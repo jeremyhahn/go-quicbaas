@@ -1,0 +1,421 @@
+// QuicBaaS Embedding Protocol Buffer Definitions v1
+// Multi-provider embedding generation with caching and provider management
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under AGPL-3.0
+
+syntax = "proto3";
+
+package quicbaas.embedding.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// =============================================================================
+// Embedding Service
+// =============================================================================
+
+// EmbeddingService provides semantic embedding generation and management.
+// It supports multiple embedding providers (Voyage AI, OpenAI, Ollama, LM Studio)
+// with intelligent caching, batch processing, and provider fallback capabilities.
+service EmbeddingService {
+  // EmbeddingGenerate generates an embedding vector for a single text.
+  rpc EmbeddingGenerate(EmbeddingGenerateRequest) returns (EmbeddingGenerateResponse);
+
+  // EmbeddingBatchGenerate generates embeddings for multiple texts in a single request.
+  rpc EmbeddingBatchGenerate(EmbeddingBatchGenerateRequest) returns (EmbeddingBatchGenerateResponse);
+
+  // EmbeddingListProviders returns all registered embedding providers with their capabilities.
+  rpc EmbeddingListProviders(EmbeddingListProvidersRequest) returns (EmbeddingListProvidersResponse);
+
+  // EmbeddingGetProviderInfo returns detailed information about a specific provider.
+  rpc EmbeddingGetProviderInfo(EmbeddingGetProviderInfoRequest) returns (EmbeddingGetProviderInfoResponse);
+
+  // EmbeddingSetDefaultProvider sets the default embedding provider.
+  rpc EmbeddingSetDefaultProvider(EmbeddingSetDefaultProviderRequest) returns (EmbeddingSetDefaultProviderResponse);
+
+  // EmbeddingGetCacheStats returns statistics about the embedding cache.
+  rpc EmbeddingGetCacheStats(EmbeddingGetCacheStatsRequest) returns (EmbeddingGetCacheStatsResponse);
+
+  // EmbeddingClearCache invalidates all or specific embedding cache entries.
+  rpc EmbeddingClearCache(EmbeddingClearCacheRequest) returns (EmbeddingClearCacheResponse);
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+// EmbeddingProvider specifies the embedding provider type.
+enum EmbeddingProvider {
+  // EMBEDDING_PROVIDER_UNSPECIFIED is the default unspecified value.
+  EMBEDDING_PROVIDER_UNSPECIFIED = 0;
+
+  // EMBEDDING_PROVIDER_VOYAGE uses Voyage AI embedding models.
+  EMBEDDING_PROVIDER_VOYAGE = 1;
+
+  // EMBEDDING_PROVIDER_OPENAI uses OpenAI embedding models.
+  EMBEDDING_PROVIDER_OPENAI = 2;
+
+  // EMBEDDING_PROVIDER_OLLAMA uses local Ollama embedding models.
+  EMBEDDING_PROVIDER_OLLAMA = 3;
+
+  // EMBEDDING_PROVIDER_LMSTUDIO uses local LM Studio embedding models.
+  EMBEDDING_PROVIDER_LMSTUDIO = 4;
+}
+
+// EmbeddingInputType specifies the type of text being embedded.
+enum EmbeddingInputType {
+  // EMBEDDING_INPUT_TYPE_UNSPECIFIED is the default unspecified value.
+  EMBEDDING_INPUT_TYPE_UNSPECIFIED = 0;
+
+  // EMBEDDING_INPUT_TYPE_DOCUMENT indicates document/long-form text.
+  EMBEDDING_INPUT_TYPE_DOCUMENT = 1;
+
+  // EMBEDDING_INPUT_TYPE_QUERY indicates search query text.
+  EMBEDDING_INPUT_TYPE_QUERY = 2;
+
+  // EMBEDDING_INPUT_TYPE_CODE indicates source code.
+  EMBEDDING_INPUT_TYPE_CODE = 3;
+}
+
+// EmbeddingStatus indicates provider availability status.
+enum EmbeddingStatus {
+  // EMBEDDING_STATUS_UNSPECIFIED is the default unspecified value.
+  EMBEDDING_STATUS_UNSPECIFIED = 0;
+
+  // EMBEDDING_STATUS_AVAILABLE indicates the provider is ready.
+  EMBEDDING_STATUS_AVAILABLE = 1;
+
+  // EMBEDDING_STATUS_UNAVAILABLE indicates the provider is down.
+  EMBEDDING_STATUS_UNAVAILABLE = 2;
+
+  // EMBEDDING_STATUS_RATE_LIMITED indicates the provider hit rate limits.
+  EMBEDDING_STATUS_RATE_LIMITED = 3;
+
+  // EMBEDDING_STATUS_ERROR indicates the provider has errors.
+  EMBEDDING_STATUS_ERROR = 4;
+}
+
+// =============================================================================
+// Common Types
+// =============================================================================
+
+// EmbeddingMetadata contains information about an embedding request.
+message EmbeddingMetadata {
+  // Model is the embedding model name.
+  string model = 1;
+
+  // Provider is the provider that generated the embedding.
+  EmbeddingProvider provider = 2;
+
+  // Dimensions is the embedding vector dimensions.
+  int32 dimensions = 3;
+
+  // Tokens is the number of tokens processed.
+  int32 tokens = 4;
+
+  // Source is the source identifier (file path, URL, etc.).
+  string source = 5;
+
+  // Language is the programming or natural language.
+  string language = 6;
+
+  // InputType specifies the type of input text.
+  EmbeddingInputType input_type = 7;
+
+  // Tags are custom user-defined tags.
+  map<string, string> tags = 8;
+
+  // CacheHit indicates if this result was served from cache.
+  bool cache_hit = 9;
+
+  // ProcessingTime is the time taken to generate the embedding.
+  google.protobuf.Duration processing_time = 10;
+}
+
+// EmbeddingProviderInfo contains detailed information about an embedding provider.
+message EmbeddingProviderInfo {
+  // Name is the provider name.
+  string name = 1;
+
+  // Type is the provider type.
+  EmbeddingProvider type = 2;
+
+  // Model is the model name being used.
+  string model = 3;
+
+  // Dimensions is the embedding vector dimensions.
+  int32 dimensions = 4;
+
+  // MaxTokens is the maximum number of tokens per request.
+  int32 max_tokens = 5;
+
+  // MaxBatchSize is the maximum batch size supported.
+  int32 max_batch_size = 6;
+
+  // Status is the current provider status.
+  EmbeddingStatus status = 7;
+
+  // ApiUrl is the provider API endpoint.
+  string api_url = 8;
+
+  // RateLimitPerMinute is the rate limit (0 = unlimited).
+  int32 rate_limit_per_minute = 9;
+
+  // Timeout is the request timeout duration.
+  google.protobuf.Duration timeout = 10;
+
+  // IsDefault indicates if this is the default provider.
+  bool is_default = 11;
+
+  // LastError contains the last error message if any.
+  string last_error = 12;
+
+  // LastErrorTime is when the last error occurred.
+  google.protobuf.Timestamp last_error_time = 13;
+
+  // SuccessCount is the total successful requests.
+  uint64 success_count = 14;
+
+  // ErrorCount is the total failed requests.
+  uint64 error_count = 15;
+
+  // AvgLatency is the average request latency.
+  google.protobuf.Duration avg_latency = 16;
+}
+
+// =============================================================================
+// Generate Embedding Request/Response
+// =============================================================================
+
+// EmbeddingGenerateRequest requests embedding generation for a single text.
+message EmbeddingGenerateRequest {
+  // Text is the input text to embed.
+  string text = 1;
+
+  // Provider optionally specifies which provider to use (uses default if unspecified).
+  EmbeddingProvider provider = 2;
+
+  // InputType specifies the type of input text.
+  EmbeddingInputType input_type = 3;
+
+  // Metadata contains optional metadata to attach.
+  map<string, string> metadata = 4;
+
+  // Source is the source identifier.
+  string source = 5;
+
+  // Language is the programming or natural language.
+  string language = 6;
+
+  // CacheBypass forces generation even if cached.
+  bool cache_bypass = 7;
+}
+
+// EmbeddingGenerateResponse returns the generated embedding.
+message EmbeddingGenerateResponse {
+  // Embedding is the embedding vector.
+  repeated float embedding = 1;
+
+  // Metadata contains embedding metadata.
+  EmbeddingMetadata metadata = 2;
+
+  // Timestamp is when the embedding was generated.
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// =============================================================================
+// Batch Generate Embeddings Request/Response
+// =============================================================================
+
+// EmbeddingBatchItem represents a single item in a batch embedding request.
+message EmbeddingBatchItem {
+  // ID is a client-provided identifier for this item.
+  string id = 1;
+
+  // Text is the input text to embed.
+  string text = 2;
+
+  // InputType specifies the type of input text.
+  EmbeddingInputType input_type = 3;
+
+  // Metadata contains optional metadata.
+  map<string, string> metadata = 4;
+
+  // Source is the source identifier.
+  string source = 5;
+
+  // Language is the programming or natural language.
+  string language = 6;
+}
+
+// EmbeddingBatchGenerateRequest requests batch embedding generation.
+message EmbeddingBatchGenerateRequest {
+  // Items is the list of texts to embed.
+  repeated EmbeddingBatchItem items = 1;
+
+  // Provider optionally specifies which provider to use.
+  EmbeddingProvider provider = 2;
+
+  // CacheBypass forces generation even if cached.
+  bool cache_bypass = 3;
+}
+
+// EmbeddingBatchResult represents the result for one batch item.
+message EmbeddingBatchResult {
+  // ID is the client-provided identifier.
+  string id = 1;
+
+  // Embedding is the embedding vector.
+  repeated float embedding = 2;
+
+  // Metadata contains embedding metadata.
+  EmbeddingMetadata metadata = 3;
+
+  // Error contains any error message for this item.
+  string error = 4;
+}
+
+// EmbeddingBatchGenerateResponse returns batch embedding results.
+message EmbeddingBatchGenerateResponse {
+  // Results contains per-item results in the same order as the request.
+  repeated EmbeddingBatchResult results = 1;
+
+  // SuccessCount is the number of successful embeddings.
+  int32 success_count = 2;
+
+  // ErrorCount is the number of failed embeddings.
+  int32 error_count = 3;
+
+  // TotalTokens is the total tokens processed.
+  int32 total_tokens = 4;
+
+  // ProcessingTime is the total processing time.
+  google.protobuf.Duration processing_time = 5;
+
+  // Timestamp is when the batch was processed.
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+// =============================================================================
+// Provider Management Request/Response
+// =============================================================================
+
+// EmbeddingListProvidersRequest requests a list of available providers.
+message EmbeddingListProvidersRequest {
+  // IncludeUnavailable includes providers that are currently unavailable.
+  bool include_unavailable = 1;
+}
+
+// EmbeddingListProvidersResponse returns the list of providers.
+message EmbeddingListProvidersResponse {
+  // Providers is the list of available providers.
+  repeated EmbeddingProviderInfo providers = 1;
+
+  // DefaultProvider is the name of the default provider.
+  string default_provider = 2;
+
+  // Timestamp is when the list was generated.
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// EmbeddingGetProviderInfoRequest requests information about a specific provider.
+message EmbeddingGetProviderInfoRequest {
+  // Provider is the provider type.
+  EmbeddingProvider provider = 1;
+}
+
+// EmbeddingGetProviderInfoResponse returns detailed provider information.
+message EmbeddingGetProviderInfoResponse {
+  // Info contains the provider information.
+  EmbeddingProviderInfo info = 1;
+
+  // Timestamp is when the info was retrieved.
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// EmbeddingSetDefaultProviderRequest sets the default provider.
+message EmbeddingSetDefaultProviderRequest {
+  // Provider is the provider to set as default.
+  EmbeddingProvider provider = 1;
+}
+
+// EmbeddingSetDefaultProviderResponse confirms the default provider change.
+message EmbeddingSetDefaultProviderResponse {
+  // Provider is the new default provider.
+  EmbeddingProvider provider = 1;
+
+  // PreviousProvider is the previous default provider.
+  EmbeddingProvider previous_provider = 2;
+
+  // Timestamp is when the change was made.
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// =============================================================================
+// Cache Management Request/Response
+// =============================================================================
+
+// EmbeddingGetCacheStatsRequest requests cache statistics.
+message EmbeddingGetCacheStatsRequest {
+  // No parameters needed.
+}
+
+// EmbeddingGetCacheStatsResponse returns cache statistics.
+message EmbeddingGetCacheStatsResponse {
+  // Enabled indicates if caching is enabled.
+  bool enabled = 1;
+
+  // Size is the current number of cached embeddings.
+  int32 size = 2;
+
+  // Capacity is the maximum cache capacity.
+  int32 capacity = 3;
+
+  // Hits is the total cache hits.
+  uint64 hits = 4;
+
+  // Misses is the total cache misses.
+  uint64 misses = 5;
+
+  // HitRate is the cache hit rate (0.0 to 1.0).
+  double hit_rate = 6;
+
+  // Evictions is the total number of evictions.
+  uint64 evictions = 7;
+
+  // MemoryBytes is the approximate memory used by cache.
+  uint64 memory_bytes = 8;
+
+  // CompressionEnabled indicates if compression is enabled.
+  bool compression_enabled = 9;
+
+  // CompressionRatio is the average compression ratio.
+  double compression_ratio = 10;
+
+  // Timestamp is when stats were collected.
+  google.protobuf.Timestamp timestamp = 11;
+}
+
+// EmbeddingClearCacheRequest requests cache clearing.
+message EmbeddingClearCacheRequest {
+  // Provider optionally clears cache only for a specific provider.
+  EmbeddingProvider provider = 1;
+
+  // All clears the entire cache regardless of provider.
+  bool all = 2;
+}
+
+// EmbeddingClearCacheResponse confirms cache clearing.
+message EmbeddingClearCacheResponse {
+  // EntriesCleared is the number of cache entries removed.
+  int32 entries_cleared = 1;
+
+  // Provider is the provider whose cache was cleared (if specified).
+  EmbeddingProvider provider = 2;
+
+  // Timestamp is when the cache was cleared.
+  google.protobuf.Timestamp timestamp = 3;
+}

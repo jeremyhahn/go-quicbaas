@@ -1,0 +1,611 @@
+// QuicBaaS Orchestrator Protocol Buffer Definitions v1
+// Agent Orchestration and Fleet Management
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.orchestrator.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+
+// =============================================================================
+// Orchestrator Service
+// =============================================================================
+
+service OrchestratorService {
+    // Session Operations
+    rpc SpawnSession(SpawnSessionRequest) returns (SpawnSessionResponse);
+    rpc PromptSession(PromptSessionRequest) returns (PromptSessionResponse);
+    rpc SessionStatus(SessionStatusRequest) returns (SessionStatusResponse);
+    rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+    rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+
+    // Task Operations
+    rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+    rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+    rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+    rpc ClaimTask(ClaimTaskRequest) returns (ClaimTaskResponse);
+    rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+    rpc DecomposeTask(DecomposeTaskRequest) returns (DecomposeTaskResponse);
+
+    // Job Operations
+    rpc StartJob(OrchestratorStartJobRequest) returns (OrchestratorStartJobResponse);
+    rpc GetJobStatus(OrchestratorGetJobStatusRequest) returns (OrchestratorGetJobStatusResponse);
+    rpc CancelJob(OrchestratorCancelJobRequest) returns (OrchestratorCancelJobResponse);
+    rpc ListJobs(OrchestratorListJobsRequest) returns (OrchestratorListJobsResponse);
+
+    // Event Streaming
+    rpc SubscribeJobEvents(SubscribeJobEventsRequest) returns (stream JobEvent);
+
+    // Backend Operations
+    rpc ListBackends(OrchestratorListBackendsRequest) returns (OrchestratorListBackendsResponse);
+
+    // Health Operations
+    rpc Health(OrchestratorHealthRequest) returns (OrchestratorHealthResponse);
+
+    // Agent Fleet Management
+    rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);
+    rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
+    rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+    rpc RemoveAgent(RemoveAgentRequest) returns (RemoveAgentResponse);
+    rpc AgentHeartbeat(AgentHeartbeatRequest) returns (AgentHeartbeatResponse);
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+enum TaskStatus {
+    TASK_STATUS_UNSPECIFIED = 0;
+    TASK_STATUS_PENDING = 1;
+    TASK_STATUS_CLAIMED = 2;
+    TASK_STATUS_IN_PROGRESS = 3;
+    TASK_STATUS_COMPLETED = 4;
+    TASK_STATUS_FAILED = 5;
+    TASK_STATUS_CANCELLED = 6;
+}
+
+enum AgentStatus {
+    AGENT_STATUS_UNSPECIFIED = 0;
+    AGENT_STATUS_ONLINE = 1;
+    AGENT_STATUS_OFFLINE = 2;
+    AGENT_STATUS_BUSY = 3;
+    AGENT_STATUS_ERROR = 4;
+    AGENT_STATUS_DRAINING = 5;
+}
+
+enum SessionState {
+    SESSION_STATE_UNSPECIFIED = 0;
+    SESSION_STATE_ACTIVE = 1;
+    SESSION_STATE_IDLE = 2;
+    SESSION_STATE_CLOSED = 3;
+    SESSION_STATE_ERROR = 4;
+}
+
+// =============================================================================
+// Core Types
+// =============================================================================
+
+// MCPServerConfig configures an MCP server for an agent session.
+message MCPServerConfig {
+    string name = 1;
+    string url = 2;
+    map<string, string> env = 3;
+}
+
+// ContainerSpec defines a container configuration for sandboxed sessions.
+message ContainerSpec {
+    string image = 1;
+    repeated string command = 2;
+    map<string, string> env = 3;
+    repeated string volumes = 4;
+    string work_dir = 5;
+    string network = 6;
+    string name = 7;
+}
+
+// ContentBlock represents a block of content in a response.
+message ContentBlock {
+    string type = 1;
+    string text = 2;
+}
+
+// SessionInfo contains summary information about an active session.
+message SessionInfo {
+    string session_id = 1;
+    string project_id = 2;
+    string backend = 3;
+    string model = 4;
+    SessionState state = 5;
+    google.protobuf.Timestamp created_at = 6;
+    google.protobuf.Timestamp last_activity = 7;
+}
+
+// Task represents an orchestration work item.
+message Task {
+    string id = 1;
+    string tenant_id = 2;
+    string team_name = 3;
+    string subject = 4;
+    string description = 5;
+    TaskStatus status = 6;
+    string assigned_to = 7;
+    string created_by = 8;
+    repeated string dependencies = 9;
+    repeated string blocks = 10;
+    TaskResult result = 11;
+    map<string, string> metadata = 12;
+    google.protobuf.Timestamp created_at = 13;
+    google.protobuf.Timestamp updated_at = 14;
+    google.protobuf.Timestamp claimed_at = 15;
+    google.protobuf.Timestamp completed_at = 16;
+    uint64 version = 17;
+}
+
+// TaskResult contains the output of a completed task.
+message TaskResult {
+    string output = 1;
+    repeated string files = 2;
+    map<string, string> metadata = 3;
+}
+
+// TaskFilter specifies criteria for listing tasks.
+message TaskFilter {
+    string team_name = 1;
+    TaskStatus status = 2;
+    string assigned_to = 3;
+    string created_by = 4;
+    int32 limit = 5;
+}
+
+// OrchestratorWorkItem represents a decomposed unit of work.
+message OrchestratorWorkItem {
+    string id = 1;
+    string project_id = 2;
+    string title = 3;
+    string description = 4;
+    int32 priority = 5;
+    repeated string dependencies = 6;
+}
+
+// AgentRegistration represents a registered agent in the fleet registry.
+message AgentRegistration {
+    string id = 1;
+    string tenant_id = 2;
+    string name = 3;
+    string host = 4;
+    string backend = 5;
+    string agent_type = 6;
+    AgentStatus status = 7;
+    repeated string capabilities = 8;
+    string container_id = 9;
+    string work_dir = 10;
+    google.protobuf.Timestamp last_seen = 11;
+    google.protobuf.Timestamp registered_at = 12;
+    uint64 version = 13;
+    map<string, string> metadata = 14;
+    string model = 15;
+}
+
+// AgentFilter specifies criteria for listing agents.
+message AgentFilter {
+    string host = 1;
+    AgentStatus status = 2;
+    string agent_type = 3;
+    string backend = 4;
+    int32 limit = 5;
+    string model = 6;
+}
+
+// BackendCapabilities describes what a backend supports.
+message BackendCapabilities {
+    bool supports_sessions = 1;
+    bool supports_streaming = 2;
+    bool supports_mcp = 3;
+    bool supports_rag = 4;
+    bool supports_tools = 5;
+    string kind = 6;
+}
+
+// AgentBackendInfo contains information about a registered agent backend.
+message AgentBackendInfo {
+    string name = 1;
+    string type = 2;
+    BackendCapabilities capabilities = 3;
+    string default_model = 4;
+}
+
+// SessionHealthResult contains the health check result for a single session.
+message SessionHealthResult {
+    string session_id = 1;
+    string backend = 2;
+    SessionState state = 3;
+    bool healthy = 4;
+    string error = 5;
+}
+
+// HealthCheckReport contains the results of checking all active sessions.
+message HealthCheckReport {
+    google.protobuf.Timestamp timestamp = 1;
+    int32 total_sessions = 2;
+    int32 healthy = 3;
+    int32 unhealthy = 4;
+    int32 closed = 5;
+    repeated SessionHealthResult results = 6;
+}
+
+// =============================================================================
+// Session Requests and Responses
+// =============================================================================
+
+// SpawnSession
+message SpawnSessionRequest {
+    string backend = 1;
+    string project_id = 2;
+    string model = 3;
+    string system_prompt = 4;
+    repeated MCPServerConfig mcp_servers = 5;
+    map<string, string> env = 6;
+    string work_dir = 7;
+    bool sandboxed = 8;
+    string container_image = 9;
+    ContainerSpec container_config = 10;
+    string tenant_id = 11;
+}
+
+message SpawnSessionResponse {
+    string session_id = 1;
+    string backend = 2;
+    string model = 3;
+    string container_id = 4;
+    google.protobuf.Timestamp timestamp = 5;
+}
+
+// PromptSession
+message PromptSessionRequest {
+    string backend = 1;
+    string session_id = 2;
+    string project_id = 3;
+    string prompt = 4;
+    string model = 5;
+    string system_prompt = 6;
+    bool use_rag = 7;
+    string tenant_id = 8;
+}
+
+message PromptSessionResponse {
+    string session_id = 1;
+    repeated ContentBlock content = 2;
+    string model = 3;
+    string stop_reason = 4;
+    google.protobuf.Timestamp timestamp = 5;
+}
+
+// SessionStatus
+message SessionStatusRequest {
+    string session_id = 1;
+    string tenant_id = 2;
+}
+
+message SessionStatusResponse {
+    string session_id = 1;
+    SessionState state = 2;
+    google.protobuf.Timestamp last_activity = 3;
+    int64 uptime_seconds = 4;
+    google.protobuf.Timestamp timestamp = 5;
+}
+
+// CloseSession
+message CloseSessionRequest {
+    string session_id = 1;
+    string tenant_id = 2;
+}
+
+message CloseSessionResponse {
+    string session_id = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// ListSessions
+message ListSessionsRequest {
+    string backend = 1;
+    string tenant_id = 2;
+}
+
+message ListSessionsResponse {
+    repeated SessionInfo sessions = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// =============================================================================
+// Task Requests and Responses
+// =============================================================================
+
+// CreateTask
+message CreateTaskRequest {
+    string tenant_id = 1;
+    string team_name = 2;
+    string subject = 3;
+    string description = 4;
+    string assigned_to = 5;
+    repeated string dependencies = 6;
+    map<string, string> metadata = 7;
+}
+
+message CreateTaskResponse {
+    Task task = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// GetTask
+message GetTaskRequest {
+    string tenant_id = 1;
+    string task_id = 2;
+}
+
+message GetTaskResponse {
+    Task task = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// ListTasks
+message ListTasksRequest {
+    string tenant_id = 1;
+    TaskFilter filter = 2;
+}
+
+message ListTasksResponse {
+    repeated Task tasks = 1;
+    int32 total_count = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// ClaimTask
+message ClaimTaskRequest {
+    string tenant_id = 1;
+    string task_id = 2;
+    string agent_id = 3;
+}
+
+message ClaimTaskResponse {
+    string task_id = 1;
+    string agent_id = 2;
+    bool claimed = 3;
+    google.protobuf.Timestamp timestamp = 4;
+}
+
+// CompleteTask
+message CompleteTaskRequest {
+    string tenant_id = 1;
+    string task_id = 2;
+    TaskResult result = 3;
+}
+
+message CompleteTaskResponse {
+    string task_id = 1;
+    bool completed = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// DecomposeTask
+message DecomposeTaskRequest {
+    string backend = 1;
+    string model = 2;
+    string task = 3;
+    repeated string project_ids = 4;
+    bool use_rag = 5;
+    string tenant_id = 6;
+}
+
+message DecomposeTaskResponse {
+    repeated OrchestratorWorkItem work_items = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// =============================================================================
+// Job Requests and Responses
+// =============================================================================
+
+// OrchestratorStartJobRequest starts an autonomous orchestration job.
+message OrchestratorStartJobRequest {
+    string tenant_id = 1;
+    string description = 2;
+    string lead_backend = 3;
+    string lead_model = 4;
+    string project_id = 5;
+    int32 max_iterations = 6;
+    string poll_interval = 7;
+    string workflow_name = 8;
+    string workflow_file = 9;
+}
+
+// OrchestratorStartJobResponse contains the result of starting an orchestration job.
+message OrchestratorStartJobResponse {
+    string job_id = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// OrchestratorGetJobStatusRequest requests the status of an orchestration job.
+message OrchestratorGetJobStatusRequest {
+    string tenant_id = 1;
+    string job_id = 2;
+}
+
+// OrchestratorGetJobStatusResponse contains the current status of an orchestration job.
+message OrchestratorGetJobStatusResponse {
+    string job_id = 1;
+    string state = 2;
+    int32 iteration = 3;
+    int32 task_count = 4;
+    int32 completed = 5;
+    int32 failed = 6;
+    string description = 7;
+    int64 started_at = 8;
+    int64 updated_at = 9;
+    string error = 10;
+    google.protobuf.Timestamp timestamp = 11;
+    repeated OrchestratorAuditEvent events = 12; // Complete audit trail
+}
+
+// OrchestratorAuditEvent records a single event in the job's audit trail.
+message OrchestratorAuditEvent {
+    int64 timestamp = 1;
+    string type = 2;
+    string details = 3;
+}
+
+// OrchestratorCancelJobRequest cancels a running orchestration job.
+message OrchestratorCancelJobRequest {
+    string tenant_id = 1;
+    string job_id = 2;
+}
+
+// OrchestratorCancelJobResponse contains the result of cancelling an orchestration job.
+message OrchestratorCancelJobResponse {
+    string job_id = 1;
+    bool cancelled = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// OrchestratorListJobsRequest lists all jobs for a tenant.
+message OrchestratorListJobsRequest {
+    string tenant_id = 1;
+}
+
+// OrchestratorListJobsResponse contains the list of jobs for a tenant.
+message OrchestratorListJobsResponse {
+    repeated OrchestratorJobSummary jobs = 1;
+}
+
+// OrchestratorJobSummary provides a summary of an orchestration job.
+message OrchestratorJobSummary {
+    string job_id = 1;
+    string state = 2;
+    int32 iteration = 3;
+    int32 task_count = 4;
+    int32 completed = 5;
+    int32 failed = 6;
+    string description = 7;
+    int64 started_at = 8;
+    int64 updated_at = 9;
+    string error = 10;
+    int32 event_count = 11;
+}
+
+// SubscribeJobEventsRequest subscribes to real-time events from a job.
+message SubscribeJobEventsRequest {
+    string tenant_id = 1;
+    string job_id = 2;
+}
+
+// JobEvent represents a real-time event from a running orchestration job.
+message JobEvent {
+    string job_id = 1;
+    string type = 2;
+    string state = 3;
+    string message = 4;
+    int32 iteration = 5;
+    map<string, string> metadata = 6;
+    int64 timestamp = 7;
+}
+
+// =============================================================================
+// Backend Requests and Responses
+// =============================================================================
+
+// ListBackends
+message OrchestratorListBackendsRequest {
+    string tenant_id = 1;
+}
+
+message OrchestratorListBackendsResponse {
+    repeated AgentBackendInfo backends = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// =============================================================================
+// Health Requests and Responses
+// =============================================================================
+
+// Health
+message OrchestratorHealthRequest {
+    string tenant_id = 1;
+}
+
+message OrchestratorHealthResponse {
+    HealthCheckReport report = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// =============================================================================
+// Agent Fleet Management Requests and Responses
+// =============================================================================
+
+// RegisterAgent
+message RegisterAgentRequest {
+    string tenant_id = 1;
+    string name = 2;
+    string host = 3;
+    string backend = 4;
+    string agent_type = 5;
+    repeated string capabilities = 6;
+    string work_dir = 7;
+    map<string, string> metadata = 8;
+    string model = 9;
+}
+
+message RegisterAgentResponse {
+    AgentRegistration agent = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// GetAgent
+message GetAgentRequest {
+    string tenant_id = 1;
+    string agent_id = 2;
+}
+
+message GetAgentResponse {
+    AgentRegistration agent = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// ListAgents
+message ListAgentsRequest {
+    string tenant_id = 1;
+    AgentFilter filter = 2;
+}
+
+message ListAgentsResponse {
+    repeated AgentRegistration agents = 1;
+    int32 count = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// RemoveAgent
+message RemoveAgentRequest {
+    string tenant_id = 1;
+    string agent_id = 2;
+}
+
+message RemoveAgentResponse {
+    string agent_id = 1;
+    bool removed = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// AgentHeartbeat
+message AgentHeartbeatRequest {
+    string tenant_id = 1;
+    string agent_id = 2;
+}
+
+message AgentHeartbeatResponse {
+    string agent_id = 1;
+    bool acknowledged = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}

@@ -1,0 +1,27 @@
+name: tictactoe-{{PROFILE}}
+description: "Tic-tac-toe game development ({{PROFILE_DESC}})"
+mode: constrained
+agents:
+  - role: lead
+    backend: ollama
+    model: {{OLLAMA_MODEL}}
+  - role: coder
+    backend: claude
+    model: ""
+    capabilities: [persistent_sessions, tool_use, file_access]
+    mcp_scopes: [orchestrator:read]
+    workspace_path: {{WORKSPACE_PATH}}
+    skip_permissions: true
+    permission_mode: bypassPermissions
+  - role: reviewer
+    backend: codex
+    model: o4-mini
+    capabilities: [tool_use]
+    mcp_scopes: [orchestrator:read]
+    workspace_path: {{WORKSPACE_PATH}}
+    skip_permissions: true
+settings:
+  max_iterations: {{MAX_ITERATIONS}}
+  max_parallelism: 1
+  poll_interval: 5s
+  total_timeout: {{TOTAL_TIMEOUT}}

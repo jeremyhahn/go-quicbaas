@@ -1,0 +1,2801 @@
+//go:build mcp && iam
+
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package mcp
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"time"
+
+	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+
+	"gopkg.in/yaml.v3"
+)
+
+// iamServiceAccessor is the interface for accessing the IAM service from QuicBaaS.
+// The IAM() method is only available when built with the "iam" build tag.
+type iamServiceAccessor interface {
+	IAM() service.IAMService
+}
+
+// getIAMService retrieves the IAM service from the QuicBaaS service.
+// It returns an error if the service doesn't support IAM or if IAM is not configured.
+func (r *ToolRegistry) getIAMService() (service.IAMService, error) {
+	accessor, ok := r.service.(iamServiceAccessor)
+	if !ok {
+		return nil, api.NewServiceUnavailableError("IAM")
+	}
+	iamSvc := accessor.IAM()
+	if iamSvc == nil {
+		return nil, api.NewServiceNotConfiguredError("IAM")
+	}
+	return iamSvc, nil
+}
+
+func (r *ToolRegistry) registerIAMTools() {
+	// Register all IAM subsystem tools
+	r.registerTenantTools()
+	r.registerUserTools()
+	r.registerGroupTools()
+	r.registerRoleTools()
+	r.registerPolicyTools()
+	r.registerAppTools()
+	r.registerMFATools()
+	r.registerPEPTools()
+	// Register delegated administration and GDPR tools
+	r.registerAdminTools()
+	r.registerGDPRTools()
+	// Register federation and identity tools
+	r.registerFederationTools()
+	r.registerIdentityTools()
+	// Register session management tools
+	r.registerSessionTools()
+	// Register audit tools
+	r.registerAuditTools()
+}
+
+// =============================================================================
+// Tenant Tools
+// =============================================================================
+
+func (r *ToolRegistry) registerTenantTools() {
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_tenant_create",
+		Description: "Create a new IAM tenant with optional settings and quotas",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID (optional, auto-generated if not provided)",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Human-readable tenant name",
+				},
+				"settings": map[string]interface{}{
+					"type":        "object",
+					"description": "Tenant-specific configuration settings",
+				},
+				"quotas": map[string]interface{}{
+					"type":        "object",
+					"description": "Resource limits for this tenant",
+				},
+			},
+			"required": []string{"name"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_tenant_get",
+		Description: "Retrieve a tenant by ID",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant identifier",
+				},
+			},
+			"required": []string{"id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_tenant_update",
+		Description: "Update an existing tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant identifier",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated tenant name",
+				},
+				"settings": map[string]interface{}{
+					"type":        "object",
+					"description": "Updated tenant settings",
+				},
+				"quotas": map[string]interface{}{
+					"type":        "object",
+					"description": "Updated resource limits",
+				},
+			},
+			"required": []string{"id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_tenant_delete",
+		Description: "Delete a tenant and all its resources",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant identifier",
+				},
+			},
+			"required": []string{"id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_tenant_list",
+		Description: "List all tenants with pagination and filtering",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of results",
+					"default":     100,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of results to skip",
+					"default":     0,
+				},
+				"filter": map[string]interface{}{
+					"type":        "object",
+					"description": "Filter by tenant fields",
+				},
+			},
+		},
+	})
+}
+
+// =============================================================================
+// User Tools
+// =============================================================================
+
+func (r *ToolRegistry) registerUserTools() {
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_user_create",
+		Description: "Create a new user in a tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"email": map[string]interface{}{
+					"type":        "string",
+					"description": "User email address (unique within tenant)",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "User display name",
+				},
+				"roles": map[string]interface{}{
+					"type":        "array",
+					"description": "List of role IDs to assign",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+				},
+				"groups": map[string]interface{}{
+					"type":        "array",
+					"description": "List of group IDs",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+				},
+				"attributes": map[string]interface{}{
+					"type":        "object",
+					"description": "Custom user attributes",
+				},
+			},
+			"required": []string{"tenant_id", "email", "name"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_user_get",
+		Description: "Retrieve a user by ID",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+			},
+			"required": []string{"tenant_id", "user_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_user_update",
+		Description: "Update an existing user",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+				"email": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated email address",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated display name",
+				},
+				"roles": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+				"groups": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+				"attributes": map[string]interface{}{
+					"type": "object",
+				},
+				"suspended": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Suspend user access",
+				},
+				"locked": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Lock user account",
+				},
+			},
+			"required": []string{"tenant_id", "user_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_user_delete",
+		Description: "Delete a user from a tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+			},
+			"required": []string{"tenant_id", "user_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_user_list",
+		Description: "List all users in a tenant with pagination",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"limit": map[string]interface{}{
+					"type":    "integer",
+					"default": 100,
+				},
+				"offset": map[string]interface{}{
+					"type":    "integer",
+					"default": 0,
+				},
+				"filter": map[string]interface{}{
+					"type": "object",
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_user_assign_role",
+		Description: "Assign a role to a user",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+				"role_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Role identifier",
+				},
+			},
+			"required": []string{"tenant_id", "user_id", "role_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_user_revoke_role",
+		Description: "Revoke a role from a user",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+				"role_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Role identifier",
+				},
+			},
+			"required": []string{"tenant_id", "user_id", "role_id"},
+		},
+	})
+}
+
+// =============================================================================
+// Group Tools
+// =============================================================================
+
+func (r *ToolRegistry) registerGroupTools() {
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_group_create",
+		Description: "Create a new group in a tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Group display name",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Group purpose description",
+				},
+				"members": map[string]interface{}{
+					"type":        "array",
+					"description": "Initial member user IDs",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+				},
+			},
+			"required": []string{"tenant_id", "name"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_group_get",
+		Description: "Retrieve a group by ID",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Group identifier",
+				},
+			},
+			"required": []string{"tenant_id", "group_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_group_update",
+		Description: "Update an existing group",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Group identifier",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated group name",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated description",
+				},
+				"members": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+			},
+			"required": []string{"tenant_id", "group_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_group_delete",
+		Description: "Delete a group from a tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Group identifier",
+				},
+			},
+			"required": []string{"tenant_id", "group_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_group_list",
+		Description: "List all groups in a tenant with pagination",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"limit": map[string]interface{}{
+					"type":    "integer",
+					"default": 100,
+				},
+				"offset": map[string]interface{}{
+					"type":    "integer",
+					"default": 0,
+				},
+				"filter": map[string]interface{}{
+					"type": "object",
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_group_add_member",
+		Description: "Add a user to a group",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Group identifier",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+			},
+			"required": []string{"tenant_id", "group_id", "user_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_group_remove_member",
+		Description: "Remove a user from a group",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Group identifier",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+			},
+			"required": []string{"tenant_id", "group_id", "user_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_group_list_members",
+		Description: "List all members of a group",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Group identifier",
+				},
+			},
+			"required": []string{"tenant_id", "group_id"},
+		},
+	})
+}
+
+// =============================================================================
+// Role Tools
+// =============================================================================
+
+func (r *ToolRegistry) registerRoleTools() {
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_role_create",
+		Description: "Create a new role in a tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Role display name",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Role purpose description",
+				},
+				"permissions": map[string]interface{}{
+					"type":        "array",
+					"description": "List of permission strings",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+				},
+			},
+			"required": []string{"tenant_id", "name"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_role_get",
+		Description: "Retrieve a role by ID",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"role_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Role identifier",
+				},
+			},
+			"required": []string{"tenant_id", "role_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_role_update",
+		Description: "Update an existing role",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"role_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Role identifier",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated role name",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated description",
+				},
+				"permissions": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+			},
+			"required": []string{"tenant_id", "role_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_role_delete",
+		Description: "Delete a role from a tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"role_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Role identifier",
+				},
+			},
+			"required": []string{"tenant_id", "role_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_role_list",
+		Description: "List all roles in a tenant with pagination",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"limit": map[string]interface{}{
+					"type":    "integer",
+					"default": 100,
+				},
+				"offset": map[string]interface{}{
+					"type":    "integer",
+					"default": 0,
+				},
+				"filter": map[string]interface{}{
+					"type": "object",
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+}
+
+// =============================================================================
+// Policy Tools
+// =============================================================================
+
+func (r *ToolRegistry) registerPolicyTools() {
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_policy_create",
+		Description: "Create a new policy in a tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"policy": map[string]interface{}{
+					"type":        "object",
+					"description": "Policy document with rules and conditions",
+				},
+			},
+			"required": []string{"tenant_id", "policy"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_policy_get",
+		Description: "Retrieve a policy by name",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Policy name",
+				},
+			},
+			"required": []string{"tenant_id", "name"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_policy_update",
+		Description: "Update an existing policy",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Policy name",
+				},
+				"policy": map[string]interface{}{
+					"type":        "object",
+					"description": "Updated policy document",
+				},
+			},
+			"required": []string{"tenant_id", "name", "policy"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_policy_delete",
+		Description: "Delete a policy from a tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Policy name",
+				},
+			},
+			"required": []string{"tenant_id", "name"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_policy_list",
+		Description: "List all policies in a tenant with pagination",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"limit": map[string]interface{}{
+					"type":    "integer",
+					"default": 100,
+				},
+				"offset": map[string]interface{}{
+					"type":    "integer",
+					"default": 0,
+				},
+				"filter": map[string]interface{}{
+					"type": "object",
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_policy_test",
+		Description: "Test a policy against an authorization check",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"policy": map[string]interface{}{
+					"type":        "object",
+					"description": "Policy document to test",
+				},
+				"check": map[string]interface{}{
+					"type":        "object",
+					"description": "Authorization check request",
+					"properties": map[string]interface{}{
+						"principal": map[string]interface{}{"type": "string"},
+						"action":    map[string]interface{}{"type": "string"},
+						"resource":  map[string]interface{}{"type": "string"},
+						"context":   map[string]interface{}{"type": "object"},
+					},
+					"required": []string{"principal", "action", "resource"},
+				},
+			},
+			"required": []string{"policy", "check"},
+		},
+	})
+}
+
+// =============================================================================
+// Application Tools
+// =============================================================================
+
+func (r *ToolRegistry) registerAppTools() {
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_app_register",
+		Description: "Register a new OAuth2 application",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Application display name",
+				},
+				"redirect_uris": map[string]interface{}{
+					"type":        "array",
+					"description": "Allowed OAuth redirect URIs",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+				},
+				"grant_types": map[string]interface{}{
+					"type":        "array",
+					"description": "Allowed OAuth grant types",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+				},
+				"response_types": map[string]interface{}{
+					"type":        "array",
+					"description": "Allowed OAuth response types",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+				},
+				"resource_prefix": map[string]interface{}{
+					"type":        "string",
+					"description": "Resource namespace for this application",
+				},
+			},
+			"required": []string{"tenant_id", "name", "redirect_uris", "grant_types", "response_types"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_app_get",
+		Description: "Retrieve an application by client ID",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"client_id": map[string]interface{}{
+					"type":        "string",
+					"description": "OAuth client identifier",
+				},
+			},
+			"required": []string{"client_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_app_update",
+		Description: "Update an existing application",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"client_id": map[string]interface{}{
+					"type":        "string",
+					"description": "OAuth client identifier",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated application name",
+				},
+				"redirect_uris": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+				"grant_types": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+				"response_types": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+				"resource_prefix": map[string]interface{}{
+					"type": "string",
+				},
+			},
+			"required": []string{"client_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_app_delete",
+		Description: "Delete an application",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"client_id": map[string]interface{}{
+					"type":        "string",
+					"description": "OAuth client identifier",
+				},
+			},
+			"required": []string{"client_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_app_list",
+		Description: "List all applications in a tenant with pagination",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"limit": map[string]interface{}{
+					"type":    "integer",
+					"default": 100,
+				},
+				"offset": map[string]interface{}{
+					"type":    "integer",
+					"default": 0,
+				},
+				"filter": map[string]interface{}{
+					"type": "object",
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_app_rotate_secret",
+		Description: "Rotate an application's client secret",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"client_id": map[string]interface{}{
+					"type":        "string",
+					"description": "OAuth client identifier",
+				},
+			},
+			"required": []string{"client_id"},
+		},
+	})
+}
+
+// =============================================================================
+// MFA Tools
+// =============================================================================
+
+func (r *ToolRegistry) registerMFATools() {
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_enroll_begin",
+		Description: "Begin MFA enrollment for a user",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+				"method": map[string]interface{}{
+					"type":        "string",
+					"description": "MFA method to enroll",
+					"enum":        []string{"totp", "webauthn"},
+				},
+			},
+			"required": []string{"tenant_id", "user_id", "method"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_enroll_complete",
+		Description: "Complete MFA enrollment by verifying the initial code",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"enrollment_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Enrollment identifier from begin step",
+				},
+				"code": map[string]interface{}{
+					"type":        "string",
+					"description": "OTP code from authenticator app",
+				},
+			},
+			"required": []string{"enrollment_id", "code"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_enroll_cancel",
+		Description: "Cancel an in-progress MFA enrollment",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"enrollment_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Enrollment identifier",
+				},
+			},
+			"required": []string{"enrollment_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_status",
+		Description: "Get MFA enrollment status for a user",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+			},
+			"required": []string{"tenant_id", "user_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_disable",
+		Description: "Disable MFA for a user",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+			},
+			"required": []string{"tenant_id", "user_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_challenge_begin",
+		Description: "Begin MFA challenge during authentication",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+				"session_token": map[string]interface{}{
+					"type":        "string",
+					"description": "Partial authentication token",
+				},
+			},
+			"required": []string{"tenant_id", "user_id", "session_token"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_challenge_verify",
+		Description: "Verify MFA challenge with OTP code",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"challenge_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Challenge identifier from begin step",
+				},
+				"code": map[string]interface{}{
+					"type":        "string",
+					"description": "OTP code from authenticator app",
+				},
+				"use_backup_code": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Use backup code instead of OTP",
+					"default":     false,
+				},
+			},
+			"required": []string{"challenge_id", "code"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_backup_codes_generate",
+		Description: "Generate backup codes for a user",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+				"count": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of backup codes to generate",
+					"default":     10,
+					"minimum":     1,
+					"maximum":     20,
+				},
+			},
+			"required": []string{"tenant_id", "user_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_backup_codes_verify",
+		Description: "Verify a backup code",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+				"code": map[string]interface{}{
+					"type":        "string",
+					"description": "Backup code to verify",
+				},
+			},
+			"required": []string{"tenant_id", "user_id", "code"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_mfa_backup_codes_status",
+		Description: "Get backup code status for a user",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "string",
+					"description": "User identifier",
+				},
+			},
+			"required": []string{"tenant_id", "user_id"},
+		},
+	})
+}
+
+// =============================================================================
+// PEP (Policy Enforcement Point) Tools
+// =============================================================================
+
+func (r *ToolRegistry) registerPEPTools() {
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_pep_check",
+		Description: "Check if an action is authorized",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Owning tenant ID",
+				},
+				"principal": map[string]interface{}{
+					"type":        "string",
+					"description": "Principal identifier (user, service, etc.)",
+				},
+				"action": map[string]interface{}{
+					"type":        "string",
+					"description": "Action to perform (read, write, delete, etc.)",
+				},
+				"resource": map[string]interface{}{
+					"type":        "string",
+					"description": "Resource identifier",
+				},
+				"context": map[string]interface{}{
+					"type":        "object",
+					"description": "Additional context for policy evaluation",
+				},
+			},
+			"required": []string{"tenant_id", "principal", "action", "resource"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_pep_check_batch",
+		Description: "Check multiple authorization requests in batch",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"checks": map[string]interface{}{
+					"type":        "array",
+					"description": "List of authorization checks",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"tenant_id": map[string]interface{}{"type": "string"},
+							"principal": map[string]interface{}{"type": "string"},
+							"action":    map[string]interface{}{"type": "string"},
+							"resource":  map[string]interface{}{"type": "string"},
+							"context":   map[string]interface{}{"type": "object"},
+						},
+						"required": []string{"tenant_id", "principal", "action", "resource"},
+					},
+				},
+			},
+			"required": []string{"checks"},
+		},
+	})
+}
+
+// =============================================================================
+// Execution Handlers - Tenants
+// =============================================================================
+
+func (r *ToolRegistry) executeIAMTenantCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.CreateTenantRequest{
+		ID:   getString(args, "id"),
+		Name: getString(args, "name"),
+	}
+
+	// Parse optional fields
+	if settingsRaw, ok := args["settings"].(map[string]interface{}); ok {
+		// Convert string numeric values to integers for proper JSON parsing
+		convertedSettings := convertStringNumerics(settingsRaw)
+		settings := &iam.TenantSettings{}
+		if parseErr := parseJSONObject(convertedSettings, settings); parseErr == nil {
+			req.Settings = settings
+		}
+		// Also extract max_users into quotas if present
+		if maxUsersRaw, ok := settingsRaw["max_users"]; ok {
+			maxUsers := 0
+			switch v := maxUsersRaw.(type) {
+			case string:
+				fmt.Sscanf(v, "%d", &maxUsers)
+			case float64:
+				maxUsers = int(v)
+			}
+			if maxUsers > 0 {
+				if req.Quotas == nil {
+					req.Quotas = &iam.TenantQuotas{}
+				}
+				req.Quotas.MaxUsers = maxUsers
+			}
+		}
+	}
+	if quotasRaw, ok := args["quotas"].(map[string]interface{}); ok {
+		quotas := &iam.TenantQuotas{}
+		if parseErr := parseJSONObject(quotasRaw, quotas); parseErr == nil {
+			req.Quotas = quotas
+		}
+	}
+	// Also check for max_users at top level (from SDK flattening)
+	if maxUsersRaw, ok := args["max_users"]; ok && req.Quotas == nil {
+		maxUsers := 0
+		switch v := maxUsersRaw.(type) {
+		case string:
+			fmt.Sscanf(v, "%d", &maxUsers)
+		case float64:
+			maxUsers = int(v)
+		}
+		if maxUsers > 0 {
+			req.Quotas = &iam.TenantQuotas{MaxUsers: maxUsers}
+		}
+	}
+
+	resp, err := iamSvc.CreateTenant(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMTenantGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.GetTenantRequest{
+		ID: getString(args, "id"),
+	}
+
+	resp, err := iamSvc.GetTenant(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMTenantUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.UpdateTenantRequest{
+		ID: getString(args, "id"),
+	}
+
+	if name := getString(args, "name"); name != "" {
+		req.Name = &name
+	}
+	if settingsRaw, ok := args["settings"].(map[string]interface{}); ok {
+		// Convert string numeric values to integers for proper JSON parsing
+		convertedSettings := convertStringNumerics(settingsRaw)
+		settings := &iam.TenantSettings{}
+		if parseErr := parseJSONObject(convertedSettings, settings); parseErr == nil {
+			req.Settings = settings
+		}
+		// Also extract max_users into quotas if present
+		if maxUsersRaw, ok := settingsRaw["max_users"]; ok {
+			maxUsers := 0
+			switch v := maxUsersRaw.(type) {
+			case string:
+				fmt.Sscanf(v, "%d", &maxUsers)
+			case float64:
+				maxUsers = int(v)
+			}
+			if maxUsers > 0 {
+				if req.Quotas == nil {
+					req.Quotas = &iam.TenantQuotas{}
+				}
+				req.Quotas.MaxUsers = maxUsers
+			}
+		}
+	}
+	if quotasRaw, ok := args["quotas"].(map[string]interface{}); ok {
+		quotas := &iam.TenantQuotas{}
+		if parseErr := parseJSONObject(quotasRaw, quotas); parseErr == nil {
+			req.Quotas = quotas
+		}
+	}
+	// Also check for max_users at top level (from SDK flattening)
+	if maxUsersRaw, ok := args["max_users"]; ok && req.Quotas == nil {
+		maxUsers := 0
+		switch v := maxUsersRaw.(type) {
+		case string:
+			fmt.Sscanf(v, "%d", &maxUsers)
+		case float64:
+			maxUsers = int(v)
+		}
+		if maxUsers > 0 {
+			req.Quotas = &iam.TenantQuotas{MaxUsers: maxUsers}
+		}
+	}
+
+	resp, err := iamSvc.UpdateTenant(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMTenantDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.DeleteTenantRequest{
+		ID: getString(args, "id"),
+	}
+
+	resp, err := iamSvc.DeleteTenant(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMTenantList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	limit := getUint64(args, "limit")
+	if limit == 0 {
+		limit = 100
+	}
+
+	req := &service.ListTenantsRequest{
+		Limit:  int(limit), //nolint:gosec // G115: limit is bounded by schema default
+		Offset: int(getUint64(args, "offset")),
+	}
+
+	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
+		req.Filter = filterRaw
+	}
+
+	resp, err := iamSvc.ListTenants(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+// =============================================================================
+// Execution Handlers - Users
+// =============================================================================
+
+func (r *ToolRegistry) executeIAMUserCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMCreateUserRequest{
+		TenantID: getString(args, "tenant_id"),
+		Email:    getString(args, "email"),
+		Name:     getString(args, "name"),
+	}
+
+	if rolesRaw, ok := args["roles"].([]interface{}); ok {
+		req.Roles = make([]string, len(rolesRaw))
+		for i, role := range rolesRaw {
+			if str, ok := role.(string); ok {
+				req.Roles[i] = str
+			}
+		}
+	}
+
+	if groupsRaw, ok := args["groups"].([]interface{}); ok {
+		req.Groups = make([]string, len(groupsRaw))
+		for i, g := range groupsRaw {
+			if str, ok := g.(string); ok {
+				req.Groups[i] = str
+			}
+		}
+	}
+
+	if attrRaw, ok := args["attributes"].(map[string]interface{}); ok {
+		req.Attributes = attrRaw
+	}
+
+	resp, err := iamSvc.CreateUser(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMUserGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMGetUserRequest{
+		TenantID: getString(args, "tenant_id"),
+		UserID:   getString(args, "user_id"),
+	}
+
+	resp, err := iamSvc.GetUser(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMUserUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMUpdateUserRequest{
+		TenantID: getString(args, "tenant_id"),
+		UserID:   getString(args, "user_id"),
+	}
+
+	if email := getString(args, "email"); email != "" {
+		req.Email = &email
+	}
+	if name := getString(args, "name"); name != "" {
+		req.Name = &name
+	}
+	if rolesRaw, ok := args["roles"].([]interface{}); ok {
+		roles := make([]string, len(rolesRaw))
+		for i, role := range rolesRaw {
+			if str, ok := role.(string); ok {
+				roles[i] = str
+			}
+		}
+		req.Roles = &roles
+	}
+	if groupsRaw, ok := args["groups"].([]interface{}); ok {
+		groups := make([]string, len(groupsRaw))
+		for i, g := range groupsRaw {
+			if str, ok := g.(string); ok {
+				groups[i] = str
+			}
+		}
+		req.Groups = &groups
+	}
+	if attrRaw, ok := args["attributes"].(map[string]interface{}); ok {
+		req.Attributes = &attrRaw
+	}
+	if suspended, ok := args["suspended"].(bool); ok {
+		req.Suspended = &suspended
+	}
+	if locked, ok := args["locked"].(bool); ok {
+		req.Locked = &locked
+	}
+
+	resp, err := iamSvc.UpdateUser(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMUserDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMDeleteUserRequest{
+		TenantID: getString(args, "tenant_id"),
+		UserID:   getString(args, "user_id"),
+	}
+
+	resp, err := iamSvc.DeleteUser(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMUserList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	limit := getUint64(args, "limit")
+	if limit == 0 {
+		limit = 100
+	}
+
+	req := &service.IAMListUsersRequest{
+		TenantID: getString(args, "tenant_id"),
+		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
+		Offset:   int(getUint64(args, "offset")),
+	}
+
+	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
+		req.Filter = filterRaw
+	}
+
+	resp, err := iamSvc.ListUsers(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMUserAssignRole(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	// The IAMService interface uses AssignRoleRequest (alias for AuthAssignRoleRequest)
+	// which has Username and RoleName fields, not TenantID/UserID/RoleID.
+	// Map the MCP args to the expected interface types.
+	req := &service.AssignRoleRequest{
+		Username: getString(args, "user_id"),
+		RoleName: getString(args, "role_id"),
+	}
+
+	resp, err := iamSvc.AssignRole(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMUserRevokeRole(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	// The IAMService interface uses RevokeRoleRequest (alias for AuthRevokeRoleRequest)
+	// which has Username and RoleName fields, not TenantID/UserID/RoleID.
+	// Map the MCP args to the expected interface types.
+	req := &service.RevokeRoleRequest{
+		Username: getString(args, "user_id"),
+		RoleName: getString(args, "role_id"),
+	}
+
+	resp, err := iamSvc.RevokeRole(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+// =============================================================================
+// Execution Handlers - Groups
+// =============================================================================
+
+func (r *ToolRegistry) executeIAMGroupCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.CreateGroupRequest{
+		TenantID:    getString(args, "tenant_id"),
+		ID:          getString(args, "id"),
+		Name:        getString(args, "name"),
+		Description: getString(args, "description"),
+	}
+
+	if membersRaw, ok := args["members"].([]interface{}); ok {
+		req.Members = make([]string, len(membersRaw))
+		for i, m := range membersRaw {
+			if str, ok := m.(string); ok {
+				req.Members[i] = str
+			}
+		}
+	}
+
+	resp, err := iamSvc.CreateGroup(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMGroupGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.GetGroupRequest{
+		TenantID: getString(args, "tenant_id"),
+		GroupID:  getString(args, "group_id"),
+	}
+
+	resp, err := iamSvc.GetGroup(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMGroupUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.UpdateGroupRequest{
+		TenantID: getString(args, "tenant_id"),
+		GroupID:  getString(args, "group_id"),
+	}
+
+	if name := getString(args, "name"); name != "" {
+		req.Name = &name
+	}
+	if desc := getString(args, "description"); desc != "" {
+		req.Description = &desc
+	}
+	if membersRaw, ok := args["members"].([]interface{}); ok {
+		members := make([]string, len(membersRaw))
+		for i, m := range membersRaw {
+			if str, ok := m.(string); ok {
+				members[i] = str
+			}
+		}
+		req.Members = &members
+	}
+
+	resp, err := iamSvc.UpdateGroup(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMGroupDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.DeleteGroupRequest{
+		TenantID: getString(args, "tenant_id"),
+		GroupID:  getString(args, "group_id"),
+	}
+
+	resp, err := iamSvc.DeleteGroup(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMGroupList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	limit := getUint64(args, "limit")
+	if limit == 0 {
+		limit = 100
+	}
+
+	req := &service.ListGroupsRequest{
+		TenantID: getString(args, "tenant_id"),
+		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
+		Offset:   int(getUint64(args, "offset")),
+	}
+
+	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
+		req.Filter = filterRaw
+	}
+
+	resp, err := iamSvc.ListGroups(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMGroupAddMember(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.AddUserToGroupRequest{
+		TenantID: getString(args, "tenant_id"),
+		GroupID:  getString(args, "group_id"),
+		UserID:   getString(args, "user_id"),
+	}
+
+	resp, err := iamSvc.AddUserToGroup(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMGroupRemoveMember(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.RemoveUserFromGroupRequest{
+		TenantID: getString(args, "tenant_id"),
+		GroupID:  getString(args, "group_id"),
+		UserID:   getString(args, "user_id"),
+	}
+
+	resp, err := iamSvc.RemoveUserFromGroup(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMGroupListMembers(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	// Get the group which contains the member list
+	resp, err := r.executeIAMGroupGet(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// The GetGroupResponse wraps the group in a "group" field.
+	// Extract members from the nested group object.
+	if respMap, ok := resp.(map[string]interface{}); ok {
+		// Try nested group first (GetGroupResponse wraps as {group: {...}})
+		groupMap, _ := respMap["group"].(map[string]interface{})
+		if groupMap == nil {
+			// Fallback to top-level if group is not wrapped
+			groupMap = respMap
+		}
+		members, _ := groupMap["members"].([]interface{})
+		if members == nil {
+			members = []interface{}{}
+		}
+		return marshalResult(map[string]interface{}{
+			"members": members,
+			"total":   len(members),
+		})
+	}
+	return resp, nil
+}
+
+// =============================================================================
+// Execution Handlers - Roles
+// =============================================================================
+
+func (r *ToolRegistry) executeIAMRoleCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMCreateRoleRequest{
+		TenantID:    getString(args, "tenant_id"),
+		ID:          getString(args, "id"),
+		Name:        getString(args, "name"),
+		Description: getString(args, "description"),
+	}
+
+	if permsRaw, ok := args["permissions"].([]interface{}); ok {
+		req.Permissions = make([]string, len(permsRaw))
+		for i, p := range permsRaw {
+			if str, ok := p.(string); ok {
+				req.Permissions[i] = str
+			}
+		}
+	}
+
+	resp, err := iamSvc.CreateRole(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMRoleGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMGetRoleRequest{
+		TenantID: getString(args, "tenant_id"),
+		RoleID:   getString(args, "role_id"),
+	}
+
+	resp, err := iamSvc.GetRole(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMRoleUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMUpdateRoleRequest{
+		TenantID: getString(args, "tenant_id"),
+		RoleID:   getString(args, "role_id"),
+	}
+
+	if name := getString(args, "name"); name != "" {
+		req.Name = &name
+	}
+	if desc := getString(args, "description"); desc != "" {
+		req.Description = &desc
+	}
+	if permsRaw, ok := args["permissions"].([]interface{}); ok {
+		perms := make([]string, len(permsRaw))
+		for i, p := range permsRaw {
+			if str, ok := p.(string); ok {
+				perms[i] = str
+			}
+		}
+		req.Permissions = &perms
+	}
+
+	resp, err := iamSvc.UpdateRole(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMRoleDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMDeleteRoleRequest{
+		TenantID: getString(args, "tenant_id"),
+		RoleID:   getString(args, "role_id"),
+	}
+
+	resp, err := iamSvc.DeleteRole(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMRoleList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	limit := getUint64(args, "limit")
+	if limit == 0 {
+		limit = 100
+	}
+
+	req := &service.IAMListRolesRequest{
+		TenantID: getString(args, "tenant_id"),
+		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
+		Offset:   int(getUint64(args, "offset")),
+	}
+
+	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
+		req.Filter = filterRaw
+	}
+
+	resp, err := iamSvc.ListRoles(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+// =============================================================================
+// Execution Handlers - Policies
+// =============================================================================
+
+func (r *ToolRegistry) executeIAMPolicyCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	policyRaw, ok := args["policy"].(map[string]interface{})
+	if !ok {
+		return nil, api.NewInvalidTypeError("policy", "an object")
+	}
+
+	tenantID := getString(args, "tenant_id")
+
+	// Try direct parse as server-format policy first (has apiVersion, kind, metadata, spec)
+	policy := &iam.Policy{}
+	if err := parseJSONObject(policyRaw, policy); err != nil {
+		return nil, api.NewInvalidFormatError("policy", err)
+	}
+
+	// If the policy doesn't have apiVersion, try parsing from SDK format with spec_yaml
+	if policy.APIVersion == "" {
+		policy, err = buildPolicyFromSDKFormat(policyRaw, tenantID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	req := &service.CreatePolicyRequest{
+		TenantID: tenantID,
+		Policy:   policy,
+	}
+
+	resp, err := iamSvc.CreatePolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+// buildPolicyFromSDKFormat constructs an iam.Policy from SDK-format fields.
+// The SDK sends {name, spec_yaml, description, enabled, ...} instead of the
+// server format {apiVersion, kind, metadata, spec}.
+func buildPolicyFromSDKFormat(policyRaw map[string]interface{}, tenantID string) (*iam.Policy, error) {
+	name, _ := policyRaw["name"].(string)
+
+	// Check for spec_yaml (base64-encoded YAML from the SDK)
+	var specYAML []byte
+	if yamlStr, ok := policyRaw["spec_yaml"].(string); ok && yamlStr != "" {
+		specYAML = []byte(yamlStr)
+	}
+
+	if len(specYAML) > 0 {
+		// Try full policy format first
+		var fullPolicy iam.Policy
+		if parseErr := yaml.Unmarshal(specYAML, &fullPolicy); parseErr == nil && fullPolicy.APIVersion != "" {
+			if name != "" {
+				fullPolicy.Metadata.Name = name
+			}
+			fullPolicy.Metadata.Tenant = tenantID
+			if desc, ok := policyRaw["description"].(string); ok {
+				fullPolicy.Metadata.Description = desc
+			}
+			return &fullPolicy, nil
+		}
+
+		// Try spec-only YAML
+		var spec iam.PolicySpec
+		if parseErr := yaml.Unmarshal(specYAML, &spec); parseErr != nil {
+			return nil, api.NewInvalidFormatError("spec_yaml", parseErr)
+		}
+
+		desc, _ := policyRaw["description"].(string)
+
+		return &iam.Policy{
+			APIVersion: "iam.quicbaas.io/v1",
+			Kind:       "Policy",
+			Metadata: iam.PolicyMetadata{
+				Name:        name,
+				Tenant:      tenantID,
+				Description: desc,
+			},
+			Spec: spec,
+		}, nil
+	}
+
+	// No spec_yaml - create a minimal policy from the available fields
+	desc, _ := policyRaw["description"].(string)
+	policy := &iam.Policy{
+		APIVersion: "iam.quicbaas.io/v1",
+		Kind:       "Policy",
+		Metadata: iam.PolicyMetadata{
+			Name:        name,
+			Tenant:      tenantID,
+			Description: desc,
+		},
+	}
+
+	return policy, nil
+}
+
+func (r *ToolRegistry) executeIAMPolicyGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.GetPolicyRequest{
+		TenantID: getString(args, "tenant_id"),
+		Name:     getString(args, "name"),
+	}
+
+	resp, err := iamSvc.GetPolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMPolicyUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	policyRaw, ok := args["policy"].(map[string]interface{})
+	if !ok {
+		return nil, api.NewInvalidTypeError("policy", "an object")
+	}
+
+	policy := &iam.Policy{}
+	if err := parseJSONObject(policyRaw, policy); err != nil {
+		return nil, api.NewInvalidFormatError("policy", err)
+	}
+
+	req := &service.UpdatePolicyRequest{
+		TenantID: getString(args, "tenant_id"),
+		Name:     getString(args, "name"),
+		Policy:   policy,
+	}
+
+	resp, err := iamSvc.UpdatePolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMPolicyDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.DeletePolicyRequest{
+		TenantID: getString(args, "tenant_id"),
+		Name:     getString(args, "name"),
+	}
+
+	resp, err := iamSvc.DeletePolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMPolicyList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	limit := getUint64(args, "limit")
+	if limit == 0 {
+		limit = 100
+	}
+
+	req := &service.ListPoliciesRequest{
+		TenantID: getString(args, "tenant_id"),
+		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
+		Offset:   int(getUint64(args, "offset")),
+	}
+
+	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
+		req.Filter = filterRaw
+	}
+
+	resp, err := iamSvc.ListPolicies(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMPolicyTest(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle simulate format from SDK: flat args with subject/action/resource
+	// (sent by Policy.Simulate which maps to this tool).
+	if _, hasPolicy := args["policy"]; !hasPolicy {
+		return r.executeIAMPolicySimulate(ctx, iamSvc, args)
+	}
+
+	policyRaw, ok := args["policy"].(map[string]interface{})
+	if !ok {
+		return nil, api.NewInvalidTypeError("policy", "an object")
+	}
+
+	policy := &iam.Policy{}
+	if err := parseJSONObject(policyRaw, policy); err != nil {
+		return nil, api.NewInvalidFormatError("policy", err)
+	}
+
+	checkRaw, ok := args["check"].(map[string]interface{})
+	if !ok {
+		return nil, api.NewInvalidTypeError("check", "an object")
+	}
+
+	check := &iam.CheckRequest{}
+	if err := parseJSONObject(checkRaw, check); err != nil {
+		return nil, api.NewInvalidFormatError("check", err)
+	}
+
+	req := &service.TestPolicyRequest{
+		Policy: policy,
+		Check:  check,
+	}
+
+	resp, err := iamSvc.TestPolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+// executeIAMPolicySimulate handles the simulate/evaluate format where the SDK
+// sends flat fields (tenant_id, subject, action, resource) rather than the
+// test format (policy, check). This builds a CheckRequest and evaluates
+// against all policies in the tenant.
+func (r *ToolRegistry) executeIAMPolicySimulate(ctx context.Context, iamSvc service.IAMService, args map[string]interface{}) (interface{}, error) {
+	tenantID := getString(args, "tenant_id")
+
+	// Build subject from args
+	subject := iam.Subject{
+		TenantID: tenantID,
+		Tenant:   tenantID,
+	}
+	if subjectRaw, ok := args["subject"].(map[string]interface{}); ok {
+		if id, ok := subjectRaw["id"].(string); ok {
+			subject.ID = id
+		}
+		if authenticated, ok := subjectRaw["authenticated"].(bool); ok && authenticated {
+			if subject.ID == "" {
+				subject.ID = "authenticated"
+			}
+		}
+		if rolesRaw, ok := subjectRaw["roles"].([]interface{}); ok {
+			for _, r := range rolesRaw {
+				if s, ok := r.(string); ok {
+					subject.Roles = append(subject.Roles, s)
+				}
+			}
+		}
+		if groupsRaw, ok := subjectRaw["groups"].([]interface{}); ok {
+			for _, g := range groupsRaw {
+				if s, ok := g.(string); ok {
+					subject.Groups = append(subject.Groups, s)
+				}
+			}
+		}
+	} else if subjectStr, ok := args["subject"].(string); ok {
+		subject.ID = subjectStr
+	}
+
+	check := &iam.CheckRequest{
+		Subject:  subject,
+		Action:   getString(args, "action"),
+		Resource: getString(args, "resource"),
+	}
+
+	if ctxMap, ok := args["context"].(map[string]interface{}); ok {
+		check.Context = ctxMap
+	}
+
+	req := &service.TestPolicyRequest{
+		Check: check,
+	}
+
+	resp, err := iamSvc.TestPolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+// =============================================================================
+// Execution Handlers - Applications
+// =============================================================================
+
+func (r *ToolRegistry) executeIAMAppRegister(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.RegisterAppRequest{
+		TenantID:       getString(args, "tenant_id"),
+		Name:           getString(args, "name"),
+		ResourcePrefix: getString(args, "resource_prefix"),
+	}
+
+	if urisRaw, ok := args["redirect_uris"].([]interface{}); ok {
+		req.RedirectURIs = make([]string, len(urisRaw))
+		for i, u := range urisRaw {
+			if str, ok := u.(string); ok {
+				req.RedirectURIs[i] = str
+			}
+		}
+	}
+
+	if grantTypesRaw, ok := args["grant_types"].([]interface{}); ok {
+		req.GrantTypes = make([]string, len(grantTypesRaw))
+		for i, g := range grantTypesRaw {
+			if str, ok := g.(string); ok {
+				req.GrantTypes[i] = str
+			}
+		}
+	}
+
+	if respTypesRaw, ok := args["response_types"].([]interface{}); ok {
+		req.ResponseTypes = make([]string, len(respTypesRaw))
+		for i, rt := range respTypesRaw {
+			if str, ok := rt.(string); ok {
+				req.ResponseTypes[i] = str
+			}
+		}
+	}
+
+	resp, err := iamSvc.RegisterApp(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMAppGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.GetAppRequest{
+		ClientID: getString(args, "client_id"),
+	}
+
+	resp, err := iamSvc.GetApp(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMAppUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.UpdateAppRequest{
+		ClientID: getString(args, "client_id"),
+	}
+
+	if name := getString(args, "name"); name != "" {
+		req.Name = &name
+	}
+	if prefix := getString(args, "resource_prefix"); prefix != "" {
+		req.ResourcePrefix = &prefix
+	}
+
+	if urisRaw, ok := args["redirect_uris"].([]interface{}); ok {
+		uris := make([]string, len(urisRaw))
+		for i, u := range urisRaw {
+			if str, ok := u.(string); ok {
+				uris[i] = str
+			}
+		}
+		req.RedirectURIs = &uris
+	}
+
+	if grantTypesRaw, ok := args["grant_types"].([]interface{}); ok {
+		grantTypes := make([]string, len(grantTypesRaw))
+		for i, g := range grantTypesRaw {
+			if str, ok := g.(string); ok {
+				grantTypes[i] = str
+			}
+		}
+		req.GrantTypes = &grantTypes
+	}
+
+	if respTypesRaw, ok := args["response_types"].([]interface{}); ok {
+		respTypes := make([]string, len(respTypesRaw))
+		for i, rt := range respTypesRaw {
+			if str, ok := rt.(string); ok {
+				respTypes[i] = str
+			}
+		}
+		req.ResponseTypes = &respTypes
+	}
+
+	resp, err := iamSvc.UpdateApp(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMAppDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.DeleteAppRequest{
+		ClientID: getString(args, "client_id"),
+	}
+
+	resp, err := iamSvc.DeleteApp(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMAppList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	limit := getUint64(args, "limit")
+	if limit == 0 {
+		limit = 100
+	}
+
+	req := &service.ListAppsRequest{
+		TenantID: getString(args, "tenant_id"),
+		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
+		Offset:   int(getUint64(args, "offset")),
+	}
+
+	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
+		req.Filter = filterRaw
+	}
+
+	resp, err := iamSvc.ListApps(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMAppRotateSecret(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	clientID := getString(args, "client_id")
+	req := &service.RotateAppSecretRequest{
+		ClientID: clientID,
+	}
+
+	resp, err := iamSvc.RotateAppSecret(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(map[string]interface{}{
+		"client_id":     clientID,
+		"client_secret": resp.ClientSecret,
+		"timestamp":     resp.Timestamp,
+	})
+}
+
+// =============================================================================
+// Policy Validate Handler
+// =============================================================================
+
+func (r *ToolRegistry) executeIAMPolicyValidate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	policyRaw, ok := args["policy"].(map[string]interface{})
+	if !ok {
+		return nil, api.NewInvalidTypeError("policy", "an object")
+	}
+
+	tenantID := getString(args, "tenant_id")
+
+	// Try direct parse as server-format policy first
+	policy := &iam.Policy{}
+	if parseErr := parseJSONObject(policyRaw, policy); parseErr != nil {
+		return nil, api.NewInvalidFormatError("policy", parseErr)
+	}
+
+	// If the policy doesn't have apiVersion, try parsing from SDK format
+	if policy.APIVersion == "" {
+		policy, err = buildPolicyFromSDKFormat(policyRaw, tenantID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	req := &service.ValidatePolicyRequest{
+		Policy: policy,
+	}
+
+	resp, err := iamSvc.ValidatePolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+// =============================================================================
+// Audit Query/Get/Delete Handlers
+// =============================================================================
+
+// auditLoggerAccessor provides access to the audit logger from the QuicBaaS service.
+type auditLoggerAccessor interface {
+	GetAuditLogger(ctx context.Context) (iam.AuditLogger, error)
+}
+
+// getAuditLogger retrieves the audit logger from the QuicBaaS service.
+func (r *ToolRegistry) getAuditLogger(ctx context.Context) (iam.AuditLogger, error) {
+	accessor, ok := r.service.(auditLoggerAccessor)
+	if !ok {
+		return nil, api.NewServiceUnavailableError("audit")
+	}
+	logger, err := accessor.GetAuditLogger(ctx)
+	if err != nil {
+		return nil, api.NewOperationFailedError("get audit logger", err)
+	}
+	if logger == nil {
+		return nil, api.NewServiceUnavailableError("audit")
+	}
+	return logger, nil
+}
+
+func (r *ToolRegistry) executeIAMAuditQuery(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	auditLogger, err := r.getAuditLogger(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	filter := &iam.AuditFilter{
+		TenantID: getString(args, "tenant_id"),
+	}
+
+	if category := getString(args, "category"); category != "" {
+		filter.Categories = []iam.AuditCategory{iam.AuditCategory(category)}
+	}
+	if outcome := getString(args, "outcome"); outcome != "" {
+		filter.Outcomes = []iam.AuditOutcome{iam.AuditOutcome(outcome)}
+	}
+	if actorID := getString(args, "actor_id"); actorID != "" {
+		filter.ActorID = actorID
+	}
+	if resourceID := getString(args, "resource_id"); resourceID != "" {
+		filter.ResourceID = resourceID
+	}
+
+	limit := getUint64(args, "limit")
+	if limit == 0 {
+		limit = 100
+	}
+	filter.Limit = int(limit) //nolint:gosec // G115: limit bounded by schema
+
+	filter.Offset = int(getUint64(args, "offset")) //nolint:gosec // G115: offset bounded by schema
+
+	if startTime := getString(args, "start_time"); startTime != "" {
+		if t, parseErr := time.Parse(time.RFC3339, startTime); parseErr == nil {
+			filter.StartTime = &t
+		}
+	}
+	if endTime := getString(args, "end_time"); endTime != "" {
+		if t, parseErr := time.Parse(time.RFC3339, endTime); parseErr == nil {
+			filter.EndTime = &t
+		}
+	}
+
+	events, total, err := auditLogger.Query(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"events":    events,
+		"total":     total,
+		"timestamp": time.Now(),
+	})
+}
+
+func (r *ToolRegistry) executeIAMAuditGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	auditLogger, err := r.getAuditLogger(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	tenantID := getString(args, "tenant_id")
+	eventID := getString(args, "event_id")
+
+	event, err := auditLogger.GetEvent(ctx, tenantID, eventID)
+	if err != nil {
+		return nil, &AuditEventGetError{EventID: eventID, Cause: err}
+	}
+	return marshalResult(event)
+}
+
+func (r *ToolRegistry) executeIAMAuditDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	auditLogger, err := r.getAuditLogger(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	tenantID := getString(args, "tenant_id")
+	beforeStr := getString(args, "before")
+
+	before, parseErr := time.Parse(time.RFC3339, beforeStr)
+	if parseErr != nil {
+		return nil, api.NewInvalidFormatError("before", parseErr)
+	}
+
+	deleted, err := auditLogger.DeleteOlderThan(ctx, tenantID, before)
+	if err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"deleted":   deleted,
+		"timestamp": time.Now(),
+	})
+}
+
+// =============================================================================
+// Audit Tools
+// =============================================================================
+
+func (r *ToolRegistry) registerAuditTools() {
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_audit_query",
+		Description: "Query audit events with filters",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID to query audit events for",
+				},
+				"category": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by audit category (authentication, authorization, management, data_access, security)",
+				},
+				"outcome": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by outcome (success, failure, error)",
+				},
+				"actor_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by actor user ID",
+				},
+				"resource_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by resource ID",
+				},
+				"start_time": map[string]interface{}{
+					"type":        "string",
+					"description": "Start time in RFC3339 format",
+					"format":      "date-time",
+				},
+				"end_time": map[string]interface{}{
+					"type":        "string",
+					"description": "End time in RFC3339 format",
+					"format":      "date-time",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of results",
+					"default":     100,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of results to skip",
+					"default":     0,
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_audit_get",
+		Description: "Get a specific audit event by ID",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID",
+				},
+				"event_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Audit event ID",
+				},
+			},
+			"required": []string{"tenant_id", "event_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_audit_delete",
+		Description: "Delete audit events older than a specified time",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID",
+				},
+				"before": map[string]interface{}{
+					"type":        "string",
+					"description": "Delete events before this time (RFC3339 format)",
+					"format":      "date-time",
+				},
+			},
+			"required": []string{"tenant_id", "before"},
+		},
+	})
+}
+
+// convertStringNumerics converts string values that look like numbers to their
+// numeric equivalents. This is needed when the SDK sends settings as
+// map[string]string but the server struct expects int/bool fields.
+func convertStringNumerics(m map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		if strVal, ok := v.(string); ok {
+			// Try integer
+			if intVal, err := strconv.Atoi(strVal); err == nil {
+				result[k] = intVal
+				continue
+			}
+			// Try boolean
+			if strVal == "true" {
+				result[k] = true
+				continue
+			}
+			if strVal == "false" {
+				result[k] = false
+				continue
+			}
+		}
+		result[k] = v
+	}
+	return result
+}
+
+// AuditEventGetError indicates a failure to retrieve an audit event by ID.
+type AuditEventGetError struct {
+	EventID string
+	Cause   error
+}
+
+// Error implements the error interface.
+func (e *AuditEventGetError) Error() string {
+	return "audit event " + e.EventID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause for errors.Is/As support.
+func (e *AuditEventGetError) Unwrap() error {
+	return e.Cause
+}

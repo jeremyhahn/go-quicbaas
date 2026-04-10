@@ -1,0 +1,136 @@
+# QuicBaaS 3-Node Raft Cluster - Node 3
+# Production-ready 3-node Raft cluster configuration
+# Tolerates 1 node failure while maintaining quorum
+#
+# Usage:
+#   quicbaasd --config configs/raft-3-node/node3.yaml
+#   docker compose -f configs/docker/docker-compose.raft-3-node.yaml up
+
+server:
+  host: "0.0.0.0"
+  grpc:
+    enabled: true
+    port: 9093
+  rest:
+    enabled: true
+    port: 8083
+  quic:
+    enabled: true
+    port: 10083
+  mcp:
+    enabled: true
+    port: 11083
+  unix:
+    enabled: true
+    socket: "/var/run/quicbaas-node3.sock"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 60s
+  shutdown_timeout: 30s
+  max_connections: 1000
+  shards: [1]
+
+# Raft consensus configuration
+raft:
+  node_id: 3
+  election_rtt: 10
+  heartbeat_rtt: 1
+  snapshot_entries: 10000
+  compaction_overhead: 5000
+  request_timeout: 5s
+  rtt_millisecond: 200
+  raft_address: "node3:63000"
+  listen_address: "0.0.0.0:63000"
+  mutual_tls: false
+  max_in_mem_log_size: 67108864  # 64MB
+  max_send_queue_size: 1024
+  max_receive_queue_size: 1024
+  enable_metrics: true
+
+# Static peer discovery
+discovery:
+  enabled: true
+  type: "static"
+  static:
+    peers:
+      - "1:node1:63000"
+      - "2:node2:63000"
+      - "3:node3:63000"
+
+# Cluster membership settings
+cluster:
+  min_quorum: 2
+
+membership:
+  lease_ttl: 10s
+  keep_alive_interval: 5s
+  health_check_interval: 15s
+
+# PebbleDB storage configuration
+storage:
+  backend: "raft"
+  data_dir: "/data/quicbaas"
+  wal_dir: "/data/quicbaas/wal"
+  cache_size: 134217728  # 128MB
+  max_open_files: 1000
+  max_concurrent_reads: 100
+  max_concurrent_writes: 100
+  disable_wal: false
+  sync_writes: true
+  bytes_per_sync: 1048576  # 1MB
+  mem_table_size: 67108864  # 64MB
+  mem_table_stop_writes: 2
+  l0_compaction_threshold: 4
+  l0_stop_writes_threshold: 12
+  block_size: 4096
+  target_file_size: 67108864  # 64MB
+  compression_type: "snappy"
+
+# Object storage using local filesystem
+object_storage:
+  backends:
+    primary:
+      type: "local"
+      description: "Local filesystem object storage"
+      config:
+        path: "/data/quicbaas/objects"
+
+# Security configuration
+security:
+  tls_enabled: false
+  api_key_enabled: false
+  encryption_enabled: false
+  fips_mode: false
+  authorization:
+    provider: "rbac"
+    rbac:
+      enabled: true
+      allow_anonymous: true
+
+# Enable KMS and Secrets with dedicated shards
+kms:
+  enabled: true
+  backend: software
+  auto_generate_key: true
+  raft:
+    shard_id: 1000
+
+secrets:
+  enabled: true
+  raft:
+    shard_id: 1001
+
+# Backup configuration
+backup:
+  enabled: true
+  storage_backend: "primary"
+  default_compression: "zstd"
+  default_encryption: "none"
+  work_dir: "/tmp/quicbaas-backup"
+  timeout: "30m"
+
+# JSON logging for production
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"

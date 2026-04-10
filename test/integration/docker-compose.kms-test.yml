@@ -1,0 +1,361 @@
+# QuicBaaS KMS Test Cluster with Software TPM
+# 3-node Raft cluster with simulated TPM 2.0 backends for KMS testing
+# Each node has its own swtpm instance for hardware key isolation
+
+version: '3.8'
+
+services:
+  # Software TPM instances (one per node)
+  swtpm1:
+    build:
+      context: ../..
+      dockerfile: test/integration/docker/swtpm/Dockerfile
+    image: quicbaas/swtpm:latest
+    container_name: quicbaas-swtpm1
+    hostname: swtpm1
+    ports:
+      - "2321:2321"
+      - "2322:2322"
+    volumes:
+      - swtpm-data1:/var/lib/swtpm
+    networks:
+      - kms-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  swtpm2:
+    build:
+      context: ../..
+      dockerfile: test/integration/docker/swtpm/Dockerfile
+    image: quicbaas/swtpm:latest
+    container_name: quicbaas-swtpm2
+    hostname: swtpm2
+    ports:
+      - "2323:2321"
+      - "2324:2322"
+    volumes:
+      - swtpm-data2:/var/lib/swtpm
+    networks:
+      - kms-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  swtpm3:
+    build:
+      context: ../..
+      dockerfile: test/integration/docker/swtpm/Dockerfile
+    image: quicbaas/swtpm:latest
+    container_name: quicbaas-swtpm3
+    hostname: swtpm3
+    ports:
+      - "2325:2321"
+      - "2326:2322"
+    volumes:
+      - swtpm-data3:/var/lib/swtpm
+    networks:
+      - kms-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # QuicBaaS Node 1 with KMS enabled
+  node1:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    container_name: quicbaas-kms-node1
+    hostname: node1
+    ports:
+      - "8081:8080"   # HTTP API
+      - "9091:9090"   # Metrics
+      - "50051:50051" # gRPC
+    environment:
+      # Node configuration
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=node1:63001
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=node2:63002,node3:63003
+
+      # HTTP/gRPC configuration
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_METRICS_PORT=9090
+
+      # KMS configuration
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_TPM_ENABLED=true
+      - QUICBAAS_KMS_TPM_DEVICE=tcp://swtpm1:2321
+      - QUICBAAS_KMS_BACKEND=tpm2
+      - QUICBAAS_KMS_DEK_STORAGE=__secrets/dek
+      - QUICBAAS_KMS_DATA_STORAGE=__secrets/data
+
+      # Logging
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=json
+
+      # Storage
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+
+      # Raft tuning for tests
+      - QUICBAAS_RAFT_ELECTION_RTT=10
+      - QUICBAAS_RAFT_HEARTBEAT_RTT=1
+      - QUICBAAS_RAFT_SNAPSHOT_ENTRIES=10000
+
+      # Performance
+      - GOMAXPROCS=2
+    volumes:
+      - kms-data-node1:/data
+      - kms-logs-node1:/var/log/quicbaas
+    networks:
+      - kms-network
+    depends_on:
+      swtpm1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  # QuicBaaS Node 2 with KMS enabled
+  node2:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    container_name: quicbaas-kms-node2
+    hostname: node2
+    ports:
+      - "8082:8080"   # HTTP API
+      - "9092:9090"   # Metrics
+      - "50052:50051" # gRPC
+    environment:
+      # Node configuration
+      - QUICBAAS_RAFT_NODE_ID=2
+      - QUICBAAS_RAFT_RAFT_ADDRESS=node2:63002
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=node1:63001,node3:63003
+
+      # HTTP/gRPC configuration
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_METRICS_PORT=9090
+
+      # KMS configuration
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_TPM_ENABLED=true
+      - QUICBAAS_KMS_TPM_DEVICE=tcp://swtpm2:2321
+      - QUICBAAS_KMS_BACKEND=tpm2
+      - QUICBAAS_KMS_DEK_STORAGE=__secrets/dek
+      - QUICBAAS_KMS_DATA_STORAGE=__secrets/data
+
+      # Logging
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=json
+
+      # Storage
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+
+      # Raft tuning for tests
+      - QUICBAAS_RAFT_ELECTION_RTT=10
+      - QUICBAAS_RAFT_HEARTBEAT_RTT=1
+      - QUICBAAS_RAFT_SNAPSHOT_ENTRIES=10000
+
+      # Performance
+      - GOMAXPROCS=2
+    volumes:
+      - kms-data-node2:/data
+      - kms-logs-node2:/var/log/quicbaas
+    networks:
+      - kms-network
+    depends_on:
+      swtpm2:
+        condition: service_healthy
+      node1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  # QuicBaaS Node 3 with KMS enabled
+  node3:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    container_name: quicbaas-kms-node3
+    hostname: node3
+    ports:
+      - "8083:8080"   # HTTP API
+      - "9093:9090"   # Metrics
+      - "50053:50051" # gRPC
+    environment:
+      # Node configuration
+      - QUICBAAS_RAFT_NODE_ID=3
+      - QUICBAAS_RAFT_RAFT_ADDRESS=node3:63003
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=node1:63001,node2:63002
+
+      # HTTP/gRPC configuration
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_METRICS_PORT=9090
+
+      # KMS configuration
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_TPM_ENABLED=true
+      - QUICBAAS_KMS_TPM_DEVICE=tcp://swtpm3:2321
+      - QUICBAAS_KMS_BACKEND=tpm2
+      - QUICBAAS_KMS_DEK_STORAGE=__secrets/dek
+      - QUICBAAS_KMS_DATA_STORAGE=__secrets/data
+
+      # Logging
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=json
+
+      # Storage
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+
+      # Raft tuning for tests
+      - QUICBAAS_RAFT_ELECTION_RTT=10
+      - QUICBAAS_RAFT_HEARTBEAT_RTT=1
+      - QUICBAAS_RAFT_SNAPSHOT_ENTRIES=10000
+
+      # Performance
+      - GOMAXPROCS=2
+    volumes:
+      - kms-data-node3:/data
+      - kms-logs-node3:/var/log/quicbaas
+    networks:
+      - kms-network
+    depends_on:
+      swtpm3:
+        condition: service_healthy
+      node1:
+        condition: service_healthy
+      node2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+networks:
+  kms-network:
+    driver: bridge
+    name: quicbaas-kms-network
+
+volumes:
+  # SWTPM data volumes
+  swtpm-data1:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-test"
+      com.quicbaas.component: "swtpm"
+      com.quicbaas.node: "swtpm1"
+
+  swtpm-data2:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-test"
+      com.quicbaas.component: "swtpm"
+      com.quicbaas.node: "swtpm2"
+
+  swtpm-data3:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-test"
+      com.quicbaas.component: "swtpm"
+      com.quicbaas.node: "swtpm3"
+
+  # Data volumes for nodes
+  kms-data-node1:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-test"
+      com.quicbaas.node: "node1"
+      com.quicbaas.type: "data"
+
+  kms-data-node2:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-test"
+      com.quicbaas.node: "node2"
+      com.quicbaas.type: "data"
+
+  kms-data-node3:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-test"
+      com.quicbaas.node: "node3"
+      com.quicbaas.type: "data"
+
+  # Log volumes for nodes
+  kms-logs-node1:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-test"
+      com.quicbaas.node: "node1"
+      com.quicbaas.type: "logs"
+
+  kms-logs-node2:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-test"
+      com.quicbaas.node: "node2"
+      com.quicbaas.type: "logs"
+
+  kms-logs-node3:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-test"
+      com.quicbaas.node: "node3"
+      com.quicbaas.type: "logs"

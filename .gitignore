@@ -1,0 +1,105 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# Build artifacts
+/bin/
+/build/
+/dist/
+*.tar.gz
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Data directories
+/data/
+*.db
+*.log
+
+# Configuration files with secrets
+config.local.yml
+config.local.yaml
+config.local.json
+*.secret
+*.key
+*.pem
+*.crt
+
+# Debug and profiling
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+trace.out
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Docker volumes
+.docker-data/
+
+# Test artifacts
+test/data/
+test/tmp/
+
+# Benchmark artifacts
+test/benchmark/results/
+test/benchmark/profiles/*.prof
+
+# Generated code
+*.pb.go
+*_generated.go
+vendor/
+
+# Code coverage
+coverage/
+*.coverprofile
+
+# Compiled test binaries
+*.test
+
+# CI/CD artifacts
+.artifacts/
+
+# Raft specific
+raftwal/
+snapshots/
+
+# PebbleDB specific
+*.sst
+*.log
+MANIFEST-*
+CURRENT
+LOCK
+
+# Shared object binaries
+*.so.*
+.tmp/
+
+# Staged local dependencies for Docker builds
+.deps/

@@ -1,0 +1,939 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package grpc
+
+import (
+	"context"
+	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
+	iam "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+)
+
+// handleCreateUser handles CreateUser requests.
+func (h *iamHandler) handleCreateUser(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleCreateUser", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	email, _ := getString(requestData, "email")
+	username, _ := getString(requestData, "username")
+	displayName, _ := getString(requestData, "display_name")
+	roles, _ := getStringSlice(requestData, "roles")
+	groups, _ := getStringSlice(requestData, "groups")
+	metadata, _ := getStringMap(requestData, "metadata")
+
+	pbReq := &iampb.CreateUserRequest{
+		TenantId:   tenantID,
+		Email:      email,
+		Name:       displayName,
+		Roles:      roles,
+		Groups:     groups,
+		Attributes: metadata,
+	}
+
+	// Use username as name if display name not provided.
+	if pbReq.Name == "" {
+		pbReq.Name = username
+	}
+
+	resp, err := client.CreateUser(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleCreateUser")
+	}
+
+	return convertProtoUserToSDK(resp), nil
+}
+
+// handleGetUser handles GetUser requests.
+func (h *iamHandler) handleGetUser(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleGetUser", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	userID, _ := getString(reqMap, "user_id")
+
+	pbReq := &iampb.GetUserRequest{
+		TenantId: tenantID,
+		UserId:   userID,
+	}
+
+	resp, err := client.GetUser(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleGetUser")
+	}
+
+	return convertProtoUserToSDK(resp), nil
+}
+
+// handleUpdateUser handles UpdateUser requests.
+func (h *iamHandler) handleUpdateUser(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleUpdateUser", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	userID, _ := getString(reqMap, "user_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	email, _ := getString(requestData, "email")
+	displayName, _ := getString(requestData, "display_name")
+	roles, _ := getStringSlice(requestData, "roles")
+	groups, _ := getStringSlice(requestData, "groups")
+	metadata, _ := getStringMap(requestData, "metadata")
+
+	pbReq := &iampb.UpdateUserRequest{
+		TenantId:   tenantID,
+		UserId:     userID,
+		Email:      email,
+		Name:       displayName,
+		Roles:      roles,
+		Groups:     groups,
+		Attributes: metadata,
+	}
+
+	resp, err := client.UpdateUser(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleUpdateUser")
+	}
+
+	return convertProtoUserToSDK(resp), nil
+}
+
+// handleDeleteUser handles DeleteUser requests.
+func (h *iamHandler) handleDeleteUser(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleDeleteUser", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	userID, _ := getString(reqMap, "user_id")
+
+	pbReq := &iampb.DeleteUserRequest{
+		TenantId: tenantID,
+		UserId:   userID,
+	}
+
+	_, err := client.DeleteUser(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleDeleteUser")
+	}
+
+	// Return nil to indicate success.
+	return nil, nil
+}
+
+// handleListUsers handles ListUsers requests.
+func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleListUsers", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	pageSize, _ := getInt(requestData, "page_size")
+	roleID, _ := getString(requestData, "role_id")
+	groupID, _ := getString(requestData, "group_id")
+
+	pbReq := &iampb.ListUsersRequest{
+		TenantId: tenantID,
+		Limit:    int32(pageSize),
+		Role:     roleID,
+		Group:    groupID,
+	}
+
+	resp, err := client.ListUsers(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleListUsers")
+	}
+
+	users := make([]iam.User, 0, len(resp.Users))
+	for _, u := range resp.Users {
+		if converted := convertProtoUserToSDK(u); converted != nil {
+			users = append(users, *converted)
+		}
+	}
+
+	return &iam.ListUsersResponse{
+		Users: users,
+		Pagination: iam.PaginationInfo{
+			TotalCount: int(resp.Total),
+		},
+	}, nil
+}
+
+// handleAssignRole handles AssignRole requests.
+func (h *iamHandler) handleAssignRole(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleAssignRole", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	userID, _ := getString(reqMap, "user_id")
+	roleID, _ := getString(reqMap, "role_id")
+
+	pbReq := &iampb.AssignRoleRequest{
+		TenantId: tenantID,
+		UserId:   userID,
+		Role:     roleID,
+	}
+
+	_, err := client.AssignRole(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleAssignRole")
+	}
+
+	return nil, nil
+}
+
+// handleRevokeRole handles RevokeRole requests.
+func (h *iamHandler) handleRevokeRole(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleRevokeRole", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	userID, _ := getString(reqMap, "user_id")
+	roleID, _ := getString(reqMap, "role_id")
+
+	pbReq := &iampb.RevokeRoleRequest{
+		TenantId: tenantID,
+		UserId:   userID,
+		Role:     roleID,
+	}
+
+	_, err := client.RevokeRole(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleRevokeRole")
+	}
+
+	return nil, nil
+}
+
+// handleAddUserToGroup handles AddUserToGroup requests.
+func (h *iamHandler) handleAddUserToGroup(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleAddUserToGroup", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	userID, _ := getString(reqMap, "user_id")
+	groupID, _ := getString(reqMap, "group_id")
+
+	pbReq := &iampb.AddUserToGroupRequest{
+		TenantId: tenantID,
+		UserId:   userID,
+		GroupId:  groupID,
+	}
+
+	_, err := client.AddUserToGroup(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleAddUserToGroup")
+	}
+
+	return nil, nil
+}
+
+// handleRemoveUserFromGroup handles RemoveUserFromGroup requests.
+func (h *iamHandler) handleRemoveUserFromGroup(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleRemoveUserFromGroup", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	userID, _ := getString(reqMap, "user_id")
+	groupID, _ := getString(reqMap, "group_id")
+
+	pbReq := &iampb.RemoveUserFromGroupRequest{
+		TenantId: tenantID,
+		UserId:   userID,
+		GroupId:  groupID,
+	}
+
+	_, err := client.RemoveUserFromGroup(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleRemoveUserFromGroup")
+	}
+
+	return nil, nil
+}
+
+// handleCreateTenant handles CreateTenant requests.
+func (h *iamHandler) handleCreateTenant(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleCreateTenant", "invalid request type")
+	}
+
+	id, _ := getString(reqMap, "id")
+	name, _ := getString(reqMap, "name")
+	settings, _ := getStringMap(reqMap, "settings")
+
+	pbReq := &iampb.CreateTenantRequest{
+		Id:   id,
+		Name: name,
+	}
+
+	if len(settings) > 0 {
+		pbReq.Settings = &iampb.TenantSettings{
+			NamedNetworks: settings,
+		}
+	}
+
+	resp, err := client.CreateTenant(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleCreateTenant")
+	}
+
+	return convertProtoTenantToSDK(resp), nil
+}
+
+// handleGetTenant handles GetTenant requests.
+func (h *iamHandler) handleGetTenant(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleGetTenant", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+
+	pbReq := &iampb.GetTenantRequest{
+		Id: tenantID,
+	}
+
+	resp, err := client.GetTenant(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleGetTenant")
+	}
+
+	return convertProtoTenantToSDK(resp), nil
+}
+
+// handleUpdateTenant handles UpdateTenant requests.
+func (h *iamHandler) handleUpdateTenant(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleUpdateTenant", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	name, _ := getString(requestData, "display_name")
+	settings, _ := getStringMap(requestData, "settings")
+
+	pbReq := &iampb.UpdateTenantRequest{
+		Id:   tenantID,
+		Name: name,
+	}
+
+	if len(settings) > 0 {
+		pbReq.Settings = &iampb.TenantSettings{
+			NamedNetworks: settings,
+		}
+	}
+
+	resp, err := client.UpdateTenant(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleUpdateTenant")
+	}
+
+	return convertProtoTenantToSDK(resp), nil
+}
+
+// handleDeleteTenant handles DeleteTenant requests.
+func (h *iamHandler) handleDeleteTenant(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleDeleteTenant", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+
+	pbReq := &iampb.DeleteTenantRequest{
+		Id: tenantID,
+	}
+
+	_, err := client.DeleteTenant(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleDeleteTenant")
+	}
+
+	return nil, nil
+}
+
+// handleListTenants handles ListTenants requests.
+func (h *iamHandler) handleListTenants(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleListTenants", "invalid request type")
+	}
+
+	pageSize, _ := getInt(reqMap, "page_size")
+
+	pbReq := &iampb.ListTenantsRequest{
+		Limit: int32(pageSize),
+	}
+
+	resp, err := client.ListTenants(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleListTenants")
+	}
+
+	tenants := make([]iam.Tenant, 0, len(resp.Tenants))
+	for _, t := range resp.Tenants {
+		if converted := convertProtoTenantToSDK(t); converted != nil {
+			tenants = append(tenants, *converted)
+		}
+	}
+
+	return &iam.ListTenantsResponse{
+		Tenants: tenants,
+		Pagination: iam.PaginationInfo{
+			TotalCount: int(resp.Total),
+		},
+	}, nil
+}
+
+// handleCreateGroup handles CreateGroup requests.
+func (h *iamHandler) handleCreateGroup(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleCreateGroup", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	id, _ := getString(requestData, "id")
+	name, _ := getString(requestData, "name")
+	displayName, _ := getString(requestData, "display_name")
+	description, _ := getString(requestData, "description")
+
+	// Use display_name as the name if name isn't provided.
+	groupName := name
+	if groupName == "" {
+		groupName = displayName
+	}
+
+	pbReq := &iampb.CreateGroupRequest{
+		TenantId:    tenantID,
+		Id:          id,
+		Name:        groupName,
+		Description: description,
+	}
+
+	resp, err := client.CreateGroup(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleCreateGroup")
+	}
+
+	return convertProtoGroupToSDK(resp), nil
+}
+
+// handleGetGroup handles GetGroup requests.
+func (h *iamHandler) handleGetGroup(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleGetGroup", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	groupID, _ := getString(reqMap, "group_id")
+
+	pbReq := &iampb.GetGroupRequest{
+		TenantId: tenantID,
+		GroupId:  groupID,
+	}
+
+	resp, err := client.GetGroup(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleGetGroup")
+	}
+
+	return convertProtoGroupToSDK(resp), nil
+}
+
+// handleUpdateGroup handles UpdateGroup requests.
+func (h *iamHandler) handleUpdateGroup(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleUpdateGroup", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	groupID, _ := getString(reqMap, "group_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	displayName, _ := getString(requestData, "display_name")
+	if displayName == "" {
+		displayName, _ = getString(requestData, "name")
+	}
+	description, _ := getString(requestData, "description")
+
+	// If name is still empty, fetch the current group to preserve the existing name.
+	if displayName == "" {
+		existing, fetchErr := client.GetGroup(ctx, &iampb.GetGroupRequest{
+			TenantId: tenantID,
+			GroupId:  groupID,
+		})
+		if fetchErr == nil && existing != nil {
+			displayName = existing.Name
+		}
+	}
+
+	pbReq := &iampb.UpdateGroupRequest{
+		TenantId:    tenantID,
+		GroupId:     groupID,
+		Name:        displayName,
+		Description: description,
+	}
+
+	resp, err := client.UpdateGroup(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleUpdateGroup")
+	}
+
+	return convertProtoGroupToSDK(resp), nil
+}
+
+// handleDeleteGroup handles DeleteGroup requests.
+func (h *iamHandler) handleDeleteGroup(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleDeleteGroup", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	groupID, _ := getString(reqMap, "group_id")
+
+	pbReq := &iampb.DeleteGroupRequest{
+		TenantId: tenantID,
+		GroupId:  groupID,
+	}
+
+	_, err := client.DeleteGroup(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleDeleteGroup")
+	}
+
+	return nil, nil
+}
+
+// handleListGroups handles ListGroups requests.
+func (h *iamHandler) handleListGroups(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleListGroups", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	pageSize, _ := getInt(requestData, "page_size")
+
+	pbReq := &iampb.ListGroupsRequest{
+		TenantId: tenantID,
+		Limit:    int32(pageSize),
+	}
+
+	resp, err := client.ListGroups(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleListGroups")
+	}
+
+	groups := make([]iam.Group, 0, len(resp.Groups))
+	for _, g := range resp.Groups {
+		if converted := convertProtoGroupToSDK(g); converted != nil {
+			groups = append(groups, *converted)
+		}
+	}
+
+	return &iam.ListGroupsResponse{
+		Groups: groups,
+		Pagination: iam.PaginationInfo{
+			TotalCount: int(resp.Total),
+		},
+	}, nil
+}
+
+// handleAddGroupMember handles AddMember requests for groups.
+func (h *iamHandler) handleAddGroupMember(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleAddGroupMember", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	groupID, _ := getString(reqMap, "group_id")
+	userID, _ := getString(reqMap, "user_id")
+
+	pbReq := &iampb.AddUserToGroupRequest{
+		TenantId: tenantID,
+		GroupId:  groupID,
+		UserId:   userID,
+	}
+
+	_, err := client.AddUserToGroup(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleAddGroupMember")
+	}
+
+	return nil, nil
+}
+
+// handleRemoveGroupMember handles RemoveMember requests for groups.
+func (h *iamHandler) handleRemoveGroupMember(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleRemoveGroupMember", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	groupID, _ := getString(reqMap, "group_id")
+	userID, _ := getString(reqMap, "user_id")
+
+	pbReq := &iampb.RemoveUserFromGroupRequest{
+		TenantId: tenantID,
+		GroupId:  groupID,
+		UserId:   userID,
+	}
+
+	_, err := client.RemoveUserFromGroup(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleRemoveGroupMember")
+	}
+
+	return nil, nil
+}
+
+// handleListGroupMembers handles ListMembers requests for groups.
+func (h *iamHandler) handleListGroupMembers(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleListGroupMembers", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	groupID, _ := getString(reqMap, "group_id")
+
+	pbReq := &iampb.GetGroupRequest{
+		TenantId: tenantID,
+		GroupId:  groupID,
+	}
+
+	resp, err := client.GetGroup(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleListGroupMembers")
+	}
+
+	members := make([]iam.GroupMember, 0, len(resp.Members))
+	for _, memberID := range resp.Members {
+		members = append(members, iam.GroupMember{
+			UserID: memberID,
+		})
+	}
+
+	return &iam.ListMembersResponse{
+		Members: members,
+		Pagination: iam.PaginationInfo{
+			TotalCount: len(members),
+		},
+	}, nil
+}
+
+// handleCreateRole handles CreateRole requests.
+func (h *iamHandler) handleCreateRole(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleCreateRole", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	id, _ := getString(requestData, "id")
+	name, _ := getString(requestData, "name")
+	description, _ := getString(requestData, "description")
+	permissions, _ := getStringSlice(requestData, "permissions")
+
+	pbReq := &iampb.CreateRoleRequest{
+		TenantId:    tenantID,
+		Id:          id,
+		Name:        name,
+		Description: description,
+		Permissions: permissions,
+	}
+
+	resp, err := client.CreateRole(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleCreateRole")
+	}
+
+	return convertProtoRoleToSDK(resp), nil
+}
+
+// handleGetRole handles GetRole requests.
+func (h *iamHandler) handleGetRole(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleGetRole", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	roleID, _ := getString(reqMap, "role_id")
+
+	pbReq := &iampb.GetRoleRequest{
+		TenantId: tenantID,
+		RoleId:   roleID,
+	}
+
+	resp, err := client.GetRole(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleGetRole")
+	}
+
+	return convertProtoRoleToSDK(resp), nil
+}
+
+// handleUpdateRole handles UpdateRole requests.
+func (h *iamHandler) handleUpdateRole(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleUpdateRole", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	roleID, _ := getString(reqMap, "role_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	name, _ := getString(requestData, "name")
+	if name == "" {
+		name, _ = getString(requestData, "display_name")
+	}
+	description, _ := getString(requestData, "description")
+	permissions, _ := getStringSlice(requestData, "permissions")
+
+	pbReq := &iampb.UpdateRoleRequest{
+		TenantId:    tenantID,
+		RoleId:      roleID,
+		Name:        name,
+		Description: description,
+		Permissions: permissions,
+	}
+
+	resp, err := client.UpdateRole(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleUpdateRole")
+	}
+
+	return convertProtoRoleToSDK(resp), nil
+}
+
+// handleDeleteRole handles DeleteRole requests.
+func (h *iamHandler) handleDeleteRole(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleDeleteRole", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	roleID, _ := getString(reqMap, "role_id")
+
+	pbReq := &iampb.DeleteRoleRequest{
+		TenantId: tenantID,
+		RoleId:   roleID,
+	}
+
+	_, err := client.DeleteRole(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleDeleteRole")
+	}
+
+	return nil, nil
+}
+
+// handleListRoles handles ListRoles requests.
+func (h *iamHandler) handleListRoles(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleListRoles", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	requestData, _ := getMap(reqMap, "request")
+
+	pageSize, _ := getInt(requestData, "page_size")
+
+	pbReq := &iampb.ListRolesRequest{
+		TenantId: tenantID,
+		Limit:    int32(pageSize),
+	}
+
+	resp, err := client.ListRoles(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleListRoles")
+	}
+
+	roles := make([]iam.Role, 0, len(resp.Roles))
+	for _, r := range resp.Roles {
+		if converted := convertProtoRoleToSDK(r); converted != nil {
+			roles = append(roles, *converted)
+		}
+	}
+
+	return &iam.ListRolesResponse{
+		Roles: roles,
+		Pagination: iam.PaginationInfo{
+			TotalCount: int(resp.Total),
+		},
+	}, nil
+}
+
+// Conversion helpers.
+
+// convertProtoUserToSDK converts a protobuf User to SDK User.
+func convertProtoUserToSDK(u *iampb.User) *iam.User {
+	if u == nil {
+		return nil
+	}
+
+	resp := &iam.User{
+		ID:          u.Id,
+		TenantID:    u.TenantId,
+		Email:       u.Email,
+		Username:    u.Name,
+		DisplayName: u.Name,
+		MFAEnabled:  u.MfaVerified,
+		Roles:       u.Roles,
+		Groups:      u.Groups,
+	}
+
+	if len(u.Attributes) > 0 {
+		resp.Metadata = u.Attributes
+	}
+
+	if u.CreatedAt != nil {
+		resp.CreatedAt = u.CreatedAt.AsTime()
+	}
+	if u.UpdatedAt != nil {
+		resp.UpdatedAt = u.UpdatedAt.AsTime()
+	}
+	if u.LastAuth != nil {
+		t := u.LastAuth.AsTime()
+		resp.LastLoginAt = &t
+	}
+
+	return resp
+}
+
+// convertProtoTenantToSDK converts a protobuf Tenant to SDK Tenant.
+func convertProtoTenantToSDK(t *iampb.Tenant) *iam.Tenant {
+	if t == nil {
+		return nil
+	}
+
+	resp := &iam.Tenant{
+		ID:          t.Id,
+		Name:        t.Name,
+		DisplayName: t.Name,
+	}
+
+	if t.Settings != nil && len(t.Settings.NamedNetworks) > 0 {
+		resp.Settings = t.Settings.NamedNetworks
+	}
+
+	if t.CreatedAt != nil {
+		resp.CreatedAt = t.CreatedAt.AsTime()
+	}
+	if t.UpdatedAt != nil {
+		resp.UpdatedAt = t.UpdatedAt.AsTime()
+	}
+
+	return resp
+}
+
+// convertProtoGroupToSDK converts a protobuf Group to SDK Group.
+func convertProtoGroupToSDK(g *iampb.Group) *iam.Group {
+	if g == nil {
+		return nil
+	}
+
+	resp := &iam.Group{
+		ID:          g.Id,
+		TenantID:    g.TenantId,
+		Name:        g.Name,
+		DisplayName: g.Name,
+		Description: g.Description,
+		MemberCount: len(g.Members),
+	}
+
+	if g.CreatedAt != nil {
+		resp.CreatedAt = g.CreatedAt.AsTime()
+	}
+	if g.UpdatedAt != nil {
+		resp.UpdatedAt = g.UpdatedAt.AsTime()
+	}
+
+	return resp
+}
+
+// convertProtoRoleToSDK converts a protobuf Role to SDK Role.
+func convertProtoRoleToSDK(r *iampb.Role) *iam.Role {
+	if r == nil {
+		return nil
+	}
+
+	resp := &iam.Role{
+		ID:          r.Id,
+		TenantID:    r.TenantId,
+		Name:        r.Name,
+		Description: r.Description,
+		Permissions: r.Permissions,
+	}
+
+	if r.CreatedAt != nil {
+		resp.CreatedAt = r.CreatedAt.AsTime()
+	}
+	if r.UpdatedAt != nil {
+		resp.UpdatedAt = r.UpdatedAt.AsTime()
+	}
+
+	return resp
+}
+
+// protoTimestamp converts a time.Time to protobuf Timestamp.
+func protoTimestamp(t time.Time) *timestamppb.Timestamp {
+	if t.IsZero() {
+		return nil
+	}
+	return timestamppb.New(t)
+}

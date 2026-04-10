@@ -1,0 +1,84 @@
+// QuicBaaS Object Transfer Protocol Buffer Definitions
+// Peer-to-peer object data transfer for lazy snapshot recovery
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// ObjectTransferService enables peer-to-peer object data transfer.
+// Used by recovering nodes to fetch objects marked as pending after
+// metadata-only snapshot recovery.
+service ObjectTransferService {
+  // FetchObject retrieves object data from a peer's local object store.
+  rpc FetchObject(FetchObjectRequest) returns (FetchObjectResponse);
+
+  // StreamFetchObjects retrieves multiple objects in a single stream.
+  // More efficient for bulk recovery after snapshot restoration.
+  rpc StreamFetchObjects(StreamFetchObjectsRequest) returns (stream FetchObjectResponse);
+}
+
+// FetchObjectRequest requests object data from a peer.
+message FetchObjectRequest {
+  // shard_id identifies the Raft shard owning the object.
+  uint64 shard_id = 1;
+
+  // object_ref is the storage path/key in the peer's object store.
+  string object_ref = 2;
+
+  // checksum is the expected SHA-256 for verification.
+  // If provided, the peer will verify before sending.
+  bytes checksum = 3;
+
+  // request_id for tracing and deduplication.
+  string request_id = 4;
+}
+
+// FetchObjectResponse returns object data from a peer.
+message FetchObjectResponse {
+  // object_ref echoes back the requested reference.
+  string object_ref = 1;
+
+  // data contains the object bytes.
+  bytes data = 2;
+
+  // checksum is the computed SHA-256 of data.
+  bytes checksum = 3;
+
+  // size is the uncompressed size in bytes.
+  int64 size = 4;
+
+  // compressed indicates if data is compressed.
+  bool compressed = 5;
+
+  // compression_algo if compressed (e.g., "lz4", "zstd").
+  string compression_algo = 6;
+
+  // found indicates if the object exists.
+  bool found = 7;
+
+  // error_message if not found or other error.
+  string error_message = 8;
+}
+
+// StreamFetchObjectsRequest requests multiple objects in one stream.
+message StreamFetchObjectsRequest {
+  // shard_id identifies the Raft shard.
+  uint64 shard_id = 1;
+
+  // items lists the objects to fetch.
+  repeated ObjectFetchItem items = 2;
+}
+
+// ObjectFetchItem identifies a single object to fetch.
+message ObjectFetchItem {
+  // object_ref is the storage path/key.
+  string object_ref = 1;
+
+  // checksum is the expected SHA-256 for verification.
+  bytes checksum = 2;
+}

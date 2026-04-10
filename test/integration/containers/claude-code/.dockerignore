@@ -1,0 +1,3 @@
+# Exclude everything not needed for the Claude Code agent image build
+*
+!entrypoint.sh

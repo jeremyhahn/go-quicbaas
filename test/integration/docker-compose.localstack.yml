@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # LocalStack - AWS services emulator (KMS, S3, etc.)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: quicbaas-localstack
+    ports:
+      - "4566:4566"            # LocalStack gateway
+      - "4510-4559:4510-4559"  # External services port range
+    environment:
+      - SERVICES=kms,s3        # Only enable services we need
+      - DEBUG=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - quicbaas-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Fake GCS Server - Google Cloud Storage emulator
+  fake-gcs-server:
+    image: fsouza/fake-gcs-server:latest
+    container_name: quicbaas-fake-gcs
+    ports:
+      - "4443:4443"
+    command: ["-scheme", "http", "-port", "4443", "-external-url", "http://localhost:4443"]
+    networks:
+      - quicbaas-test
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4443/storage/v1/b"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Azurite - Azure Storage emulator (Blob, Queue, Table)
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: quicbaas-azurite
+    ports:
+      - "10000:10000"  # Blob service
+      - "10001:10001"  # Queue service
+      - "10002:10002"  # Table service
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --loose"
+    networks:
+      - quicbaas-test
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "10000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # SoftHSM - PKCS#11 HSM emulator
+  softhsm:
+    build:
+      context: ../..
+      dockerfile: test/integration/docker/softhsm/Dockerfile
+    container_name: quicbaas-softhsm
+    volumes:
+      - softhsm-tokens:/var/lib/softhsm/tokens
+    networks:
+      - quicbaas-test
+    command: ["tail", "-f", "/dev/null"]  # Keep container running
+
+networks:
+  quicbaas-test:
+    name: quicbaas-test
+    driver: bridge
+
+volumes:
+  softhsm-tokens:

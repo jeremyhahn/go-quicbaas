@@ -1,0 +1,2002 @@
+// QuicBaaS Vector Database Protocol Buffer Definitions
+// High-performance distributed vector database with k-NN search and Raft consensus
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.vector.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+
+// ========================================
+// Vector Database Service
+// ========================================
+
+// VectorDB provides high-performance vector storage, search, and management.
+// Designed for machine learning embeddings, semantic search, and recommendation systems.
+service VectorDB {
+  // CRUD Operations
+
+  // UpsertVector creates or updates a single vector with metadata.
+  // Returns an error if the operation fails or if namespace doesn't exist.
+  rpc UpsertVector(UpsertVectorRequest) returns (UpsertVectorResponse);
+
+  // BatchUpsertVectors creates or updates multiple vectors atomically.
+  // Either all operations succeed or all fail. Ideal for bulk embedding ingestion.
+  rpc BatchUpsertVectors(BatchUpsertVectorsRequest) returns (stream BatchUpsertVectorsResponse);
+
+  // GetVector retrieves a vector by ID with optional metadata.
+  // Returns NotFound error if the vector doesn't exist.
+  rpc GetVector(GetVectorRequest) returns (GetVectorResponse);
+
+  // UpdateMetadata updates only the metadata for a vector without re-upserting the entire vector.
+  // This is more efficient than fetching, modifying, and re-upserting the full vector.
+  rpc UpdateMetadata(UpdateMetadataRequest) returns (UpdateMetadataResponse);
+
+  // DeleteVector removes a vector by ID.
+  // Returns success even if the vector doesn't exist (idempotent).
+  rpc DeleteVector(DeleteVectorRequest) returns (DeleteVectorResponse);
+
+  // BatchDeleteVectors removes multiple vectors atomically.
+  rpc BatchDeleteVectors(BatchDeleteVectorsRequest) returns (BatchDeleteVectorsResponse);
+
+  // Search Operations
+
+  // SearchSimilar performs k-NN similarity search to find the nearest neighbors.
+  // Supports multiple distance metrics and metadata filtering.
+  // Returns results via streaming for large result sets.
+  rpc SearchSimilar(SearchSimilarRequest) returns (stream SearchSimilarResponse);
+
+  // SearchByID performs k-NN search using an existing vector as the query.
+  // Convenient for "find similar items" without re-sending the embedding.
+  rpc SearchByID(SearchByIDRequest) returns (stream SearchByIDResponse);
+
+  // HybridSearch combines similarity search with metadata filtering.
+  // First performs k-NN search, then filters results by metadata.
+  // Optionally applies reranking for improved relevance.
+  rpc HybridSearch(HybridSearchRequest) returns (stream HybridSearchResponse);
+
+  // SearchByMetadata searches for vectors based solely on metadata filters.
+  // Useful for finding vectors by attributes without providing a query vector.
+  rpc SearchByMetadata(SearchByMetadataRequest) returns (stream SearchByMetadataResponse);
+
+  // List Operations
+
+  // ListVectors returns all vectors in a namespace with pagination support.
+  // Uses server-side streaming for efficient memory usage with large datasets.
+  rpc ListVectors(ListVectorsRequest) returns (stream ListVectorsResponse);
+
+  // ListNamespaces returns all available namespaces.
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+
+  // Namespace Management
+
+  // CreateNamespace creates a new vector namespace with specified configuration.
+  // Namespaces isolate vectors and enable per-namespace indexing strategies.
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+
+  // UpdateNamespace modifies namespace configuration (e.g., index parameters).
+  rpc UpdateNamespace(UpdateNamespaceRequest) returns (UpdateNamespaceResponse);
+
+  // DeleteNamespace removes a namespace and all its vectors.
+  // WARNING: This is a destructive operation that cannot be undone.
+  rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse);
+
+  // GetNamespaceInfo retrieves namespace configuration and statistics.
+  rpc GetNamespaceInfo(GetNamespaceInfoRequest) returns (GetNamespaceInfoResponse);
+
+  // Statistics and Health
+
+  // GetVectorStats returns statistics for a namespace or the entire database.
+  rpc GetVectorStats(GetVectorStatsRequest) returns (GetVectorStatsResponse);
+
+  // Health returns the health status of the vector database.
+  rpc Health(VectorHealthRequest) returns (VectorHealthResponse);
+
+  // Index Operations
+
+  // RebuildIndex rebuilds the vector index for a namespace.
+  // Useful after bulk imports or to optimize search performance.
+  rpc RebuildIndex(RebuildIndexRequest) returns (RebuildIndexResponse);
+
+  // GetIndexProgress returns the progress of an ongoing index rebuild.
+  rpc GetIndexProgress(GetIndexProgressRequest) returns (GetIndexProgressResponse);
+}
+
+// ========================================
+// Vector Admin Service
+// ========================================
+
+// VectorAdmin provides administrative operations for monitoring and management.
+// Typically requires elevated privileges and should be accessed via secure channels.
+service VectorAdmin {
+  // GetClusterStats returns cluster-wide vector database statistics.
+  rpc GetClusterStats(GetClusterStatsRequest) returns (GetClusterStatsResponse);
+
+  // CompactNamespace performs compaction on a namespace to reclaim disk space.
+  rpc CompactNamespace(CompactNamespaceRequest) returns (CompactNamespaceResponse);
+
+  // GetCompactionProgress returns the progress of an ongoing compaction.
+  rpc GetCompactionProgress(GetCompactionProgressRequest) returns (GetCompactionProgressResponse);
+
+  // ExportVectors exports vectors from a namespace for backup or migration.
+  rpc ExportVectors(ExportVectorsRequest) returns (stream ExportVectorsResponse);
+
+  // ImportVectors imports vectors into a namespace from a backup or migration.
+  rpc ImportVectors(stream ImportVectorsRequest) returns (ImportVectorsResponse);
+
+  // Scalar Index Management
+
+  // CreateScalarIndex creates a scalar field index for metadata filtering acceleration.
+  rpc CreateScalarIndex(CreateScalarIndexRequest) returns (CreateScalarIndexResponse);
+
+  // DropScalarIndex removes a scalar field index.
+  rpc DropScalarIndex(DropScalarIndexRequest) returns (DropScalarIndexResponse);
+
+  // ListScalarIndexes returns all scalar field indexes for a namespace.
+  rpc ListScalarIndexes(ListScalarIndexesRequest) returns (ListScalarIndexesResponse);
+}
+
+// ========================================
+// Enums
+// ========================================
+
+// VectorConsistencyLevel defines the read/write consistency guarantees for vector operations.
+// Uses vector-specific consistency levels optimized for k-NN search workloads.
+enum VectorConsistencyLevel {
+  // UNSPECIFIED defaults to QUORUM for balanced consistency and performance.
+  VECTOR_CONSISTENCY_LEVEL_UNSPECIFIED = 0;
+
+  // ALL requires all replicas to acknowledge (highest consistency, highest latency).
+  // Use for: Critical vectors where stale reads are unacceptable.
+  VECTOR_CONSISTENCY_LEVEL_ALL = 1;
+
+  // QUORUM requires majority of replicas to acknowledge (recommended default).
+  // Balances consistency with performance (typical latency: 5-15ms).
+  VECTOR_CONSISTENCY_LEVEL_QUORUM = 2;
+
+  // ONE requires only one replica to acknowledge (fastest, eventual consistency).
+  // Use for: High-throughput ingestion where immediate consistency isn't critical.
+  VECTOR_CONSISTENCY_LEVEL_ONE = 3;
+
+  reserved 4 to 10; // Reserved for future consistency levels
+}
+
+// DistanceMetric defines the similarity/distance calculation method.
+enum DistanceMetric {
+  DISTANCE_METRIC_UNSPECIFIED = 0;
+
+  // L2 (Euclidean) distance: sqrt(sum((a[i] - b[i])^2))
+  // Best for: General-purpose embeddings, computer vision.
+  // Range: [0, ∞), where 0 = identical vectors.
+  DISTANCE_METRIC_L2 = 1;
+
+  // COSINE similarity: 1 - (dot(a, b) / (norm(a) * norm(b)))
+  // Best for: Text embeddings (BERT, GPT), document similarity.
+  // Range: [0, 2], where 0 = identical direction, 2 = opposite direction.
+  DISTANCE_METRIC_COSINE = 2;
+
+  // DOT_PRODUCT (inner product): dot(a, b)
+  // Best for: Pre-normalized embeddings, recommendation systems.
+  // Range: (-∞, ∞), higher = more similar (for normalized vectors: [-1, 1]).
+  DISTANCE_METRIC_DOT_PRODUCT = 3;
+
+  // MANHATTAN (L1) distance: sum(|a[i] - b[i]|)
+  // Best for: High-dimensional sparse vectors.
+  // Range: [0, ∞), where 0 = identical vectors.
+  DISTANCE_METRIC_MANHATTAN = 4;
+
+  reserved 5 to 15; // Reserved for future metrics (Hamming, Jaccard, etc.)
+}
+
+// VectorPrecision defines the floating-point precision for vector storage.
+enum VectorPrecision {
+  VECTOR_PRECISION_UNSPECIFIED = 0;
+
+  // FLOAT32 uses 32-bit IEEE 754 floating point (default).
+  // Storage: 4 bytes per dimension. Precision: ~7 decimal digits.
+  // Use for: Most applications requiring high precision.
+  VECTOR_PRECISION_FLOAT32 = 1;
+
+  // FLOAT16 uses 16-bit IEEE 754 half precision.
+  // Storage: 2 bytes per dimension (50% space savings). Precision: ~3 decimal digits.
+  // Use for: Large-scale systems where precision can be traded for storage/performance.
+  // WARNING: May reduce search accuracy for some embedding types.
+  VECTOR_PRECISION_FLOAT16 = 2;
+
+  // BFLOAT16 uses 16-bit brain floating point (Google's format).
+  // Storage: 2 bytes per dimension. Range same as FLOAT32, but less precision.
+  // Use for: ML embeddings trained with bfloat16 (TPUs, modern GPUs).
+  VECTOR_PRECISION_BFLOAT16 = 3;
+
+  // INT8 uses 8-bit scalar quantization (SQ8).
+  // Storage: 1 byte per dimension (4x compression). Calibration required.
+  // Use for: Large-scale systems where 4x memory reduction is needed.
+  VECTOR_PRECISION_INT8 = 4;
+
+  // PQ uses Product Quantization codes.
+  // Storage: M bytes per vector (M = number of sub-quantizers).
+  // Use for: Very large datasets requiring extreme compression.
+  VECTOR_PRECISION_PQ = 5;
+
+  reserved 6 to 10; // Reserved for future quantization types
+}
+
+// IndexType defines the vector indexing algorithm.
+enum IndexType {
+  INDEX_TYPE_UNSPECIFIED = 0;
+
+  // FLAT performs exact brute-force search (no index).
+  // Best for: Small datasets (<10K vectors), perfect accuracy required.
+  // Search complexity: O(n * d) where n = vectors, d = dimensions.
+  INDEX_TYPE_FLAT = 1;
+
+  // HNSW (Hierarchical Navigable Small World) graph-based index.
+  // Best for: General-purpose, balanced accuracy/performance (10K-10M vectors).
+  // Search complexity: O(log n * d). Build complexity: O(n * log n * d).
+  INDEX_TYPE_HNSW = 2;
+
+  // IVF (Inverted File) with flat quantization.
+  // Best for: Large datasets (1M+ vectors) with GPU acceleration.
+  // Search complexity: O(k * d) where k = probe clusters.
+  INDEX_TYPE_IVF_FLAT = 3;
+
+  // IVF with Product Quantization (compressed vectors).
+  // Best for: Very large datasets (10M+ vectors) with memory constraints.
+  // Storage: ~32x compression. Search complexity: O(k * d/m) where m = subquantizers.
+  INDEX_TYPE_IVF_PQ = 4;
+
+  // GPU CAGRA (CUDA Approximate Graph-based Nearest Neighbor) index.
+  // Best for: High-throughput GPU-accelerated approximate search (1M+ vectors).
+  // Requires: NVIDIA GPU with cuVS library.
+  INDEX_TYPE_GPU_CAGRA = 5;
+
+  // GPU IVF-Flat index.
+  // Best for: Large datasets with GPU-accelerated inverted file search.
+  // Requires: NVIDIA GPU with cuVS library.
+  INDEX_TYPE_GPU_IVF_FLAT = 6;
+
+  // GPU IVF-PQ (Product Quantization) index.
+  // Best for: Very large datasets with GPU acceleration and compressed storage.
+  // Requires: NVIDIA GPU with cuVS library.
+  INDEX_TYPE_GPU_IVF_PQ = 7;
+
+  // GPU brute-force exact search index.
+  // Best for: Small-medium datasets requiring exact results with GPU acceleration.
+  // Requires: NVIDIA GPU with cuVS library.
+  INDEX_TYPE_GPU_BRUTE_FORCE = 8;
+
+  reserved 9 to 20; // Reserved for future indexes (Annoy, ScaNN, DiskANN)
+}
+
+// ScalarIndexType defines the scalar field indexing algorithm.
+// Scalar indexes accelerate metadata filtering during vector search.
+enum ScalarIndexType {
+  SCALAR_INDEX_TYPE_UNSPECIFIED = 0;
+
+  // BITMAP uses roaring bitmaps for low-cardinality fields (booleans, enums).
+  // Best for: Fields with <= 100 unique values.
+  SCALAR_INDEX_TYPE_BITMAP = 1;
+
+  // INVERTED uses hash-based inverted posting lists.
+  // Best for: High-cardinality string fields (e.g., email, UUID).
+  SCALAR_INDEX_TYPE_INVERTED = 2;
+
+  // SORTED uses B-tree index for range queries.
+  // Best for: Numeric fields requiring range scans.
+  SCALAR_INDEX_TYPE_SORTED = 3;
+
+  // AUTO automatically selects the optimal index type based on field statistics.
+  SCALAR_INDEX_TYPE_AUTO = 4;
+
+  reserved 5 to 15;
+}
+
+// VectorStatus represents the state of a vector entity.
+enum VectorStatus {
+  VECTOR_STATUS_UNSPECIFIED = 0;
+  VECTOR_STATUS_ACTIVE = 1;      // Vector is active and searchable
+  VECTOR_STATUS_PENDING = 2;     // Vector is being indexed
+  VECTOR_STATUS_DELETED = 3;     // Vector is marked for deletion
+  VECTOR_STATUS_CORRUPTED = 4;   // Vector failed validation checks
+
+  reserved 5 to 10;
+}
+
+// VectorHealthStatus represents the health state of the vector database.
+enum VectorHealthStatus {
+  VECTOR_HEALTH_STATUS_UNSPECIFIED = 0;
+  VECTOR_HEALTH_STATUS_HEALTHY = 1;     // System is healthy and ready
+  VECTOR_HEALTH_STATUS_DEGRADED = 2;    // System is operational but experiencing issues
+  VECTOR_HEALTH_STATUS_UNHEALTHY = 3;   // System is not functional
+  VECTOR_HEALTH_STATUS_INDEXING = 4;    // System is rebuilding indexes
+  VECTOR_HEALTH_STATUS_UNKNOWN = 5;     // Health status cannot be determined
+
+  reserved 6 to 10;
+}
+
+// ========================================
+// Core Vector Messages
+// ========================================
+
+// VectorEntity represents a single vector with metadata.
+message VectorEntity {
+  // id uniquely identifies the vector (UUID, hash, or application-specific ID).
+  // REQUIRED for upsert. Must be unique within namespace.
+  // Validation: 1-256 characters, alphanumeric + '-' + '_'.
+  string id = 1;
+
+  // namespace isolates vectors for multi-tenancy or logical grouping.
+  // REQUIRED. Must be created via CreateNamespace before use.
+  // Validation: 1-64 characters, alphanumeric + '-' + '_'.
+  string namespace = 2;
+
+  // vector is the embedding/feature vector.
+  // REQUIRED. Length must match namespace's dimension configuration.
+  // Validation: All values must be finite (no NaN, Inf).
+  repeated float vector = 3;
+
+  // metadata contains application-specific key-value pairs for filtering.
+  // OPTIONAL. Maximum 64 keys, each key/value max 1KB.
+  // Use for: Document IDs, tags, categories, timestamps, etc.
+  map<string, string> metadata = 4;
+
+  // version is the entity version number for optimistic locking.
+  // READ-ONLY. Managed by the system.
+  uint64 version = 5;
+
+  // created_at is when the vector was first created.
+  // READ-ONLY. Managed by the system.
+  google.protobuf.Timestamp created_at = 6;
+
+  // updated_at is when the vector was last modified.
+  // READ-ONLY. Managed by the system.
+  google.protobuf.Timestamp updated_at = 7;
+
+  // status indicates the vector's current state.
+  // READ-ONLY. Managed by the system.
+  VectorStatus status = 8;
+
+  // shard_id identifies which shard contains this vector.
+  // READ-ONLY. Managed by the system based on namespace configuration.
+  uint64 shard_id = 9;
+
+  reserved 10 to 20; // Reserved for sparse vectors, multi-vector, etc.
+}
+
+// NamespaceConfig defines the configuration for a vector namespace.
+message NamespaceConfig {
+  // namespace is the unique namespace identifier.
+  // REQUIRED. Validation: 1-64 characters, alphanumeric + '-' + '_'.
+  string namespace = 1;
+
+  // dimensions is the vector dimensionality (must be consistent for all vectors).
+  // REQUIRED. Validation: 1 <= dimensions <= 4096.
+  // Common values: 384 (all-MiniLM), 768 (BERT), 1536 (OpenAI), 3072 (GPT-4).
+  int32 dimensions = 2;
+
+  // distance_metric defines the similarity calculation method.
+  // REQUIRED. Cannot be changed after namespace creation (requires rebuild).
+  DistanceMetric distance_metric = 3;
+
+  // precision defines the floating-point precision for storage.
+  // OPTIONAL. Defaults to FLOAT32. Lower precision reduces storage and memory.
+  VectorPrecision precision = 4;
+
+  // index_type defines the indexing algorithm.
+  // OPTIONAL. Defaults to HNSW. Can be changed, but requires index rebuild.
+  IndexType index_type = 5;
+
+  // index_params contains index-specific tuning parameters (JSON-encoded).
+  // OPTIONAL. Example for HNSW: {"M": 16, "efConstruction": 200, "efSearch": 100}
+  // - M: number of bi-directional links (higher = better recall, more memory)
+  // - efConstruction: build-time search depth (higher = better index quality)
+  // - efSearch: query-time search depth (higher = better recall, slower search)
+  map<string, string> index_params = 6;
+
+  // shard_id assigns this namespace to a specific shard (0 = auto-assign).
+  // OPTIONAL. Useful for isolating high-traffic namespaces.
+  uint64 shard_id = 7;
+
+  // replication_factor specifies how many replicas to maintain.
+  // OPTIONAL. Defaults to cluster default (typically 3).
+  // Validation: 1 <= replication_factor <= cluster_size.
+  int32 replication_factor = 8;
+
+  // compression_enabled enables vector compression (e.g., PQ, quantization).
+  // OPTIONAL. Defaults to false. Reduces storage at the cost of accuracy.
+  bool compression_enabled = 9;
+
+  // metadata contains namespace-level key-value metadata.
+  // OPTIONAL. Use for: Owner, purpose, model version, etc.
+  map<string, string> metadata = 10;
+
+  // Multi-tenant fields
+
+  // tenant_id identifies the owning tenant for multi-tenant deployments.
+  // OPTIONAL. Empty for single-tenant deployments.
+  // Cross-tenant access is blocked when this is set.
+  string tenant_id = 11;
+
+  // owner_user_id identifies the user who created this namespace.
+  // OPTIONAL. Set automatically on creation if authentication is enabled.
+  string owner_user_id = 12;
+
+  // quotas specifies resource limits for this namespace.
+  // OPTIONAL. If not set, no limits are enforced.
+  TenantQuotas quotas = 13;
+
+  // labels contains organization labels for filtering and grouping.
+  // OPTIONAL. Use for: environment, team, project, etc.
+  map<string, string> labels = 14;
+
+  // quantization_params configures vector quantization for storage compression.
+  // OPTIONAL. When set, vectors are compressed using the specified algorithm.
+  QuantizationParams quantization_params = 15;
+
+  reserved 16 to 20;
+}
+
+// TenantQuotas defines resource limits for multi-tenant namespaces.
+// Quotas are enforced at write time and can be used for billing/capacity planning.
+message TenantQuotas {
+  // max_vectors is the maximum number of vectors allowed.
+  // 0 means unlimited. Writes are rejected when limit is reached.
+  int64 max_vectors = 1;
+
+  // max_storage_bytes is the maximum storage in bytes.
+  // 0 means unlimited. Writes are rejected when limit is reached.
+  int64 max_storage_bytes = 2;
+
+  // max_dimensions is the maximum allowed vector dimension.
+  // 0 means no limit (uses system default of 4096).
+  int32 max_dimensions = 3;
+
+  // rate_limit_qps is the maximum queries per second per namespace.
+  // 0 means unlimited. Requests above this rate are throttled.
+  int32 rate_limit_qps = 4;
+
+  // rate_limit_writes_qps is the maximum writes per second per namespace.
+  // 0 means unlimited. Write requests above this rate are throttled.
+  int32 rate_limit_writes_qps = 5;
+
+  // max_batch_size is the maximum vectors per batch operation.
+  // 0 means unlimited (uses system default of 10000).
+  int32 max_batch_size = 6;
+
+  reserved 7 to 10;
+}
+
+// QuantizationParams configures vector quantization for storage compression.
+// Quantization reduces memory footprint at the cost of some precision loss.
+message QuantizationParams {
+  // type is the quantization algorithm.
+  // REQUIRED when quantization is enabled.
+  // Valid values: "sq8", "pq", "float16", "bfloat16".
+  string type = 1;
+
+  // calibration_size is the number of vectors used for SQ8 calibration.
+  // Only applicable for type "sq8". 0 means use all available vectors.
+  int32 calibration_size = 2;
+
+  // pq_m is the number of sub-quantizers for Product Quantization.
+  // Only applicable for type "pq". Dimensions must be evenly divisible by pq_m.
+  int32 pq_m = 3;
+
+  // pq_nbits is the bits per sub-quantizer code (typically 8, giving 256 centroids).
+  // Only applicable for type "pq".
+  int32 pq_nbits = 4;
+
+  // pq_training_size is the number of vectors used for PQ codebook training.
+  // Only applicable for type "pq". 0 means use all available vectors.
+  int32 pq_training_size = 5;
+
+  reserved 6 to 10;
+}
+
+// QuotaUsage represents current resource usage against configured quotas.
+// Used for monitoring and alerting on quota consumption.
+message QuotaUsage {
+  // vectors_used is the current number of vectors.
+  int64 vectors_used = 1;
+
+  // storage_bytes_used is the current storage in bytes.
+  int64 storage_bytes_used = 2;
+
+  // vectors_percent is the percentage of max_vectors used (0-100).
+  // -1 if no quota is configured.
+  double vectors_percent = 3;
+
+  // storage_percent is the percentage of max_storage_bytes used (0-100).
+  // -1 if no quota is configured.
+  double storage_percent = 4;
+
+  // queries_this_second is the current QPS rate.
+  int32 queries_this_second = 5;
+
+  // writes_this_second is the current writes per second rate.
+  int32 writes_this_second = 6;
+
+  // throttled indicates if the namespace is currently being throttled.
+  bool throttled = 7;
+
+  // last_updated is when the usage was last calculated.
+  google.protobuf.Timestamp last_updated = 8;
+
+  reserved 9 to 10;
+}
+
+// MetadataFilter defines filtering criteria for metadata-based search.
+message MetadataFilter {
+  // key is the metadata key to filter on.
+  string key = 1;
+
+  // operator defines the comparison operator.
+  FilterOperator operator = 2;
+
+  // value is the value to compare against.
+  string value = 3;
+
+  // values is the list of values for IN/NOT_IN operators.
+  repeated string values = 4;
+
+  // filter_expression is a rich filter expression string (e.g. "age > 25 AND category IN ["tech"]").
+  // When set, this takes precedence over key/operator/value fields.
+  string filter_expression = 5;
+
+  reserved 6 to 10;
+}
+
+// FilterOperator defines metadata filtering operators.
+enum FilterOperator {
+  FILTER_OPERATOR_UNSPECIFIED = 0;
+  FILTER_OPERATOR_EQUALS = 1;        // ==
+  FILTER_OPERATOR_NOT_EQUALS = 2;    // !=
+  FILTER_OPERATOR_CONTAINS = 3;      // substring match
+  FILTER_OPERATOR_STARTS_WITH = 4;   // prefix match
+  FILTER_OPERATOR_ENDS_WITH = 5;     // suffix match
+  FILTER_OPERATOR_IN = 6;            // value in comma-separated list
+  FILTER_OPERATOR_NOT_IN = 7;        // value not in comma-separated list
+
+  FILTER_OPERATOR_GREATER_THAN = 8;  // >
+  FILTER_OPERATOR_GREATER_EQUAL = 9; // >=
+  FILTER_OPERATOR_LESS_THAN = 10;    // <
+  FILTER_OPERATOR_LESS_EQUAL = 11;   // <=
+  FILTER_OPERATOR_IS_NULL = 12;      // field is empty/missing
+  FILTER_OPERATOR_IS_NOT_NULL = 13;  // field is present and non-empty
+  FILTER_OPERATOR_RANGE = 14;        // between min and max values
+  FILTER_OPERATOR_TEXT_MATCH = 15;   // case-insensitive substring match
+
+  reserved 16 to 30;
+}
+
+// ========================================
+// CRUD Request/Response Messages
+// ========================================
+
+// UpsertVectorRequest creates or updates a single vector.
+message UpsertVectorRequest {
+  // vector is the vector entity to upsert.
+  // REQUIRED. All required fields in VectorEntity must be set.
+  VectorEntity vector = 1;
+
+  // consistency determines the write consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 2;
+
+  // skip_index_update defers index updates for bulk operations.
+  // OPTIONAL. Defaults to false. Set to true for batch imports (requires manual rebuild).
+  bool skip_index_update = 3;
+
+  // timeout_ms specifies the maximum time to wait for the operation (milliseconds).
+  // OPTIONAL. Defaults to 5000ms.
+  int64 timeout_ms = 4;
+
+  reserved 5 to 10;
+}
+
+// UpsertVectorResponse confirms successful upsert.
+message UpsertVectorResponse {
+  // id is the assigned or provided unique identifier.
+  string id = 1;
+
+  // version is the new entity version number.
+  uint64 version = 2;
+
+  // timestamp is the server timestamp when stored.
+  google.protobuf.Timestamp timestamp = 3;
+
+  // leader_id identifies which node handled the write.
+  uint64 leader_id = 4;
+
+  // index_updated indicates if the index was updated.
+  bool index_updated = 5;
+
+  reserved 6 to 10;
+}
+
+// BatchUpsertVectorsRequest creates or updates multiple vectors.
+message BatchUpsertVectorsRequest {
+  // vectors is the list of vector entities to upsert.
+  // REQUIRED. Maximum 10,000 vectors per batch.
+  repeated VectorEntity vectors = 1;
+
+  // consistency determines the write consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 2;
+
+  // skip_index_update defers index updates for bulk operations.
+  // OPTIONAL. Defaults to false. Set to true for batch imports (requires manual rebuild).
+  bool skip_index_update = 3;
+
+  // batch_size specifies how many vectors to process per internal batch.
+  // OPTIONAL. Defaults to 1000. Lower values reduce memory, higher values improve throughput.
+  int32 batch_size = 4;
+
+  // timeout_ms specifies the maximum time to wait for the entire operation (milliseconds).
+  // OPTIONAL. Defaults to 60000ms (1 minute).
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// BatchUpsertVectorsResponse streams batch upsert results.
+message BatchUpsertVectorsResponse {
+  // vectors_processed is the number of vectors processed so far.
+  int64 vectors_processed = 1;
+
+  // vectors_succeeded is the number of vectors successfully upserted.
+  int64 vectors_succeeded = 2;
+
+  // vectors_failed is the number of vectors that failed.
+  int64 vectors_failed = 3;
+
+  // failed_ids contains IDs of vectors that failed (for retry).
+  repeated string failed_ids = 4;
+
+  // timestamp is when this batch was processed.
+  google.protobuf.Timestamp timestamp = 5;
+
+  // is_final indicates this is the last response in the stream.
+  bool is_final = 6;
+
+  // error_message provides details if batch processing failed.
+  string error_message = 7;
+
+  reserved 8 to 10;
+}
+
+// GetVectorRequest retrieves a vector by ID.
+message GetVectorRequest {
+  // namespace identifies the vector namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // id is the unique identifier.
+  // REQUIRED.
+  string id = 2;
+
+  // consistency determines the read consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 3;
+
+  // include_metadata requests metadata to be returned.
+  // OPTIONAL. Defaults to true.
+  bool include_metadata = 4;
+
+  // include_vector requests the vector data to be returned.
+  // OPTIONAL. Defaults to true. Set to false to retrieve only metadata.
+  bool include_vector = 5;
+
+  // timeout_ms specifies the maximum time to wait for the read (milliseconds).
+  // OPTIONAL. Defaults to 5000ms.
+  int64 timeout_ms = 6;
+
+  reserved 7 to 10;
+}
+
+// GetVectorResponse returns the requested vector.
+message GetVectorResponse {
+  // vector is the retrieved vector entity.
+  VectorEntity vector = 1;
+
+  // found indicates whether the vector exists.
+  bool found = 2;
+
+  // node_id identifies which node served the read.
+  uint64 node_id = 3;
+
+  reserved 4 to 10;
+}
+
+// UpdateMetadataRequest updates only the metadata for a vector.
+message UpdateMetadataRequest {
+  // namespace identifies the vector namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // id is the unique identifier of the vector to update.
+  // REQUIRED.
+  string id = 2;
+
+  // metadata is the new metadata to apply.
+  // REQUIRED. Cannot be empty.
+  map<string, string> metadata = 3;
+
+  // merge determines update behavior:
+  // - true: merge with existing metadata (add/update keys, keep others)
+  // - false: replace all metadata (remove existing keys not in this map)
+  // OPTIONAL. Defaults to false (replace).
+  bool merge = 4;
+
+  // consistency determines the write consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 5;
+
+  // timeout_ms specifies the maximum time to wait for the operation (milliseconds).
+  // OPTIONAL. Defaults to 5000ms.
+  int64 timeout_ms = 6;
+
+  reserved 7 to 10;
+}
+
+// UpdateMetadataResponse confirms successful metadata update.
+message UpdateMetadataResponse {
+  // success indicates whether the update succeeded.
+  bool success = 1;
+
+  // version is the new entity version number after update.
+  uint64 version = 2;
+
+  // timestamp is the server timestamp when updated.
+  google.protobuf.Timestamp timestamp = 3;
+
+  reserved 4 to 10;
+}
+
+// DeleteVectorRequest removes a vector by ID.
+message DeleteVectorRequest {
+  // namespace identifies the vector namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // id is the unique identifier to delete.
+  // REQUIRED.
+  string id = 2;
+
+  // consistency determines the delete consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 3;
+
+  // version enables optimistic locking (0 = no version check).
+  // OPTIONAL. Defaults to 0.
+  uint64 version = 4;
+
+  // timeout_ms specifies the maximum time to wait for the operation (milliseconds).
+  // OPTIONAL. Defaults to 5000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// DeleteVectorResponse confirms deletion.
+message DeleteVectorResponse {
+  // deleted indicates whether the vector existed and was deleted.
+  bool deleted = 1;
+
+  // timestamp is when the deletion occurred.
+  google.protobuf.Timestamp timestamp = 2;
+
+  reserved 3 to 10;
+}
+
+// BatchDeleteVectorsRequest removes multiple vectors.
+message BatchDeleteVectorsRequest {
+  // namespace identifies the vector namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // ids is the list of unique identifiers to delete.
+  // REQUIRED. Maximum 10,000 IDs per batch.
+  repeated string ids = 2;
+
+  // consistency determines the delete consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 3;
+
+  // timeout_ms specifies the maximum time to wait for the operation (milliseconds).
+  // OPTIONAL. Defaults to 60000ms (1 minute).
+  int64 timeout_ms = 4;
+
+  reserved 5 to 10;
+}
+
+// BatchDeleteVectorsResponse confirms batch deletion.
+message BatchDeleteVectorsResponse {
+  // deleted_count is the number of vectors deleted.
+  int64 deleted_count = 1;
+
+  // timestamp is when the batch deletion completed.
+  google.protobuf.Timestamp timestamp = 2;
+
+  reserved 3 to 10;
+}
+
+// ========================================
+// Search Request/Response Messages
+// ========================================
+
+// SearchSimilarRequest performs k-NN similarity search.
+message SearchSimilarRequest {
+  // namespace identifies the vector namespace to search.
+  // REQUIRED.
+  string namespace = 1;
+
+  // query_vector is the embedding to search for.
+  // REQUIRED. Length must match namespace's dimension configuration.
+  repeated float query_vector = 2;
+
+  // k is the number of nearest neighbors to return.
+  // REQUIRED. Validation: 1 <= k <= 10000.
+  int32 k = 3;
+
+  // distance_metric overrides the namespace's default metric.
+  // OPTIONAL. Useful for comparing different similarity measures.
+  DistanceMetric distance_metric = 4;
+
+  // metadata_filters applies pre-filtering before search.
+  // OPTIONAL. Filters are applied with AND logic.
+  // WARNING: Filtering reduces effective search space, may impact recall.
+  repeated MetadataFilter metadata_filters = 5;
+
+  // consistency determines the read consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 6;
+
+  // include_metadata requests metadata to be returned.
+  // OPTIONAL. Defaults to true.
+  bool include_metadata = 7;
+
+  // include_vectors requests vector data to be returned.
+  // OPTIONAL. Defaults to false to reduce response size.
+  bool include_vectors = 8;
+
+  // ef_search overrides the HNSW efSearch parameter for this query.
+  // OPTIONAL. Higher values improve recall at the cost of latency.
+  // Validation: Only applies to HNSW index. Range: 1-1000.
+  int32 ef_search = 9;
+
+  // min_score filters results below this similarity threshold.
+  // OPTIONAL. Useful for rejecting low-confidence matches.
+  // Note: Interpretation depends on distance_metric (lower is better for L2/cosine).
+  float min_score = 10;
+
+  // timeout_ms specifies the maximum time to wait for the search (milliseconds).
+  // OPTIONAL. Defaults to 10000ms.
+  int64 timeout_ms = 11;
+
+  // filter_expression is a rich filter expression string.
+  // OPTIONAL. When set, overrides metadata_filters with expression-based filtering.
+  string filter_expression = 12;
+
+  reserved 13 to 20;
+
+  // distributed enables scatter-gather search across all shards holding
+  // data for this namespace. When false (default), the search is executed
+  // only on the local shard.
+  // OPTIONAL. Defaults to false.
+  bool distributed = 21;
+}
+
+// SearchSimilarResponse streams similarity search results.
+message SearchSimilarResponse {
+  // results contains the k nearest neighbors.
+  repeated SimilarityResult results = 1;
+
+  // total_candidates is the total vectors considered (before filtering).
+  int64 total_candidates = 2;
+
+  // search_time_ms is the search latency in milliseconds.
+  int64 search_time_ms = 3;
+
+  // node_id identifies which node served the search.
+  uint64 node_id = 4;
+
+  // is_final indicates this is the last response in the stream.
+  bool is_final = 5;
+
+  reserved 6 to 10;
+
+  // shard_metadata contains per-shard search metadata for distributed queries.
+  // Only populated when the request had distributed = true.
+  repeated ShardSearchMeta shard_metadata = 11;
+}
+
+
+// ShardSearchMeta contains per-shard metadata from a distributed search query.
+message ShardSearchMeta {
+  // shard_id is the shard that was searched.
+  uint64 shard_id = 1;
+
+  // results_count is the number of results returned from this shard.
+  int32 results_count = 2;
+
+  // search_duration_ms is the search duration for this shard in milliseconds.
+  int64 search_duration_ms = 3;
+}
+// SimilarityResult represents a single k-NN search result.
+message SimilarityResult {
+  // vector is the matched vector entity.
+  VectorEntity vector = 1;
+
+  // score is the similarity/distance score.
+  // Interpretation depends on distance_metric:
+  // - L2/COSINE: Lower = more similar
+  // - DOT_PRODUCT: Higher = more similar (for normalized vectors)
+  float score = 2;
+
+  // rank is the result position (1 = closest match).
+  int32 rank = 3;
+
+  reserved 4 to 10;
+}
+
+// SearchByIDRequest performs k-NN search using an existing vector.
+message SearchByIDRequest {
+  // namespace identifies the vector namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // id is the vector ID to use as the query.
+  // REQUIRED.
+  string id = 2;
+
+  // k is the number of nearest neighbors to return.
+  // REQUIRED. Validation: 1 <= k <= 10000.
+  // Note: Result may include the query vector itself if include_self = true.
+  int32 k = 3;
+
+  // include_self includes the query vector in results.
+  // OPTIONAL. Defaults to false.
+  bool include_self = 4;
+
+  // distance_metric overrides the namespace's default metric.
+  // OPTIONAL.
+  DistanceMetric distance_metric = 5;
+
+  // metadata_filters applies pre-filtering before search.
+  // OPTIONAL.
+  repeated MetadataFilter metadata_filters = 6;
+
+  // consistency determines the read consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 7;
+
+  // include_metadata requests metadata to be returned.
+  // OPTIONAL. Defaults to true.
+  bool include_metadata = 8;
+
+  // include_vectors requests vector data to be returned.
+  // OPTIONAL. Defaults to false.
+  bool include_vectors = 9;
+
+  // ef_search overrides the HNSW efSearch parameter.
+  // OPTIONAL.
+  int32 ef_search = 10;
+
+  // min_score filters results below this threshold.
+  // OPTIONAL.
+  float min_score = 11;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 10000ms.
+  int64 timeout_ms = 12;
+
+  reserved 13 to 20;
+}
+
+// SearchByIDResponse streams search-by-ID results.
+message SearchByIDResponse {
+  // results contains the k nearest neighbors.
+  repeated SimilarityResult results = 1;
+
+  // query_vector is the vector that was used as the query (if requested).
+  VectorEntity query_vector = 2;
+
+  // total_candidates is the total vectors considered.
+  int64 total_candidates = 3;
+
+  // search_time_ms is the search latency in milliseconds.
+  int64 search_time_ms = 4;
+
+  // node_id identifies which node served the search.
+  uint64 node_id = 5;
+
+  // is_final indicates this is the last response in the stream.
+  bool is_final = 6;
+
+  reserved 7 to 10;
+}
+
+// HybridSearchRequest combines similarity search with metadata filtering.
+message HybridSearchRequest {
+  // namespace identifies the vector namespace to search.
+  // REQUIRED.
+  string namespace = 1;
+
+  // query_vector is the embedding to search for.
+  // REQUIRED. Length must match namespace's dimension configuration.
+  repeated float query_vector = 2;
+
+  // k is the number of nearest neighbors to return.
+  // REQUIRED. Validation: 1 <= k <= 10000.
+  int32 k = 3;
+
+  // ef_search overrides the HNSW efSearch parameter for this query.
+  // OPTIONAL. Higher values improve recall at the cost of latency.
+  int32 ef_search = 4;
+
+  // min_score filters results below this similarity threshold.
+  // OPTIONAL. Useful for rejecting low-confidence matches.
+  float min_score = 5;
+
+  // metadata_filters applies post-similarity filtering.
+  // OPTIONAL. Filters are applied with filter_operator logic.
+  repeated MetadataFilter metadata_filters = 6;
+
+  // filter_operator specifies how to combine metadata filters.
+  // OPTIONAL. Values: "AND" (default), "OR".
+  string filter_operator = 7;
+
+  // reranking_algorithm specifies the reranking strategy.
+  // OPTIONAL. Values: "none" (default), "cross_encoder", "colbert", "rrf".
+  string reranking_algorithm = 8;
+
+  // include_metadata requests metadata to be returned.
+  // OPTIONAL. Defaults to true.
+  bool include_metadata = 9;
+
+  // include_vectors requests vector data to be returned.
+  // OPTIONAL. Defaults to false to reduce response size.
+  bool include_vectors = 10;
+
+  // consistency determines the read consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 11;
+
+  // timeout_ms specifies the maximum time to wait for the search (milliseconds).
+  // OPTIONAL. Defaults to 10000ms.
+  int64 timeout_ms = 12;
+
+  // filter_expression is a rich filter expression string.
+  // OPTIONAL. When set, overrides metadata_filters with expression-based filtering.
+  string filter_expression = 13;
+
+  reserved 14 to 20;
+}
+
+// HybridSearchResponse streams hybrid search results.
+message HybridSearchResponse {
+  // results contains the k nearest neighbors after filtering.
+  repeated SimilarityResult results = 1;
+
+  // total_candidates is the total vectors considered before filtering.
+  int64 total_candidates = 2;
+
+  // total_filtered is the number of results after metadata filtering.
+  int64 total_filtered = 3;
+
+  // search_time_ms is the search latency in milliseconds.
+  int64 search_time_ms = 4;
+
+  // reranking_applied indicates if reranking was applied.
+  bool reranking_applied = 5;
+
+  // node_id identifies which node served the search.
+  uint64 node_id = 6;
+
+  // is_final indicates this is the last response in the stream.
+  bool is_final = 7;
+
+  reserved 8 to 10;
+}
+
+// SearchByMetadataRequest searches vectors by metadata without a query vector.
+message SearchByMetadataRequest {
+  // namespace identifies the vector namespace to search.
+  // REQUIRED.
+  string namespace = 1;
+
+  // metadata_filters specifies the metadata criteria.
+  // REQUIRED. At least one filter must be provided.
+  repeated MetadataFilter metadata_filters = 2;
+
+  // filter_operator specifies how to combine metadata filters.
+  // OPTIONAL. Values: "AND" (default), "OR".
+  string filter_operator = 3;
+
+  // limit restricts the number of results.
+  // OPTIONAL. Defaults to 100. Maximum: 10000.
+  int32 limit = 4;
+
+  // offset is the pagination offset.
+  // OPTIONAL. Defaults to 0.
+  int32 offset = 5;
+
+  // include_metadata requests metadata to be returned.
+  // OPTIONAL. Defaults to true.
+  bool include_metadata = 6;
+
+  // include_vectors requests vector data to be returned.
+  // OPTIONAL. Defaults to false to reduce response size.
+  bool include_vectors = 7;
+
+  // consistency determines the read consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 8;
+
+  // timeout_ms specifies the maximum time to wait for the search (milliseconds).
+  // OPTIONAL. Defaults to 10000ms.
+  int64 timeout_ms = 9;
+
+  // filter_expression is a rich filter expression string.
+  // OPTIONAL. When set, overrides metadata_filters with expression-based filtering.
+  string filter_expression = 10;
+
+  reserved 11 to 15;
+}
+
+// SearchByMetadataResponse streams metadata search results.
+message SearchByMetadataResponse {
+  // results contains the matching vectors.
+  repeated VectorEntity results = 1;
+
+  // total_count is the total number of matching vectors.
+  int64 total_count = 2;
+
+  // next_cursor is the pagination cursor for the next page.
+  string next_cursor = 3;
+
+  // search_time_ms is the search latency in milliseconds.
+  int64 search_time_ms = 4;
+
+  // node_id identifies which node served the search.
+  uint64 node_id = 5;
+
+  // is_final indicates this is the last response in the stream.
+  bool is_final = 6;
+
+  reserved 7 to 10;
+}
+
+// ========================================
+// List Operations Messages
+// ========================================
+
+// ListVectorsRequest retrieves all vectors in a namespace.
+message ListVectorsRequest {
+  // namespace identifies the vector namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // page_size limits the number of results per page.
+  // OPTIONAL. Defaults to 100. Maximum: 1000.
+  int32 page_size = 2;
+
+  // page_token is the continuation token from a previous request.
+  // OPTIONAL. Empty for first page.
+  string page_token = 3;
+
+  // consistency determines the read consistency level.
+  // OPTIONAL. Defaults to QUORUM.
+  VectorConsistencyLevel consistency = 4;
+
+  // include_metadata requests metadata to be returned.
+  // OPTIONAL. Defaults to true.
+  bool include_metadata = 5;
+
+  // include_vectors requests vector data to be returned.
+  // OPTIONAL. Defaults to false to reduce response size.
+  bool include_vectors = 6;
+
+  // metadata_filters applies filtering before listing.
+  // OPTIONAL.
+  repeated MetadataFilter metadata_filters = 7;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 30000ms.
+  int64 timeout_ms = 8;
+
+  reserved 9 to 10;
+}
+
+// ListVectorsResponse streams vectors.
+message ListVectorsResponse {
+  // vectors is a batch of results.
+  repeated VectorEntity vectors = 1;
+
+  // next_page_token is the token for the next page (empty if last page).
+  string next_page_token = 2;
+
+  // total_count is the total number of vectors (if available).
+  int64 total_count = 3;
+
+  // is_final indicates this is the last response in the stream.
+  bool is_final = 4;
+
+  reserved 5 to 10;
+}
+
+// ListNamespacesRequest lists all namespaces.
+message ListNamespacesRequest {
+  // prefix filters namespaces by prefix.
+  // OPTIONAL. Empty returns all namespaces.
+  string prefix = 1;
+
+  // page_size limits the number of results per page.
+  // OPTIONAL. Defaults to 100.
+  int32 page_size = 2;
+
+  // page_token is the continuation token.
+  // OPTIONAL.
+  string page_token = 3;
+
+  reserved 4 to 10;
+}
+
+// ListNamespacesResponse returns available namespaces.
+message ListNamespacesResponse {
+  // namespaces is the list of namespace configurations.
+  repeated NamespaceInfo namespaces = 1;
+
+  // next_page_token is the token for the next page.
+  string next_page_token = 2;
+
+  // total_count is the total number of namespaces.
+  int32 total_count = 3;
+
+  reserved 4 to 10;
+}
+
+// NamespaceInfo contains namespace metadata and statistics.
+message NamespaceInfo {
+  // config is the namespace configuration.
+  NamespaceConfig config = 1;
+
+  // vector_count is the total number of vectors.
+  int64 vector_count = 2;
+
+  // indexed_count is the number of indexed vectors.
+  int64 indexed_count = 3;
+
+  // pending_count is the number of vectors pending indexing.
+  int64 pending_count = 4;
+
+  // storage_bytes is the total storage used.
+  int64 storage_bytes = 5;
+
+  // index_bytes is the index size.
+  int64 index_bytes = 6;
+
+  // created_at is when the namespace was created.
+  google.protobuf.Timestamp created_at = 7;
+
+  // updated_at is when the namespace was last modified.
+  google.protobuf.Timestamp updated_at = 8;
+
+  // last_index_build is when the index was last rebuilt.
+  google.protobuf.Timestamp last_index_build = 9;
+
+  // Multi-tenant fields
+
+  // tenant_id identifies the owning tenant.
+  // READ-ONLY. Copied from NamespaceConfig.
+  string tenant_id = 10;
+
+  // owner_user_id identifies the user who created this namespace.
+  // READ-ONLY. Copied from NamespaceConfig.
+  string owner_user_id = 11;
+
+  // quotas contains the configured resource limits.
+  // READ-ONLY. Copied from NamespaceConfig.
+  TenantQuotas quotas = 12;
+
+  // quota_usage contains current resource usage against quotas.
+  // READ-ONLY. Populated by the system.
+  QuotaUsage quota_usage = 13;
+
+  // labels contains organization labels.
+  // READ-ONLY. Copied from NamespaceConfig.
+  map<string, string> labels = 14;
+
+  reserved 15 to 20;
+}
+
+// ========================================
+// Namespace Management Messages
+// ========================================
+
+// CreateNamespaceRequest creates a new namespace.
+message CreateNamespaceRequest {
+  // config is the namespace configuration.
+  // REQUIRED. All required fields in NamespaceConfig must be set.
+  NamespaceConfig config = 1;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 10000ms.
+  int64 timeout_ms = 2;
+
+  reserved 3 to 10;
+}
+
+// CreateNamespaceResponse confirms namespace creation.
+message CreateNamespaceResponse {
+  // namespace is the created namespace identifier.
+  string namespace = 1;
+
+  // timestamp is when the namespace was created.
+  google.protobuf.Timestamp timestamp = 2;
+
+  reserved 3 to 10;
+}
+
+// UpdateNamespaceRequest modifies namespace configuration.
+message UpdateNamespaceRequest {
+  // namespace identifies the namespace to update.
+  // REQUIRED.
+  string namespace = 1;
+
+  // index_params updates index-specific parameters.
+  // OPTIONAL. Only specified parameters are updated.
+  map<string, string> index_params = 2;
+
+  // metadata updates namespace metadata.
+  // OPTIONAL. Merged with existing metadata.
+  map<string, string> metadata = 3;
+
+  // replication_factor updates the replication factor.
+  // OPTIONAL. 0 = no change.
+  int32 replication_factor = 4;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 10000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// UpdateNamespaceResponse confirms update.
+message UpdateNamespaceResponse {
+  // namespace is the updated namespace identifier.
+  string namespace = 1;
+
+  // timestamp is when the update occurred.
+  google.protobuf.Timestamp timestamp = 2;
+
+  // requires_rebuild indicates if an index rebuild is required.
+  bool requires_rebuild = 3;
+
+  reserved 4 to 10;
+}
+
+// DeleteNamespaceRequest removes a namespace.
+message DeleteNamespaceRequest {
+  // namespace identifies the namespace to delete.
+  // REQUIRED.
+  string namespace = 1;
+
+  // force bypasses safety checks and deletes even if vectors exist.
+  // OPTIONAL. Defaults to false. DANGEROUS: Cannot be undone.
+  bool force = 2;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 60000ms.
+  int64 timeout_ms = 3;
+
+  reserved 4 to 10;
+}
+
+// DeleteNamespaceResponse confirms deletion.
+message DeleteNamespaceResponse {
+  // deleted indicates if the namespace was deleted.
+  bool deleted = 1;
+
+  // vectors_deleted is the number of vectors deleted.
+  int64 vectors_deleted = 2;
+
+  // timestamp is when the deletion occurred.
+  google.protobuf.Timestamp timestamp = 3;
+
+  reserved 4 to 10;
+}
+
+// GetNamespaceInfoRequest retrieves namespace information.
+message GetNamespaceInfoRequest {
+  // namespace identifies the namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // include_stats requests detailed statistics.
+  // OPTIONAL. Defaults to true.
+  bool include_stats = 2;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 5000ms.
+  int64 timeout_ms = 3;
+
+  reserved 4 to 10;
+}
+
+// GetNamespaceInfoResponse returns namespace information.
+message GetNamespaceInfoResponse {
+  // info contains namespace metadata and statistics.
+  NamespaceInfo info = 1;
+
+  reserved 2 to 10;
+}
+
+// ========================================
+// Statistics Messages
+// ========================================
+
+// GetVectorStatsRequest requests vector database statistics.
+message GetVectorStatsRequest {
+  // namespace filters statistics to a specific namespace.
+  // OPTIONAL. Empty returns cluster-wide stats.
+  string namespace = 1;
+
+  // include_details requests per-shard breakdown.
+  // OPTIONAL. Defaults to false.
+  bool include_details = 2;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 5000ms.
+  int64 timeout_ms = 3;
+
+  reserved 4 to 10;
+}
+
+// GetVectorStatsResponse returns statistics.
+message GetVectorStatsResponse {
+  // total_vectors is the total number of vectors across all namespaces.
+  int64 total_vectors = 1;
+
+  // total_namespaces is the total number of namespaces.
+  int32 total_namespaces = 2;
+
+  // total_storage_bytes is the total storage used.
+  int64 total_storage_bytes = 3;
+
+  // total_index_bytes is the total index size.
+  int64 total_index_bytes = 4;
+
+  // avg_dimension is the average vector dimensionality.
+  double avg_dimension = 5;
+
+  // search_qps is the current search queries per second.
+  double search_qps = 6;
+
+  // avg_search_latency_ms is the average search latency.
+  double avg_search_latency_ms = 7;
+
+  // p95_search_latency_ms is the 95th percentile search latency.
+  double p95_search_latency_ms = 8;
+
+  // p99_search_latency_ms is the 99th percentile search latency.
+  double p99_search_latency_ms = 9;
+
+  // namespace_stats contains per-namespace statistics (if requested).
+  repeated NamespaceStats namespace_stats = 10;
+
+  reserved 11 to 20;
+}
+
+// NamespaceStats contains detailed namespace statistics.
+message NamespaceStats {
+  // namespace is the namespace identifier.
+  string namespace = 1;
+
+  // vector_count is the total number of vectors.
+  int64 vector_count = 2;
+
+  // indexed_count is the number of indexed vectors.
+  int64 indexed_count = 3;
+
+  // storage_bytes is the storage used.
+  int64 storage_bytes = 4;
+
+  // index_bytes is the index size.
+  int64 index_bytes = 5;
+
+  // avg_search_latency_ms is the average search latency for this namespace.
+  double avg_search_latency_ms = 6;
+
+  // search_count is the total number of searches performed.
+  int64 search_count = 7;
+
+  reserved 8 to 15;
+}
+
+// ========================================
+// Health Messages
+// ========================================
+
+// VectorHealthRequest requests health status.
+message VectorHealthRequest {
+  // include_details requests detailed health information.
+  // OPTIONAL. Defaults to false.
+  bool include_details = 1;
+
+  reserved 2 to 10;
+}
+
+// VectorHealthResponse returns health status.
+message VectorHealthResponse {
+  // status is the overall health status.
+  VectorHealthStatus status = 1;
+
+  // node_id identifies this node.
+  uint64 node_id = 2;
+
+  // version is the QuicBaaS version.
+  string version = 3;
+
+  // uptime_seconds is how long the vector database has been running.
+  uint64 uptime_seconds = 4;
+
+  // namespaces_healthy is the number of healthy namespaces.
+  int32 namespaces_healthy = 5;
+
+  // namespaces_degraded is the number of degraded namespaces.
+  int32 namespaces_degraded = 6;
+
+  // namespaces_unhealthy is the number of unhealthy namespaces.
+  int32 namespaces_unhealthy = 7;
+
+  // details contains component-specific health information.
+  map<string, VectorComponentHealth> details = 8;
+
+  reserved 9 to 10;
+}
+
+// ComponentHealth describes the health of a specific component.
+message VectorComponentHealth {
+  // status is the component health status.
+  VectorHealthStatus status = 1;
+
+  // message provides additional context.
+  string message = 2;
+
+  // last_check is when health was last checked.
+  google.protobuf.Timestamp last_check = 3;
+
+  // metrics contains component-specific metrics.
+  map<string, double> metrics = 4;
+
+  reserved 5 to 10;
+}
+
+// ========================================
+// Index Operations Messages
+// ========================================
+
+// RebuildIndexRequest rebuilds the index for a namespace.
+message RebuildIndexRequest {
+  // namespace identifies the namespace to rebuild.
+  // REQUIRED.
+  string namespace = 1;
+
+  // index_params overrides existing index parameters during rebuild.
+  // OPTIONAL. Use to tune index quality vs. build time.
+  map<string, string> index_params = 2;
+
+  // async returns immediately without waiting for completion.
+  // OPTIONAL. Defaults to true. Use GetIndexProgress to monitor.
+  bool async = 3;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 300000ms (5 minutes). Only applies if async = false.
+  int64 timeout_ms = 4;
+
+  reserved 5 to 10;
+}
+
+// RebuildIndexResponse confirms index rebuild initiation.
+message RebuildIndexResponse {
+  // operation_id uniquely identifies this rebuild operation.
+  string operation_id = 1;
+
+  // started is when the rebuild started.
+  google.protobuf.Timestamp started = 2;
+
+  // estimated_duration_ms is the estimated rebuild time.
+  int64 estimated_duration_ms = 3;
+
+  reserved 4 to 10;
+}
+
+// GetIndexProgressRequest gets rebuild progress.
+message GetIndexProgressRequest {
+  // namespace identifies the namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // operation_id identifies the rebuild operation.
+  // OPTIONAL. Empty returns current/latest operation.
+  string operation_id = 2;
+
+  reserved 3 to 10;
+}
+
+// GetIndexProgressResponse returns rebuild progress.
+message GetIndexProgressResponse {
+  // operation_id is the rebuild operation ID.
+  string operation_id = 1;
+
+  // namespace is the namespace being rebuilt.
+  string namespace = 2;
+
+  // vectors_indexed is the number of vectors indexed so far.
+  int64 vectors_indexed = 3;
+
+  // total_vectors is the total number of vectors to index.
+  int64 total_vectors = 4;
+
+  // percent_complete is the completion percentage.
+  double percent_complete = 5;
+
+  // elapsed_time_ms is the elapsed time in milliseconds.
+  int64 elapsed_time_ms = 6;
+
+  // estimated_remaining_ms is the estimated remaining time.
+  int64 estimated_remaining_ms = 7;
+
+  // status is the rebuild status ("running", "completed", "failed").
+  string status = 8;
+
+  // error_message provides details if rebuild failed.
+  string error_message = 9;
+
+  reserved 10 to 15;
+}
+
+// ========================================
+// Admin Service Messages
+// ========================================
+
+// GetClusterStatsRequest requests cluster-wide statistics.
+message GetClusterStatsRequest {
+  // include_namespaces includes per-namespace breakdown.
+  // OPTIONAL. Defaults to false.
+  bool include_namespaces = 1;
+
+  // include_nodes includes per-node breakdown.
+  // OPTIONAL. Defaults to false.
+  bool include_nodes = 2;
+
+  reserved 3 to 10;
+}
+
+// GetClusterStatsResponse returns cluster statistics.
+message GetClusterStatsResponse {
+  // cluster_id uniquely identifies the cluster.
+  string cluster_id = 1;
+
+  // total_nodes is the number of nodes in the cluster.
+  int32 total_nodes = 2;
+
+  // total_vectors is the total number of vectors across all nodes.
+  int64 total_vectors = 3;
+
+  // total_namespaces is the total number of namespaces.
+  int32 total_namespaces = 4;
+
+  // total_storage_bytes is the total storage used.
+  int64 total_storage_bytes = 5;
+
+  // total_index_bytes is the total index size.
+  int64 total_index_bytes = 6;
+
+  // cluster_qps is the cluster-wide queries per second.
+  double cluster_qps = 7;
+
+  // namespace_stats contains per-namespace statistics (if requested).
+  repeated NamespaceStats namespace_stats = 8;
+
+  // node_stats contains per-node statistics (if requested).
+  repeated NodeStats node_stats = 9;
+
+  // timestamp is when the stats were collected.
+  google.protobuf.Timestamp timestamp = 10;
+
+  reserved 11 to 20;
+}
+
+// NodeStats contains per-node statistics.
+message NodeStats {
+  // node_id uniquely identifies the node.
+  uint64 node_id = 1;
+
+  // address is the node's network address.
+  string address = 2;
+
+  // vector_count is the number of vectors on this node.
+  int64 vector_count = 3;
+
+  // storage_bytes is the storage used on this node.
+  int64 storage_bytes = 4;
+
+  // index_bytes is the index size on this node.
+  int64 index_bytes = 5;
+
+  // qps is the queries per second on this node.
+  double qps = 6;
+
+  // avg_latency_ms is the average search latency.
+  double avg_latency_ms = 7;
+
+  // cpu_usage is the CPU usage percentage.
+  double cpu_usage = 8;
+
+  // memory_usage_bytes is the memory used.
+  int64 memory_usage_bytes = 9;
+
+  reserved 10 to 15;
+}
+
+// CompactNamespaceRequest compacts a namespace.
+message CompactNamespaceRequest {
+  // namespace identifies the namespace to compact.
+  // REQUIRED.
+  string namespace = 1;
+
+  // async returns immediately without waiting for completion.
+  // OPTIONAL. Defaults to true.
+  bool async = 2;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 300000ms (5 minutes).
+  int64 timeout_ms = 3;
+
+  reserved 4 to 10;
+}
+
+// CompactNamespaceResponse confirms compaction initiation.
+message CompactNamespaceResponse {
+  // operation_id uniquely identifies this compaction.
+  string operation_id = 1;
+
+  // started is when the compaction started.
+  google.protobuf.Timestamp started = 2;
+
+  reserved 3 to 10;
+}
+
+// GetCompactionProgressRequest gets compaction progress.
+message GetCompactionProgressRequest {
+  // namespace identifies the namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // operation_id identifies the compaction operation.
+  // OPTIONAL. Empty returns current/latest operation.
+  string operation_id = 2;
+
+  reserved 3 to 10;
+}
+
+// GetCompactionProgressResponse returns compaction progress.
+message GetCompactionProgressResponse {
+  // operation_id is the compaction operation ID.
+  string operation_id = 1;
+
+  // namespace is the namespace being compacted.
+  string namespace = 2;
+
+  // bytes_compacted is the number of bytes compacted.
+  int64 bytes_compacted = 3;
+
+  // total_bytes is the total bytes to compact.
+  int64 total_bytes = 4;
+
+  // percent_complete is the completion percentage.
+  double percent_complete = 5;
+
+  // elapsed_time_ms is the elapsed time.
+  int64 elapsed_time_ms = 6;
+
+  // space_reclaimed_bytes is the disk space reclaimed.
+  int64 space_reclaimed_bytes = 7;
+
+  // status is the compaction status.
+  string status = 8;
+
+  reserved 9 to 10;
+}
+
+// ExportVectorsRequest exports vectors from a namespace.
+message ExportVectorsRequest {
+  // namespace identifies the namespace to export.
+  // REQUIRED.
+  string namespace = 1;
+
+  // format specifies the export format ("json", "parquet", "binary").
+  // OPTIONAL. Defaults to "binary".
+  string format = 2;
+
+  // compression specifies compression ("none", "gzip", "zstd").
+  // OPTIONAL. Defaults to "gzip".
+  string compression = 3;
+
+  // batch_size specifies vectors per batch.
+  // OPTIONAL. Defaults to 1000.
+  int32 batch_size = 4;
+
+  // metadata_filters applies filtering before export.
+  // OPTIONAL.
+  repeated MetadataFilter metadata_filters = 5;
+
+  reserved 6 to 10;
+}
+
+// ExportVectorsResponse streams exported vector batches.
+message ExportVectorsResponse {
+  // batch_data contains serialized vector data.
+  bytes batch_data = 1;
+
+  // vectors_exported is the cumulative count.
+  int64 vectors_exported = 2;
+
+  // batch_number is the sequence number.
+  int32 batch_number = 3;
+
+  // is_final indicates the last batch.
+  bool is_final = 4;
+
+  // checksum is the CRC32 checksum for this batch.
+  uint32 checksum = 5;
+
+  reserved 6 to 10;
+}
+
+// ImportVectorsRequest imports vectors into a namespace.
+message ImportVectorsRequest {
+  // namespace identifies the target namespace.
+  // REQUIRED for first message.
+  string namespace = 1;
+
+  // format specifies the import format ("json", "parquet", "binary").
+  // REQUIRED for first message.
+  string format = 2;
+
+  // batch_data contains serialized vector data.
+  // REQUIRED for all messages.
+  bytes batch_data = 3;
+
+  // skip_validation bypasses vector validation (faster, but risky).
+  // OPTIONAL. Defaults to false.
+  bool skip_validation = 4;
+
+  // overwrite_existing overwrites vectors with matching IDs.
+  // OPTIONAL. Defaults to false (skip existing).
+  bool overwrite_existing = 5;
+
+  reserved 6 to 10;
+}
+
+// ImportVectorsResponse confirms import completion.
+message ImportVectorsResponse {
+  // vectors_imported is the total number imported.
+  int64 vectors_imported = 1;
+
+  // vectors_skipped is the number skipped (duplicates).
+  int64 vectors_skipped = 2;
+
+  // vectors_failed is the number that failed validation.
+  int64 vectors_failed = 3;
+
+  // duration_ms is the import duration.
+  int64 duration_ms = 4;
+
+  // timestamp is when the import completed.
+  google.protobuf.Timestamp timestamp = 5;
+
+  reserved 6 to 10;
+}
+
+// ========================================
+// Scalar Index Management Messages
+// ========================================
+
+// CreateScalarIndexRequest creates a scalar field index for a namespace.
+message CreateScalarIndexRequest {
+  // namespace identifies the target namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // field is the metadata field name to index.
+  // REQUIRED.
+  string field = 2;
+
+  // index_type specifies the scalar index algorithm.
+  // REQUIRED.
+  ScalarIndexType index_type = 3;
+
+  reserved 4 to 10;
+}
+
+// CreateScalarIndexResponse confirms scalar index creation.
+message CreateScalarIndexResponse {
+  // field is the indexed field name.
+  string field = 1;
+
+  // index_type is the scalar index algorithm used.
+  ScalarIndexType index_type = 2;
+
+  // timestamp is when the index was created.
+  google.protobuf.Timestamp timestamp = 3;
+
+  reserved 4 to 10;
+}
+
+// DropScalarIndexRequest removes a scalar field index.
+message DropScalarIndexRequest {
+  // namespace identifies the target namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  // field is the metadata field name whose index should be removed.
+  // REQUIRED.
+  string field = 2;
+
+  reserved 3 to 10;
+}
+
+// DropScalarIndexResponse confirms scalar index removal.
+message DropScalarIndexResponse {
+  // field is the field whose index was removed.
+  string field = 1;
+
+  // timestamp is when the index was removed.
+  google.protobuf.Timestamp timestamp = 2;
+
+  reserved 3 to 10;
+}
+
+// ListScalarIndexesRequest lists scalar field indexes for a namespace.
+message ListScalarIndexesRequest {
+  // namespace identifies the target namespace.
+  // REQUIRED.
+  string namespace = 1;
+
+  reserved 2 to 10;
+}
+
+// ScalarIndexInfo describes a scalar field index.
+message ScalarIndexInfo {
+  // field is the indexed metadata field name.
+  string field = 1;
+
+  // index_type is the scalar index algorithm.
+  ScalarIndexType index_type = 2;
+
+  // entry_count is the number of indexed entries.
+  int64 entry_count = 3;
+
+  // created_at is when the index was created.
+  google.protobuf.Timestamp created_at = 4;
+
+  reserved 5 to 10;
+}
+
+// ListScalarIndexesResponse returns all scalar field indexes for a namespace.
+message ListScalarIndexesResponse {
+  // indexes contains the scalar index information.
+  repeated ScalarIndexInfo indexes = 1;
+
+  reserved 2 to 10;
+}

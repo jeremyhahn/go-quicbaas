@@ -1,0 +1,194 @@
+# QuicBaaS Reusable 3-Node Cluster
+# A standalone 3-node Raft cluster that can be started independently for testing.
+#
+# Usage:
+#   Start cluster:    docker compose -f docker-compose.cluster.yml up -d
+#   Stop cluster:     docker compose -f docker-compose.cluster.yml down
+#   Clean restart:    docker compose -f docker-compose.cluster.yml down -v && docker compose -f docker-compose.cluster.yml up -d
+#   View logs:        docker compose -f docker-compose.cluster.yml logs -f
+#   Check health:     docker compose -f docker-compose.cluster.yml ps
+#
+# The cluster provides:
+#   - 3 QuicBaaS nodes with Raft consensus
+#   - REST API on ports 8081, 8082, 8083 (host)
+#   - gRPC on ports 50051, 50052, 50053 (host)
+#   - QUIC on ports 4433, 4434, 4435 (host)
+#   - Metrics on ports 9091, 9092, 9093 (host)
+
+services:
+  # Node 1 - Initial leader
+  quicbaas-node1:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    hostname: quicbaas-node1
+    container_name: quicbaas-cluster-node1
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node1:63001
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=quicbaas-node2:63002,quicbaas-node3:63003
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_QUIC_PORT=4433
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_ENABLE_DEBUG_ROUTES=1
+      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
+      - QUICBAAS_SECURITY_TLS_ENABLED=false
+    volumes:
+      - cluster-data-node1:/data
+      - cluster-logs-node1:/var/log/quicbaas
+      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+    ports:
+      - "8081:8080"      # REST API
+      - "50051:50051"    # gRPC
+      - "4433:4433/udp"  # QUIC
+      - "9091:9090"      # Metrics
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      quicbaas-cluster:
+        aliases:
+          - node1
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+  # Node 2
+  quicbaas-node2:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    hostname: quicbaas-node2
+    container_name: quicbaas-cluster-node2
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_RAFT_NODE_ID=2
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node2:63002
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=quicbaas-node1:63001,quicbaas-node3:63003
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_QUIC_PORT=4433
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_ENABLE_DEBUG_ROUTES=1
+      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
+      - QUICBAAS_SECURITY_TLS_ENABLED=false
+    volumes:
+      - cluster-data-node2:/data
+      - cluster-logs-node2:/var/log/quicbaas
+      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+    ports:
+      - "8082:8080"      # REST API
+      - "50052:50051"    # gRPC
+      - "4434:4433/udp"  # QUIC
+      - "9092:9090"      # Metrics
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      quicbaas-cluster:
+        aliases:
+          - node2
+    depends_on:
+      quicbaas-node1:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+  # Node 3
+  quicbaas-node3:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    hostname: quicbaas-node3
+    container_name: quicbaas-cluster-node3
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_RAFT_NODE_ID=3
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node3:63003
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=quicbaas-node1:63001,quicbaas-node2:63002
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_QUIC_PORT=4433
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_ENABLE_DEBUG_ROUTES=1
+      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
+      - QUICBAAS_SECURITY_TLS_ENABLED=false
+    volumes:
+      - cluster-data-node3:/data
+      - cluster-logs-node3:/var/log/quicbaas
+      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+    ports:
+      - "8083:8080"      # REST API
+      - "50053:50051"    # gRPC
+      - "4435:4433/udp"  # QUIC
+      - "9093:9090"      # Metrics
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      quicbaas-cluster:
+        aliases:
+          - node3
+    depends_on:
+      quicbaas-node1:
+        condition: service_started
+      quicbaas-node2:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+networks:
+  quicbaas-cluster:
+    driver: bridge
+    name: quicbaas-cluster-network
+
+volumes:
+  cluster-data-node1:
+    driver: local
+  cluster-data-node2:
+    driver: local
+  cluster-data-node3:
+    driver: local
+  cluster-logs-node1:
+    driver: local
+  cluster-logs-node2:
+    driver: local
+  cluster-logs-node3:
+    driver: local

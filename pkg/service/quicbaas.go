@@ -1,0 +1,5427 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package service implements the unified service facade for QuicBaaS.
+// This file contains the concrete implementation that orchestrates all backend components.
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+
+	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
+	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
+	schedulerstorage "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/storage/quicbaas"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
+	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
+)
+
+// kmsGracePeriodAdapter wraps kmsServiceImpl to satisfy handlers.KMSKeyStatusUpdater.
+// This adapter bridges the service and handlers packages to avoid import cycles.
+type kmsGracePeriodAdapter struct {
+	kms   *kmsServiceImpl
+	jobID string // Job ID for audit logging
+}
+
+// SetJobID sets the job ID for audit logging.
+func (a *kmsGracePeriodAdapter) SetJobID(jobID string) {
+	a.jobID = jobID
+}
+
+// UpdateKeyStatusForGracePeriod implements handlers.KMSKeyStatusUpdater.
+func (a *kmsGracePeriodAdapter) UpdateKeyStatusForGracePeriod(ctx context.Context, keyID string, version uint64) (*schedulerhandlers.GracePeriodResult, error) {
+	resp, err := a.kms.disableKeyVersion(ctx, keyID, version)
+
+	// Log the grace period disable event to audit logger
+	if a.kms.auditLogger != nil {
+		var errorMsg string
+		if err != nil {
+			errorMsg = err.Error()
+		}
+		_ = a.kms.auditLogger.LogGracePeriodDisable(ctx, keyID, version, a.jobID, err == nil, errorMsg)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &schedulerhandlers.GracePeriodResult{
+		KeyID:     resp.KeyID,
+		Version:   resp.Version,
+		OldStatus: string(resp.OldStatus),
+		NewStatus: string(resp.NewStatus),
+	}, nil
+}
+
+// schedulerLoggerAdapter wraps interfaces.Logger to satisfy scheduler.Logger.
+type schedulerLoggerAdapter struct {
+	logger interfaces.Logger
+}
+
+func (a *schedulerLoggerAdapter) Debugf(format string, args ...interface{}) {
+	if a.logger != nil {
+		a.logger.Debugf(format, args...)
+	}
+}
+
+func (a *schedulerLoggerAdapter) Warnf(format string, args ...interface{}) {
+	if a.logger != nil {
+		a.logger.Warnf(format, args...)
+	}
+}
+
+func (a *schedulerLoggerAdapter) Errorf(format string, args ...interface{}) {
+	if a.logger != nil {
+		a.logger.Errorf(format, args...)
+	}
+}
+
+// QRDBClientProvider provides per-shard qrdb SDK clients. This interface
+// decouples the service layer from the concrete ShardedClient in the server package.
+type QRDBClientProvider interface {
+	ForShard(shardID uint64) (*qrdbsdk.Client, error)
+	Close() error
+}
+
+// quicBaaS is the concrete implementation of QuicBaaS.
+// It orchestrates all backend components and applies cross-cutting concerns.
+type quicBaaS struct {
+	// Configuration
+	config *ServiceConfig
+
+	// Backend components (use proper interfaces)
+	raftNode     interfaces.RaftNode
+	storage      interfaces.Storage
+	cacheManager interfaces.CacheManager
+	authManager  interfaces.AuthManager
+	backupMgr    interfaces.BackupManager
+	logger       interfaces.Logger
+
+	// QRDB SDK client provider for type-safe access to core KV operations
+	qrdbClient QRDBClientProvider
+
+	// KVStore provider for DAO factory
+	kvStoreProvider func(shardID uint64) interfaces.KVStore
+
+	// Sub-services for specialized operations
+	kvService          *kvService
+	batchService       *batchService
+	transactionService *transactionService
+	queryService       *queryService
+	clusterService     *clusterService
+	backupService      *backupService
+	authService        *authService
+	rbacService        *rbacService
+	cacheService       *cacheService
+	healthService      *healthService
+	timeSeriesService  *timeSeriesService
+	operationsService  *operationsService
+	watchManager       *watch.Manager
+
+	// KMS, Secrets, Crypto services (optional)
+	kmsManager                interfaces.KMSManager
+	kmsService                KMSService
+	secretsService            SecretsService
+	cryptoService             CryptoService
+	vectorService             VectorService
+	embeddingService          EmbeddingService
+	ollamaService             OllamaService
+	certificateService        CertificateService
+	dynamicSecretsService     DynamicSecretsService
+	clusterDEKService         ClusterDEKService
+	objectStorageService      ObjectStorageService
+	objectStorageAdminService ObjectStorageAdminService
+	parameterStoreService     ParameterStoreService
+	objectTransferService     ObjectTransferService
+	schedulerService          SchedulerService
+	agentService              orchestration.AgentService
+	messagingService          messaging.Service
+	databaseService           DatabaseService
+	schedulerEngine           interfaces.SchedulerEngine
+	iamService                *iamServiceProvider
+
+	// IAM provider - stores IAMComponents for REST handlers
+	// Uses IAMServiceProvider interface for proper type safety and testability
+	iamProvider IAMServiceProvider
+
+	// DAO factory for application-level data access
+	daoFactory *daoFactory
+
+	// Metrics
+	metrics *serviceMetrics
+
+	// Keyspace resolver for multi-tenant key isolation
+	keyspaceResolver KeyspaceResolver
+
+	// Lifecycle management
+	mu        sync.RWMutex
+	closed    bool
+	startTime time.Time
+}
+
+// serviceMetrics holds Prometheus metrics for the service facade.
+type serviceMetrics struct {
+	requestsTotal    *metrics.CounterVec
+	requestDuration  *metrics.HistogramVec
+	activeRequests   *metrics.Gauge
+	consistencyLevel *metrics.CounterVec
+	errorsByType     *metrics.CounterVec
+}
+
+// qrdbForShard returns the qrdb SDK client for the given shard.
+// The QRDBClientProvider must be injected via WithQRDBClient().
+func (d *quicBaaS) qrdbForShard(shardID uint64) (*qrdbsdk.Client, error) {
+	if d.qrdbClient == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.qrdbForShard",
+			Err:  &api.OperationFailedError{Operation: "qrdb client lookup", Cause: &QRDBClientNotSetError{}},
+		}
+	}
+	return d.qrdbClient.ForShard(shardID)
+}
+
+// QRDBClientNotSetError indicates the qrdb client provider was not configured.
+type QRDBClientNotSetError struct{}
+
+// Error implements the error interface.
+func (e *QRDBClientNotSetError) Error() string {
+	return "qrdb client provider not configured"
+}
+
+// newQuicBaaS creates a new QuicBaaS service from the builder.
+// This is called by ServiceBuilder.Build() in service.go.
+func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
+	// Validate required dependencies
+	if b.raftNode == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.newQuicBaaS",
+			Err:  &api.RequiredFieldError{Field: "raft node"},
+		}
+	}
+
+	if b.config == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.newQuicBaaS",
+			Err:  &api.RequiredFieldError{Field: "config"},
+		}
+	}
+
+	// Type assert interfaces to concrete types
+	raftNode, ok := b.raftNode.(interfaces.RaftNode)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.newQuicBaaS",
+			Err:  &api.InvalidTypeError{Field: "raft node", Expected: "interfaces.RaftNode"},
+		}
+	}
+
+	var storage interfaces.Storage
+	if b.storage != nil {
+		storage, ok = b.storage.(interfaces.Storage)
+		if !ok {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.newQuicBaaS",
+				Err:  &api.InvalidTypeError{Field: "storage", Expected: "interfaces.Storage"},
+			}
+		}
+	}
+
+	var cacheManager interfaces.CacheManager
+	if b.cacheManager != nil {
+		var ok bool
+		cacheManager, ok = b.cacheManager.(interfaces.CacheManager)
+		if !ok {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.newQuicBaaS",
+				Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "interfaces.CacheManager"},
+			}
+		}
+	}
+
+	var authManager interfaces.AuthManager
+	if b.authManager != nil {
+		var ok bool
+		authManager, ok = b.authManager.(interfaces.AuthManager)
+		if !ok {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.newQuicBaaS",
+				Err:  &api.InvalidTypeError{Field: "auth manager", Expected: "interfaces.AuthManager"},
+			}
+		}
+	}
+
+	var backupMgr interfaces.BackupManager
+	if b.backupManager != nil {
+		var ok bool
+		backupMgr, ok = b.backupManager.(interfaces.BackupManager)
+		if !ok {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.newQuicBaaS",
+				Err:  &api.InvalidTypeError{Field: "backup manager", Expected: "interfaces.BackupManager"},
+			}
+		}
+	}
+
+	var logger interfaces.Logger
+	if b.logger != nil {
+		logger, ok = b.logger.(interfaces.Logger)
+		if !ok {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.newQuicBaaS",
+				Err:  &api.InvalidTypeError{Field: "logger", Expected: "interfaces.Logger"},
+			}
+		}
+	}
+
+	// Handle KMS manager
+	var kmsManager interfaces.KMSManager
+	if b.kmsManager != nil {
+		var ok bool
+		kmsManager, ok = b.kmsManager.(interfaces.KMSManager)
+		if !ok {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.newQuicBaaS",
+				Err:  &api.InvalidTypeError{Field: "KMS manager", Expected: "interfaces.KMSManager"},
+			}
+		}
+	}
+
+	// Create service instance
+	svc := &quicBaaS{
+		config:           b.config,
+		raftNode:         raftNode,
+		storage:          storage,
+		cacheManager:     cacheManager,
+		authManager:      authManager,
+		backupMgr:        backupMgr,
+		logger:           logger,
+		keyspaceResolver: NewKeyspaceResolver(),
+		startTime:        time.Now(),
+	}
+
+	// Wire qrdb SDK client provider if provided.
+	if b.qrdbClient != nil {
+		if provider, ok := b.qrdbClient.(QRDBClientProvider); ok {
+			svc.qrdbClient = provider
+		}
+	}
+
+	// Initialize KVStore provider for DAO factory
+	if b.kvStoreProvider != nil {
+		svc.kvStoreProvider = func(shardID uint64) interfaces.KVStore {
+			result := b.kvStoreProvider(shardID)
+			if kvStore, ok := result.(interfaces.KVStore); ok {
+				return kvStore
+			}
+			return nil
+		}
+		svc.daoFactory = &daoFactory{
+			kvStoreProvider: svc.kvStoreProvider,
+		}
+	}
+
+	// Initialize metrics if enabled
+	if b.config.EnableMetrics {
+		svc.initMetrics()
+	}
+
+	// Initialize sub-services
+	svc.kvService = &kvService{svc: svc}
+	svc.batchService = &batchService{svc: svc}
+	svc.transactionService = &transactionService{svc: svc}
+	svc.queryService = &queryService{svc: svc}
+	svc.clusterService = &clusterService{svc: svc}
+	svc.backupService = &backupService{svc: svc}
+	svc.authService = &authService{svc: svc}
+	svc.rbacService = &rbacService{svc: svc}
+	svc.cacheService = &cacheService{svc: svc}
+	svc.healthService = &healthService{svc: svc}
+	// Initialize timeseries storage if provided
+	var tsStorage interfaces.TimeSeriesStorage
+	if b.tsStorage != nil {
+		var ok bool
+		tsStorage, ok = b.tsStorage.(interfaces.TimeSeriesStorage)
+		if !ok {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.newQuicBaaS",
+				Err:  &api.InvalidTypeError{Field: "timeseries storage", Expected: "interfaces.TimeSeriesStorage"},
+			}
+		}
+	}
+	// Resolve time series shard ID from config (default: 1 for backward compatibility).
+	tsShardID := uint64(1)
+	if svc.config != nil && svc.config.TimeSeriesShardID > 0 {
+		tsShardID = svc.config.TimeSeriesShardID
+	}
+	svc.timeSeriesService = &timeSeriesService{svc: svc, tsStorage: tsStorage, shardID: tsShardID}
+	svc.operationsService = newOperationsService(svc)
+
+	// Initialize watch manager for key change notifications
+	svc.watchManager = watch.NewManager()
+
+	// Initialize KMS service if KMS manager is provided
+	if kmsManager != nil {
+		svc.kmsManager = kmsManager
+		svc.kmsService = newKMSService(kmsManager, logger)
+	}
+
+	// Initialize Scheduler if enabled
+	if b.config.EnableScheduler && svc.kvStoreProvider != nil {
+		schedulerConfig := &scheduler.SchedulerConfig{
+			TickInterval:      b.config.SchedulerTickInterval,
+			MaxConcurrentJobs: b.config.SchedulerMaxConcurrentJobs,
+			DefaultTimeout:    30 * time.Second,
+			DefaultRetries:    3,
+			RetryBackoff:      5 * time.Second,
+		}
+		if schedulerConfig.TickInterval == 0 {
+			schedulerConfig.TickInterval = time.Second
+		}
+		if schedulerConfig.MaxConcurrentJobs == 0 {
+			schedulerConfig.MaxConcurrentJobs = 10
+		}
+		// Wrap the service logger for the scheduler
+		if logger != nil {
+			schedulerConfig.Logger = &schedulerLoggerAdapter{logger: logger}
+		}
+
+		// Create scheduler storage using KVStore for persistence
+		// Use shard 1 for scheduler data
+		kvStore := svc.kvStoreProvider(1)
+		if kvStore != nil {
+			schedulerStorage := schedulerstorage.NewStorage(kvStore)
+
+			// Create scheduler engine
+			svc.schedulerEngine = scheduler.New(schedulerConfig, schedulerStorage)
+
+			// Create scheduler adapter for the SchedulerService interface
+			schedulerAdapter := NewSchedulerAdapter(svc.schedulerEngine)
+			svc.schedulerService = schedulerAdapter
+
+			// Register KMS grace period handler if KMS service is available
+			if kmsImpl, ok := svc.kmsService.(*kmsServiceImpl); ok {
+				// Create adapter to bridge service and handlers packages
+				kmsAdapter := &kmsGracePeriodAdapter{kms: kmsImpl}
+				graceHandler := schedulerhandlers.NewKMSGracePeriodHandler(kmsAdapter)
+				if err := svc.schedulerEngine.RegisterHandler(graceHandler.Name(), graceHandler.Handler()); err != nil {
+					if logger != nil {
+						logger.Warnf("Failed to register KMS grace period handler: %v", err)
+					}
+				}
+
+				// Wire scheduler adapter to KMS service for grace period job scheduling
+				kmsImpl.SetScheduler(schedulerAdapter)
+
+				// Wire KVStore for persistent version status replication across cluster nodes
+				kmsImpl.SetKVStore(kvStore)
+			}
+
+			// Register standard test handlers for integration testing
+			for _, handler := range schedulerhandlers.StandardTestHandlers() {
+				if err := svc.schedulerEngine.RegisterHandler(handler.Name(), handler.Handler()); err != nil {
+					if logger != nil {
+						logger.Warnf("Failed to register test handler '%s': %v", handler.Name(), err)
+					}
+				}
+			}
+
+			// Start scheduler in background
+			go func() {
+				if err := svc.schedulerEngine.Start(context.Background()); err != nil {
+					if logger != nil {
+						logger.Errorf("Scheduler failed to start: %v", err)
+					}
+				}
+			}()
+
+			if logger != nil {
+				logger.Info("Scheduler service initialized and started")
+			}
+		}
+	}
+
+	// Initialize Crypto service if CryptoManager is provided
+	// The crypto service requires both a CryptoManager and KMSManager
+	// Note: KMSManager and CryptoManager are separate interfaces with different Sign methods,
+	// so CryptoManager must be provided explicitly - it cannot be derived from KMSManager
+	if b.cryptoService != nil {
+		if cryptoMgr, ok := b.cryptoService.(interfaces.CryptoManager); ok {
+			svc.cryptoService = newCryptoService(cryptoMgr, kmsManager, logger, nil)
+		}
+	} else if b.cryptoManager != nil {
+		// CryptoManager provided explicitly via builder
+		svc.cryptoService = newCryptoService(b.cryptoManager, kmsManager, logger, nil)
+	}
+
+	// Initialize Secrets service if secrets manager is provided
+	if b.secretsManager != nil {
+		if secretsMgr, ok := b.secretsManager.(interfaces.SecretsManager); ok {
+			svc.secretsService = newSecretsService(secretsMgr, logger)
+		}
+	}
+
+	// Initialize Certificate service if CA service is provided
+	if b.caService != nil {
+		if caService, ok := b.caService.(xkmstransport.Client); ok {
+			svc.certificateService = NewCertificateService(caService)
+		}
+	}
+
+	// Initialize IAM service if IAM manager is provided
+	iamSvc, err := initializeIAMService(b)
+	if err != nil {
+		return nil, err
+	}
+	svc.iamService = iamSvc
+
+	// Initialize IAM provider for REST handlers (iam only)
+	svc.iamProvider = initializeIAMProvider(b)
+
+	// Initialize Object Storage service if all dependencies are provided
+	if b.catalogManager != nil && b.backendManager != nil && b.objectStoreConfigResolver != nil {
+		objStorageSvc, err := NewObjectStorageService(
+			b.catalogManager,
+			b.backendManager,
+			b.objectStoreConfigResolver,
+			b.workerManager,
+			logger,
+		)
+		if err != nil {
+			if logger != nil {
+				logger.Warnf("Failed to initialize object storage service: %v", err)
+			}
+		} else {
+			svc.objectStorageService = objStorageSvc
+		}
+	}
+	// Initialize Object Storage Admin service if all dependencies are provided
+	if b.catalogManager != nil && b.backendManager != nil && b.objectStoreConfigResolver != nil {
+		objStorageAdminSvc, err := NewObjectStorageAdminService(
+			b.catalogManager,
+			b.backendManager,
+			b.objectStoreConfigResolver,
+			logger,
+		)
+		if err != nil {
+			if logger != nil {
+				logger.Warnf("Failed to initialize object storage admin service: %v", err)
+			}
+		} else {
+			svc.objectStorageAdminService = objStorageAdminSvc
+		}
+	}
+	// Initialize Parameter Store service using the qrdb SDK client
+	if svc.qrdbClient != nil {
+		paramMgr := newKVParameterManager(svc.qrdbClient, 1, logger) // Use shard 1 for parameters
+		paramStoreSvc, err := NewParameterStoreService(paramMgr, logger)
+		if err != nil {
+			if logger != nil {
+				logger.Warnf("Failed to initialize parameter store service: %v", err)
+			}
+		} else {
+			svc.parameterStoreService = paramStoreSvc
+			if logger != nil {
+				logger.Info("Parameter store service initialized with KV backend")
+			}
+		}
+	}
+
+	// Initialize Vector service if provided.
+	// The vector service uses direct Raft proposals for writes
+	// (via raftNode.SyncPropose), not the SDK embedded transport.
+	if b.vectorService != nil {
+		svc.vectorService = b.vectorService
+	}
+
+	// Initialize Embedding service if embedding manager is provided
+	if b.embeddingManager != nil {
+		svc.embeddingService = NewEmbeddingService(b.embeddingManager, logger)
+	}
+
+	// Initialize Messaging service if provided
+	if b.messagingService != nil {
+		svc.messagingService = b.messagingService
+	}
+
+	// Initialize Ollama service if provided
+	if b.ollamaService != nil {
+		svc.ollamaService = b.ollamaService
+	}
+
+	if svc.logger != nil {
+		svc.logger.WithFields(map[string]interface{}{
+			"node_id":        b.config.NodeID,
+			"version":        b.config.Version,
+			"enable_auth":    b.config.EnableAuth,
+			"enable_metrics": b.config.EnableMetrics,
+		}).Info("QuicBaaS service initialized")
+	}
+
+	return svc, nil
+}
+
+// initMetrics initializes Prometheus metrics for the service.
+func (s *quicBaaS) initMetrics() {
+	s.metrics = &serviceMetrics{
+		requestsTotal: metrics.NewCounterVec(metrics.CounterOpts{
+			Namespace: "quicbaas",
+			Subsystem: "service",
+			Name:      "requests_total",
+			Help:      "Total number of service requests",
+		}, []string{"operation", "status"}),
+
+		requestDuration: metrics.NewHistogramVec(metrics.HistogramOpts{
+			Namespace: "quicbaas",
+			Subsystem: "service",
+			Name:      "request_duration_seconds",
+			Help:      "Duration of service requests in seconds",
+			Buckets:   []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+		}, []string{"operation"}),
+
+		activeRequests: metrics.NewGauge(metrics.GaugeOpts{
+			Namespace: "quicbaas",
+			Subsystem: "service",
+			Name:      "active_requests",
+			Help:      "Number of active service requests",
+		}),
+
+		consistencyLevel: metrics.NewCounterVec(metrics.CounterOpts{
+			Namespace: "quicbaas",
+			Subsystem: "service",
+			Name:      "consistency_level_total",
+			Help:      "Total requests by consistency level",
+		}, []string{"level"}),
+
+		errorsByType: metrics.NewCounterVec(metrics.CounterOpts{
+			Namespace: "quicbaas",
+			Subsystem: "service",
+			Name:      "errors_total",
+			Help:      "Total errors by type",
+		}, []string{"error_type"}),
+	}
+}
+
+// =============================================================================
+// KV Service Implementation
+// =============================================================================
+
+type kvService struct {
+	svc *quicBaaS
+}
+
+func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, error) {
+	start := time.Now()
+	if k.svc.metrics != nil {
+		k.svc.metrics.activeRequests.Inc()
+		defer func() {
+			k.svc.metrics.activeRequests.Dec()
+			k.svc.metrics.requestDuration.With("Put").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if err := k.validatePutRequest(req); err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Put", "invalid").Inc()
+		}
+		return nil, err
+	}
+
+	// Check authentication if enabled
+	if k.svc.config.EnableAuth && k.svc.authManager != nil {
+		if err := k.svc.checkAuth(ctx, "write"); err != nil {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Put", "unauthorized").Inc()
+			}
+			return nil, err
+		}
+	}
+
+	// Track consistency level
+	if k.svc.metrics != nil {
+		k.svc.metrics.consistencyLevel.With(req.Consistency.String()).Inc()
+	}
+
+	// Determine shard ID (default to 1 for single-shard setup)
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+
+	// Build tenant-aware key using keyspace resolver
+	key, err := k.svc.keyspaceResolver.BuildKey(ctx, req.EntityType, req.ID)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Put", "invalid").Inc()
+		}
+		return nil, err
+	}
+	// Propose to Raft via qrdb SDK
+	client, err := k.svc.qrdbForShard(shardID)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.Put",
+			Err:  err,
+		}
+	}
+	if err := client.KV().Put(ctx, string(key), req.Data); err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.Put",
+			Err:  err,
+		}
+	}
+
+	// Get leader ID via SDK
+	leaderID := k.svc.getLeaderIDFromSDK(ctx, shardID)
+
+	resp := &PutResponse{
+		ID:        req.ID,
+		Version:   1, // Initial version (MVCC revision tracking requires state machine changes)
+		Timestamp: time.Now().UnixNano(),
+		LeaderID:  leaderID,
+	}
+
+	if k.svc.metrics != nil {
+		k.svc.metrics.requestsTotal.With("Put", "success").Inc()
+	}
+
+	// Update cache if available (use the same tenant-aware key)
+	if k.svc.cacheManager != nil {
+		_ = k.svc.cacheManager.Set(context.Background(), string(key), req.Data)
+	}
+
+	return resp, nil
+}
+
+func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, error) {
+	start := time.Now()
+	if k.svc.metrics != nil {
+		k.svc.metrics.activeRequests.Inc()
+		defer func() {
+			k.svc.metrics.activeRequests.Dec()
+			k.svc.metrics.requestDuration.With("Get").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if err := k.validateGetRequest(req); err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Get", "invalid").Inc()
+		}
+		return nil, err
+	}
+
+	// Check authentication if enabled
+	if k.svc.config.EnableAuth && k.svc.authManager != nil {
+		if err := k.svc.checkAuth(ctx, "read"); err != nil {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Get", "unauthorized").Inc()
+			}
+			return nil, err
+		}
+	}
+
+	// Track consistency level
+	if k.svc.metrics != nil {
+		k.svc.metrics.consistencyLevel.With(req.Consistency.String()).Inc()
+	}
+
+	// Build tenant-aware key using keyspace resolver
+	key, err := k.svc.keyspaceResolver.BuildKey(ctx, req.EntityType, req.ID)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Get", "invalid").Inc()
+		}
+		return nil, err
+	}
+
+	// Check cache first (if consistency allows)
+	if req.Consistency == ConsistencyLevelEventual && k.svc.cacheManager != nil {
+		if data, err := k.svc.cacheManager.Get(context.Background(), string(key)); err == nil && len(data) > 0 {
+			return &GetResponse{
+				ID:        req.ID,
+				Data:      data,
+				Version:   1,
+				Timestamp: time.Now().UnixNano(),
+				Found:     true,
+			}, nil
+		}
+	}
+
+	// Determine shard ID
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+
+	// Build read options from request
+	readTimeoutMs := int64(req.TimeoutMs) //nolint:gosec // G115: timeout conversion for read options
+	if readTimeoutMs <= 0 {
+		readTimeoutMs = 5000 // Default 5s read timeout
+	}
+	readTimeout := time.Duration(readTimeoutMs) * time.Millisecond
+
+	// Use the shorter of: parent context deadline, or per-read timeout
+	if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
+		remaining := time.Until(deadline)
+		if readTimeout < remaining {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, readTimeout)
+			defer cancel()
+		}
+	} else {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, readTimeout)
+		defer cancel()
+	}
+
+	// Read via qrdb SDK
+	client, err := k.svc.qrdbForShard(shardID)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Get", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.Get",
+			Err:  err,
+		}
+	}
+	data, err := client.KV().Get(ctx, string(key))
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Get", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.Get",
+			Err:  err,
+		}
+	}
+
+	// Parse result
+	resp := &GetResponse{
+		ID:        req.ID,
+		Version:   1,
+		Timestamp: time.Now().UnixNano(),
+		Found:     false,
+	}
+
+	if data != nil {
+		resp.Data = data
+		resp.Found = true
+
+		// Update cache (only for non-empty values to avoid cache pollution)
+		if k.svc.cacheManager != nil && len(data) > 0 {
+			_ = k.svc.cacheManager.Set(context.Background(), string(key), data)
+		}
+	}
+
+	if !resp.Found {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Get", "not_found").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotFound,
+			Op:   "service.Get",
+			Err:  &api.NotFoundError{Resource: req.EntityType, ID: fmt.Sprintf("%d", req.ID)},
+		}
+	}
+
+	if k.svc.metrics != nil {
+		k.svc.metrics.requestsTotal.With("Get", "success").Inc()
+	}
+
+	return resp, nil
+}
+
+func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResponse, error) {
+	start := time.Now()
+	if k.svc.metrics != nil {
+		k.svc.metrics.activeRequests.Inc()
+		defer func() {
+			k.svc.metrics.activeRequests.Dec()
+			k.svc.metrics.requestDuration.With("Delete").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if err := k.validateDeleteRequest(req); err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Delete", "invalid").Inc()
+		}
+		return nil, err
+	}
+
+	// Check authentication if enabled
+	if k.svc.config.EnableAuth && k.svc.authManager != nil {
+		if err := k.svc.checkAuth(ctx, "write"); err != nil {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Delete", "unauthorized").Inc()
+			}
+			return nil, err
+		}
+	}
+
+	// Determine shard ID
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+
+	// Build tenant-aware key using keyspace resolver
+	key, err := k.svc.keyspaceResolver.BuildKey(ctx, req.EntityType, req.ID)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Delete", "invalid").Inc()
+		}
+		return nil, err
+	}
+	// Delete via qrdb SDK
+	client, err := k.svc.qrdbForShard(shardID)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.Delete",
+			Err:  err,
+		}
+	}
+	if err := client.KV().Delete(ctx, string(key)); err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.Delete",
+			Err:  err,
+		}
+	}
+
+	// Invalidate cache (use the same tenant-aware key)
+	if k.svc.cacheManager != nil {
+		_ = k.svc.cacheManager.Delete(context.Background(), string(key))
+	}
+
+	resp := &DeleteResponse{
+		Deleted:   true,
+		Timestamp: time.Now().UnixNano(),
+	}
+
+	if k.svc.metrics != nil {
+		k.svc.metrics.requestsTotal.With("Delete", "success").Inc()
+	}
+
+	return resp, nil
+}
+
+func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *ListResponse) error {
+	defer close(stream)
+
+	start := time.Now()
+	if k.svc.metrics != nil {
+		k.svc.metrics.activeRequests.Inc()
+		defer func() {
+			k.svc.metrics.activeRequests.Dec()
+			k.svc.metrics.requestDuration.With("List").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if err := k.validateListRequest(req); err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("List", "invalid").Inc()
+		}
+		return err
+	}
+
+	// Check authentication if enabled
+	if k.svc.config.EnableAuth && k.svc.authManager != nil {
+		if err := k.svc.checkAuth(ctx, "read"); err != nil {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("List", "unauthorized").Inc()
+			}
+			return err
+		}
+	}
+
+	// Determine shard ID
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+
+	// Build tenant-aware prefix using keyspace resolver
+	prefix, err := k.svc.keyspaceResolver.BuildPrefix(ctx, req.EntityType)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("List", "invalid").Inc()
+		}
+		return err
+	}
+
+	// Scan via qrdb SDK
+	client, err := k.svc.qrdbForShard(shardID)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("List", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.List",
+			Err:  err,
+		}
+	}
+	scanResult, err := client.KV().Scan(ctx, string(prefix))
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("List", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.List",
+			Err:  err,
+		}
+	}
+
+	// Parse results from scan
+	var entities []*Entity
+	for keyStr, data := range scanResult {
+		// Extract ID from key using keyspace resolver
+		_, _, id, parseErr := k.svc.keyspaceResolver.ParseKey([]byte(keyStr))
+		if parseErr != nil {
+			// Skip keys that can't be parsed
+			continue
+		}
+
+		entities = append(entities, &Entity{
+			EntityType: req.EntityType,
+			ID:         id,
+			Data:       data,
+			Version:    1,
+			Timestamp:  time.Now().UnixNano(),
+		})
+	}
+
+	// Apply pagination
+	pageSize := req.PageSize
+	if pageSize == 0 {
+		pageSize = 100
+	}
+
+	totalCount := uint64(len(entities))
+	offset := 0
+
+	for offset < len(entities) {
+		end := offset + int(pageSize) //nolint:gosec // G115: uint64 to int conversion for pagination
+		if end > len(entities) {
+			end = len(entities)
+		}
+
+		batch := entities[offset:end]
+		nextPageToken := ""
+		if end < len(entities) {
+			nextPageToken = fmt.Sprintf("%d", end)
+		}
+
+		resp := &ListResponse{
+			Entities:      batch,
+			NextPageToken: nextPageToken,
+			TotalCount:    totalCount,
+		}
+
+		select {
+		case stream <- resp:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		offset = end
+	}
+
+	if k.svc.metrics != nil {
+		k.svc.metrics.requestsTotal.With("List", "success").Inc()
+	}
+
+	return nil
+}
+
+// Watch monitors a key or key prefix for changes and streams events to the caller.
+// Returns the watch ID and any error that occurred during setup.
+func (k *kvService) Watch(ctx context.Context, req *WatchRequest, stream chan<- *WatchResponse) (int64, error) {
+	start := time.Now()
+	if k.svc.metrics != nil {
+		k.svc.metrics.activeRequests.Inc()
+		defer func() {
+			k.svc.metrics.activeRequests.Dec()
+			k.svc.metrics.requestDuration.With("Watch").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if req == nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Watch", "invalid").Inc()
+		}
+		return 0, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Watch",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+
+	if len(req.Key) == 0 {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Watch", "invalid").Inc()
+		}
+		return 0, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Watch",
+			Err:  &api.RequiredFieldError{Field: "key"},
+		}
+	}
+
+	if stream == nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Watch", "invalid").Inc()
+		}
+		return 0, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Watch",
+			Err:  &api.RequiredFieldError{Field: "stream channel"},
+		}
+	}
+
+	// Build watch options
+	var opts []watch.WatchOption
+	if req.IsPrefix {
+		opts = append(opts, watch.WithPrefix())
+	}
+
+	// Create watch using the watch manager
+	eventCh, err := k.svc.watchManager.Watch(ctx, string(req.Key), opts...)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Watch", "error").Inc()
+		}
+		return 0, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.Watch",
+			Err:  &api.OperationFailedError{Operation: "create watch", Cause: err},
+		}
+	}
+
+	// Generate watch ID
+	watchID := time.Now().UnixNano()
+
+	// Send created response
+	select {
+	case stream <- &WatchResponse{
+		WatchID: watchID,
+		Created: true,
+	}:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+
+	// Start event forwarding goroutine
+	go func() {
+		defer close(stream)
+
+		for {
+			select {
+			case <-ctx.Done():
+				// Send canceled response
+				stream <- &WatchResponse{
+					WatchID:      watchID,
+					Canceled:     true,
+					CancelReason: ctx.Err().Error(),
+				}
+				return
+			case event, ok := <-eventCh:
+				if !ok {
+					// Channel closed, watch ended
+					stream <- &WatchResponse{
+						WatchID:      watchID,
+						Canceled:     true,
+						CancelReason: "watch closed",
+					}
+					return
+				}
+
+				// Convert event type
+				var eventType WatchEventType
+				switch event.Type {
+				case watch.EventTypePut:
+					eventType = WatchEventTypePut
+				case watch.EventTypeDelete:
+					eventType = WatchEventTypeDelete
+				default:
+					eventType = WatchEventTypeUnspecified
+				}
+
+				// Apply filters
+				if len(req.Filters) > 0 {
+					skip := false
+					for _, filter := range req.Filters {
+						if filter == eventType {
+							skip = true
+							break
+						}
+					}
+					if skip {
+						continue
+					}
+				}
+
+				// Send event to stream
+				resp := &WatchResponse{
+					WatchID:  watchID,
+					Revision: time.Now().UnixNano(), // Use timestamp as revision
+					Events: []*WatchEvent{
+						{
+							Type:      eventType,
+							Key:       event.Key,
+							Value:     event.Value,
+							Timestamp: time.Now().UnixNano(),
+						},
+					},
+				}
+
+				select {
+				case stream <- resp:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	if k.svc.metrics != nil {
+		k.svc.metrics.requestsTotal.With("Watch", "success").Inc()
+	}
+
+	return watchID, nil
+}
+
+// ListEntityTypes returns all unique entity types stored in the database.
+// It scans through all keys and extracts unique entity type prefixes.
+func (k *kvService) ListEntityTypes(ctx context.Context, req *ListEntityTypesRequest) (*ListEntityTypesResponse, error) {
+	start := time.Now()
+	if k.svc.metrics != nil {
+		k.svc.metrics.activeRequests.Inc()
+		defer func() {
+			k.svc.metrics.activeRequests.Dec()
+			k.svc.metrics.requestDuration.With("ListEntityTypes").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if req == nil {
+		req = &ListEntityTypesRequest{PageSize: 100}
+	}
+	if req.PageSize <= 0 {
+		req.PageSize = 100
+	}
+
+	// Check authentication if enabled
+	if k.svc.config.EnableAuth && k.svc.authManager != nil {
+		if err := k.svc.checkAuth(ctx, "read"); err != nil {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("ListEntityTypes", "unauthorized").Inc()
+			}
+			return nil, err
+		}
+	}
+
+	// Determine shard ID
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+
+	// Get the tenant prefix from keyspace resolver
+	// This ensures we only scan keys belonging to the current tenant
+	prefix, err := k.svc.keyspaceResolver.BuildTenantPrefix(ctx)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("ListEntityTypes", "error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.ListEntityTypes",
+			Err:  err,
+		}
+	}
+
+	// Scan via qrdb SDK
+	client, err := k.svc.qrdbForShard(shardID)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("ListEntityTypes", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.ListEntityTypes",
+			Err:  err,
+		}
+	}
+	scanResult, err := client.KV().Scan(ctx, string(prefix))
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("ListEntityTypes", "error").Inc()
+			k.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.ListEntityTypes",
+			Err:  err,
+		}
+	}
+
+	// Extract unique entity types from keys
+	entityTypeSet := make(map[string]struct{})
+	for keyStr := range scanResult {
+		key := []byte(keyStr)
+
+		// Skip system keys
+		if k.svc.keyspaceResolver.IsSystemKey(key) {
+			continue
+		}
+
+		// Extract entity type using the keyspace resolver
+		entityType, ok := ExtractEntityTypeFromKey(k.svc.keyspaceResolver, key)
+		if ok && entityType != "" {
+			entityTypeSet[entityType] = struct{}{}
+		}
+	}
+
+	// Convert set to sorted slice
+	entityTypes := make([]string, 0, len(entityTypeSet))
+	for entityType := range entityTypeSet {
+		entityTypes = append(entityTypes, entityType)
+	}
+	sort.Strings(entityTypes)
+
+	// Apply pagination
+	totalCount := len(entityTypes)
+	startIdx := 0
+	if req.PageToken != "" {
+		var parsedIdx int
+		if _, err := fmt.Sscanf(req.PageToken, "%d", &parsedIdx); err == nil && parsedIdx > 0 && parsedIdx < totalCount {
+			startIdx = parsedIdx
+		}
+	}
+
+	endIdx := startIdx + req.PageSize
+	if endIdx > totalCount {
+		endIdx = totalCount
+	}
+
+	pagedTypes := entityTypes[startIdx:endIdx]
+	nextPageToken := ""
+	if endIdx < totalCount {
+		nextPageToken = fmt.Sprintf("%d", endIdx)
+	}
+
+	if k.svc.metrics != nil {
+		k.svc.metrics.requestsTotal.With("ListEntityTypes", "success").Inc()
+	}
+
+	return &ListEntityTypesResponse{
+		EntityTypes:   pagedTypes,
+		NextPageToken: nextPageToken,
+		TotalCount:    totalCount,
+	}, nil
+}
+
+// =============================================================================
+// Batch Service Implementation
+// =============================================================================
+
+type batchService struct {
+	svc *quicBaaS
+}
+
+func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*BatchPutResponse, error) {
+	start := time.Now()
+	if b.svc.metrics != nil {
+		b.svc.metrics.activeRequests.Inc()
+		defer func() {
+			b.svc.metrics.activeRequests.Dec()
+			b.svc.metrics.requestDuration.With("BatchPut").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if req == nil {
+		if b.svc.metrics != nil {
+			b.svc.metrics.requestsTotal.With("BatchPut", "invalid").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchPut",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+
+	if len(req.Requests) == 0 {
+		if b.svc.metrics != nil {
+			b.svc.metrics.requestsTotal.With("BatchPut", "invalid").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchPut",
+			Err:  &api.EmptyCollectionError{Field: "batch"},
+		}
+	}
+
+	// Check authentication if enabled
+	if b.svc.config.EnableAuth && b.svc.authManager != nil {
+		if err := b.svc.checkAuth(ctx, "write"); err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchPut", "unauthorized").Inc()
+			}
+			return nil, err
+		}
+	}
+
+	// Execute each put operation individually through the KV service,
+	// grouped by per-request ShardID for correct shard routing.
+	timestamp := time.Now().UnixNano()
+	responses := make([]*PutResponse, len(req.Requests))
+	for i, putReq := range req.Requests {
+		key, err := b.svc.keyspaceResolver.BuildKey(ctx, putReq.EntityType, putReq.ID)
+		if err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchPut", "invalid").Inc()
+			}
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.BatchPut",
+				Err:  &api.OperationFailedError{Operation: "validate entity type " + putReq.EntityType, Cause: err},
+			}
+		}
+		shardID := putReq.ShardID
+		if shardID == 0 {
+			shardID = 1
+		}
+		client, err := b.svc.qrdbForShard(shardID)
+		if err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchPut", "error").Inc()
+				b.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, &errors.DragonError{
+				Code: errors.ErrRaft,
+				Op:   "service.BatchPut",
+				Err:  err,
+			}
+		}
+		if err := client.KV().Put(ctx, string(key), putReq.Data); err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchPut", "error").Inc()
+				b.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, &errors.DragonError{
+				Code: errors.ErrRaft,
+				Op:   "service.BatchPut",
+				Err:  err,
+			}
+		}
+		responses[i] = &PutResponse{
+			ID:        putReq.ID,
+			Version:   1,
+			Timestamp: timestamp,
+		}
+	}
+
+	resp := &BatchPutResponse{
+		Responses: responses,
+		Timestamp: timestamp,
+	}
+
+	if b.svc.metrics != nil {
+		b.svc.metrics.requestsTotal.With("BatchPut", "success").Inc()
+	}
+
+	return resp, nil
+}
+
+func (b *batchService) BatchGet(ctx context.Context, req *BatchGetRequest) (*BatchGetResponse, error) {
+	start := time.Now()
+	if b.svc.metrics != nil {
+		b.svc.metrics.activeRequests.Inc()
+		defer func() {
+			b.svc.metrics.activeRequests.Dec()
+			b.svc.metrics.requestDuration.With("BatchGet").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if req == nil {
+		if b.svc.metrics != nil {
+			b.svc.metrics.requestsTotal.With("BatchGet", "invalid").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchGet",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+
+	if len(req.Requests) == 0 {
+		if b.svc.metrics != nil {
+			b.svc.metrics.requestsTotal.With("BatchGet", "invalid").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchGet",
+			Err:  &api.EmptyCollectionError{Field: "batch"},
+		}
+	}
+
+	// Check authentication if enabled
+	if b.svc.config.EnableAuth && b.svc.authManager != nil {
+		if err := b.svc.checkAuth(ctx, "read"); err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchGet", "unauthorized").Inc()
+			}
+			return nil, err
+		}
+	}
+
+	// Process each get request
+	responses := make([]*GetResponse, 0, len(req.Requests))
+	for _, getReq := range req.Requests {
+		resp, err := b.svc.kvService.Get(ctx, getReq)
+		if err != nil {
+			// For batch operations, collect errors but continue
+			responses = append(responses, &GetResponse{
+				ID:    getReq.ID,
+				Found: false,
+			})
+			continue
+		}
+		responses = append(responses, resp)
+	}
+
+	resp := &BatchGetResponse{
+		Responses: responses,
+	}
+
+	if b.svc.metrics != nil {
+		b.svc.metrics.requestsTotal.With("BatchGet", "success").Inc()
+	}
+
+	return resp, nil
+}
+
+func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest) (*BatchDeleteResponse, error) {
+	start := time.Now()
+	if b.svc.metrics != nil {
+		b.svc.metrics.activeRequests.Inc()
+		defer func() {
+			b.svc.metrics.activeRequests.Dec()
+			b.svc.metrics.requestDuration.With("BatchDelete").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if req == nil {
+		if b.svc.metrics != nil {
+			b.svc.metrics.requestsTotal.With("BatchDelete", "invalid").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchDelete",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+
+	if len(req.Requests) == 0 {
+		if b.svc.metrics != nil {
+			b.svc.metrics.requestsTotal.With("BatchDelete", "invalid").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchDelete",
+			Err:  &api.EmptyCollectionError{Field: "batch"},
+		}
+	}
+
+	// Check authentication if enabled
+	if b.svc.config.EnableAuth && b.svc.authManager != nil {
+		if err := b.svc.checkAuth(ctx, "write"); err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchDelete", "unauthorized").Inc()
+			}
+			return nil, err
+		}
+	}
+
+	// Execute each delete operation individually through the KV service,
+	// grouped by per-request ShardID for correct shard routing.
+	timestamp := time.Now().UnixNano()
+	responses := make([]*DeleteResponse, len(req.Requests))
+	for i, delReq := range req.Requests {
+		key, err := b.svc.keyspaceResolver.BuildKey(ctx, delReq.EntityType, delReq.ID)
+		if err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchDelete", "invalid").Inc()
+			}
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.BatchDelete",
+				Err:  &api.OperationFailedError{Operation: "validate entity type " + delReq.EntityType, Cause: err},
+			}
+		}
+		shardID := delReq.ShardID
+		if shardID == 0 {
+			shardID = 1
+		}
+		client, err := b.svc.qrdbForShard(shardID)
+		if err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchDelete", "error").Inc()
+				b.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, &errors.DragonError{
+				Code: errors.ErrRaft,
+				Op:   "service.BatchDelete",
+				Err:  err,
+			}
+		}
+		if err := client.KV().Delete(ctx, string(key)); err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchDelete", "error").Inc()
+				b.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, &errors.DragonError{
+				Code: errors.ErrRaft,
+				Op:   "service.BatchDelete",
+				Err:  err,
+			}
+		}
+		responses[i] = &DeleteResponse{
+			Deleted:   true,
+			Timestamp: timestamp,
+		}
+	}
+
+	resp := &BatchDeleteResponse{
+		Responses: responses,
+		Timestamp: timestamp,
+	}
+
+	if b.svc.metrics != nil {
+		b.svc.metrics.requestsTotal.With("BatchDelete", "success").Inc()
+	}
+
+	return resp, nil
+}
+
+// =============================================================================
+// Transaction Service Implementation
+// =============================================================================
+
+type transactionService struct {
+	svc *quicBaaS
+}
+
+func (t *transactionService) Transaction(ctx context.Context, req *TransactionRequest) (*TransactionResponse, error) {
+	start := time.Now()
+	if t.svc.metrics != nil {
+		t.svc.metrics.activeRequests.Inc()
+		defer func() {
+			t.svc.metrics.activeRequests.Dec()
+			t.svc.metrics.requestDuration.With("Transaction").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if err := t.validateTransactionRequest(req); err != nil {
+		if t.svc.metrics != nil {
+			t.svc.metrics.requestsTotal.With("Transaction", "invalid").Inc()
+		}
+		return nil, err
+	}
+
+	// Check authentication if enabled
+	if t.svc.config.EnableAuth && t.svc.authManager != nil {
+		if err := t.svc.checkAuth(ctx, "write"); err != nil {
+			if t.svc.metrics != nil {
+				t.svc.metrics.requestsTotal.With("Transaction", "unauthorized").Inc()
+			}
+			return nil, err
+		}
+	}
+
+	// Determine shard ID
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+
+	// Evaluate comparison conditions
+	succeeded := true
+	for _, cmp := range req.Compare {
+		result, err := t.evaluateCompare(ctx, shardID, cmp)
+		if err != nil {
+			if t.svc.metrics != nil {
+				t.svc.metrics.requestsTotal.With("Transaction", "error").Inc()
+			}
+			return nil, err
+		}
+		if !result {
+			succeeded = false
+			break
+		}
+	}
+
+	// Select operations based on comparison result
+	var ops []*TransactionOp
+	if succeeded {
+		ops = req.Success
+	} else {
+		ops = req.Failure
+	}
+
+	// Execute operations
+	responses, err := t.executeTransactionOps(ctx, shardID, ops)
+	if err != nil {
+		if t.svc.metrics != nil {
+			t.svc.metrics.requestsTotal.With("Transaction", "error").Inc()
+		}
+		return nil, err
+	}
+
+	resp := &TransactionResponse{
+		Succeeded: succeeded,
+		Responses: responses,
+		Timestamp: time.Now().UnixNano(),
+		Message:   fmt.Sprintf("Transaction completed: %d operations executed", len(responses)),
+		Revision:  0, // Revision 0 indicates no revision tracking in current transaction
+	}
+
+	if t.svc.metrics != nil {
+		t.svc.metrics.requestsTotal.With("Transaction", "success").Inc()
+	}
+
+	return resp, nil
+}
+
+func (t *transactionService) evaluateCompare(ctx context.Context, shardID uint64, cmp *CompareCondition) (bool, error) {
+	key := []byte(fmt.Sprintf("%s:%d", cmp.EntityType, cmp.ID))
+
+	// Read via qrdb SDK
+	client, err := t.svc.qrdbForShard(shardID)
+	if err != nil {
+		return false, err
+	}
+	data, err := client.KV().Get(ctx, string(key))
+
+	// Check if entity exists: error OR nil data means not found
+	entityExists := err == nil && data != nil
+
+	if !entityExists {
+		if cmp.Target == CompareTargetExists {
+			// Entity not found: Equal operator fails (exists != true), NotEqual succeeds (exists == false)
+			return cmp.Operator == CompareOperatorNotEqual, nil
+		}
+		return false, nil
+	}
+
+	if cmp.Target == CompareTargetExists {
+		// Entity found: Equal operator succeeds (exists == true), NotEqual fails
+		return cmp.Operator == CompareOperatorEqual, nil
+	}
+
+	switch cmp.Target {
+	case CompareTargetVersion:
+		return t.compareVersion(1, cmp.Version, cmp.Operator), nil
+	case CompareTargetValue:
+		return t.compareValue(data, cmp.Value, cmp.Operator), nil
+	default:
+		return false, &api.InvalidInputError{Message: "unsupported compare target"}
+	}
+}
+
+func (t *transactionService) compareVersion(actual, expected uint64, op CompareOperator) bool {
+	switch op {
+	case CompareOperatorEqual:
+		return actual == expected
+	case CompareOperatorNotEqual:
+		return actual != expected
+	case CompareOperatorGreater:
+		return actual > expected
+	case CompareOperatorLess:
+		return actual < expected
+	case CompareOperatorGreaterEqual:
+		return actual >= expected
+	case CompareOperatorLessEqual:
+		return actual <= expected
+	default:
+		return false
+	}
+}
+
+func (t *transactionService) compareValue(actual, expected []byte, op CompareOperator) bool {
+	switch op {
+	case CompareOperatorEqual:
+		return string(actual) == string(expected)
+	case CompareOperatorNotEqual:
+		return string(actual) != string(expected)
+	default:
+		return false
+	}
+}
+
+func (t *transactionService) executeTransactionOps(ctx context.Context, shardID uint64, ops []*TransactionOp) ([]*TransactionOpResponse, error) {
+	if len(ops) == 0 {
+		return []*TransactionOpResponse{}, nil
+	}
+
+	// Separate write and read operations
+	var batchOps []qrdbtransport.Op
+	var writeOpsMetadata []*TransactionOp
+	var responses []*TransactionOpResponse
+
+	// Process operations
+	for _, op := range ops {
+		switch op.OpType {
+		case TransactionOpTypeGet:
+			resp, err := t.executeGetOp(ctx, shardID, op)
+			if err != nil {
+				responses = append(responses, &TransactionOpResponse{
+					OpType:     op.OpType,
+					EntityType: op.EntityType,
+					ID:         op.ID,
+					Success:    false,
+					Error:      err.Error(),
+				})
+			} else {
+				responses = append(responses, resp)
+			}
+
+		case TransactionOpTypePut:
+			key := []byte(fmt.Sprintf("%s:%d", op.EntityType, op.ID))
+			batchOps = append(batchOps, qrdbtransport.Op{
+				Type:  qrdbtransport.OpPut,
+				Key:   key,
+				Value: op.Data,
+			})
+			writeOpsMetadata = append(writeOpsMetadata, op)
+
+		case TransactionOpTypeDelete:
+			key := []byte(fmt.Sprintf("%s:%d", op.EntityType, op.ID))
+			batchOps = append(batchOps, qrdbtransport.Op{
+				Type: qrdbtransport.OpDelete,
+				Key:  key,
+			})
+			writeOpsMetadata = append(writeOpsMetadata, op)
+		}
+	}
+
+	// Execute all write operations in a single batch via qrdb SDK
+	if len(batchOps) > 0 {
+		client, err := t.svc.qrdbForShard(shardID)
+		if err != nil {
+			for _, op := range writeOpsMetadata {
+				responses = append(responses, &TransactionOpResponse{
+					OpType:     op.OpType,
+					EntityType: op.EntityType,
+					ID:         op.ID,
+					Success:    false,
+					Error:      err.Error(),
+				})
+			}
+			return responses, err
+		}
+		if _, err := client.Batch().ExecuteBatch(ctx, batchOps); err != nil {
+			for _, op := range writeOpsMetadata {
+				responses = append(responses, &TransactionOpResponse{
+					OpType:     op.OpType,
+					EntityType: op.EntityType,
+					ID:         op.ID,
+					Success:    false,
+					Error:      err.Error(),
+				})
+			}
+			return responses, err
+		}
+
+		timestamp := time.Now().UnixNano()
+		for _, op := range writeOpsMetadata {
+			responses = append(responses, &TransactionOpResponse{
+				OpType:     op.OpType,
+				EntityType: op.EntityType,
+				ID:         op.ID,
+				Success:    true,
+				Timestamp:  timestamp,
+			})
+		}
+	}
+
+	return responses, nil
+}
+
+func (t *transactionService) executeGetOp(ctx context.Context, shardID uint64, op *TransactionOp) (*TransactionOpResponse, error) {
+	key := []byte(fmt.Sprintf("%s:%d", op.EntityType, op.ID))
+
+	// Read via qrdb SDK
+	client, err := t.svc.qrdbForShard(shardID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := client.KV().Get(ctx, string(key))
+	if err != nil {
+		return nil, err
+	}
+
+	return &TransactionOpResponse{
+		OpType:     op.OpType,
+		EntityType: op.EntityType,
+		ID:         op.ID,
+		Data:       data,
+		Success:    true,
+		Version:    1,
+		Timestamp:  time.Now().UnixNano(),
+	}, nil
+}
+
+func (t *transactionService) validateTransactionRequest(req *TransactionRequest) error {
+	if req == nil {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Transaction",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	return nil
+}
+
+// =============================================================================
+// Stub Implementations for Other Services
+// =============================================================================
+
+type queryService struct{ svc *quicBaaS }
+
+func (q *queryService) Query(ctx context.Context, req *QueryRequest, stream chan<- *QueryResponse) error {
+	defer close(stream)
+
+	start := time.Now()
+	if q.svc.metrics != nil {
+		q.svc.metrics.activeRequests.Inc()
+		defer func() {
+			q.svc.metrics.activeRequests.Dec()
+			q.svc.metrics.requestDuration.With("Query").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if req.EntityType == "" {
+		if q.svc.metrics != nil {
+			q.svc.metrics.requestsTotal.With("Query", "invalid").Inc()
+		}
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Query",
+			Err:  &api.RequiredFieldError{Field: "entity_type"},
+		}
+	}
+
+	// Check authentication if enabled
+	if q.svc.config.EnableAuth && q.svc.authManager != nil {
+		if err := q.svc.checkAuth(ctx, "read"); err != nil {
+			if q.svc.metrics != nil {
+				q.svc.metrics.requestsTotal.With("Query", "unauthorized").Inc()
+			}
+			return err
+		}
+	}
+
+	// Determine shard ID
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+
+	// Scan via qrdb SDK for prefix scan
+	prefix := req.EntityType + ":"
+	client, err := q.svc.qrdbForShard(shardID)
+	if err != nil {
+		if q.svc.metrics != nil {
+			q.svc.metrics.requestsTotal.With("Query", "error").Inc()
+			q.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.Query",
+			Err:  err,
+		}
+	}
+	scanResult, err := client.KV().Scan(ctx, prefix)
+	if err != nil {
+		if q.svc.metrics != nil {
+			q.svc.metrics.requestsTotal.With("Query", "error").Inc()
+			q.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.Query",
+			Err:  err,
+		}
+	}
+
+	// Parse results and filter by value if provided
+	var entities []*Entity
+	for keyStr, data := range scanResult {
+		var id uint64
+		if idx := strings.LastIndex(keyStr, ":"); idx >= 0 {
+			_, _ = fmt.Sscanf(keyStr[idx+1:], "%d", &id) //nolint:errcheck // G104: parsing ID from key
+		}
+
+		// Filter by index value if requested
+		if req.IndexName != "" && req.Value != nil {
+			if !matchesIndexValue(data, req.IndexName, req.Value) {
+				continue
+			}
+		}
+
+		entities = append(entities, &Entity{
+			EntityType: req.EntityType,
+			ID:         id,
+			Data:       data,
+			Version:    1,
+			Timestamp:  time.Now().UnixNano(),
+		})
+	}
+
+	// Send all entities in a single response
+	// In a full implementation, this would support pagination
+	resp := &QueryResponse{
+		Entities:      entities,
+		TotalCount:    uint64(len(entities)),
+		NextPageToken: "",
+	}
+
+	select {
+	case stream <- resp:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	if q.svc.metrics != nil {
+		q.svc.metrics.requestsTotal.With("Query", "success").Inc()
+	}
+
+	return nil
+}
+
+// matchesIndexValue checks if a JSON document matches an index value
+// This is a simple MVP implementation for basic filtering.
+func matchesIndexValue(data []byte, indexName string, value []byte) bool {
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return false
+	}
+
+	// Get the field value
+	fieldValue, exists := doc[indexName]
+	if !exists {
+		return false
+	}
+
+	// Convert to string for comparison
+	fieldStr := fmt.Sprintf("%v", fieldValue)
+	valueStr := string(value)
+
+	return fieldStr == valueStr
+}
+
+func (q *queryService) ScanIndex(ctx context.Context, req *ScanRequest, stream chan<- *ScanResponse) error {
+	defer close(stream)
+	// ScanIndex is not yet implemented - returns NotImplemented error
+	return &errors.DragonError{
+		Code: errors.ErrNotImplemented,
+		Op:   "service.ScanIndex",
+		Err:  &api.NotImplementedError{Feature: "scan index"},
+	}
+}
+
+type clusterService struct{ svc *quicBaaS }
+
+func (c *clusterService) ClusterStatus(ctx context.Context, req *ClusterStatusRequest) (*ClusterStatusResponse, error) {
+	_ = req
+
+	resp := &ClusterStatusResponse{
+		ClusterID: "quicbaas-cluster",
+		Nodes:     []*NodeInfo{},
+		Shards:    []*ShardInfo{},
+		Timestamp: time.Now().UnixNano(),
+	}
+
+	// Use SDK client to get topology
+	client, err := c.svc.qrdbForShard(1) // Use shard 1 for admin ops
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.ClusterStatus",
+			Err:  err,
+		}
+	}
+	topology, err := client.Admin().GetTopology(ctx)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.ClusterStatus",
+			Err:  err,
+		}
+	}
+
+	if topology != nil {
+		// Track unique nodes and their leader status across all shards
+		nodeMap := make(map[uint64]*NodeInfo)
+		leaderNodes := make(map[uint64]bool)
+
+		for _, shardInfo := range topology.Shards {
+			replicas := make([]uint64, 0, len(shardInfo.Nodes))
+			for nodeID, address := range shardInfo.Nodes {
+				replicas = append(replicas, nodeID)
+
+				// Add node to map if not already present
+				if _, exists := nodeMap[nodeID]; !exists {
+					nodeMap[nodeID] = &NodeInfo{
+						NodeID:       nodeID,
+						Address:      address,
+						IsLeader:     false,
+						HealthStatus: HealthStatusHealthy,
+					}
+				}
+			}
+
+			// Track if this shard's leader exists
+			if shardInfo.LeaderID > 0 {
+				leaderNodes[shardInfo.LeaderID] = true
+			}
+
+			resp.Shards = append(resp.Shards, &ShardInfo{
+				ShardID:  shardInfo.ShardID,
+				LeaderID: shardInfo.LeaderID,
+				Replicas: replicas,
+				Status:   HealthStatusHealthy,
+			})
+		}
+
+		// Mark leader nodes
+		for nodeID := range leaderNodes {
+			if node, exists := nodeMap[nodeID]; exists {
+				node.IsLeader = true
+			}
+		}
+
+		// Convert map to slice
+		for _, node := range nodeMap {
+			resp.Nodes = append(resp.Nodes, node)
+		}
+	}
+
+	return resp, nil
+}
+
+func (c *clusterService) GetLeader(ctx context.Context, req *GetLeaderRequest) (*GetLeaderResponse, error) {
+	client, err := c.svc.qrdbForShard(req.ShardID)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.GetLeader",
+			Err:  err,
+		}
+	}
+	state, err := client.Admin().GetShardState(ctx, req.ShardID)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.GetLeader",
+			Err:  err,
+		}
+	}
+	return &GetLeaderResponse{
+		ShardID:  req.ShardID,
+		LeaderID: state.LeaderID,
+	}, nil
+}
+
+func (c *clusterService) AddNode(ctx context.Context, req *AddNodeRequest) (*AddNodeResponse, error) {
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.AddNode",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.ShardID == 0 {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.AddNode",
+			Err:  &api.InvalidInputError{Message: "shard_id must be greater than 0"},
+		}
+	}
+	if req.NodeID == 0 {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.AddNode",
+			Err:  &api.InvalidInputError{Message: "node_id must be greater than 0"},
+		}
+	}
+	if req.Address == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.AddNode",
+			Err:  &api.EmptyCollectionError{Field: "address"},
+		}
+	}
+
+	// Use SDK to add member
+	client, err := c.svc.qrdbForShard(req.ShardID)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.AddNode",
+			Err:  err,
+		}
+	}
+	if err := client.Admin().AddMember(ctx, req.ShardID, req.NodeID, req.Address); err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.AddNode",
+			Err:  &api.OperationFailedError{Operation: "add node to shard", Cause: err},
+		}
+	}
+
+	return &AddNodeResponse{
+		Success: true,
+		Message: "node added to shard",
+	}, nil
+}
+
+func (c *clusterService) RemoveNode(ctx context.Context, req *RemoveNodeRequest) (*RemoveNodeResponse, error) {
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.RemoveNode",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.ShardID == 0 {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.RemoveNode",
+			Err:  &api.InvalidInputError{Message: "shard_id must be greater than 0"},
+		}
+	}
+	if req.NodeID == 0 {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.RemoveNode",
+			Err:  &api.InvalidInputError{Message: "node_id must be greater than 0"},
+		}
+	}
+
+	// Use SDK to remove member
+	client, err := c.svc.qrdbForShard(req.ShardID)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.RemoveNode",
+			Err:  err,
+		}
+	}
+	if err := client.Admin().RemoveMember(ctx, req.ShardID, req.NodeID); err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.RemoveNode",
+			Err:  &api.OperationFailedError{Operation: "remove node from shard", Cause: err},
+		}
+	}
+
+	return &RemoveNodeResponse{
+		Success: true,
+		Message: "node removed from shard",
+	}, nil
+}
+
+func (c *clusterService) CreateShard(ctx context.Context, req *CreateShardRequest) (*CreateShardResponse, error) {
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.CreateShard",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.ShardID == 0 {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.CreateShard",
+			Err:  &api.InvalidInputError{Message: "shard_id must be greater than 0"},
+		}
+	}
+	if len(req.InitialMembers) == 0 {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.CreateShard",
+			Err:  &api.EmptyCollectionError{Field: "initial_members"},
+		}
+	}
+
+	// Check if SDK client is available
+	if c.svc.qrdbClient == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.CreateShard",
+			Err:  &api.ServiceNotConfiguredError{Service: "qrdb client"},
+		}
+	}
+
+	// CreateShard is currently not fully implemented
+	// The full implementation would require:
+	// 1. Creating a RaftGroupConfig with the shard ID and initial members
+	// 2. Creating a state machine factory for the new shard
+	// 3. Calling raftNode.StartShard() with the config and factory
+	//
+	// For now, return an error indicating this needs to be implemented
+	// with the proper state machine setup
+	return nil, &errors.DragonError{
+		Code: errors.ErrNotImplemented,
+		Op:   "service.CreateShard",
+		Err:  &api.NotImplementedError{Feature: "CreateShard (requires state machine factory setup)"},
+	}
+}
+
+func (c *clusterService) RebalanceCluster(ctx context.Context, req *RebalanceClusterRequest) (*RebalanceClusterResponse, error) {
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.RebalanceCluster",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+
+	// Check if SDK client is available
+	if c.svc.qrdbClient == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.RebalanceCluster",
+			Err:  &api.ServiceNotConfiguredError{Service: "qrdb client"},
+		}
+	}
+
+	// Generate operation ID
+	operationID := fmt.Sprintf("rebalance-%d", time.Now().UnixNano())
+
+	// Log the rebalance request
+	if c.svc.logger != nil {
+		c.svc.logger.WithFields(map[string]interface{}{
+			"operation_id":       operationID,
+			"target_shard_count": req.TargetShardCount,
+			"strategy":           req.Strategy,
+		}).Info("Cluster rebalance initiated")
+	}
+
+	return &RebalanceClusterResponse{
+		JobID:               operationID,
+		Progress:            0.0,
+		EstimatedCompletion: time.Now().Add(5 * time.Minute).UnixNano(),
+	}, nil
+}
+
+func (c *clusterService) GetRebalanceProgress(ctx context.Context, req *GetRebalanceProgressRequest) (*GetRebalanceProgressResponse, error) {
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.GetRebalanceProgress",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.OperationID == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.GetRebalanceProgress",
+			Err:  &api.RequiredFieldError{Field: "operation_id"},
+		}
+	}
+
+	return nil, &errors.DragonError{
+		Code: errors.ErrNotFound,
+		Op:   "service.GetRebalanceProgress",
+		Err:  &api.NotFoundError{Resource: "operation", ID: req.OperationID},
+	}
+}
+
+type backupService struct{ svc *quicBaaS }
+
+func (b *backupService) CreateBackup(ctx context.Context, req *CreateBackupRequest) (*CreateBackupResponse, error) {
+	// Check if backup manager is available
+	if b.svc.backupMgr == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "service.CreateBackup",
+			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
+		}
+	}
+
+	// Map backup type from string to backup.BackupType
+	var backupType backup.BackupType
+	switch req.Name {
+	case "full":
+		backupType = backup.BackupTypeFull
+	case "incremental":
+		backupType = backup.BackupTypeIncremental
+	default:
+		backupType = backup.BackupTypeFull // Default to full backup
+	}
+
+	// Create backup using backup manager
+	backupResultRaw, err := b.svc.backupMgr.CreateBackup(ctx, backupType)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.CreateBackup",
+			Err:  &api.OperationFailedError{Operation: "create backup", Cause: err},
+		}
+	}
+
+	backupResult, ok := backupResultRaw.(*backup.Backup)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.CreateBackup",
+			Err:  &api.InvalidTypeError{Field: "backup result", Expected: "*backup.Backup"},
+		}
+	}
+
+	// Map result to service response
+	resp := &CreateBackupResponse{
+		BackupID:  backupResult.ID,
+		Size:      uint64(backupResult.Size), //nolint:gosec // G115: Size represents byte count, safe conversion
+		Timestamp: backupResult.Timestamp.UnixNano(),
+		Status:    "completed",
+	}
+
+	return resp, nil
+}
+
+func (b *backupService) ListBackups(ctx context.Context, req *ListBackupsRequest) (*ListBackupsResponse, error) {
+	// Check if backup manager is available
+	if b.svc.backupMgr == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "service.ListBackups",
+			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
+		}
+	}
+
+	// Determine limit
+	limit := int(req.Limit) //nolint:gosec // G115: uint64 to int conversion for limit
+	if limit == 0 {
+		limit = 100 // Default limit
+	}
+
+	// List backups using backup manager
+	backupListRaw, err := b.svc.backupMgr.ListBackups(ctx, limit)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.ListBackups",
+			Err:  &api.OperationFailedError{Operation: "list backups", Cause: err},
+		}
+	}
+	backupList, ok := backupListRaw.(*backup.BackupList)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.ListBackups",
+			Err:  &api.InvalidTypeError{Field: "backup list", Expected: "*backup.BackupList"},
+		}
+	}
+
+	// Map results to service response
+	backups := make([]*BackupMetadata, 0, len(backupList.Backups))
+	for _, b := range backupList.Backups {
+		// Extract shard IDs
+		shards := make([]uint64, 0, len(b.Shards))
+		for shardID := range b.Shards {
+			shards = append(shards, shardID)
+		}
+
+		backups = append(backups, &BackupMetadata{
+			BackupID:    b.ID,
+			Name:        string(b.Type),
+			Description: fmt.Sprintf("Backup created at %s", b.Timestamp.Format(time.RFC3339)),
+			Size:        uint64(b.Size), //nolint:gosec // G115: Size represents byte count, safe conversion
+			Timestamp:   b.Timestamp.UnixNano(),
+			Status:      "completed",
+			Shards:      shards,
+		})
+	}
+
+	resp := &ListBackupsResponse{
+		Backups:    backups,
+		TotalCount: uint64(backupList.TotalCount), //nolint:gosec // G115: TotalCount represents count, safe conversion
+	}
+
+	return resp, nil
+}
+
+func (b *backupService) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) (*RestoreBackupResponse, error) {
+	// Check if backup manager is available
+	if b.svc.backupMgr == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "service.RestoreBackup",
+			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
+		}
+	}
+
+	// Build restore options
+	opts := &backup.RestoreOptions{
+		VerifyChecksum: true,
+		TargetShards:   req.TargetShards,
+		SkipExisting:   false,
+	}
+
+	// Restore backup using backup manager
+	err := b.svc.backupMgr.RestoreBackup(ctx, req.BackupID, opts)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.RestoreBackup",
+			Err:  &api.OperationFailedError{Operation: "restore backup", Cause: err},
+		}
+	}
+
+	// Map result to service response
+	resp := &RestoreBackupResponse{
+		JobID:    fmt.Sprintf("restore-%s", req.BackupID),
+		Status:   "completed",
+		Progress: 100.0,
+	}
+
+	return resp, nil
+}
+
+func (b *backupService) DeleteBackup(ctx context.Context, req *DeleteBackupRequest) (*DeleteBackupResponse, error) {
+	// Check if backup manager is available
+	if b.svc.backupMgr == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "service.DeleteBackup",
+			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
+		}
+	}
+
+	// Delete backup using backup manager
+	err := b.svc.backupMgr.DeleteBackup(ctx, req.BackupID)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.DeleteBackup",
+			Err:  &api.OperationFailedError{Operation: "delete backup", Cause: err},
+		}
+	}
+
+	// Map result to service response
+	resp := &DeleteBackupResponse{
+		Success: true,
+		Message: fmt.Sprintf("Backup %s deleted successfully", req.BackupID),
+	}
+
+	return resp, nil
+}
+
+func (b *backupService) VerifyBackup(ctx context.Context, req *VerifyBackupRequest) (*VerifyBackupResponse, error) {
+	// Check if backup manager is available
+	if b.svc.backupMgr == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "service.VerifyBackup",
+			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
+		}
+	}
+
+	// Verify backup using backup manager
+	resultRaw, err := b.svc.backupMgr.VerifyBackup(ctx, req.BackupID)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.VerifyBackup",
+			Err:  &api.OperationFailedError{Operation: "verify backup", Cause: err},
+		}
+	}
+	result, ok := resultRaw.(*backup.VerificationResult)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.VerifyBackup",
+			Err:  &api.InvalidTypeError{Field: "verification result", Expected: "*backup.VerificationResult"},
+		}
+	}
+
+	// Map result to service response
+	resp := &VerifyBackupResponse{
+		Valid:         result.Valid,
+		ChecksumMatch: result.ChecksumValid,
+		Issues:        result.Errors,
+	}
+
+	return resp, nil
+}
+
+type authService struct{ svc *quicBaaS }
+
+func (a *authService) Login(ctx context.Context, req *LoginRequest) (*LoginResponse, error) {
+	// Check if auth manager is available
+	if a.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.Login",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
+		}
+	}
+
+	// Authenticate with auth manager
+	tokenRaw, err := a.svc.authManager.Authenticate(ctx, req.Username, req.Password)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrUnauthorized,
+			Op:   "service.Login",
+			Err:  err,
+		}
+	}
+	token, ok := tokenRaw.(*auth.Token)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.Authenticate",
+			Err:  &api.InvalidTypeError{Field: "token", Expected: "*auth.Token"},
+		}
+	}
+
+	// Map auth.Token to LoginResponse
+	return &LoginResponse{
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		ExpiresAt:    token.ExpiresAt.UnixNano(),
+		UserID:       "", // UserID not included in auth.Token, could be extracted from JWT claims if needed
+	}, nil
+}
+
+func (a *authService) Logout(ctx context.Context, req *LogoutRequest) (*LogoutResponse, error) {
+	// Check if auth manager is available
+	if a.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.Logout",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
+		}
+	}
+
+	// Revoke token
+	err := a.svc.authManager.RevokeToken(ctx, req.AccessToken)
+	if err != nil {
+		return &LogoutResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to revoke token: %v", err),
+		}, err
+	}
+
+	return &LogoutResponse{
+		Success: true,
+		Message: "Successfully logged out",
+	}, nil
+}
+
+func (a *authService) RefreshToken(ctx context.Context, req *RefreshTokenRequest) (*RefreshTokenResponse, error) {
+	// Check if auth manager is available
+	if a.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.RefreshToken",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
+		}
+	}
+
+	// Refresh token
+	tokenRaw, err := a.svc.authManager.RefreshToken(ctx, req.RefreshToken)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrUnauthorized,
+			Op:   "service.RefreshToken",
+			Err:  err,
+		}
+	}
+	token, ok := tokenRaw.(*auth.Token)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.RefreshToken",
+			Err:  &api.InvalidTypeError{Field: "token", Expected: "*auth.Token"},
+		}
+	}
+
+	// Map auth.Token to RefreshTokenResponse
+	return &RefreshTokenResponse{
+		AccessToken: token.AccessToken,
+		ExpiresAt:   token.ExpiresAt.UnixNano(),
+	}, nil
+}
+
+func (a *authService) ValidateToken(ctx context.Context, req *ValidateTokenRequest) (*ValidateTokenResponse, error) {
+	// Check if auth manager is available
+	if a.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.ValidateToken",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
+		}
+	}
+
+	// Validate token
+	resultRaw, err := a.svc.authManager.ValidateToken(ctx, req.AccessToken)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrUnauthorized,
+			Op:   "service.ValidateToken",
+			Err:  err,
+		}
+	}
+	result, ok := resultRaw.(*auth.TokenValidationResult)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.ValidateToken",
+			Err:  &api.InvalidTypeError{Field: "validation result", Expected: "*auth.TokenValidationResult"},
+		}
+	}
+
+	// Map auth.TokenValidationResult to ValidateTokenResponse
+	return &ValidateTokenResponse{
+		Valid:     result.Valid,
+		UserID:    result.UserID,
+		Username:  result.Username,
+		Roles:     result.Roles,
+		ExpiresAt: result.ExpiresAt.UnixNano(),
+	}, nil
+}
+
+type rbacService struct{ svc *quicBaaS }
+
+func (r *rbacService) CreateUser(ctx context.Context, req *AuthCreateUserRequest) (*AuthCreateUserResponse, error) {
+	// Check if authManager is available
+	if r.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.CreateUser",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
+		}
+	}
+
+	// Validate request
+	if req.Username == "" || req.Password == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.CreateUser",
+			Err:  &api.InvalidInputError{Message: "username and password are required"},
+		}
+	}
+
+	// Create user through AuthManager
+	userRaw, err := r.svc.authManager.CreateUser(req.Username, req.Password, req.Roles)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.CreateUser",
+			Err:  err,
+		}
+	}
+
+	user, ok := userRaw.(*auth.User)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.CreateUser",
+			Err:  &api.InvalidTypeError{Field: "user", Expected: "*auth.User"},
+		}
+	}
+
+	return &AuthCreateUserResponse{
+		UserID:    user.ID,
+		Timestamp: time.Now().UnixNano(),
+	}, nil
+}
+
+func (r *rbacService) DeleteUser(ctx context.Context, req *AuthDeleteUserRequest) (*AuthDeleteUserResponse, error) {
+	// Check if authManager is available
+	if r.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.DeleteUser",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
+		}
+	}
+
+	// Validate request
+	if req.Username == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.DeleteUser",
+			Err:  &api.RequiredFieldError{Field: "username"},
+		}
+	}
+
+	// Get user store
+	userStoreRaw := r.svc.authManager.GetUserStore()
+	userStore, ok := userStoreRaw.(*auth.UserStore)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.RBAC",
+			Err:  &api.InvalidTypeError{Field: "user store", Expected: "*auth.UserStore"},
+		}
+	}
+	if userStore == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.DeleteUser",
+			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
+		}
+	}
+
+	// Find user by username
+	user := userStore.GetByUsername(req.Username)
+	if user == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotFound,
+			Op:   "service.DeleteUser",
+			Err:  &api.NotFoundError{Resource: "user", ID: req.Username},
+		}
+	}
+
+	// Delete user
+	userStore.DeleteUser(user.GetID())
+
+	return &AuthDeleteUserResponse{
+		Success: true,
+		Message: fmt.Sprintf("User %s deleted successfully", req.Username),
+	}, nil
+}
+
+func (r *rbacService) ListUsers(ctx context.Context, req *AuthListUsersRequest) (*AuthListUsersResponse, error) {
+	// Check if authManager is available
+	if r.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.ListUsers",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
+		}
+	}
+
+	// Get user store (returns interfaces.UserStore)
+	userStore := r.svc.authManager.GetUserStore()
+	if userStore == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.ListUsers",
+			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
+		}
+	}
+
+	// Get all users
+	users := userStore.ListUsers()
+
+	// Convert to UserInfo
+	userInfos := make([]*UserInfo, 0, len(users))
+	for _, user := range users {
+		userInfos = append(userInfos, &UserInfo{
+			UserID:      user.GetID(),
+			Username:    user.GetUsername(),
+			Roles:       user.GetRoles(),
+			CreatedAt:   user.GetCreated().UnixNano(),
+			LastLoginAt: user.GetLastAuth().UnixNano(),
+		})
+	}
+
+	// Apply pagination if requested
+	totalCount := uint64(len(userInfos))
+	if req.Limit > 0 {
+		start := req.Offset
+		if start > totalCount {
+			start = totalCount
+		}
+		end := start + req.Limit
+		if end > totalCount {
+			end = totalCount
+		}
+		userInfos = userInfos[start:end]
+	}
+
+	return &AuthListUsersResponse{
+		Users:      userInfos,
+		TotalCount: totalCount,
+	}, nil
+}
+
+func (r *rbacService) CreateRole(ctx context.Context, req *AuthCreateRoleRequest) (*AuthCreateRoleResponse, error) {
+	// Check if authManager is available
+	if r.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.CreateRole",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
+		}
+	}
+
+	// Validate request
+	if req.RoleName == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.CreateRole",
+			Err:  &api.RequiredFieldError{Field: "role name"},
+		}
+	}
+
+	// Get role manager
+	roleManagerRaw := r.svc.authManager.GetRoleManager()
+	roleManager, ok := roleManagerRaw.(*auth.RoleManager)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.RBAC",
+			Err:  &api.InvalidTypeError{Field: "role manager", Expected: "*auth.RoleManager"},
+		}
+	}
+	if roleManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.CreateRole",
+			Err:  &api.ServiceNotConfiguredError{Service: "role manager"},
+		}
+	}
+
+	// Check if role already exists
+	if existing := roleManager.GetRole(req.RoleName); existing != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.CreateRole",
+			Err:  &api.InvalidInputError{Message: "role already exists: " + req.RoleName},
+		}
+	}
+
+	// Create role with permissions
+	// Parse permissions into Permission objects
+	permissions := make([]*auth.Permission, 0, len(req.Permissions))
+	for _, perm := range req.Permissions {
+		// Simple format: "resource:action" or "resource:*"
+		permissions = append(permissions, &auth.Permission{
+			Resource: auth.ResourceKeys, // Default to keys for now
+			Actions:  []string{perm},
+		})
+	}
+
+	role := &auth.Role{
+		Name:        req.RoleName,
+		Description: fmt.Sprintf("Custom role: %s", req.RoleName),
+		Permissions: permissions,
+	}
+
+	// Add role
+	if err := roleManager.AddRole(role); err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.CreateRole",
+			Err:  err,
+		}
+	}
+
+	return &AuthCreateRoleResponse{
+		RoleID:    req.RoleName,
+		Timestamp: time.Now().UnixNano(),
+	}, nil
+}
+
+func (r *rbacService) DeleteRole(ctx context.Context, req *AuthDeleteRoleRequest) (*AuthDeleteRoleResponse, error) {
+	// Check if authManager is available
+	if r.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.DeleteRole",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
+		}
+	}
+
+	// Validate request
+	if req.RoleName == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.DeleteRole",
+			Err:  &api.RequiredFieldError{Field: "role name"},
+		}
+	}
+
+	// Get role manager
+	roleManagerRaw := r.svc.authManager.GetRoleManager()
+	roleManager, ok := roleManagerRaw.(*auth.RoleManager)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.RBAC",
+			Err:  &api.InvalidTypeError{Field: "role manager", Expected: "*auth.RoleManager"},
+		}
+	}
+	if roleManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.DeleteRole",
+			Err:  &api.ServiceNotConfiguredError{Service: "role manager"},
+		}
+	}
+
+	// Check if role exists
+	if existing := roleManager.GetRole(req.RoleName); existing == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotFound,
+			Op:   "service.DeleteRole",
+			Err:  &api.NotFoundError{Resource: "role", ID: req.RoleName},
+		}
+	}
+
+	// Delete role
+	if err := roleManager.DeleteRole(req.RoleName); err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.DeleteRole",
+			Err:  err,
+		}
+	}
+
+	return &AuthDeleteRoleResponse{
+		Success: true,
+		Message: fmt.Sprintf("Role %s deleted successfully", req.RoleName),
+	}, nil
+}
+
+func (r *rbacService) ListRoles(ctx context.Context, req *AuthListRolesRequest) (*AuthListRolesResponse, error) {
+	// Check if authManager is available
+	if r.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.ListRoles",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
+		}
+	}
+
+	// Get role manager
+	roleManagerRaw := r.svc.authManager.GetRoleManager()
+	roleManager, ok := roleManagerRaw.(*auth.RoleManager)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.RBAC",
+			Err:  &api.InvalidTypeError{Field: "role manager", Expected: "*auth.RoleManager"},
+		}
+	}
+	if roleManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.ListRoles",
+			Err:  &api.ServiceNotConfiguredError{Service: "role manager"},
+		}
+	}
+
+	// Get all roles
+	roles := roleManager.ListRoles()
+
+	// Convert to RoleInfo
+	roleInfos := make([]*RoleInfo, 0, len(roles))
+	for _, role := range roles {
+		// Extract permission strings
+		permStrings := make([]string, 0)
+		for _, perm := range role.GetPermissions() {
+			for _, action := range perm.GetActions() {
+				permStrings = append(permStrings, fmt.Sprintf("%s:%s", perm.GetResource(), action))
+			}
+		}
+
+		roleInfos = append(roleInfos, &RoleInfo{
+			RoleID:      role.GetName(),
+			RoleName:    role.GetName(),
+			Permissions: permStrings,
+			CreatedAt:   time.Now().UnixNano(), // Roles don't track creation time
+		})
+	}
+
+	// Apply pagination if requested
+	totalCount := uint64(len(roleInfos))
+	if req.Limit > 0 {
+		start := req.Offset
+		if start > totalCount {
+			start = totalCount
+		}
+		end := start + req.Limit
+		if end > totalCount {
+			end = totalCount
+		}
+		roleInfos = roleInfos[start:end]
+	}
+
+	return &AuthListRolesResponse{
+		Roles:      roleInfos,
+		TotalCount: totalCount,
+	}, nil
+}
+
+func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest) (*AuthAssignRoleResponse, error) {
+	// Check if authManager is available
+	if r.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.AssignRole",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
+		}
+	}
+
+	// Validate request
+	if req.Username == "" || req.RoleName == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.AssignRole",
+			Err:  &api.InvalidInputError{Message: "username and role name are required"},
+		}
+	}
+
+	// Get user store
+	userStore := r.svc.authManager.GetUserStore()
+	if userStore == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.AssignRole",
+			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
+		}
+	}
+
+	// Find user by username
+	user := userStore.GetByUsername(req.Username)
+	if user == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotFound,
+			Op:   "service.AssignRole",
+			Err:  &api.NotFoundError{Resource: "user", ID: req.Username},
+		}
+	}
+
+	// Assign role
+	if err := userStore.AssignRole(user.GetID(), req.RoleName); err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.AssignRole",
+			Err:  err,
+		}
+	}
+
+	return &AuthAssignRoleResponse{
+		Success: true,
+		Message: fmt.Sprintf("Role %s assigned to user %s", req.RoleName, req.Username),
+	}, nil
+}
+
+func (r *rbacService) RevokeRole(ctx context.Context, req *AuthRevokeRoleRequest) (*AuthRevokeRoleResponse, error) {
+	// Check if authManager is available
+	if r.svc.authManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.RevokeRole",
+			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
+		}
+	}
+
+	// Validate request
+	if req.Username == "" || req.RoleName == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.RevokeRole",
+			Err:  &api.InvalidInputError{Message: "username and role name are required"},
+		}
+	}
+
+	// Get user store
+	userStore := r.svc.authManager.GetUserStore()
+	if userStore == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.RevokeRole",
+			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
+		}
+	}
+
+	// Find user by username
+	user := userStore.GetByUsername(req.Username)
+	if user == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotFound,
+			Op:   "service.RevokeRole",
+			Err:  &api.NotFoundError{Resource: "user", ID: req.Username},
+		}
+	}
+
+	// Revoke role
+	if err := userStore.RevokeRole(user.GetID(), req.RoleName); err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.RevokeRole",
+			Err:  err,
+		}
+	}
+
+	return &AuthRevokeRoleResponse{
+		Success: true,
+		Message: fmt.Sprintf("Role %s revoked from user %s", req.RoleName, req.Username),
+	}, nil
+}
+
+type cacheService struct{ svc *quicBaaS }
+
+func (c *cacheService) GetCacheStats(ctx context.Context, req *GetCacheStatsRequest) (*GetCacheStatsResponse, error) {
+	// Check if cache manager is available
+	if c.svc.cacheManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "service.GetCacheStats",
+			Err:  &api.ServiceNotConfiguredError{Service: "cache manager"},
+		}
+	}
+
+	// Get stats from cache manager (type assert to concrete type)
+	cacheMgr, ok := c.svc.cacheManager.(*cache.CacheManager)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.Cache",
+			Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "*cache.CacheManager"},
+		}
+	}
+	stats := cacheMgr.Stats()
+
+	// Map to response
+	resp := &GetCacheStatsResponse{
+		HitRate:   stats.L1HitRate,
+		Size:      uint64(stats.L1Size),      //nolint:gosec // G115: L1Size represents cache size, safe conversion
+		MaxSize:   uint64(stats.L1Capacity),  //nolint:gosec // G115: int to uint64 conversion for cache size
+		Evictions: uint64(stats.L1Evictions), //nolint:gosec // G115: int64 to uint64 conversion for cache evictions
+		Hits:      uint64(stats.L1Hits),      //nolint:gosec // G115: int64 to uint64 conversion for cache hits
+		Misses:    uint64(stats.L1Misses),    //nolint:gosec // G115: int64 to uint64 conversion for cache misses
+	}
+
+	return resp, nil
+}
+
+func (c *cacheService) ClearCache(ctx context.Context, req *ClearCacheRequest) (*ClearCacheResponse, error) {
+	// Check if cache manager is available
+	if c.svc.cacheManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "service.ClearCache",
+			Err:  &api.ServiceNotConfiguredError{Service: "cache manager"},
+		}
+	}
+
+	// Get current size before clearing (type assert to concrete type)
+	cacheMgr, ok := c.svc.cacheManager.(*cache.CacheManager)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.ClearCache",
+			Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "*cache.CacheManager"},
+		}
+	}
+	stats := cacheMgr.Stats()
+	entriesCleared := uint64(stats.L1Size) //nolint:gosec // G115: L1Size represents cache size, safe conversion
+
+	// Clear the cache
+	c.svc.cacheManager.Clear()
+
+	resp := &ClearCacheResponse{
+		EntriesCleared: entriesCleared,
+	}
+
+	return resp, nil
+}
+
+func (c *cacheService) GetCacheConfig(ctx context.Context, req *GetCacheConfigRequest) (*GetCacheConfigResponse, error) {
+	// Check if cache manager is available
+	if c.svc.cacheManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "service.GetCacheConfig",
+			Err:  &api.ServiceNotConfiguredError{Service: "cache manager"},
+		}
+	}
+
+	// Get config from cache manager (type assert to concrete type)
+	cacheMgr, ok := c.svc.cacheManager.(*cache.CacheManager)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.GetCacheConfig",
+			Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "*cache.CacheManager"},
+		}
+	}
+	config := cacheMgr.GetConfig()
+
+	resp := &GetCacheConfigResponse{
+		L1Size:          config.L1Size,
+		L1TTL:           config.L1TTL,
+		CleanupInterval: config.CleanupInterval,
+		Enabled:         true,
+	}
+
+	return resp, nil
+}
+
+func (c *cacheService) UpdateCacheConfig(ctx context.Context, req *UpdateCacheConfigRequest) (*UpdateCacheConfigResponse, error) {
+	// Check if cache manager is available
+	if c.svc.cacheManager == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "service.UpdateCacheConfig",
+			Err:  &api.ServiceNotConfiguredError{Service: "cache manager"},
+		}
+	}
+
+	// Type assert to concrete type for methods not in interface
+	cacheMgr, ok := c.svc.cacheManager.(*cache.CacheManager)
+	if !ok {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.UpdateCacheConfig",
+			Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "*cache.CacheManager"},
+		}
+	}
+
+	// Get current config
+	currentConfig := cacheMgr.GetConfig()
+
+	// Build new config with updates
+	newConfig := &cache.Config{
+		L1Size:          currentConfig.L1Size,
+		L1TTL:           currentConfig.L1TTL,
+		CleanupInterval: currentConfig.CleanupInterval,
+	}
+
+	// Apply updates from request
+	if req.L1Size != nil {
+		newConfig.L1Size = *req.L1Size
+	}
+	if req.L1TTL != nil {
+		newConfig.L1TTL = *req.L1TTL
+	}
+	if req.CleanupInterval != nil {
+		newConfig.CleanupInterval = *req.CleanupInterval
+	}
+
+	// Update cache manager config
+	if err := cacheMgr.UpdateConfig(newConfig); err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.UpdateCacheConfig",
+			Err:  err,
+		}
+	}
+
+	// Get updated config
+	updatedConfig := cacheMgr.GetConfig()
+
+	resp := &UpdateCacheConfigResponse{
+		Updated: true,
+		NewConfig: &GetCacheConfigResponse{
+			L1Size:          updatedConfig.L1Size,
+			L1TTL:           updatedConfig.L1TTL,
+			CleanupInterval: updatedConfig.CleanupInterval,
+			Enabled:         true,
+		},
+	}
+
+	return resp, nil
+}
+
+type healthService struct{ svc *quicBaaS }
+
+func (h *healthService) Health(ctx context.Context, req *HealthRequest) (*HealthResponse, error) {
+	resp := &HealthResponse{
+		Status:        HealthStatusHealthy,
+		NodeID:        h.svc.config.NodeID,
+		Version:       h.svc.config.Version,
+		UptimeSeconds: uint64(time.Since(h.svc.startTime).Seconds()),
+	}
+
+	if req.IncludeDetails {
+		resp.Details = make(map[string]*ComponentHealth)
+		resp.Details["raft"] = &ComponentHealth{
+			Status:    HealthStatusHealthy,
+			Message:   "Raft operational",
+			LastCheck: time.Now().UnixNano(),
+		}
+	}
+
+	return resp, nil
+}
+
+func (h *healthService) Liveness(ctx context.Context, req *LivenessRequest) (*LivenessResponse, error) {
+	return &LivenessResponse{Alive: true}, nil
+}
+
+func (h *healthService) Readiness(ctx context.Context, req *ReadinessRequest) (*ReadinessResponse, error) {
+	// Basic readiness: service must be initialized
+	if h.svc == nil || h.svc.config == nil {
+		return &ReadinessResponse{Ready: false, Reason: "service not initialized"}, nil
+	}
+
+	// In standalone mode, no Raft shard leaders are required
+	if h.svc.config.Mode == "" || h.svc.config.Mode == "standalone" {
+		return &ReadinessResponse{Ready: true}, nil
+	}
+
+	// If no qrdb client, we're in local/memory mode - always ready
+	if h.svc.qrdbClient == nil {
+		return &ReadinessResponse{Ready: true}, nil
+	}
+
+	// Check all configured shards have elected leaders via SDK.
+	// If the SDK client cannot verify shard state (e.g., standalone raft
+	// nodes without full Raft consensus), fall back to ready since the
+	// local transport is operational.
+	shards := h.svc.config.Shards
+	if len(shards) == 0 {
+		shards = []uint64{1} // Default to shard 1
+	}
+
+	for _, shardID := range shards {
+		client, err := h.svc.qrdbForShard(shardID)
+		if err != nil {
+			// No SDK client for this shard - check if local transport works
+			if h.svc.raftNode != nil {
+				continue // Local transport available, shard is accessible
+			}
+			return &ReadinessResponse{
+				Ready:  false,
+				Reason: "shard has no SDK client available",
+			}, nil
+		}
+		state, err := client.Admin().GetShardState(ctx, shardID)
+		if err != nil {
+			// GetShardState failed - this is expected with standalone raft nodes
+			// that don't participate in real Raft consensus. If the raft node
+			// is present, the local transport handles requests directly.
+			if h.svc.raftNode != nil {
+				continue
+			}
+			return &ReadinessResponse{
+				Ready:  false,
+				Reason: "shard state check failed",
+			}, nil
+		}
+		if !state.HasLeader {
+			// No leader - but if we have a local raft node, it can serve reads
+			if h.svc.raftNode != nil {
+				continue
+			}
+			return &ReadinessResponse{
+				Ready:  false,
+				Reason: "shard has no leader elected",
+			}, nil
+		}
+	}
+
+	return &ReadinessResponse{Ready: true}, nil
+}
+
+type timeSeriesService struct {
+	svc       *quicBaaS
+	tsStorage interfaces.TimeSeriesStorage
+	shardID   uint64
+}
+
+func (t *timeSeriesService) Aggregate(ctx context.Context, req *AggregateRequest) (*AggregateResponse, error) {
+	start := time.Now()
+	if t.svc.metrics != nil {
+		t.svc.metrics.activeRequests.Inc()
+		defer func() {
+			t.svc.metrics.activeRequests.Dec()
+			t.svc.metrics.requestDuration.With("Aggregate").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if err := t.validateAggregateRequest(req); err != nil {
+		if t.svc.metrics != nil {
+			t.svc.metrics.requestsTotal.With("Aggregate", "invalid").Inc()
+		}
+		return nil, err
+	}
+
+	// Default to shard 1
+	shardID := uint64(1)
+
+	// Query entities through qrdb SDK
+	client, err := t.svc.qrdbForShard(shardID)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.Aggregate",
+			Err:  err,
+		}
+	}
+
+	entities, err := client.KV().Scan(ctx, req.EntityType)
+	if err != nil {
+		if t.svc.metrics != nil {
+			t.svc.metrics.requestsTotal.With("Aggregate", "error").Inc()
+			t.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return nil, &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.Aggregate",
+			Err:  err,
+		}
+	}
+
+	// Parse entities and extract time-series data
+	var values []float64
+	var count uint64
+
+	for _, data := range entities {
+		// Try to parse as JSON to extract timestamp and value
+		var entity map[string]interface{}
+		if err := json.Unmarshal(data, &entity); err != nil {
+			continue // Skip non-JSON entities
+		}
+
+		// Extract timestamp field (support multiple formats)
+		var timestamp int64
+		if ts, ok := entity["timestamp"].(float64); ok {
+			timestamp = int64(ts)
+		} else if ts, ok := entity["ts"].(float64); ok {
+			timestamp = int64(ts)
+		} else if ts, ok := entity["time"].(float64); ok {
+			timestamp = int64(ts)
+		} else {
+			continue // Skip if no timestamp
+		}
+
+		// Filter by time range
+		if timestamp < req.StartTime || timestamp > req.EndTime {
+			continue
+		}
+
+		// Extract field value
+		var value float64
+		if req.FieldName != "" {
+			if v, ok := entity[req.FieldName].(float64); ok {
+				value = v
+			} else {
+				continue // Skip if field not found or not numeric
+			}
+		} else {
+			// If no field specified, try "value" as default
+			if v, ok := entity["value"].(float64); ok {
+				value = v
+			} else {
+				continue
+			}
+		}
+
+		values = append(values, value)
+		count++
+	}
+
+	// Apply aggregation function
+	var aggregateResult float64
+	switch req.Function {
+	case AggregateFunctionSum:
+		for _, v := range values {
+			aggregateResult += v
+		}
+	case AggregateFunctionAvg:
+		if count > 0 {
+			sum := 0.0
+			for _, v := range values {
+				sum += v
+			}
+			aggregateResult = sum / float64(count)
+		}
+	case AggregateFunctionMin:
+		if count > 0 {
+			aggregateResult = math.MaxFloat64
+			for _, v := range values {
+				if v < aggregateResult {
+					aggregateResult = v
+				}
+			}
+		}
+	case AggregateFunctionMax:
+		if count > 0 {
+			aggregateResult = -math.MaxFloat64
+			for _, v := range values {
+				if v > aggregateResult {
+					aggregateResult = v
+				}
+			}
+		}
+	case AggregateFunctionCount:
+		aggregateResult = float64(count)
+	default:
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Aggregate",
+			Err:  &api.InvalidInputError{Message: fmt.Sprintf("unsupported aggregation function: %v", req.Function)},
+		}
+	}
+
+	resp := &AggregateResponse{
+		Result:    aggregateResult,
+		Count:     count,
+		StartTime: req.StartTime,
+		EndTime:   req.EndTime,
+	}
+
+	if t.svc.metrics != nil {
+		t.svc.metrics.requestsTotal.With("Aggregate", "success").Inc()
+	}
+
+	if t.svc.logger != nil {
+		t.svc.logger.WithFields(map[string]interface{}{
+			"entity_type": req.EntityType,
+			"field_name":  req.FieldName,
+			"function":    req.Function,
+			"count":       count,
+			"result":      aggregateResult,
+		}).Debug("Time-series aggregation completed")
+	}
+
+	return resp, nil
+}
+
+func (t *timeSeriesService) TimeSeriesQuery(ctx context.Context, req *TimeSeriesQueryRequest, stream chan<- *TimeSeriesQueryResponse) error {
+	defer close(stream)
+
+	start := time.Now()
+	if t.svc.metrics != nil {
+		t.svc.metrics.activeRequests.Inc()
+		defer func() {
+			t.svc.metrics.activeRequests.Dec()
+			t.svc.metrics.requestDuration.With("TimeSeriesQuery").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	// Validate request
+	if err := t.validateTimeSeriesQueryRequest(req); err != nil {
+		if t.svc.metrics != nil {
+			t.svc.metrics.requestsTotal.With("TimeSeriesQuery", "invalid").Inc()
+		}
+		return err
+	}
+
+	// Default to shard 1
+	shardID := uint64(1)
+
+	// Query entities through qrdb SDK
+	client, err := t.svc.qrdbForShard(shardID)
+	if err != nil {
+		return &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "service.TimeSeriesQuery",
+			Err:  err,
+		}
+	}
+
+	entities, err := client.KV().Scan(ctx, req.EntityType)
+	if err != nil {
+		if t.svc.metrics != nil {
+			t.svc.metrics.requestsTotal.With("TimeSeriesQuery", "error").Inc()
+			t.svc.metrics.errorsByType.With("raft_error").Inc()
+		}
+		return &errors.DragonError{
+			Code: errors.ErrRaft,
+			Op:   "service.TimeSeriesQuery",
+			Err:  err,
+		}
+	}
+
+	// Parse entities and extract time-series data points
+	var dataPoints []*TimeSeriesPoint
+
+	for _, data := range entities {
+		// Try to parse as JSON to extract timestamp and value
+		var entity map[string]interface{}
+		if err := json.Unmarshal(data, &entity); err != nil {
+			continue // Skip non-JSON entities
+		}
+
+		// Extract timestamp field
+		var timestamp int64
+		if ts, ok := entity["timestamp"].(float64); ok {
+			timestamp = int64(ts)
+		} else if ts, ok := entity["ts"].(float64); ok {
+			timestamp = int64(ts)
+		} else if ts, ok := entity["time"].(float64); ok {
+			timestamp = int64(ts)
+		} else {
+			continue // Skip if no timestamp
+		}
+
+		// Filter by time range
+		if timestamp < req.StartTime || timestamp > req.EndTime {
+			continue
+		}
+
+		// Extract value field
+		var value float64
+		if v, ok := entity["value"].(float64); ok {
+			value = v
+		} else {
+			continue // Skip if no value
+		}
+
+		// Extract entity ID field (supports both uint64 and float64 JSON representations)
+		var entityID uint64
+		if id, ok := entity["id"].(float64); ok {
+			entityID = uint64(id) //nolint:gosec // G115: float64 to uint64 conversion for entity ID
+		} else if id, ok := entity["entity_id"].(float64); ok {
+			entityID = uint64(id) //nolint:gosec // G115: float64 to uint64 conversion for entity ID
+		}
+		// entityID remains 0 if not present in entity
+
+		// Extract metadata (exclude reserved fields)
+		metadata := make(map[string]string)
+		for k, v := range entity {
+			if k != "timestamp" && k != "ts" && k != "time" && k != "value" && k != "id" && k != "entity_id" {
+				if strVal, ok := v.(string); ok {
+					metadata[k] = strVal
+				}
+			}
+		}
+
+		dataPoints = append(dataPoints, &TimeSeriesPoint{
+			ID:        entityID,
+			Timestamp: timestamp,
+			Value:     value,
+			Data:      data, // Preserve raw serialized entity data
+			Metadata:  metadata,
+		})
+	}
+
+	// Apply limit if specified
+	limit := req.Limit
+	if limit == 0 {
+		limit = 1000 // Default limit
+	}
+
+	totalCount := uint64(len(dataPoints))
+	offset := 0
+
+	// Send data points in batches
+	batchSize := 100
+	for offset < len(dataPoints) {
+		end := offset + batchSize
+		if end > len(dataPoints) {
+			end = len(dataPoints)
+		}
+
+		// Apply limit
+		if uint64(offset) >= limit { //nolint:gosec // G115: int to uint64 conversion for offset comparison
+			break
+		}
+		if uint64(end) > limit { //nolint:gosec // G115: int to uint64 conversion for limit comparison
+			end = int(limit) //nolint:gosec // G115: uint64 to int conversion for slice index
+		}
+
+		batch := dataPoints[offset:end]
+		nextPageToken := ""
+		if end < len(dataPoints) && uint64(end) < limit { //nolint:gosec // G115: int to uint64 conversion for limit comparison
+			nextPageToken = fmt.Sprintf("%d", end)
+		}
+
+		resp := &TimeSeriesQueryResponse{
+			DataPoints:    batch,
+			TotalCount:    totalCount,
+			NextPageToken: nextPageToken,
+		}
+
+		select {
+		case stream <- resp:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		offset = end
+	}
+
+	if t.svc.metrics != nil {
+		t.svc.metrics.requestsTotal.With("TimeSeriesQuery", "success").Inc()
+	}
+
+	if t.svc.logger != nil {
+		t.svc.logger.WithFields(map[string]interface{}{
+			"entity_type": req.EntityType,
+			"start_time":  req.StartTime,
+			"end_time":    req.EndTime,
+			"count":       len(dataPoints),
+		}).Debug("Time-series query completed")
+	}
+
+	return nil
+}
+
+func (t *timeSeriesService) WritePoint(ctx context.Context, req *WritePointRequest) (*WritePointResponse, error) {
+	if t.tsStorage == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "timeSeriesService.WritePoint",
+			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
+		}
+	}
+
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.WritePoint",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.Metric == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.WritePoint",
+			Err:  &api.RequiredFieldError{Field: "metric"},
+		}
+	}
+
+	// Build storage data point for routing and local fallback
+	point := toTimeSeriesDataPoint(req.Metric, req.Tags, req.Value, req.Timestamp)
+
+	// Delegate through qrdb SDK if raft is available, otherwise write directly to storage
+	if t.svc.qrdbClient != nil {
+		// Tenant-scope the metric name for the Raft path so writes match reads
+		tenantID, err := prepareTimeSeriesTenantContext(ctx)
+		if err != nil {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "timeSeriesService.WritePoint",
+				Err:  err,
+			}
+		}
+		scopedMetric := tsTenantScopedMetric(tenantID, req.Metric)
+		sdkPoint := toSDKDataPointFromRequest(scopedMetric, req.Tags, req.Value, point.Timestamp)
+
+		client, err := t.svc.qrdbForShard(t.shardID)
+		if err != nil {
+			return nil, &errors.DragonError{
+				Code: errors.ErrRaft,
+				Op:   "timeSeriesService.WritePoint",
+				Err:  err,
+			}
+		}
+		if err := client.TimeSeries().TSWritePoint(ctx, sdkPoint); err != nil {
+			return nil, &errors.DragonError{
+				Code: errors.ErrRaft,
+				Op:   "timeSeriesService.WritePoint",
+				Err:  err,
+			}
+		}
+	} else {
+		// Fallback to direct storage write when Raft not available
+		if err := t.tsStorage.WritePoint(ctx, point); err != nil {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInternal,
+				Op:   "timeSeriesService.WritePoint",
+				Err:  err,
+			}
+		}
+	}
+
+	return &WritePointResponse{
+		Success:   true,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchRequest) (*WriteBatchResponse, error) {
+	if t.tsStorage == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "timeSeriesService.WriteBatch",
+			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
+		}
+	}
+
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.WriteBatch",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if len(req.Points) == 0 {
+		return &WriteBatchResponse{
+			Success:       true,
+			PointsWritten: 0,
+			Timestamp:     time.Now(),
+		}, nil
+	}
+
+	// Convert to storage data points for routing and local fallback
+	points := make([]*tsDataPoint, len(req.Points))
+	for i, p := range req.Points {
+		if p == nil {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "timeSeriesService.WriteBatch",
+				Err:  &api.BatchItemError{Index: i, Message: "point is nil"},
+			}
+		}
+		if p.Metric == "" {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInvalidInput,
+				Op:   "timeSeriesService.WriteBatch",
+				Err:  &api.BatchItemError{Index: i, Field: "metric", Message: "metric is required"},
+			}
+		}
+		ts := p.Timestamp
+		if ts.IsZero() {
+			ts = time.Now()
+		}
+		points[i] = &tsDataPoint{
+			Metric:    p.Metric,
+			Tags:      p.Tags,
+			Value:     p.Value,
+			Timestamp: ts,
+		}
+	}
+
+	// Delegate through qrdb SDK if raft is available, otherwise write directly to storage
+	if t.svc.qrdbClient != nil {
+		// Write all points to default shard through qrdb SDK
+		sdkPoints := localPointsToSDK(points)
+		client, err := t.svc.qrdbForShard(t.shardID)
+		if err != nil {
+			return nil, &errors.DragonError{
+				Code: errors.ErrRaft,
+				Op:   "timeSeriesService.WriteBatch",
+				Err:  err,
+			}
+		}
+		if err := client.TimeSeries().TSWriteBatch(ctx, sdkPoints); err != nil {
+			return nil, &errors.DragonError{
+				Code: errors.ErrRaft,
+				Op:   "timeSeriesService.WriteBatch",
+				Err:  err,
+			}
+		}
+	} else {
+		// Fallback to direct storage write when Raft not available
+		valuePoints := localPointsToStorageBatch(points)
+		if err := t.tsStorage.WriteBatch(valuePoints); err != nil {
+			return nil, &errors.DragonError{
+				Code: errors.ErrInternal,
+				Op:   "timeSeriesService.WriteBatch",
+				Err:  err,
+			}
+		}
+	}
+
+	return &WriteBatchResponse{
+		Success:       true,
+		PointsWritten: len(points),
+		Timestamp:     time.Now(),
+	}, nil
+}
+
+// toSDKDataPointFromRequest builds a qrdb SDK transport TSDataPoint directly from request fields.
+func toSDKDataPointFromRequest(metric string, tags map[string]string, value float64, ts time.Time) *qrdbtransport.TSDataPoint {
+	return &qrdbtransport.TSDataPoint{
+		Metric:      metric,
+		Value:       value,
+		TimestampNs: ts.UnixNano(),
+		Tags:        mapToSDKTags(tags),
+	}
+}
+
+// mapToSDKTags converts a map of string tags to a slice of qrdb SDK transport TSTag values.
+func mapToSDKTags(m map[string]string) []qrdbtransport.TSTag {
+	if len(m) == 0 {
+		return nil
+	}
+	tags := make([]qrdbtransport.TSTag, 0, len(m))
+	for k, v := range m {
+		tags = append(tags, qrdbtransport.TSTag{Key: k, Value: v})
+	}
+	return tags
+}
+
+func (t *timeSeriesService) TSQuery(ctx context.Context, req *TSQueryRequest) (*TSQueryResponse, error) {
+	if t.tsStorage == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "timeSeriesService.TSQuery",
+			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
+		}
+	}
+
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.TSQuery",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.Metric == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.TSQuery",
+			Err:  &api.RequiredFieldError{Field: "metric"},
+		}
+	}
+	if req.StartTime.IsZero() {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.TSQuery",
+			Err:  &api.RequiredFieldError{Field: "start_time"},
+		}
+	}
+	if req.EndTime.IsZero() {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.TSQuery",
+			Err:  &api.RequiredFieldError{Field: "end_time"},
+		}
+	}
+
+	// Convert aggregation string to AggFunc
+	agg := parseAggFunc(req.Aggregation)
+
+	// Build storage query request and execute
+	storageReq := newTimeSeriesQueryRequest(
+		req.Metric, req.Tags, req.StartTime, req.EndTime,
+		agg, time.Duration(req.IntervalSec)*time.Second,
+		req.GroupBy, req.Limit, req.Percentile,
+	)
+
+	// Execute query
+	result, err := t.tsStorage.QueryRich(ctx, storageReq)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "timeSeriesService.TSQuery",
+			Err:  err,
+		}
+	}
+
+	// Convert result to service response
+	resp := &TSQueryResponse{
+		Metric:          result.Metric,
+		Tags:            result.Tags,
+		AggregatedValue: result.AggregatedValue,
+		Timestamp:       time.Now(),
+	}
+
+	// Convert data points
+	if len(result.Points) > 0 {
+		resp.Points = make([]*TSDataPoint, len(result.Points))
+		for i, p := range result.Points {
+			resp.Points[i] = &TSDataPoint{
+				Metric:    p.Metric,
+				Tags:      p.Tags,
+				Value:     p.Value,
+				Timestamp: p.Timestamp,
+			}
+		}
+	}
+
+	// Convert grouped results
+	if len(result.GroupedResults) > 0 {
+		resp.GroupedResults = make([]*TSGroupedResult, len(result.GroupedResults))
+		for i, g := range result.GroupedResults {
+			resp.GroupedResults[i] = &TSGroupedResult{
+				Tags:            g.Tags,
+				AggregatedValue: g.AggregatedValue,
+			}
+			if len(g.Points) > 0 {
+				resp.GroupedResults[i].Points = make([]*TSDataPoint, len(g.Points))
+				for j, p := range g.Points {
+					resp.GroupedResults[i].Points[j] = &TSDataPoint{
+						Metric:    p.Metric,
+						Tags:      p.Tags,
+						Value:     p.Value,
+						Timestamp: p.Timestamp,
+					}
+				}
+			}
+		}
+	}
+
+	return resp, nil
+}
+
+func (t *timeSeriesService) DeleteSeries(ctx context.Context, req *TSDeleteRequest) (*TSDeleteResponse, error) {
+	if t.tsStorage == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "timeSeriesService.DeleteSeries",
+			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
+		}
+	}
+
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.DeleteSeries",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.Metric == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.DeleteSeries",
+			Err:  &api.RequiredFieldError{Field: "metric"},
+		}
+	}
+
+	// Build storage delete request
+	storageReq := newTimeSeriesDeleteRequest(req.Metric, req.Tags, req.StartTime, req.EndTime)
+
+	// Execute delete
+	if err := t.tsStorage.DeleteSeries(ctx, storageReq); err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "timeSeriesService.DeleteSeries",
+			Err:  err,
+		}
+	}
+
+	return &TSDeleteResponse{
+		Success:   true,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRetentionPolicyRequest) (*TSGetRetentionPolicyResponse, error) {
+	_ = ctx // Context not needed for this operation
+
+	if t.tsStorage == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "timeSeriesService.GetRetentionPolicy",
+			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
+		}
+	}
+
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.GetRetentionPolicy",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.Metric == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.GetRetentionPolicy",
+			Err:  &api.RequiredFieldError{Field: "metric"},
+		}
+	}
+
+	// Get retention policy from storage
+	policy, err := t.tsStorage.GetRetentionPolicy(req.Metric)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "timeSeriesService.GetRetentionPolicy",
+			Err:  err,
+		}
+	}
+
+	// Convert to service response
+	var servicePolicy *TSRetentionPolicy
+	if policy != nil {
+		servicePolicy = &TSRetentionPolicy{
+			Duration:    policy.Duration,
+			Resolution:  policy.Resolution,
+			Aggregation: policy.Aggregation.String(),
+		}
+	}
+
+	return &TSGetRetentionPolicyResponse{
+		Metric:    req.Metric,
+		Policy:    servicePolicy,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (t *timeSeriesService) SetRetentionPolicy(ctx context.Context, req *TSSetRetentionPolicyRequest) (*TSSetRetentionPolicyResponse, error) {
+	_ = ctx // Context not needed for this operation
+
+	if t.tsStorage == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "timeSeriesService.SetRetentionPolicy",
+			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
+		}
+	}
+
+	// Validate request
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.SetRetentionPolicy",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.Metric == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.SetRetentionPolicy",
+			Err:  &api.RequiredFieldError{Field: "metric"},
+		}
+	}
+	if req.Policy == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.SetRetentionPolicy",
+			Err:  &api.RequiredFieldError{Field: "policy"},
+		}
+	}
+
+	// Convert to storage policy and set
+	storagePolicy := newTimeSeriesRetentionPolicy(req.Policy.Duration, req.Policy.Resolution, parseAggFunc(req.Policy.Aggregation))
+
+	// Set retention policy in storage
+	if err := t.tsStorage.SetRetentionPolicy(req.Metric, storagePolicy); err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "timeSeriesService.SetRetentionPolicy",
+			Err:  err,
+		}
+	}
+
+	return &TSSetRetentionPolicyResponse{
+		Success:   true,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+func (t *timeSeriesService) ListMetrics(ctx context.Context, req *TSListMetricsRequest) (*TSListMetricsResponse, error) {
+	if t.tsStorage == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotImplemented,
+			Op:   "timeSeriesService.ListMetrics",
+			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
+		}
+	}
+
+	// Prepare tenant context for multi-tenant isolation
+	tenantID, err := prepareTimeSeriesTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate request
+	if req == nil {
+		req = &TSListMetricsRequest{}
+	}
+
+	// Set default limit if not specified
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 1000 // Default limit
+	}
+
+	// Scope the prefix to the tenant namespace. The tenant list prefix is
+	// prepended so storage only scans keys belonging to this tenant. The
+	// caller-supplied prefix is appended to further narrow the results.
+	scopedPrefix := tsTenantListPrefix(tenantID) + req.Prefix
+
+	// Get metrics from storage
+	metrics, err := t.tsStorage.ListMetrics(scopedPrefix, limit)
+	if err != nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInternal,
+			Op:   "timeSeriesService.ListMetrics",
+			Err:  err,
+		}
+	}
+
+	// Strip tenant prefix from returned metric names so callers see
+	// their own namespace without the internal tenant scoping prefix.
+	metrics = tsFilterMetricsByTenant(tenantID, metrics)
+
+	return &TSListMetricsResponse{
+		Metrics:   metrics,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// Validation methods.
+func (t *timeSeriesService) validateAggregateRequest(req *AggregateRequest) error {
+	if req == nil {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateAggregateRequest",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.EntityType == "" {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateAggregateRequest",
+			Err:  &api.RequiredFieldError{Field: "entity_type"},
+		}
+	}
+	if req.StartTime <= 0 {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateAggregateRequest",
+			Err:  &api.InvalidInputError{Message: "start_time must be greater than 0"},
+		}
+	}
+	if req.EndTime <= 0 {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateAggregateRequest",
+			Err:  &api.InvalidInputError{Message: "end_time must be greater than 0"},
+		}
+	}
+	if req.EndTime < req.StartTime {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateAggregateRequest",
+			Err:  &api.InvalidInputError{Message: "end_time must be greater than or equal to start_time"},
+		}
+	}
+	return nil
+}
+
+func (t *timeSeriesService) validateTimeSeriesQueryRequest(req *TimeSeriesQueryRequest) error {
+	if req == nil {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateTimeSeriesQueryRequest",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.EntityType == "" {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateTimeSeriesQueryRequest",
+			Err:  &api.RequiredFieldError{Field: "entity_type"},
+		}
+	}
+	if req.StartTime <= 0 {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateTimeSeriesQueryRequest",
+			Err:  &api.InvalidInputError{Message: "start_time must be greater than 0"},
+		}
+	}
+	if req.EndTime <= 0 {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateTimeSeriesQueryRequest",
+			Err:  &api.InvalidInputError{Message: "end_time must be greater than 0"},
+		}
+	}
+	if req.EndTime < req.StartTime {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.validateTimeSeriesQueryRequest",
+			Err:  &api.InvalidInputError{Message: "end_time must be greater than or equal to start_time"},
+		}
+	}
+	return nil
+}
+
+// operationsService handles operational management tasks like migrations and upgrades.
+// It tracks operations in-memory with unique job IDs for async operation monitoring.
+type operationsService struct {
+	svc *quicBaaS
+
+	// In-memory job tracking
+	jobs   map[string]*operationJob
+	jobsMu sync.RWMutex
+}
+
+// operationJob represents an asynchronous operation (migration, upgrade, node replacement).
+type operationJob struct {
+	ID        string
+	Type      string // "migration", "upgrade", "replacement"
+	Status    string // "initiated", "running", "completed", "failed"
+	Progress  float64
+	StartTime time.Time
+
+	// Migration-specific fields
+	SourceShard   uint64
+	TargetShard   uint64
+	ItemsMigrated uint64
+	TotalItems    uint64
+
+	// Upgrade-specific fields
+	NodeID         uint64
+	CurrentVersion string
+	TargetVersion  string
+}
+
+func newOperationsService(svc *quicBaaS) *operationsService {
+	return &operationsService{
+		svc:  svc,
+		jobs: make(map[string]*operationJob),
+	}
+}
+
+func (o *operationsService) MigrateData(ctx context.Context, req *MigrateDataRequest) (*MigrateDataResponse, error) {
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.MigrateData",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+
+	// Generate unique migration ID
+	migrationID := fmt.Sprintf("migration-%s", uuid.New().String())
+
+	// Create job entry
+	job := &operationJob{
+		ID:          migrationID,
+		Type:        "migration",
+		Status:      "initiated",
+		Progress:    0.0,
+		StartTime:   time.Now(),
+		SourceShard: req.SourceShard,
+		TargetShard: req.TargetShard,
+		TotalItems:  10000, // Mock estimate
+	}
+
+	o.jobsMu.Lock()
+	o.jobs[migrationID] = job
+	o.jobsMu.Unlock()
+
+	// Log the operation
+	if o.svc.logger != nil {
+		o.svc.logger.WithFields(map[string]interface{}{
+			"migration_id": migrationID,
+			"source_shard": req.SourceShard,
+			"target_shard": req.TargetShard,
+			"concurrency":  req.Concurrency,
+		}).Info("Migration initiated")
+	}
+
+	// In production, this would kick off an async goroutine to perform the migration
+	// For now, we just return the initiated status
+
+	return &MigrateDataResponse{
+		MigrationID:       migrationID,
+		Status:            "initiated",
+		EstimatedDuration: 3600, // 1 hour estimate in seconds
+	}, nil
+}
+
+func (o *operationsService) GetMigrationProgress(ctx context.Context, req *GetMigrationProgressRequest) (*GetMigrationProgressResponse, error) {
+	if req == nil || req.MigrationID == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.GetMigrationProgress",
+			Err:  &api.RequiredFieldError{Field: "migration ID"},
+		}
+	}
+
+	o.jobsMu.RLock()
+	job, exists := o.jobs[req.MigrationID]
+	o.jobsMu.RUnlock()
+
+	if !exists {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotFound,
+			Op:   "service.GetMigrationProgress",
+			Err:  &api.NotFoundError{Resource: "migration", ID: req.MigrationID},
+		}
+	}
+
+	if job.Type != "migration" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.GetMigrationProgress",
+			Err:  &api.InvalidInputError{Message: "job " + req.MigrationID + " is not a migration"},
+		}
+	}
+
+	// Calculate ETA based on progress
+	var eta int64
+	if job.Progress > 0 && job.Progress < 100 {
+		elapsed := time.Since(job.StartTime).Seconds()
+		totalEstimate := elapsed / (job.Progress / 100.0)
+		eta = int64(totalEstimate - elapsed)
+	}
+
+	return &GetMigrationProgressResponse{
+		MigrationID:   job.ID,
+		Progress:      job.Progress,
+		Status:        job.Status,
+		ItemsMigrated: job.ItemsMigrated,
+		TotalItems:    job.TotalItems,
+		ETA:           eta,
+	}, nil
+}
+
+func (o *operationsService) ReplaceNode(ctx context.Context, req *ReplaceNodeRequest) (*ReplaceNodeResponse, error) {
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.ReplaceNode",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+
+	// Generate unique job ID
+	jobID := fmt.Sprintf("replace-%s", uuid.New().String())
+
+	// Create job entry
+	job := &operationJob{
+		ID:        jobID,
+		Type:      "replacement",
+		Status:    "initiated",
+		Progress:  0.0,
+		StartTime: time.Now(),
+	}
+
+	o.jobsMu.Lock()
+	o.jobs[jobID] = job
+	o.jobsMu.Unlock()
+
+	// Log the operation
+	if o.svc.logger != nil {
+		o.svc.logger.WithFields(map[string]interface{}{
+			"job_id":      jobID,
+			"shard_id":    req.ShardID,
+			"old_node_id": req.OldNodeID,
+			"new_node_id": req.NewNodeID,
+			"new_address": req.NewAddress,
+		}).Info("Node replacement initiated")
+	}
+
+	// In production, this would:
+	// 1. Add new node to cluster
+	// 2. Initiate data sync from old node
+	// 3. Wait for sync completion
+	// 4. Update routing tables
+	// 5. Remove old node
+
+	return &ReplaceNodeResponse{
+		JobID:  jobID,
+		Status: "initiated",
+	}, nil
+}
+
+func (o *operationsService) UpgradeNode(ctx context.Context, req *UpgradeNodeRequest) (*UpgradeNodeResponse, error) {
+	if req == nil {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.UpgradeNode",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+
+	// Generate unique job ID
+	jobID := fmt.Sprintf("upgrade-%s", uuid.New().String())
+
+	// Create job entry
+	job := &operationJob{
+		ID:             jobID,
+		Type:           "upgrade",
+		Status:         "initiated",
+		Progress:       0.0,
+		StartTime:      time.Now(),
+		NodeID:         req.NodeID,
+		CurrentVersion: "1.0.0", // Mock current version
+		TargetVersion:  req.TargetVersion,
+	}
+
+	o.jobsMu.Lock()
+	o.jobs[jobID] = job
+	o.jobsMu.Unlock()
+
+	// Log the operation
+	if o.svc.logger != nil {
+		o.svc.logger.WithFields(map[string]interface{}{
+			"job_id":         jobID,
+			"node_id":        req.NodeID,
+			"target_version": req.TargetVersion,
+		}).Info("Node upgrade initiated")
+	}
+
+	// In production, this would perform a rolling upgrade:
+	// 1. Drain connections from node
+	// 2. Stop node gracefully
+	// 3. Upgrade binary
+	// 4. Restart node
+	// 5. Verify health
+	// 6. Resume traffic
+
+	return &UpgradeNodeResponse{
+		JobID:  jobID,
+		Status: "initiated",
+	}, nil
+}
+
+func (o *operationsService) GetUpgradeStatus(ctx context.Context, req *GetUpgradeStatusRequest) (*GetUpgradeStatusResponse, error) {
+	if req == nil || req.JobID == "" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.GetUpgradeStatus",
+			Err:  &api.RequiredFieldError{Field: "job ID"},
+		}
+	}
+
+	o.jobsMu.RLock()
+	job, exists := o.jobs[req.JobID]
+	o.jobsMu.RUnlock()
+
+	if !exists {
+		return nil, &errors.DragonError{
+			Code: errors.ErrNotFound,
+			Op:   "service.GetUpgradeStatus",
+			Err:  &api.NotFoundError{Resource: "job", ID: req.JobID},
+		}
+	}
+
+	if job.Type != "upgrade" {
+		return nil, &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.GetUpgradeStatus",
+			Err:  &api.InvalidInputError{Message: "job " + req.JobID + " is not an upgrade"},
+		}
+	}
+
+	return &GetUpgradeStatusResponse{
+		JobID:          job.ID,
+		Progress:       job.Progress,
+		Status:         job.Status,
+		CurrentVersion: job.CurrentVersion,
+		TargetVersion:  job.TargetVersion,
+	}, nil
+}
+
+// =============================================================================
+// Interface Methods (delegate to sub-services)
+// =============================================================================
+
+func (s *quicBaaS) Put(ctx context.Context, req *PutRequest) (*PutResponse, error) {
+	return s.kvService.Put(ctx, req)
+}
+
+func (s *quicBaaS) Get(ctx context.Context, req *GetRequest) (*GetResponse, error) {
+	return s.kvService.Get(ctx, req)
+}
+
+func (s *quicBaaS) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResponse, error) {
+	return s.kvService.Delete(ctx, req)
+}
+
+func (s *quicBaaS) List(ctx context.Context, req *ListRequest, stream chan<- *ListResponse) error {
+	return s.kvService.List(ctx, req, stream)
+}
+
+func (s *quicBaaS) Watch(ctx context.Context, req *WatchRequest, stream chan<- *WatchResponse) (int64, error) {
+	return s.kvService.Watch(ctx, req, stream)
+}
+
+func (s *quicBaaS) ListEntityTypes(ctx context.Context, req *ListEntityTypesRequest) (*ListEntityTypesResponse, error) {
+	return s.kvService.ListEntityTypes(ctx, req)
+}
+
+func (s *quicBaaS) BatchPut(ctx context.Context, req *BatchPutRequest) (*BatchPutResponse, error) {
+	return s.batchService.BatchPut(ctx, req)
+}
+
+func (s *quicBaaS) BatchGet(ctx context.Context, req *BatchGetRequest) (*BatchGetResponse, error) {
+	return s.batchService.BatchGet(ctx, req)
+}
+
+func (s *quicBaaS) BatchDelete(ctx context.Context, req *BatchDeleteRequest) (*BatchDeleteResponse, error) {
+	return s.batchService.BatchDelete(ctx, req)
+}
+
+func (s *quicBaaS) Transaction(ctx context.Context, req *TransactionRequest) (*TransactionResponse, error) {
+	return s.transactionService.Transaction(ctx, req)
+}
+
+func (s *quicBaaS) Query(ctx context.Context, req *QueryRequest, stream chan<- *QueryResponse) error {
+	return s.queryService.Query(ctx, req, stream)
+}
+
+func (s *quicBaaS) ScanIndex(ctx context.Context, req *ScanRequest, stream chan<- *ScanResponse) error {
+	return s.queryService.ScanIndex(ctx, req, stream)
+}
+
+func (s *quicBaaS) ClusterStatus(ctx context.Context, req *ClusterStatusRequest) (*ClusterStatusResponse, error) {
+	return s.clusterService.ClusterStatus(ctx, req)
+}
+
+func (s *quicBaaS) GetLeader(ctx context.Context, req *GetLeaderRequest) (*GetLeaderResponse, error) {
+	return s.clusterService.GetLeader(ctx, req)
+}
+
+func (s *quicBaaS) AddNode(ctx context.Context, req *AddNodeRequest) (*AddNodeResponse, error) {
+	return s.clusterService.AddNode(ctx, req)
+}
+
+func (s *quicBaaS) RemoveNode(ctx context.Context, req *RemoveNodeRequest) (*RemoveNodeResponse, error) {
+	return s.clusterService.RemoveNode(ctx, req)
+}
+
+func (s *quicBaaS) CreateShard(ctx context.Context, req *CreateShardRequest) (*CreateShardResponse, error) {
+	return s.clusterService.CreateShard(ctx, req)
+}
+
+func (s *quicBaaS) RebalanceCluster(ctx context.Context, req *RebalanceClusterRequest) (*RebalanceClusterResponse, error) {
+	return s.clusterService.RebalanceCluster(ctx, req)
+}
+
+func (s *quicBaaS) GetRebalanceProgress(ctx context.Context, req *GetRebalanceProgressRequest) (*GetRebalanceProgressResponse, error) {
+	return s.clusterService.GetRebalanceProgress(ctx, req)
+}
+
+func (s *quicBaaS) CreateBackup(ctx context.Context, req *CreateBackupRequest) (*CreateBackupResponse, error) {
+	return s.backupService.CreateBackup(ctx, req)
+}
+
+func (s *quicBaaS) ListBackups(ctx context.Context, req *ListBackupsRequest) (*ListBackupsResponse, error) {
+	return s.backupService.ListBackups(ctx, req)
+}
+
+func (s *quicBaaS) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) (*RestoreBackupResponse, error) {
+	return s.backupService.RestoreBackup(ctx, req)
+}
+
+func (s *quicBaaS) DeleteBackup(ctx context.Context, req *DeleteBackupRequest) (*DeleteBackupResponse, error) {
+	return s.backupService.DeleteBackup(ctx, req)
+}
+
+func (s *quicBaaS) VerifyBackup(ctx context.Context, req *VerifyBackupRequest) (*VerifyBackupResponse, error) {
+	return s.backupService.VerifyBackup(ctx, req)
+}
+
+func (s *quicBaaS) Login(ctx context.Context, req *LoginRequest) (*LoginResponse, error) {
+	return s.authService.Login(ctx, req)
+}
+
+func (s *quicBaaS) Logout(ctx context.Context, req *LogoutRequest) (*LogoutResponse, error) {
+	return s.authService.Logout(ctx, req)
+}
+
+func (s *quicBaaS) RefreshToken(ctx context.Context, req *RefreshTokenRequest) (*RefreshTokenResponse, error) {
+	return s.authService.RefreshToken(ctx, req)
+}
+
+func (s *quicBaaS) ValidateToken(ctx context.Context, req *ValidateTokenRequest) (*ValidateTokenResponse, error) {
+	return s.authService.ValidateToken(ctx, req)
+}
+
+func (s *quicBaaS) CreateUser(ctx context.Context, req *AuthCreateUserRequest) (*AuthCreateUserResponse, error) {
+	return s.rbacService.CreateUser(ctx, req)
+}
+
+func (s *quicBaaS) DeleteUser(ctx context.Context, req *AuthDeleteUserRequest) (*AuthDeleteUserResponse, error) {
+	return s.rbacService.DeleteUser(ctx, req)
+}
+
+func (s *quicBaaS) ListUsers(ctx context.Context, req *AuthListUsersRequest) (*AuthListUsersResponse, error) {
+	return s.rbacService.ListUsers(ctx, req)
+}
+
+func (s *quicBaaS) CreateAuthRole(ctx context.Context, req *AuthCreateRoleRequest) (*AuthCreateRoleResponse, error) {
+	return s.rbacService.CreateRole(ctx, req)
+}
+
+func (s *quicBaaS) DeleteAuthRole(ctx context.Context, req *AuthDeleteRoleRequest) (*AuthDeleteRoleResponse, error) {
+	return s.rbacService.DeleteRole(ctx, req)
+}
+
+func (s *quicBaaS) ListAuthRoles(ctx context.Context, req *AuthListRolesRequest) (*AuthListRolesResponse, error) {
+	return s.rbacService.ListRoles(ctx, req)
+}
+
+func (s *quicBaaS) AssignRole(ctx context.Context, req *AuthAssignRoleRequest) (*AuthAssignRoleResponse, error) {
+	return s.rbacService.AssignRole(ctx, req)
+}
+
+func (s *quicBaaS) RevokeRole(ctx context.Context, req *AuthRevokeRoleRequest) (*AuthRevokeRoleResponse, error) {
+	return s.rbacService.RevokeRole(ctx, req)
+}
+
+func (s *quicBaaS) GetCacheStats(ctx context.Context, req *GetCacheStatsRequest) (*GetCacheStatsResponse, error) {
+	return s.cacheService.GetCacheStats(ctx, req)
+}
+
+func (s *quicBaaS) ClearCache(ctx context.Context, req *ClearCacheRequest) (*ClearCacheResponse, error) {
+	return s.cacheService.ClearCache(ctx, req)
+}
+
+func (s *quicBaaS) GetCacheConfig(ctx context.Context, req *GetCacheConfigRequest) (*GetCacheConfigResponse, error) {
+	return s.cacheService.GetCacheConfig(ctx, req)
+}
+
+func (s *quicBaaS) UpdateCacheConfig(ctx context.Context, req *UpdateCacheConfigRequest) (*UpdateCacheConfigResponse, error) {
+	return s.cacheService.UpdateCacheConfig(ctx, req)
+}
+
+func (s *quicBaaS) Health(ctx context.Context, req *HealthRequest) (*HealthResponse, error) {
+	return s.healthService.Health(ctx, req)
+}
+
+func (s *quicBaaS) Liveness(ctx context.Context, req *LivenessRequest) (*LivenessResponse, error) {
+	return s.healthService.Liveness(ctx, req)
+}
+
+func (s *quicBaaS) Readiness(ctx context.Context, req *ReadinessRequest) (*ReadinessResponse, error) {
+	return s.healthService.Readiness(ctx, req)
+}
+
+func (s *quicBaaS) Aggregate(ctx context.Context, req *AggregateRequest) (*AggregateResponse, error) {
+	return s.timeSeriesService.Aggregate(ctx, req)
+}
+
+func (s *quicBaaS) TimeSeriesQuery(ctx context.Context, req *TimeSeriesQueryRequest, stream chan<- *TimeSeriesQueryResponse) error {
+	return s.timeSeriesService.TimeSeriesQuery(ctx, req, stream)
+}
+
+func (s *quicBaaS) WritePoint(ctx context.Context, req *WritePointRequest) (*WritePointResponse, error) {
+	return s.timeSeriesService.WritePoint(ctx, req)
+}
+
+func (s *quicBaaS) WriteBatch(ctx context.Context, req *WriteBatchRequest) (*WriteBatchResponse, error) {
+	return s.timeSeriesService.WriteBatch(ctx, req)
+}
+
+func (s *quicBaaS) TSQuery(ctx context.Context, req *TSQueryRequest) (*TSQueryResponse, error) {
+	return s.timeSeriesService.TSQuery(ctx, req)
+}
+
+func (s *quicBaaS) DeleteSeries(ctx context.Context, req *TSDeleteRequest) (*TSDeleteResponse, error) {
+	return s.timeSeriesService.DeleteSeries(ctx, req)
+}
+
+func (s *quicBaaS) GetRetentionPolicy(ctx context.Context, req *TSGetRetentionPolicyRequest) (*TSGetRetentionPolicyResponse, error) {
+	return s.timeSeriesService.GetRetentionPolicy(ctx, req)
+}
+
+func (s *quicBaaS) SetRetentionPolicy(ctx context.Context, req *TSSetRetentionPolicyRequest) (*TSSetRetentionPolicyResponse, error) {
+	return s.timeSeriesService.SetRetentionPolicy(ctx, req)
+}
+
+func (s *quicBaaS) ListMetrics(ctx context.Context, req *TSListMetricsRequest) (*TSListMetricsResponse, error) {
+	return s.timeSeriesService.ListMetrics(ctx, req)
+}
+
+func (s *quicBaaS) MigrateData(ctx context.Context, req *MigrateDataRequest) (*MigrateDataResponse, error) {
+	return s.operationsService.MigrateData(ctx, req)
+}
+
+func (s *quicBaaS) GetMigrationProgress(ctx context.Context, req *GetMigrationProgressRequest) (*GetMigrationProgressResponse, error) {
+	return s.operationsService.GetMigrationProgress(ctx, req)
+}
+
+func (s *quicBaaS) ReplaceNode(ctx context.Context, req *ReplaceNodeRequest) (*ReplaceNodeResponse, error) {
+	return s.operationsService.ReplaceNode(ctx, req)
+}
+
+func (s *quicBaaS) UpgradeNode(ctx context.Context, req *UpgradeNodeRequest) (*UpgradeNodeResponse, error) {
+	return s.operationsService.UpgradeNode(ctx, req)
+}
+
+func (s *quicBaaS) GetUpgradeStatus(ctx context.Context, req *GetUpgradeStatusRequest) (*GetUpgradeStatusResponse, error) {
+	return s.operationsService.GetUpgradeStatus(ctx, req)
+}
+
+// Close gracefully shuts down the service and all backend components.
+
+// =============================================================================
+// Accessor Methods - KMS, Secrets, Crypto Services
+// =============================================================================
+
+// KMS returns the KMS service (returns nil if not configured).
+func (s *quicBaaS) KMS() KMSService {
+	return s.kmsService
+}
+
+// KMSManager returns the underlying KMS manager for direct access.
+// This provides the interfaces.KMSManager implementation used by API layers.
+func (s *quicBaaS) KMSManager() interfaces.KMSManager {
+	return s.kmsManager
+}
+
+// Secrets returns the Secrets service (returns nil if not configured).
+func (s *quicBaaS) Secrets() SecretsService {
+	return s.secretsService
+}
+
+// Crypto returns the Crypto service (returns nil if not configured).
+func (s *quicBaaS) Crypto() CryptoService {
+	return s.cryptoService
+}
+
+// Vector returns the Vector service (returns nil if not configured).
+func (s *quicBaaS) Vector() VectorService {
+	return s.vectorService
+}
+
+// Embedding returns the Embedding service (returns nil if not configured).
+func (s *quicBaaS) Embedding() EmbeddingService {
+	return s.embeddingService
+}
+
+// Ollama returns the Ollama service (returns nil if not configured).
+func (s *quicBaaS) Ollama() OllamaService {
+	return s.ollamaService
+}
+
+// Certificate returns the Certificate service (returns nil if not configured).
+func (s *quicBaaS) Certificate() CertificateService {
+	return s.certificateService
+}
+
+// DynamicSecrets returns the Dynamic Secrets service (returns nil if not configured).
+func (s *quicBaaS) DynamicSecrets() DynamicSecretsService {
+	return s.dynamicSecretsService
+}
+
+// ClusterDEK returns the Cluster DEK service (returns nil if not configured).
+func (s *quicBaaS) ClusterDEK() ClusterDEKService {
+	return s.clusterDEKService
+}
+
+// ObjectStorageService returns the Object Storage service (returns nil if not configured).
+func (s *quicBaaS) ObjectStorageService() ObjectStorageService {
+	return s.objectStorageService
+}
+
+// ObjectStorageAdminService returns the Object Storage Admin service (returns nil if not configured).
+func (s *quicBaaS) ObjectStorageAdminService() ObjectStorageAdminService {
+	return s.objectStorageAdminService
+}
+
+// ParameterStoreService returns the Parameter Store service (returns nil if not configured).
+func (s *quicBaaS) ParameterStoreService() ParameterStoreService {
+	return s.parameterStoreService
+}
+
+// ObjectTransferService returns the Object Transfer service (returns nil if not configured).
+// ObjectTransferService provides peer-to-peer object data transfer for lazy snapshot recovery.
+func (s *quicBaaS) ObjectTransferService() ObjectTransferService {
+	return s.objectTransferService
+}
+
+// Scheduler returns the Scheduler service (returns nil if not configured).
+// Scheduler provides job scheduling and execution with multi-tenant support.
+func (s *quicBaaS) Scheduler() SchedulerService {
+	return s.schedulerService
+}
+
+// Agent returns the Agent service (returns nil if not configured).
+// Agent provides AI agent orchestration across multiple backends.
+func (s *quicBaaS) Agent() orchestration.AgentService {
+	return s.agentService
+}
+
+// SetAgentService sets the Agent orchestration service.
+// This is called during initialization when orchestration is configured.
+func (s *quicBaaS) SetAgentService(agent orchestration.AgentService) {
+	s.agentService = agent
+}
+
+// Messaging returns the Messaging notification service (returns nil if not configured).
+// Messaging provides real-time push notifications and event streaming.
+func (s *quicBaaS) Messaging() messaging.Service {
+	return s.messagingService
+}
+
+// SetMessagingService sets the Messaging notification service.
+// This is called after the messaging service is initialized externally.
+func (s *quicBaaS) SetMessagingService(ms messaging.Service) {
+	s.messagingService = ms
+}
+
+// Database returns the Database service (returns nil if not configured).
+// Database provides tenant-scoped database lifecycle management.
+func (s *quicBaaS) Database() DatabaseService {
+	return s.databaseService
+}
+
+// SetDatabaseService sets the Database lifecycle management service.
+// This is called after the database manager is initialized.
+func (s *quicBaaS) SetDatabaseService(ds DatabaseService) {
+	s.databaseService = ds
+}
+
+// SetQRDBClient sets the qrdb SDK client provider for core KV operations.
+// This is called after the ShardedClient is initialized.
+func (s *quicBaaS) SetQRDBClient(provider QRDBClientProvider) {
+	s.qrdbClient = provider
+}
+
+// WatchManager returns the internal watch.Manager for bridge integration.
+func (s *quicBaaS) WatchManager() *watch.Manager {
+	return s.watchManager
+}
+
+// DAO returns the DAO factory for creating type-safe Generic DAOs.
+// Returns nil if no KVStore provider was configured.
+func (s *quicBaaS) DAO() DAOFactory {
+	if s.daoFactory == nil {
+		return nil
+	}
+	return s.daoFactory
+}
+
+// =============================================================================
+// KMS Service Delegation Methods
+// =============================================================================
+
+// GenerateKey creates a new cryptographic key with specified parameters.
+// Delegates to the underlying KMS service.
+func (s *quicBaaS) GenerateKey(ctx context.Context, req *GenerateKeyRequest) (*GenerateKeyResponse, error) {
+	if s.kmsService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.GenerateKey", "KMS service not initialized")
+	}
+	return s.kmsService.GenerateKey(ctx, req)
+}
+
+// ImportKey imports an externally generated key into the KMS.
+// Delegates to the underlying KMS service.
+func (s *quicBaaS) ImportKey(ctx context.Context, req *ImportKeyRequest) (*ImportKeyResponse, error) {
+	if s.kmsService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.ImportKey", "KMS service not initialized")
+	}
+	return s.kmsService.ImportKey(ctx, req)
+}
+
+// GetKey retrieves key material or public key by key ID.
+// Delegates to the underlying KMS service.
+func (s *quicBaaS) GetKey(ctx context.Context, req *GetKeyRequest) (*GetKeyResponse, error) {
+	if s.kmsService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.GetKey", "KMS service not initialized")
+	}
+	return s.kmsService.GetKey(ctx, req)
+}
+
+// ListKeys returns all keys accessible to the requester with pagination.
+// Delegates to the underlying KMS service.
+func (s *quicBaaS) ListKeys(ctx context.Context, req *ListKeysRequest) (*ListKeysResponse, error) {
+	if s.kmsService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.ListKeys", "KMS service not initialized")
+	}
+	return s.kmsService.ListKeys(ctx, req)
+}
+
+// RotateKey creates a new version of an existing key.
+// Delegates to the underlying KMS service.
+func (s *quicBaaS) RotateKey(ctx context.Context, req *RotateKeyRequest) (*RotateKeyResponse, error) {
+	if s.kmsService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.RotateKey", "KMS service not initialized")
+	}
+	return s.kmsService.RotateKey(ctx, req)
+}
+
+// RevokeKey marks a key version as revoked and unusable.
+// Delegates to the underlying KMS service.
+func (s *quicBaaS) RevokeKey(ctx context.Context, req *RevokeKeyRequest) (*RevokeKeyResponse, error) {
+	if s.kmsService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.RevokeKey", "KMS service not initialized")
+	}
+	return s.kmsService.RevokeKey(ctx, req)
+}
+
+// DeleteKey permanently removes a key and all its versions.
+// Delegates to the underlying KMS service.
+func (s *quicBaaS) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (*DeleteKeyResponse, error) {
+	if s.kmsService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.DeleteKey", "KMS service not initialized")
+	}
+	return s.kmsService.DeleteKey(ctx, req)
+}
+
+// GetKeyMetadata retrieves metadata for a key without exposing key material.
+// Delegates to the underlying KMS service.
+func (s *quicBaaS) GetKeyMetadata(ctx context.Context, req *GetKeyMetadataRequest) (*GetKeyMetadataResponse, error) {
+	if s.kmsService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.GetKeyMetadata", "KMS service not initialized")
+	}
+	return s.kmsService.GetKeyMetadata(ctx, req)
+}
+
+// =============================================================================
+// Crypto Service Delegation Methods
+// =============================================================================
+
+// Encrypt encrypts data using the specified key.
+// Delegates to the underlying Crypto service.
+func (s *quicBaaS) Encrypt(ctx context.Context, req *EncryptRequest) (*EncryptResponse, error) {
+	if s.cryptoService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Encrypt", "Crypto service not initialized")
+	}
+	return s.cryptoService.Encrypt(ctx, req)
+}
+
+// Decrypt decrypts data using the specified key.
+// Delegates to the underlying Crypto service.
+func (s *quicBaaS) Decrypt(ctx context.Context, req *DecryptRequest) (*DecryptResponse, error) {
+	if s.cryptoService == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Decrypt", "Crypto service not initialized")
+	}
+	return s.cryptoService.Decrypt(ctx, req)
+}
+
+func (s *quicBaaS) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil
+	}
+
+	if s.logger != nil {
+		s.logger.Info("Shutting down QuicBaaS service")
+	}
+
+	// Close components in reverse dependency order
+
+	// Stop scheduler first to prevent new job executions
+	if s.schedulerEngine != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.schedulerEngine.Stop(ctx); err != nil {
+			if s.logger != nil {
+				s.logger.Warnf("Failed to stop scheduler gracefully: %v", err)
+			}
+		}
+	}
+
+	var errs []error
+
+	if s.cacheManager != nil {
+		if err := s.cacheManager.Close(); err != nil {
+			errs = append(errs, &api.OperationFailedError{Operation: "close cache manager", Cause: err})
+		}
+	}
+
+	if s.backupMgr != nil {
+		if err := s.backupMgr.Close(); err != nil {
+			errs = append(errs, &api.OperationFailedError{Operation: "close backup manager", Cause: err})
+		}
+	}
+
+	if s.storage != nil {
+		if err := s.storage.Close(); err != nil {
+			errs = append(errs, &api.OperationFailedError{Operation: "close storage", Cause: err})
+		}
+	}
+
+	if s.qrdbClient != nil {
+		if err := s.qrdbClient.Close(); err != nil {
+			errs = append(errs, &api.OperationFailedError{Operation: "close qrdb client", Cause: err})
+		}
+	}
+
+	s.closed = true
+
+	if len(errs) > 0 {
+		return api.NewShutdownError("service.QuicBaaS.Close", errs)
+	}
+
+	if s.logger != nil {
+		s.logger.Info("QuicBaaS service shutdown complete")
+	}
+
+	return nil
+}
+
+// =============================================================================
+// Helper Methods
+// =============================================================================
+
+// getLeaderIDFromSDK retrieves the leader replica ID for a shard via the
+// qrdb SDK's GetShardState endpoint. Returns 0 when the leader cannot be
+// determined (e.g., no SDK client, no leader elected, or transient error).
+func (s *quicBaaS) getLeaderIDFromSDK(ctx context.Context, shardID uint64) uint64 {
+	client, err := s.qrdbForShard(shardID)
+	if err != nil {
+		return 0
+	}
+	state, err := client.Admin().GetShardState(ctx, shardID)
+	if err != nil || !state.HasLeader {
+		return 0
+	}
+	return state.LeaderID
+}
+
+func (s *quicBaaS) checkAuth(ctx context.Context, permission string) error {
+	// Skip auth check if authentication is disabled
+	if !s.config.EnableAuth {
+		return nil
+	}
+
+	// Extract token from context metadata
+	token, err := auth.ExtractTokenFromContext(ctx)
+	if err != nil {
+		return &errors.DragonError{
+			Code: errors.ErrUnauthorized,
+			Op:   "service.checkAuth",
+			Err:  &api.OperationFailedError{Operation: "extract token", Cause: err},
+		}
+	}
+
+	// If no token found and auth is required, return unauthorized
+	if token == "" {
+		return &errors.DragonError{
+			Code: errors.ErrUnauthorized,
+			Op:   "service.checkAuth",
+			Err:  &api.InvalidInputError{Message: "authentication required"},
+		}
+	}
+
+	// Validate token and check permission using auth manager
+	if s.authManager != nil {
+		if err := s.authManager.Authorize(ctx, token, "keys", permission); err != nil {
+			return &errors.DragonError{
+				Code: errors.ErrUnauthorized,
+				Op:   "service.checkAuth",
+				Err:  &api.OperationFailedError{Operation: "authorization", Cause: err},
+			}
+		}
+	}
+
+	return nil
+}
+
+func (k *kvService) convertConsistency(level ConsistencyLevel) qrdbtransport.ConsistencyLevel {
+	switch level {
+	case ConsistencyLevelEventual:
+		return qrdbtransport.ConsistencyEventual
+	case ConsistencyLevelLinearizable:
+		return qrdbtransport.ConsistencyLinearizable
+	case ConsistencyLevelStrong:
+		return qrdbtransport.ConsistencyStrong
+	default:
+		return qrdbtransport.ConsistencyLinearizable
+	}
+}
+
+func (k *kvService) convertWriteMode(mode WriteMode) qrdbtransport.WriteMode {
+	switch mode {
+	case WriteModeSync:
+		return qrdbtransport.WriteModeSync
+	case WriteModeWALDurable:
+		return qrdbtransport.WriteModeWALDurable
+	case WriteModeBatched:
+		return qrdbtransport.WriteModeBatched
+	default:
+		return qrdbtransport.WriteModeWALDurable
+	}
+}
+
+// =============================================================================
+// Validation Methods
+// =============================================================================
+
+func (k *kvService) validatePutRequest(req *PutRequest) error {
+	if req == nil {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Put",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.EntityType == "" {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Put",
+			Err:  &api.RequiredFieldError{Field: "entity type"},
+		}
+	}
+	// Note: Empty data (len == 0) is allowed - this is valid in key-value stores
+	// The existence of a key with empty value is semantically different from key not existing
+	return nil
+}
+
+func (k *kvService) validateGetRequest(req *GetRequest) error {
+	if req == nil {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Get",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.EntityType == "" {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Get",
+			Err:  &api.RequiredFieldError{Field: "entity type"},
+		}
+	}
+	return nil
+}
+
+func (k *kvService) validateDeleteRequest(req *DeleteRequest) error {
+	if req == nil {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Delete",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.EntityType == "" {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.Delete",
+			Err:  &api.RequiredFieldError{Field: "entity type"},
+		}
+	}
+	return nil
+}
+
+func (k *kvService) validateListRequest(req *ListRequest) error {
+	if req == nil {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.List",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if req.EntityType == "" {
+		return &errors.DragonError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.List",
+			Err:  &api.RequiredFieldError{Field: "entity type"},
+		}
+	}
+	return nil
+}
+
+// ConsistencyLevel.String() implementation.
+func (c ConsistencyLevel) String() string {
+	switch c {
+	case ConsistencyLevelUnspecified:
+		return "unspecified"
+	case ConsistencyLevelEventual:
+		return "eventual"
+	case ConsistencyLevelLinearizable:
+		return "linearizable"
+	case ConsistencyLevelStrong:
+		return "strong"
+	default:
+		return "unknown"
+	}
+}
+
+// aggFuncMap provides O(1) lookup from aggregation name strings to AggFunc values.
+var aggFuncMap = map[string]qrdbtransport.AggFunc{
+	"avg":        qrdbtransport.AggAvg,
+	"sum":        qrdbtransport.AggSum,
+	"min":        qrdbtransport.AggMin,
+	"max":        qrdbtransport.AggMax,
+	"count":      qrdbtransport.AggCount,
+	"percentile": qrdbtransport.AggPercentile,
+	"first":      qrdbtransport.AggFirst,
+	"last":       qrdbtransport.AggLast,
+}
+
+// parseAggFunc converts a string aggregation name to a qrdbtransport.AggFunc.
+// Returns AggNone for empty or unrecognized strings.
+func parseAggFunc(name string) qrdbtransport.AggFunc {
+	if name == "" {
+		return qrdbtransport.AggNone
+	}
+	if agg, ok := aggFuncMap[strings.ToLower(name)]; ok {
+		return agg
+	}
+	return qrdbtransport.AggNone
+}

@@ -1,0 +1,360 @@
+// QuicBaaS Certificate Protocol Buffer Definitions v1
+// Certificate Authority and TLS Certificate Management
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under AGPL-3.0
+
+syntax = "proto3";
+
+package quicbaas.certificate.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+
+// =============================================================================
+// Certificate Service
+// =============================================================================
+
+// CertificateService provides X.509 certificate issuance, signing, and management.
+// It wraps an internal Certificate Authority (CA) for secure certificate operations
+// including issuance, CSR signing, revocation, and verification.
+service CertificateService {
+  // IssueCertificate generates a new X.509 certificate with the specified parameters.
+  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
+
+  // SignCSR signs a Certificate Signing Request with the CA.
+  rpc SignCSR(SignCSRRequest) returns (SignCSRResponse);
+
+  // RevokeCertificate marks a certificate as revoked by serial number.
+  rpc RevokeCertificate(RevokeCertificateRequest) returns (RevokeCertificateResponse);
+
+  // VerifyCertificate checks if a certificate is valid and not revoked.
+  rpc VerifyCertificate(VerifyCertificateRequest) returns (VerifyCertificateResponse);
+
+  // GetCACertificate returns the CA certificate and bundle.
+  rpc GetCACertificate(GetCACertificateRequest) returns (GetCACertificateResponse);
+
+  // GetTLSConfig returns a TLS configuration for secure communications.
+  rpc GetTLSConfig(GetTLSConfigRequest) returns (GetTLSConfigResponse);
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+// CertificateUsage specifies the intended use of the certificate.
+enum CertificateUsage {
+  // CERTIFICATE_USAGE_UNSPECIFIED is the default unspecified value.
+  CERTIFICATE_USAGE_UNSPECIFIED = 0;
+
+  // CERTIFICATE_USAGE_CLIENT indicates client authentication usage.
+  CERTIFICATE_USAGE_CLIENT = 1;
+
+  // CERTIFICATE_USAGE_SERVER indicates server authentication usage.
+  CERTIFICATE_USAGE_SERVER = 2;
+
+  // CERTIFICATE_USAGE_BOTH indicates both client and server authentication.
+  CERTIFICATE_USAGE_BOTH = 3;
+}
+
+// KeyAlgorithm specifies the key algorithm for certificate generation.
+enum CertKeyAlgorithm {
+  // CERT_KEY_ALG_UNSPECIFIED is the default unspecified value.
+  CERT_KEY_ALG_UNSPECIFIED = 0;
+
+  // CERT_KEY_ALG_ECDSA uses Elliptic Curve Digital Signature Algorithm.
+  CERT_KEY_ALG_ECDSA = 1;
+
+  // CERT_KEY_ALG_RSA uses RSA algorithm.
+  CERT_KEY_ALG_RSA = 2;
+}
+
+// TLSVersion specifies the minimum TLS version.
+enum TLSVersion {
+  // TLS_VERSION_UNSPECIFIED is the default unspecified value.
+  TLS_VERSION_UNSPECIFIED = 0;
+
+  // TLS_VERSION_1_2 requires TLS 1.2 or higher.
+  TLS_VERSION_1_2 = 1;
+
+  // TLS_VERSION_1_3 requires TLS 1.3 or higher.
+  TLS_VERSION_1_3 = 2;
+}
+
+// =============================================================================
+// Common Types
+// =============================================================================
+
+// Subject contains the distinguished name fields for a certificate.
+message CertificateSubject {
+  // CommonName is the CN field (required).
+  string common_name = 1;
+
+  // Organization is the O field.
+  string organization = 2;
+
+  // OrganizationalUnit is the OU field.
+  string organizational_unit = 3;
+
+  // Country is the C field.
+  string country = 4;
+
+  // Province is the ST field.
+  string province = 5;
+
+  // Locality is the L field.
+  string locality = 6;
+}
+
+// SubjectAlternativeNames contains SANs for the certificate.
+message SubjectAlternativeNames {
+  // DNSNames are DNS subject alternative names.
+  repeated string dns_names = 1;
+
+  // IPAddresses are IP subject alternative names.
+  repeated string ip_addresses = 2;
+
+  // EmailAddresses are email subject alternative names.
+  repeated string email_addresses = 3;
+
+  // URIs are URI subject alternative names.
+  repeated string uris = 4;
+}
+
+// =============================================================================
+// Issue Certificate Request/Response
+// =============================================================================
+
+// IssueCertificateRequest requests issuance of a new certificate.
+message IssueCertificateRequest {
+  // CommonName is the CN field (required).
+  string common_name = 1;
+
+  // Organization is the O field.
+  string organization = 2;
+
+  // OrganizationalUnit is the OU field.
+  string organizational_unit = 3;
+
+  // Country is the C field.
+  string country = 4;
+
+  // Province is the ST field.
+  string province = 5;
+
+  // Locality is the L field.
+  string locality = 6;
+
+  // DNSNames are DNS subject alternative names.
+  repeated string dns_names = 7;
+
+  // IPAddresses are IP subject alternative names.
+  repeated string ip_addresses = 8;
+
+  // EmailAddresses are email subject alternative names.
+  repeated string email_addresses = 9;
+
+  // URIs are URI subject alternative names.
+  repeated string uris = 10;
+
+  // ValidityDays is the certificate validity period in days.
+  int32 validity_days = 11;
+
+  // Usage specifies the intended certificate usage.
+  CertificateUsage usage = 12;
+
+  // IsCA indicates if this is a CA certificate.
+  bool is_ca = 13;
+
+  // MaxPathLen is the maximum path length for CA certificates.
+  int32 max_path_len = 14;
+
+  // KeyAlgorithm specifies the key algorithm.
+  CertKeyAlgorithm key_algorithm = 15;
+
+  // KeySize is the key size in bits.
+  int32 key_size = 16;
+
+  // Metadata contains custom metadata.
+  map<string, string> metadata = 17;
+}
+
+// IssueCertificateResponse returns the issued certificate.
+message IssueCertificateResponse {
+  // CertificatePEM is the issued certificate in PEM format.
+  string certificate_pem = 1;
+
+  // PrivateKeyPEM is the private key in PEM format.
+  string private_key_pem = 2;
+
+  // CACertificatePEM is the CA certificate in PEM format.
+  string ca_certificate_pem = 3;
+
+  // ChainPEM is the full certificate chain in PEM format.
+  string chain_pem = 4;
+
+  // SerialNumber is the certificate serial number.
+  string serial_number = 5;
+
+  // NotBefore is when the certificate becomes valid.
+  google.protobuf.Timestamp not_before = 6;
+
+  // NotAfter is when the certificate expires.
+  google.protobuf.Timestamp not_after = 7;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 8;
+}
+
+// =============================================================================
+// Sign CSR Request/Response
+// =============================================================================
+
+// SignCSRRequest contains a CSR to sign.
+message SignCSRRequest {
+  // CSRPEM is the Certificate Signing Request in PEM format.
+  string csr_pem = 1;
+
+  // ValidityDays is the certificate validity period in days.
+  int32 validity_days = 2;
+
+  // Usage specifies the intended certificate usage.
+  CertificateUsage usage = 3;
+}
+
+// SignCSRResponse returns the signed certificate.
+message SignCSRResponse {
+  // CertificatePEM is the signed certificate in PEM format.
+  string certificate_pem = 1;
+
+  // CACertificatePEM is the CA certificate in PEM format.
+  string ca_certificate_pem = 2;
+
+  // ChainPEM is the full certificate chain in PEM format.
+  string chain_pem = 3;
+
+  // SerialNumber is the certificate serial number.
+  string serial_number = 4;
+
+  // NotBefore is when the certificate becomes valid.
+  google.protobuf.Timestamp not_before = 5;
+
+  // NotAfter is when the certificate expires.
+  google.protobuf.Timestamp not_after = 6;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 7;
+}
+
+// =============================================================================
+// Revoke Certificate Request/Response
+// =============================================================================
+
+// RevokeCertificateRequest requests certificate revocation.
+message RevokeCertificateRequest {
+  // SerialNumber is the serial number of the certificate to revoke.
+  string serial_number = 1;
+}
+
+// RevokeCertificateResponse confirms certificate revocation.
+message RevokeCertificateResponse {
+  // Success indicates if the revocation was successful.
+  bool success = 1;
+
+  // Timestamp is when the revocation occurred.
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// =============================================================================
+// Verify Certificate Request/Response
+// =============================================================================
+
+// VerifyCertificateRequest requests certificate verification.
+message VerifyCertificateRequest {
+  // CertificatePEM is the certificate to verify in PEM format.
+  string certificate_pem = 1;
+}
+
+// VerifyCertificateResponse returns the verification result.
+message VerifyCertificateResponse {
+  // Valid indicates if the certificate is valid.
+  bool valid = 1;
+
+  // ErrorMessage contains the error message if invalid.
+  string error_message = 2;
+
+  // Timestamp is when the verification was performed.
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// =============================================================================
+// Get CA Certificate Request/Response
+// =============================================================================
+
+// GetCACertificateRequest requests the CA certificate.
+message GetCACertificateRequest {
+  // No parameters needed.
+}
+
+// GetCACertificateResponse returns the CA certificate.
+message GetCACertificateResponse {
+  // CACertificatePEM is the CA certificate in PEM format.
+  string ca_certificate_pem = 1;
+
+  // CABundlePEM is the full CA bundle in PEM format.
+  string ca_bundle_pem = 2;
+
+  // Identity is the CA identity string.
+  string identity = 3;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// =============================================================================
+// Get TLS Config Request/Response
+// =============================================================================
+
+// GetTLSConfigRequest requests a TLS configuration.
+message GetTLSConfigRequest {
+  // ServerName is the server name for SNI.
+  string server_name = 1;
+
+  // RequireClientCert indicates if client certificates are required.
+  bool require_client_cert = 2;
+
+  // IsServer indicates if this is a server-side configuration.
+  bool is_server = 3;
+
+  // MinVersion specifies the minimum TLS version.
+  TLSVersion min_version = 4;
+}
+
+// GetTLSConfigResponse returns TLS configuration details.
+// Note: The actual tls.Config is constructed client-side from these parameters.
+message GetTLSConfigResponse {
+  // CertificatePEM is the certificate in PEM format.
+  string certificate_pem = 1;
+
+  // PrivateKeyPEM is the private key in PEM format.
+  string private_key_pem = 2;
+
+  // CACertificatePEM is the CA certificate in PEM format.
+  string ca_certificate_pem = 3;
+
+  // ServerName is the server name configured.
+  string server_name = 4;
+
+  // RequireClientCert indicates if client certs are required.
+  bool require_client_cert = 5;
+
+  // IsServer indicates if this is server-side config.
+  bool is_server = 6;
+
+  // MinVersion is the minimum TLS version configured.
+  TLSVersion min_version = 7;
+
+  // Timestamp is when the configuration was generated.
+  google.protobuf.Timestamp timestamp = 8;
+}

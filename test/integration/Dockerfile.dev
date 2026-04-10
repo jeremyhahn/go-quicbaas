@@ -1,0 +1,100 @@
+# QuicBaaS Development Dockerfile
+# Includes development tools and supports hot reloading
+
+# Build arguments
+ARG BUILD_TAGS=iam
+
+FROM golang:1.26-alpine
+
+ARG BUILD_TAGS
+
+# Install development dependencies
+RUN apk add --no-cache \
+    git \
+    make \
+    bash \
+    curl \
+    vim \
+    ca-certificates \
+    tzdata \
+    protobuf \
+    protobuf-dev
+
+# Install development tools
+RUN go install github.com/air-verse/air@latest && \
+    go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
+    go install github.com/securego/gosec/v2/cmd/gosec@latest && \
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+# Set working directory
+WORKDIR /app
+
+# Copy module files first for caching
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+
+# Copy local dependencies (staged by Makefile into .deps/)
+COPY .deps/ /deps/
+
+# Rewrite local replace directives to point to staged deps
+RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod sdk/go/go.mod
+
+# Download remaining dependencies
+RUN rm -f go.sum sdk/go/go.sum && GONOSUMCHECK='*' GONOSUMDB='*' go mod download
+
+# Copy source code
+COPY . .
+
+# Rewrite replace directives again (COPY . . overwrites go.mod)
+RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod sdk/go/go.mod
+
+# Remove deprecated debug route variants to avoid stale files in image cache
+RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
+
+# Build both binaries for integration/runtime use
+RUN CGO_ENABLED=0 GONOSUMCHECK='*' go build -mod=mod -buildvcs=false -tags "${BUILD_TAGS}" -o /usr/local/bin/quicbaasd ./cmd/quicbaasd && \
+    CGO_ENABLED=0 GONOSUMCHECK='*' go build -mod=mod -buildvcs=false -tags "${BUILD_TAGS}" -o /usr/local/bin/quicbaas ./cmd/quicbaas
+
+# Create non-root user for running the application
+RUN addgroup -g 1000 quicbaas && \
+    adduser -D -u 1000 -G quicbaas quicbaas
+
+# Create data directories and set ownership to quicbaas user
+RUN mkdir -p /data /var/log/quicbaas /.cache /var/run/quicbaas /var/lib/quicbaas && \
+    chown -R quicbaas:quicbaas /data /var/log/quicbaas /.cache /app /var/run/quicbaas /var/lib/quicbaas
+
+# Switch to non-root user
+USER quicbaas
+
+# Expose ports
+# 8080: HTTP/REST API
+# 9090: Metrics/Prometheus
+# 50051: gRPC API
+# 63001-63010: Raft cluster communication
+# 2345: Delve debugger (if needed)
+EXPOSE 8080 9090 50051 63001-63010 2345
+
+# Volume for data persistence and hot reload
+VOLUME ["/app", "/data"]
+
+# Default environment variables for development
+ENV QUICBAAS_LOG_LEVEL=debug \
+    QUICBAAS_LOG_FORMAT=console \
+    QUICBAAS_DATA_DIR=/data \
+    CGO_ENABLED=0
+
+# Default to air for hot reloading in development; compose overrides to run server
+CMD ["air", "-c", ".air.toml"]

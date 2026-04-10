@@ -1,0 +1,11 @@
+# Benchmark results
+results/
+!results/.gitkeep
+
+# Profile files
+profiles/*.prof
+!profiles/.gitkeep
+
+# Temporary benchmark data
+*.test
+*.out

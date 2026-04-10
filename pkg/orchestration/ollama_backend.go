@@ -1,0 +1,134 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package orchestration
+
+import (
+	"context"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/ollama"
+)
+
+// OllamaBackendConfig holds configuration for the Ollama backend.
+type OllamaBackendConfig struct {
+	ChatService  *ollama.ChatService
+	DefaultModel string
+}
+
+// OllamaBackend implements AgentBackend for Ollama LLMs. It is stateless
+// and does not support persistent sessions.
+type OllamaBackend struct {
+	chatService  *ollama.ChatService
+	defaultModel string
+}
+
+// Compile-time interface check.
+var _ AgentBackend = (*OllamaBackend)(nil)
+
+// NewOllamaBackend creates a new Ollama backend with the given configuration.
+func NewOllamaBackend(config OllamaBackendConfig) *OllamaBackend {
+	return &OllamaBackend{
+		chatService:  config.ChatService,
+		defaultModel: config.DefaultModel,
+	}
+}
+
+// Spawn returns an UnsupportedOperationError because Ollama does not support
+// persistent sessions.
+func (b *OllamaBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Session, error) {
+	return nil, &UnsupportedOperationError{Backend: b.Type(), Operation: "spawn"}
+}
+
+// Prompt sends a chat request to Ollama. The SessionID field is ignored.
+// Model resolution order: req.Model, then b.defaultModel.
+func (b *OllamaBackend) Prompt(ctx context.Context, req *PromptRequest) (*PromptResponse, error) {
+	if req == nil {
+		return nil, &InputValidationError{Field: "request", Message: "cannot be nil"}
+	}
+	if req.Prompt == "" {
+		return nil, &InputValidationError{Field: "prompt", Message: "cannot be empty"}
+	}
+
+	model := req.Model
+	if model == "" {
+		model = b.defaultModel
+	}
+	if model == "" {
+		return nil, &InputValidationError{Field: "model", Message: "no model specified and no default configured"}
+	}
+
+	var messages []ollama.ChatMessage
+
+	if req.SystemPrompt != "" {
+		messages = append(messages, ollama.ChatMessage{
+			Role:    ollama.ChatRoleSystem,
+			Content: req.SystemPrompt,
+		})
+	}
+
+	messages = append(messages, ollama.ChatMessage{
+		Role:    ollama.ChatRoleUser,
+		Content: req.Prompt,
+	})
+
+	resp, err := b.chatService.ChatWithModel(ctx, model, messages, nil)
+	if err != nil {
+		return nil, &PromptError{SessionID: "", Cause: err}
+	}
+
+	return &PromptResponse{
+		Content: []ContentBlock{
+			{
+				Type: "text",
+				Text: resp.Message.Content,
+			},
+		},
+		Model:      resp.Model,
+		StopReason: "end_turn",
+	}, nil
+}
+
+// Status returns an UnsupportedOperationError because Ollama does not support
+// persistent sessions.
+func (b *OllamaBackend) Status(ctx context.Context, sessionID string) (*SessionStatus, error) {
+	return nil, &UnsupportedOperationError{Backend: b.Type(), Operation: "status"}
+}
+
+// Close returns an UnsupportedOperationError because Ollama does not support
+// persistent sessions.
+func (b *OllamaBackend) Close(ctx context.Context, sessionID string) error {
+	return &UnsupportedOperationError{Backend: b.Type(), Operation: "close"}
+}
+
+// Capabilities returns the capabilities of the Ollama backend.
+func (b *OllamaBackend) Capabilities() BackendCapabilities {
+	return BackendCapabilities{
+		Kind:               BackendKindModelServer,
+		PersistentSessions: false,
+		ToolUse:            false,
+		FileAccess:         false,
+		Streaming:          false,
+		ACP:                false,
+	}
+}
+
+// Type returns the backend type identifier.
+func (b *OllamaBackend) Type() string {
+	return "ollama"
+}
+
+// ToolGuidance returns empty string. Ollama is a model server, not an agent,
+// so it has no tool-specific schema requirements.
+func (b *OllamaBackend) ToolGuidance() string {
+	return ""
+}

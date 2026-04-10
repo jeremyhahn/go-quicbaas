@@ -1,0 +1,2116 @@
+openapi: 3.0.3
+info:
+  title: QuicBaaS Vector Database API
+  description: |
+    High-performance distributed vector database with k-NN search and Raft consensus.
+
+    QuicBaaS Vector Database provides a RESTful API for vector storage, semantic search,
+    and namespace management. Designed for machine learning embeddings, semantic search,
+    and recommendation systems.
+
+    ## Features
+    - Vector CRUD operations with MVCC versioning
+    - k-NN similarity search with multiple distance metrics
+    - Namespace isolation for multi-tenancy
+    - Multiple index types (FLAT, HNSW, IVF)
+    - Metadata filtering and pre-filtering
+    - Batch operations for high-throughput ingestion
+    - Streaming support for large result sets
+    - Raft consensus for strong consistency
+
+    ## Consistency Levels
+    - **ALL**: All replicas must acknowledge (highest consistency, highest latency)
+    - **QUORUM**: Majority of replicas acknowledge (recommended default, ~5-15ms)
+    - **ONE**: Single replica acknowledges (fastest, eventual consistency)
+
+    ## Distance Metrics
+    - **L2**: Euclidean distance (computer vision, general embeddings)
+    - **COSINE**: Cosine similarity (text embeddings, document similarity)
+    - **DOT_PRODUCT**: Inner product (normalized embeddings, recommendations)
+    - **MANHATTAN**: L1 distance (high-dimensional sparse vectors)
+
+    ## Authentication
+    Bearer token authentication (configured per deployment).
+
+    ## Rate Limiting
+    Configurable per-server (default: 1000 req/s per namespace).
+
+  version: 1.0.0
+  contact:
+    name: QuicBaaS Vector Database
+    url: https://github.com/jeremyhahn/go-quicbaas
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+  - url: https://quicbaas.example.com/api/v1
+    description: Production server
+
+tags:
+  - name: Vectors
+    description: Vector CRUD operations
+  - name: Search
+    description: k-NN similarity search operations
+  - name: Namespaces
+    description: Namespace management and configuration
+  - name: Admin
+    description: Administrative operations (index rebuilding, compaction, export/import)
+  - name: Health
+    description: Health checks and statistics
+
+security:
+  - BearerAuth: []
+
+paths:
+  # ========================================
+  # Health Endpoints
+  # ========================================
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Get vector database health status
+      description: Returns the overall health status of the vector database including namespace health
+      operationId: getVectorHealth
+      security: []
+      parameters:
+        - name: include_details
+          in: query
+          description: Include detailed health information
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Health status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "healthy"
+                node_id: 1
+                version: "1.0.0"
+                uptime_seconds: 86400
+                namespaces_healthy: 5
+                namespaces_degraded: 0
+                namespaces_unhealthy: 0
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /stats:
+    get:
+      tags:
+        - Health
+      summary: Get vector database statistics
+      description: Returns statistics for a namespace or the entire database
+      operationId: getVectorStats
+      parameters:
+        - name: namespace
+          in: query
+          description: Filter statistics to specific namespace (empty = cluster-wide)
+          schema:
+            type: string
+        - name: include_details
+          in: query
+          description: Include per-shard breakdown
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorStatsResponse'
+              example:
+                total_vectors: 1000000
+                total_namespaces: 10
+                total_storage_bytes: 4294967296
+                total_index_bytes: 536870912
+                avg_dimension: 768
+                search_qps: 125.5
+                avg_search_latency_ms: 8.2
+                p95_search_latency_ms: 15.4
+                p99_search_latency_ms: 22.1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ========================================
+  # Namespace Management
+  # ========================================
+
+  /namespaces:
+    get:
+      tags:
+        - Namespaces
+      summary: List all namespaces
+      description: Returns all available namespaces with configuration and statistics
+      operationId: listNamespaces
+      parameters:
+        - name: prefix
+          in: query
+          description: Filter namespaces by prefix
+          schema:
+            type: string
+        - name: page_size
+          in: query
+          description: Number of results per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: page_token
+          in: query
+          description: Continuation token from previous request
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Namespaces retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListNamespacesResponse'
+              example:
+                namespaces:
+                  - namespace: "embeddings"
+                    dimensions: 768
+                    distance_metric: "cosine"
+                    index_type: "hnsw"
+                    vector_count: 100000
+                    indexed_count: 100000
+                    storage_bytes: 314572800
+                next_page_token: ""
+                total_count: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - Namespaces
+      summary: Create a new namespace
+      description: Creates a new vector namespace with specified configuration
+      operationId: createNamespace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNamespaceRequest'
+            example:
+              namespace: "embeddings"
+              dimensions: 768
+              distance_metric: "cosine"
+              precision: "float32"
+              index_type: "hnsw"
+              index_params:
+                M: "16"
+                efConstruction: "200"
+                efSearch: "100"
+              replication_factor: 3
+      responses:
+        '201':
+          description: Namespace created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateNamespaceResponse'
+              example:
+                namespace: "embeddings"
+                timestamp: "2025-10-20T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Namespace already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /namespaces/{namespace}:
+    get:
+      tags:
+        - Namespaces
+      summary: Get namespace information
+      description: Retrieves namespace configuration and statistics
+      operationId: getNamespaceInfo
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - name: include_stats
+          in: query
+          description: Include detailed statistics
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Namespace info retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamespaceInfo'
+              example:
+                namespace: "embeddings"
+                dimensions: 768
+                distance_metric: "cosine"
+                index_type: "hnsw"
+                vector_count: 100000
+                indexed_count: 100000
+                storage_bytes: 314572800
+                created_at: "2025-10-01T10:00:00Z"
+                updated_at: "2025-10-20T12:00:00Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    patch:
+      tags:
+        - Namespaces
+      summary: Update namespace configuration
+      description: Modifies namespace configuration (index parameters, metadata, replication factor)
+      operationId: updateNamespace
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNamespaceRequest'
+            example:
+              index_params:
+                efSearch: "150"
+              metadata:
+                updated_by: "admin"
+      responses:
+        '200':
+          description: Namespace updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateNamespaceResponse'
+              example:
+                namespace: "embeddings"
+                timestamp: "2025-10-20T12:00:00Z"
+                requires_rebuild: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags:
+        - Namespaces
+      summary: Delete a namespace
+      description: Removes a namespace and all its vectors (DESTRUCTIVE - cannot be undone)
+      operationId: deleteNamespace
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - name: force
+          in: query
+          description: Bypass safety checks and delete even if vectors exist
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Namespace deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteNamespaceResponse'
+              example:
+                deleted: true
+                vectors_deleted: 100000
+                timestamp: "2025-10-20T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ========================================
+  # Vector CRUD Operations
+  # ========================================
+
+  /namespaces/{namespace}/vectors:
+    get:
+      tags:
+        - Vectors
+      summary: List vectors in namespace
+      description: Returns all vectors in a namespace with pagination support
+      operationId: listVectors
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - name: page_size
+          in: query
+          description: Number of results per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: page_token
+          in: query
+          description: Continuation token from previous request
+          schema:
+            type: string
+        - name: include_metadata
+          in: query
+          description: Include metadata in response
+          schema:
+            type: boolean
+            default: true
+        - name: include_vectors
+          in: query
+          description: Include vector data in response
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/ConsistencyLevel'
+      responses:
+        '200':
+          description: Vectors retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListVectorsResponse'
+              example:
+                vectors:
+                  - id: "vec-123"
+                    metadata:
+                      document: "readme.md"
+                      section: "intro"
+                    version: 1
+                    created_at: "2025-10-20T10:00:00Z"
+                    updated_at: "2025-10-20T10:00:00Z"
+                pagination:
+                  next_page_token: ""
+                  total_count: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - Vectors
+      summary: Upsert a single vector
+      description: Creates or updates a single vector with metadata
+      operationId: upsertVector
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - $ref: '#/components/parameters/ConsistencyLevel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertVectorRequest'
+            example:
+              id: "vec-123"
+              vector: [0.1, 0.2, 0.3, 0.4]
+              metadata:
+                document: "readme.md"
+                section: "intro"
+                tags: "documentation,important"
+      responses:
+        '200':
+          description: Vector updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpsertVectorResponse'
+              example:
+                id: "vec-123"
+                version: 2
+                timestamp: "2025-10-20T12:00:00Z"
+                leader_id: 1
+                index_updated: true
+        '201':
+          description: Vector created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpsertVectorResponse'
+              example:
+                id: "vec-123"
+                version: 1
+                timestamp: "2025-10-20T12:00:00Z"
+                leader_id: 1
+                index_updated: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /namespaces/{namespace}/vectors:batch:
+    post:
+      tags:
+        - Vectors
+      summary: Batch upsert vectors
+      description: Creates or updates multiple vectors atomically (max 10,000 per batch)
+      operationId: batchUpsertVectors
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - $ref: '#/components/parameters/ConsistencyLevel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchUpsertVectorsRequest'
+            example:
+              vectors:
+                - id: "vec-1"
+                  vector: [0.1, 0.2, 0.3, 0.4]
+                  metadata:
+                    doc: "file1.txt"
+                - id: "vec-2"
+                  vector: [0.5, 0.6, 0.7, 0.8]
+                  metadata:
+                    doc: "file2.txt"
+              batch_size: 1000
+              skip_index_update: false
+      responses:
+        '200':
+          description: Batch upsert completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchUpsertVectorsResponse'
+              example:
+                vectors_processed: 2
+                vectors_succeeded: 2
+                vectors_failed: 0
+                failed_ids: []
+                timestamp: "2025-10-20T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /namespaces/{namespace}/vectors/{id}:
+    get:
+      tags:
+        - Vectors
+      summary: Get a vector by ID
+      description: Retrieves a vector by its unique identifier
+      operationId: getVector
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - $ref: '#/components/parameters/VectorID'
+        - name: include_metadata
+          in: query
+          description: Include metadata in response
+          schema:
+            type: boolean
+            default: true
+        - name: include_vector
+          in: query
+          description: Include vector data in response
+          schema:
+            type: boolean
+            default: true
+        - $ref: '#/components/parameters/ConsistencyLevel'
+      responses:
+        '200':
+          description: Vector retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorEntity'
+              example:
+                id: "vec-123"
+                namespace: "embeddings"
+                vector: [0.1, 0.2, 0.3, 0.4]
+                metadata:
+                  document: "readme.md"
+                  section: "intro"
+                version: 1
+                created_at: "2025-10-20T10:00:00Z"
+                updated_at: "2025-10-20T10:00:00Z"
+                status: "active"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags:
+        - Vectors
+      summary: Delete a vector
+      description: Removes a vector by ID (idempotent)
+      operationId: deleteVector
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - $ref: '#/components/parameters/VectorID'
+        - $ref: '#/components/parameters/ConsistencyLevel'
+        - name: version
+          in: query
+          description: Entity version for optimistic locking (0 = no version check)
+          schema:
+            type: integer
+            format: int64
+            default: 0
+      responses:
+        '200':
+          description: Vector deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteVectorResponse'
+              example:
+                deleted: true
+                timestamp: "2025-10-20T12:00:00Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Version conflict (optimistic locking)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /namespaces/{namespace}/vectors:batch-delete:
+    post:
+      tags:
+        - Vectors
+      summary: Batch delete vectors
+      description: Removes multiple vectors atomically (max 10,000 per batch)
+      operationId: batchDeleteVectors
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - $ref: '#/components/parameters/ConsistencyLevel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchDeleteVectorsRequest'
+            example:
+              ids: ["vec-1", "vec-2", "vec-3"]
+      responses:
+        '200':
+          description: Batch delete completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchDeleteVectorsResponse'
+              example:
+                deleted_count: 3
+                timestamp: "2025-10-20T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ========================================
+  # Search Operations
+  # ========================================
+
+  /namespaces/{namespace}/search:
+    post:
+      tags:
+        - Search
+      summary: k-NN similarity search
+      description: Performs k-NN similarity search to find the nearest neighbors
+      operationId: searchSimilar
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - $ref: '#/components/parameters/ConsistencyLevel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchSimilarRequest'
+            example:
+              query_vector: [0.1, 0.2, 0.3, 0.4]
+              k: 10
+              distance_metric: "cosine"
+              metadata_filters:
+                - key: "document"
+                  operator: "equals"
+                  value: "readme.md"
+              include_metadata: true
+              include_vectors: false
+              min_score: 0.7
+      responses:
+        '200':
+          description: Search completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchSimilarResponse'
+              example:
+                results:
+                  - id: "vec-123"
+                    score: 0.95
+                    rank: 1
+                    metadata:
+                      document: "readme.md"
+                      section: "intro"
+                  - id: "vec-456"
+                    score: 0.88
+                    rank: 2
+                    metadata:
+                      document: "readme.md"
+                      section: "usage"
+                total_candidates: 100000
+                search_time_ms: 8
+                node_id: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /namespaces/{namespace}/search/{id}:
+    post:
+      tags:
+        - Search
+      summary: Search by existing vector ID
+      description: Performs k-NN search using an existing vector as the query
+      operationId: searchByID
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - $ref: '#/components/parameters/VectorID'
+        - $ref: '#/components/parameters/ConsistencyLevel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchByIDRequest'
+            example:
+              k: 10
+              include_self: false
+              distance_metric: "cosine"
+              include_metadata: true
+              include_vectors: false
+              min_score: 0.7
+      responses:
+        '200':
+          description: Search completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchByIDResponse'
+              example:
+                results:
+                  - id: "vec-789"
+                    score: 0.92
+                    rank: 1
+                    metadata:
+                      document: "guide.md"
+                total_candidates: 100000
+                search_time_ms: 7
+                node_id: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ========================================
+  # Admin Operations
+  # ========================================
+
+  /admin/cluster/stats:
+    get:
+      tags:
+        - Admin
+      summary: Get cluster-wide statistics
+      description: Returns cluster-wide vector database statistics
+      operationId: getClusterStats
+      parameters:
+        - name: include_namespaces
+          in: query
+          description: Include per-namespace breakdown
+          schema:
+            type: boolean
+            default: false
+        - name: include_nodes
+          in: query
+          description: Include per-node breakdown
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Cluster stats retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterStatsResponse'
+              example:
+                cluster_id: "cluster-abc"
+                total_nodes: 3
+                total_vectors: 1000000
+                total_namespaces: 10
+                total_storage_bytes: 4294967296
+                total_index_bytes: 536870912
+                cluster_qps: 250.5
+                timestamp: "2025-10-20T12:00:00Z"
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/namespaces/{namespace}/index/rebuild:
+    post:
+      tags:
+        - Admin
+      summary: Rebuild namespace index
+      description: Triggers index rebuild for a namespace (useful after bulk imports)
+      operationId: rebuildIndex
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebuildIndexRequest'
+            example:
+              index_params:
+                efConstruction: "250"
+              async: true
+      responses:
+        '202':
+          description: Index rebuild initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebuildIndexResponse'
+              example:
+                operation_id: "rebuild-op-123"
+                started: "2025-10-20T12:00:00Z"
+                estimated_duration_ms: 300000
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/namespaces/{namespace}/index/progress:
+    get:
+      tags:
+        - Admin
+      summary: Get index rebuild progress
+      description: Returns the progress of an ongoing index rebuild
+      operationId: getIndexProgress
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - name: operation_id
+          in: query
+          description: Rebuild operation ID (empty = current/latest)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Index progress retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexProgressResponse'
+              example:
+                operation_id: "rebuild-op-123"
+                namespace: "embeddings"
+                vectors_indexed: 50000
+                total_vectors: 100000
+                percent_complete: 50.0
+                elapsed_time_ms: 150000
+                estimated_remaining_ms: 150000
+                status: "running"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/namespaces/{namespace}/compact:
+    post:
+      tags:
+        - Admin
+      summary: Compact namespace
+      description: Performs compaction on a namespace to reclaim disk space
+      operationId: compactNamespace
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                async:
+                  type: boolean
+                  default: true
+                  description: Return immediately without waiting
+            example:
+              async: true
+      responses:
+        '202':
+          description: Compaction initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompactNamespaceResponse'
+              example:
+                operation_id: "compact-op-456"
+                started: "2025-10-20T12:00:00Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/namespaces/{namespace}/compact/progress:
+    get:
+      tags:
+        - Admin
+      summary: Get compaction progress
+      description: Returns the progress of an ongoing compaction
+      operationId: getCompactionProgress
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+        - name: operation_id
+          in: query
+          description: Compaction operation ID (empty = current/latest)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Compaction progress retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompactionProgressResponse'
+              example:
+                operation_id: "compact-op-456"
+                namespace: "embeddings"
+                bytes_compacted: 2147483648
+                total_bytes: 4294967296
+                percent_complete: 50.0
+                elapsed_time_ms: 60000
+                space_reclaimed_bytes: 536870912
+                status: "running"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/namespaces/{namespace}/export:
+    post:
+      tags:
+        - Admin
+      summary: Export vectors
+      description: Exports vectors from a namespace for backup or migration
+      operationId: exportVectors
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportVectorsRequest'
+            example:
+              format: "json"
+              compression: "gzip"
+              batch_size: 1000
+      responses:
+        '200':
+          description: Export stream (newline-delimited JSON)
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                format: binary
+                description: Newline-delimited JSON batches
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                description: Binary export data
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/namespaces/{namespace}/import:
+    post:
+      tags:
+        - Admin
+      summary: Import vectors
+      description: Imports vectors into a namespace from backup or migration
+      operationId: importVectors
+      parameters:
+        - $ref: '#/components/parameters/NamespacePath'
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+              format: binary
+              description: Newline-delimited JSON batches
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: Binary import data
+      responses:
+        '200':
+          description: Import completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportVectorsResponse'
+              example:
+                vectors_imported: 95000
+                vectors_skipped: 5000
+                vectors_failed: 0
+                duration_ms: 30000
+                timestamp: "2025-10-20T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+# ========================================
+# Component Definitions
+# ========================================
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer token authentication
+
+  parameters:
+    NamespacePath:
+      name: namespace
+      in: path
+      required: true
+      description: Namespace identifier
+      schema:
+        type: string
+        pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        example: "embeddings"
+
+    VectorID:
+      name: id
+      in: path
+      required: true
+      description: Vector unique identifier
+      schema:
+        type: string
+        pattern: '^[a-zA-Z0-9_-]{1,256}$'
+        example: "vec-123"
+
+    ConsistencyLevel:
+      name: consistency
+      in: query
+      description: Read/write consistency level
+      schema:
+        type: string
+        enum: [all, quorum, one]
+        default: quorum
+      example: "quorum"
+
+  responses:
+    BadRequest:
+      description: Bad request (invalid parameters)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "INVALID_ARGUMENT"
+              message: "Vector dimension mismatch: expected 768, got 384"
+              details:
+                field: "vector"
+                expected: 768
+                actual: 384
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "NOT_FOUND"
+              message: "Namespace 'embeddings' not found"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "INTERNAL_ERROR"
+              message: "Raft consensus failed: leader election timeout"
+              details:
+                node_id: 1
+                shard_id: 1
+
+  schemas:
+    # ========================================
+    # Core Schemas
+    # ========================================
+
+    VectorEntity:
+      type: object
+      required:
+        - id
+        - namespace
+      properties:
+        id:
+          type: string
+          description: Unique identifier (UUID, hash, or application-specific)
+          pattern: '^[a-zA-Z0-9_-]{1,256}$'
+          example: "vec-123"
+        namespace:
+          type: string
+          description: Namespace identifier
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+          example: "embeddings"
+        vector:
+          type: array
+          description: Vector embedding (dimensionality must match namespace config)
+          items:
+            type: number
+            format: float
+          minItems: 1
+          maxItems: 4096
+          example: [0.1, 0.2, 0.3, 0.4]
+        metadata:
+          type: object
+          description: Application-specific key-value pairs (max 64 keys)
+          additionalProperties:
+            type: string
+          maxProperties: 64
+          example:
+            document: "readme.md"
+            section: "intro"
+            tags: "documentation,important"
+        version:
+          type: integer
+          format: int64
+          description: Entity version number (read-only, managed by system)
+          readOnly: true
+          example: 1
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp (read-only)
+          readOnly: true
+          example: "2025-10-20T10:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp (read-only)
+          readOnly: true
+          example: "2025-10-20T12:00:00Z"
+        status:
+          type: string
+          enum: [active, pending, deleted, corrupted]
+          description: Vector status (read-only)
+          readOnly: true
+          example: "active"
+        shard_id:
+          type: integer
+          format: int64
+          description: Shard ID (read-only, managed by system)
+          readOnly: true
+          example: 1
+
+    NamespaceConfig:
+      type: object
+      required:
+        - namespace
+        - dimensions
+        - distance_metric
+      properties:
+        namespace:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+          example: "embeddings"
+        dimensions:
+          type: integer
+          minimum: 1
+          maximum: 4096
+          description: Vector dimensionality
+          example: 768
+        distance_metric:
+          type: string
+          enum: [l2, cosine, dot_product, manhattan]
+          description: Similarity/distance calculation method
+          example: "cosine"
+        precision:
+          type: string
+          enum: [float32, float16, bfloat16]
+          default: float32
+          description: Floating-point precision for storage
+          example: "float32"
+        index_type:
+          type: string
+          enum: [flat, hnsw, ivf_flat, ivf_pq]
+          default: hnsw
+          description: Vector indexing algorithm
+          example: "hnsw"
+        index_params:
+          type: object
+          description: Index-specific tuning parameters
+          additionalProperties:
+            type: string
+          example:
+            M: "16"
+            efConstruction: "200"
+            efSearch: "100"
+        shard_id:
+          type: integer
+          format: int64
+          default: 0
+          description: Shard assignment (0 = auto-assign)
+          example: 0
+        replication_factor:
+          type: integer
+          minimum: 1
+          default: 3
+          description: Number of replicas
+          example: 3
+        compression_enabled:
+          type: boolean
+          default: false
+          description: Enable vector compression
+          example: false
+        metadata:
+          type: object
+          description: Namespace-level metadata
+          additionalProperties:
+            type: string
+          example:
+            owner: "ml-team"
+            model: "all-MiniLM-L6-v2"
+
+    MetadataFilter:
+      type: object
+      required:
+        - key
+        - operator
+        - value
+      properties:
+        key:
+          type: string
+          description: Metadata key to filter on
+          example: "document"
+        operator:
+          type: string
+          enum: [equals, not_equals, contains, starts_with, ends_with, in, not_in]
+          description: Comparison operator
+          example: "equals"
+        value:
+          type: string
+          description: Value to compare against
+          example: "readme.md"
+
+    # ========================================
+    # Request/Response Schemas
+    # ========================================
+
+    UpsertVectorRequest:
+      type: object
+      required:
+        - id
+        - vector
+      properties:
+        id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,256}$'
+          example: "vec-123"
+        vector:
+          type: array
+          items:
+            type: number
+            format: float
+          minItems: 1
+          maxItems: 4096
+          example: [0.1, 0.2, 0.3, 0.4]
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            document: "readme.md"
+        skip_index_update:
+          type: boolean
+          default: false
+          description: Defer index update for bulk operations
+        timeout_ms:
+          type: integer
+          format: int64
+          default: 5000
+          description: Maximum operation timeout
+
+    UpsertVectorResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "vec-123"
+        version:
+          type: integer
+          format: int64
+          example: 1
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+        leader_id:
+          type: integer
+          format: int64
+          example: 1
+        index_updated:
+          type: boolean
+          example: true
+
+    BatchUpsertVectorsRequest:
+      type: object
+      required:
+        - vectors
+      properties:
+        vectors:
+          type: array
+          items:
+            $ref: '#/components/schemas/VectorEntity'
+          minItems: 1
+          maxItems: 10000
+        batch_size:
+          type: integer
+          default: 1000
+          minimum: 1
+          maximum: 10000
+          description: Vectors per internal batch
+        skip_index_update:
+          type: boolean
+          default: false
+        timeout_ms:
+          type: integer
+          format: int64
+          default: 60000
+
+    BatchUpsertVectorsResponse:
+      type: object
+      properties:
+        vectors_processed:
+          type: integer
+          format: int64
+          example: 1000
+        vectors_succeeded:
+          type: integer
+          format: int64
+          example: 995
+        vectors_failed:
+          type: integer
+          format: int64
+          example: 5
+        failed_ids:
+          type: array
+          items:
+            type: string
+          example: ["vec-99", "vec-100"]
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+
+    DeleteVectorResponse:
+      type: object
+      properties:
+        deleted:
+          type: boolean
+          example: true
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+
+    BatchDeleteVectorsRequest:
+      type: object
+      required:
+        - ids
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 10000
+          example: ["vec-1", "vec-2", "vec-3"]
+        timeout_ms:
+          type: integer
+          format: int64
+          default: 60000
+
+    BatchDeleteVectorsResponse:
+      type: object
+      properties:
+        deleted_count:
+          type: integer
+          format: int64
+          example: 3
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+
+    SearchSimilarRequest:
+      type: object
+      required:
+        - query_vector
+        - k
+      properties:
+        query_vector:
+          type: array
+          items:
+            type: number
+            format: float
+          minItems: 1
+          maxItems: 4096
+          example: [0.1, 0.2, 0.3, 0.4]
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: Number of nearest neighbors
+          example: 10
+        distance_metric:
+          type: string
+          enum: [l2, cosine, dot_product, manhattan]
+          description: Override namespace default metric
+          example: "cosine"
+        metadata_filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetadataFilter'
+        include_metadata:
+          type: boolean
+          default: true
+        include_vectors:
+          type: boolean
+          default: false
+        ef_search:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: HNSW efSearch parameter override
+        min_score:
+          type: number
+          format: float
+          description: Minimum similarity threshold
+          example: 0.7
+        timeout_ms:
+          type: integer
+          format: int64
+          default: 10000
+
+    SearchSimilarResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimilarityResult'
+        total_candidates:
+          type: integer
+          format: int64
+          description: Total vectors considered
+          example: 100000
+        search_time_ms:
+          type: integer
+          format: int64
+          description: Search latency
+          example: 8
+        node_id:
+          type: integer
+          format: int64
+          example: 1
+
+    SimilarityResult:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "vec-123"
+        vector:
+          type: array
+          items:
+            type: number
+            format: float
+          description: Vector data (if include_vectors=true)
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Metadata (if include_metadata=true)
+          example:
+            document: "readme.md"
+        score:
+          type: number
+          format: float
+          description: Distance/similarity score
+          example: 0.95
+        rank:
+          type: integer
+          description: Result position (1 = closest match)
+          example: 1
+
+    SearchByIDRequest:
+      type: object
+      required:
+        - k
+      properties:
+        k:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          example: 10
+        include_self:
+          type: boolean
+          default: false
+          description: Include query vector in results
+        distance_metric:
+          type: string
+          enum: [l2, cosine, dot_product, manhattan]
+        metadata_filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetadataFilter'
+        include_metadata:
+          type: boolean
+          default: true
+        include_vectors:
+          type: boolean
+          default: false
+        ef_search:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        min_score:
+          type: number
+          format: float
+        timeout_ms:
+          type: integer
+          format: int64
+          default: 10000
+
+    SearchByIDResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimilarityResult'
+        query_vector:
+          $ref: '#/components/schemas/VectorEntity'
+          description: Query vector (if requested)
+        total_candidates:
+          type: integer
+          format: int64
+          example: 100000
+        search_time_ms:
+          type: integer
+          format: int64
+          example: 7
+        node_id:
+          type: integer
+          format: int64
+          example: 1
+
+    ListVectorsResponse:
+      type: object
+      properties:
+        vectors:
+          type: array
+          items:
+            $ref: '#/components/schemas/VectorEntity'
+        pagination:
+          type: object
+          properties:
+            next_page_token:
+              type: string
+              description: Token for next page (empty if last page)
+              example: ""
+            total_count:
+              type: integer
+              format: int64
+              description: Total vector count (if available)
+              example: 100000
+
+    CreateNamespaceRequest:
+      allOf:
+        - $ref: '#/components/schemas/NamespaceConfig'
+        - type: object
+          properties:
+            timeout_ms:
+              type: integer
+              format: int64
+              default: 10000
+
+    CreateNamespaceResponse:
+      type: object
+      properties:
+        namespace:
+          type: string
+          example: "embeddings"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+
+    UpdateNamespaceRequest:
+      type: object
+      properties:
+        index_params:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            efSearch: "150"
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        replication_factor:
+          type: integer
+          minimum: 1
+        timeout_ms:
+          type: integer
+          format: int64
+          default: 10000
+
+    UpdateNamespaceResponse:
+      type: object
+      properties:
+        namespace:
+          type: string
+          example: "embeddings"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+        requires_rebuild:
+          type: boolean
+          description: Index rebuild required
+          example: false
+
+    DeleteNamespaceResponse:
+      type: object
+      properties:
+        deleted:
+          type: boolean
+          example: true
+        vectors_deleted:
+          type: integer
+          format: int64
+          example: 100000
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+
+    ListNamespacesResponse:
+      type: object
+      properties:
+        namespaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/NamespaceInfo'
+        next_page_token:
+          type: string
+        total_count:
+          type: integer
+          example: 10
+
+    NamespaceInfo:
+      allOf:
+        - $ref: '#/components/schemas/NamespaceConfig'
+        - type: object
+          properties:
+            vector_count:
+              type: integer
+              format: int64
+              example: 100000
+            indexed_count:
+              type: integer
+              format: int64
+              example: 100000
+            pending_count:
+              type: integer
+              format: int64
+              example: 0
+            storage_bytes:
+              type: integer
+              format: int64
+              example: 314572800
+            index_bytes:
+              type: integer
+              format: int64
+              example: 52428800
+            created_at:
+              type: string
+              format: date-time
+              example: "2025-10-01T10:00:00Z"
+            updated_at:
+              type: string
+              format: date-time
+              example: "2025-10-20T12:00:00Z"
+            last_index_build:
+              type: string
+              format: date-time
+              example: "2025-10-20T11:00:00Z"
+
+    VectorStatsResponse:
+      type: object
+      properties:
+        total_vectors:
+          type: integer
+          format: int64
+          example: 1000000
+        total_namespaces:
+          type: integer
+          example: 10
+        total_storage_bytes:
+          type: integer
+          format: int64
+          example: 4294967296
+        total_index_bytes:
+          type: integer
+          format: int64
+          example: 536870912
+        avg_dimension:
+          type: number
+          format: double
+          example: 768.0
+        search_qps:
+          type: number
+          format: double
+          example: 125.5
+        avg_search_latency_ms:
+          type: number
+          format: double
+          example: 8.2
+        p95_search_latency_ms:
+          type: number
+          format: double
+          example: 15.4
+        p99_search_latency_ms:
+          type: number
+          format: double
+          example: 22.1
+        namespace_stats:
+          type: array
+          items:
+            $ref: '#/components/schemas/NamespaceStats'
+
+    NamespaceStats:
+      type: object
+      properties:
+        namespace:
+          type: string
+          example: "embeddings"
+        vector_count:
+          type: integer
+          format: int64
+          example: 100000
+        indexed_count:
+          type: integer
+          format: int64
+          example: 100000
+        storage_bytes:
+          type: integer
+          format: int64
+          example: 314572800
+        index_bytes:
+          type: integer
+          format: int64
+          example: 52428800
+        avg_search_latency_ms:
+          type: number
+          format: double
+          example: 7.5
+        search_count:
+          type: integer
+          format: int64
+          example: 50000
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy, indexing, unknown]
+          example: "healthy"
+        node_id:
+          type: integer
+          format: int64
+          example: 1
+        version:
+          type: string
+          example: "1.0.0"
+        uptime_seconds:
+          type: integer
+          format: int64
+          example: 86400
+        namespaces_healthy:
+          type: integer
+          example: 5
+        namespaces_degraded:
+          type: integer
+          example: 0
+        namespaces_unhealthy:
+          type: integer
+          example: 0
+        details:
+          type: object
+          description: Component-specific health (if include_details=true)
+          additionalProperties:
+            $ref: '#/components/schemas/ComponentHealth'
+
+    ComponentHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy, indexing, unknown]
+        message:
+          type: string
+        last_check:
+          type: string
+          format: date-time
+        metrics:
+          type: object
+          additionalProperties:
+            type: number
+
+    ClusterStatsResponse:
+      type: object
+      properties:
+        cluster_id:
+          type: string
+          example: "cluster-abc"
+        total_nodes:
+          type: integer
+          example: 3
+        total_vectors:
+          type: integer
+          format: int64
+          example: 1000000
+        total_namespaces:
+          type: integer
+          example: 10
+        total_storage_bytes:
+          type: integer
+          format: int64
+          example: 4294967296
+        total_index_bytes:
+          type: integer
+          format: int64
+          example: 536870912
+        cluster_qps:
+          type: number
+          format: double
+          example: 250.5
+        namespace_stats:
+          type: array
+          items:
+            $ref: '#/components/schemas/NamespaceStats'
+        node_stats:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeStats'
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+
+    NodeStats:
+      type: object
+      properties:
+        node_id:
+          type: integer
+          format: int64
+          example: 1
+        address:
+          type: string
+          example: "192.168.1.10:8080"
+        vector_count:
+          type: integer
+          format: int64
+          example: 333333
+        storage_bytes:
+          type: integer
+          format: int64
+          example: 1431655765
+        index_bytes:
+          type: integer
+          format: int64
+          example: 178956970
+        qps:
+          type: number
+          format: double
+          example: 83.5
+        avg_latency_ms:
+          type: number
+          format: double
+          example: 8.1
+        cpu_usage:
+          type: number
+          format: double
+          example: 45.2
+        memory_usage_bytes:
+          type: integer
+          format: int64
+          example: 2147483648
+
+    RebuildIndexRequest:
+      type: object
+      properties:
+        index_params:
+          type: object
+          additionalProperties:
+            type: string
+          description: Override index parameters during rebuild
+        async:
+          type: boolean
+          default: true
+          description: Return immediately without waiting
+        timeout_ms:
+          type: integer
+          format: int64
+          default: 300000
+
+    RebuildIndexResponse:
+      type: object
+      properties:
+        operation_id:
+          type: string
+          example: "rebuild-op-123"
+        started:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+        estimated_duration_ms:
+          type: integer
+          format: int64
+          example: 300000
+
+    IndexProgressResponse:
+      type: object
+      properties:
+        operation_id:
+          type: string
+          example: "rebuild-op-123"
+        namespace:
+          type: string
+          example: "embeddings"
+        vectors_indexed:
+          type: integer
+          format: int64
+          example: 50000
+        total_vectors:
+          type: integer
+          format: int64
+          example: 100000
+        percent_complete:
+          type: number
+          format: double
+          example: 50.0
+        elapsed_time_ms:
+          type: integer
+          format: int64
+          example: 150000
+        estimated_remaining_ms:
+          type: integer
+          format: int64
+          example: 150000
+        status:
+          type: string
+          enum: [running, completed, failed]
+          example: "running"
+        error_message:
+          type: string
+
+    CompactNamespaceResponse:
+      type: object
+      properties:
+        operation_id:
+          type: string
+          example: "compact-op-456"
+        started:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+
+    CompactionProgressResponse:
+      type: object
+      properties:
+        operation_id:
+          type: string
+          example: "compact-op-456"
+        namespace:
+          type: string
+          example: "embeddings"
+        bytes_compacted:
+          type: integer
+          format: int64
+          example: 2147483648
+        total_bytes:
+          type: integer
+          format: int64
+          example: 4294967296
+        percent_complete:
+          type: number
+          format: double
+          example: 50.0
+        elapsed_time_ms:
+          type: integer
+          format: int64
+          example: 60000
+        space_reclaimed_bytes:
+          type: integer
+          format: int64
+          example: 536870912
+        status:
+          type: string
+          enum: [running, completed, failed]
+          example: "running"
+
+    ExportVectorsRequest:
+      type: object
+      properties:
+        format:
+          type: string
+          enum: [json, parquet, binary]
+          default: binary
+          description: Export format
+        compression:
+          type: string
+          enum: [none, gzip, zstd]
+          default: gzip
+          description: Compression type
+        batch_size:
+          type: integer
+          default: 1000
+          minimum: 1
+          maximum: 10000
+          description: Vectors per batch
+        metadata_filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetadataFilter'
+
+    ImportVectorsResponse:
+      type: object
+      properties:
+        vectors_imported:
+          type: integer
+          format: int64
+          example: 95000
+        vectors_skipped:
+          type: integer
+          format: int64
+          example: 5000
+        vectors_failed:
+          type: integer
+          format: int64
+          example: 0
+        duration_ms:
+          type: integer
+          format: int64
+          example: 30000
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-10-20T12:00:00Z"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_ARGUMENT
+                - NOT_FOUND
+                - ALREADY_EXISTS
+                - PERMISSION_DENIED
+                - RESOURCE_EXHAUSTED
+                - FAILED_PRECONDITION
+                - ABORTED
+                - OUT_OF_RANGE
+                - UNIMPLEMENTED
+                - INTERNAL_ERROR
+                - UNAVAILABLE
+                - DEADLINE_EXCEEDED
+              example: "INVALID_ARGUMENT"
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Vector dimension mismatch"
+            details:
+              type: object
+              description: Additional error context
+              additionalProperties: true

@@ -1,0 +1,700 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package main is the entry point for the QuicBaaS daemon.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/server"
+	"github.com/jeremyhahn/go-quicbaas/pkg/version"
+)
+
+var (
+	// Global flags.
+	cfgFile  string
+	logLevel string
+	fipsMode bool
+	dataDir  string
+
+	// Server flags.
+	httpPort    int
+	grpcPort    int
+	raftPort    int
+	raftAddress string
+	nodeID      uint64
+	unixSocket  string
+
+	// Discovery flags for node command.
+	discoveryType string
+	joinAddresses string
+
+	// Global configuration.
+	cfg *config.Config
+	log *logger.Logger
+
+	// Root command.
+	rootCmd = &cobra.Command{
+		Use:          "quicbaasd",
+		Short:        "QuicBaaS daemon - multi-model distributed database and Backend-as-a-Service",
+		SilenceUsage: true,
+		Long: `QuicBaaS daemon is a modern multi-model distributed database and Backend-as-a-Service
+built for the agentic cloud era.
+
+Multi-Model Database:
+  - Key-value, vector, time-series, and object storage engines
+  - Embedded PebbleDB with multi-Raft consensus via QuicRaft
+  - Multiple Raft groups for horizontal scaling and multi-DC failover
+
+AI-Native Platform:
+  - RAG pipelines and multi-provider embeddings
+  - AI agent discovery, spawning, prompt routing, and tool execution
+  - 297+ MCP tools for AI agent integration
+
+Backend-as-a-Service:
+  - IAM with ABAC/PEP, OAuth2/OIDC, WebAuthn, and MFA
+  - KMS, certificate management, and secrets management
+  - Job scheduler, service discovery, and pub/sub messaging
+
+Security and Compliance:
+  - FIPS 140-3 compliance mode with per-tenant encryption
+  - Field-level encryption with AES-128/256-GCM
+  - TLS 1.3 with mutual authentication
+
+Multi-Protocol Access:
+  - gRPC, REST, QUIC, MCP, Unix socket, and WebSocket
+
+Commands:
+  start    Start with local PebbleDB (no Raft, fastest single-node)
+  node     Start as multi-node Raft cluster member (production)
+  cluster  Start single-node Raft cluster (development/testing)
+
+For more information, visit: https://github.com/jeremyhahn/go-quicbaas`,
+		Version: version.Full(),
+	}
+
+	// start command - local PebbleDB mode (no Raft).
+	startCmd = &cobra.Command{
+		Use:   "start",
+		Short: "Start with local PebbleDB backend (no Raft consensus)",
+		Long: `Start QuicBaaS with direct PebbleDB backend, bypassing Raft consensus.
+
+This is the fastest mode for single-node deployments where distributed
+consensus is not needed. Data is stored locally without replication.
+
+Examples:
+  # Start with defaults
+  quicbaasd start
+
+  # Start with custom data directory
+  quicbaasd start --data-dir /var/lib/quicbaas
+
+  # Start with TCP and REST enabled
+  quicbaasd start --grpc-port 9090 --http-port 8080`,
+		RunE: runStart,
+	}
+
+	// node command - multi-node Raft cluster (production).
+	nodeCmd = &cobra.Command{
+		Use:   "node",
+		Short: "Start as multi-node Raft cluster member",
+		Long: `Start QuicBaaS as a member of a multi-node Raft cluster.
+
+This is the production mode with full distributed consensus. Nodes discover
+each other using the configured discovery method (multicast by default).
+
+Discovery methods:
+  - multicast  Zero-config LAN discovery via UDP multicast (default)
+  - static     Fixed peer list via --join-addresses
+  - dns        DNS SRV record lookup
+  - kubernetes Kubernetes pod discovery
+
+Examples:
+  # Start with multicast discovery (default)
+  quicbaasd node --node-id 1
+
+  # Start with static peer list
+  quicbaasd node --node-id 1 --discovery static \
+    --join-addresses "192.168.1.2:63001,192.168.1.3:63002"
+
+  # Start with DNS discovery
+  quicbaasd node --node-id 1 --discovery dns
+
+  # Start with Kubernetes discovery
+  quicbaasd node --node-id 1 --discovery kubernetes`,
+		RunE: runNode,
+	}
+
+	// cluster command - single-node Raft cluster (development).
+	clusterCmd = &cobra.Command{
+		Use:   "cluster",
+		Short: "Start single-node Raft cluster for development",
+		Long: `Start QuicBaaS as a single-node Raft cluster for development and testing.
+
+This mode provides the full Raft consensus stack but runs as a single node.
+Useful for testing Raft behavior without multi-node complexity.
+
+Examples:
+  # Start single-node Raft cluster
+  quicbaasd cluster
+
+  # Start with custom node ID
+  quicbaasd cluster --node-id 1
+
+  # Start with TCP enabled
+  quicbaasd cluster --grpc-port 9090`,
+		RunE: runCluster,
+	}
+)
+
+func init() {
+	cobra.OnInitialize(initConfig)
+
+	// Global persistent flags.
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (optional, defaults to built-in defaults)")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (trace|debug|info|warn|error|fatal|panic)")
+	rootCmd.PersistentFlags().BoolVar(&fipsMode, "fips", false, "enable FIPS 140-3 mode")
+	rootCmd.PersistentFlags().StringVar(&dataDir, "data-dir", "./data", "data directory path")
+
+	// Common server flags for all commands.
+	addServerFlags(startCmd)
+	addServerFlags(nodeCmd)
+	addServerFlags(clusterCmd)
+
+	// Raft-specific flags for node and cluster commands.
+	addRaftFlags(nodeCmd)
+	addRaftFlags(clusterCmd)
+
+	// Discovery flags for node command only.
+	nodeCmd.Flags().StringVar(&discoveryType, "discovery", "multicast", "discovery method (multicast|static|dns|kubernetes)")
+	nodeCmd.Flags().StringVar(&joinAddresses, "join-addresses", "", "comma-separated peer addresses for static discovery")
+
+	// Bind flags to viper.
+	_ = viper.BindPFlag("logging.level", rootCmd.PersistentFlags().Lookup("log-level"))
+	_ = viper.BindPFlag("security.fips_mode", rootCmd.PersistentFlags().Lookup("fips"))
+	_ = viper.BindPFlag("storage.data_dir", rootCmd.PersistentFlags().Lookup("data-dir"))
+
+	// Add subcommands.
+	rootCmd.AddCommand(startCmd)
+	rootCmd.AddCommand(nodeCmd)
+	rootCmd.AddCommand(clusterCmd)
+}
+
+// addServerFlags adds common server flags to a command.
+func addServerFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&unixSocket, "unix-socket", config.DefaultUnixSocket, "Unix socket path for local gRPC communication")
+	cmd.Flags().IntVar(&httpPort, "http-port", 0, "HTTP REST API port (0 = disabled)")
+	cmd.Flags().IntVar(&grpcPort, "grpc-port", 0, "gRPC TCP port (0 = Unix socket only)")
+}
+
+// addRaftFlags adds Raft-specific flags to a command.
+func addRaftFlags(cmd *cobra.Command) {
+	cmd.Flags().IntVar(&raftPort, "raft-port", 63000, "Raft communication port")
+	cmd.Flags().StringVar(&raftAddress, "raft-address", "", "Raft node address (default: <hostname>:<raft-port>)")
+	cmd.Flags().Uint64Var(&nodeID, "node-id", 1, "Raft node ID")
+}
+
+func initConfig() {
+	// Start with default configuration - config file is optional.
+	cfg = config.Default()
+
+	// Set viper defaults for vector config (important for proper unmarshal behavior).
+	viper.SetDefault("vector.enabled", false)
+	viper.SetDefault("vector.shard_id", 200)
+	viper.SetDefault("vector.storage_path", "./data/vector")
+
+	// Set viper defaults for timeseries config.
+	viper.SetDefault("timeseries.enabled", false)
+	viper.SetDefault("timeseries.shard_id", config.DefaultTimeSeriesConfig().ShardID)
+	viper.SetDefault("timeseries.storage_path", "")
+
+	// Set viper defaults for backup config (important for proper unmarshal behavior).
+	viper.SetDefault("backup.enabled", false)
+	viper.SetDefault("backup.storage_backend", "local")
+	viper.SetDefault("backup.default_compression", "zstd")
+	viper.SetDefault("backup.default_encryption", "aes-256-gcm")
+
+	if cfgFile != "" {
+		// If config file is explicitly specified, use it.
+		viper.SetConfigFile(cfgFile)
+		if err := viper.ReadInConfig(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	} else {
+		// Search for config in standard locations (optional).
+		// Try both "quicbaas" and "config" as config file names.
+		configNames := []string{"quicbaas", "config"}
+		configPaths := []string{"/etc/quicbaas", "$HOME/.quicbaas", "."}
+		viper.SetConfigType("yaml")
+		for _, p := range configPaths {
+			viper.AddConfigPath(p)
+		}
+
+		found := false
+		for _, name := range configNames {
+			viper.SetConfigName(name)
+			if err := viper.ReadInConfig(); err == nil {
+				fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+				found = true
+				break
+			}
+		}
+		_ = found // Config file is optional; defaults used if not found.
+	}
+
+	// Environment variables.
+	viper.SetEnvPrefix("QUICBAAS")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+
+	// Bind environment variables to config keys.
+	bindEnvVars()
+
+	// Unmarshal config into struct.
+	if err := viper.Unmarshal(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to unmarshal configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Parse special environment variables that viper doesn't handle automatically.
+	parseSpecialEnvVars()
+
+	// Initialize logger.
+	logConfig := logger.LogConfig{
+		Level:  cfg.Logging.Level,
+		Format: cfg.Logging.Format,
+		Output: cfg.Logging.Output,
+	}
+	if logConfig.Level == "" {
+		logConfig.Level = "info"
+	}
+	if logConfig.Format == "" {
+		logConfig.Format = "json"
+	}
+	if logConfig.Output == "" {
+		logConfig.Output = "stdout"
+	}
+
+	var err error
+	log, err = logger.New(logConfig)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// bindEnvVars binds environment variables to config keys.
+func bindEnvVars() {
+	// Server configuration - nested protocol configs.
+	_ = viper.BindEnv("server.host")
+	_ = viper.BindEnv("server.mode")
+	_ = viper.BindEnv("server.grpc.enabled")
+	_ = viper.BindEnv("server.grpc.port")
+	_ = viper.BindEnv("server.rest.enabled")
+	_ = viper.BindEnv("server.rest.port")
+	_ = viper.BindEnv("server.quic.enabled")
+	_ = viper.BindEnv("server.quic.port")
+	_ = viper.BindEnv("server.mcp.enabled")
+	_ = viper.BindEnv("server.mcp.port")
+	_ = viper.BindEnv("server.unix.enabled")
+	_ = viper.BindEnv("server.unix.socket")
+	// NOTE: server.shards and server.entity_shard_pins are NOT bound to viper
+	// because viper cannot parse comma-separated strings to []uint64 or key:value
+	// format to map[string]uint64. These are handled by parseSpecialEnvVars().
+
+	// Raft configuration.
+	_ = viper.BindEnv("raft.node_id")
+	_ = viper.BindEnv("raft.raft_address")
+	_ = viper.BindEnv("raft.listen_address")
+	_ = viper.BindEnv("raft.join_addresses")
+
+	// Storage configuration.
+	_ = viper.BindEnv("storage.backend")
+	_ = viper.BindEnv("storage.data_dir")
+	_ = viper.BindEnv("storage.wal_dir")
+
+	// Logging configuration.
+	_ = viper.BindEnv("logging.level")
+	_ = viper.BindEnv("logging.format")
+	_ = viper.BindEnv("logging.output")
+
+	// Security configuration.
+	_ = viper.BindEnv("security.fips_mode")
+	_ = viper.BindEnv("security.tls_enabled")
+
+	// Discovery configuration.
+	_ = viper.BindEnv("discovery.type")
+	_ = viper.BindEnv("discovery.enabled")
+	_ = viper.BindEnv("discovery.static_peers")
+
+	// KMS configuration.
+	_ = viper.BindEnv("kms.enabled")
+	_ = viper.BindEnv("kms.backend")
+	_ = viper.BindEnv("kms.enabled_backends")
+
+	// Secrets configuration.
+	_ = viper.BindEnv("secrets.enabled")
+
+	// Backup configuration.
+	_ = viper.BindEnv("backup.enabled")
+	_ = viper.BindEnv("backup.storage_backend")
+	_ = viper.BindEnv("backup.default_compression")
+	_ = viper.BindEnv("backup.default_encryption")
+	_ = viper.BindEnv("backup.encryption_key")
+	_ = viper.BindEnv("backup.work_dir")
+
+	// Vector configuration.
+	_ = viper.BindEnv("vector.enabled")
+	_ = viper.BindEnv("vector.shard_id")
+
+	// TimeSeries configuration.
+	_ = viper.BindEnv("timeseries.enabled")
+	_ = viper.BindEnv("timeseries.shard_id")
+	_ = viper.BindEnv("timeseries.storage_path")
+
+	// Messaging configuration.
+	_ = viper.BindEnv("messaging.enabled")
+	_ = viper.BindEnv("messaging.buffer_size")
+	_ = viper.BindEnv("messaging.dedup_enabled")
+	_ = viper.BindEnv("messaging.dedup_window")
+	_ = viper.BindEnv("messaging.watch_bridge.enabled")
+
+	// Orchestration configuration.
+	_ = viper.BindEnv("orchestration.enabled")
+}
+
+// parseSpecialEnvVars parses environment variables that viper doesn't handle automatically.
+// Viper doesn't convert comma-separated strings to []uint64 or key:value format to maps.
+func parseSpecialEnvVars() {
+	// Parse QUICBAAS_SERVER_SHARDS (comma-separated list of shard IDs).
+	if shardsEnv := os.Getenv("QUICBAAS_SERVER_SHARDS"); shardsEnv != "" {
+		parts := strings.Split(shardsEnv, ",")
+		shards := make([]uint64, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			id, err := strconv.ParseUint(p, 10, 64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Invalid shard ID %q in QUICBAAS_SERVER_SHARDS: %v\n", p, err)
+				os.Exit(1)
+			}
+			shards = append(shards, id)
+		}
+		cfg.Server.Shards = shards
+	}
+
+	// Parse QUICBAAS_SERVER_ENTITY_SHARD_PINS (comma-separated key:value pairs).
+	if pinsEnv := os.Getenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS"); pinsEnv != "" {
+		pins := make(map[string]uint64)
+		pairs := strings.Split(pinsEnv, ",")
+		for _, pair := range pairs {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			parts := strings.SplitN(pair, ":", 2)
+			if len(parts) != 2 {
+				fmt.Fprintf(os.Stderr, "Invalid entity shard pin %q (expected format: entityType:shardID)\n", pair)
+				os.Exit(1)
+			}
+			entityType := strings.TrimSpace(parts[0])
+			shardIDStr := strings.TrimSpace(parts[1])
+			shardID, err := strconv.ParseUint(shardIDStr, 10, 64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Invalid shard ID %q in entity shard pin %q: %v\n", shardIDStr, pair, err)
+				os.Exit(1)
+			}
+			pins[entityType] = shardID
+		}
+		cfg.Server.EntityShardPins = pins
+	}
+
+	// Parse QUICBAAS_ENABLE_SCHEDULER (boolean for scheduler service).
+	if val := os.Getenv("QUICBAAS_ENABLE_SCHEDULER"); val != "" {
+		lower := strings.ToLower(val)
+		cfg.Scheduler.Enabled = lower == "true" || lower == "1" || lower == "yes" || lower == "on"
+	}
+
+	// Parse QUICBAAS_TIMESERIES_ENABLED (boolean for timeseries service).
+	if val := os.Getenv("QUICBAAS_TIMESERIES_ENABLED"); val != "" {
+		lower := strings.ToLower(val)
+		cfg.TimeSeries.Enabled = lower == "true" || lower == "1" || lower == "yes" || lower == "on"
+	}
+
+	// Parse QUICBAAS_VECTOR_ENABLED (boolean for vector service).
+	if val := os.Getenv("QUICBAAS_VECTOR_ENABLED"); val != "" {
+		lower := strings.ToLower(val)
+		cfg.Vector.Enabled = lower == "true" || lower == "1" || lower == "yes" || lower == "on"
+	}
+
+	// Parse QUICBAAS_BACKUP_ENABLED (boolean for backup service).
+	if val := os.Getenv("QUICBAAS_BACKUP_ENABLED"); val != "" {
+		lower := strings.ToLower(val)
+		cfg.Backup.Enabled = lower == "true" || lower == "1" || lower == "yes" || lower == "on"
+	}
+}
+
+// runStart handles the 'start' command - local PebbleDB mode.
+func runStart(cmd *cobra.Command, args []string) error {
+	// Use standalone mode with PebbleDB backend (no Raft consensus).
+	cfg.Server.Mode = config.ServerModeStandalone
+	cfg.Storage.Backend = config.StorageBackendPebble
+	applyServerFlags(cmd)
+	return runDaemon("local")
+}
+
+// runNode handles the 'node' command - multi-node Raft cluster.
+func runNode(cmd *cobra.Command, args []string) error {
+	// Use cluster mode for distributed Raft consensus with PebbleDB storage.
+	// Mode determines Raft usage, backend determines storage engine.
+	cfg.Server.Mode = config.ServerModeCluster
+	cfg.Storage.Backend = config.StorageBackendPebble
+	applyServerFlags(cmd)
+	applyRaftFlags(cmd)
+
+	// Configure discovery.
+	cfg.Discovery.Enabled = true
+	if cmd.Flags().Changed("discovery") {
+		cfg.Discovery.Type = discoveryType
+	} else {
+		cfg.Discovery.Type = "multicast" // Default to multicast.
+	}
+
+	// Handle static discovery join addresses.
+	if cfg.Discovery.Type == "static" && cmd.Flags().Changed("join-addresses") {
+		cfg.Discovery.StaticPeers = strings.Split(joinAddresses, ",")
+	}
+
+	return runDaemon("node")
+}
+
+// runCluster handles the 'cluster' command - single-node Raft cluster.
+func runCluster(cmd *cobra.Command, args []string) error {
+	// Use cluster mode for single-node Raft cluster with PebbleDB storage.
+	// Mode determines Raft usage, backend determines storage engine.
+	cfg.Server.Mode = config.ServerModeCluster
+	cfg.Storage.Backend = config.StorageBackendPebble
+	applyServerFlags(cmd)
+	applyRaftFlags(cmd)
+
+	// Single-node Raft cluster doesn't need discovery.
+	cfg.Discovery.Enabled = false
+
+	return runDaemon("cluster")
+}
+
+// applyServerFlags applies common server flags to config.
+func applyServerFlags(cmd *cobra.Command) {
+	if cmd.Flags().Changed("unix-socket") {
+		cfg.Server.Unix.Socket = unixSocket
+		cfg.Server.Unix.Enabled = unixSocket != ""
+	}
+	if cmd.Flags().Changed("http-port") {
+		cfg.Server.REST.Port = httpPort
+		cfg.Server.REST.Enabled = httpPort > 0
+	}
+	if cmd.Flags().Changed("grpc-port") {
+		cfg.Server.GRPC.Port = grpcPort
+		cfg.Server.GRPC.Enabled = grpcPort > 0
+	}
+	if cmd.Flags().Changed("data-dir") {
+		cfg.Storage.DataDir = dataDir
+	}
+}
+
+// applyRaftFlags applies Raft-specific flags to config.
+func applyRaftFlags(cmd *cobra.Command) {
+	if cmd.Flags().Changed("node-id") {
+		cfg.Raft.NodeID = nodeID
+	}
+	if raftAddress != "" {
+		cfg.Raft.RaftAddress = raftAddress
+		cfg.Raft.ListenAddress = raftAddress
+	} else if cmd.Flags().Changed("raft-port") {
+		hostname, err := os.Hostname()
+		if err != nil {
+			hostname = "localhost"
+		}
+		cfg.Raft.RaftAddress = fmt.Sprintf("%s:%d", hostname, raftPort)
+		cfg.Raft.ListenAddress = fmt.Sprintf("0.0.0.0:%d", raftPort)
+	}
+}
+
+// prepareDaemon performs pre-server startup tasks: logging configuration details,
+// validating routing config, and creating required directories. This is separated
+// from runDaemon to allow unit testing of the startup logic without starting a
+// real server that blocks indefinitely.
+func prepareDaemon(modeName string) error {
+	// Log startup information.
+	log.Info("Starting QuicBaaS daemon")
+	log.Infof("Version: %s", version.Full())
+	log.Infof("Mode: %s", modeName)
+	log.Infof("Server mode: %s", cfg.Server.Mode)
+	log.Infof("Storage backend: %s", cfg.Storage.Backend)
+	log.Infof("Data directory: %s", cfg.Storage.DataDir)
+
+	if cfg.Server.Unix.Enabled {
+		log.Infof("Unix socket: %s", cfg.Server.Unix.Socket)
+	}
+
+	// Log Raft info if in cluster mode
+	if cfg.Server.Mode == config.ServerModeCluster || cfg.Server.Mode == config.ServerModeDevCluster {
+		log.Infof("Node ID: %d", cfg.Raft.NodeID)
+		log.Infof("Raft address: %s", cfg.Raft.RaftAddress)
+	}
+
+	if cfg.Server.GRPC.Enabled {
+		log.Infof("gRPC TCP port: %d", cfg.Server.GRPC.Port)
+	}
+	if cfg.Server.REST.Enabled {
+		log.Infof("HTTP REST port: %d", cfg.Server.REST.Port)
+	}
+
+	if cfg.Discovery.Enabled {
+		log.Infof("Discovery: %s", cfg.Discovery.Type)
+	}
+
+	if fipsMode {
+		log.Info("FIPS 140-3 mode: enabled")
+	}
+
+	// Validate routing configuration early - before creating server.
+	// This ensures invalid entity shard pins are rejected at startup.
+	if err := validateRoutingConfig(cfg.Server.Shards, cfg.Server.EntityShardPins); err != nil {
+		return &dberrors.WrappedMessageError{Message: "invalid routing config", Cause: err}
+	}
+
+	// Create data directory if it doesn't exist.
+	if err := os.MkdirAll(cfg.Storage.DataDir, 0o755); err != nil {
+		return &dberrors.WrappedMessageError{Message: "failed to create data directory", Cause: err}
+	}
+
+	// Create Unix socket directory if needed.
+	if cfg.Server.Unix.Enabled {
+		socketDir := getSocketDir(cfg.Server.Unix.Socket)
+		if socketDir != "" {
+			if err := os.MkdirAll(socketDir, 0o755); err != nil {
+				return &dberrors.WrappedMessageError{Message: "failed to create socket directory", Cause: err}
+			}
+		}
+	}
+
+	return nil
+}
+
+// runDaemon runs the daemon with the configured storage backend.
+func runDaemon(modeName string) error {
+	// Perform pre-server startup tasks.
+	if err := prepareDaemon(modeName); err != nil {
+		return err
+	}
+
+	// Create server instance.
+	srv, err := server.NewServer(cfg)
+	if err != nil {
+		log.WithError(err).Error("Failed to create server")
+		return err
+	}
+
+	// Set up signal handling for graceful shutdown.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start server in background.
+	errChan := make(chan error, 1)
+	go func() {
+		if err := srv.Start(); err != nil {
+			errChan <- err
+		}
+	}()
+
+	// Wait for shutdown signal or error.
+	select {
+	case sig := <-sigChan:
+		log.Infof("Received signal %v, initiating shutdown...", sig)
+	case err := <-errChan:
+		log.WithError(err).Error("Server error")
+		return err
+	}
+
+	// Graceful shutdown.
+	log.Info("Performing graceful shutdown...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.WithError(err).Error("Shutdown error")
+		return err
+	}
+
+	// Clean up Unix socket file.
+	if cfg.Server.Unix.Enabled && cfg.Server.Unix.Socket != "" {
+		_ = os.Remove(cfg.Server.Unix.Socket)
+	}
+
+	log.Info("QuicBaaS daemon shutdown complete")
+	return nil
+}
+
+// validateRoutingConfig validates that all entity shard pins reference valid shards.
+// This is called early in startup to fail fast on invalid configuration.
+func validateRoutingConfig(shards []uint64, pins map[string]uint64) error {
+	if len(pins) == 0 {
+		return nil
+	}
+	shardSet := make(map[uint64]struct{}, len(shards))
+	for _, s := range shards {
+		shardSet[s] = struct{}{}
+	}
+	for entityType, shardID := range pins {
+		if _, ok := shardSet[shardID]; !ok {
+			return &dberrors.MessageError{
+				Message: "entity " + entityType + " pinned to shard " + strconv.FormatUint(shardID, 10) + " which is not in configured shards",
+			}
+		}
+	}
+	return nil
+}
+
+// getSocketDir returns the directory portion of a socket path.
+func getSocketDir(socketPath string) string {
+	for i := len(socketPath) - 1; i >= 0; i-- {
+		if socketPath[i] == '/' {
+			return socketPath[:i]
+		}
+	}
+	return ""
+}
+
+func main() {
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}

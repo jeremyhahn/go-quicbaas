@@ -1,0 +1,1108 @@
+//go:build rag
+
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package watcher
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNew(t *testing.T) {
+	config := Config{
+		Paths:         []string{t.TempDir()},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+	require.NotNil(t, w)
+
+	defer w.Stop()
+}
+
+func TestNew_InvalidConfig(t *testing.T) {
+	config := Config{
+		Paths: []string{},
+	}
+
+	w, err := New(config)
+	assert.Error(t, err)
+	assert.Nil(t, w)
+}
+
+func TestWatcher_Start(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+
+	// Should not be able to start again
+	err = w.Start(ctx)
+	assert.ErrorIs(t, err, ErrAlreadyStarted)
+
+	w.Stop()
+}
+
+func TestWatcher_Stop(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+
+	err = w.Stop()
+	assert.NoError(t, err)
+
+	// Should be idempotent
+	err = w.Stop()
+	assert.NoError(t, err)
+}
+
+func TestWatcher_Events_Create(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Give watcher time to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	// Create a file
+	testFile := filepath.Join(tmpDir, "test.txt")
+	err = os.WriteFile(testFile, []byte("test content"), 0644)
+	require.NoError(t, err)
+
+	// Wait for event - may be create or modify depending on OS
+	select {
+	case event := <-w.Events():
+		// Accept either create or modify (OS-dependent)
+		assert.True(t, event.Type == EventCreate || event.Type == EventModify)
+		assert.Equal(t, testFile, event.Path)
+		assert.Greater(t, event.Size, int64(0))
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for create event")
+	}
+}
+
+func TestWatcher_Events_Modify(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create file first
+	testFile := filepath.Join(tmpDir, "test.txt")
+	err := os.WriteFile(testFile, []byte("initial"), 0644)
+	require.NoError(t, err)
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Give watcher time to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	// Modify the file
+	err = os.WriteFile(testFile, []byte("modified content"), 0644)
+	require.NoError(t, err)
+
+	// Wait for event
+	select {
+	case event := <-w.Events():
+		// Should be modify or create
+		assert.True(t, event.Type == EventModify || event.Type == EventCreate)
+		assert.Equal(t, testFile, event.Path)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for modify event")
+	}
+}
+
+func TestWatcher_Events_Delete(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create file first
+	testFile := filepath.Join(tmpDir, "test.txt")
+	err := os.WriteFile(testFile, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Give watcher time to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	// Delete the file
+	err = os.Remove(testFile)
+	require.NoError(t, err)
+
+	// Wait for event
+	select {
+	case event := <-w.Events():
+		assert.Equal(t, EventDelete, event.Type)
+		assert.Equal(t, testFile, event.Path)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for delete event")
+	}
+}
+
+func TestWatcher_IgnoreHidden(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+		IgnoreHidden:  true,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Give watcher time to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	// Create hidden file
+	hiddenFile := filepath.Join(tmpDir, ".hidden.txt")
+	err = os.WriteFile(hiddenFile, []byte("hidden"), 0644)
+	require.NoError(t, err)
+
+	// Should not receive event
+	select {
+	case event := <-w.Events():
+		t.Fatalf("unexpected event for hidden file: %+v", event)
+	case <-time.After(1 * time.Second):
+		// Expected - no event
+	}
+
+	// Create normal file
+	normalFile := filepath.Join(tmpDir, "normal.txt")
+	err = os.WriteFile(normalFile, []byte("normal"), 0644)
+	require.NoError(t, err)
+
+	// Should receive event
+	select {
+	case event := <-w.Events():
+		assert.Equal(t, normalFile, event.Path)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for normal file event")
+	}
+}
+
+func TestWatcher_ExcludePatterns(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		Exclude:       []string{"*.tmp", "ignored/"},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Wait for watcher to initialize using timer pattern
+	initTimer := time.NewTimer(500 * time.Millisecond)
+	<-initTimer.C
+
+	// Create excluded file
+	tmpFile := filepath.Join(tmpDir, "test.tmp")
+	err = os.WriteFile(tmpFile, []byte("temp"), 0644)
+	require.NoError(t, err)
+
+	// Wait for at least one batch interval before checking
+	batchTimer1 := time.NewTimer(150 * time.Millisecond)
+	<-batchTimer1.C
+
+	// Should not receive event
+	select {
+	case event := <-w.Events():
+		t.Fatalf("unexpected event for excluded file: %+v", event)
+	case <-time.After(1 * time.Second):
+		// Expected - no event
+	}
+
+	// Create normal file
+	normalFile := filepath.Join(tmpDir, "test.txt")
+	err = os.WriteFile(normalFile, []byte("normal"), 0644)
+	require.NoError(t, err)
+
+	// Wait for at least one batch interval to ensure event is flushed
+	batchTimer2 := time.NewTimer(150 * time.Millisecond)
+	<-batchTimer2.C
+
+	// Should receive event with extended timeout
+	select {
+	case event := <-w.Events():
+		assert.Equal(t, normalFile, event.Path)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for normal file event")
+	}
+}
+
+func TestWatcher_Debouncing(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 200 * time.Millisecond,
+		BufferSize:    100,
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Give watcher time to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	testFile := filepath.Join(tmpDir, "test.txt")
+
+	// Rapidly modify the same file
+	for i := 0; i < 5; i++ {
+		err = os.WriteFile(testFile, []byte("content"), 0644)
+		require.NoError(t, err)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Should only receive one event (debounced)
+	var eventCount int
+	timeout := time.After(5 * time.Second)
+
+	for {
+		select {
+		case <-w.Events():
+			eventCount++
+		case <-timeout:
+			// Count complete
+			assert.LessOrEqual(t, eventCount, 2, "should receive at most 2 events due to debouncing")
+			return
+		}
+	}
+}
+
+func TestWatcher_AddPath(t *testing.T) {
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir1},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Give watcher time to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	// Add second path
+	err = w.AddPath(tmpDir2)
+	require.NoError(t, err)
+
+	// Create file in second path
+	testFile := filepath.Join(tmpDir2, "test.txt")
+	err = os.WriteFile(testFile, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	// Should receive event
+	select {
+	case event := <-w.Events():
+		assert.Equal(t, testFile, event.Path)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for event from new path")
+	}
+}
+
+func TestWatcher_RemovePath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Give watcher time to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	// Remove path
+	err = w.RemovePath(tmpDir)
+	require.NoError(t, err)
+
+	// Create file in removed path
+	testFile := filepath.Join(tmpDir, "test.txt")
+	err = os.WriteFile(testFile, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	// Should not receive event
+	select {
+	case event := <-w.Events():
+		t.Fatalf("unexpected event after removing path: %+v", event)
+	case <-time.After(1 * time.Second):
+		// Expected - no event
+	}
+}
+
+func TestWatcher_RemovePath_NotWatched(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	err = w.RemovePath("/nonexistent/path")
+	assert.ErrorIs(t, err, ErrPathNotWatched)
+}
+
+func TestWatcher_RecursiveWatching(t *testing.T) {
+	tmpDir := t.TempDir()
+	subDir := filepath.Join(tmpDir, "subdir")
+	err := os.Mkdir(subDir, 0755)
+	require.NoError(t, err)
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+		Recursive:     true,
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Give watcher time to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	// Create file in subdirectory
+	testFile := filepath.Join(subDir, "test.txt")
+	err = os.WriteFile(testFile, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	// Should receive event
+	select {
+	case event := <-w.Events():
+		assert.Equal(t, testFile, event.Path)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for event from subdirectory")
+	}
+}
+
+func TestWatcher_MaxDepth(t *testing.T) {
+	tmpDir := t.TempDir()
+	subDir1 := filepath.Join(tmpDir, "level1")
+	subDir2 := filepath.Join(subDir1, "level2")
+	err := os.MkdirAll(subDir2, 0755)
+	require.NoError(t, err)
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+		Recursive:     true,
+		MaxDepth:      1, // Only watch tmpDir and level1
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Give watcher time to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	// File in level1 should be watched
+	testFile1 := filepath.Join(subDir1, "test1.txt")
+	err = os.WriteFile(testFile1, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	// Should receive event
+	select {
+	case event := <-w.Events():
+		assert.Equal(t, testFile1, event.Path)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for event from level1")
+	}
+
+	// Give time to process
+	time.Sleep(500 * time.Millisecond)
+
+	// File in level2 should NOT be watched (exceeds max depth)
+	testFile2 := filepath.Join(subDir2, "test2.txt")
+	err = os.WriteFile(testFile2, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	// Should not receive event
+	select {
+	case event := <-w.Events():
+		t.Fatalf("unexpected event from level2: %+v", event)
+	case <-time.After(1 * time.Second):
+		// Expected - no event
+	}
+}
+
+func TestWatcher_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	err = w.Start(ctx)
+	require.NoError(t, err)
+
+	// Cancel context
+	cancel()
+
+	// Give time for shutdown
+	time.Sleep(500 * time.Millisecond)
+
+	// Watcher should be stopped
+	testFile := filepath.Join(tmpDir, "test.txt")
+	err = os.WriteFile(testFile, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	// Should not receive events after cancellation
+	select {
+	case event := <-w.Events():
+		// Channel might be closed or have buffered events
+		_ = event
+	case <-time.After(1 * time.Second):
+		// Expected - no event or closed channel
+	}
+}
+
+func TestNew_ConfigValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    Config
+		wantError bool
+	}{
+		{"valid", Config{Paths: []string{"."}, DebounceDelay: 100 * time.Millisecond}, false},
+		{"empty paths", Config{Paths: []string{}}, true},
+		{"negative debounce", Config{Paths: []string{"."}, DebounceDelay: -1}, true},
+		{"negative batch", Config{Paths: []string{"."}, BatchInterval: -1}, true},
+		{"negative max depth", Config{Paths: []string{"."}, MaxDepth: -1}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(tt.config)
+			if (err != nil) != tt.wantError {
+				t.Errorf("New() error = %v, wantError %v", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestWatcher_AddRecursive_EdgeCases(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create deep nested structure
+	deep := tmpDir + "/a/b/c/d/e"
+	os.MkdirAll(deep, 0755)
+
+	// Create hidden dir
+	hidden := tmpDir + "/.hidden"
+	os.Mkdir(hidden, 0755)
+
+	tests := []struct {
+		name   string
+		config Config
+	}{
+		{
+			"max depth limit",
+			Config{
+				Paths:         []string{tmpDir},
+				MaxDepth:      2,
+				IgnoreHidden:  false,
+				BatchInterval: 100 * time.Millisecond,
+				DebounceDelay: 50 * time.Millisecond,
+			},
+		},
+		{
+			"ignore hidden",
+			Config{
+				Paths:         []string{tmpDir},
+				IgnoreHidden:  true,
+				BatchInterval: 100 * time.Millisecond,
+				DebounceDelay: 50 * time.Millisecond,
+			},
+		},
+		{
+			"with exclusions",
+			Config{
+				Paths:         []string{tmpDir},
+				Exclude:       []string{"*/c/*"},
+				BatchInterval: 100 * time.Millisecond,
+				DebounceDelay: 50 * time.Millisecond,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, err := New(tt.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer w.Stop()
+
+			// Just verify it doesn't crash
+			if w == nil {
+				t.Error("Watcher is nil")
+			}
+		})
+	}
+}
+
+func TestWatcher_FlushEvents(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    10,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	go w.Start(ctx)
+	time.Sleep(500 * time.Millisecond)
+
+	// Create file to generate event
+	testFile := tmpDir + "/test.txt"
+	os.WriteFile(testFile, []byte("test"), 0644)
+
+	// Wait for debounce
+	time.Sleep(500 * time.Millisecond)
+
+	// Stop should flush events
+	w.Stop()
+}
+
+func TestWatcher_AddPath_Invalid(t *testing.T) {
+	config := Config{
+		Paths:         []string{t.TempDir()},
+		DebounceDelay: 100 * time.Millisecond,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	err = w.AddPath("/nonexistent/path/that/does/not/exist")
+	if err == nil {
+		t.Error("Expected error for nonexistent path")
+	}
+}
+func TestWatcher_FollowSymlinks(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create actual directory
+	realDir := filepath.Join(tmpDir, "real")
+	os.Mkdir(realDir, 0755)
+
+	// Create symlink
+	symlink := filepath.Join(tmpDir, "symlink")
+	os.Symlink(realDir, symlink)
+
+	tests := []struct {
+		name          string
+		followSymlink bool
+	}{
+		{"follow symlinks", true},
+		{"ignore symlinks", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := Config{
+				Paths:          []string{tmpDir},
+				Recursive:      true,
+				BatchInterval:  100 * time.Millisecond,
+				DebounceDelay:  50 * time.Millisecond,
+				FollowSymlinks: tt.followSymlink,
+			}
+
+			w, err := New(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer w.Stop()
+
+			// Verify watcher was created
+			if w == nil {
+				t.Error("Watcher is nil")
+			}
+		})
+	}
+}
+
+func TestWatcher_AddRecursive_DeepNesting(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create deeply nested structure
+	current := tmpDir
+	for i := 0; i < 5; i++ {
+		current = filepath.Join(current, "level")
+		os.Mkdir(current, 0755)
+	}
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		Recursive:     true,
+		MaxDepth:      3,
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	// Verify it handled deep nesting
+	if w == nil {
+		t.Error("Watcher is nil")
+	}
+}
+
+func TestNew_ErrorPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a file to test error when path exists but is not a directory
+	testFile := filepath.Join(tmpDir, "file.txt")
+	os.WriteFile(testFile, []byte("test"), 0644)
+
+	config := Config{
+		Paths:         []string{testFile},
+		Recursive:     true,
+		BatchInterval: 100 * time.Millisecond,
+		DebounceDelay: 50 * time.Millisecond,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		// Expected - can't watch a file in recursive mode
+		return
+	}
+	if w != nil {
+		w.Stop()
+	}
+}
+
+func TestWatcher_AddRecursive_Errors(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create directory with subdirectories
+	level1 := filepath.Join(tmpDir, "level1")
+	os.Mkdir(level1, 0755)
+
+	// Create a subdirectory
+	level2 := filepath.Join(level1, "level2")
+	os.Mkdir(level2, 0755)
+
+	// Create unreadable directory (no permissions)
+	unreadable := filepath.Join(level1, "unreadable")
+	os.Mkdir(unreadable, 0000)
+	defer os.Chmod(unreadable, 0755) // Cleanup
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		Recursive:     true,
+		BatchInterval: 100 * time.Millisecond,
+		DebounceDelay: 50 * time.Millisecond,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	// Should handle errors gracefully
+	if w == nil {
+		t.Error("Watcher is nil")
+	}
+}
+
+func TestWatcher_AddRecursive_Symlink_Coverage(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create actual directory
+	realDir := filepath.Join(tmpDir, "real")
+	os.Mkdir(realDir, 0755)
+
+	// Create file symlink (not a directory)
+	testFile := filepath.Join(tmpDir, "file.txt")
+	os.WriteFile(testFile, []byte("test"), 0644)
+	fileSymlink := filepath.Join(realDir, "filelink")
+	os.Symlink(testFile, fileSymlink)
+
+	// Create directory symlink
+	dirSymlink := filepath.Join(tmpDir, "dirlink")
+	os.Symlink(realDir, dirSymlink)
+
+	// Test with follow symlinks enabled
+	config := Config{
+		Paths:          []string{tmpDir},
+		Recursive:      true,
+		FollowSymlinks: true,
+		BatchInterval:  100 * time.Millisecond,
+		DebounceDelay:  50 * time.Millisecond,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	if w == nil {
+		t.Error("Watcher is nil")
+	}
+}
+
+func TestWatcher_FlushEvents_Multiple(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 20 * time.Millisecond,
+		BatchInterval: 50 * time.Millisecond,
+		BufferSize:    5,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Create multiple files rapidly to trigger batching
+	for i := 0; i < 5; i++ {
+		testFile := filepath.Join(tmpDir, "batch_"+string(rune('a'+i))+".txt")
+		os.WriteFile(testFile, []byte("test"), 0644)
+	}
+
+	// Wait for batch interval
+	time.Sleep(500 * time.Millisecond)
+
+	// Collect events
+	collected := 0
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case <-w.Events():
+			collected++
+		case <-timeout:
+			w.Stop()
+			return
+		}
+	}
+}
+
+func TestNew_FailedWatcher(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:          []string{tmpDir},
+		DebounceDelay:  50 * time.Millisecond,
+		BatchInterval:  100 * time.Millisecond,
+		BufferSize:     10,
+		Recursive:      true,
+		FollowSymlinks: false,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if w == nil {
+		t.Error("Expected watcher to be created")
+	} else {
+		w.Stop()
+	}
+}
+
+func TestWatcher_AddRecursive_ErrorHandling(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create structure that will trigger different code paths
+	subDir := filepath.Join(tmpDir, "subdir")
+	os.Mkdir(subDir, 0755)
+
+	// Create a broken symlink
+	brokenLink := filepath.Join(subDir, "broken")
+	os.Symlink("/nonexistent/path", brokenLink)
+
+	// Create normal subdirectory
+	normalDir := filepath.Join(subDir, "normal")
+	os.Mkdir(normalDir, 0755)
+
+	// Test with recursive and follow symlinks
+	config := Config{
+		Paths:          []string{tmpDir},
+		Recursive:      true,
+		FollowSymlinks: true,
+		BatchInterval:  100 * time.Millisecond,
+		DebounceDelay:  50 * time.Millisecond,
+		MaxDepth:       5,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	// Start watcher to trigger addRecursive
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	w.Stop()
+}
+
+func TestWatcher_ProcessEvents_AllPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: 30 * time.Millisecond,
+		BatchInterval: 60 * time.Millisecond,
+		BufferSize:    10,
+	}
+
+	w, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = w.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Create, modify, delete to exercise all event types
+	testFile := filepath.Join(tmpDir, "events.txt")
+
+	// Create
+	os.WriteFile(testFile, []byte("initial"), 0644)
+	time.Sleep(150 * time.Millisecond)
+
+	// Modify
+	os.WriteFile(testFile, []byte("modified"), 0644)
+	time.Sleep(150 * time.Millisecond)
+
+	// Delete
+	os.Remove(testFile)
+	time.Sleep(150 * time.Millisecond)
+
+	// Drain events
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case <-w.Events():
+		case <-timeout:
+			return
+		}
+	}
+}

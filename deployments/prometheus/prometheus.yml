@@ -1,0 +1,66 @@
+# Prometheus configuration for QuicBaaS
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'quicbaas-dev'
+    replica: '1'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  # - "alerts/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # QuicBaaS Standalone (Docker network)
+  # Scrapes from standalone container on Docker network
+  - job_name: 'quicbaas-standalone'
+    static_configs:
+      - targets: ['quicbaas-standalone:8080']
+        labels:
+          mode: 'standalone'
+          node: 'standalone'
+          instance: 'quicbaas-standalone'
+    metrics_path: '/v1/metrics/'
+
+  # QuicBaaS Node 1 (cluster mode)
+  - job_name: 'quicbaas-node1'
+    static_configs:
+      - targets: ['quicbaas-node1:8080']
+        labels:
+          mode: 'cluster'
+          node: 'node1'
+          instance: 'quicbaas-node1'
+    metrics_path: '/v1/metrics/'
+
+  # QuicBaaS Node 2 (cluster mode)
+  - job_name: 'quicbaas-node2'
+    static_configs:
+      - targets: ['quicbaas-node2:8080']
+        labels:
+          mode: 'cluster'
+          node: 'node2'
+          instance: 'quicbaas-node2'
+    metrics_path: '/v1/metrics/'
+
+  # QuicBaaS Node 3 (cluster mode)
+  - job_name: 'quicbaas-node3'
+    static_configs:
+      - targets: ['quicbaas-node3:8080']
+        labels:
+          mode: 'cluster'
+          node: 'node3'
+          instance: 'quicbaas-node3'
+    metrics_path: '/v1/metrics/'
+
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

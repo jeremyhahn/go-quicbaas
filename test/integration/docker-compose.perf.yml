@@ -1,0 +1,115 @@
+version: '3.8'
+
+# QuicBaaS Performance Testing Environment
+# 3-node Raft cluster for performance testing
+
+services:
+  # Node 1 - Primary node
+  quicbaas-perf-node1:
+    image: quicbaas:dev
+    container_name: quicbaas-perf-node1
+    hostname: quicbaas-perf-node1
+    command: ["/usr/local/bin/quicbaasd", "node", "--discovery=static", "--grpc-port=50051"]
+    ports:
+      - "18081:8080"   # REST API (using 18xxx to avoid conflicts)
+      - "19091:9090"   # Metrics
+      - "50051:50051"  # gRPC
+    environment:
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-perf-node1:63001
+      - QUICBAAS_DISCOVERY_STATIC_PEERS=quicbaas-perf-node2:63002,quicbaas-perf-node3:63003
+      - QUICBAAS_LOGGING_LEVEL=error  # Reduce logging for performance
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+    volumes:
+      - perf-node1-data:/data
+    networks:
+      - quicbaas-perf-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Node 2
+  quicbaas-perf-node2:
+    image: quicbaas:dev
+    container_name: quicbaas-perf-node2
+    hostname: quicbaas-perf-node2
+    command: ["/usr/local/bin/quicbaasd", "node", "--discovery=static", "--grpc-port=50051"]
+    ports:
+      - "18082:8080"   # REST API
+      - "19092:9090"   # Metrics
+      - "50052:50051"  # gRPC
+    environment:
+      - QUICBAAS_RAFT_NODE_ID=2
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-perf-node2:63002
+      - QUICBAAS_DISCOVERY_STATIC_PEERS=quicbaas-perf-node1:63001,quicbaas-perf-node3:63003
+      - QUICBAAS_LOGGING_LEVEL=error
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+    volumes:
+      - perf-node2-data:/data
+    networks:
+      - quicbaas-perf-network
+    depends_on:
+      - quicbaas-perf-node1
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Node 3
+  quicbaas-perf-node3:
+    image: quicbaas:dev
+    container_name: quicbaas-perf-node3
+    hostname: quicbaas-perf-node3
+    command: ["/usr/local/bin/quicbaasd", "node", "--discovery=static", "--grpc-port=50051"]
+    ports:
+      - "18083:8080"   # REST API
+      - "19093:9090"   # Metrics
+      - "50053:50051"  # gRPC
+    environment:
+      - QUICBAAS_RAFT_NODE_ID=3
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-perf-node3:63003
+      - QUICBAAS_DISCOVERY_STATIC_PEERS=quicbaas-perf-node1:63001,quicbaas-perf-node2:63002
+      - QUICBAAS_LOGGING_LEVEL=error
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+    volumes:
+      - perf-node3-data:/data
+    networks:
+      - quicbaas-perf-network
+    depends_on:
+      - quicbaas-perf-node1
+      - quicbaas-perf-node2
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  quicbaas-perf-network:
+    driver: bridge
+
+volumes:
+  perf-node1-data:
+  perf-node2-data:
+  perf-node3-data:

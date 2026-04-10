@@ -1,0 +1,2258 @@
+// QuicBaaS Protocol Buffer Definitions v1
+// High-performance distributed key-value database with Raft consensus
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.v1;
+
+import "api/proto/cluster.proto";
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// QuicBaaS service provides CRUD operations, indexing, time-series aggregation,
+// and cluster management for a distributed key-value database.
+service QuicBaaS {
+  // CRUD Operations
+
+  // Put stores a key-value pair in the database with optional consistency guarantees.
+  // Returns an error if the operation fails or if a unique constraint is violated.
+  rpc Put(PutRequest) returns (PutResponse);
+
+  // Get retrieves a value by key with configurable consistency level.
+  // Returns NotFound error if the key doesn't exist.
+  rpc Get(GetRequest) returns (GetResponse);
+
+  // Delete removes a key-value pair from the database.
+  // Returns success even if the key doesn't exist (idempotent).
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // List returns all entities of a given type with pagination support.
+  // Uses server-side streaming for efficient memory usage with large datasets.
+  rpc List(ListRequest) returns (stream ListResponse);
+
+  // ListEntityTypes returns all unique entity types stored in the database.
+  // Useful for discovering available data types in multi-tenant environments.
+  rpc ListEntityTypes(ListEntityTypesRequest) returns (ListEntityTypesResponse);
+
+  // Watch Operations
+
+  // Watch monitors a key for changes and streams events to the client.
+  // Returns a stream of WatchResponse messages containing change events.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+
+  // Index Operations
+
+  // Query searches for entities using secondary indexes.
+  // Supports exact match, range queries, and returns results via streaming.
+  rpc Query(QueryRequest) returns (stream QueryResponse);
+
+  // ScanIndex performs a full index scan with optional filtering.
+  // Returns results via streaming for memory efficiency.
+  rpc ScanIndex(ScanRequest) returns (stream ScanResponse);
+
+  // Cluster Management
+
+  // ClusterStatus returns the current state of all cluster nodes.
+  // Includes information about leaders, followers, and health status.
+  rpc ClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse);
+
+  // GetLeader returns the current leader for a specific shard.
+  // Useful for directing write operations to the appropriate node.
+  rpc GetLeader(GetLeaderRequest) returns (GetLeaderResponse);
+
+  // AddNode adds a new node to a Raft shard.
+  rpc AddNode(AddNodeRequest) returns (AddNodeResponse);
+
+  // RemoveNode removes a node from a Raft shard.
+  rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
+
+  // CreateShard creates a new Raft shard group.
+  rpc CreateShard(CreateShardRequest) returns (CreateShardResponse);
+
+  // Time-Series Operations
+
+  // Aggregate performs time-series aggregation functions over a time range.
+  // Supports common aggregations: AVG, SUM, MIN, MAX, COUNT.
+  rpc Aggregate(AggregateRequest) returns (AggregateResponse);
+
+  // TimeSeriesQuery retrieves time-series data points within a time range.
+  // Returns data via streaming for large result sets.
+  rpc TimeSeriesQuery(TimeSeriesQueryRequest) returns (stream TimeSeriesQueryResponse);
+
+  // TSWritePoint writes a single data point to time series storage.
+  rpc TSWritePoint(TSWritePointRequest) returns (TSWritePointResponse);
+
+  // TSWriteBatch writes multiple data points atomically.
+  rpc TSWriteBatch(TSWriteBatchRequest) returns (TSWriteBatchResponse);
+
+  // TSQuery performs time range queries with optional aggregation.
+  rpc TSQuery(TSQueryRequest) returns (TSQueryResponse);
+
+  // TSDeleteSeries deletes a time series or specific data points.
+  rpc TSDeleteSeries(TSDeleteSeriesRequest) returns (TSDeleteSeriesResponse);
+
+  // TSGetRetentionPolicy retrieves the retention policy for a metric.
+  rpc TSGetRetentionPolicy(TSGetRetentionPolicyRequest) returns (TSGetRetentionPolicyResponse);
+
+  // TSSetRetentionPolicy sets the retention policy for a metric.
+  rpc TSSetRetentionPolicy(TSSetRetentionPolicyRequest) returns (TSSetRetentionPolicyResponse);
+
+  // TSListMetrics lists all available metrics.
+  rpc TSListMetrics(TSListMetricsRequest) returns (TSListMetricsResponse);
+
+  // Batch Operations
+
+  // BatchPut performs multiple Put operations atomically.
+  // Either all operations succeed or all fail.
+  rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
+
+  // BatchGet retrieves multiple values in a single request.
+  // More efficient than multiple individual Get calls.
+  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
+
+  // BatchDelete removes multiple keys atomically.
+  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse);
+
+  // StreamBatchPut performs bidirectional streaming for large batch operations.
+  // Enables processing millions of records with progress tracking, back-pressure,
+  // and the ability to abort mid-stream. Supports chunked transfer with validation.
+  rpc StreamBatchPut(stream StreamBatchPutRequest) returns (stream StreamBatchPutResponse);
+
+  // Transaction Operations
+
+  // Transaction performs an atomic compare-and-swap transaction.
+  // Evaluates comparison conditions and executes success or failure operations.
+  // Provides full ACID guarantees via Raft consensus.
+  rpc Transaction(TransactionRequest) returns (TransactionResponse);
+
+  // Health and Diagnostics
+
+  // Health returns the health status of the current node.
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Backup Operations (Phase 4)
+
+  // CreateBackup creates a new backup of the database.
+  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
+
+  // ListBackups returns a list of available backups.
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+
+  // RestoreBackup restores the database from a backup.
+  rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse);
+
+  // DeleteBackup deletes a backup.
+  rpc DeleteBackup(DeleteBackupRequest) returns (DeleteBackupResponse);
+
+  // VerifyBackup verifies the integrity of a backup.
+  rpc VerifyBackup(VerifyBackupRequest) returns (VerifyBackupResponse);
+
+  // Authentication Operations (Phase 4)
+
+  // Login authenticates a user and returns access tokens.
+  rpc Login(LoginRequest) returns (LoginResponse);
+
+  // Logout revokes user tokens.
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+
+  // RefreshToken generates a new access token from a refresh token.
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+
+  // ValidateToken validates an authentication token.
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+
+  // User/Role Management (Phase 4)
+
+  // CreateUser creates a new user.
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+
+  // DeleteUser deletes a user.
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+
+  // ListUsers lists all users.
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+
+  // CreateRole creates a new role.
+  rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse);
+
+  // DeleteRole deletes a role.
+  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse);
+
+  // ListRoles lists all roles.
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+
+  // AssignRole assigns a role to a user.
+  rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse);
+
+  // RevokeRole revokes a role from a user.
+  rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse);
+
+  // Operations Management (Phase 4)
+
+  // MigrateData initiates data migration between storage backends.
+  rpc MigrateData(MigrateDataRequest) returns (MigrateDataResponse);
+
+  // GetMigrationProgress returns the current migration progress.
+  rpc GetMigrationProgress(GetMigrationProgressRequest) returns (GetMigrationProgressResponse);
+
+  // RebalanceCluster initiates cluster rebalancing.
+  rpc RebalanceCluster(RebalanceClusterRequest) returns (RebalanceClusterResponse);
+
+  // GetRebalanceProgress returns the current rebalance progress.
+  rpc GetRebalanceProgress(GetRebalanceProgressRequest) returns (GetRebalanceProgressResponse);
+
+  // ReplaceNode replaces a failed node in the cluster.
+  rpc ReplaceNode(ReplaceNodeRequest) returns (ReplaceNodeResponse);
+
+  // UpgradeNode initiates a rolling upgrade for a node.
+  rpc UpgradeNode(UpgradeNodeRequest) returns (UpgradeNodeResponse);
+
+  // GetUpgradeStatus returns the current upgrade status.
+  rpc GetUpgradeStatus(GetUpgradeStatusRequest) returns (GetUpgradeStatusResponse);
+
+  // Cache Management (Phase 4)
+
+  // GetCacheStats returns cache statistics.
+  rpc GetCacheStats(GetCacheStatsRequest) returns (GetCacheStatsResponse);
+
+  // ClearCache clears the cache.
+  rpc ClearCache(ClearCacheRequest) returns (ClearCacheResponse);
+
+  // GetCacheConfig returns the cache configuration.
+  rpc GetCacheConfig(GetCacheConfigRequest) returns (GetCacheConfigResponse);
+
+  // UpdateCacheConfig updates the cache configuration.
+  rpc UpdateCacheConfig(UpdateCacheConfigRequest) returns (UpdateCacheConfigResponse);
+
+  // Seal Operations
+
+  // SealStatus returns the current seal status of the database.
+  rpc SealStatus(SealStatusRequest) returns (SealStatusResponse);
+
+  // SealInit initializes the seal manager and generates key shares (bootstrap).
+  rpc SealInit(SealInitRequest) returns (SealInitResponse);
+
+  // Unseal provides a key share to attempt unsealing the database.
+  rpc Unseal(UnsealRequest) returns (UnsealResponse);
+
+  // Seal re-seals the database (requires unsealed state).
+  rpc Seal(SealRequest) returns (SealResponse);
+
+  // SealRekey generates new key shares with a new threshold configuration.
+  rpc SealRekey(SealRekeyRequest) returns (SealRekeyResponse);
+}
+
+// ConsistencyLevel defines the read/write consistency guarantees.
+// These levels map to QuicRaft's read modes for optimal performance.
+enum ConsistencyLevel {
+  // UNSPECIFIED defaults to LINEARIZABLE.
+  CONSISTENCY_LEVEL_UNSPECIFIED = 0;
+
+  // STRONG requires full Raft consensus on every read (SyncRead).
+  // Guarantees linearizable reads but has highest latency (10-50ms).
+  // Use for: Financial transactions, critical data where stale reads are unacceptable.
+  CONSISTENCY_LEVEL_STRONG = 1;
+
+  // LINEARIZABLE uses Raft ReadIndex optimization.
+  // Guarantees linearizable reads with much lower latency (1-5ms).
+  // Leader confirms it's still leader, then reads from local state machine.
+  // This is the RECOMMENDED DEFAULT for most applications.
+  CONSISTENCY_LEVEL_LINEARIZABLE = 2;
+
+  // EVENTUAL allows reading from local node without Raft coordination.
+  // Fastest reads (<1ms) but may return stale data if node is partitioned.
+  // Use for: Analytics, dashboards, caching where staleness is acceptable.
+  CONSISTENCY_LEVEL_EVENTUAL = 3;
+}
+
+// AggregateFunction defines supported time-series aggregation operations.
+enum AggregateFunction {
+  AGGREGATE_FUNCTION_UNSPECIFIED = 0;
+  AGGREGATE_FUNCTION_AVG = 1;    // Average value
+  AGGREGATE_FUNCTION_SUM = 2;    // Sum of values
+  AGGREGATE_FUNCTION_MIN = 3;    // Minimum value
+  AGGREGATE_FUNCTION_MAX = 4;    // Maximum value
+  AGGREGATE_FUNCTION_COUNT = 5;  // Count of data points
+  AGGREGATE_FUNCTION_FIRST = 6;  // First value in time range
+  AGGREGATE_FUNCTION_LAST = 7;   // Last value in time range
+}
+
+// HealthStatus represents the health state of a node or service.
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;     // Node is healthy and ready
+  HEALTH_STATUS_DEGRADED = 2;    // Node is operational but experiencing issues
+  HEALTH_STATUS_UNHEALTHY = 3;   // Node is not functional
+  HEALTH_STATUS_UNKNOWN = 4;     // Health status cannot be determined
+}
+
+// CRUD Request/Response Messages
+
+// PutRequest stores a key-value pair.
+message PutRequest {
+  // entity_type categorizes the data (e.g., "user", "sensor").
+  string entity_type = 1;
+
+  // id is the unique identifier. Set to 0 for auto-generated IDs.
+  uint64 id = 2;
+
+  // data contains the serialized entity (JSON, protobuf, etc.).
+  bytes data = 3;
+
+  // consistency determines the write consistency level.
+  ConsistencyLevel consistency = 4;
+
+  // ttl_seconds specifies time-to-live in seconds (0 = no expiration).
+  uint64 ttl_seconds = 5;
+
+  // metadata contains optional key-value metadata.
+  map<string, string> metadata = 6;
+
+  // shard_id specifies the target shard (0 = auto-assign).
+  uint64 shard_id = 7;
+}
+
+// PutResponse confirms successful storage.
+message PutResponse {
+  // id is the assigned or provided unique identifier.
+  uint64 id = 1;
+
+  // version is the entity version number (for optimistic locking).
+  uint64 version = 2;
+
+  // timestamp is the server timestamp when stored (Unix nanoseconds).
+  int64 timestamp = 3;
+
+  // leader_id identifies which node handled the write.
+  uint64 leader_id = 4;
+}
+
+// GetRequest retrieves a value by key.
+message GetRequest {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // id is the unique identifier.
+  uint64 id = 2;
+
+  // consistency determines the read consistency level.
+  ConsistencyLevel consistency = 3;
+
+  // shard_id specifies the target shard (0 = auto-detect).
+  uint64 shard_id = 4;
+
+  // include_metadata requests metadata to be returned.
+  bool include_metadata = 5;
+
+  // timeout_ms specifies the maximum time to wait for the read (milliseconds).
+  // If zero, a default timeout is used (5000ms).
+  int64 timeout_ms = 6;
+}
+
+// GetResponse returns the requested value.
+message GetResponse {
+  // id is the unique identifier.
+  uint64 id = 1;
+
+  // data contains the serialized entity.
+  bytes data = 2;
+
+  // version is the current entity version.
+  uint64 version = 3;
+
+  // timestamp is when the entity was last modified (Unix nanoseconds).
+  int64 timestamp = 4;
+
+  // metadata contains optional key-value metadata.
+  map<string, string> metadata = 5;
+
+  // found indicates whether the key exists.
+  bool found = 6;
+}
+
+// DeleteRequest removes a key-value pair.
+message DeleteRequest {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // id is the unique identifier to delete.
+  uint64 id = 2;
+
+  // consistency determines the delete consistency level.
+  ConsistencyLevel consistency = 3;
+
+  // shard_id specifies the target shard (0 = auto-detect).
+  uint64 shard_id = 4;
+
+  // version enables optimistic locking (0 = no version check).
+  uint64 version = 5;
+}
+
+// DeleteResponse confirms deletion.
+message DeleteResponse {
+  // deleted indicates whether the key existed and was deleted.
+  bool deleted = 1;
+
+  // timestamp is when the deletion occurred (Unix nanoseconds).
+  int64 timestamp = 2;
+}
+
+// ListRequest retrieves all entities of a type with pagination.
+message ListRequest {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // page_size limits the number of results per page.
+  uint32 page_size = 2;
+
+  // page_token is the continuation token from a previous request.
+  string page_token = 3;
+
+  // consistency determines the read consistency level.
+  ConsistencyLevel consistency = 4;
+
+  // shard_id specifies the target shard (0 = all shards).
+  uint64 shard_id = 5;
+
+  // include_metadata requests metadata to be returned.
+  bool include_metadata = 6;
+
+  // timeout_ms specifies the maximum time to wait for the read (milliseconds).
+  // If zero, a default timeout is used (5000ms).
+  int64 timeout_ms = 7;
+}
+
+// ListResponse streams entities.
+message ListResponse {
+  // entities is a batch of results.
+  repeated Entity entities = 1;
+
+  // next_page_token is the token for the next page (empty if last page).
+  string next_page_token = 2;
+
+  // total_count is the total number of entities (if available).
+  uint64 total_count = 3;
+}
+
+// ListEntityTypesRequest retrieves unique entity types.
+message ListEntityTypesRequest {
+  // page_size limits the number of results per page (default: 100, max: 1000).
+  uint32 page_size = 1;
+
+  // page_token is the continuation token from a previous request.
+  string page_token = 2;
+
+  // consistency determines the read consistency level.
+  ConsistencyLevel consistency = 3;
+
+  // timeout_ms specifies the maximum time to wait for the read (milliseconds).
+  // If zero, a default timeout is used (5000ms).
+  int64 timeout_ms = 4;
+}
+
+// ListEntityTypesResponse returns unique entity types.
+message ListEntityTypesResponse {
+  // entity_types is the list of unique entity type names.
+  repeated string entity_types = 1;
+
+  // next_page_token is the token for the next page (empty if last page).
+  string next_page_token = 2;
+
+  // total_count is the total number of entity types (if available).
+  uint64 total_count = 3;
+}
+
+// Entity represents a stored key-value pair.
+message Entity {
+  // id is the unique identifier.
+  uint64 id = 1;
+
+  // entity_type categorizes the data.
+  string entity_type = 2;
+
+  // data contains the serialized entity.
+  bytes data = 3;
+
+  // version is the current entity version.
+  uint64 version = 4;
+
+  // timestamp is when the entity was last modified (Unix nanoseconds).
+  int64 timestamp = 5;
+
+  // metadata contains optional key-value metadata.
+  map<string, string> metadata = 6;
+}
+
+// Watch Operations Messages
+
+// WatchEventType defines the type of watch event.
+enum WatchEventType {
+  WATCH_EVENT_TYPE_UNSPECIFIED = 0;
+  WATCH_EVENT_TYPE_PUT = 1;    // Key was created or updated
+  WATCH_EVENT_TYPE_DELETE = 2; // Key was deleted
+}
+
+// WatchRequest initiates a watch on a key or key prefix.
+message WatchRequest {
+  // key is the key to watch.
+  // If is_prefix is true, this is treated as a prefix and all keys
+  // with this prefix will be watched.
+  bytes key = 1;
+
+  // is_prefix indicates whether to watch all keys with the given prefix.
+  bool is_prefix = 2;
+
+  // start_revision is the optional revision to start watching from.
+  // If 0, watching starts from the current revision.
+  int64 start_revision = 3;
+
+  // prev_kv requests that the previous key-value be included in events.
+  bool prev_kv = 4;
+
+  // progress_notify enables periodic progress notifications.
+  bool progress_notify = 5;
+
+  // filters specifies event types to filter out.
+  // Events matching these filters will NOT be sent.
+  repeated WatchEventType filters = 6;
+
+  // watch_id is an optional client-specified watch identifier.
+  // If 0, the server assigns an ID.
+  int64 watch_id = 7;
+}
+
+// WatchEvent represents a single change event.
+message WatchEvent {
+  // type is the type of event (PUT or DELETE).
+  WatchEventType type = 1;
+
+  // key is the key that was affected.
+  bytes key = 2;
+
+  // value is the new value (for PUT events).
+  bytes value = 3;
+
+  // prev_value is the previous value (if prev_kv was requested).
+  bytes prev_value = 4;
+
+  // version is the key's version after this event.
+  uint64 version = 5;
+
+  // revision is the MVCC revision at which the event occurred.
+  int64 revision = 6;
+
+  // timestamp is when the event occurred (Unix nanoseconds).
+  int64 timestamp = 7;
+}
+
+// WatchResponse streams watch events to the client.
+message WatchResponse {
+  // watch_id identifies the watch that generated these events.
+  int64 watch_id = 1;
+
+  // created indicates this is the initial response confirming watch creation.
+  bool created = 2;
+
+  // canceled indicates the watch was canceled.
+  bool canceled = 3;
+
+  // cancel_reason provides the reason if canceled is true.
+  string cancel_reason = 4;
+
+  // compact_revision is the minimum revision the watcher may receive.
+  // Set if the watch was created after a compaction.
+  int64 compact_revision = 5;
+
+  // events contains the watch events.
+  repeated WatchEvent events = 6;
+
+  // revision is the current MVCC revision when this response was sent.
+  int64 revision = 7;
+}
+
+// Index Operations Messages
+
+// QueryRequest searches using secondary indexes.
+message QueryRequest {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // index_name is the name of the index to query.
+  string index_name = 2;
+
+  // value is the exact value to match (for equality queries).
+  bytes value = 3;
+
+  // range_start is the inclusive start for range queries.
+  bytes range_start = 4;
+
+  // range_end is the inclusive end for range queries.
+  bytes range_end = 5;
+
+  // page_size limits the number of results.
+  uint32 page_size = 6;
+
+  // page_token is the continuation token.
+  string page_token = 7;
+
+  // consistency determines the read consistency level.
+  ConsistencyLevel consistency = 8;
+
+  // include_metadata requests metadata to be returned.
+  bool include_metadata = 9;
+
+  // timeout_ms specifies the maximum time to wait for the read (milliseconds).
+  // If zero, a default timeout is used (5000ms).
+  int64 timeout_ms = 10;
+}
+
+// QueryResponse streams query results.
+message QueryResponse {
+  // entities matching the query.
+  repeated Entity entities = 1;
+
+  // next_page_token for pagination.
+  string next_page_token = 2;
+
+  // total_count is the total number of matches (if available).
+  uint64 total_count = 3;
+}
+
+// ScanRequest performs a full index scan.
+message ScanRequest {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // index_name is the name of the index to scan.
+  string index_name = 2;
+
+  // page_size limits the number of results.
+  uint32 page_size = 3;
+
+  // page_token is the continuation token.
+  string page_token = 4;
+
+  // consistency determines the read consistency level.
+  ConsistencyLevel consistency = 5;
+
+  // include_metadata requests metadata to be returned.
+  bool include_metadata = 6;
+
+  // timeout_ms specifies the maximum time to wait for the read (milliseconds).
+  // If zero, a default timeout is used (5000ms).
+  int64 timeout_ms = 7;
+}
+
+// ScanResponse streams scan results.
+message ScanResponse {
+  // entities from the index scan.
+  repeated Entity entities = 1;
+
+  // next_page_token for pagination.
+  string next_page_token = 2;
+
+  // total_count is the total number of entities scanned (if available).
+  uint64 total_count = 3;
+}
+
+// Cluster Management Messages
+
+// ClusterStatusRequest requests cluster state information.
+message ClusterStatusRequest {
+  // include_metrics requests detailed metrics.
+  bool include_metrics = 1;
+}
+
+// ClusterStatusResponse returns cluster state.
+message ClusterStatusResponse {
+  // cluster_id uniquely identifies the cluster.
+  string cluster_id = 1;
+
+  // nodes contains information about all cluster nodes.
+  repeated NodeInfo nodes = 2;
+
+  // shards contains information about all shards.
+  repeated ShardInfo shards = 3;
+
+  // timestamp when the status was collected (Unix nanoseconds).
+  int64 timestamp = 4;
+}
+
+// NodeInfo describes a cluster node.
+message NodeInfo {
+  // node_id uniquely identifies the node.
+  uint64 node_id = 1;
+
+  // address is the network address (host:port).
+  string address = 2;
+
+  // raft_address is the Raft protocol address.
+  string raft_address = 3;
+
+  // is_leader indicates if this node is the cluster leader.
+  bool is_leader = 4;
+
+  // health_status indicates node health.
+  HealthStatus health_status = 5;
+
+  // version is the QuicBaaS version running on this node.
+  string version = 6;
+
+  // uptime_seconds is how long the node has been running.
+  uint64 uptime_seconds = 7;
+
+  // metrics contains optional performance metrics.
+  map<string, double> metrics = 8;
+}
+
+// ShardInfo describes a Raft shard.
+message ShardInfo {
+  // shard_id uniquely identifies the shard.
+  uint64 shard_id = 1;
+
+  // leader_id is the current leader node for this shard.
+  uint64 leader_id = 2;
+
+  // replicas lists all nodes participating in this shard.
+  repeated uint64 replicas = 3;
+
+  // entity_types lists the data types stored in this shard.
+  repeated string entity_types = 4;
+
+  // status indicates shard health.
+  HealthStatus status = 5;
+
+  // metrics contains optional shard metrics.
+  map<string, double> metrics = 6;
+}
+
+// GetLeaderRequest requests the leader for a shard.
+message GetLeaderRequest {
+  // shard_id identifies the shard.
+  uint64 shard_id = 1;
+}
+
+// GetLeaderResponse returns the leader information.
+message GetLeaderResponse {
+  // shard_id identifies the shard.
+  uint64 shard_id = 1;
+
+  // leader_id is the current leader node.
+  uint64 leader_id = 2;
+
+  // leader_address is the leader's network address.
+  string leader_address = 3;
+
+  // term is the current Raft term.
+  uint64 term = 4;
+}
+
+// Time-Series Messages
+
+// AggregateRequest performs time-series aggregation.
+message AggregateRequest {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // field_name is the numeric field to aggregate.
+  string field_name = 2;
+
+  // function is the aggregation function to apply.
+  AggregateFunction function = 3;
+
+  // start_time is the inclusive start of the time range (Unix nanoseconds).
+  int64 start_time = 4;
+
+  // end_time is the inclusive end of the time range (Unix nanoseconds).
+  int64 end_time = 5;
+
+  // group_by_interval groups results by time intervals (seconds).
+  uint64 group_by_interval = 6;
+
+  // shard_id specifies the target shard (0 = all shards).
+  uint64 shard_id = 7;
+
+  // consistency determines the read consistency level.
+  ConsistencyLevel consistency = 8;
+}
+
+// AggregateResponse returns aggregation results.
+message AggregateResponse {
+  // result is the aggregation result (for non-grouped queries).
+  double result = 1;
+
+  // grouped_results contains time-bucketed results (for grouped queries).
+  repeated GroupedResult grouped_results = 2;
+
+  // count is the number of data points processed.
+  uint64 count = 3;
+}
+
+// GroupedResult represents a time-bucketed aggregation result.
+message GroupedResult {
+  // timestamp is the bucket start time (Unix nanoseconds).
+  int64 timestamp = 1;
+
+  // value is the aggregation result for this bucket.
+  double value = 2;
+
+  // count is the number of data points in this bucket.
+  uint64 count = 3;
+}
+
+// TimeSeriesQueryRequest retrieves time-series data.
+message TimeSeriesQueryRequest {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // start_time is the inclusive start of the time range (Unix nanoseconds).
+  int64 start_time = 2;
+
+  // end_time is the inclusive end of the time range (Unix nanoseconds).
+  int64 end_time = 3;
+
+  // page_size limits the number of results.
+  uint32 page_size = 4;
+
+  // page_token is the continuation token.
+  string page_token = 5;
+
+  // consistency determines the read consistency level.
+  ConsistencyLevel consistency = 6;
+
+  // include_metadata requests metadata to be returned.
+  bool include_metadata = 7;
+
+  // timeout_ms specifies the maximum time to wait for the read (milliseconds).
+  // If zero, a default timeout is used (5000ms).
+  int64 timeout_ms = 8;
+}
+
+// TimeSeriesQueryResponse streams time-series data points.
+message TimeSeriesQueryResponse {
+  // data_points are the time-series entries.
+  repeated TimeSeriesPoint data_points = 1;
+
+  // next_page_token for pagination.
+  string next_page_token = 2;
+
+  // total_count is the total number of points (if available).
+  uint64 total_count = 3;
+}
+
+// TimeSeriesPoint represents a single time-series data point.
+message TimeSeriesPoint {
+  // timestamp is when the data point was recorded (Unix nanoseconds).
+  int64 timestamp = 1;
+
+  // id is the entity identifier.
+  uint64 id = 2;
+
+  // data contains the serialized entity.
+  bytes data = 3;
+
+  // metadata contains optional key-value metadata.
+  map<string, string> metadata = 4;
+}
+
+// Batch Operations Messages
+
+// BatchPutRequest performs multiple Puts atomically.
+message BatchPutRequest {
+  // requests contains multiple put operations.
+  repeated PutRequest requests = 1;
+
+  // consistency determines the write consistency level.
+  ConsistencyLevel consistency = 2;
+
+  // shard_id specifies the target shard (must be same for all operations).
+  uint64 shard_id = 3;
+}
+
+// BatchPutResponse returns results for batch put.
+message BatchPutResponse {
+  // responses contains results for each put operation.
+  repeated PutResponse responses = 1;
+
+  // timestamp when the batch was committed (Unix nanoseconds).
+  int64 timestamp = 2;
+}
+
+// BatchGetRequest retrieves multiple values.
+message BatchGetRequest {
+  // requests contains multiple get operations.
+  repeated GetRequest requests = 1;
+}
+
+// BatchGetResponse returns results for batch get.
+message BatchGetResponse {
+  // responses contains results for each get operation.
+  repeated GetResponse responses = 1;
+}
+
+// BatchDeleteRequest removes multiple keys atomically.
+message BatchDeleteRequest {
+  // requests contains multiple delete operations.
+  repeated DeleteRequest requests = 1;
+
+  // consistency determines the delete consistency level.
+  ConsistencyLevel consistency = 2;
+
+  // shard_id specifies the target shard (must be same for all operations).
+  uint64 shard_id = 3;
+}
+
+// BatchDeleteResponse returns results for batch delete.
+message BatchDeleteResponse {
+  // responses contains results for each delete operation.
+  repeated DeleteResponse responses = 1;
+
+  // timestamp when the batch was committed (Unix nanoseconds).
+  int64 timestamp = 2;
+}
+
+// Streaming Batch Operations Messages (Phase 6)
+
+// StreamBatchPutRequest is sent by client in streaming batch operation.
+message StreamBatchPutRequest {
+  oneof payload {
+    // header initializes the streaming batch session.
+    StreamBatchHeader header = 1;
+    // chunk contains a batch of put operations.
+    StreamBatchChunk chunk = 2;
+    // complete signals the end of the stream.
+    StreamBatchComplete complete = 3;
+  }
+}
+
+// StreamBatchHeader initializes a streaming batch session.
+message StreamBatchHeader {
+  // shard_id is the target shard for all operations.
+  uint64 shard_id = 1;
+
+  // total_operations is the expected total number of operations (for progress tracking).
+  int64 total_operations = 2;
+
+  // chunk_size is the number of operations per chunk (for buffer allocation).
+  int32 chunk_size = 3;
+
+  // conditions are optional batch-level conditions that must be satisfied.
+  repeated BatchCondition conditions = 4;
+
+  // consistency determines the write consistency level.
+  ConsistencyLevel consistency = 5;
+}
+
+// BatchCondition defines a condition that must be satisfied for batch commit.
+message BatchCondition {
+  // entity_type for key-based conditions.
+  string entity_type = 1;
+
+  // id for key-based conditions.
+  uint64 id = 2;
+
+  // must_exist requires the key to exist.
+  bool must_exist = 3;
+
+  // must_not_exist requires the key to not exist.
+  bool must_not_exist = 4;
+
+  // expected_version for version-based conditions (0 = no version check).
+  uint64 expected_version = 5;
+}
+
+// StreamBatchChunk contains a batch of put operations.
+message StreamBatchChunk {
+  // operations are the put operations in this chunk.
+  repeated PutRequest operations = 1;
+
+  // chunk_index is the zero-based index of this chunk.
+  int32 chunk_index = 2;
+}
+
+// StreamBatchComplete signals the end of the stream.
+message StreamBatchComplete {
+  // commit indicates whether to commit (true) or abort (false) the batch.
+  bool commit = 1;
+}
+
+// StreamBatchPutResponse is sent by server in streaming batch operation.
+message StreamBatchPutResponse {
+  oneof payload {
+    // progress reports progress after each chunk.
+    StreamBatchProgress progress = 1;
+    // result is the final result of the batch operation.
+    StreamBatchResult result = 2;
+  }
+}
+
+// StreamBatchProgress reports progress during streaming batch operation.
+message StreamBatchProgress {
+  // operations_received is the number of operations received so far.
+  int64 operations_received = 1;
+
+  // operations_validated is the number of operations validated so far.
+  int64 operations_validated = 2;
+
+  // chunk_index is the index of the last processed chunk.
+  int32 chunk_index = 3;
+
+  // validation_errors contains any validation errors for the chunk.
+  repeated string validation_errors = 4;
+}
+
+// StreamBatchResult is the final result of a streaming batch operation.
+message StreamBatchResult {
+  // succeeded indicates if the batch was committed successfully.
+  bool succeeded = 1;
+
+  // operations_committed is the number of operations committed.
+  int64 operations_committed = 2;
+
+  // failed_keys lists keys that failed to commit (if any).
+  repeated string failed_keys = 3;
+
+  // error contains the error message if the batch failed.
+  string error = 4;
+
+  // timestamp is when the batch was committed (Unix nanoseconds).
+  int64 timestamp = 5;
+}
+
+// Health Messages
+
+// HealthRequest requests health status.
+message HealthRequest {
+  // include_details requests detailed health information.
+  bool include_details = 1;
+}
+
+// HealthResponse returns health status.
+message HealthResponse {
+  // status is the overall health status.
+  HealthStatus status = 1;
+
+  // node_id identifies this node.
+  uint64 node_id = 2;
+
+  // version is the QuicBaaS version.
+  string version = 3;
+
+  // uptime_seconds is how long the node has been running.
+  uint64 uptime_seconds = 4;
+
+  // details contains component-specific health information.
+  map<string, ComponentHealth> details = 5;
+}
+
+// ComponentHealth describes the health of a specific component.
+message ComponentHealth {
+  // status is the component health status.
+  HealthStatus status = 1;
+
+  // message provides additional context.
+  string message = 2;
+
+  // last_check is when health was last checked (Unix nanoseconds).
+  int64 last_check = 3;
+
+  // metrics contains component-specific metrics.
+  map<string, double> metrics = 4;
+}
+
+// Transaction Messages
+
+// CompareTarget specifies what aspect of an entity to compare.
+enum CompareTarget {
+  COMPARE_TARGET_UNSPECIFIED = 0;
+  COMPARE_TARGET_VERSION = 1;  // Compare entity version number
+  COMPARE_TARGET_VALUE = 2;    // Compare entity data value
+  COMPARE_TARGET_EXISTS = 3;   // Check if entity exists
+  COMPARE_TARGET_CREATE = 4;   // Check entity creation timestamp
+  COMPARE_TARGET_MOD = 5;      // Check entity modification timestamp
+}
+
+// CompareOperator defines comparison operators.
+enum CompareOperator {
+  COMPARE_OPERATOR_UNSPECIFIED = 0;
+  COMPARE_OPERATOR_EQUAL = 1;         // ==
+  COMPARE_OPERATOR_NOT_EQUAL = 2;     // !=
+  COMPARE_OPERATOR_GREATER = 3;       // >
+  COMPARE_OPERATOR_LESS = 4;          // <
+  COMPARE_OPERATOR_GREATER_EQUAL = 5; // >=
+  COMPARE_OPERATOR_LESS_EQUAL = 6;    // <=
+}
+
+// TransactionOpType defines the type of transaction operation.
+enum TransactionOpType {
+  TRANSACTION_OP_TYPE_UNSPECIFIED = 0;
+  TRANSACTION_OP_TYPE_PUT = 1;     // Create or update entity
+  TRANSACTION_OP_TYPE_GET = 2;     // Retrieve entity
+  TRANSACTION_OP_TYPE_DELETE = 3;  // Delete entity
+}
+
+// CompareCondition represents a single comparison predicate.
+message CompareCondition {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // id is the unique identifier to compare.
+  uint64 id = 2;
+
+  // target specifies what to compare.
+  CompareTarget target = 3;
+
+  // operator is the comparison operator to apply.
+  CompareOperator operator = 4;
+
+  // version is the expected version (for VERSION comparisons).
+  uint64 version = 5;
+
+  // value is the expected value (for VALUE comparisons).
+  bytes value = 6;
+
+  // timestamp is the expected timestamp (for CREATE/MOD comparisons, Unix nanoseconds).
+  int64 timestamp = 7;
+}
+
+// TransactionOp represents a single operation in a transaction.
+message TransactionOp {
+  // op_type is the type of operation.
+  TransactionOpType op_type = 1;
+
+  // entity_type categorizes the data.
+  string entity_type = 2;
+
+  // id is the unique identifier for the operation.
+  uint64 id = 3;
+
+  // data contains the entity data (for PUT operations).
+  bytes data = 4;
+
+  // metadata contains optional key-value metadata (for PUT operations).
+  map<string, string> metadata = 5;
+}
+
+// TransactionRequest performs an atomic compare-and-swap transaction.
+message TransactionRequest {
+  // compare contains predicates to evaluate.
+  // All comparisons must succeed for success operations to execute.
+  repeated CompareCondition compare = 1;
+
+  // success contains operations to execute if all comparisons succeed.
+  repeated TransactionOp success = 2;
+
+  // failure contains operations to execute if any comparison fails.
+  repeated TransactionOp failure = 3;
+
+  // consistency determines the transaction consistency level.
+  ConsistencyLevel consistency = 4;
+
+  // shard_id specifies the target shard (0 = auto-detect).
+  // All operations must be on the same shard.
+  uint64 shard_id = 5;
+
+  // timeout_ms specifies the maximum time to wait for the transaction (milliseconds).
+  // If zero, a default timeout is used (30000ms).
+  int64 timeout_ms = 6;
+}
+
+// TransactionOpResponse represents the result of a single operation.
+message TransactionOpResponse {
+  // op_type is the type of operation that was executed.
+  TransactionOpType op_type = 1;
+
+  // entity_type categorizes the data.
+  string entity_type = 2;
+
+  // id is the entity identifier.
+  uint64 id = 3;
+
+  // data contains the entity data (for GET operations).
+  bytes data = 4;
+
+  // version is the entity version (for GET operations).
+  uint64 version = 5;
+
+  // timestamp is when the operation completed (Unix nanoseconds).
+  int64 timestamp = 6;
+
+  // success indicates if the operation succeeded.
+  bool success = 7;
+
+  // error contains error message if the operation failed.
+  string error = 8;
+
+  // metadata contains optional key-value metadata (for GET operations).
+  map<string, string> metadata = 9;
+}
+
+// TransactionResponse returns the result of a transaction.
+message TransactionResponse {
+  // succeeded indicates if all comparisons succeeded.
+  // If true, success operations were executed.
+  // If false, failure operations were executed.
+  bool succeeded = 1;
+
+  // responses contains the results of executed operations.
+  repeated TransactionOpResponse responses = 2;
+
+  // timestamp when the transaction completed (Unix nanoseconds).
+  int64 timestamp = 3;
+
+  // message provides additional information about the transaction result.
+  string message = 4;
+
+  // revision is the MVCC revision at which the transaction was applied.
+  uint64 revision = 5;
+}
+
+// Phase 4: Backup Operations Messages
+
+// BackupType defines the type of backup.
+enum BackupType {
+  BACKUP_TYPE_UNSPECIFIED = 0;
+  BACKUP_TYPE_FULL = 1;        // Full backup of all data
+  BACKUP_TYPE_INCREMENTAL = 2; // Incremental backup of changes since last backup
+  BACKUP_TYPE_SNAPSHOT = 3;    // Point-in-time snapshot
+}
+
+// CompressionType defines the compression algorithm.
+enum CompressionType {
+  COMPRESSION_TYPE_UNSPECIFIED = 0;
+  COMPRESSION_TYPE_NONE = 1;   // No compression
+  COMPRESSION_TYPE_GZIP = 2;   // GZIP compression
+  COMPRESSION_TYPE_SNAPPY = 3; // Snappy compression
+  COMPRESSION_TYPE_LZ4 = 4;    // LZ4 compression
+}
+
+// EncryptionType defines the encryption algorithm.
+enum EncryptionType {
+  ENCRYPTION_TYPE_UNSPECIFIED = 0;
+  ENCRYPTION_TYPE_NONE = 1;     // No encryption
+  ENCRYPTION_TYPE_AES256 = 2;   // AES-256 encryption
+}
+
+// CreateBackupRequest creates a new backup.
+message CreateBackupRequest {
+  // backup_type specifies the type of backup to create.
+  BackupType backup_type = 1;
+
+  // compression specifies the compression algorithm (defaults to server config).
+  CompressionType compression = 2;
+
+  // encryption specifies the encryption algorithm (defaults to server config).
+  EncryptionType encryption = 3;
+
+  // tags contains optional metadata tags for the backup.
+  map<string, string> tags = 4;
+}
+
+// CreateBackupResponse returns information about the created backup.
+message CreateBackupResponse {
+  // backup_id uniquely identifies the backup.
+  string backup_id = 1;
+
+  // timestamp when the backup was created (Unix nanoseconds).
+  int64 timestamp = 2;
+
+  // size is the backup size in bytes.
+  int64 size = 3;
+
+  // duration is how long the backup took (nanoseconds).
+  int64 duration = 4;
+}
+
+// ListBackupsRequest lists available backups.
+message ListBackupsRequest {
+  // limit specifies the maximum number of backups to return (0 = all).
+  int32 limit = 1;
+
+  // continuation_token is used for pagination.
+  string continuation_token = 2;
+}
+
+// ListBackupsResponse returns a list of backups.
+message ListBackupsResponse {
+  // backups is the list of available backups.
+  repeated BackupInfo backups = 1;
+
+  // next_token is the continuation token for pagination.
+  string next_token = 2;
+}
+
+// BackupInfo contains metadata about a backup.
+message BackupInfo {
+  // backup_id uniquely identifies the backup.
+  string backup_id = 1;
+
+  // backup_type is the type of backup.
+  BackupType backup_type = 2;
+
+  // timestamp when the backup was created (Unix nanoseconds).
+  int64 timestamp = 3;
+
+  // size is the backup size in bytes.
+  int64 size = 4;
+
+  // compression is the compression algorithm used.
+  CompressionType compression = 5;
+
+  // encryption is the encryption algorithm used.
+  EncryptionType encryption = 6;
+
+  // tags contains optional metadata tags.
+  map<string, string> tags = 7;
+
+  // num_shards is the number of shards in the backup.
+  int32 num_shards = 8;
+}
+
+// RestoreBackupRequest restores from a backup.
+message RestoreBackupRequest {
+  // backup_id identifies the backup to restore.
+  string backup_id = 1;
+
+  // verify_checksum enables backup integrity verification.
+  bool verify_checksum = 2;
+
+  // skip_existing skips restoring keys that already exist.
+  bool skip_existing = 3;
+
+  // target_shards limits restoration to specific shards (empty = all shards).
+  repeated uint64 target_shards = 4;
+}
+
+// RestoreBackupResponse returns information about the restore operation.
+message RestoreBackupResponse {
+  // backup_id is the backup that was restored.
+  string backup_id = 1;
+
+  // timestamp when the restore completed (Unix nanoseconds).
+  int64 timestamp = 2;
+
+  // keys_restored is the number of keys restored.
+  int64 keys_restored = 3;
+
+  // duration is how long the restore took (nanoseconds).
+  int64 duration = 4;
+}
+
+// DeleteBackupRequest deletes a backup.
+message DeleteBackupRequest {
+  // backup_id identifies the backup to delete.
+  string backup_id = 1;
+}
+
+// DeleteBackupResponse confirms deletion.
+message DeleteBackupResponse {
+  // success indicates if the backup was deleted.
+  bool success = 1;
+}
+
+// VerifyBackupRequest verifies a backup's integrity.
+message VerifyBackupRequest {
+  // backup_id identifies the backup to verify.
+  string backup_id = 1;
+}
+
+// VerifyBackupResponse returns verification results.
+message VerifyBackupResponse {
+  // valid indicates if the backup passed verification.
+  bool valid = 1;
+
+  // message provides additional information.
+  string message = 2;
+
+  // checksum_valid indicates if the checksum verification passed.
+  bool checksum_valid = 3;
+}
+
+// Phase 4: Authentication Operations Messages
+
+// LoginRequest authenticates a user.
+message LoginRequest {
+  // username is the user's username.
+  string username = 1;
+
+  // password is the user's password.
+  string password = 2;
+}
+
+// LoginResponse returns authentication tokens.
+message LoginResponse {
+  // access_token is the JWT access token.
+  string access_token = 1;
+
+  // refresh_token is the JWT refresh token.
+  string refresh_token = 2;
+
+  // expires_at is when the access token expires (Unix nanoseconds).
+  int64 expires_at = 3;
+
+  // token_type is the type of token (typically "Bearer").
+  string token_type = 4;
+
+  // user_id is the authenticated user's ID.
+  string user_id = 5;
+
+  // roles are the user's roles.
+  repeated string roles = 6;
+}
+
+// LogoutRequest revokes user tokens.
+message LogoutRequest {
+  // access_token is the token to revoke.
+  string access_token = 1;
+}
+
+// LogoutResponse confirms logout.
+message LogoutResponse {
+  // success indicates if the logout was successful.
+  bool success = 1;
+}
+
+// RefreshTokenRequest generates a new access token.
+message RefreshTokenRequest {
+  // refresh_token is the refresh token.
+  string refresh_token = 1;
+}
+
+// RefreshTokenResponse returns a new access token.
+message RefreshTokenResponse {
+  // access_token is the new JWT access token.
+  string access_token = 1;
+
+  // expires_at is when the new access token expires (Unix nanoseconds).
+  int64 expires_at = 2;
+
+  // token_type is the type of token (typically "Bearer").
+  string token_type = 3;
+}
+
+// ValidateTokenRequest validates a token.
+message ValidateTokenRequest {
+  // access_token is the token to validate.
+  string access_token = 1;
+}
+
+// ValidateTokenResponse returns validation results.
+message ValidateTokenResponse {
+  // valid indicates if the token is valid.
+  bool valid = 1;
+
+  // user_id is the user ID from the token.
+  string user_id = 2;
+
+  // username is the username from the token.
+  string username = 3;
+
+  // roles are the roles from the token.
+  repeated string roles = 4;
+
+  // expires_at is when the token expires (Unix nanoseconds).
+  int64 expires_at = 5;
+}
+
+// Phase 4: User/Role Management Messages
+
+// CreateUserRequest creates a new user.
+message CreateUserRequest {
+  // username is the user's username.
+  string username = 1;
+
+  // password is the user's password.
+  string password = 2;
+
+  // roles are the initial roles to assign.
+  repeated string roles = 3;
+}
+
+// CreateUserResponse returns information about the created user.
+message CreateUserResponse {
+  // user_id is the created user's ID.
+  string user_id = 1;
+
+  // username is the user's username.
+  string username = 2;
+
+  // created is when the user was created (Unix nanoseconds).
+  int64 created = 3;
+}
+
+// DeleteUserRequest deletes a user.
+message DeleteUserRequest {
+  // user_id is the ID of the user to delete.
+  string user_id = 1;
+}
+
+// DeleteUserResponse confirms deletion.
+message DeleteUserResponse {
+  // success indicates if the user was deleted.
+  bool success = 1;
+}
+
+// ListUsersRequest lists all users.
+message ListUsersRequest {
+  // No parameters needed for now.
+}
+
+// ListUsersResponse returns a list of users.
+message ListUsersResponse {
+  // users is the list of users.
+  repeated UserInfo users = 1;
+}
+
+// UserInfo contains information about a user.
+message UserInfo {
+  // user_id is the user's ID.
+  string user_id = 1;
+
+  // username is the user's username.
+  string username = 2;
+
+  // roles are the user's roles.
+  repeated string roles = 3;
+
+  // created is when the user was created (Unix nanoseconds).
+  int64 created = 4;
+
+  // last_auth is when the user last authenticated (Unix nanoseconds).
+  int64 last_auth = 5;
+}
+
+// CreateRoleRequest creates a new role.
+message CreateRoleRequest {
+  // role_name is the name of the role.
+  string role_name = 1;
+
+  // permissions are the permissions to grant.
+  repeated Permission permissions = 2;
+}
+
+// Permission represents a resource permission.
+message Permission {
+  // resource is the resource name (e.g., "backup", "auth").
+  string resource = 1;
+
+  // actions are the allowed actions (e.g., "read", "write").
+  repeated string actions = 2;
+}
+
+// CreateRoleResponse confirms role creation.
+message CreateRoleResponse {
+  // role_name is the created role's name.
+  string role_name = 1;
+}
+
+// DeleteRoleRequest deletes a role.
+message DeleteRoleRequest {
+  // role_name is the name of the role to delete.
+  string role_name = 1;
+}
+
+// DeleteRoleResponse confirms deletion.
+message DeleteRoleResponse {
+  // success indicates if the role was deleted.
+  bool success = 1;
+}
+
+// ListRolesRequest lists all roles.
+message ListRolesRequest {
+  // No parameters needed for now.
+}
+
+// ListRolesResponse returns a list of roles.
+message ListRolesResponse {
+  // roles is the list of roles.
+  repeated RoleInfo roles = 1;
+}
+
+// RoleInfo contains information about a role.
+message RoleInfo {
+  // role_name is the role's name.
+  string role_name = 1;
+
+  // permissions are the role's permissions.
+  repeated Permission permissions = 2;
+}
+
+// AssignRoleRequest assigns a role to a user.
+message AssignRoleRequest {
+  // user_id is the user's ID.
+  string user_id = 1;
+
+  // role_name is the role to assign.
+  string role_name = 2;
+}
+
+// AssignRoleResponse confirms role assignment.
+message AssignRoleResponse {
+  // success indicates if the role was assigned.
+  bool success = 1;
+}
+
+// RevokeRoleRequest revokes a role from a user.
+message RevokeRoleRequest {
+  // user_id is the user's ID.
+  string user_id = 1;
+
+  // role_name is the role to revoke.
+  string role_name = 2;
+}
+
+// RevokeRoleResponse confirms role revocation.
+message RevokeRoleResponse {
+  // success indicates if the role was revoked.
+  bool success = 1;
+}
+
+// Phase 4: Operations Management Messages
+
+// MigrateDataRequest initiates data migration.
+message MigrateDataRequest {
+  // source_backend specifies the source storage backend.
+  string source_backend = 1;
+
+  // destination_backend specifies the destination storage backend.
+  string destination_backend = 2;
+
+  // batch_size is the number of keys per batch.
+  int32 batch_size = 3;
+
+  // concurrency is the number of parallel workers.
+  int32 concurrency = 4;
+
+  // verify_data enables data verification after migration.
+  bool verify_data = 5;
+
+  // delete_source enables deletion of source data after migration.
+  bool delete_source = 6;
+}
+
+// MigrateDataResponse returns migration operation ID.
+message MigrateDataResponse {
+  // operation_id uniquely identifies this migration.
+  string operation_id = 1;
+
+  // started is when the migration started (Unix nanoseconds).
+  int64 started = 2;
+}
+
+// GetMigrationProgressRequest gets migration progress.
+message GetMigrationProgressRequest {
+  // operation_id identifies the migration operation.
+  string operation_id = 1;
+}
+
+// GetMigrationProgressResponse returns migration progress.
+message GetMigrationProgressResponse {
+  // operation_id is the migration operation ID.
+  string operation_id = 1;
+
+  // keys_processed is the number of keys processed.
+  uint64 keys_processed = 2;
+
+  // bytes_processed is the number of bytes processed.
+  uint64 bytes_processed = 3;
+
+  // estimated_total is the estimated total keys.
+  uint64 estimated_total = 4;
+
+  // percent_complete is the completion percentage.
+  double percent_complete = 5;
+
+  // elapsed_time is the elapsed time in nanoseconds.
+  int64 elapsed_time = 6;
+
+  // estimated_remaining is the estimated remaining time in nanoseconds.
+  int64 estimated_remaining = 7;
+
+  // current_rate is the current processing rate (keys/sec).
+  double current_rate = 8;
+
+  // status is the migration status.
+  string status = 9;
+}
+
+// RebalanceClusterRequest initiates cluster rebalancing.
+message RebalanceClusterRequest {
+  // strategy is the rebalancing strategy ("round_robin", "consistent_hash").
+  string strategy = 1;
+
+  // target_distribution specifies desired shard distribution (optional).
+  map<uint64, int32> target_distribution = 2;
+}
+
+// RebalanceClusterResponse returns rebalance operation ID.
+message RebalanceClusterResponse {
+  // operation_id uniquely identifies this rebalance.
+  string operation_id = 1;
+
+  // started is when the rebalance started (Unix nanoseconds).
+  int64 started = 2;
+}
+
+// GetRebalanceProgressRequest gets rebalance progress.
+message GetRebalanceProgressRequest {
+  // operation_id identifies the rebalance operation.
+  string operation_id = 1;
+}
+
+// GetRebalanceProgressResponse returns rebalance progress.
+message GetRebalanceProgressResponse {
+  // operation_id is the rebalance operation ID.
+  string operation_id = 1;
+
+  // shards_moved is the number of shards moved.
+  int32 shards_moved = 2;
+
+  // total_shards is the total number of shards to move.
+  int32 total_shards = 3;
+
+  // percent_complete is the completion percentage.
+  double percent_complete = 4;
+
+  // elapsed_time is the elapsed time in nanoseconds.
+  int64 elapsed_time = 5;
+
+  // status is the rebalance status.
+  string status = 6;
+}
+
+// ReplaceNodeRequest replaces a failed node.
+message ReplaceNodeRequest {
+  // failed_node_id is the ID of the failed node.
+  uint64 failed_node_id = 1;
+
+  // replacement_node_id is the ID of the replacement node.
+  uint64 replacement_node_id = 2;
+
+  // replacement_address is the address of the replacement node.
+  string replacement_address = 3;
+}
+
+// ReplaceNodeResponse returns operation result.
+message ReplaceNodeResponse {
+  // success indicates if the node was replaced.
+  bool success = 1;
+
+  // message provides additional information.
+  string message = 2;
+}
+
+// UpgradeNodeRequest initiates a rolling upgrade.
+message UpgradeNodeRequest {
+  // node_id is the ID of the node to upgrade.
+  uint64 node_id = 1;
+
+  // target_version is the version to upgrade to.
+  string target_version = 2;
+}
+
+// UpgradeNodeResponse returns upgrade operation ID.
+message UpgradeNodeResponse {
+  // operation_id uniquely identifies this upgrade.
+  string operation_id = 1;
+
+  // started is when the upgrade started (Unix nanoseconds).
+  int64 started = 2;
+}
+
+// GetUpgradeStatusRequest gets upgrade status.
+message GetUpgradeStatusRequest {
+  // operation_id identifies the upgrade operation (empty = current upgrade).
+  string operation_id = 1;
+}
+
+// GetUpgradeStatusResponse returns upgrade status.
+message GetUpgradeStatusResponse {
+  // operation_id is the upgrade operation ID.
+  string operation_id = 1;
+
+  // nodes_upgraded is the number of nodes upgraded.
+  int32 nodes_upgraded = 2;
+
+  // total_nodes is the total number of nodes to upgrade.
+  int32 total_nodes = 3;
+
+  // percent_complete is the completion percentage.
+  double percent_complete = 4;
+
+  // current_version is the current version.
+  string current_version = 5;
+
+  // target_version is the target version.
+  string target_version = 6;
+
+  // status is the upgrade status.
+  string status = 7;
+}
+
+// Phase 4: Cache Management Messages
+
+// GetCacheStatsRequest requests cache statistics.
+message GetCacheStatsRequest {
+  // No parameters needed.
+}
+
+// GetCacheStatsResponse returns cache statistics.
+message GetCacheStatsResponse {
+  // enabled indicates if caching is enabled.
+  bool enabled = 1;
+
+  // l1_size is the current L1 cache size.
+  int32 l1_size = 2;
+
+  // l1_capacity is the L1 cache capacity.
+  int32 l1_capacity = 3;
+
+  // l1_hits is the total L1 cache hits.
+  int64 l1_hits = 4;
+
+  // l1_misses is the total L1 cache misses.
+  int64 l1_misses = 5;
+
+  // l1_hit_rate is the L1 cache hit rate.
+  double l1_hit_rate = 6;
+
+  // l1_evictions is the total L1 cache evictions.
+  int64 l1_evictions = 7;
+}
+
+// ClearCacheRequest clears the cache.
+message ClearCacheRequest {
+  // No parameters needed.
+}
+
+// ClearCacheResponse confirms cache clear.
+message ClearCacheResponse {
+  // success indicates if the cache was cleared.
+  bool success = 1;
+
+  // entries_cleared is the number of entries cleared.
+  int32 entries_cleared = 2;
+}
+
+// GetCacheConfigRequest requests cache configuration.
+message GetCacheConfigRequest {
+  // No parameters needed.
+}
+
+// GetCacheConfigResponse returns cache configuration.
+message GetCacheConfigResponse {
+  // enabled indicates if caching is enabled.
+  bool enabled = 1;
+
+  // l1_size is the L1 cache size.
+  int32 l1_size = 2;
+
+  // l1_ttl_seconds is the L1 TTL in seconds.
+  int64 l1_ttl_seconds = 3;
+
+  // cleanup_interval_seconds is the cleanup interval in seconds.
+  int64 cleanup_interval_seconds = 4;
+}
+
+// UpdateCacheConfigRequest updates cache configuration.
+message UpdateCacheConfigRequest {
+  // enabled indicates if caching should be enabled.
+  bool enabled = 1;
+
+  // l1_size is the new L1 cache size (0 = no change).
+  int32 l1_size = 2;
+
+  // l1_ttl_seconds is the new L1 TTL in seconds (0 = no change).
+  int64 l1_ttl_seconds = 3;
+}
+
+// UpdateCacheConfigResponse confirms configuration update.
+message UpdateCacheConfigResponse {
+  // success indicates if the configuration was updated.
+  bool success = 1;
+
+  // message provides additional information.
+  string message = 2;
+}
+
+// Seal Operations Messages
+
+// SealMode defines the seal mode.
+enum SealMode {
+  SEAL_MODE_UNSPECIFIED = 0;
+  SEAL_MODE_MANUAL = 1;       // Manual unsealing with Shamir shares
+  SEAL_MODE_AUTO = 2;         // Auto unseal using TPM or cloud KMS
+  SEAL_MODE_CRYPTO = 3;      // Crypto seal using external service
+}
+
+// SealStatusRequest requests seal status.
+message SealStatusRequest {
+  // No parameters needed.
+}
+
+// SealStatusResponse returns seal status.
+message SealStatusResponse {
+  // sealed indicates if the database is sealed.
+  bool sealed = 1;
+
+  // initialized indicates if the seal manager has been initialized.
+  bool initialized = 2;
+
+  // mode is the seal mode (manual, auto, crypto).
+  SealMode mode = 3;
+
+  // threshold is the minimum number of shares required to unseal.
+  int32 threshold = 4;
+
+  // total_shares is the total number of shares generated.
+  int32 total_shares = 5;
+
+  // shares_provided is the number of shares already provided for unsealing.
+  int32 shares_provided = 6;
+
+  // tpm_available indicates if TPM is available for auto-unsealing.
+  bool tpm_available = 7;
+
+  // cluster_nodes is the number of nodes in the cluster.
+  int32 cluster_nodes = 8;
+
+  // version is the seal configuration version.
+  uint64 version = 9;
+
+  // error contains any error message.
+  string error = 10;
+}
+
+// SealInitRequest initializes the seal manager (bootstrap).
+message SealInitRequest {
+  // threshold is the minimum number of shares required to unseal.
+  int32 threshold = 1;
+
+  // total_shares is the total number of shares to generate.
+  int32 total_shares = 2;
+
+  // recovery_keys_enabled enables generation of recovery keys.
+  bool recovery_keys_enabled = 3;
+
+  // recovery_threshold is the minimum recovery keys needed.
+  int32 recovery_threshold = 4;
+
+  // recovery_total_keys is the total recovery keys to generate.
+  int32 recovery_total_keys = 5;
+}
+
+// SealInitResponse returns the generated key shares.
+message SealInitResponse {
+  // shares are the Shamir secret shares for unsealing.
+  repeated bytes shares = 1;
+
+  // recovery_keys are the recovery keys (if enabled).
+  repeated bytes recovery_keys = 2;
+
+  // root_token is the root authentication token.
+  string root_token = 3;
+
+  // version is the seal configuration version.
+  uint64 version = 4;
+
+  // error contains any error message.
+  string error = 5;
+}
+
+// UnsealRequest provides a key share to attempt unsealing.
+message UnsealRequest {
+  // share is the key share to provide.
+  bytes share = 1;
+
+  // node_id is the ID of the node providing the share (for cluster mode).
+  uint64 node_id = 2;
+
+  // signature is an optional signature for authenticated unsealing.
+  bytes signature = 3;
+}
+
+// UnsealResponse returns the unsealing progress.
+message UnsealResponse {
+  // sealed indicates if the database is still sealed.
+  bool sealed = 1;
+
+  // shares_provided is the number of shares provided so far.
+  int32 shares_provided = 2;
+
+  // threshold is the minimum shares required to unseal.
+  int32 threshold = 3;
+
+  // error contains any error message.
+  string error = 4;
+}
+
+// SealRequest re-seals the database.
+message SealRequest {
+  // force forces re-sealing even if operations are in progress.
+  bool force = 1;
+}
+
+// SealResponse confirms sealing.
+message SealResponse {
+  // sealed indicates if the database was sealed.
+  bool sealed = 1;
+
+  // error contains any error message.
+  string error = 2;
+}
+
+// SealRekeyRequest generates new key shares.
+message SealRekeyRequest {
+  // new_threshold is the new minimum shares required to unseal.
+  int32 new_threshold = 1;
+
+  // new_total is the new total number of shares to generate.
+  int32 new_total = 2;
+}
+
+// SealRekeyResponse returns the new key shares.
+message SealRekeyResponse {
+  // shares are the new Shamir secret shares.
+  repeated bytes shares = 1;
+
+  // version is the new seal configuration version.
+  uint64 version = 2;
+
+  // error contains any error message.
+  string error = 3;
+}
+
+// ========================================
+// Time Series Messages
+// ========================================
+
+// TSDataPoint represents a single time series data point.
+message TSDataPoint {
+  // metric is the metric name.
+  string metric = 1;
+
+  // tags are key-value pairs for filtering and grouping.
+  map<string, string> tags = 2;
+
+  // value is the numeric value of the data point.
+  double value = 3;
+
+  // timestamp is when the data point was recorded (Unix nanoseconds).
+  int64 timestamp = 4;
+}
+
+// TSRetentionPolicy defines data retention settings.
+message TSRetentionPolicy {
+  // duration_seconds is how long to retain data.
+  int64 duration_seconds = 1;
+
+  // resolution_seconds is the data resolution after downsampling.
+  int64 resolution_seconds = 2;
+
+  // aggregation is the aggregation function for downsampling (avg, sum, min, max).
+  string aggregation = 3;
+}
+
+// TSWritePointRequest writes a single data point.
+message TSWritePointRequest {
+  // metric is the metric name.
+  string metric = 1;
+
+  // tags are key-value pairs for filtering and grouping.
+  map<string, string> tags = 2;
+
+  // value is the numeric value.
+  double value = 3;
+
+  // timestamp is when the data point was recorded (Unix nanoseconds).
+  int64 timestamp = 4;
+}
+
+// TSWritePointResponse confirms the write.
+message TSWritePointResponse {
+  // success indicates if the write succeeded.
+  bool success = 1;
+
+  // timestamp is when the write was processed (Unix nanoseconds).
+  int64 timestamp = 2;
+}
+
+// TSWriteBatchRequest writes multiple data points atomically.
+message TSWriteBatchRequest {
+  // points are the data points to write.
+  repeated TSDataPoint points = 1;
+}
+
+// TSWriteBatchResponse confirms the batch write.
+message TSWriteBatchResponse {
+  // success indicates if the batch write succeeded.
+  bool success = 1;
+
+  // points_written is the number of points written.
+  int32 points_written = 2;
+
+  // timestamp is when the batch was processed (Unix nanoseconds).
+  int64 timestamp = 3;
+}
+
+// TSQueryRequest queries time series data.
+message TSQueryRequest {
+  // metric is the metric name to query.
+  string metric = 1;
+
+  // tags are optional filters.
+  map<string, string> tags = 2;
+
+  // start_time is the start of the time range (Unix nanoseconds).
+  int64 start_time = 3;
+
+  // end_time is the end of the time range (Unix nanoseconds).
+  int64 end_time = 4;
+
+  // aggregation is the optional aggregation function (avg, sum, min, max, count).
+  string aggregation = 5;
+
+  // interval_seconds is the aggregation interval.
+  int64 interval_seconds = 6;
+
+  // group_by are the tags to group results by.
+  repeated string group_by = 7;
+
+  // limit is the maximum number of points to return.
+  int32 limit = 8;
+
+  // percentile is the optional percentile to calculate (0-100).
+  double percentile = 9;
+}
+
+// TSGroupedResult represents grouped query results.
+message TSGroupedResult {
+  // tags are the group key tags.
+  map<string, string> tags = 1;
+
+  // points are the data points in this group.
+  repeated TSDataPoint points = 2;
+
+  // aggregated_value is the aggregated value for this group.
+  double aggregated_value = 3;
+
+  // has_aggregated_value indicates if aggregated_value is set.
+  bool has_aggregated_value = 4;
+}
+
+// TSQueryResponse returns query results.
+message TSQueryResponse {
+  // metric is the queried metric.
+  string metric = 1;
+
+  // tags are the query filter tags.
+  map<string, string> tags = 2;
+
+  // points are the data points matching the query.
+  repeated TSDataPoint points = 3;
+
+  // aggregated_value is the overall aggregated value.
+  double aggregated_value = 4;
+
+  // has_aggregated_value indicates if aggregated_value is set.
+  bool has_aggregated_value = 5;
+
+  // grouped_results are results grouped by the group_by tags.
+  repeated TSGroupedResult grouped_results = 6;
+
+  // timestamp is when the query was processed (Unix nanoseconds).
+  int64 timestamp = 7;
+}
+
+// TSDeleteSeriesRequest deletes time series data.
+message TSDeleteSeriesRequest {
+  // metric is the metric name.
+  string metric = 1;
+
+  // tags are optional filters to match specific series.
+  map<string, string> tags = 2;
+
+  // start_time is the optional start of the time range to delete (Unix nanoseconds).
+  int64 start_time = 3;
+
+  // end_time is the optional end of the time range to delete (Unix nanoseconds).
+  int64 end_time = 4;
+
+  // has_time_range indicates if start_time and end_time are set.
+  bool has_time_range = 5;
+}
+
+// TSDeleteSeriesResponse confirms the deletion.
+message TSDeleteSeriesResponse {
+  // success indicates if the deletion succeeded.
+  bool success = 1;
+
+  // timestamp is when the deletion was processed (Unix nanoseconds).
+  int64 timestamp = 2;
+}
+
+// TSGetRetentionPolicyRequest retrieves the retention policy.
+message TSGetRetentionPolicyRequest {
+  // metric is the metric name.
+  string metric = 1;
+}
+
+// TSGetRetentionPolicyResponse returns the retention policy.
+message TSGetRetentionPolicyResponse {
+  // metric is the metric name.
+  string metric = 1;
+
+  // policy is the retention policy.
+  TSRetentionPolicy policy = 2;
+
+  // timestamp is when the request was processed (Unix nanoseconds).
+  int64 timestamp = 3;
+}
+
+// TSSetRetentionPolicyRequest sets the retention policy.
+message TSSetRetentionPolicyRequest {
+  // metric is the metric name.
+  string metric = 1;
+
+  // policy is the retention policy to set.
+  TSRetentionPolicy policy = 2;
+}
+
+// TSSetRetentionPolicyResponse confirms the policy update.
+message TSSetRetentionPolicyResponse {
+  // success indicates if the update succeeded.
+  bool success = 1;
+
+  // timestamp is when the update was processed (Unix nanoseconds).
+  int64 timestamp = 2;
+}
+
+// TSListMetricsRequest lists available metrics.
+message TSListMetricsRequest {
+  // prefix is an optional prefix to filter metrics.
+  string prefix = 1;
+
+  // tags are optional filters.
+  map<string, string> tags = 2;
+
+  // limit is the maximum number of metrics to return.
+  int32 limit = 3;
+
+  // cursor is the pagination cursor.
+  string cursor = 4;
+}
+
+// TSListMetricsResponse returns the list of metrics.
+message TSListMetricsResponse {
+  // metrics are the metric names.
+  repeated string metrics = 1;
+
+  // next_cursor is the pagination cursor for the next page.
+  string next_cursor = 2;
+
+  // timestamp is when the request was processed (Unix nanoseconds).
+  int64 timestamp = 3;
+}

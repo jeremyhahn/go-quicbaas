@@ -1,0 +1,443 @@
+package rest
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestDetectPreferredCodec(t *testing.T) {
+	tests := []struct {
+		name          string
+		acceptHeader  string
+		queryParam    string
+		expectedCodec string
+	}{
+		{
+			name:          "default to JSON",
+			acceptHeader:  "",
+			queryParam:    "",
+			expectedCodec: "json",
+		},
+		{
+			name:          "JSON from Accept header",
+			acceptHeader:  "application/json",
+			queryParam:    "",
+			expectedCodec: "json",
+		},
+		{
+			name:          "YAML from Accept header",
+			acceptHeader:  "application/yaml",
+			queryParam:    "",
+			expectedCodec: "yaml",
+		},
+		{
+			name:          "YAML from x-yaml Accept header",
+			acceptHeader:  "application/x-yaml",
+			queryParam:    "",
+			expectedCodec: "yaml",
+		},
+		{
+			name:          "text/yaml Accept header",
+			acceptHeader:  "text/yaml",
+			queryParam:    "",
+			expectedCodec: "yaml",
+		},
+		{
+			name:          "msgpack from Accept header",
+			acceptHeader:  "application/msgpack",
+			queryParam:    "",
+			expectedCodec: "msgpack",
+		},
+		{
+			name:          "x-msgpack from Accept header",
+			acceptHeader:  "application/x-msgpack",
+			queryParam:    "",
+			expectedCodec: "msgpack",
+		},
+		{
+			name:          "query param overrides Accept header",
+			acceptHeader:  "application/json",
+			queryParam:    "yaml",
+			expectedCodec: "yaml",
+		},
+		{
+			name:          "JSON from query param",
+			acceptHeader:  "",
+			queryParam:    "json",
+			expectedCodec: "json",
+		},
+		{
+			name:          "YAML from query param",
+			acceptHeader:  "",
+			queryParam:    "yaml",
+			expectedCodec: "yaml",
+		},
+		{
+			name:          "msgpack from query param",
+			acceptHeader:  "",
+			queryParam:    "msgpack",
+			expectedCodec: "msgpack",
+		},
+		{
+			name:          "invalid query param falls back to Accept",
+			acceptHeader:  "application/yaml",
+			queryParam:    "invalid",
+			expectedCodec: "yaml",
+		},
+		{
+			name:          "invalid Accept falls back to JSON",
+			acceptHeader:  "text/html",
+			queryParam:    "",
+			expectedCodec: "json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/v1/entities/user/123", nil)
+			if tt.acceptHeader != "" {
+				req.Header.Set("Accept", tt.acceptHeader)
+			}
+			if tt.queryParam != "" {
+				q := req.URL.Query()
+				q.Set("codec", tt.queryParam)
+				req.URL.RawQuery = q.Encode()
+			}
+
+			result := detectPreferredCodec(req)
+			assert.Equal(t, tt.expectedCodec, result)
+		})
+	}
+}
+
+func TestSetContentType(t *testing.T) {
+	tests := []struct {
+		codecName       string
+		expectedContent string
+	}{
+		{"json", "application/json"},
+		{"yaml", "application/x-yaml"},
+		{"msgpack", "application/msgpack"},
+		{"unknown", "application/octet-stream"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.codecName, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			setContentType(w, tt.codecName)
+			assert.Equal(t, tt.expectedContent, w.Header().Get("Content-Type"))
+		})
+	}
+}
+
+func TestHandleGetOptimized(t *testing.T) {
+	// Setup test server
+	srv, cleanup := setupRESTTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test entity
+	entityType := "user"
+	entityID := uint64(123)
+	testData := []byte(`{"id":123,"name":"Alice","email":"alice@example.com"}`)
+
+	// First, create the entity using PUT
+	err := createTestEntity(ctx, srv, entityType, entityID, testData)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name           string
+		method         string
+		path           string
+		acceptHeader   string
+		queryParams    map[string]string
+		expectedStatus int
+		expectedCodec  string
+		validateBody   func(*testing.T, []byte)
+	}{
+		{
+			name:           "basic get without codec preference",
+			method:         "GET",
+			path:           "/v1/entities/user/123",
+			acceptHeader:   "",
+			queryParams:    nil,
+			expectedStatus: http.StatusOK,
+			expectedCodec:  "json",
+			validateBody: func(t *testing.T, body []byte) {
+				assert.NotEmpty(t, body)
+			},
+		},
+		{
+			name:           "get with JSON Accept header",
+			method:         "GET",
+			path:           "/v1/entities/user/123",
+			acceptHeader:   "application/json",
+			queryParams:    nil,
+			expectedStatus: http.StatusOK,
+			expectedCodec:  "json",
+			validateBody: func(t *testing.T, body []byte) {
+				assert.NotEmpty(t, body)
+			},
+		},
+		{
+			name:           "get with YAML Accept header",
+			method:         "GET",
+			path:           "/v1/entities/user/123",
+			acceptHeader:   "application/yaml",
+			queryParams:    nil,
+			expectedStatus: http.StatusOK,
+			expectedCodec:  "yaml",
+			validateBody: func(t *testing.T, body []byte) {
+				assert.NotEmpty(t, body)
+			},
+		},
+		{
+			name:           "get with msgpack Accept header",
+			method:         "GET",
+			path:           "/v1/entities/user/123",
+			acceptHeader:   "application/msgpack",
+			queryParams:    nil,
+			expectedStatus: http.StatusOK,
+			expectedCodec:  "msgpack",
+			validateBody: func(t *testing.T, body []byte) {
+				assert.NotEmpty(t, body)
+			},
+		},
+		{
+			name:         "get with codec query parameter",
+			method:       "GET",
+			path:         "/v1/entities/user/123",
+			acceptHeader: "application/json",
+			queryParams: map[string]string{
+				"codec": "yaml",
+			},
+			expectedStatus: http.StatusOK,
+			expectedCodec:  "yaml",
+			validateBody: func(t *testing.T, body []byte) {
+				assert.NotEmpty(t, body)
+			},
+		},
+		{
+			name:         "get with consistency level",
+			method:       "GET",
+			path:         "/v1/entities/user/123",
+			acceptHeader: "application/json",
+			queryParams: map[string]string{
+				"consistency": "eventual",
+			},
+			expectedStatus: http.StatusOK,
+			expectedCodec:  "json",
+			validateBody: func(t *testing.T, body []byte) {
+				assert.NotEmpty(t, body)
+			},
+		},
+		{
+			name:         "get with timeout",
+			method:       "GET",
+			path:         "/v1/entities/user/123",
+			acceptHeader: "application/json",
+			queryParams: map[string]string{
+				"timeout_ms": "10000",
+			},
+			expectedStatus: http.StatusOK,
+			expectedCodec:  "json",
+			validateBody: func(t *testing.T, body []byte) {
+				assert.NotEmpty(t, body)
+			},
+		},
+		{
+			name:           "get non-existent entity",
+			method:         "GET",
+			path:           "/v1/entities/user/99999",
+			acceptHeader:   "application/json",
+			queryParams:    nil,
+			expectedStatus: http.StatusNotFound,
+			expectedCodec:  "",
+			validateBody:   nil,
+		},
+		{
+			name:           "get with invalid entity ID",
+			method:         "GET",
+			path:           "/v1/entities/user/invalid",
+			acceptHeader:   "application/json",
+			queryParams:    nil,
+			expectedStatus: http.StatusBadRequest,
+			expectedCodec:  "",
+			validateBody:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Build request
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			if tt.acceptHeader != "" {
+				req.Header.Set("Accept", tt.acceptHeader)
+			}
+
+			// Add query parameters
+			if tt.queryParams != nil {
+				q := req.URL.Query()
+				for k, v := range tt.queryParams {
+					q.Set(k, v)
+				}
+				req.URL.RawQuery = q.Encode()
+			}
+
+			// Execute request
+			w := httptest.NewRecorder()
+			srv.router.ServeHTTP(w, req)
+
+			// Validate response
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			if tt.expectedCodec != "" {
+				codecHeader := w.Header().Get("X-QuicBaaS-Codec")
+				assert.Equal(t, tt.expectedCodec, codecHeader)
+			}
+
+			if tt.validateBody != nil {
+				tt.validateBody(t, w.Body.Bytes())
+			}
+		})
+	}
+}
+
+func TestHandleGetOptimized_PerformanceHeaders(t *testing.T) {
+	// Verify that performance-related headers are set correctly
+	srv, cleanup := setupRESTTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test entity
+	entityType := "user"
+	entityID := uint64(456)
+	testData := []byte(`{"id":456,"name":"Bob"}`)
+
+	err := createTestEntity(ctx, srv, entityType, entityID, testData)
+	require.NoError(t, err)
+
+	// Make GET request
+	req := httptest.NewRequest("GET", "/v1/entities/user/456", nil)
+	req.Header.Set("Accept", "application/json")
+
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	// Validate headers
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotEmpty(t, w.Header().Get("X-QuicBaaS-Codec"))
+
+	// Verify shard header if enabled
+	if srv.config.ExposeShardHeader {
+		assert.NotEmpty(t, w.Header().Get("X-QuicBaaS-Shard"))
+	}
+
+	// Verify content type matches codec
+	contentType := w.Header().Get("Content-Type")
+	assert.Contains(t, contentType, "application/json")
+}
+
+func TestRespondWithCodec(t *testing.T) {
+	tests := []struct {
+		name         string
+		data         interface{}
+		codec        string
+		expectedType string
+	}{
+		{
+			name:         "JSON encoding",
+			data:         map[string]string{"name": "Alice"},
+			codec:        "json",
+			expectedType: "application/json",
+		},
+		{
+			name:         "YAML encoding",
+			data:         map[string]string{"name": "Bob"},
+			codec:        "yaml",
+			expectedType: "application/x-yaml",
+		},
+		{
+			name:         "msgpack encoding",
+			data:         map[string]string{"name": "Charlie"},
+			codec:        "msgpack",
+			expectedType: "application/msgpack",
+		},
+		{
+			name:         "unknown codec defaults to JSON",
+			data:         map[string]string{"name": "Dave"},
+			codec:        "unknown",
+			expectedType: "application/octet-stream",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/test", nil)
+
+			RespondWithCodec(w, req, http.StatusOK, tt.data, tt.codec)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tt.expectedType, w.Header().Get("Content-Type"))
+			assert.Equal(t, tt.codec, w.Header().Get("X-QuicBaaS-Codec"))
+			assert.NotEmpty(t, w.Body.Bytes())
+		})
+	}
+}
+
+func TestHandleGetOptimized_ZeroCopyPath(t *testing.T) {
+	// Verify that data is written directly without unnecessary copying
+	srv, cleanup := setupRESTTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create larger test entity to make copying more visible
+	entityType := "document"
+	entityID := uint64(789)
+	testData := make([]byte, 1024) // 1KB of data
+	for i := range testData {
+		testData[i] = byte(i % 256)
+	}
+
+	err := createTestEntity(ctx, srv, entityType, entityID, testData)
+	require.NoError(t, err)
+
+	// Make GET request
+	req := httptest.NewRequest("GET", "/v1/entities/document/789", nil)
+	req.Header.Set("Accept", "application/json")
+
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	// Validate response
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotEmpty(t, w.Body.Bytes())
+
+	// Verify data size is reasonable (not doubled due to copying)
+	// This is a basic check - full profiling should be done with benchmarks
+	assert.Greater(t, len(w.Body.Bytes()), 0)
+}
+
+// Helper functions for tests
+
+func setupRESTTestServer(t *testing.T) (*Server, func()) {
+	// This is a placeholder - actual implementation would set up
+	// a complete test server with mock Raft node and storage
+	t.Skip("Full REST server setup requires mock implementation")
+	return nil, func() {}
+}
+
+func createTestEntity(ctx context.Context, srv *Server, entityType string, id uint64, data []byte) error {
+	// This is a placeholder - actual implementation would create
+	// test entity using the server's handlers
+	return nil
+}

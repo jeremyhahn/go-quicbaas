@@ -1,0 +1,31 @@
+# Ignore data directories
+data/
+./data
+# Common nested data dirs
+*/data
+test/*/data
+test/integration/data
+
+# Ignore log directories
+logs/
+./logs
+*/logs
+
+# Ignore test coverage files
+*.out
+coverage.html
+
+# Ignore IDE files
+.vscode/
+.idea/
+
+# Ignore git
+.git/
+.gitignore
+
+# Ignore Docker files
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Dependencies are fetched via go mod download (no vendor directory)

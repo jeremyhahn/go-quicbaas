@@ -1,0 +1,22 @@
+version: v1
+
+# Managed mode - Buf automatically handles import paths
+managed:
+  enabled: true
+  go_package_prefix:
+    default: github.com/jeremyhahn/go-quicbaas
+
+# Plugins for code generation
+plugins:
+  # Generate Go protobuf code
+  - plugin: buf.build/protocolbuffers/go
+    out: .
+    opt:
+      - paths=source_relative
+
+  # Generate Go gRPC code
+  - plugin: buf.build/grpc/go
+    out: .
+    opt:
+      - paths=source_relative
+      - require_unimplemented_servers=false

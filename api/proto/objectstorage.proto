@@ -1,0 +1,1903 @@
+// QuicBaaS Object Storage Protocol Buffer Definitions v1
+// Distributed object storage with multi-backend support, tiered storage, and lifecycle management
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.objectstorage.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+
+// =============================================================================
+// Object Storage Service
+// =============================================================================
+
+// ObjectStorageService provides distributed object storage operations with
+// multi-backend support, tiered storage, replication, and lifecycle management.
+service ObjectStorageService {
+  // Object CRUD Operations
+
+  // PutObject stores an object in the distributed storage system.
+  // Supports configurable replication, tiering, and retention policies.
+  rpc PutObject(PutObjectRequest) returns (PutObjectResponse);
+
+  // GetObject retrieves an object by key with optional metadata.
+  // Returns NotFound error if the object doesn't exist.
+  rpc GetObject(GetObjectRequest) returns (GetObjectResponse);
+
+  // DeleteObject removes an object from storage.
+  // Supports soft delete (recoverable) or permanent deletion.
+  rpc DeleteObject(DeleteObjectRequest) returns (DeleteObjectResponse);
+
+  // HeadObject retrieves object metadata without the object body.
+  // Efficient for existence checks and metadata queries.
+  rpc HeadObject(HeadObjectRequest) returns (HeadObjectResponse);
+
+  // Listing Operations
+
+  // ListObjects returns objects in a namespace with pagination support.
+  // Supports prefix filtering for hierarchical organization.
+  rpc ListObjects(ListObjectsRequest) returns (ListObjectsResponse);
+
+  // ListByTag returns object keys matching a specific tag value.
+  // Enables tag-based discovery and organization.
+  rpc ListByTag(ListByTagRequest) returns (ListByTagResponse);
+
+  // ListByTenant returns all objects belonging to a tenant.
+  // Supports multi-tenant isolation and billing queries.
+  rpc ListByTenant(ListByTenantRequest) returns (ListByTenantResponse);
+
+  // Object Operations
+
+  // CopyObject creates a copy of an object within the same namespace or across namespaces.
+  // Does not transfer data through the client (server-side copy).
+  rpc CopyObject(CopyObjectRequest) returns (CopyObjectResponse);
+
+  // ReplicateObject initiates replication of an object to specified backend stores.
+  // Supports synchronous or asynchronous replication modes.
+  rpc ReplicateObject(ReplicateObjectRequest) returns (ReplicateObjectResponse);
+
+  // MigrateObject moves an object from one backend to another.
+  // Used for tier transitions or backend consolidation.
+  rpc MigrateObject(MigrateObjectRequest) returns (MigrateObjectResponse);
+
+  // ArchiveObject moves an object to archive storage (cold tier).
+  // Optionally removes from primary storage after archival.
+  rpc ArchiveObject(ArchiveObjectRequest) returns (ArchiveObjectResponse);
+
+  // RestoreObject restores an object from archive to active storage.
+  // Required before accessing archived objects.
+  rpc RestoreObject(RestoreObjectRequest) returns (RestoreObjectResponse);
+
+  // VerifyObject validates object integrity across all storage locations.
+  // Checks checksums and replication status.
+  rpc VerifyObject(VerifyObjectRequest) returns (VerifyObjectResponse);
+
+  // Policy Operations
+
+  // SetObjectPolicy sets replication, archive, and retention policies for an object.
+  // Overrides namespace-level defaults.
+  rpc SetObjectPolicy(SetObjectPolicyRequest) returns (SetObjectPolicyResponse);
+
+  // GetObjectPolicy retrieves the effective policies for an object.
+  // Returns both explicit and inherited policies.
+  rpc GetObjectPolicy(GetObjectPolicyRequest) returns (GetObjectPolicyResponse);
+
+  // Backend Management
+
+  // ListBackends returns all configured storage backends with optional health status.
+  rpc ListBackends(ListBackendsRequest) returns (ListBackendsResponse);
+
+  // GetBackendHealth retrieves detailed health information for a specific backend.
+  rpc GetBackendHealth(GetBackendHealthRequest) returns (GetBackendHealthResponse);
+
+  // Tenant Operations
+
+  // GetObjectStorageTenantUsage returns storage usage statistics for a tenant.
+  rpc GetObjectStorageTenantUsage(GetObjectStorageTenantUsageRequest) returns (GetObjectStorageTenantUsageResponse);
+
+  // GetObjectStorageTenantQuotas retrieves configured quotas for a tenant.
+  rpc GetObjectStorageTenantQuotas(GetObjectStorageTenantQuotasRequest) returns (GetObjectStorageTenantQuotasResponse);
+
+  // SetObjectStorageTenantQuotas sets or updates quotas for a tenant.
+  rpc SetObjectStorageTenantQuotas(SetObjectStorageTenantQuotasRequest) returns (SetObjectStorageTenantQuotasResponse);
+
+  // Streaming Operations
+
+  // StreamGetObject streams large objects in chunks for memory-efficient retrieval.
+  rpc StreamGetObject(GetObjectRequest) returns (stream ObjectChunk);
+
+  // StreamPutObject accepts object data as a stream of chunks for large uploads.
+  rpc StreamPutObject(stream PutObjectChunk) returns (PutObjectResponse);
+
+  // Batch Operations
+
+  // BatchPutObjects stores multiple objects atomically.
+  rpc BatchPutObjects(BatchPutObjectsRequest) returns (BatchPutObjectsResponse);
+
+  // BatchDeleteObjects removes multiple objects atomically.
+  rpc BatchDeleteObjects(BatchDeleteObjectsRequest) returns (BatchDeleteObjectsResponse);
+
+  // BatchGetObjects retrieves multiple objects in a single request.
+  rpc BatchGetObjects(BatchGetObjectsRequest) returns (BatchGetObjectsResponse);
+}
+
+// =============================================================================
+// Object Storage Admin Service
+// =============================================================================
+
+// ObjectStorageAdmin provides administrative operations for storage management.
+service ObjectStorageAdmin {
+  // CreateBackend registers a new storage backend.
+  rpc CreateBackend(CreateBackendRequest) returns (CreateBackendResponse);
+
+  // UpdateBackend updates backend configuration.
+  rpc UpdateBackend(UpdateBackendRequest) returns (UpdateBackendResponse);
+
+  // DeleteBackend removes a storage backend (requires migration of objects).
+  rpc DeleteBackend(DeleteBackendRequest) returns (DeleteBackendResponse);
+
+  // SetBackendStatus enables or disables a backend.
+  rpc SetBackendStatus(SetBackendStatusRequest) returns (SetBackendStatusResponse);
+
+  // GetStorageStats returns cluster-wide storage statistics.
+  rpc GetStorageStats(GetStorageStatsRequest) returns (GetStorageStatsResponse);
+
+  // RunGarbageCollection initiates garbage collection on specified backends.
+  rpc RunGarbageCollection(RunGarbageCollectionRequest) returns (RunGarbageCollectionResponse);
+
+  // GetGarbageCollectionProgress returns GC progress.
+  rpc GetGarbageCollectionProgress(GetGarbageCollectionProgressRequest) returns (GetGarbageCollectionProgressResponse);
+
+  // RepairObject attempts to repair an object with inconsistent replicas.
+  rpc RepairObject(RepairObjectRequest) returns (RepairObjectResponse);
+
+  // CompactBackend triggers compaction on a backend.
+  rpc CompactBackend(CompactBackendRequest) returns (CompactBackendResponse);
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+// ObjectStatus represents the lifecycle state of an object.
+enum ObjectStatus {
+  OBJECT_STATUS_UNSPECIFIED = 0;
+  OBJECT_STATUS_ACTIVE = 1;           // Object is active and accessible
+  OBJECT_STATUS_ARCHIVED = 2;         // Object is in archive storage
+  OBJECT_STATUS_RESTORING = 3;        // Object is being restored from archive
+  OBJECT_STATUS_PENDING_DELETE = 4;   // Object is marked for deletion
+  OBJECT_STATUS_DELETED = 5;          // Object has been deleted (soft delete)
+  OBJECT_STATUS_CORRUPTED = 6;        // Object failed integrity checks
+
+  reserved 7 to 10;
+}
+
+// BackendType defines the type of storage backend.
+enum BackendType {
+  BACKEND_TYPE_UNSPECIFIED = 0;
+  BACKEND_TYPE_LOCAL = 1;        // Local filesystem
+  BACKEND_TYPE_S3 = 2;           // Amazon S3 or compatible
+  BACKEND_TYPE_GCS = 3;          // Google Cloud Storage
+  BACKEND_TYPE_AZURE = 4;        // Azure Blob Storage
+  BACKEND_TYPE_MINIO = 5;        // MinIO object storage
+  BACKEND_TYPE_PEBBLE = 6;       // Embedded PebbleDB
+  BACKEND_TYPE_RAFT = 7;         // Raft-replicated storage
+
+  reserved 8 to 15;
+}
+
+// StorageTier defines the storage tier for cost/performance optimization.
+enum StorageTier {
+  STORAGE_TIER_UNSPECIFIED = 0;
+  STORAGE_TIER_HOT = 1;          // Frequently accessed, highest performance
+  STORAGE_TIER_WARM = 2;         // Infrequently accessed, balanced
+  STORAGE_TIER_COLD = 3;         // Rarely accessed, low cost
+  STORAGE_TIER_ARCHIVE = 4;      // Long-term retention, lowest cost
+
+  reserved 5 to 10;
+}
+
+// ReplicationMode defines how data is replicated across backends.
+enum ReplicationMode {
+  REPLICATION_MODE_UNSPECIFIED = 0;
+  REPLICATION_MODE_SYNC = 1;     // Synchronous replication (write acknowledged after all replicas)
+  REPLICATION_MODE_ASYNC = 2;    // Asynchronous replication (write acknowledged after primary)
+  REPLICATION_MODE_QUORUM = 3;   // Quorum-based replication (majority acknowledgment)
+
+  reserved 4 to 10;
+}
+
+// CompressionAlgorithm defines supported compression algorithms.
+enum CompressionAlgorithm {
+  COMPRESSION_ALGORITHM_UNSPECIFIED = 0;
+  COMPRESSION_ALGORITHM_NONE = 1;
+  COMPRESSION_ALGORITHM_GZIP = 2;
+  COMPRESSION_ALGORITHM_LZ4 = 3;
+  COMPRESSION_ALGORITHM_ZSTD = 4;
+  COMPRESSION_ALGORITHM_SNAPPY = 5;
+
+  reserved 6 to 10;
+}
+
+// EncryptionAlgorithm defines supported encryption algorithms.
+enum EncryptionAlgorithm {
+  ENCRYPTION_ALGORITHM_UNSPECIFIED = 0;
+  ENCRYPTION_ALGORITHM_NONE = 1;
+  ENCRYPTION_ALGORITHM_AES_256_GCM = 2;
+  ENCRYPTION_ALGORITHM_CHACHA20_POLY1305 = 3;
+
+  reserved 4 to 10;
+}
+
+// =============================================================================
+// Core Object Messages
+// =============================================================================
+
+// ObjectMetadata contains comprehensive metadata about an object.
+message ObjectMetadata {
+  // tenant_id identifies the owning tenant for multi-tenant deployments.
+  string tenant_id = 1;
+
+  // shard_id identifies which shard contains this object.
+  uint64 shard_id = 2;
+
+  // owner identifies the user who created this object.
+  string owner = 3;
+
+  // locations contains all storage locations where this object is stored.
+  repeated StoreLocation locations = 4;
+
+  // status indicates the object's current lifecycle state.
+  ObjectStatus status = 5;
+
+  // created_at is when the object was first created.
+  google.protobuf.Timestamp created_at = 6;
+
+  // modified_at is when the object was last modified.
+  google.protobuf.Timestamp modified_at = 7;
+
+  // last_access_at is when the object was last accessed.
+  google.protobuf.Timestamp last_access_at = 8;
+
+  // expires_at is when the object will be automatically deleted (optional).
+  google.protobuf.Timestamp expires_at = 9;
+
+  // compression indicates the compression algorithm used.
+  CompressionAlgorithm compression = 10;
+
+  // encryption indicates the encryption algorithm used.
+  EncryptionAlgorithm encryption = 11;
+
+  // encryption_key_id references the encryption key used.
+  string encryption_key_id = 12;
+
+  reserved 13 to 20;
+}
+
+// StoreLocation represents a single storage location for an object.
+message StoreLocation {
+  // store identifies the storage backend.
+  string store = 1;
+
+  // object_ref is the backend-specific reference to the object.
+  string object_ref = 2;
+
+  // status indicates the replication status at this location.
+  string status = 3;
+
+  // checksum is the integrity checksum at this location.
+  bytes checksum = 4;
+
+  // stored_size is the actual size on disk (may differ from object size due to compression).
+  int64 stored_size = 5;
+
+  // compressed indicates if the object is compressed at this location.
+  bool compressed = 6;
+
+  // synced_at is when this location was last synchronized.
+  google.protobuf.Timestamp synced_at = 7;
+
+  // tier indicates the storage tier at this location.
+  StorageTier tier = 8;
+
+  reserved 9 to 15;
+}
+
+// ObjectInfo contains summary information about an object for listing.
+message ObjectInfo {
+  // key is the object's unique key.
+  string key = 1;
+
+  // size is the object size in bytes.
+  int64 size = 2;
+
+  // checksum is the content checksum (SHA-256).
+  bytes checksum = 3;
+
+  // content_type is the MIME type of the object.
+  string content_type = 4;
+
+  // version is the object version number.
+  uint64 version = 5;
+
+  // created_at is when the object was created.
+  google.protobuf.Timestamp created_at = 6;
+
+  // modified_at is when the object was last modified.
+  google.protobuf.Timestamp modified_at = 7;
+
+  // tags contains object tags for filtering and organization.
+  map<string, string> tags = 8;
+
+  // status indicates the object's lifecycle state.
+  ObjectStatus status = 9;
+
+  // tier indicates the current storage tier.
+  StorageTier tier = 10;
+
+  reserved 11 to 15;
+}
+
+// =============================================================================
+// Policy Messages
+// =============================================================================
+
+// ReplicationPolicy defines how an object should be replicated.
+message ReplicationPolicy {
+  // enabled indicates if replication is enabled.
+  bool enabled = 1;
+
+  // min_replicas is the minimum number of replicas required.
+  int32 min_replicas = 2;
+
+  // target_stores specifies which backends to replicate to.
+  repeated string target_stores = 3;
+
+  // mode specifies the replication mode (sync, async, quorum).
+  ReplicationMode mode = 4;
+
+  // priority determines replication order (higher = more urgent).
+  int32 priority = 5;
+
+  // max_lag_seconds is the maximum allowed replication lag for async mode.
+  int64 max_lag_seconds = 6;
+
+  reserved 7 to 10;
+}
+
+// ArchivePolicy defines automatic archival behavior.
+message ArchivePolicy {
+  // enabled indicates if automatic archival is enabled.
+  bool enabled = 1;
+
+  // archive_after_days is when to archive after last access.
+  int32 archive_after_days = 2;
+
+  // target_store specifies which backend to archive to.
+  string target_store = 3;
+
+  // delete_from_primary removes from primary storage after archival.
+  bool delete_from_primary = 4;
+
+  // compression_level specifies compression level (0-9, higher = more compression).
+  int32 compression_level = 5;
+
+  // compression_algorithm specifies the compression algorithm.
+  CompressionAlgorithm compression_algorithm = 6;
+
+  reserved 7 to 10;
+}
+
+// RetentionPolicy defines data retention behavior.
+message RetentionPolicy {
+  // enabled indicates if retention policy is enabled.
+  bool enabled = 1;
+
+  // retention_days is how long to retain the object.
+  int32 retention_days = 2;
+
+  // max_versions is the maximum number of versions to retain.
+  int32 max_versions = 3;
+
+  // legal_hold prevents deletion regardless of retention settings.
+  bool legal_hold = 4;
+
+  // governance_mode allows privileged deletion with audit.
+  bool governance_mode = 5;
+
+  reserved 6 to 10;
+}
+
+// ObjectPolicy combines all policies for an object.
+message ObjectPolicy {
+  // replication_policy defines replication behavior.
+  ReplicationPolicy replication_policy = 1;
+
+  // archive_policy defines archival behavior.
+  ArchivePolicy archive_policy = 2;
+
+  // retention_policy defines retention behavior.
+  RetentionPolicy retention_policy = 3;
+
+  // version is the policy version for optimistic locking.
+  uint64 version = 4;
+
+  // updated_at is when the policy was last updated.
+  google.protobuf.Timestamp updated_at = 5;
+
+  reserved 6 to 10;
+}
+
+// =============================================================================
+// CRUD Request/Response Messages
+// =============================================================================
+
+// PutObjectRequest stores an object in the distributed storage system.
+message PutObjectRequest {
+  // key is the unique object key in namespace:path format.
+  // REQUIRED. Validation: 1-1024 characters.
+  string key = 1;
+
+  // value is the object data.
+  // REQUIRED for non-streaming uploads. Maximum size: 5GB (use streaming for larger).
+  bytes value = 2;
+
+  // content_type is the MIME type of the object.
+  // OPTIONAL. Defaults to application/octet-stream.
+  string content_type = 3;
+
+  // tenant_id identifies the owning tenant.
+  // OPTIONAL. Required for multi-tenant deployments.
+  string tenant_id = 4;
+
+  // shard_id specifies the target shard (0 = auto-assign).
+  // OPTIONAL. Defaults to consistent hash of key.
+  uint64 shard_id = 5;
+
+  // tags contains key-value tags for filtering and organization.
+  // OPTIONAL. Maximum 50 tags, each key max 128 chars, value max 256 chars.
+  map<string, string> tags = 6;
+
+  // Policy overrides (optional, uses namespace defaults if not specified)
+
+  // replication_policy overrides the namespace replication policy.
+  ReplicationPolicy replication_policy = 7;
+
+  // archive_policy overrides the namespace archive policy.
+  ArchivePolicy archive_policy = 8;
+
+  // retention_policy overrides the namespace retention policy.
+  RetentionPolicy retention_policy = 9;
+
+  // target_backend specifies an explicit backend for primary storage.
+  // OPTIONAL. Uses routing policy if not specified.
+  string target_backend = 10;
+
+  // checksum is a client-provided checksum for verification.
+  // OPTIONAL. Server will verify if provided.
+  bytes checksum = 11;
+
+  // compression specifies the compression algorithm to use.
+  // OPTIONAL. Defaults to namespace setting.
+  CompressionAlgorithm compression = 12;
+
+  // encryption specifies the encryption algorithm to use.
+  // OPTIONAL. Defaults to namespace setting.
+  EncryptionAlgorithm encryption = 13;
+
+  // encryption_key_id specifies a custom encryption key.
+  // OPTIONAL. Uses namespace default key if not specified.
+  string encryption_key_id = 14;
+
+  // if_not_exists fails the request if the key already exists.
+  // OPTIONAL. Defaults to false (upsert behavior).
+  bool if_not_exists = 15;
+
+  // if_match performs conditional update based on version.
+  // OPTIONAL. 0 means no version check.
+  uint64 if_match = 16;
+
+  // expires_at sets an expiration time for the object.
+  // OPTIONAL. 0 means no expiration.
+  google.protobuf.Timestamp expires_at = 17;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 30000ms.
+  int64 timeout_ms = 18;
+
+  reserved 19 to 25;
+}
+
+// PutObjectResponse confirms successful storage.
+message PutObjectResponse {
+  // key is the stored object key.
+  string key = 1;
+
+  // object_id is the internal object identifier.
+  uint64 object_id = 2;
+
+  // checksum is the computed content checksum.
+  bytes checksum = 3;
+
+  // size is the object size in bytes.
+  int64 size = 4;
+
+  // backend identifies which backend stored the object.
+  string backend = 5;
+
+  // version is the object version number.
+  uint64 version = 6;
+
+  // created_at is when the object was created/updated.
+  google.protobuf.Timestamp created_at = 7;
+
+  // replicated_to lists backends where the object was replicated.
+  repeated string replicated_to = 8;
+
+  reserved 9 to 15;
+}
+
+// GetObjectRequest retrieves an object by key.
+message GetObjectRequest {
+  // key is the object key to retrieve.
+  // REQUIRED.
+  string key = 1;
+
+  // tenant_id identifies the tenant for multi-tenant lookups.
+  // OPTIONAL. Required for multi-tenant deployments.
+  string tenant_id = 2;
+
+  // include_metadata requests full metadata to be returned.
+  // OPTIONAL. Defaults to false.
+  bool include_metadata = 3;
+
+  // version retrieves a specific version (0 = latest).
+  // OPTIONAL. Defaults to 0 (latest).
+  uint64 version = 4;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 30000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// GetObjectResponse returns the requested object.
+message GetObjectResponse {
+  // key is the object key.
+  string key = 1;
+
+  // value is the object data.
+  bytes value = 2;
+
+  // content_type is the MIME type.
+  string content_type = 3;
+
+  // checksum is the content checksum.
+  bytes checksum = 4;
+
+  // size is the object size in bytes.
+  int64 size = 5;
+
+  // version is the object version.
+  uint64 version = 6;
+
+  // tags contains object tags.
+  map<string, string> tags = 7;
+
+  // metadata contains full metadata (if requested).
+  ObjectMetadata metadata = 8;
+
+  // found indicates if the object exists.
+  bool found = 9;
+
+  reserved 10 to 15;
+}
+
+// DeleteObjectRequest removes an object from storage.
+message DeleteObjectRequest {
+  // key is the object key to delete.
+  // REQUIRED.
+  string key = 1;
+
+  // tenant_id identifies the tenant for multi-tenant lookups.
+  // OPTIONAL.
+  string tenant_id = 2;
+
+  // permanent bypasses soft delete and permanently removes the object.
+  // OPTIONAL. Defaults to false (soft delete).
+  bool permanent = 3;
+
+  // version deletes only if version matches (optimistic locking).
+  // OPTIONAL. 0 means no version check.
+  uint64 version = 4;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 10000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// DeleteObjectResponse confirms deletion.
+message DeleteObjectResponse {
+  // key is the deleted object key.
+  string key = 1;
+
+  // deleted indicates if the object was deleted.
+  bool deleted = 2;
+
+  // deleted_at is when the deletion occurred.
+  google.protobuf.Timestamp deleted_at = 3;
+
+  // permanent indicates if the deletion was permanent.
+  bool permanent = 4;
+
+  reserved 5 to 10;
+}
+
+// HeadObjectRequest retrieves object metadata without the body.
+message HeadObjectRequest {
+  // key is the object key.
+  // REQUIRED.
+  string key = 1;
+
+  // tenant_id identifies the tenant.
+  // OPTIONAL.
+  string tenant_id = 2;
+
+  // version retrieves metadata for a specific version (0 = latest).
+  // OPTIONAL.
+  uint64 version = 3;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 5000ms.
+  int64 timeout_ms = 4;
+
+  reserved 5 to 10;
+}
+
+// HeadObjectResponse returns object metadata.
+message HeadObjectResponse {
+  // key is the object key.
+  string key = 1;
+
+  // exists indicates if the object exists.
+  bool exists = 2;
+
+  // size is the object size in bytes.
+  int64 size = 3;
+
+  // checksum is the content checksum.
+  bytes checksum = 4;
+
+  // content_type is the MIME type.
+  string content_type = 5;
+
+  // version is the object version.
+  uint64 version = 6;
+
+  // modified_at is when the object was last modified.
+  google.protobuf.Timestamp modified_at = 7;
+
+  // tags contains object tags.
+  map<string, string> tags = 8;
+
+  // status is the object's lifecycle status.
+  ObjectStatus status = 9;
+
+  // tier is the current storage tier.
+  StorageTier tier = 10;
+
+  reserved 11 to 15;
+}
+
+// =============================================================================
+// Listing Request/Response Messages
+// =============================================================================
+
+// ListObjectsRequest retrieves objects in a namespace.
+message ListObjectsRequest {
+  // namespace is the namespace to list objects from.
+  // REQUIRED.
+  string namespace = 1;
+
+  // prefix filters objects by key prefix.
+  // OPTIONAL. Empty returns all objects.
+  string prefix = 2;
+
+  // tenant_id filters by tenant.
+  // OPTIONAL.
+  string tenant_id = 3;
+
+  // limit specifies the maximum number of results.
+  // OPTIONAL. Defaults to 100. Maximum: 1000.
+  int32 limit = 4;
+
+  // cursor is the pagination cursor from a previous response.
+  // OPTIONAL.
+  string cursor = 5;
+
+  // include_metadata requests full metadata for each object.
+  // OPTIONAL. Defaults to false (summary only).
+  bool include_metadata = 6;
+
+  // delimiter enables hierarchical listing (e.g., "/" for directories).
+  // OPTIONAL.
+  string delimiter = 7;
+
+  // include_deleted includes soft-deleted objects.
+  // OPTIONAL. Defaults to false.
+  bool include_deleted = 8;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 30000ms.
+  int64 timeout_ms = 9;
+
+  reserved 10 to 15;
+}
+
+// ListObjectsResponse returns a page of objects.
+message ListObjectsResponse {
+  // objects is the list of object summaries.
+  repeated ObjectInfo objects = 1;
+
+  // next_cursor is the cursor for the next page (empty if no more pages).
+  string next_cursor = 2;
+
+  // has_more indicates if more results are available.
+  bool has_more = 3;
+
+  // total is the total count of objects matching the query (if available).
+  int64 total = 4;
+
+  // common_prefixes contains common prefixes when using delimiter.
+  repeated string common_prefixes = 5;
+
+  reserved 6 to 10;
+}
+
+// ListByTagRequest retrieves objects by tag.
+message ListByTagRequest {
+  // tag is the tag key to search for.
+  // REQUIRED.
+  string tag = 1;
+
+  // value is the tag value to match.
+  // REQUIRED.
+  string value = 2;
+
+  // tenant_id filters by tenant.
+  // OPTIONAL.
+  string tenant_id = 3;
+
+  // limit specifies the maximum number of results.
+  // OPTIONAL. Defaults to 100.
+  int32 limit = 4;
+
+  // cursor is the pagination cursor.
+  // OPTIONAL.
+  string cursor = 5;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 30000ms.
+  int64 timeout_ms = 6;
+
+  reserved 7 to 10;
+}
+
+// ListByTagResponse returns objects matching a tag.
+message ListByTagResponse {
+  // keys is the list of matching object keys.
+  repeated string keys = 1;
+
+  // next_cursor is the cursor for the next page.
+  string next_cursor = 2;
+
+  // has_more indicates if more results are available.
+  bool has_more = 3;
+
+  // total is the total count of matching objects.
+  int64 total = 4;
+
+  reserved 5 to 10;
+}
+
+// ListByTenantRequest retrieves objects for a tenant.
+message ListByTenantRequest {
+  // tenant_id identifies the tenant.
+  // REQUIRED.
+  string tenant_id = 1;
+
+  // limit specifies the maximum number of results.
+  // OPTIONAL. Defaults to 100.
+  int32 limit = 2;
+
+  // cursor is the pagination cursor.
+  // OPTIONAL.
+  string cursor = 3;
+
+  // include_metadata requests full metadata.
+  // OPTIONAL.
+  bool include_metadata = 4;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 30000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// ListByTenantResponse returns objects for a tenant.
+message ListByTenantResponse {
+  // keys is the list of object keys.
+  repeated string keys = 1;
+
+  // next_cursor is the cursor for the next page.
+  string next_cursor = 2;
+
+  // has_more indicates if more results are available.
+  bool has_more = 3;
+
+  // total is the total count of tenant objects.
+  int64 total = 4;
+
+  // objects contains full object info (if include_metadata was true).
+  repeated ObjectInfo objects = 5;
+
+  reserved 6 to 10;
+}
+
+// =============================================================================
+// Object Operations Request/Response Messages
+// =============================================================================
+
+// CopyObjectRequest creates a server-side copy of an object.
+message CopyObjectRequest {
+  // source_key is the key of the object to copy.
+  // REQUIRED.
+  string source_key = 1;
+
+  // dest_key is the key for the new copy.
+  // REQUIRED.
+  string dest_key = 2;
+
+  // tenant_id identifies the tenant.
+  // OPTIONAL.
+  string tenant_id = 3;
+
+  // dest_tenant_id allows cross-tenant copy (requires permissions).
+  // OPTIONAL. Defaults to source tenant.
+  string dest_tenant_id = 4;
+
+  // copy_tags copies tags from source to destination.
+  // OPTIONAL. Defaults to true.
+  bool copy_tags = 5;
+
+  // override_tags replaces tags on destination.
+  // OPTIONAL.
+  map<string, string> override_tags = 6;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 60000ms.
+  int64 timeout_ms = 7;
+
+  reserved 8 to 10;
+}
+
+// CopyObjectResponse confirms the copy operation.
+message CopyObjectResponse {
+  // key is the destination object key.
+  string key = 1;
+
+  // version is the new object's version.
+  uint64 version = 2;
+
+  // created_at is when the copy was created.
+  google.protobuf.Timestamp created_at = 3;
+
+  // size is the copied object's size.
+  int64 size = 4;
+
+  reserved 5 to 10;
+}
+
+// ReplicateObjectRequest initiates replication to specified backends.
+message ReplicateObjectRequest {
+  // key is the object key to replicate.
+  // REQUIRED.
+  string key = 1;
+
+  // target_stores specifies which backends to replicate to.
+  // REQUIRED. At least one target required.
+  repeated string target_stores = 2;
+
+  // sync waits for replication to complete before returning.
+  // OPTIONAL. Defaults to false (async).
+  bool sync = 3;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 60000ms (only applies if sync=true).
+  int64 timeout_ms = 4;
+
+  reserved 5 to 10;
+}
+
+// ReplicateObjectResponse confirms the replication operation.
+message ReplicateObjectResponse {
+  // key is the replicated object key.
+  string key = 1;
+
+  // replicated_to lists backends where replication succeeded.
+  repeated string replicated_to = 2;
+
+  // success indicates if all replications succeeded.
+  bool success = 3;
+
+  // failed_stores lists backends where replication failed.
+  repeated string failed_stores = 4;
+
+  // operation_id is the async operation ID (for tracking).
+  string operation_id = 5;
+
+  reserved 6 to 10;
+}
+
+// MigrateObjectRequest moves an object between backends.
+message MigrateObjectRequest {
+  // key is the object key to migrate.
+  // REQUIRED.
+  string key = 1;
+
+  // target_backend is the destination backend.
+  // REQUIRED.
+  string target_backend = 2;
+
+  // delete_source removes the object from source after successful migration.
+  // OPTIONAL. Defaults to false.
+  bool delete_source = 3;
+
+  // verify performs checksum verification after migration.
+  // OPTIONAL. Defaults to true.
+  bool verify = 4;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 300000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// MigrateObjectResponse confirms the migration operation.
+message MigrateObjectResponse {
+  // key is the migrated object key.
+  string key = 1;
+
+  // old_backend is the source backend.
+  string old_backend = 2;
+
+  // new_backend is the destination backend.
+  string new_backend = 3;
+
+  // success indicates if the migration succeeded.
+  bool success = 4;
+
+  // source_deleted indicates if source was deleted.
+  bool source_deleted = 5;
+
+  // verified indicates if checksum verification passed.
+  bool verified = 6;
+
+  reserved 7 to 10;
+}
+
+// ArchiveObjectRequest moves an object to archive storage.
+message ArchiveObjectRequest {
+  // key is the object key to archive.
+  // REQUIRED.
+  string key = 1;
+
+  // target_store specifies which archive backend to use.
+  // OPTIONAL. Uses policy default if not specified.
+  string target_store = 2;
+
+  // delete_from_primary removes from primary storage after archival.
+  // OPTIONAL. Uses policy default if not specified.
+  bool delete_from_primary = 3;
+
+  // compression_level specifies compression level (0-9).
+  // OPTIONAL. Uses policy default if not specified.
+  int32 compression_level = 4;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 300000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// ArchiveObjectResponse confirms the archive operation.
+message ArchiveObjectResponse {
+  // key is the archived object key.
+  string key = 1;
+
+  // archive_store is where the object was archived.
+  string archive_store = 2;
+
+  // success indicates if the archival succeeded.
+  bool success = 3;
+
+  // archived_at is when the object was archived.
+  google.protobuf.Timestamp archived_at = 4;
+
+  // original_size is the size before compression.
+  int64 original_size = 5;
+
+  // archived_size is the size after compression.
+  int64 archived_size = 6;
+
+  reserved 7 to 10;
+}
+
+// RestoreObjectRequest restores an object from archive.
+message RestoreObjectRequest {
+  // key is the object key to restore.
+  // REQUIRED.
+  string key = 1;
+
+  // target_backend specifies where to restore the object.
+  // OPTIONAL. Restores to original location if not specified.
+  string target_backend = 2;
+
+  // restore_days is how long to keep the restored copy accessible.
+  // OPTIONAL. Defaults to 7 days.
+  int32 restore_days = 3;
+
+  // tier specifies the restore tier (affects restore time).
+  // OPTIONAL. Defaults to STANDARD.
+  StorageTier tier = 4;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 300000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// RestoreObjectResponse confirms the restore operation.
+message RestoreObjectResponse {
+  // key is the restored object key.
+  string key = 1;
+
+  // restored_to is where the object was restored.
+  string restored_to = 2;
+
+  // success indicates if the restore succeeded.
+  bool success = 3;
+
+  // operation_id is the async operation ID for tracking.
+  string operation_id = 4;
+
+  // estimated_completion is when restore will complete (for async restores).
+  google.protobuf.Timestamp estimated_completion = 5;
+
+  reserved 6 to 10;
+}
+
+// VerifyObjectRequest validates object integrity.
+message VerifyObjectRequest {
+  // key is the object key to verify.
+  // REQUIRED.
+  string key = 1;
+
+  // check_all_locations verifies all replicas.
+  // OPTIONAL. Defaults to true.
+  bool check_all_locations = 2;
+
+  // repair attempts to repair inconsistent replicas.
+  // OPTIONAL. Defaults to false.
+  bool repair = 3;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 60000ms.
+  int64 timeout_ms = 4;
+
+  reserved 5 to 10;
+}
+
+// VerifyObjectResponse returns verification results.
+message VerifyObjectResponse {
+  // key is the verified object key.
+  string key = 1;
+
+  // valid indicates if all locations are consistent.
+  bool valid = 2;
+
+  // locations contains per-location verification results.
+  repeated LocationVerification locations = 3;
+
+  // repaired indicates if any repairs were performed.
+  bool repaired = 4;
+
+  reserved 5 to 10;
+}
+
+// LocationVerification represents verification result for a single location.
+message LocationVerification {
+  // store is the backend store name.
+  string store = 1;
+
+  // valid indicates if this location is valid.
+  bool valid = 2;
+
+  // error contains the error message if invalid.
+  string error = 3;
+
+  // checksum is the checksum at this location.
+  bytes checksum = 4;
+
+  // size is the size at this location.
+  int64 size = 5;
+
+  reserved 6 to 10;
+}
+
+// =============================================================================
+// Policy Request/Response Messages
+// =============================================================================
+
+// SetObjectPolicyRequest sets policies for an object.
+message SetObjectPolicyRequest {
+  // key is the object key.
+  // REQUIRED.
+  string key = 1;
+
+  // replication_policy sets the replication policy.
+  // OPTIONAL. Null means no change.
+  ReplicationPolicy replication_policy = 2;
+
+  // archive_policy sets the archive policy.
+  // OPTIONAL. Null means no change.
+  ArchivePolicy archive_policy = 3;
+
+  // retention_policy sets the retention policy.
+  // OPTIONAL. Null means no change.
+  RetentionPolicy retention_policy = 4;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 5000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// SetObjectPolicyResponse confirms the policy update.
+message SetObjectPolicyResponse {
+  // key is the object key.
+  string key = 1;
+
+  // version is the new policy version.
+  uint64 version = 2;
+
+  // updated_at is when the policy was updated.
+  google.protobuf.Timestamp updated_at = 3;
+
+  reserved 4 to 10;
+}
+
+// GetObjectPolicyRequest retrieves policies for an object.
+message GetObjectPolicyRequest {
+  // key is the object key.
+  // REQUIRED.
+  string key = 1;
+
+  // include_inherited includes namespace-level policies.
+  // OPTIONAL. Defaults to true.
+  bool include_inherited = 2;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 5000ms.
+  int64 timeout_ms = 3;
+
+  reserved 4 to 10;
+}
+
+// GetObjectPolicyResponse returns object policies.
+message GetObjectPolicyResponse {
+  // key is the object key.
+  string key = 1;
+
+  // policy is the effective policy (merged with inherited).
+  ObjectPolicy policy = 2;
+
+  // explicit_policy is only the explicitly set policy.
+  ObjectPolicy explicit_policy = 3;
+
+  // inherited_policy is the namespace-level policy.
+  ObjectPolicy inherited_policy = 4;
+
+  reserved 5 to 10;
+}
+
+// =============================================================================
+// Backend Management Messages
+// =============================================================================
+
+// BackendInfo contains information about a storage backend.
+message BackendInfo {
+  // name is the unique backend name.
+  string name = 1;
+
+  // type is the backend type (s3, gcs, local, etc.).
+  BackendType type = 2;
+
+  // enabled indicates if the backend is enabled.
+  bool enabled = 3;
+
+  // healthy indicates if the backend is healthy.
+  bool healthy = 4;
+
+  // tier is the storage tier for this backend.
+  StorageTier tier = 5;
+
+  // region is the geographic region (if applicable).
+  string region = 6;
+
+  // endpoint is the backend endpoint URL.
+  string endpoint = 7;
+
+  // bucket is the bucket/container name (for cloud storage).
+  string bucket = 8;
+
+  // capacity_bytes is the total capacity (if known).
+  int64 capacity_bytes = 9;
+
+  // used_bytes is the current usage.
+  int64 used_bytes = 10;
+
+  // object_count is the number of objects stored.
+  int64 object_count = 11;
+
+  // last_health_check is when health was last checked.
+  google.protobuf.Timestamp last_health_check = 12;
+
+  // metadata contains additional backend-specific metadata.
+  map<string, string> metadata = 13;
+
+  reserved 14 to 20;
+}
+
+// ListBackendsRequest lists configured storage backends.
+message ListBackendsRequest {
+  // include_health requests health status for each backend.
+  // OPTIONAL. Defaults to true.
+  bool include_health = 1;
+
+  // type filters by backend type.
+  // OPTIONAL.
+  BackendType type = 2;
+
+  // tier filters by storage tier.
+  // OPTIONAL.
+  StorageTier tier = 3;
+
+  reserved 4 to 10;
+}
+
+// ListBackendsResponse returns configured backends.
+message ListBackendsResponse {
+  // backends is the list of storage backends.
+  repeated BackendInfo backends = 1;
+
+  // total is the total number of backends.
+  int32 total = 2;
+
+  reserved 3 to 10;
+}
+
+// GetBackendHealthRequest retrieves health for a specific backend.
+message GetBackendHealthRequest {
+  // name is the backend name.
+  // REQUIRED.
+  string name = 1;
+
+  // force_check forces a fresh health check.
+  // OPTIONAL. Defaults to false (uses cached status).
+  bool force_check = 2;
+
+  reserved 3 to 10;
+}
+
+// GetBackendHealthResponse returns backend health status.
+message GetBackendHealthResponse {
+  // name is the backend name.
+  string name = 1;
+
+  // healthy indicates if the backend is healthy.
+  bool healthy = 2;
+
+  // latency_ms is the latency to the backend in milliseconds.
+  int64 latency_ms = 3;
+
+  // last_check is when health was last checked.
+  google.protobuf.Timestamp last_check = 4;
+
+  // error contains error details if unhealthy.
+  string error = 5;
+
+  // read_ok indicates if read operations work.
+  bool read_ok = 6;
+
+  // write_ok indicates if write operations work.
+  bool write_ok = 7;
+
+  // delete_ok indicates if delete operations work.
+  bool delete_ok = 8;
+
+  reserved 9 to 15;
+}
+
+// =============================================================================
+// Tenant Messages
+// =============================================================================
+
+// ObjectStorageTenantUsage contains usage statistics for a tenant.
+message ObjectStorageTenantUsage {
+  // tenant_id identifies the tenant.
+  string tenant_id = 1;
+
+  // total_bytes is the total storage used.
+  int64 total_bytes = 2;
+
+  // object_count is the total number of objects.
+  int64 object_count = 3;
+
+  // hot_bytes is storage in hot tier.
+  int64 hot_bytes = 4;
+
+  // warm_bytes is storage in warm tier.
+  int64 warm_bytes = 5;
+
+  // cold_bytes is storage in cold tier.
+  int64 cold_bytes = 6;
+
+  // archive_bytes is storage in archive tier.
+  int64 archive_bytes = 7;
+
+  // calculated_at is when usage was calculated.
+  google.protobuf.Timestamp calculated_at = 8;
+
+  reserved 9 to 15;
+}
+
+// GetObjectStorageTenantUsageRequest retrieves tenant usage.
+message GetObjectStorageTenantUsageRequest {
+  // tenant_id identifies the tenant.
+  // REQUIRED.
+  string tenant_id = 1;
+
+  reserved 2 to 10;
+}
+
+// GetObjectStorageTenantUsageResponse returns tenant usage.
+message GetObjectStorageTenantUsageResponse {
+  // usage contains the usage statistics.
+  ObjectStorageTenantUsage usage = 1;
+
+  reserved 2 to 10;
+}
+
+// ObjectStorageTenantQuotas defines resource limits for a tenant.
+message ObjectStorageTenantQuotas {
+  // tenant_id identifies the tenant.
+  string tenant_id = 1;
+
+  // max_storage_bytes is the maximum total storage.
+  int64 max_storage_bytes = 2;
+
+  // max_object_size is the maximum size of a single object.
+  int64 max_object_size = 3;
+
+  // max_object_count is the maximum number of objects.
+  int64 max_object_count = 4;
+
+  // max_requests_per_second is the rate limit.
+  int32 max_requests_per_second = 5;
+
+  // max_bandwidth_bytes_per_second is the bandwidth limit.
+  int64 max_bandwidth_bytes_per_second = 6;
+
+  reserved 7 to 15;
+}
+
+// GetObjectStorageTenantQuotasRequest retrieves tenant quotas.
+message GetObjectStorageTenantQuotasRequest {
+  // tenant_id identifies the tenant.
+  // REQUIRED.
+  string tenant_id = 1;
+
+  reserved 2 to 10;
+}
+
+// GetObjectStorageTenantQuotasResponse returns tenant quotas.
+message GetObjectStorageTenantQuotasResponse {
+  // quotas contains the quota configuration.
+  ObjectStorageTenantQuotas quotas = 1;
+
+  // usage contains current usage for quota comparison.
+  ObjectStorageTenantUsage usage = 2;
+
+  reserved 3 to 10;
+}
+
+// SetObjectStorageTenantQuotasRequest sets or updates tenant quotas.
+message SetObjectStorageTenantQuotasRequest {
+  // quotas is the quota configuration to set.
+  // REQUIRED.
+  ObjectStorageTenantQuotas quotas = 1;
+
+  reserved 2 to 10;
+}
+
+// SetObjectStorageTenantQuotasResponse confirms quota update.
+message SetObjectStorageTenantQuotasResponse {
+  // tenant_id identifies the tenant.
+  string tenant_id = 1;
+
+  // updated_at is when quotas were updated.
+  google.protobuf.Timestamp updated_at = 2;
+
+  reserved 3 to 10;
+}
+
+// =============================================================================
+// Streaming Messages
+// =============================================================================
+
+// ObjectChunk represents a chunk of object data for streaming.
+message ObjectChunk {
+  // data is the chunk data.
+  bytes data = 1;
+
+  // offset is the byte offset within the object.
+  int64 offset = 2;
+
+  // is_last indicates this is the final chunk.
+  bool is_last = 3;
+
+  // checksum is the chunk checksum for verification.
+  bytes checksum = 4;
+
+  // total_size is the total object size (set in first or last chunk).
+  int64 total_size = 5;
+
+  reserved 6 to 10;
+}
+
+// PutObjectChunk is used for streaming uploads.
+message PutObjectChunk {
+  oneof payload {
+    // metadata is sent as the first message with object metadata.
+    PutObjectRequest metadata = 1;
+
+    // data is sent in subsequent messages containing object data.
+    bytes data = 2;
+  }
+
+  // chunk_index is the sequence number of this chunk.
+  int32 chunk_index = 3;
+
+  // is_last indicates this is the final chunk.
+  bool is_last = 4;
+
+  // checksum is the chunk checksum for verification.
+  bytes checksum = 5;
+
+  reserved 6 to 10;
+}
+
+// =============================================================================
+// Batch Operation Messages
+// =============================================================================
+
+// BatchPutObjectsRequest stores multiple objects atomically.
+message BatchPutObjectsRequest {
+  // objects is the list of objects to store.
+  // REQUIRED. Maximum 100 objects per batch.
+  repeated PutObjectRequest objects = 1;
+
+  // atomic requires all objects to succeed or all fail.
+  // OPTIONAL. Defaults to true.
+  bool atomic = 2;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 60000ms.
+  int64 timeout_ms = 3;
+
+  reserved 4 to 10;
+}
+
+// BatchPutObjectsResponse returns batch put results.
+message BatchPutObjectsResponse {
+  // results contains results for each object.
+  repeated PutObjectResponse results = 1;
+
+  // succeeded is the count of successful puts.
+  int32 succeeded = 2;
+
+  // failed is the count of failed puts.
+  int32 failed = 3;
+
+  // errors contains error messages for failed objects.
+  map<string, string> errors = 4;
+
+  reserved 5 to 10;
+}
+
+// BatchDeleteObjectsRequest removes multiple objects.
+message BatchDeleteObjectsRequest {
+  // keys is the list of object keys to delete.
+  // REQUIRED. Maximum 1000 keys per batch.
+  repeated string keys = 1;
+
+  // tenant_id identifies the tenant.
+  // OPTIONAL.
+  string tenant_id = 2;
+
+  // permanent bypasses soft delete.
+  // OPTIONAL. Defaults to false.
+  bool permanent = 3;
+
+  // atomic requires all deletes to succeed or all fail.
+  // OPTIONAL. Defaults to false.
+  bool atomic = 4;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 60000ms.
+  int64 timeout_ms = 5;
+
+  reserved 6 to 10;
+}
+
+// BatchDeleteObjectsResponse returns batch delete results.
+message BatchDeleteObjectsResponse {
+  // deleted_keys contains keys that were deleted.
+  repeated string deleted_keys = 1;
+
+  // failed_keys contains keys that failed to delete.
+  repeated string failed_keys = 2;
+
+  // errors contains error messages for failed keys.
+  map<string, string> errors = 3;
+
+  reserved 4 to 10;
+}
+
+// BatchGetObjectsRequest retrieves multiple objects.
+message BatchGetObjectsRequest {
+  // keys is the list of object keys to retrieve.
+  // REQUIRED. Maximum 100 keys per batch.
+  repeated string keys = 1;
+
+  // tenant_id identifies the tenant.
+  // OPTIONAL.
+  string tenant_id = 2;
+
+  // include_metadata requests full metadata.
+  // OPTIONAL. Defaults to false.
+  bool include_metadata = 3;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 30000ms.
+  int64 timeout_ms = 4;
+
+  reserved 5 to 10;
+}
+
+// BatchGetObjectsResponse returns batch get results.
+message BatchGetObjectsResponse {
+  // objects contains the retrieved objects.
+  repeated GetObjectResponse objects = 1;
+
+  // not_found contains keys that were not found.
+  repeated string not_found = 2;
+
+  reserved 3 to 10;
+}
+
+// =============================================================================
+// Admin Service Messages
+// =============================================================================
+
+// CreateBackendRequest registers a new storage backend.
+message CreateBackendRequest {
+  // name is the unique backend name.
+  // REQUIRED.
+  string name = 1;
+
+  // type is the backend type.
+  // REQUIRED.
+  BackendType type = 2;
+
+  // tier is the storage tier.
+  // REQUIRED.
+  StorageTier tier = 3;
+
+  // config contains backend-specific configuration.
+  // REQUIRED.
+  map<string, string> config = 4;
+
+  // enabled indicates if the backend should be enabled.
+  // OPTIONAL. Defaults to true.
+  bool enabled = 5;
+
+  reserved 6 to 10;
+}
+
+// CreateBackendResponse confirms backend creation.
+message CreateBackendResponse {
+  // name is the created backend name.
+  string name = 1;
+
+  // created_at is when the backend was created.
+  google.protobuf.Timestamp created_at = 2;
+
+  reserved 3 to 10;
+}
+
+// UpdateBackendRequest updates backend configuration.
+message UpdateBackendRequest {
+  // name is the backend name.
+  // REQUIRED.
+  string name = 1;
+
+  // config contains updated configuration.
+  // OPTIONAL. Only specified keys are updated.
+  map<string, string> config = 2;
+
+  // tier updates the storage tier.
+  // OPTIONAL. 0 means no change.
+  StorageTier tier = 3;
+
+  reserved 4 to 10;
+}
+
+// UpdateBackendResponse confirms backend update.
+message UpdateBackendResponse {
+  // name is the updated backend name.
+  string name = 1;
+
+  // updated_at is when the backend was updated.
+  google.protobuf.Timestamp updated_at = 2;
+
+  reserved 3 to 10;
+}
+
+// DeleteBackendRequest removes a storage backend.
+message DeleteBackendRequest {
+  // name is the backend name.
+  // REQUIRED.
+  string name = 1;
+
+  // migrate_to specifies where to migrate objects before deletion.
+  // OPTIONAL. Required if backend contains objects.
+  string migrate_to = 2;
+
+  // force deletes even if objects exist (data loss!).
+  // OPTIONAL. Defaults to false.
+  bool force = 3;
+
+  reserved 4 to 10;
+}
+
+// DeleteBackendResponse confirms backend deletion.
+message DeleteBackendResponse {
+  // name is the deleted backend name.
+  string name = 1;
+
+  // deleted indicates if the backend was deleted.
+  bool deleted = 2;
+
+  // migrated_objects is the count of migrated objects.
+  int64 migrated_objects = 3;
+
+  reserved 4 to 10;
+}
+
+// SetBackendStatusRequest enables or disables a backend.
+message SetBackendStatusRequest {
+  // name is the backend name.
+  // REQUIRED.
+  string name = 1;
+
+  // enabled sets the enabled status.
+  // REQUIRED.
+  bool enabled = 2;
+
+  reserved 3 to 10;
+}
+
+// SetBackendStatusResponse confirms status update.
+message SetBackendStatusResponse {
+  // name is the backend name.
+  string name = 1;
+
+  // enabled is the new status.
+  bool enabled = 2;
+
+  // updated_at is when the status was updated.
+  google.protobuf.Timestamp updated_at = 3;
+
+  reserved 4 to 10;
+}
+
+// GetStorageStatsRequest retrieves cluster-wide storage statistics.
+message GetStorageStatsRequest {
+  // include_backends includes per-backend breakdown.
+  // OPTIONAL. Defaults to false.
+  bool include_backends = 1;
+
+  // include_tenants includes per-tenant breakdown.
+  // OPTIONAL. Defaults to false.
+  bool include_tenants = 2;
+
+  reserved 3 to 10;
+}
+
+// GetStorageStatsResponse returns storage statistics.
+message GetStorageStatsResponse {
+  // total_bytes is the total storage used.
+  int64 total_bytes = 1;
+
+  // total_objects is the total object count.
+  int64 total_objects = 2;
+
+  // total_backends is the number of backends.
+  int32 total_backends = 3;
+
+  // healthy_backends is the number of healthy backends.
+  int32 healthy_backends = 4;
+
+  // backend_stats contains per-backend statistics.
+  repeated BackendInfo backend_stats = 5;
+
+  // tenant_stats contains per-tenant statistics.
+  repeated ObjectStorageTenantUsage tenant_stats = 6;
+
+  // calculated_at is when stats were calculated.
+  google.protobuf.Timestamp calculated_at = 7;
+
+  reserved 8 to 15;
+}
+
+// RunGarbageCollectionRequest initiates garbage collection.
+message RunGarbageCollectionRequest {
+  // backends specifies which backends to GC.
+  // OPTIONAL. Empty means all backends.
+  repeated string backends = 1;
+
+  // dry_run reports what would be deleted without deleting.
+  // OPTIONAL. Defaults to false.
+  bool dry_run = 2;
+
+  // aggressive uses more aggressive GC settings.
+  // OPTIONAL. Defaults to false.
+  bool aggressive = 3;
+
+  reserved 4 to 10;
+}
+
+// RunGarbageCollectionResponse confirms GC initiation.
+message RunGarbageCollectionResponse {
+  // operation_id is the async operation ID for tracking.
+  string operation_id = 1;
+
+  // started_at is when GC started.
+  google.protobuf.Timestamp started_at = 2;
+
+  reserved 3 to 10;
+}
+
+// GetGarbageCollectionProgressRequest retrieves GC progress.
+message GetGarbageCollectionProgressRequest {
+  // operation_id identifies the GC operation.
+  // REQUIRED.
+  string operation_id = 1;
+
+  reserved 2 to 10;
+}
+
+// GetGarbageCollectionProgressResponse returns GC progress.
+message GetGarbageCollectionProgressResponse {
+  // operation_id is the GC operation ID.
+  string operation_id = 1;
+
+  // status is the GC status (running, completed, failed).
+  string status = 2;
+
+  // objects_scanned is the count of scanned objects.
+  int64 objects_scanned = 3;
+
+  // objects_deleted is the count of deleted objects.
+  int64 objects_deleted = 4;
+
+  // bytes_reclaimed is the storage reclaimed.
+  int64 bytes_reclaimed = 5;
+
+  // percent_complete is the completion percentage.
+  double percent_complete = 6;
+
+  // error contains error message if failed.
+  string error = 7;
+
+  // completed_at is when GC completed (if finished).
+  google.protobuf.Timestamp completed_at = 8;
+
+  reserved 9 to 15;
+}
+
+// RepairObjectRequest attempts to repair an inconsistent object.
+message RepairObjectRequest {
+  // key is the object key to repair.
+  // REQUIRED.
+  string key = 1;
+
+  // source_location specifies which location has the correct data.
+  // OPTIONAL. Auto-selects based on checksums if not specified.
+  string source_location = 2;
+
+  // timeout_ms specifies the maximum time to wait (milliseconds).
+  // OPTIONAL. Defaults to 60000ms.
+  int64 timeout_ms = 3;
+
+  reserved 4 to 10;
+}
+
+// RepairObjectResponse returns repair results.
+message RepairObjectResponse {
+  // key is the repaired object key.
+  string key = 1;
+
+  // success indicates if repair succeeded.
+  bool success = 2;
+
+  // repaired_locations lists locations that were repaired.
+  repeated string repaired_locations = 3;
+
+  // error contains error message if failed.
+  string error = 4;
+
+  reserved 5 to 10;
+}
+
+// CompactBackendRequest triggers compaction on a backend.
+message CompactBackendRequest {
+  // name is the backend name.
+  // REQUIRED.
+  string name = 1;
+
+  // aggressive uses more aggressive compaction settings.
+  // OPTIONAL. Defaults to false.
+  bool aggressive = 2;
+
+  reserved 3 to 10;
+}
+
+// CompactBackendResponse confirms compaction initiation.
+message CompactBackendResponse {
+  // name is the backend name.
+  string name = 1;
+
+  // operation_id is the async operation ID.
+  string operation_id = 2;
+
+  // started_at is when compaction started.
+  google.protobuf.Timestamp started_at = 3;
+
+  reserved 4 to 10;
+}

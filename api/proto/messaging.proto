@@ -1,0 +1,635 @@
+// QuicBaaS Messaging Protocol Buffer Definitions v1
+// Real-time Messaging System with Pub/Sub Channels
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.messaging.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// Messaging Service
+// =============================================================================
+
+// MessagingService provides real-time messaging capabilities with
+// pub/sub channels, message deduplication, and delta updates.
+service MessagingService {
+    // Channel Management
+    rpc CreateChannel(MessagingCreateChannelRequest) returns (MessagingCreateChannelResponse);
+    rpc DeleteChannel(MessagingDeleteChannelRequest) returns (MessagingDeleteChannelResponse);
+    rpc GetChannel(MessagingGetChannelRequest) returns (MessagingGetChannelResponse);
+    rpc ListChannels(MessagingListChannelsRequest) returns (MessagingListChannelsResponse);
+
+    // Subscription Management
+    rpc Subscribe(MessagingSubscribeRequest) returns (MessagingSubscribeResponse);
+    rpc Unsubscribe(MessagingUnsubscribeRequest) returns (MessagingUnsubscribeResponse);
+
+    // Publishing
+    rpc Publish(MessagingPublishRequest) returns (MessagingPublishResponse);
+    rpc PublishDelta(MessagingPublishDeltaRequest) returns (MessagingPublishDeltaResponse);
+
+    // Streaming - Server-side streaming for real-time notifications
+    rpc StreamNotifications(MessagingStreamNotificationsRequest) returns (stream MessagingNotification);
+
+    // Watch Integration - Watch for key changes with messaging notifications
+    rpc WatchChannel(MessagingWatchChannelRequest) returns (MessagingWatchChannelResponse);
+
+    // Statistics
+    rpc GetStats(MessagingGetStatsRequest) returns (MessagingGetStatsResponse);
+    rpc GetDedupStats(MessagingGetDedupStatsRequest) returns (MessagingGetDedupStatsResponse);
+    rpc GetChannelStats(MessagingGetChannelStatsRequest) returns (MessagingGetChannelStatsResponse);
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+// MessageType defines the type of messaging notification message.
+enum MessageType {
+    MESSAGE_TYPE_UNSPECIFIED = 0;
+    MESSAGE_TYPE_SUBSCRIBE = 1;
+    MESSAGE_TYPE_UNSUBSCRIBE = 2;
+    MESSAGE_TYPE_PUBLISH = 3;
+    MESSAGE_TYPE_NOTIFICATION = 4;
+    MESSAGE_TYPE_PING = 5;
+    MESSAGE_TYPE_PONG = 6;
+    MESSAGE_TYPE_ACK = 7;
+    MESSAGE_TYPE_ERROR = 8;
+    MESSAGE_TYPE_DATA = 9;
+    MESSAGE_TYPE_CONTROL = 10;
+    MESSAGE_TYPE_HEARTBEAT = 11;
+}
+
+// EventType represents the type of event for filtering subscriptions.
+enum EventType {
+    EVENT_TYPE_UNSPECIFIED = 0;
+    EVENT_TYPE_PUT = 1;
+    EVENT_TYPE_DELETE = 2;
+}
+
+// OpType represents the type of operation in a delta payload.
+enum OpType {
+    OP_TYPE_UNSPECIFIED = 0;
+    OP_TYPE_SET = 1;
+    OP_TYPE_DELETE = 2;
+    OP_TYPE_APPEND = 3;
+    OP_TYPE_INCREMENT = 4;
+}
+
+// CodecType defines supported codec identifiers for message serialization.
+enum CodecType {
+    CODEC_TYPE_UNSPECIFIED = 0;
+    CODEC_TYPE_JSON = 1;
+    CODEC_TYPE_MSGPACK = 2;
+    CODEC_TYPE_PROTOBUF = 3;
+}
+
+// =============================================================================
+// Core Types
+// =============================================================================
+
+// Channel represents a notification channel.
+message Channel {
+    // Name is the unique channel identifier.
+    string name = 1;
+
+    // Codec is the default codec for messages on this channel.
+    string codec = 2;
+
+    // CreatedAt is when the channel was created (Unix timestamp).
+    int64 created_at = 3;
+
+    // Subscribers is the current count of active subscribers.
+    int64 subscribers = 4;
+
+    // Persistent indicates whether messages should be persisted for replay.
+    bool persistent = 5;
+
+    // MaxHistory is the maximum number of messages to retain for replay.
+    int32 max_history = 6;
+
+    // BufferSize is the message buffer size for the channel.
+    int32 buffer_size = 7;
+
+    // TTL is the time-to-live for messages in seconds.
+    int64 ttl_seconds = 8;
+}
+
+// Subscription represents a client's subscription to a channel.
+message Subscription {
+    // ID is the unique subscription identifier.
+    string id = 1;
+
+    // Channel is the name of the subscribed channel.
+    string channel = 2;
+
+    // ClientID identifies the subscribing client.
+    string client_id = 3;
+
+    // CreatedAt is when the subscription was created (Unix timestamp).
+    int64 created_at = 4;
+
+    // Filters contains optional event filtering configuration.
+    SubscriptionFilter filters = 5;
+}
+
+// SubscriptionFilter defines filtering criteria for subscriptions.
+message SubscriptionFilter {
+    // EventTypes restricts events to the specified types.
+    // An empty list means all event types are accepted.
+    repeated EventType event_types = 1;
+
+    // KeyPrefix restricts events to keys matching the specified prefix.
+    // This is primarily used for watch channels.
+    string key_prefix = 2;
+}
+
+// Message represents a messaging notification message.
+message Message {
+    // ID is a unique identifier for the message.
+    string id = 1;
+
+    // Type indicates the message type.
+    MessageType type = 2;
+
+    // Channel is the target channel for the message.
+    string channel = 3;
+
+    // Payload contains the message data.
+    bytes payload = 4;
+
+    // Timestamp is when the message was created (Unix timestamp).
+    int64 timestamp = 5;
+
+    // Source is the originator of the message.
+    string source = 6;
+
+    // Metadata contains optional key-value metadata.
+    map<string, string> metadata = 7;
+
+    // Dedup contains deduplication metadata for the message.
+    DedupInfo dedup = 8;
+}
+
+// DedupInfo contains deduplication metadata for a message.
+message DedupInfo {
+    // IsDuplicate indicates whether this message was a duplicate.
+    bool is_duplicate = 1;
+
+    // Count is the total number of times this message has been received.
+    int64 count = 2;
+
+    // FirstSeen is when this message was first received (Unix timestamp).
+    int64 first_seen = 3;
+}
+
+// DeltaPayload represents changes to an entity for efficient delta updates.
+message DeltaPayload {
+    // EntityID is the unique identifier of the entity being modified.
+    string entity_id = 1;
+
+    // EntityType describes the type of entity.
+    string entity_type = 2;
+
+    // Version is the new version number after changes.
+    uint64 version = 3;
+
+    // PrevVersion is the version number before changes.
+    uint64 prev_version = 4;
+
+    // Timestamp is when the changes were made (Unix timestamp).
+    int64 timestamp = 5;
+
+    // Changes is the list of field modifications.
+    repeated FieldChange changes = 6;
+}
+
+// FieldChange represents a single field modification in a delta payload.
+message FieldChange {
+    // Path is the JSON path to the modified field (e.g., "user.address.city").
+    string path = 1;
+
+    // Operation is the type of modification.
+    OpType operation = 2;
+
+    // Value is the new value for the field (JSON encoded).
+    bytes value = 3;
+
+    // OldValue is the previous value of the field (JSON encoded).
+    // This is only populated when include_old_values is enabled.
+    bytes old_value = 4;
+}
+
+// Stats contains statistics about the messaging service.
+message Stats {
+    // TotalChannels is the number of active channels.
+    int64 total_channels = 1;
+
+    // TotalSubscriptions is the total number of active subscriptions.
+    int64 total_subscriptions = 2;
+
+    // MessagesPublished is the total number of messages published.
+    int64 messages_published = 3;
+
+    // MessagesDelivered is the total number of messages delivered to subscribers.
+    int64 messages_delivered = 4;
+
+    // DedupHits is the number of duplicate messages that were deduplicated.
+    int64 dedup_hits = 5;
+
+    // DroppedMessages is the number of messages dropped due to slow consumers.
+    int64 dropped_messages = 6;
+
+    // BufferUtilization is the current buffer usage as a percentage (0.0 to 1.0).
+    double buffer_utilization = 7;
+}
+
+// ChannelStats contains statistics for a specific channel.
+message ChannelStats {
+    // Name is the channel name.
+    string name = 1;
+
+    // Subscribers is the current subscriber count.
+    int64 subscribers = 2;
+
+    // MessagesPublished is the number of messages published to this channel.
+    int64 messages_published = 3;
+
+    // MessagesInHistory is the number of messages currently in history.
+    int32 messages_in_history = 4;
+}
+
+// DedupEntry stores deduplication metadata for a message.
+message DedupEntry {
+    // Count is the number of times received.
+    int64 count = 1;
+
+    // FirstSeen is when the message was first received (Unix timestamp).
+    int64 first_seen = 2;
+
+    // LastSeen is when the message was last received (Unix timestamp).
+    int64 last_seen = 3;
+
+    // MessageID is the original message ID.
+    string message_id = 4;
+
+    // PayloadHash is the content hash for deduplication.
+    string payload_hash = 5;
+}
+
+// DedupStats provides statistics about deduplication for a channel.
+message DedupStats {
+    // Channel is the channel name.
+    string channel = 1;
+
+    // TotalMessages is the total unique messages tracked.
+    int64 total_messages = 2;
+
+    // TotalDuplicates is the total duplicate count across all messages.
+    int64 total_duplicates = 3;
+
+    // TopDuplicates are the most duplicated messages.
+    repeated DedupEntry top_duplicates = 4;
+}
+
+// MessagingNotification represents a real-time messaging notification in the stream.
+message MessagingNotification {
+    // Message is the notification message.
+    Message message = 1;
+
+    // SubscriptionID is the subscription that received this notification.
+    string subscription_id = 2;
+
+    // SequenceNumber is the monotonically increasing sequence number.
+    uint64 sequence_number = 3;
+}
+
+// =============================================================================
+// Channel Management Requests/Responses
+// =============================================================================
+
+// MessagingCreateChannelRequest creates a new notification channel.
+message MessagingCreateChannelRequest {
+    // Name is the unique channel identifier.
+    string name = 1;
+
+    // Codec is the default codec for messages on this channel.
+    string codec = 2;
+
+    // Persistent indicates whether messages should be persisted for replay.
+    bool persistent = 3;
+
+    // MaxHistory is the maximum number of messages to retain for replay.
+    int32 max_history = 4;
+
+    // BufferSize is the message buffer size for the channel.
+    int32 buffer_size = 5;
+
+    // MaxSubscribers is the maximum number of subscribers (0 = unlimited).
+    int32 max_subscribers = 6;
+
+    // TTLSeconds is the time-to-live for messages in seconds.
+    int64 ttl_seconds = 7;
+}
+
+message MessagingCreateChannelResponse {
+    // Channel is the created channel.
+    Channel channel = 1;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 2;
+}
+
+// MessagingDeleteChannelRequest deletes a notification channel.
+message MessagingDeleteChannelRequest {
+    // Name is the channel to delete.
+    string name = 1;
+}
+
+message MessagingDeleteChannelResponse {
+    // Name is the deleted channel name.
+    string name = 1;
+
+    // Deleted indicates whether the channel was deleted.
+    bool deleted = 2;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 3;
+}
+
+// MessagingGetChannelRequest retrieves channel information.
+message MessagingGetChannelRequest {
+    // Name is the channel to retrieve.
+    string name = 1;
+}
+
+message MessagingGetChannelResponse {
+    // Channel is the channel information.
+    Channel channel = 1;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 2;
+}
+
+// MessagingListChannelsRequest lists all notification channels.
+message MessagingListChannelsRequest {
+    // Limit is the maximum number of channels to return.
+    int32 limit = 1;
+
+    // Cursor is the pagination cursor for subsequent requests.
+    string cursor = 2;
+
+    // NamePrefix filters channels by name prefix.
+    string name_prefix = 3;
+}
+
+message MessagingListChannelsResponse {
+    // Channels is the list of channels.
+    repeated Channel channels = 1;
+
+    // NextCursor is the pagination cursor for the next page.
+    string next_cursor = 2;
+
+    // HasMore indicates if there are more results.
+    bool has_more = 3;
+
+    // TotalCount is the total number of matching channels.
+    int32 total_count = 4;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 5;
+}
+
+// =============================================================================
+// Subscription Management Requests/Responses
+// =============================================================================
+
+// MessagingSubscribeRequest subscribes to a notification channel.
+message MessagingSubscribeRequest {
+    // Channel is the channel to subscribe to.
+    string channel = 1;
+
+    // SessionID is an optional session ID for subscription tracking.
+    string session_id = 2;
+
+    // Filter is the optional subscription filter.
+    SubscriptionFilter filter = 3;
+
+    // DeltaMode enables delta mode for the subscription.
+    bool delta_mode = 4;
+
+    // IncludeOldValues enables inclusion of old values in delta payloads.
+    bool include_old_values = 5;
+
+    // DedupMetadata enables deduplication metadata in messages.
+    bool dedup_metadata = 6;
+
+    // DedupSkipDuplicates enables automatic skipping of duplicate messages.
+    bool dedup_skip_duplicates = 7;
+
+    // BufferSize is the buffer size for the subscription.
+    int32 buffer_size = 8;
+}
+
+message MessagingSubscribeResponse {
+    // Subscription is the created subscription.
+    Subscription subscription = 1;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 2;
+}
+
+// MessagingUnsubscribeRequest removes a subscription.
+message MessagingUnsubscribeRequest {
+    // SubscriptionID is the subscription to remove.
+    string subscription_id = 1;
+}
+
+message MessagingUnsubscribeResponse {
+    // SubscriptionID is the removed subscription ID.
+    string subscription_id = 1;
+
+    // Unsubscribed indicates whether the subscription was removed.
+    bool unsubscribed = 2;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 3;
+}
+
+// =============================================================================
+// Publishing Requests/Responses
+// =============================================================================
+
+// MessagingPublishRequest publishes a message to a channel.
+message MessagingPublishRequest {
+    // Channel is the target channel.
+    string channel = 1;
+
+    // Payload is the message payload.
+    bytes payload = 2;
+
+    // MessageID is an optional custom message ID.
+    string message_id = 3;
+
+    // DedupKey is the deduplication key for the message.
+    string dedup_key = 4;
+
+    // Codec is the codec for the published message.
+    string codec = 5;
+
+    // Metadata is optional key-value metadata for the message.
+    map<string, string> metadata = 6;
+}
+
+message MessagingPublishResponse {
+    // MessageID is the published message ID.
+    string message_id = 1;
+
+    // Channel is the channel the message was published to.
+    string channel = 2;
+
+    // IsDuplicate indicates if the message was a duplicate (and potentially skipped).
+    bool is_duplicate = 3;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 4;
+}
+
+// MessagingPublishDeltaRequest publishes a delta message to a channel.
+message MessagingPublishDeltaRequest {
+    // Channel is the target channel.
+    string channel = 1;
+
+    // OldValue is the previous state (JSON encoded).
+    bytes old_value = 2;
+
+    // NewValue is the new state (JSON encoded).
+    bytes new_value = 3;
+
+    // MessageID is an optional custom message ID.
+    string message_id = 4;
+
+    // DedupKey is the deduplication key for the message.
+    string dedup_key = 5;
+
+    // Codec is the codec for the published message.
+    string codec = 6;
+
+    // Metadata is optional key-value metadata for the message.
+    map<string, string> metadata = 7;
+}
+
+message MessagingPublishDeltaResponse {
+    // MessageID is the published message ID.
+    string message_id = 1;
+
+    // Channel is the channel the message was published to.
+    string channel = 2;
+
+    // Delta is the computed delta payload.
+    DeltaPayload delta = 3;
+
+    // IsDuplicate indicates if the message was a duplicate (and potentially skipped).
+    bool is_duplicate = 4;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 5;
+}
+
+// =============================================================================
+// Streaming Requests/Responses
+// =============================================================================
+
+// MessagingStreamNotificationsRequest initiates a notification stream.
+message MessagingStreamNotificationsRequest {
+    // SubscriptionID is the subscription to stream notifications for.
+    string subscription_id = 1;
+
+    // StartSequence is the sequence number to start streaming from (0 = latest).
+    uint64 start_sequence = 2;
+
+    // IncludeHistory indicates whether to replay historical messages.
+    bool include_history = 3;
+
+    // HistoryLimit is the maximum number of historical messages to replay.
+    int32 history_limit = 4;
+}
+
+// =============================================================================
+// Watch Integration Requests/Responses
+// =============================================================================
+
+// MessagingWatchChannelRequest creates a subscription that watches for key changes.
+message MessagingWatchChannelRequest {
+    // KeyPrefix is the key prefix to watch for changes.
+    string key_prefix = 1;
+
+    // SessionID is an optional session ID for subscription tracking.
+    string session_id = 2;
+
+    // Filter is the optional subscription filter.
+    SubscriptionFilter filter = 3;
+
+    // BufferSize is the buffer size for the subscription.
+    int32 buffer_size = 4;
+}
+
+message MessagingWatchChannelResponse {
+    // Subscription is the created watch subscription.
+    Subscription subscription = 1;
+
+    // ChannelName is the auto-generated channel name for the watch.
+    string channel_name = 2;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 3;
+}
+
+// =============================================================================
+// Statistics Requests/Responses
+// =============================================================================
+
+// MessagingGetStatsRequest retrieves messaging service statistics.
+message MessagingGetStatsRequest {}
+
+message MessagingGetStatsResponse {
+    // Stats is the messaging service statistics.
+    Stats stats = 1;
+
+    // IsRunning indicates whether the messaging service is running.
+    bool is_running = 2;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 3;
+}
+
+// MessagingGetDedupStatsRequest retrieves deduplication statistics for a channel.
+message MessagingGetDedupStatsRequest {
+    // Channel is the channel to retrieve dedup stats for.
+    string channel = 1;
+}
+
+message MessagingGetDedupStatsResponse {
+    // Stats is the deduplication statistics.
+    DedupStats stats = 1;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 2;
+}
+
+// MessagingGetChannelStatsRequest retrieves statistics for a specific channel.
+message MessagingGetChannelStatsRequest {
+    // Name is the channel to retrieve stats for.
+    string name = 1;
+}
+
+message MessagingGetChannelStatsResponse {
+    // Stats is the channel statistics.
+    ChannelStats stats = 1;
+
+    // Timestamp is when the response was generated (Unix timestamp).
+    int64 timestamp = 2;
+}

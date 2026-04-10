@@ -1,0 +1,168 @@
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.container {
+    text-align: center;
+    padding: 2rem;
+}
+
+h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    color: #e0e0e0;
+    letter-spacing: 0.05em;
+}
+
+/* Status bar */
+.status {
+    font-size: 1.1rem;
+    margin-bottom: 1.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    background: #16213e;
+    min-height: 2.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.status.win {
+    background: #0f3d1e;
+    color: #4caf50;
+}
+
+.status.lose {
+    background: #3d0f0f;
+    color: #ef5350;
+}
+
+.status.draw {
+    background: #3d3a0f;
+    color: #ffc107;
+}
+
+/* Board grid */
+.board {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    width: 300px;
+    height: 300px;
+    margin: 0 auto 1.5rem;
+    background: #0f3460;
+    padding: 6px;
+    border-radius: 10px;
+}
+
+/* Individual cells */
+.cell {
+    background: #16213e;
+    border: none;
+    border-radius: 6px;
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: #e0e0e0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, transform 0.1s;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.cell:hover:not(.taken):not(.locked) {
+    background: #1a2744;
+    transform: scale(1.03);
+}
+
+.cell:active:not(.taken):not(.locked) {
+    transform: scale(0.97);
+}
+
+.cell.taken {
+    cursor: default;
+}
+
+.cell.locked {
+    cursor: default;
+}
+
+.cell.x {
+    color: #5c9ded;
+}
+
+.cell.o {
+    color: #ef5350;
+}
+
+/* Controls */
+.controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+}
+
+.difficulty-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.difficulty-selector label {
+    font-size: 0.9rem;
+    color: #a0a0a0;
+}
+
+.difficulty-selector select {
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid #0f3460;
+    background: #16213e;
+    color: #e0e0e0;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.difficulty-selector select:focus {
+    outline: 2px solid #5c9ded;
+    outline-offset: 1px;
+}
+
+.btn {
+    padding: 0.5rem 1.2rem;
+    border-radius: 6px;
+    border: none;
+    background: #0f3460;
+    color: #e0e0e0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.btn:hover {
+    background: #1a4a8a;
+}
+
+.btn:active {
+    background: #0a2540;
+}

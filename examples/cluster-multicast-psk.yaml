@@ -1,0 +1,49 @@
+# QuicBaaS Multicast Discovery with PSK Authentication Example
+
+discovery:
+  enabled: true
+  type: "multicast"
+
+  # Multicast discovery configuration
+  multicast:
+    # Multicast group IP address (default: 239.255.77.77)
+    group: "239.255.77.77"
+
+    # UDP port for multicast discovery (default: 63777)
+    port: 63777
+
+    # Network interface to use (optional, uses system default if not specified)
+    # interface: "eth0"
+
+    # How often to broadcast announcements (default: 2s)
+    broadcast_interval: 2s
+
+    # How long to remember a peer without hearing from it (default: 10s)
+    peer_ttl: 10s
+
+    # Pre-Shared Key for authenticating discovery messages
+    # If set, all discovery messages are signed with HMAC-SHA256
+    # If empty or omitted, discovery is unauthenticated (open cluster)
+    #
+    # IMPORTANT: All nodes in the cluster must use the same cluster_secret
+    # to communicate with each other.
+    #
+    # Examples:
+    # - cluster_secret: "my-secret-key-123"  # Enable PSK authentication
+    # - cluster_secret: ""                   # Disable PSK (open cluster)
+    #
+    cluster_secret: "your-cluster-secret-key-here"
+
+# Example for production (PSK enabled for security):
+# discovery:
+#   enabled: true
+#   type: "multicast"
+#   multicast:
+#     cluster_secret: "prod-cluster-secret-abc123xyz"
+
+# Example for development (PSK disabled for simplicity):
+# discovery:
+#   enabled: true
+#   type: "multicast"
+#   multicast:
+#     cluster_secret: ""

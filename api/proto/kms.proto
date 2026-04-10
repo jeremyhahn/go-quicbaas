@@ -1,0 +1,1305 @@
+// QuicBaaS KMS Protocol Buffer Definitions v1
+// Key Management System, Secrets Management, and Crypto Encryption
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.kms.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// Key Management Service
+// =============================================================================
+
+// KeyManagement provides cryptographic key lifecycle management operations.
+// This service handles key generation, import, rotation, and policy management
+// with comprehensive access control and audit logging.
+service KeyManagement {
+  // GenerateKey creates a new cryptographic key with specified parameters.
+  rpc GenerateKey(GenerateKeyRequest) returns (GenerateKeyResponse);
+
+  // ImportKey imports an externally generated key into the KMS.
+  rpc ImportKey(ImportKeyRequest) returns (ImportKeyResponse);
+
+  // GetKey retrieves key material or public key by key ID.
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+
+  // ListKeys returns all keys accessible to the requester with pagination.
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+
+  // ListKeyVersions returns all versions of a key.
+  rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse);
+
+  // RotateKey creates a new version of an existing key.
+  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+
+  // RevokeKey marks a key version as revoked and unusable.
+  rpc RevokeKey(RevokeKeyRequest) returns (RevokeKeyResponse);
+
+  // DeleteKey permanently removes a key and all its versions.
+  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+
+  // UpdateKeyStatus enables or disables a key or key version.
+  rpc UpdateKeyStatus(UpdateKeyStatusRequest) returns (UpdateKeyStatusResponse);
+
+  // GetKeyMetadata retrieves metadata for a key without exposing key material.
+  rpc GetKeyMetadata(GetKeyMetadataRequest) returns (GetKeyMetadataResponse);
+
+  // UpdateKeyMetadata updates mutable metadata fields for a key.
+  rpc UpdateKeyMetadata(UpdateKeyMetadataRequest) returns (UpdateKeyMetadataResponse);
+
+  // SetKeyPolicy sets the access control policy for a key.
+  rpc SetKeyPolicy(SetKeyPolicyRequest) returns (SetKeyPolicyResponse);
+
+  // GetKeyPolicy retrieves the access control policy for a key.
+  rpc GetKeyPolicy(GetKeyPolicyRequest) returns (GetKeyPolicyResponse);
+
+  // GetSupportedAlgorithms returns the list of cryptographic algorithms
+  // supported by the current backend. Use this to check if specific algorithms
+  // like ChaCha20-Poly1305 are available before attempting operations.
+  rpc GetSupportedAlgorithms(GetSupportedAlgorithmsRequest) returns (GetSupportedAlgorithmsResponse);
+
+  // BackendStatus returns health and capability information about the KMS backend.
+  rpc BackendStatus(BackendStatusRequest) returns (BackendStatusResponse);
+
+  // BackendTest performs a seal/unseal test cycle to verify backend functionality.
+  rpc BackendTest(BackendTestRequest) returns (BackendTestResponse);
+
+  // ExportKey exports a key wrapped with a wrapping key.
+  rpc ExportKey(ExportKeyRequest) returns (ExportKeyResponse);
+
+  // UnwrapKey imports a wrapped key into the KMS.
+  rpc UnwrapKey(UnwrapKeyRequest) returns (UnwrapKeyResponse);
+
+  // SetKeySafety configures AEAD safety limits for a key.
+  rpc SetKeySafety(SetKeySafetyRequest) returns (SetKeySafetyResponse);
+
+  // ClearKeySafety removes custom AEAD safety limits from a key.
+  rpc ClearKeySafety(ClearKeySafetyRequest) returns (ClearKeySafetyResponse);
+
+  // SafetyCheck returns warnings for keys/DEKs approaching safety limits.
+  rpc SafetyCheck(SafetyCheckRequest) returns (SafetyCheckResponse);
+
+  // SafetyReport returns a comprehensive safety report for all keys/DEKs.
+  rpc SafetyReport(SafetyReportRequest) returns (SafetyReportResponse);
+}
+
+// =============================================================================
+// Secrets Management Service
+// =============================================================================
+
+// SecretsManagement handles secret storage with versioning and rotation.
+// Secrets are encrypted at rest and support automatic rotation policies.
+service SecretsManagement {
+  // StoreSecret stores a secret with optional metadata and encryption.
+  rpc StoreSecret(StoreSecretRequest) returns (StoreSecretResponse);
+
+  // GetSecret retrieves the latest version of a secret.
+  rpc GetSecret(GetSecretRequest) returns (GetSecretResponse);
+
+  // ListSecrets returns all secrets accessible to the authenticated user.
+  rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
+
+  // DeleteSecret permanently removes a secret and all its versions.
+  rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse);
+
+  // GetSecretVersion retrieves a specific version of a secret.
+  rpc GetSecretVersion(GetSecretVersionRequest) returns (GetSecretVersionResponse);
+
+  // ListSecretVersions returns all versions of a secret.
+  rpc ListSecretVersions(ListSecretVersionsRequest) returns (ListSecretVersionsResponse);
+
+  // RollbackSecret rolls back to a previous version of a secret.
+  rpc RollbackSecret(RollbackSecretRequest) returns (RollbackSecretResponse);
+
+  // RotateSecret manually rotates a secret to a new value.
+  rpc RotateSecret(RotateSecretRequest) returns (RotateSecretResponse);
+
+  // UpdateSecretStatus enables or disables a secret.
+  rpc UpdateSecretStatus(UpdateSecretStatusRequest) returns (UpdateSecretStatusResponse);
+
+  // SetRotationPolicy sets or updates the automatic rotation policy.
+  rpc SetRotationPolicy(SetRotationPolicyRequest) returns (SetRotationPolicyResponse);
+
+  // GetRotationPolicy retrieves the current rotation policy for a secret.
+  rpc GetRotationPolicy(GetRotationPolicyRequest) returns (GetRotationPolicyResponse);
+
+  // GetSecretsByPrefix retrieves all secrets matching a path prefix.
+  rpc GetSecretsByPrefix(GetSecretsByPrefixRequest) returns (GetSecretsByPrefixResponse);
+
+  // WatchSecretsByPrefix streams secret changes for a prefix.
+  rpc WatchSecretsByPrefix(WatchSecretsRequest) returns (stream SecretChange);
+}
+
+// =============================================================================
+// Crypto Encryption Service
+// =============================================================================
+
+// Crypto provides encryption as a service without exposing key material.
+// All cryptographic operations are performed server-side with automatic
+// key versioning and rotation support.
+service Crypto {
+  // Encrypt encrypts plaintext data using a named encryption key.
+  rpc Encrypt(CryptoEncryptRequest) returns (CryptoEncryptResponse);
+
+  // Decrypt decrypts ciphertext that was encrypted with a named key.
+  rpc Decrypt(CryptoDecryptRequest) returns (CryptoDecryptResponse);
+
+  // Rewrap re-encrypts ciphertext with the latest version of the key.
+  rpc Rewrap(RewrapRequest) returns (RewrapResponse);
+
+  // EncryptBatch performs multiple encrypt operations in a single request.
+  rpc EncryptBatch(EncryptBatchRequest) returns (EncryptBatchResponse);
+
+  // DecryptBatch performs multiple decrypt operations in a single request.
+  rpc DecryptBatch(DecryptBatchRequest) returns (DecryptBatchResponse);
+
+  // GenerateDataKey generates a data encryption key for envelope encryption.
+  rpc GenerateDataKey(GenerateDataKeyRequest) returns (GenerateDataKeyResponse);
+
+  // GenerateWrappedDataKey generates an encrypted data key without plaintext.
+  rpc GenerateWrappedDataKey(GenerateWrappedDataKeyRequest) returns (GenerateWrappedDataKeyResponse);
+
+  // Sign creates a digital signature of data using a named signing key.
+  rpc Sign(SignRequest) returns (SignResponse);
+
+  // Verify verifies a digital signature against data using a named key.
+  rpc Verify(VerifyRequest) returns (VerifyResponse);
+
+  // GenerateHMAC generates an HMAC of data using a named key.
+  rpc GenerateHMAC(HMACRequest) returns (HMACResponse);
+
+  // VerifyHMAC verifies an HMAC against data using a named key.
+  rpc VerifyHMAC(VerifyHMACRequest) returns (VerifyHMACResponse);
+
+  // GenerateRandom generates high-quality random bytes.
+  rpc GenerateRandom(GenerateRandomRequest) returns (GenerateRandomResponse);
+
+  // Hash computes a cryptographic hash of data.
+  rpc Hash(HashRequest) returns (HashResponse);
+}
+
+// =============================================================================
+// DEK (Data Encryption Key) Management Service
+// =============================================================================
+
+// DEKManagement handles Data Encryption Key lifecycle with hierarchical paths.
+// DEKs support multi-tenant isolation through path-based namespacing.
+service DEKManagement {
+  // CreateDEK creates a new Data Encryption Key at the specified path.
+  rpc CreateDEK(CreateDEKRequest) returns (CreateDEKResponse);
+
+  // GetDEK retrieves DEK metadata by path.
+  rpc GetDEK(GetDEKRequest) returns (GetDEKResponse);
+
+  // ListDEKs returns all DEKs matching the optional path prefix.
+  rpc ListDEKs(ListDEKsRequest) returns (ListDEKsResponse);
+
+  // RotateDEK creates a new version of an existing DEK.
+  rpc RotateDEK(RotateDEKRequest) returns (RotateDEKResponse);
+
+  // DeleteDEK removes a DEK (requires force or migration).
+  rpc DeleteDEK(DeleteDEKRequest) returns (DeleteDEKResponse);
+
+  // GetDEKStatus retrieves detailed DEK status including AEAD usage.
+  rpc GetDEKStatus(GetDEKStatusRequest) returns (GetDEKStatusResponse);
+
+  // SetDefaultDEK marks a DEK as the default for its path level.
+  rpc SetDefaultDEK(SetDefaultDEKRequest) returns (SetDefaultDEKResponse);
+
+  // SetDEKSafety configures AEAD safety limits for a DEK.
+  rpc SetDEKSafety(SetDEKSafetyRequest) returns (SetDEKSafetyResponse);
+
+  // ClearDEKSafety removes custom AEAD safety limits from a DEK.
+  rpc ClearDEKSafety(ClearDEKSafetyRequest) returns (ClearDEKSafetyResponse);
+
+  // StartReencryption begins background re-encryption of data with new DEK version.
+  rpc StartReencryption(StartReencryptionRequest) returns (StartReencryptionResponse);
+
+  // GetReencryptionProgress returns the current progress of re-encryption operation.
+  rpc GetReencryptionProgress(GetReencryptionProgressRequest) returns (GetReencryptionProgressResponse);
+}
+
+// =============================================================================
+// Key Management Types
+// =============================================================================
+
+// KeyAlgorithm specifies the cryptographic algorithm for a key.
+enum KeyAlgorithm {
+  KEY_ALG_UNSPECIFIED = 0;
+
+  // Symmetric Encryption
+  KEY_ALG_AES_128_GCM = 1;
+  KEY_ALG_AES_192_GCM = 2;
+  KEY_ALG_AES_256_GCM = 3;
+  KEY_ALG_CHACHA20_POLY1305 = 4;
+  KEY_ALG_XCHACHA20_POLY1305 = 5;
+
+  // RSA
+  KEY_ALG_RSA_2048 = 10;
+  KEY_ALG_RSA_3072 = 11;
+  KEY_ALG_RSA_4096 = 12;
+
+  // ECDSA
+  KEY_ALG_ECDSA_P256 = 20;
+  KEY_ALG_ECDSA_P384 = 21;
+  KEY_ALG_ECDSA_P521 = 22;
+
+  // EdDSA
+  KEY_ALG_ED25519 = 30;
+  KEY_ALG_ED448 = 31;
+
+  // Key Exchange
+  KEY_ALG_X25519 = 40;
+  KEY_ALG_X448 = 41;
+
+  // HMAC
+  KEY_ALG_HMAC_SHA256 = 50;
+  KEY_ALG_HMAC_SHA384 = 51;
+  KEY_ALG_HMAC_SHA512 = 52;
+}
+
+// KeyUsage specifies permitted operations for a key.
+enum KeyUsage {
+  KEY_USAGE_UNSPECIFIED = 0;
+  KEY_USAGE_ENCRYPT = 1;
+  KEY_USAGE_DECRYPT = 2;
+  KEY_USAGE_SIGN = 3;
+  KEY_USAGE_VERIFY = 4;
+  KEY_USAGE_WRAP_KEY = 5;
+  KEY_USAGE_DERIVE_KEY = 6;
+  KEY_USAGE_GENERATE_MAC = 7;
+  KEY_USAGE_VERIFY_MAC = 8;
+}
+
+// KeyStatus represents the lifecycle state of a key.
+enum KeyStatus {
+  KEY_STATUS_UNSPECIFIED = 0;
+  KEY_STATUS_ENABLED = 1;
+  KEY_STATUS_DISABLED = 2;
+  KEY_STATUS_PENDING_DELETION = 3;
+  KEY_STATUS_DELETED = 4;
+  KEY_STATUS_ROTATING = 5;
+  KEY_STATUS_COMPROMISED = 6;
+}
+
+// HashAlgorithm specifies a cryptographic hash function.
+enum HashAlgorithm {
+  HASH_ALG_UNSPECIFIED = 0;
+  HASH_ALG_SHA256 = 1;
+  HASH_ALG_SHA384 = 2;
+  HASH_ALG_SHA512 = 3;
+  HASH_ALG_SHA3_256 = 4;
+  HASH_ALG_SHA3_384 = 5;
+  HASH_ALG_SHA3_512 = 6;
+  HASH_ALG_BLAKE2B_256 = 7;
+  HASH_ALG_BLAKE2B_512 = 8;
+}
+
+// WrappingAlgorithm specifies the algorithm used for key wrapping.
+enum WrappingAlgorithm {
+  WRAP_ALG_UNSPECIFIED = 0;
+  WRAP_ALG_AES_KW = 1;          // RFC 3394 AES Key Wrap
+  WRAP_ALG_AES_KWP = 2;         // RFC 5649 AES Key Wrap with Padding
+  WRAP_ALG_AES_GCM = 3;         // AES-GCM envelope encryption
+  WRAP_ALG_RSA_OAEP_SHA256 = 10;
+  WRAP_ALG_RSA_OAEP_SHA384 = 11;
+  WRAP_ALG_RSA_OAEP_SHA512 = 12;
+  WRAP_ALG_ECDH_ES_A256KW = 20; // ECDH-ES+A256KW
+}
+
+// ExportFormat specifies the format for exported key material.
+enum ExportFormat {
+  EXPORT_FORMAT_UNSPECIFIED = 0;
+  EXPORT_FORMAT_RAW = 1;
+  EXPORT_FORMAT_JWK = 2;
+  EXPORT_FORMAT_PEM = 3;
+}
+
+// SecretStatus represents the lifecycle state of a secret.
+enum SecretStatus {
+  SECRET_STATUS_UNSPECIFIED = 0;
+  SECRET_STATUS_ENABLED = 1;
+  SECRET_STATUS_DISABLED = 2;
+  SECRET_STATUS_DELETED = 3;
+}
+
+enum SecretChangeType {
+  SECRET_CHANGE_TYPE_UNSPECIFIED = 0;
+  SECRET_CHANGE_TYPE_CREATED = 1;
+  SECRET_CHANGE_TYPE_UPDATED = 2;
+  SECRET_CHANGE_TYPE_DELETED = 3;
+}
+
+// KeySpec defines the complete specification for a cryptographic key.
+message KeySpec {
+  KeyAlgorithm algorithm = 1;
+  int32 key_size = 2;
+  repeated KeyUsage usage = 3;
+  bool exportable = 4;
+  bool deletion_protection = 5;
+}
+
+// KeyHandle is an opaque reference to a key.
+message KeyHandle {
+  string key_id = 1;
+  uint64 version = 2;
+  KeyAlgorithm algorithm = 3;
+  KeyStatus status = 4;
+  int64 created_at = 5; // Unix timestamp
+}
+
+// KeyMetadata contains non-sensitive metadata about a key.
+message KeyMetadata {
+  string key_id = 1;
+  string name = 2;
+  string description = 3;
+  KeyAlgorithm algorithm = 4;
+  KeyStatus status = 5;
+  repeated KeyUsage usage = 6;
+  uint64 version = 7;
+  bool exportable = 8;
+  bool deletion_protection = 9;
+  int64 created_at = 10; // Unix timestamp
+  int64 updated_at = 11; // Unix timestamp
+  int64 last_used_at = 12; // Unix timestamp (optional)
+  RotationPolicy rotation_policy = 13;
+  map<string, string> tags = 14;
+  string owner = 15;
+}
+
+// KeyPolicy defines access control and usage policies.
+message KeyPolicy {
+  string key_id = 1;
+  uint64 version = 2;
+  repeated KeyUsage allowed_operations = 3;
+  repeated string allowed_principals = 4;
+  repeated string denied_principals = 5;
+  int64 expires_at = 6; // Unix timestamp (optional)
+  bool rotation_required = 7;
+  uint64 max_usage_count = 8;
+  bool require_mfa = 9;
+  int64 updated_at = 10; // Unix timestamp
+}
+
+// RotationPolicy defines automatic key rotation behavior.
+message RotationPolicy {
+  bool enabled = 1;
+  int64 interval_seconds = 2;
+  int64 next_rotation = 3; // Unix timestamp
+  int32 retain_versions = 4;
+  bool auto_rotate = 5;
+}
+
+// =============================================================================
+// Key Management Requests/Responses
+// =============================================================================
+
+message GenerateKeyRequest {
+  KeySpec key_spec = 1;
+  string name = 2;
+  string description = 3;
+  map<string, string> tags = 4;
+  string owner = 5;
+}
+
+message GenerateKeyResponse {
+  KeyHandle key = 1;
+  KeyMetadata metadata = 2;
+  int64 timestamp = 3; // Unix timestamp
+}
+
+message ImportKeyRequest {
+  bytes key_material = 1;
+  string wrapping_key_id = 2;
+  KeySpec key_spec = 3;
+  string name = 4;
+  string description = 5;
+  map<string, string> tags = 6;
+}
+
+message ImportKeyResponse {
+  KeyHandle key = 1;
+  KeyMetadata metadata = 2;
+  int64 timestamp = 3;
+}
+
+message GetKeyRequest {
+  string key_id = 1;
+  uint64 version = 2;
+}
+
+message GetKeyResponse {
+  KeyHandle key = 1;
+  KeyMetadata metadata = 2;
+  int64 timestamp = 3;
+}
+
+message ListKeysRequest {
+  int32 limit = 1;
+  string cursor = 2;
+  map<string, string> filter = 3;
+}
+
+message ListKeysResponse {
+  repeated KeyHandle keys = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+  int32 total_count = 4;
+  int64 timestamp = 5;
+}
+
+message RotateKeyRequest {
+  string key_id = 1;
+  bool retain_old_version = 2;
+  // Duration after which old version will be automatically disabled (0 = no grace period)
+  int64 grace_period_seconds = 3;
+}
+
+message RotateKeyResponse {
+  string key_id = 1;
+  uint64 old_version = 2;
+  uint64 new_version = 3;
+  int64 timestamp = 4;
+  // Unix timestamp when old version will be disabled (0 = no grace period)
+  int64 grace_period_disable_at = 5;
+  // Scheduler job ID for the grace period task (empty = no job scheduled)
+  string grace_period_job_id = 6;
+}
+
+message RevokeKeyRequest {
+  string key_id = 1;
+  string reason = 2;
+}
+
+message RevokeKeyResponse {
+  string key_id = 1;
+  KeyStatus status = 2;
+  int64 timestamp = 3;
+}
+
+message DeleteKeyRequest {
+  string key_id = 1;
+  int32 pending_window_days = 2;
+  bool force = 3;
+}
+
+message DeleteKeyResponse {
+  string key_id = 1;
+  KeyStatus status = 2;
+  int64 deletion_date = 3; // Unix timestamp
+  int64 timestamp = 4;
+}
+
+message GetKeyMetadataRequest {
+  string key_id = 1;
+}
+
+message GetKeyMetadataResponse {
+  KeyMetadata metadata = 1;
+  int64 timestamp = 2;
+}
+
+message UpdateKeyMetadataRequest {
+  string key_id = 1;
+  string name = 2;
+  string description = 3;
+  map<string, string> tags = 4;
+  repeated string remove_tags = 5;
+}
+
+message UpdateKeyMetadataResponse {
+  KeyMetadata metadata = 1;
+  int64 timestamp = 2;
+}
+
+message SetKeyPolicyRequest {
+  string key_id = 1;
+  KeyPolicy policy = 2;
+}
+
+message SetKeyPolicyResponse {
+  string key_id = 1;
+  uint64 policy_version = 2;
+  int64 timestamp = 3;
+}
+
+message GetKeyPolicyRequest {
+  string key_id = 1;
+}
+
+message GetKeyPolicyResponse {
+  KeyPolicy policy = 1;
+  int64 timestamp = 2;
+}
+
+// GetSupportedAlgorithmsRequest is an empty request for querying supported algorithms.
+message GetSupportedAlgorithmsRequest {}
+
+// GetSupportedAlgorithmsResponse contains the list of cryptographic algorithms
+// supported by the current backend.
+message GetSupportedAlgorithmsResponse {
+  // algorithms is the list of supported algorithm names (e.g., "AES-256-GCM", "ChaCha20-Poly1305").
+  repeated string algorithms = 1;
+}
+
+message ListKeyVersionsRequest {
+  string key_id = 1;
+  int32 limit = 2;
+  string cursor = 3;
+}
+
+// KeyVersionInfo represents metadata for a specific key version.
+message KeyVersionInfo {
+  uint64 version = 1;
+  KeyStatus status = 2;
+  KeyAlgorithm algorithm = 3;
+  int64 created_at = 4;  // Unix timestamp
+  int64 disabled_at = 5; // Unix timestamp (optional, 0 if not disabled)
+}
+
+message ListKeyVersionsResponse {
+  string key_id = 1;
+  repeated KeyVersionInfo versions = 2;
+  string next_cursor = 3;
+  bool has_more = 4;
+  int64 timestamp = 5;
+}
+
+message UpdateKeyStatusRequest {
+  string key_id = 1;
+  uint64 version = 2; // Optional: 0 means update all versions
+  KeyStatus status = 3;
+}
+
+message UpdateKeyStatusResponse {
+  string key_id = 1;
+  uint64 version = 2;
+  KeyStatus status = 3;
+  int64 timestamp = 4;
+}
+
+message ExportKeyRequest {
+  string key_id = 1;
+  string wrapping_key_id = 2;
+  WrappingAlgorithm wrapping_algorithm = 3;
+  ExportFormat format = 4;
+  uint64 version = 5;
+}
+
+message ExportKeyResponse {
+  string key_id = 1;
+  ExportFormat format = 2;
+  string wrapping_key_id = 3;
+  WrappingAlgorithm wrapping_algorithm = 4;
+  bytes wrapped_material = 5;
+  int64 timestamp = 6;
+  uint64 version = 7;
+}
+
+message UnwrapKeyRequest {
+  string key_id = 1;
+  string wrapping_key_id = 2;
+  WrappingAlgorithm wrapping_algorithm = 3;
+  bytes wrapped_material = 4;
+  KeyAlgorithm algorithm = 5;
+  string name = 6;
+  string description = 7;
+  // Source key ID and version for AAD verification (from export response)
+  string source_key_id = 8;
+  uint64 source_version = 9;
+}
+
+message UnwrapKeyResponse {
+  KeyHandle key = 1;
+  KeyMetadata metadata = 2;
+  int64 timestamp = 3;
+}
+
+message SetKeySafetyRequest {
+  string key_id = 1;
+  uint64 max_operations = 2;
+  uint64 max_bytes = 3;
+  int32 warning_percent = 4;
+}
+
+message SetKeySafetyResponse {
+  string key_id = 1;
+  int64 timestamp = 2;
+}
+
+message ClearKeySafetyRequest {
+  string key_id = 1;
+}
+
+message ClearKeySafetyResponse {
+  string key_id = 1;
+  int64 timestamp = 2;
+}
+
+message SafetyCheckRequest {}
+
+message SafetyWarning {
+  string type = 1;           // "key" or "dek"
+  string path = 2;           // key_id or dek path
+  double usage_percent = 3;
+  string status = 4;         // "warning", "critical", "exceeded"
+  uint64 operations_used = 5;
+  uint64 bytes_used = 6;
+  uint64 max_operations = 7;
+  uint64 max_bytes = 8;
+}
+
+message SafetyCheckResponse {
+  repeated SafetyWarning warnings = 1;
+  int64 timestamp = 2;
+}
+
+message SafetyReportRequest {
+  string format = 1; // "json", "table", "prometheus"
+}
+
+message SafetyReportResponse {
+  repeated SafetyWarning all_items = 1;
+  int32 total_keys = 2;
+  int32 total_deks = 3;
+  int32 keys_at_warning = 4;
+  int32 keys_at_critical = 5;
+  int32 deks_at_warning = 6;
+  int32 deks_at_critical = 7;
+  int64 timestamp = 8;
+}
+
+// BackendStatusRequest is an empty request for querying backend status.
+message BackendStatusRequest {}
+
+// BackendStatusResponse contains information about the KMS backend.
+message BackendStatusResponse {
+  // backend_type is the backend type (tpm2, awskms, azurekms, gcpkms, software, etc.)
+  string backend_type = 1;
+  // status is the backend status (healthy, degraded, unavailable)
+  string status = 2;
+  // device is the device path for TPM backends
+  string device = 3;
+  // region is the region for cloud KMS backends
+  string region = 4;
+  // key_id is the key identifier
+  string key_id = 5;
+  // pcr_banks are the PCR banks available (TPM only)
+  repeated string pcr_banks = 6;
+  // pcr_registers are the PCR registers in use (TPM only)
+  repeated int32 pcr_registers = 7;
+  // capabilities indicate what operations the backend supports
+  map<string, bool> capabilities = 8;
+  // timestamp is when the status was retrieved
+  int64 timestamp = 9;
+}
+
+// BackendTestRequest is an empty request for testing backend functionality.
+message BackendTestRequest {}
+
+// BackendTestResponse contains the result of a backend test cycle.
+message BackendTestResponse {
+  // success indicates if the test succeeded
+  bool success = 1;
+  // duration_ms is how long the test took in milliseconds
+  int64 duration_ms = 2;
+  // message contains additional information or error details
+  string message = 3;
+  // timestamp is when the test was performed
+  int64 timestamp = 4;
+}
+
+// =============================================================================
+// Secrets Management Types
+// =============================================================================
+
+// Secret represents a versioned secret with metadata.
+message Secret {
+  string secret_id = 1;
+  string name = 2;
+  string description = 3;
+  uint64 current_version = 4;
+  int64 created_at = 5; // Unix timestamp
+  int64 updated_at = 6; // Unix timestamp
+  SecretRotationPolicy rotation_policy = 7;
+  map<string, string> tags = 8;
+  string owner = 9;
+}
+
+// SecretVersion represents a specific version of a secret.
+message SecretVersion {
+  string secret_id = 1;
+  uint64 version = 2;
+  map<string, string> metadata = 3;
+  int64 created_at = 4; // Unix timestamp
+  string created_by = 5;
+  int64 deleted_at = 6; // Unix timestamp (optional)
+  int64 expires_at = 7; // Unix timestamp (optional)
+}
+
+// SecretRotationPolicy defines automatic secret rotation behavior.
+message SecretRotationPolicy {
+  bool enabled = 1;
+  int64 interval_seconds = 2;
+  int64 next_rotation = 3; // Unix timestamp
+  int32 retain_versions = 4;
+  string rotation_lambda = 5;
+}
+
+// =============================================================================
+// Secrets Management Requests/Responses
+// =============================================================================
+
+message StoreSecretRequest {
+  string secret_id = 1;
+  string name = 2;
+  string description = 3;
+  bytes data = 4;
+  map<string, string> metadata = 5;
+  map<string, string> tags = 6;
+  int64 expires_at = 7;  // Unix timestamp (optional)
+  string tenant_id = 8;  // Tenant ID for tenant-specific DEK encryption (optional)
+  string key_id = 9;     // Custom key identifier (DEKID or KeyID) (optional)
+  string algorithm = 10; // Encryption algorithm (defaults to AES-256-GCM) (optional)
+}
+
+message StoreSecretResponse {
+  string secret_id = 1;
+  uint64 version = 2;
+  int64 timestamp = 3;
+}
+
+message GetSecretRequest {
+  string secret_id = 1;
+  uint64 version = 2;
+}
+
+message GetSecretResponse {
+  string secret_id = 1;
+  uint64 version = 2;
+  bytes data = 3;
+  map<string, string> metadata = 4;
+  int64 created_at = 5;
+  int64 timestamp = 6;
+  string algorithm = 7;       // Encryption algorithm used
+  string key_identifier = 8;  // Key identifier used (DEKID or KeyID)
+}
+
+message ListSecretsRequest {
+  int32 limit = 1;
+  string cursor = 2;
+  map<string, string> filter = 3;
+}
+
+message ListSecretsResponse {
+  repeated Secret secrets = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+  int32 total_count = 4;
+  int64 timestamp = 5;
+}
+
+message DeleteSecretRequest {
+  string secret_id = 1;
+  bool permanently_delete = 2;
+}
+
+message DeleteSecretResponse {
+  string secret_id = 1;
+  bool deleted = 2;
+  int64 timestamp = 3;
+}
+
+message GetSecretVersionRequest {
+  string secret_id = 1;
+  uint64 version = 2;
+}
+
+message GetSecretVersionResponse {
+  SecretVersion version = 1;
+  bytes data = 2;
+  int64 timestamp = 3;
+}
+
+message ListSecretVersionsRequest {
+  string secret_id = 1;
+  int32 limit = 2;
+  string cursor = 3;
+}
+
+message ListSecretVersionsResponse {
+  repeated SecretVersion versions = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+  int64 timestamp = 4;
+}
+
+message RollbackSecretRequest {
+  string secret_id = 1;
+  uint64 target_version = 2;
+}
+
+message RollbackSecretResponse {
+  string secret_id = 1;
+  uint64 new_version = 2;
+  int64 timestamp = 3;
+}
+
+message RotateSecretRequest {
+  string secret_id = 1;
+  bytes new_data = 2;
+  map<string, string> metadata = 3;
+  string tenant_id = 4; // Tenant ID for tenant-specific DEK encryption (optional)
+  string key_id = 5;    // Custom key identifier (DEKID or KeyID) (optional)
+  string algorithm = 6; // Encryption algorithm (optional, inherits from previous version if not set)
+}
+
+message RotateSecretResponse {
+  string secret_id = 1;
+  uint64 old_version = 2;
+  uint64 new_version = 3;
+  int64 timestamp = 4;
+}
+
+message UpdateSecretStatusRequest {
+  string secret_id = 1;
+  SecretStatus status = 2;
+}
+
+message UpdateSecretStatusResponse {
+  string secret_id = 1;
+  SecretStatus status = 2;
+  int64 timestamp = 3;
+}
+
+message SetRotationPolicyRequest {
+  string secret_id = 1;
+  SecretRotationPolicy policy = 2;
+}
+
+message SetRotationPolicyResponse {
+  string secret_id = 1;
+  SecretRotationPolicy policy = 2;
+  int64 timestamp = 3;
+}
+
+message GetRotationPolicyRequest {
+  string secret_id = 1;
+}
+
+message GetRotationPolicyResponse {
+  string secret_id = 1;
+  SecretRotationPolicy policy = 2;
+  int64 timestamp = 3;
+}
+
+message GetSecretsByPrefixRequest {
+  string prefix = 1;
+  bool include_data = 2;
+  int32 limit = 3;
+  string cursor = 4;
+}
+
+message GetSecretsByPrefixResponse {
+  map<string, SecretData> secrets = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+  int32 total_count = 4;
+  int64 timestamp = 5;
+}
+
+// SecretData contains the data for a single secret in prefix operations.
+message SecretData {
+  map<string, bytes> data = 1;
+  map<string, string> metadata = 2;
+  int64 version = 3;
+}
+
+message WatchSecretsRequest {
+  string prefix = 1;
+  int64 start_version = 2;
+}
+
+message SecretChange {
+  string path = 1;
+  SecretChangeType change_type = 2;
+  map<string, bytes> data = 3;
+  map<string, string> metadata = 4;
+  int64 version = 5;
+  int64 timestamp = 6;
+}
+
+// =============================================================================
+// Crypto Encryption Requests/Responses
+// =============================================================================
+
+message CryptoEncryptRequest {
+  string key_id = 1;
+  bytes plaintext = 2;
+  bytes context = 3;
+  bytes nonce = 4;
+}
+
+message CryptoEncryptResponse {
+  string key_id = 1;
+  uint64 key_version = 2;
+  bytes ciphertext = 3;
+  bytes nonce = 4;
+  int64 timestamp = 5;
+}
+
+message CryptoDecryptRequest {
+  string key_id = 1;
+  bytes ciphertext = 2;
+  bytes context = 3;
+  bytes nonce = 4;
+  uint64 key_version = 5;
+}
+
+message CryptoDecryptResponse {
+  string key_id = 1;
+  uint64 key_version = 2;
+  bytes plaintext = 3;
+  int64 timestamp = 4;
+}
+
+message RewrapRequest {
+  string key_id = 1;
+  bytes ciphertext = 2;
+  bytes context = 3;
+  bytes nonce = 4;
+}
+
+message RewrapResponse {
+  string key_id = 1;
+  uint64 old_key_version = 2;
+  uint64 new_key_version = 3;
+  bytes ciphertext = 4;
+  bytes nonce = 5;
+  int64 timestamp = 6;
+}
+
+message BatchEncryptItem {
+  bytes plaintext = 1;
+  bytes context = 2;
+}
+
+message EncryptBatchRequest {
+  string key_id = 1;
+  repeated BatchEncryptItem items = 2;
+}
+
+message BatchEncryptResult {
+  bytes ciphertext = 1;
+  bytes nonce = 2;
+  string error = 3;
+}
+
+message EncryptBatchResponse {
+  string key_id = 1;
+  uint64 key_version = 2;
+  repeated BatchEncryptResult results = 3;
+  int64 timestamp = 4;
+}
+
+message BatchDecryptItem {
+  bytes ciphertext = 1;
+  bytes context = 2;
+  bytes nonce = 3;
+}
+
+message DecryptBatchRequest {
+  string key_id = 1;
+  repeated BatchDecryptItem items = 2;
+}
+
+message BatchDecryptResult {
+  bytes plaintext = 1;
+  string error = 2;
+}
+
+message DecryptBatchResponse {
+  string key_id = 1;
+  repeated BatchDecryptResult results = 2;
+  int64 timestamp = 3;
+}
+
+message GenerateDataKeyRequest {
+  string key_id = 1;
+  KeySpec key_spec = 2;
+  bytes context = 3;
+}
+
+message GenerateDataKeyResponse {
+  string key_id = 1;
+  bytes plaintext = 2;
+  bytes ciphertext_blob = 3;
+  int64 timestamp = 4;
+}
+
+message GenerateWrappedDataKeyRequest {
+  string key_id = 1;
+  KeySpec key_spec = 2;
+  bytes context = 3;
+}
+
+message GenerateWrappedDataKeyResponse {
+  string key_id = 1;
+  bytes ciphertext_blob = 2;
+  int64 timestamp = 3;
+}
+
+message SignRequest {
+  string key_id = 1;
+  bytes message = 2;
+  HashAlgorithm hash_algorithm = 3;
+}
+
+message SignResponse {
+  string key_id = 1;
+  uint64 key_version = 2;
+  bytes signature = 3;
+  HashAlgorithm hash_algorithm = 4;
+  int64 timestamp = 5;
+}
+
+message VerifyRequest {
+  string key_id = 1;
+  bytes message = 2;
+  bytes signature = 3;
+  HashAlgorithm hash_algorithm = 4;
+  uint64 key_version = 5;
+}
+
+message VerifyResponse {
+  string key_id = 1;
+  uint64 key_version = 2;
+  bool valid = 3;
+  int64 timestamp = 4;
+}
+
+message HMACRequest {
+  string key_id = 1;
+  bytes message = 2;
+  HashAlgorithm hash_algorithm = 3;
+}
+
+message HMACResponse {
+  string key_id = 1;
+  uint64 key_version = 2;
+  bytes hmac = 3;
+  HashAlgorithm hash_algorithm = 4;
+  int64 timestamp = 5;
+}
+
+message VerifyHMACRequest {
+  string key_id = 1;
+  bytes message = 2;
+  bytes hmac = 3;
+  HashAlgorithm hash_algorithm = 4;
+  uint64 key_version = 5;
+}
+
+message VerifyHMACResponse {
+  string key_id = 1;
+  uint64 key_version = 2;
+  bool valid = 3;
+  int64 timestamp = 4;
+}
+
+message GenerateRandomRequest {
+  int32 num_bytes = 1;
+}
+
+message GenerateRandomResponse {
+  bytes random_bytes = 1;
+  int64 timestamp = 2;
+}
+
+message HashRequest {
+  bytes data = 1;
+  HashAlgorithm algorithm = 2;
+}
+
+message HashResponse {
+  HashAlgorithm algorithm = 1;
+  bytes hash = 2;
+  int64 timestamp = 3;
+}
+
+// =============================================================================
+// DEK Management Types
+// =============================================================================
+
+// DEKMetadata contains non-sensitive metadata about a DEK.
+message DEKMetadata {
+  string path = 1;
+  KeyAlgorithm algorithm = 2;
+  uint64 version = 3;
+  string status = 4;
+  bool is_default = 5;
+  int64 created_at = 6;  // Unix timestamp
+  int64 rotated_at = 7;  // Unix timestamp (optional)
+  uint64 usage_count = 8;
+  uint64 bytes_used = 9;
+  uint64 max_usage_count = 10;
+  uint64 max_bytes_used = 11;
+  int32 warning_percent = 12;
+  string description = 13;
+  string backend_type = 14;
+  map<string, string> tags = 15;
+}
+
+// ReencryptionProgress tracks the progress of a background re-encryption operation.
+message ReencryptionProgress {
+  bool in_progress = 1;
+  int32 total_keys = 2;
+  int32 processed_keys = 3;
+  int32 failed_keys = 4;
+  int64 started_at = 5;  // Unix timestamp
+  int64 estimated_completion = 6;  // Unix timestamp
+}
+
+// =============================================================================
+// DEK Management Requests/Responses
+// =============================================================================
+
+message CreateDEKRequest {
+  string path = 1;
+  KeyAlgorithm algorithm = 2;
+  string description = 3;
+  uint64 max_operations = 4;
+  uint64 max_bytes = 5;
+  int32 warning_percent = 6;
+  map<string, string> tags = 7;
+}
+
+message CreateDEKResponse {
+  DEKMetadata dek = 1;
+  int64 timestamp = 2;
+}
+
+message GetDEKRequest {
+  string path = 1;
+}
+
+message GetDEKResponse {
+  DEKMetadata dek = 1;
+  int64 timestamp = 2;
+}
+
+message ListDEKsRequest {
+  string prefix = 1;
+  bool recursive = 2;
+  int32 limit = 3;
+  string cursor = 4;
+}
+
+message ListDEKsResponse {
+  repeated DEKMetadata deks = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+  int32 total_count = 4;
+  int64 timestamp = 5;
+}
+
+message RotateDEKRequest {
+  string path = 1;
+  bool background = 2;
+}
+
+message RotateDEKResponse {
+  string path = 1;
+  uint64 old_version = 2;
+  uint64 new_version = 3;
+  int64 timestamp = 4;
+}
+
+message DeleteDEKRequest {
+  string path = 1;
+  bool force = 2;
+  string migrate_to = 3;
+}
+
+message DeleteDEKResponse {
+  string path = 1;
+  bool deleted = 2;
+  int64 timestamp = 3;
+}
+
+message GetDEKStatusRequest {
+  string path = 1;
+}
+
+message GetDEKStatusResponse {
+  DEKMetadata dek = 1;
+  double usage_percent = 2;
+  string safety_status = 3; // "ok", "warning", "critical", "exceeded"
+  ReencryptionProgress reencryption_progress = 4;
+  int64 timestamp = 5;
+}
+
+message SetDefaultDEKRequest {
+  string path = 1;
+}
+
+message SetDefaultDEKResponse {
+  string path = 1;
+  string previous_default = 2;
+  int64 timestamp = 3;
+}
+
+message SetDEKSafetyRequest {
+  string path = 1;
+  uint64 max_operations = 2;
+  uint64 max_bytes = 3;
+  int32 warning_percent = 4;
+}
+
+message SetDEKSafetyResponse {
+  string path = 1;
+  int64 timestamp = 2;
+}
+
+message ClearDEKSafetyRequest {
+  string path = 1;
+}
+
+message ClearDEKSafetyResponse {
+  string path = 1;
+  int64 timestamp = 2;
+}
+
+message StartReencryptionRequest {
+  string path = 1;
+  uint64 from_version = 2;
+  uint64 to_version = 3;
+  int32 batch_size = 4;
+  bool force = 5;
+}
+
+message StartReencryptionResponse {
+  string operation_id = 1;
+  bool started = 2;
+  string path = 3;
+  int32 estimated_items = 4;
+  int64 timestamp = 5;
+}
+
+message GetReencryptionProgressRequest {
+  string path = 1;
+  string operation_id = 2;
+}
+
+message GetReencryptionProgressResponse {
+  string operation_id = 1;
+  string path = 2;
+  string status = 3;
+  ReencryptionProgress progress = 4;
+  string error = 5;
+  int64 timestamp = 6;
+}

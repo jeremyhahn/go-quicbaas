@@ -1,0 +1,1527 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package catalog
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"errors"
+	"sort"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
+)
+
+// mockStorage implements storage.Storage for testing.
+type mockStorage struct {
+	data   map[string][]byte
+	mu     sync.RWMutex
+	closed bool
+}
+
+func newMockStorage() *mockStorage {
+	return &mockStorage{
+		data: make(map[string][]byte),
+	}
+}
+
+func (m *mockStorage) Get(key []byte) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return nil, errors.New("storage is closed")
+	}
+
+	value, ok := m.data[string(key)]
+	if !ok {
+		return nil, errors.New("key not found")
+	}
+
+	result := make([]byte, len(value))
+	copy(result, value)
+	return result, nil
+}
+
+func (m *mockStorage) Set(key, value []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return errors.New("storage is closed")
+	}
+
+	valueCopy := make([]byte, len(value))
+	copy(valueCopy, value)
+	m.data[string(key)] = valueCopy
+	return nil
+}
+
+func (m *mockStorage) Delete(key []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return errors.New("storage is closed")
+	}
+
+	delete(m.data, string(key))
+	return nil
+}
+
+func (m *mockStorage) Batch() storage.Batch {
+	return &mockBatch{storage: m}
+}
+
+func (m *mockStorage) NewIterator(opts *storage.IteratorOptions) storage.Iterator {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var keys []string
+	for k := range m.data {
+		keyBytes := []byte(k)
+		if opts != nil {
+			if opts.LowerBound != nil && bytes.Compare(keyBytes, opts.LowerBound) < 0 {
+				continue
+			}
+			if opts.UpperBound != nil && bytes.Compare(keyBytes, opts.UpperBound) >= 0 {
+				continue
+			}
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	items := make([]mockKV, 0, len(keys))
+	for _, k := range keys {
+		v := m.data[k]
+		items = append(items, mockKV{key: []byte(k), value: v})
+	}
+
+	return &mockIterator{items: items, pos: -1}
+}
+
+func (m *mockStorage) Snapshot() (storage.Snapshot, error) {
+	return &mockSnapshot{storage: m}, nil
+}
+
+func (m *mockStorage) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	return nil
+}
+
+// mockBatch implements storage.Batch.
+type mockBatch struct {
+	storage *mockStorage
+	ops     []batchOp
+	closed  bool
+}
+
+type batchOp struct {
+	isDelete bool
+	key      []byte
+	value    []byte
+}
+
+func (b *mockBatch) Set(key, value []byte) error {
+	if b.closed {
+		return errors.New("batch is closed")
+	}
+	keyCopy := make([]byte, len(key))
+	copy(keyCopy, key)
+	valueCopy := make([]byte, len(value))
+	copy(valueCopy, value)
+	b.ops = append(b.ops, batchOp{key: keyCopy, value: valueCopy})
+	return nil
+}
+
+func (b *mockBatch) Delete(key []byte) error {
+	if b.closed {
+		return errors.New("batch is closed")
+	}
+	keyCopy := make([]byte, len(key))
+	copy(keyCopy, key)
+	b.ops = append(b.ops, batchOp{isDelete: true, key: keyCopy})
+	return nil
+}
+
+func (b *mockBatch) Commit() error {
+	if b.closed {
+		return errors.New("batch is closed")
+	}
+
+	b.storage.mu.Lock()
+	defer b.storage.mu.Unlock()
+
+	for _, op := range b.ops {
+		if op.isDelete {
+			delete(b.storage.data, string(op.key))
+		} else {
+			b.storage.data[string(op.key)] = op.value
+		}
+	}
+
+	b.closed = true
+	return nil
+}
+
+func (b *mockBatch) Rollback() error {
+	b.closed = true
+	return nil
+}
+
+func (b *mockBatch) Close() error {
+	if !b.closed {
+		return b.Rollback()
+	}
+	return nil
+}
+
+// mockIterator implements storage.Iterator.
+type mockIterator struct {
+	items []mockKV
+	pos   int
+	err   error
+}
+
+type mockKV struct {
+	key   []byte
+	value []byte
+}
+
+func (i *mockIterator) SeekToFirst() bool {
+	if len(i.items) == 0 {
+		return false
+	}
+	i.pos = 0
+	return true
+}
+
+func (i *mockIterator) SeekToLast() bool {
+	if len(i.items) == 0 {
+		return false
+	}
+	i.pos = len(i.items) - 1
+	return true
+}
+
+func (i *mockIterator) Seek(target []byte) bool {
+	for idx, item := range i.items {
+		if bytes.Compare(item.key, target) >= 0 {
+			i.pos = idx
+			return true
+		}
+	}
+	i.pos = len(i.items)
+	return false
+}
+
+func (i *mockIterator) Next() bool {
+	if i.pos >= len(i.items)-1 {
+		return false
+	}
+	i.pos++
+	return true
+}
+
+func (i *mockIterator) Prev() bool {
+	if i.pos <= 0 {
+		return false
+	}
+	i.pos--
+	return true
+}
+
+func (i *mockIterator) Valid() bool {
+	return i.pos >= 0 && i.pos < len(i.items)
+}
+
+func (i *mockIterator) Key() []byte {
+	if !i.Valid() {
+		return nil
+	}
+	return i.items[i.pos].key
+}
+
+func (i *mockIterator) Value() []byte {
+	if !i.Valid() {
+		return nil
+	}
+	return i.items[i.pos].value
+}
+
+func (i *mockIterator) Error() error {
+	return i.err
+}
+
+func (i *mockIterator) Close() error {
+	return nil
+}
+
+// mockSnapshot implements storage.Snapshot.
+type mockSnapshot struct {
+	storage *mockStorage
+}
+
+func (s *mockSnapshot) Get(key []byte) ([]byte, error) {
+	return s.storage.Get(key)
+}
+
+func (s *mockSnapshot) NewIterator(opts *storage.IteratorOptions) storage.Iterator {
+	return s.storage.NewIterator(opts)
+}
+
+func (s *mockSnapshot) Close() error {
+	return nil
+}
+
+// testHelper provides common test utilities.
+type testHelper struct {
+	t       *testing.T
+	ctx     context.Context
+	storage *mockStorage
+	manager CatalogManager
+}
+
+func newTestHelper(t *testing.T) *testHelper {
+	t.Helper()
+
+	store := newMockStorage()
+
+	mgr, err := NewCatalogManager(&ManagerConfig{
+		StorageConfig: &StorageConfig{
+			Storage: store,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create catalog manager: %v", err)
+	}
+
+	return &testHelper{
+		t:       t,
+		ctx:     context.Background(),
+		storage: store,
+		manager: mgr,
+	}
+}
+
+func (h *testHelper) cleanup() {
+	if h.manager != nil {
+		h.manager.Close()
+	}
+	if h.storage != nil {
+		h.storage.Close()
+	}
+}
+
+func (h *testHelper) createTestEntry(key string) *CatalogEntry {
+	checksum := sha256.Sum256([]byte(key))
+	return &CatalogEntry{
+		Key:         key,
+		ObjectID:    12345,
+		Checksum:    checksum[:],
+		Size:        1024,
+		ContentType: "application/octet-stream",
+		PrimaryStore: &StoreLocation{
+			Store:      "s3-primary",
+			ObjectRef:  "obj/" + key,
+			Status:     "active",
+			StoredSize: 1024,
+			SyncedAt:   time.Now().UnixNano(),
+		},
+		TenantID: "tenant-test",
+		Owner:    "user@example.com",
+		Tags: map[string]string{
+			"env":     "test",
+			"project": "demo",
+		},
+		Status: StatusActive,
+	}
+}
+
+// TestNewCatalogManager tests manager creation.
+func TestNewCatalogManager(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		store := newMockStorage()
+		defer store.Close()
+
+		mgr, err := NewCatalogManager(&ManagerConfig{
+			StorageConfig: &StorageConfig{
+				Storage: store,
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mgr == nil {
+			t.Fatal("expected non-nil manager")
+		}
+		defer mgr.Close()
+	})
+
+	t.Run("nil config", func(t *testing.T) {
+		_, err := NewCatalogManager(nil)
+		if err == nil {
+			t.Fatal("expected error for nil config")
+		}
+		if !errors.Is(err, ErrConfigNil) {
+			t.Errorf("expected ErrConfigNil, got: %v", err)
+		}
+	})
+
+	t.Run("nil storage config", func(t *testing.T) {
+		_, err := NewCatalogManager(&ManagerConfig{})
+		if err == nil {
+			t.Fatal("expected error for nil storage config")
+		}
+		if !errors.Is(err, ErrStorageConfigNil) {
+			t.Errorf("expected ErrStorageConfigNil, got: %v", err)
+		}
+	})
+
+	t.Run("nil storage", func(t *testing.T) {
+		_, err := NewCatalogManager(&ManagerConfig{
+			StorageConfig: &StorageConfig{},
+		})
+		if err == nil {
+			t.Fatal("expected error for nil storage")
+		}
+		if !errors.Is(err, ErrStorageNil) {
+			t.Errorf("expected ErrStorageNil, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerPut tests the Put operation.
+func TestCatalogManagerPut(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/report.pdf")
+		err := h.manager.Put(h.ctx, entry)
+		if err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		// Verify entry was stored
+		retrieved, err := h.manager.Get(h.ctx, entry.Key)
+		if err != nil {
+			t.Fatalf("Get failed: %v", err)
+		}
+
+		if retrieved.Key != entry.Key {
+			t.Errorf("key mismatch: got %s, want %s", retrieved.Key, entry.Key)
+		}
+		if retrieved.Version != 1 {
+			t.Errorf("expected version 1, got %d", retrieved.Version)
+		}
+		if retrieved.CreatedAt == 0 {
+			t.Error("expected CreatedAt to be set")
+		}
+		if retrieved.ModifiedAt == 0 {
+			t.Error("expected ModifiedAt to be set")
+		}
+	})
+
+	t.Run("nil entry", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.Put(h.ctx, nil)
+		if err == nil {
+			t.Fatal("expected error for nil entry")
+		}
+		if !errors.Is(err, ErrEntryNil) {
+			t.Errorf("expected ErrEntryNil, got: %v", err)
+		}
+	})
+
+	t.Run("empty key", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := &CatalogEntry{Key: ""}
+		err := h.manager.Put(h.ctx, entry)
+		if err == nil {
+			t.Fatal("expected error for empty key")
+		}
+
+		var ce *CatalogError
+		if !errors.As(err, &ce) || ce.Code != ErrCodeKeyEmpty {
+			t.Errorf("expected KEY_EMPTY error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid key format", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := &CatalogEntry{Key: "no-separator"}
+		err := h.manager.Put(h.ctx, entry)
+		if err == nil {
+			t.Fatal("expected error for invalid key format")
+		}
+
+		var ce *CatalogError
+		if !errors.As(err, &ce) || ce.Code != ErrCodeKeyInvalid {
+			t.Errorf("expected KEY_INVALID error, got: %v", err)
+		}
+	})
+
+	t.Run("closed manager", func(t *testing.T) {
+		h := newTestHelper(t)
+		h.manager.Close()
+
+		entry := h.createTestEntry("tenant-test:docs/file.txt")
+		err := h.manager.Put(h.ctx, entry)
+		if err == nil {
+			t.Fatal("expected error for closed manager")
+		}
+		if !IsCatalogClosed(err) {
+			t.Errorf("expected catalog closed error, got: %v", err)
+		}
+
+		h.storage.Close()
+	})
+}
+
+// TestCatalogManagerGet tests the Get operation.
+func TestCatalogManagerGet(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/report.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		retrieved, err := h.manager.Get(h.ctx, entry.Key)
+		if err != nil {
+			t.Fatalf("Get failed: %v", err)
+		}
+
+		if retrieved.Key != entry.Key {
+			t.Errorf("key mismatch: got %s, want %s", retrieved.Key, entry.Key)
+		}
+		if retrieved.Size != entry.Size {
+			t.Errorf("size mismatch: got %d, want %d", retrieved.Size, entry.Size)
+		}
+		if retrieved.TenantID != entry.TenantID {
+			t.Errorf("tenant mismatch: got %s, want %s", retrieved.TenantID, entry.TenantID)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		_, err := h.manager.Get(h.ctx, "tenant-test:nonexistent/file.txt")
+		if err == nil {
+			t.Fatal("expected error for nonexistent key")
+		}
+		if !IsNotFound(err) {
+			t.Errorf("expected not found error, got: %v", err)
+		}
+	})
+
+	t.Run("empty key", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		_, err := h.manager.Get(h.ctx, "")
+		if err == nil {
+			t.Fatal("expected error for empty key")
+		}
+
+		var ce *CatalogError
+		if !errors.As(err, &ce) || ce.Code != ErrCodeKeyEmpty {
+			t.Errorf("expected KEY_EMPTY error, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerDelete tests the Delete operation.
+func TestCatalogManagerDelete(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/to-delete.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		// Verify entry exists
+		_, err := h.manager.Get(h.ctx, entry.Key)
+		if err != nil {
+			t.Fatalf("Get failed: %v", err)
+		}
+
+		// Delete entry
+		if err := h.manager.Delete(h.ctx, entry.Key); err != nil {
+			t.Fatalf("Delete failed: %v", err)
+		}
+
+		// Verify entry is gone
+		_, err = h.manager.Get(h.ctx, entry.Key)
+		if err == nil {
+			t.Fatal("expected error for deleted entry")
+		}
+		if !IsNotFound(err) {
+			t.Errorf("expected not found error, got: %v", err)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.Delete(h.ctx, "tenant-test:nonexistent/file.txt")
+		if err == nil {
+			t.Fatal("expected error for nonexistent key")
+		}
+		if !IsNotFound(err) {
+			t.Errorf("expected not found error, got: %v", err)
+		}
+	})
+
+	t.Run("empty key", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.Delete(h.ctx, "")
+		if err == nil {
+			t.Fatal("expected error for empty key")
+		}
+
+		var ce *CatalogError
+		if !errors.As(err, &ce) || ce.Code != ErrCodeKeyEmpty {
+			t.Errorf("expected KEY_EMPTY error, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerUpdate tests the Update operation.
+func TestCatalogManagerUpdate(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/update-me.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		// Update the entry
+		newSize := int64(2048)
+		err := h.manager.Update(h.ctx, entry.Key, func(e *CatalogEntry) error {
+			e.Size = newSize
+			e.Tags["updated"] = "true"
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update failed: %v", err)
+		}
+
+		// Verify update
+		retrieved, err := h.manager.Get(h.ctx, entry.Key)
+		if err != nil {
+			t.Fatalf("Get failed: %v", err)
+		}
+
+		if retrieved.Size != newSize {
+			t.Errorf("size not updated: got %d, want %d", retrieved.Size, newSize)
+		}
+		if retrieved.Tags["updated"] != "true" {
+			t.Error("tag not updated")
+		}
+		if retrieved.Version != 2 {
+			t.Errorf("expected version 2, got %d", retrieved.Version)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.Update(h.ctx, "tenant-test:nonexistent/file.txt", func(e *CatalogEntry) error {
+			return nil
+		})
+		if err == nil {
+			t.Fatal("expected error for nonexistent key")
+		}
+		if !IsNotFound(err) {
+			t.Errorf("expected not found error, got: %v", err)
+		}
+	})
+
+	t.Run("nil updater", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/nil-updater.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		err := h.manager.Update(h.ctx, entry.Key, nil)
+		if err == nil {
+			t.Fatal("expected error for nil updater")
+		}
+		if !errors.Is(err, ErrUpdaterNil) {
+			t.Errorf("expected ErrUpdaterNil, got: %v", err)
+		}
+	})
+
+	t.Run("updater error propagates", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/updater-error.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		updateErr := errors.New("update failed")
+		err := h.manager.Update(h.ctx, entry.Key, func(e *CatalogEntry) error {
+			return updateErr
+		})
+		if err == nil {
+			t.Fatal("expected error from updater")
+		}
+		if !errors.Is(err, updateErr) {
+			t.Errorf("expected update error, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerExists tests the Exists operation.
+func TestCatalogManagerExists(t *testing.T) {
+	t.Run("exists", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/exists.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		exists, err := h.manager.Exists(h.ctx, entry.Key)
+		if err != nil {
+			t.Fatalf("Exists failed: %v", err)
+		}
+		if !exists {
+			t.Error("expected entry to exist")
+		}
+	})
+
+	t.Run("does not exist", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		exists, err := h.manager.Exists(h.ctx, "tenant-test:nonexistent/file.txt")
+		if err != nil {
+			t.Fatalf("Exists failed: %v", err)
+		}
+		if exists {
+			t.Error("expected entry to not exist")
+		}
+	})
+
+	t.Run("empty key", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		_, err := h.manager.Exists(h.ctx, "")
+		if err == nil {
+			t.Fatal("expected error for empty key")
+		}
+	})
+}
+
+// TestCatalogManagerAddLocation tests adding storage locations.
+func TestCatalogManagerAddLocation(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/add-location.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		newLoc := &StoreLocation{
+			Store:      "gcs-backup",
+			ObjectRef:  "backup/" + entry.Key,
+			Status:     "active",
+			StoredSize: 1024,
+		}
+
+		if err := h.manager.AddLocation(h.ctx, entry.Key, newLoc); err != nil {
+			t.Fatalf("AddLocation failed: %v", err)
+		}
+
+		locations, err := h.manager.GetLocations(h.ctx, entry.Key)
+		if err != nil {
+			t.Fatalf("GetLocations failed: %v", err)
+		}
+
+		if len(locations) != 2 {
+			t.Errorf("expected 2 locations, got %d", len(locations))
+		}
+	})
+
+	t.Run("nil location", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/nil-loc.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		err := h.manager.AddLocation(h.ctx, entry.Key, nil)
+		if err == nil {
+			t.Fatal("expected error for nil location")
+		}
+		if !errors.Is(err, ErrLocationNil) {
+			t.Errorf("expected ErrLocationNil, got: %v", err)
+		}
+	})
+
+	t.Run("empty store name", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/empty-store.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		err := h.manager.AddLocation(h.ctx, entry.Key, &StoreLocation{Store: ""})
+		if err == nil {
+			t.Fatal("expected error for empty store name")
+		}
+		if !errors.Is(err, ErrStoreNameEmpty) {
+			t.Errorf("expected ErrStoreNameEmpty, got: %v", err)
+		}
+	})
+
+	t.Run("duplicate location", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/dup-loc.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		// Try to add location with same store name as primary
+		dupLoc := &StoreLocation{
+			Store:     "s3-primary", // Same as primary
+			ObjectRef: "dup/path",
+		}
+
+		err := h.manager.AddLocation(h.ctx, entry.Key, dupLoc)
+		if err == nil {
+			t.Fatal("expected error for duplicate location")
+		}
+
+		var ce *CatalogError
+		if !errors.As(err, &ce) || ce.Code != ErrCodeEntryExists {
+			t.Errorf("expected ENTRY_EXISTS error, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerRemoveLocation tests removing storage locations.
+func TestCatalogManagerRemoveLocation(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/remove-loc.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		// Add a replica
+		replica := &StoreLocation{
+			Store:      "gcs-backup",
+			ObjectRef:  "backup/path",
+			StoredSize: 1024,
+		}
+		if err := h.manager.AddLocation(h.ctx, entry.Key, replica); err != nil {
+			t.Fatalf("AddLocation failed: %v", err)
+		}
+
+		// Remove the replica
+		if err := h.manager.RemoveLocation(h.ctx, entry.Key, "gcs-backup"); err != nil {
+			t.Fatalf("RemoveLocation failed: %v", err)
+		}
+
+		locations, err := h.manager.GetLocations(h.ctx, entry.Key)
+		if err != nil {
+			t.Fatalf("GetLocations failed: %v", err)
+		}
+
+		if len(locations) != 1 {
+			t.Errorf("expected 1 location, got %d", len(locations))
+		}
+	})
+
+	t.Run("cannot remove primary", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/remove-primary.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		err := h.manager.RemoveLocation(h.ctx, entry.Key, "s3-primary")
+		if err == nil {
+			t.Fatal("expected error when removing primary")
+		}
+		if !errors.Is(err, ErrCannotRemovePrimary) {
+			t.Errorf("expected ErrCannotRemovePrimary, got: %v", err)
+		}
+	})
+
+	t.Run("location not found", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/no-loc.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		err := h.manager.RemoveLocation(h.ctx, entry.Key, "nonexistent-store")
+		if err == nil {
+			t.Fatal("expected error for nonexistent location")
+		}
+
+		var ce *CatalogError
+		if !errors.As(err, &ce) || ce.Code != ErrCodeLocationNotFound {
+			t.Errorf("expected LOCATION_NOT_FOUND error, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerSetPrimaryStore tests changing the primary store.
+func TestCatalogManagerSetPrimaryStore(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/set-primary.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		// Add a replica
+		replica := &StoreLocation{
+			Store:      "gcs-backup",
+			ObjectRef:  "backup/path",
+			StoredSize: 1024,
+		}
+		if err := h.manager.AddLocation(h.ctx, entry.Key, replica); err != nil {
+			t.Fatalf("AddLocation failed: %v", err)
+		}
+
+		// Set replica as new primary
+		if err := h.manager.SetPrimaryStore(h.ctx, entry.Key, "gcs-backup"); err != nil {
+			t.Fatalf("SetPrimaryStore failed: %v", err)
+		}
+
+		// Verify
+		retrieved, err := h.manager.Get(h.ctx, entry.Key)
+		if err != nil {
+			t.Fatalf("Get failed: %v", err)
+		}
+
+		if retrieved.PrimaryStore.Store != "gcs-backup" {
+			t.Errorf("expected primary store 'gcs-backup', got '%s'", retrieved.PrimaryStore.Store)
+		}
+
+		// Old primary should now be a replica
+		found := false
+		for _, r := range retrieved.Replicas {
+			if r.Store == "s3-primary" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("old primary not found in replicas")
+		}
+	})
+
+	t.Run("location not found", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/no-primary.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		err := h.manager.SetPrimaryStore(h.ctx, entry.Key, "nonexistent-store")
+		if err == nil {
+			t.Fatal("expected error for nonexistent store")
+		}
+
+		var ce *CatalogError
+		if !errors.As(err, &ce) || ce.Code != ErrCodeLocationNotFound {
+			t.Errorf("expected LOCATION_NOT_FOUND error, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerUpdateLocationStatus tests updating location status.
+func TestCatalogManagerUpdateLocationStatus(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/update-status.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		if err := h.manager.UpdateLocationStatus(h.ctx, entry.Key, "s3-primary", LocationStatusSyncing); err != nil {
+			t.Fatalf("UpdateLocationStatus failed: %v", err)
+		}
+
+		retrieved, err := h.manager.Get(h.ctx, entry.Key)
+		if err != nil {
+			t.Fatalf("Get failed: %v", err)
+		}
+
+		if retrieved.PrimaryStore.Status != LocationStatusSyncing.String() {
+			t.Errorf("expected status 'syncing', got '%s'", retrieved.PrimaryStore.Status)
+		}
+	})
+
+	t.Run("invalid status", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		entry := h.createTestEntry("tenant-test:docs/invalid-status.pdf")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+
+		err := h.manager.UpdateLocationStatus(h.ctx, entry.Key, "s3-primary", LocationStatus("invalid"))
+		if err == nil {
+			t.Fatal("expected error for invalid status")
+		}
+		if !errors.Is(err, ErrInvalidLocationStatus) {
+			t.Errorf("expected ErrInvalidLocationStatus, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerListByStore tests listing by store.
+func TestCatalogManagerListByStore(t *testing.T) {
+	h := newTestHelper(t)
+	defer h.cleanup()
+
+	// Create test entries
+	for i := 0; i < 5; i++ {
+		entry := h.createTestEntry("tenant-test:store-test/file" + itoa(int64(i)) + ".txt")
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+	}
+
+	t.Run("list all", func(t *testing.T) {
+		entries, err := h.manager.ListByStore(h.ctx, "s3-primary", nil)
+		if err != nil {
+			t.Fatalf("ListByStore failed: %v", err)
+		}
+
+		if len(entries) != 5 {
+			t.Errorf("expected 5 entries, got %d", len(entries))
+		}
+	})
+
+	t.Run("with limit", func(t *testing.T) {
+		entries, err := h.manager.ListByStore(h.ctx, "s3-primary", &ListOptions{Limit: 3})
+		if err != nil {
+			t.Fatalf("ListByStore failed: %v", err)
+		}
+
+		if len(entries) != 3 {
+			t.Errorf("expected 3 entries, got %d", len(entries))
+		}
+	})
+
+	t.Run("empty store", func(t *testing.T) {
+		_, err := h.manager.ListByStore(h.ctx, "", nil)
+		if err == nil {
+			t.Fatal("expected error for empty store")
+		}
+		if !errors.Is(err, ErrStoreNameEmpty) {
+			t.Errorf("expected ErrStoreNameEmpty, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerListByTenant tests listing by tenant.
+func TestCatalogManagerListByTenant(t *testing.T) {
+	h := newTestHelper(t)
+	defer h.cleanup()
+
+	// Create entries for different tenants
+	for i := 0; i < 3; i++ {
+		entry := h.createTestEntry("tenant-a:files/file" + itoa(int64(i)) + ".txt")
+		entry.TenantID = "tenant-a"
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+	}
+
+	for i := 0; i < 2; i++ {
+		entry := h.createTestEntry("tenant-b:files/file" + itoa(int64(i)) + ".txt")
+		entry.TenantID = "tenant-b"
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+	}
+
+	t.Run("tenant-a", func(t *testing.T) {
+		entries, err := h.manager.ListByTenant(h.ctx, "tenant-a", nil)
+		if err != nil {
+			t.Fatalf("ListByTenant failed: %v", err)
+		}
+
+		if len(entries) != 3 {
+			t.Errorf("expected 3 entries for tenant-a, got %d", len(entries))
+		}
+	})
+
+	t.Run("tenant-b", func(t *testing.T) {
+		entries, err := h.manager.ListByTenant(h.ctx, "tenant-b", nil)
+		if err != nil {
+			t.Fatalf("ListByTenant failed: %v", err)
+		}
+
+		if len(entries) != 2 {
+			t.Errorf("expected 2 entries for tenant-b, got %d", len(entries))
+		}
+	})
+
+	t.Run("empty tenant", func(t *testing.T) {
+		_, err := h.manager.ListByTenant(h.ctx, "", nil)
+		if err == nil {
+			t.Fatal("expected error for empty tenant")
+		}
+		if !errors.Is(err, ErrTenantEmpty) {
+			t.Errorf("expected ErrTenantEmpty, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerListByPrefix tests listing by key prefix.
+func TestCatalogManagerListByPrefix(t *testing.T) {
+	h := newTestHelper(t)
+	defer h.cleanup()
+
+	// Create entries with different prefixes
+	prefixes := []string{
+		"backups:daily/file1.tar",
+		"backups:daily/file2.tar",
+		"backups:weekly/file1.tar",
+		"logs:app/error.log",
+		"logs:app/access.log",
+	}
+
+	for _, p := range prefixes {
+		entry := h.createTestEntry(p)
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+	}
+
+	t.Run("backups prefix", func(t *testing.T) {
+		entries, err := h.manager.ListByPrefix(h.ctx, "backups:", nil)
+		if err != nil {
+			t.Fatalf("ListByPrefix failed: %v", err)
+		}
+
+		if len(entries) != 3 {
+			t.Errorf("expected 3 entries for backups:, got %d", len(entries))
+		}
+	})
+
+	t.Run("daily prefix", func(t *testing.T) {
+		entries, err := h.manager.ListByPrefix(h.ctx, "backups:daily/", nil)
+		if err != nil {
+			t.Fatalf("ListByPrefix failed: %v", err)
+		}
+
+		if len(entries) != 2 {
+			t.Errorf("expected 2 entries for backups:daily/, got %d", len(entries))
+		}
+	})
+
+	t.Run("logs prefix", func(t *testing.T) {
+		entries, err := h.manager.ListByPrefix(h.ctx, "logs:", nil)
+		if err != nil {
+			t.Fatalf("ListByPrefix failed: %v", err)
+		}
+
+		if len(entries) != 2 {
+			t.Errorf("expected 2 entries for logs:, got %d", len(entries))
+		}
+	})
+}
+
+// TestCatalogManagerListByStatus tests listing by status.
+func TestCatalogManagerListByStatus(t *testing.T) {
+	h := newTestHelper(t)
+	defer h.cleanup()
+
+	// Create entries with different statuses
+	statuses := []EntryStatus{StatusActive, StatusActive, StatusPending, StatusArchived}
+
+	for i, status := range statuses {
+		entry := h.createTestEntry("tenant-test:status/file" + itoa(int64(i)) + ".txt")
+		entry.Status = status
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+	}
+
+	t.Run("active entries", func(t *testing.T) {
+		entries, err := h.manager.ListByStatus(h.ctx, StatusActive, nil)
+		if err != nil {
+			t.Fatalf("ListByStatus failed: %v", err)
+		}
+
+		if len(entries) != 2 {
+			t.Errorf("expected 2 active entries, got %d", len(entries))
+		}
+	})
+
+	t.Run("pending entries", func(t *testing.T) {
+		entries, err := h.manager.ListByStatus(h.ctx, StatusPending, nil)
+		if err != nil {
+			t.Fatalf("ListByStatus failed: %v", err)
+		}
+
+		if len(entries) != 1 {
+			t.Errorf("expected 1 pending entry, got %d", len(entries))
+		}
+	})
+
+	t.Run("invalid status", func(t *testing.T) {
+		_, err := h.manager.ListByStatus(h.ctx, EntryStatus("invalid"), nil)
+		if err == nil {
+			t.Fatal("expected error for invalid status")
+		}
+		if !errors.Is(err, ErrInvalidStatus) {
+			t.Errorf("expected ErrInvalidStatus, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerEnqueueReplication tests replication queue operations.
+func TestCatalogManagerEnqueueReplication(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.EnqueueReplication(h.ctx, "tenant-test:replicate/file.txt", []string{"gcs-backup", "azure-cold"}, 5)
+		if err != nil {
+			t.Fatalf("EnqueueReplication failed: %v", err)
+		}
+
+		task, err := h.manager.DequeueReplication(h.ctx)
+		if err != nil {
+			t.Fatalf("DequeueReplication failed: %v", err)
+		}
+
+		if task == nil {
+			t.Fatal("expected non-nil task")
+		}
+		if task.Key != "tenant-test:replicate/file.txt" {
+			t.Errorf("expected key 'tenant-test:replicate/file.txt', got '%s'", task.Key)
+		}
+		if len(task.Targets) != 2 {
+			t.Errorf("expected 2 targets, got %d", len(task.Targets))
+		}
+	})
+
+	t.Run("empty key", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.EnqueueReplication(h.ctx, "", []string{"gcs-backup"}, 5)
+		if err == nil {
+			t.Fatal("expected error for empty key")
+		}
+	})
+
+	t.Run("empty targets", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.EnqueueReplication(h.ctx, "tenant-test:replicate/file.txt", nil, 5)
+		if err == nil {
+			t.Fatal("expected error for empty targets")
+		}
+		if !errors.Is(err, ErrTargetsEmpty) {
+			t.Errorf("expected ErrTargetsEmpty, got: %v", err)
+		}
+	})
+
+	t.Run("empty queue", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		task, err := h.manager.DequeueReplication(h.ctx)
+		if err != nil {
+			t.Fatalf("DequeueReplication failed: %v", err)
+		}
+		if task != nil {
+			t.Error("expected nil task for empty queue")
+		}
+	})
+}
+
+// TestCatalogManagerEnqueueArchive tests archive queue operations.
+func TestCatalogManagerEnqueueArchive(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.EnqueueArchive(h.ctx, "tenant-test:archive/file.txt")
+		if err != nil {
+			t.Fatalf("EnqueueArchive failed: %v", err)
+		}
+
+		task, err := h.manager.DequeueArchive(h.ctx)
+		if err != nil {
+			t.Fatalf("DequeueArchive failed: %v", err)
+		}
+
+		if task == nil {
+			t.Fatal("expected non-nil task")
+		}
+		if task.Key != "tenant-test:archive/file.txt" {
+			t.Errorf("expected key 'tenant-test:archive/file.txt', got '%s'", task.Key)
+		}
+	})
+
+	t.Run("empty key", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.EnqueueArchive(h.ctx, "")
+		if err == nil {
+			t.Fatal("expected error for empty key")
+		}
+	})
+}
+
+// TestCatalogManagerEnqueueVerify tests verify queue operations.
+func TestCatalogManagerEnqueueVerify(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.EnqueueVerify(h.ctx, "tenant-test:verify/file.txt")
+		if err != nil {
+			t.Fatalf("EnqueueVerify failed: %v", err)
+		}
+	})
+
+	t.Run("empty key", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.cleanup()
+
+		err := h.manager.EnqueueVerify(h.ctx, "")
+		if err == nil {
+			t.Fatal("expected error for empty key")
+		}
+	})
+}
+
+// TestCatalogManagerGetTenantUsage tests tenant usage statistics.
+func TestCatalogManagerGetTenantUsage(t *testing.T) {
+	h := newTestHelper(t)
+	defer h.cleanup()
+
+	// Create test entries
+	for i := 0; i < 5; i++ {
+		entry := h.createTestEntry("tenant-usage:usage/file" + itoa(int64(i)) + ".txt")
+		entry.TenantID = "tenant-usage"
+		entry.Size = 1024
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+	}
+
+	t.Run("success", func(t *testing.T) {
+		usage, err := h.manager.GetTenantUsage(h.ctx, "tenant-usage")
+		if err != nil {
+			t.Fatalf("GetTenantUsage failed: %v", err)
+		}
+
+		if usage.TenantID != "tenant-usage" {
+			t.Errorf("expected tenant 'tenant-usage', got '%s'", usage.TenantID)
+		}
+		if usage.ObjectCount != 5 {
+			t.Errorf("expected 5 objects, got %d", usage.ObjectCount)
+		}
+		if usage.TotalBytes != 5*1024 {
+			t.Errorf("expected %d bytes, got %d", 5*1024, usage.TotalBytes)
+		}
+	})
+
+	t.Run("empty tenant", func(t *testing.T) {
+		_, err := h.manager.GetTenantUsage(h.ctx, "")
+		if err == nil {
+			t.Fatal("expected error for empty tenant")
+		}
+		if !errors.Is(err, ErrTenantEmpty) {
+			t.Errorf("expected ErrTenantEmpty, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerGetStoreUsage tests store usage statistics.
+func TestCatalogManagerGetStoreUsage(t *testing.T) {
+	h := newTestHelper(t)
+	defer h.cleanup()
+
+	// Create test entries
+	for i := 0; i < 3; i++ {
+		entry := h.createTestEntry("tenant-store:usage/file" + itoa(int64(i)) + ".txt")
+		entry.TenantID = "tenant-store"
+		entry.Size = 1024
+		entry.PrimaryStore.StoredSize = 512 // Compressed
+		if err := h.manager.Put(h.ctx, entry); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+	}
+
+	t.Run("success", func(t *testing.T) {
+		usage, err := h.manager.GetStoreUsage(h.ctx, "s3-primary")
+		if err != nil {
+			t.Fatalf("GetStoreUsage failed: %v", err)
+		}
+
+		if usage.StoreName != "s3-primary" {
+			t.Errorf("expected store 's3-primary', got '%s'", usage.StoreName)
+		}
+		if usage.ObjectCount != 3 {
+			t.Errorf("expected 3 objects, got %d", usage.ObjectCount)
+		}
+		if usage.TotalBytes != 3*512 {
+			t.Errorf("expected %d bytes, got %d", 3*512, usage.TotalBytes)
+		}
+	})
+
+	t.Run("empty store", func(t *testing.T) {
+		_, err := h.manager.GetStoreUsage(h.ctx, "")
+		if err == nil {
+			t.Fatal("expected error for empty store")
+		}
+		if !errors.Is(err, ErrStoreNameEmpty) {
+			t.Errorf("expected ErrStoreNameEmpty, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerUpdateAccessTime tests updating access time.
+func TestCatalogManagerUpdateAccessTime(t *testing.T) {
+	h := newTestHelper(t)
+	defer h.cleanup()
+
+	entry := h.createTestEntry("tenant-test:access/file.txt")
+	if err := h.manager.Put(h.ctx, entry); err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	// Get original access time
+	original, _ := h.manager.Get(h.ctx, entry.Key)
+	originalAccess := original.LastAccessAt
+
+	time.Sleep(10 * time.Millisecond)
+
+	if err := h.manager.UpdateAccessTime(h.ctx, entry.Key); err != nil {
+		t.Fatalf("UpdateAccessTime failed: %v", err)
+	}
+
+	updated, _ := h.manager.Get(h.ctx, entry.Key)
+	if updated.LastAccessAt <= originalAccess {
+		t.Error("LastAccessAt should have been updated")
+	}
+}
+
+// TestCatalogManagerClose tests the Close operation.
+func TestCatalogManagerClose(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.storage.Close()
+
+		err := h.manager.Close()
+		if err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	})
+
+	t.Run("double close", func(t *testing.T) {
+		h := newTestHelper(t)
+		defer h.storage.Close()
+
+		if err := h.manager.Close(); err != nil {
+			t.Fatalf("first Close failed: %v", err)
+		}
+
+		err := h.manager.Close()
+		if err == nil {
+			t.Fatal("expected error for double close")
+		}
+		if !IsCatalogClosed(err) {
+			t.Errorf("expected catalog closed error, got: %v", err)
+		}
+	})
+}
+
+// TestCatalogManagerSync tests the Sync operation.
+func TestCatalogManagerSync(t *testing.T) {
+	h := newTestHelper(t)
+	defer h.cleanup()
+
+	entry := h.createTestEntry("tenant-test:sync/file.txt")
+	if err := h.manager.Put(h.ctx, entry); err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	if err := h.manager.Sync(); err != nil {
+		t.Fatalf("Sync failed: %v", err)
+	}
+}

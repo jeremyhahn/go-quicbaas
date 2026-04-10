@@ -1,0 +1,61 @@
+# QuicBaaS SDK Integration Test Environment
+# Single-node server for testing SDK functionality
+
+services:
+  quicbaas:
+    build:
+      context: ../../../..
+      dockerfile: test/integration/Dockerfile.dev
+      args:
+        BUILD_TAGS: "iam raft rest rag"
+    container_name: quicbaas-sdk-test
+    hostname: quicbaas
+    command:
+      - /usr/local/bin/quicbaasd
+      - node
+      - --discovery=static
+      - --grpc-port=50051
+      - --http-port=8080
+    ports:
+      - "58080:8080"   # REST API
+      - "59090:9090"   # Metrics
+      - "50151:50051"  # gRPC
+    environment:
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas:63001
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=console
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=/var/run/quicbaas/quicbaas.sock
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      - QUICBAAS_SECRETS_ENABLED=true
+      - QUICBAAS_SECURITY_INSECURE=true
+      - QUICBAAS_SERVER_MCP_ENABLED=false
+    volumes:
+      - quicbaas-data:/data
+      - quicbaas-logs:/var/log/quicbaas
+      - quicbaas-socket:/var/run/quicbaas
+    networks:
+      - sdk-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 50051 && nc -z localhost 8080"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+networks:
+  sdk-test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+volumes:
+  quicbaas-data:
+  quicbaas-logs:
+  quicbaas-socket:

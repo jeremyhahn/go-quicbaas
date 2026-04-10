@@ -1,0 +1,103 @@
+# QuicBaaS 3-Node Raft Cluster Configuration - Docker Compose
+# Production-ready 3-node Raft cluster
+# Tolerates 1 node failure while maintaining quorum
+#
+# Usage:
+#   docker compose -f configs/docker/docker-compose.raft-3-node.yaml up
+#   docker compose -f configs/docker/docker-compose.raft-3-node.yaml up -d  # detached
+#
+# Access (any node can handle requests):
+#   Node 1: http://localhost:8444 (REST), localhost:9444 (gRPC)
+#   Node 2: http://localhost:8445 (REST), localhost:9445 (gRPC)
+#   Node 3: http://localhost:8446 (REST), localhost:9446 (gRPC)
+#
+# Cluster Status:
+#   curl http://localhost:8444/v1/cluster/members
+
+services:
+  node1:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: quicbaas:latest
+    container_name: quicbaas-node1
+    hostname: node1
+    ports:
+      - "8444:8443"   # REST API
+      - "9444:9443"   # gRPC
+    volumes:
+      - node1-data:/data/quicbaas
+      - ../raft-3-node/node1.yaml:/etc/quicbaas/config.yaml:ro
+    command: ["quicbaasd", "--config", "/etc/quicbaas/config.yaml"]
+    networks:
+      - quicbaas-cluster
+    healthcheck:
+      test: ["CMD", "quicbaas", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    depends_on:
+      - node2
+      - node3
+
+  node2:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: quicbaas:latest
+    container_name: quicbaas-node2
+    hostname: node2
+    ports:
+      - "8445:8443"   # REST API
+      - "9445:9443"   # gRPC
+    volumes:
+      - node2-data:/data/quicbaas
+      - ../raft-3-node/node2.yaml:/etc/quicbaas/config.yaml:ro
+    command: ["quicbaasd", "--config", "/etc/quicbaas/config.yaml"]
+    networks:
+      - quicbaas-cluster
+    healthcheck:
+      test: ["CMD", "quicbaas", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  node3:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: quicbaas:latest
+    container_name: quicbaas-node3
+    hostname: node3
+    ports:
+      - "8446:8443"   # REST API
+      - "9446:9443"   # gRPC
+    volumes:
+      - node3-data:/data/quicbaas
+      - ../raft-3-node/node3.yaml:/etc/quicbaas/config.yaml:ro
+    command: ["quicbaasd", "--config", "/etc/quicbaas/config.yaml"]
+    networks:
+      - quicbaas-cluster
+    healthcheck:
+      test: ["CMD", "quicbaas", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+networks:
+  quicbaas-cluster:
+    driver: bridge
+
+volumes:
+  node1-data:
+    driver: local
+  node2-data:
+    driver: local
+  node3-data:
+    driver: local

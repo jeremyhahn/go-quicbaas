@@ -1,0 +1,202 @@
+// QuicBaaS Ollama Protocol Buffer Definitions v1
+// Ollama integration for embedding generation and model management
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under AGPL-3.0
+
+syntax = "proto3";
+
+package quicbaas.ollama.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// =============================================================================
+// Ollama Service
+// =============================================================================
+
+// OllamaService provides embedding generation and model management via Ollama.
+// This service enables vector embedding generation for RAG and semantic search.
+service OllamaService {
+  // Health returns the health status of the Ollama connection.
+  rpc Health(OllamaHealthRequest) returns (OllamaHealthResponse);
+
+  // ListModels returns the list of available Ollama models.
+  rpc ListModels(OllamaListModelsRequest) returns (OllamaListModelsResponse);
+
+  // GetModelInfo returns detailed information about a specific model.
+  rpc GetModelInfo(OllamaGetModelInfoRequest) returns (OllamaGetModelInfoResponse);
+
+  // Embed generates an embedding for a single text using the default model.
+  rpc Embed(OllamaEmbedRequest) returns (OllamaEmbedResponse);
+
+  // EmbedWithModel generates an embedding for a single text using a specific model.
+  rpc EmbedWithModel(OllamaEmbedWithModelRequest) returns (OllamaEmbedResponse);
+
+  // EmbedBatch generates embeddings for multiple texts.
+  rpc EmbedBatch(OllamaEmbedBatchRequest) returns (OllamaEmbedBatchResponse);
+}
+
+// =============================================================================
+// Health Messages
+// =============================================================================
+
+// OllamaHealthRequest is the request for health check.
+message OllamaHealthRequest {
+  // Optional: Request a full health check including model availability
+  bool full_check = 1;
+}
+
+// OllamaHealthResponse contains the health status of Ollama.
+message OllamaHealthResponse {
+  // Whether Ollama is available and responding
+  bool available = 1;
+
+  // Ollama version string
+  string version = 2;
+
+  // Base URL of the Ollama instance
+  string base_url = 3;
+
+  // Time of the last successful health check
+  google.protobuf.Timestamp last_checked = 4;
+
+  // Error message if not available
+  string error = 5;
+}
+
+// =============================================================================
+// Model Messages
+// =============================================================================
+
+// OllamaListModelsRequest is the request for listing models.
+message OllamaListModelsRequest {
+  // Optional: Filter by model name prefix
+  string name_prefix = 1;
+}
+
+// OllamaListModelsResponse contains the list of available models.
+message OllamaListModelsResponse {
+  // List of available models
+  repeated OllamaModelInfo models = 1;
+
+  // Total count of models
+  int32 count = 2;
+}
+
+// OllamaModelInfo contains basic model information.
+message OllamaModelInfo {
+  // Model name
+  string name = 1;
+
+  // Model size in bytes
+  int64 size = 2;
+
+  // Model digest (SHA256)
+  string digest = 3;
+
+  // Last modified timestamp
+  google.protobuf.Timestamp modified_at = 4;
+}
+
+// OllamaGetModelInfoRequest is the request for model details.
+message OllamaGetModelInfoRequest {
+  // Model name to get info for
+  string model = 1;
+}
+
+// OllamaGetModelInfoResponse contains detailed model information.
+message OllamaGetModelInfoResponse {
+  // Model name
+  string model = 1;
+
+  // Detailed model information
+  OllamaModelDetails details = 2;
+}
+
+// OllamaModelDetails contains detailed model information.
+message OllamaModelDetails {
+  // Model license
+  string license = 1;
+
+  // Model format (e.g., "gguf")
+  string format = 2;
+
+  // Model family (e.g., "nomic", "llama")
+  string family = 3;
+
+  // Parameter size (e.g., "137M", "7B")
+  string parameter_size = 4;
+
+  // Quantization level (e.g., "Q4_0", "F16")
+  string quantization_level = 5;
+}
+
+// =============================================================================
+// Embedding Messages
+// =============================================================================
+
+// OllamaEmbedRequest is the request for single text embedding.
+message OllamaEmbedRequest {
+  // Text to generate embedding for
+  string text = 1;
+}
+
+// OllamaEmbedWithModelRequest is the request for embedding with specific model.
+message OllamaEmbedWithModelRequest {
+  // Text to generate embedding for
+  string text = 1;
+
+  // Model to use for embedding
+  string model = 2;
+}
+
+// OllamaEmbedResponse contains the generated embedding.
+message OllamaEmbedResponse {
+  // Generated embedding vector
+  repeated float embedding = 1;
+
+  // Model used to generate the embedding
+  string model = 2;
+
+  // Number of dimensions in the embedding
+  int32 dimensions = 3;
+
+  // Time taken to generate the embedding
+  google.protobuf.Duration processing_time = 4;
+}
+
+// OllamaEmbedBatchRequest is the request for batch embedding.
+message OllamaEmbedBatchRequest {
+  // Texts to generate embeddings for
+  repeated string texts = 1;
+
+  // Optional: Model to use (uses default if not specified)
+  string model = 2;
+}
+
+// OllamaEmbedBatchResponse contains the generated embeddings.
+message OllamaEmbedBatchResponse {
+  // Generated embedding vectors
+  repeated OllamaEmbeddingVector embeddings = 1;
+
+  // Model used to generate the embeddings
+  string model = 2;
+
+  // Number of dimensions in each embedding
+  int32 dimensions = 3;
+
+  // Number of embeddings generated
+  int32 count = 4;
+
+  // Total time taken to generate all embeddings
+  google.protobuf.Duration processing_time = 5;
+}
+
+// OllamaEmbeddingVector represents a single embedding vector.
+message OllamaEmbeddingVector {
+  // The embedding values
+  repeated float values = 1;
+}

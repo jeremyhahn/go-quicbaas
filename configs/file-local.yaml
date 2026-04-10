@@ -1,0 +1,82 @@
+# QuicBaaS File-Based Local Configuration
+# Simple file-based storage with persistence
+# Each key-value pair is stored as a separate file (hex-encoded filename)
+# Best for: Development, debugging, low-volume deployments
+#
+# Usage:
+#   quicbaasd --config configs/file-local.yaml
+#   docker compose -f configs/docker/docker-compose.file-local.yaml up
+
+server:
+  host: "127.0.0.1"
+  grpc:
+    enabled: true
+    port: 9443
+  rest:
+    enabled: true
+    port: 8443
+  quic:
+    enabled: true
+    port: 10443
+  mcp:
+    enabled: true
+    port: 11443
+  unix:
+    enabled: true
+    socket: "/var/run/quicbaas.sock"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 60s
+  shutdown_timeout: 30s
+  max_connections: 1000
+
+# File storage configuration
+# Data is stored as individual files in this directory
+storage:
+  backend: "file"
+  data_dir: "./data/kv"
+
+# Object storage using local filesystem
+object_storage:
+  backends:
+    primary:
+      type: "local"
+      description: "Local filesystem object storage"
+      config:
+        path: "./data/objects"
+
+# Minimal security for development
+security:
+  tls_enabled: false
+  api_key_enabled: false
+  encryption_enabled: false
+  fips_mode: false
+  authorization:
+    provider: "rbac"
+    rbac:
+      enabled: true
+      allow_anonymous: true
+
+# Enable KMS and Secrets
+kms:
+  enabled: true
+  backend: software
+  auto_generate_key: true
+
+secrets:
+  enabled: true
+
+# Backup configuration
+backup:
+  enabled: true
+  storage_backend: "primary"
+  default_compression: "zstd"
+  default_encryption: "none"
+  work_dir: "/tmp/quicbaas-backup"
+  timeout: "30m"
+
+# Console logging for development
+logging:
+  level: "debug"
+  format: "console"
+  output: "stdout"

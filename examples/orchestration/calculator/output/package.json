@@ -1,0 +1,19 @@
+{
+  "name": "output",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.38"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0"
+  }
+}

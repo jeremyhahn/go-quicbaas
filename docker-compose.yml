@@ -1,0 +1,217 @@
+version: '3.8'
+
+# QuicBaaS Development Environment
+# Multi-node Raft cluster for local development
+
+services:
+  # Node 1 - Primary node
+  quicbaas-node1:
+    build:
+      context: .
+      dockerfile: test/integration/Dockerfile.dev
+    container_name: quicbaas-node1
+    hostname: quicbaas-node1
+    # Run production binary with node command for multi-node cluster
+    command: ["/usr/local/bin/quicbaasd", "node", "--discovery=static", "--grpc-port=50051"]
+    ports:
+      - "8081:8080"   # REST API
+      - "9091:9090"   # Metrics
+      - "50051:50051" # gRPC
+    environment:
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node1:63001
+      - QUICBAAS_DISCOVERY_STATIC_PEERS=quicbaas-node2:63002,quicbaas-node3:63003
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=console
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      - QUICBAAS_SECRETS_ENABLED=true
+      # Auth configuration - passwordless by default
+      # Use WebAuthn, OIDC, or mTLS for authentication
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_JWT_SECRET=test-jwt-secret-for-integration-tests-only
+    volumes:
+      - node1-data:/data
+      - node1-logs:/var/log/quicbaas
+    networks:
+      - quicbaas-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Node 2
+  quicbaas-node2:
+    build:
+      context: .
+      dockerfile: test/integration/Dockerfile.dev
+    container_name: quicbaas-node2
+    hostname: quicbaas-node2
+    # Run production binary with node command for multi-node cluster
+    command: ["/usr/local/bin/quicbaasd", "node", "--discovery=static", "--grpc-port=50051"]
+    ports:
+      - "8082:8080"   # REST API
+      - "9092:9090"   # Metrics
+      - "50052:50051" # gRPC
+    environment:
+      - QUICBAAS_RAFT_NODE_ID=2
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node2:63002
+      - QUICBAAS_DISCOVERY_STATIC_PEERS=quicbaas-node1:63001,quicbaas-node3:63003
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=console
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      - QUICBAAS_SECRETS_ENABLED=true
+      # Auth configuration - passwordless by default
+      # Use WebAuthn, OIDC, or mTLS for authentication
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_JWT_SECRET=test-jwt-secret-for-integration-tests-only
+    volumes:
+      - node2-data:/data
+      - node2-logs:/var/log/quicbaas
+    networks:
+      - quicbaas-network
+    depends_on:
+      - quicbaas-node1
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Node 3
+  quicbaas-node3:
+    build:
+      context: .
+      dockerfile: test/integration/Dockerfile.dev
+    container_name: quicbaas-node3
+    hostname: quicbaas-node3
+    # Run production binary with node command for multi-node cluster
+    command: ["/usr/local/bin/quicbaasd", "node", "--discovery=static", "--grpc-port=50051"]
+    ports:
+      - "8083:8080"   # REST API
+      - "9093:9090"   # Metrics
+      - "50053:50051" # gRPC
+    environment:
+      - QUICBAAS_RAFT_NODE_ID=3
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node3:63003
+      - QUICBAAS_DISCOVERY_STATIC_PEERS=quicbaas-node1:63001,quicbaas-node2:63002
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=console
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      - QUICBAAS_SECRETS_ENABLED=true
+      # Auth configuration - passwordless by default
+      # Use WebAuthn, OIDC, or mTLS for authentication
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_JWT_SECRET=test-jwt-secret-for-integration-tests-only
+    volumes:
+      - node3-data:/data
+      - node3-logs:/var/log/quicbaas
+    networks:
+      - quicbaas-network
+    depends_on:
+      - quicbaas-node1
+      - quicbaas-node2
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Redis for L2 cache (optional feature)
+  redis:
+    image: redis:7-alpine
+    container_name: quicbaas-redis
+    hostname: redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - quicbaas-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: quicbaas-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deployments/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - quicbaas-network
+    depends_on:
+      - quicbaas-node1
+      - quicbaas-node2
+      - quicbaas-node3
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: quicbaas-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./deployments/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./deployments/grafana/datasources:/etc/grafana/provisioning/datasources
+      - grafana-data:/var/lib/grafana
+    networks:
+      - quicbaas-network
+    depends_on:
+      - prometheus
+
+networks:
+  quicbaas-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  node1-data:
+  node1-logs:
+  node2-data:
+  node2-logs:
+  node3-data:
+  node3-logs:
+  redis-data:
+  prometheus-data:
+  grafana-data:

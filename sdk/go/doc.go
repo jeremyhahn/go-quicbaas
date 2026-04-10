@@ -1,0 +1,92 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package quicbaas provides the official Go SDK for QuicBaaS.
+//
+// The SDK supports multiple transport protocols (gRPC, REST, QUIC) and provides
+// both a unified client interface and standalone domain-specific clients.
+//
+// # Quick Start
+//
+// Create a unified client to access all QuicBaaS services:
+//
+//	client, err := quicbaas.NewClient("/var/run/quicbaas.sock")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer client.Close()
+//
+//	// Use KV operations
+//	resp, err := client.KV().Put(ctx, &kv.PutRequest{
+//	    EntityType: "users",
+//	    Key:        "user-123",
+//	    Value:      []byte(`{"name": "Alice"}`),
+//	})
+//
+// # Connection Options
+//
+// The SDK supports various connection methods:
+//
+//	// Unix socket (recommended for local)
+//	client, _ := quicbaas.NewClient("/var/run/quicbaas.sock")
+//
+//	// TCP with mTLS
+//	client, _ := quicbaas.NewClient("localhost:50051",
+//	    quicbaas.WithTLS(quicbaas.TLSConfig{
+//	        CertFile: "client.crt",
+//	        KeyFile:  "client.key",
+//	        CAFile:   "ca.crt",
+//	    }),
+//	)
+//
+//	// REST transport
+//	client, _ := quicbaas.NewClient("http://localhost:8080", quicbaas.WithREST())
+//
+//	// QUIC transport
+//	client, _ := quicbaas.NewClient("localhost:50052", quicbaas.WithQUIC())
+//
+// # Watch Support
+//
+// The KV client supports watches for change notifications:
+//
+//	watcher, err := client.KV().WatchPrefix(ctx, "users/", kv.WithPrevKV())
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer watcher.Close()
+//
+//	for event := range watcher.Events() {
+//	    log.Printf("Event: %v %s", event.Type, event.Key)
+//	}
+//
+// # Authentication
+//
+// The SDK uses mTLS for authentication. API keys are not supported.
+//
+// # Services
+//
+// Available services through the unified client:
+//   - KV: Key-value storage with Watch support
+//   - Batch: Atomic batch operations
+//   - Transaction: Compare-and-swap transactions
+//   - Query: Secondary index queries
+//   - Cluster: Cluster status and management
+//   - Health: Health checks and probes
+//   - Seal: Seal/unseal operations
+//   - KMS: Key management service
+//   - Secrets: Secret storage with versioning
+//   - Crypto: Encryption/decryption as a service
+//   - Vector: Vector similarity search
+//   - TimeSeries: Time-series data storage
+//   - Backup: Backup and restore
+package quicbaas

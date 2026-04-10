@@ -1,0 +1,481 @@
+# QuicBaaS KMS Hardware Backend Test Environment
+# 3-node cluster with TPM2 (swtpm) and PKCS#11 (SoftHSM) support
+# Complete end-to-end testing of all hardware backends
+
+version: '3.8'
+
+services:
+  # KMS Hardware Test Runner
+  kms-hardware-test:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile
+    hostname: kms-hardware-test
+    user: "0:0"
+    environment:
+      # Test configuration
+      - QUICBAAS_TEST_MODE=integration
+      - QUICBAAS_LOG_LEVEL=debug
+      - QUICBAAS_LOG_FORMAT=text
+      - CGO_ENABLED=1
+
+      # Cluster configuration
+      - QUICBAAS_NODE1_URL=http://hw-node1:8080
+      - QUICBAAS_NODE2_URL=http://hw-node2:8080
+      - QUICBAAS_NODE3_URL=http://hw-node3:8080
+      - QUICBAAS_NODE1_GRPC=hw-node1:50051
+      - QUICBAAS_NODE2_GRPC=hw-node2:50051
+      - QUICBAAS_NODE3_GRPC=hw-node3:50051
+
+      # TPM configuration
+      - TPM1_URL=tcp://swtpm1:2321
+      - TPM2_URL=tcp://swtpm2:2321
+      - TPM3_URL=tcp://swtpm3:2321
+
+      # Test timeouts
+      - QUICBAAS_HEALTH_TIMEOUT=180
+      - QUICBAAS_CHECK_INTERVAL=2
+      - QUICBAAS_TEST_TIMEOUT=30m
+    volumes:
+      - ./:/app:ro
+      - kms-hw-test-cache:/go/pkg/mod
+      - kms-hw-test-results:/test-results
+    working_dir: /app
+    networks:
+      - kms-hw-network
+    depends_on:
+      swtpm1:
+        condition: service_healthy
+      swtpm2:
+        condition: service_healthy
+      swtpm3:
+        condition: service_healthy
+      hw-node1:
+        condition: service_healthy
+      hw-node2:
+        condition: service_healthy
+      hw-node3:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Waiting for cluster to be fully operational...' &&
+        sleep 15 &&
+        echo 'Running KMS hardware backend tests...' &&
+        go test -v -tags 'integration tpm2 pkcs11' -run 'TestKMS|TestTPM|TestPKCS11' -timeout 30m ./test/integration/... | tee /test-results/kms-hardware-test.log &&
+        echo 'KMS hardware backend tests completed successfully'
+      "
+
+  # Software TPM instances (one per node) - using QuicBaaS SWTPM containers
+  swtpm1:
+    build:
+      context: ../..
+      dockerfile: test/integration/docker/swtpm/Dockerfile
+    image: quicbaas/swtpm:latest
+    container_name: quicbaas-hw-swtpm1
+    hostname: swtpm1
+    ports:
+      - "2321:2321"
+      - "2322:2322"
+    volumes:
+      - swtpm1-data:/var/lib/swtpm
+    networks:
+      - kms-hw-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  swtpm2:
+    build:
+      context: ../..
+      dockerfile: test/integration/docker/swtpm/Dockerfile
+    image: quicbaas/swtpm:latest
+    container_name: quicbaas-hw-swtpm2
+    hostname: swtpm2
+    ports:
+      - "2323:2321"
+      - "2324:2322"
+    volumes:
+      - swtpm2-data:/var/lib/swtpm
+    networks:
+      - kms-hw-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  swtpm3:
+    build:
+      context: ../..
+      dockerfile: test/integration/docker/swtpm/Dockerfile
+    image: quicbaas/swtpm:latest
+    container_name: quicbaas-hw-swtpm3
+    hostname: swtpm3
+    ports:
+      - "2325:2321"
+      - "2326:2322"
+    volumes:
+      - swtpm3-data:/var/lib/swtpm
+    networks:
+      - kms-hw-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # QuicBaaS Node 1 with TPM2 and SoftHSM
+  hw-node1:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    hostname: hw-node1
+    ports:
+      - "8091:8080"   # HTTP API
+      - "9091:9090"   # Metrics
+      - "50061:50051" # gRPC
+    environment:
+      # Node configuration
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=hw-node1:63001
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=hw-node2:63002,hw-node3:63003
+
+      # HTTP/gRPC configuration
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_METRICS_PORT=9090
+
+      # KMS configuration - TPM2 Backend
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=tpm2
+      - QUICBAAS_KMS_TPM_ENABLED=true
+      - QUICBAAS_KMS_TPM_DEVICE=tcp://swtpm1:2321
+      - QUICBAAS_KMS_DEK_STORAGE=__secrets/dek
+      - QUICBAAS_KMS_DATA_STORAGE=__secrets/data
+
+      # SoftHSM configuration (available but not primary)
+      - QUICBAAS_KMS_PKCS11_ENABLED=true
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+      - SOFTHSM_TOKEN_LABEL=quicbaas-node1
+      - SOFTHSM_USER_PIN=123456
+      - SOFTHSM_SO_PIN=1234567890
+
+      # Logging
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=json
+
+      # Storage
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+
+      # Raft tuning for tests
+      - QUICBAAS_RAFT_ELECTION_RTT=10
+      - QUICBAAS_RAFT_HEARTBEAT_RTT=1
+      - QUICBAAS_RAFT_SNAPSHOT_ENTRIES=10000
+
+      # Performance
+      - GOMAXPROCS=2
+      - CGO_ENABLED=1
+    volumes:
+      - kms-hw-data-node1:/data
+      - kms-hw-logs-node1:/var/log/quicbaas
+      - softhsm-node1:/var/lib/softhsm/tokens
+    networks:
+      - kms-hw-network
+    depends_on:
+      swtpm1:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Initializing SoftHSM for node1...' &&
+        /docker-entrypoint-init.d/init-softhsm.sh &&
+        echo 'Starting QuicBaaS node1...' &&
+        /usr/local/bin/quicbaasd
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  # QuicBaaS Node 2 with PKCS#11 (SoftHSM) Backend
+  hw-node2:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    hostname: hw-node2
+    ports:
+      - "8092:8080"   # HTTP API
+      - "9092:9090"   # Metrics
+      - "50062:50051" # gRPC
+    environment:
+      # Node configuration
+      - QUICBAAS_RAFT_NODE_ID=2
+      - QUICBAAS_RAFT_RAFT_ADDRESS=hw-node2:63002
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=hw-node1:63001,hw-node3:63003
+
+      # HTTP/gRPC configuration
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_METRICS_PORT=9090
+
+      # KMS configuration - PKCS#11 Backend
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=pkcs11
+      - QUICBAAS_KMS_PKCS11_ENABLED=true
+      - QUICBAAS_KMS_DEK_STORAGE=__secrets/dek
+      - QUICBAAS_KMS_DATA_STORAGE=__secrets/data
+
+      # SoftHSM configuration
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+      - SOFTHSM_TOKEN_LABEL=quicbaas-node2
+      - SOFTHSM_USER_PIN=123456
+      - SOFTHSM_SO_PIN=1234567890
+      - QUICBAAS_KMS_PKCS11_TOKEN_LABEL=quicbaas-node2
+      - QUICBAAS_KMS_PKCS11_PIN=123456
+
+      # TPM configuration (available but not primary)
+      - QUICBAAS_KMS_TPM_ENABLED=false
+      - QUICBAAS_KMS_TPM_DEVICE=tcp://swtpm2:2321
+
+      # Logging
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=json
+
+      # Storage
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+
+      # Raft tuning for tests
+      - QUICBAAS_RAFT_ELECTION_RTT=10
+      - QUICBAAS_RAFT_HEARTBEAT_RTT=1
+      - QUICBAAS_RAFT_SNAPSHOT_ENTRIES=10000
+
+      # Performance
+      - GOMAXPROCS=2
+      - CGO_ENABLED=1
+    volumes:
+      - kms-hw-data-node2:/data
+      - kms-hw-logs-node2:/var/log/quicbaas
+      - softhsm-node2:/var/lib/softhsm/tokens
+    networks:
+      - kms-hw-network
+    depends_on:
+      swtpm2:
+        condition: service_healthy
+      hw-node1:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Initializing SoftHSM for node2...' &&
+        /docker-entrypoint-init.d/init-softhsm.sh &&
+        echo 'Starting QuicBaaS node2...' &&
+        /usr/local/bin/quicbaasd
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  # QuicBaaS Node 3 with TPM2 Backend
+  hw-node3:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    hostname: hw-node3
+    ports:
+      - "8093:8080"   # HTTP API
+      - "9093:9090"   # Metrics
+      - "50063:50051" # gRPC
+    environment:
+      # Node configuration
+      - QUICBAAS_RAFT_NODE_ID=3
+      - QUICBAAS_RAFT_RAFT_ADDRESS=hw-node3:63003
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=hw-node1:63001,hw-node2:63002
+
+      # HTTP/gRPC configuration
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_METRICS_PORT=9090
+
+      # KMS configuration - TPM2 Backend
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=tpm2
+      - QUICBAAS_KMS_TPM_ENABLED=true
+      - QUICBAAS_KMS_TPM_DEVICE=tcp://swtpm3:2321
+      - QUICBAAS_KMS_DEK_STORAGE=__secrets/dek
+      - QUICBAAS_KMS_DATA_STORAGE=__secrets/data
+
+      # SoftHSM configuration (available but not primary)
+      - QUICBAAS_KMS_PKCS11_ENABLED=true
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+      - SOFTHSM_TOKEN_LABEL=quicbaas-node3
+      - SOFTHSM_USER_PIN=123456
+      - SOFTHSM_SO_PIN=1234567890
+
+      # Logging
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=json
+
+      # Storage
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+
+      # Raft tuning for tests
+      - QUICBAAS_RAFT_ELECTION_RTT=10
+      - QUICBAAS_RAFT_HEARTBEAT_RTT=1
+      - QUICBAAS_RAFT_SNAPSHOT_ENTRIES=10000
+
+      # Performance
+      - GOMAXPROCS=2
+      - CGO_ENABLED=1
+    volumes:
+      - kms-hw-data-node3:/data
+      - kms-hw-logs-node3:/var/log/quicbaas
+      - softhsm-node3:/var/lib/softhsm/tokens
+    networks:
+      - kms-hw-network
+    depends_on:
+      swtpm3:
+        condition: service_healthy
+      hw-node1:
+        condition: service_healthy
+      hw-node2:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Initializing SoftHSM for node3...' &&
+        /docker-entrypoint-init.d/init-softhsm.sh &&
+        echo 'Starting QuicBaaS node3...' &&
+        /usr/local/bin/quicbaasd
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+networks:
+  kms-hw-network:
+    driver: bridge
+    name: quicbaas-kms-hardware-network
+
+volumes:
+  # TPM data volumes
+  swtpm1-data:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.component: "swtpm"
+      com.quicbaas.node: "swtpm1"
+
+  swtpm2-data:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.component: "swtpm"
+      com.quicbaas.node: "swtpm2"
+
+  swtpm3-data:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.component: "swtpm"
+      com.quicbaas.node: "swtpm3"
+
+  # SoftHSM token volumes
+  softhsm-node1:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.component: "softhsm"
+      com.quicbaas.node: "node1"
+
+  softhsm-node2:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.component: "softhsm"
+      com.quicbaas.node: "node2"
+
+  softhsm-node3:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.component: "softhsm"
+      com.quicbaas.node: "node3"
+
+  # Data volumes for nodes
+  kms-hw-data-node1:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.node: "node1"
+      com.quicbaas.type: "data"
+
+  kms-hw-data-node2:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.node: "node2"
+      com.quicbaas.type: "data"
+
+  kms-hw-data-node3:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.node: "node3"
+      com.quicbaas.type: "data"
+
+  # Log volumes for nodes
+  kms-hw-logs-node1:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.node: "node1"
+      com.quicbaas.type: "logs"
+
+  kms-hw-logs-node2:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.node: "node2"
+      com.quicbaas.type: "logs"
+
+  kms-hw-logs-node3:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.node: "node3"
+      com.quicbaas.type: "logs"
+
+  # Test volumes
+  kms-hw-test-cache:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.type: "test-cache"
+
+  kms-hw-test-results:
+    driver: local
+    labels:
+      com.quicbaas.cluster: "kms-hardware"
+      com.quicbaas.type: "test-results"

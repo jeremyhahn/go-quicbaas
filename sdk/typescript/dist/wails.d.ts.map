@@ -1,0 +1,1 @@
+{"version":3,"file":"wails.d.ts","sourceRoot":"","sources":["../src/wails.ts"],"names":[],"mappings":"AAaA,OAAO,KAAK,EAAE,MAAM,EAAE,gBAAgB,EAAE,kBAAkB,EAAE,MAAM,iBAAiB,CAAC;AAqKpF,qBAAa,WAAY,YAAW,MAAM;IACxC,QAAQ,CAAC,UAAU,EAAE,gBAAgB,CAAC;IACtC,QAAQ,CAAC,YAAY,EAAE,kBAAkB,CAAC;;CAM3C"}

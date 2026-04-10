@@ -1,0 +1,119 @@
+# QuicBaaS Integration Test Node Dockerfile
+# Used for running QuicBaaS cluster nodes in integration tests
+#
+# This Dockerfile provides a consistent node environment based on the
+# devcontainer tooling. Each node runs the quicbaasd server with
+# Raft consensus enabled.
+
+# Build arguments
+# BUILD_TAGS: Feature flags (iam, etc.) + codec tags (codec_json, codec_msgpack, etc.)
+# Default includes all codecs for full integration test coverage
+ARG BUILD_TAGS="local quic raft rest rag timeseries vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio"
+
+# ============================================================================
+# Stage 1: Build binaries
+# ============================================================================
+FROM golang:1.26-alpine AS builder
+
+ARG BUILD_TAGS
+
+# Install build dependencies
+RUN apk add --no-cache \
+    git \
+    make \
+    bash \
+    ca-certificates
+
+WORKDIR /build
+
+# Copy module files first for caching
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+
+# Copy local dependencies (staged by Makefile into .deps/)
+COPY .deps/ /deps/
+
+# Rewrite local replace directives to point to staged deps
+RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod
+
+# Download remaining dependencies
+RUN rm -f go.sum sdk/go/go.sum && GONOSUMCHECK='*' GONOSUMDB='*' go mod download
+
+# Copy source code
+COPY . .
+
+# Rewrite replace directives again (COPY . . overwrites go.mod)
+RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod && \
+    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod
+
+# Build binaries
+RUN CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd && \
+    CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
+
+# ============================================================================
+# Stage 2: Minimal runtime for cluster nodes
+# ============================================================================
+FROM alpine:latest
+
+LABEL maintainer="QuicBaaS Team"
+LABEL description="QuicBaaS integration test node"
+LABEL version="1.0.0"
+
+# Install minimal runtime dependencies
+# netcat-openbsd is needed for port health checks from Makefile
+RUN apk add --no-cache \
+    bash \
+    curl \
+    ca-certificates \
+    tzdata \
+    netcat-openbsd
+
+# Create quicbaas user
+RUN addgroup -g 1000 quicbaas && \
+    adduser -D -u 1000 -G quicbaas -s /bin/bash quicbaas
+
+# Create required directories
+RUN mkdir -p /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas && \
+    chown -R quicbaas:quicbaas /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas
+
+# Copy built binaries
+COPY --from=builder /build/bin/quicbaasd /usr/local/bin/quicbaasd
+COPY --from=builder /build/bin/quicbaas /usr/local/bin/quicbaas
+
+# Make binaries executable
+RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas
+
+# Environment variables
+ENV QUICBAAS_LOG_LEVEL=info \
+    QUICBAAS_LOG_FORMAT=json \
+    QUICBAAS_DATA_DIR=/data \
+    CGO_ENABLED=0
+
+# Expose ports
+# 8080: HTTP/REST API
+# 9090: Metrics/Prometheus
+# 50051: gRPC API
+# 4433: QUIC
+# 63001-63010: Raft cluster communication
+EXPOSE 8080 9090 50051 4433 63001-63010
+
+# Data volume
+VOLUME ["/data", "/var/log/quicbaas"]
+
+# Health check
+HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=10 \
+    CMD curl -sf http://localhost:8080/api/v1/health/live >/dev/null || exit 1
+
+# Default command
+CMD ["/usr/local/bin/quicbaasd", "node"]

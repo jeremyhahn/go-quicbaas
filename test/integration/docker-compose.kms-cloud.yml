@@ -1,0 +1,98 @@
+# QuicBaaS Cloud KMS Integration Test Environment
+# LocalStack for AWS KMS and other cloud service emulators
+# Used for testing cloud KMS providers without actual cloud credentials
+
+version: '3.8'
+
+services:
+  # LocalStack - AWS Services Emulator (KMS, Secrets Manager, etc.)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: quicbaas-localstack
+    hostname: localstack
+    ports:
+      - "4566:4566"       # LocalStack edge port
+      - "4571:4571"       # Legacy: Edge port
+    environment:
+      # LocalStack configuration
+      - SERVICES=kms,secretsmanager
+      - DEBUG=1
+      - PERSISTENCE=1
+      - AWS_DEFAULT_REGION=us-east-1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+
+      # Disable telemetry
+      - DISABLE_CORS_CHECKS=1
+      - DISABLE_CUSTOM_CORS_S3=1
+      - DISABLE_CUSTOM_CORS_APIGATEWAY=1
+
+      # Performance
+      - LAMBDA_EXECUTOR=local
+      - LAMBDA_REMOTE_DOCKER=false
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - kms-cloud-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # Test runner for AWS KMS integration tests
+  awskms-test:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile
+    container_name: quicbaas-awskms-test
+    hostname: awskms-test
+    environment:
+      # AWS LocalStack configuration
+      - AWS_ENDPOINT=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+
+      # Test configuration
+      - QUICBAAS_TEST_MODE=integration
+      - QUICBAAS_LOG_LEVEL=debug
+      - CGO_ENABLED=0
+    volumes:
+      - ./:/app:ro
+      - awskms-test-cache:/go/pkg/mod
+      - awskms-test-results:/test-results
+    working_dir: /app
+    networks:
+      - kms-cloud-network
+    depends_on:
+      localstack:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Waiting for LocalStack to be ready...' &&
+        sleep 5 &&
+        echo 'Running AWS KMS integration tests...' &&
+        go test -v -tags 'awskms integration' -run 'TestAWSKMSIntegration' -timeout 10m ./pkg/keyring/... | tee /test-results/awskms-integration-test.log &&
+        echo 'AWS KMS integration tests completed'
+      "
+
+networks:
+  kms-cloud-network:
+    driver: bridge
+    name: quicbaas-kms-cloud-network
+
+volumes:
+  localstack-data:
+    driver: local
+    labels:
+      com.quicbaas.service: "localstack"
+      com.quicbaas.type: "data"
+
+  awskms-test-cache:
+    driver: local
+
+  awskms-test-results:
+    driver: local

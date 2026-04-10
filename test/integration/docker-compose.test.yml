@@ -1,0 +1,237 @@
+# QuicBaaS Multi-Node Test Cluster
+# Optimized for end-to-end testing with 3-node Raft cluster
+# Includes proper networking, health checks, and volume management
+
+services:
+  # Node 1 - Primary node
+  node1:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    container_name: quicbaas-node1
+    hostname: node1
+    ports:
+      - "8081:8080"   # HTTP API
+      - "9091:9090"   # Metrics
+      - "50051:50051" # gRPC
+    environment:
+      # Node configuration
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=node1:63001
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=node2:63002,node3:63003
+
+      # HTTP/gRPC configuration
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_METRICS_PORT=9090
+
+      # Logging
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+
+      # Storage
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+
+      # Raft tuning for tests
+      - QUICBAAS_RAFT_ELECTION_RTT=10
+      - QUICBAAS_RAFT_HEARTBEAT_RTT=1
+      - QUICBAAS_RAFT_SNAPSHOT_ENTRIES=10000
+
+      # Performance
+      - GOMAXPROCS=2
+    volumes:
+      - cluster-data-node1:/data
+      - cluster-logs-node1:/var/log/quicbaas
+    networks:
+      - cluster-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  # Node 2
+  node2:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    container_name: quicbaas-node2
+    hostname: node2
+    ports:
+      - "8082:8080"   # HTTP API
+      - "9092:9090"   # Metrics
+      - "50052:50051" # gRPC
+    environment:
+      # Node configuration
+      - QUICBAAS_RAFT_NODE_ID=2
+      - QUICBAAS_RAFT_RAFT_ADDRESS=node2:63002
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=node1:63001,node3:63003
+
+      # HTTP/gRPC configuration
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_METRICS_PORT=9090
+
+      # Logging
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+
+      # Storage
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+
+      # Raft tuning for tests
+      - QUICBAAS_RAFT_ELECTION_RTT=10
+      - QUICBAAS_RAFT_HEARTBEAT_RTT=1
+      - QUICBAAS_RAFT_SNAPSHOT_ENTRIES=10000
+
+      # Performance
+      - GOMAXPROCS=2
+    volumes:
+      - cluster-data-node2:/data
+      - cluster-logs-node2:/var/log/quicbaas
+    networks:
+      - cluster-network
+    depends_on:
+      node1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  # Node 3
+  node3:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+    container_name: quicbaas-node3
+    hostname: node3
+    ports:
+      - "8083:8080"   # HTTP API
+      - "9093:9090"   # Metrics
+      - "50053:50051" # gRPC
+    environment:
+      # Node configuration
+      - QUICBAAS_RAFT_NODE_ID=3
+      - QUICBAAS_RAFT_RAFT_ADDRESS=node3:63003
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=node1:63001,node2:63002
+
+      # HTTP/gRPC configuration
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_METRICS_PORT=9090
+
+      # Logging
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+
+      # Storage
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+
+      # Raft tuning for tests
+      - QUICBAAS_RAFT_ELECTION_RTT=10
+      - QUICBAAS_RAFT_HEARTBEAT_RTT=1
+      - QUICBAAS_RAFT_SNAPSHOT_ENTRIES=10000
+
+      # Performance
+      - GOMAXPROCS=2
+    volumes:
+      - cluster-data-node3:/data
+      - cluster-logs-node3:/var/log/quicbaas
+    networks:
+      - cluster-network
+    depends_on:
+      node1:
+        condition: service_healthy
+      node2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+networks:
+  cluster-network:
+    driver: bridge
+
+volumes:
+  # Data volumes with proper labels
+  cluster-data-node1:
+    driver: local
+    labels:
+      com.quicbaas.component: storage
+      com.quicbaas.node: "1"
+  cluster-data-node2:
+    driver: local
+    labels:
+      com.quicbaas.component: storage
+      com.quicbaas.node: "2"
+  cluster-data-node3:
+    driver: local
+    labels:
+      com.quicbaas.component: storage
+      com.quicbaas.node: "3"
+
+  # Log volumes
+  cluster-logs-node1:
+    driver: local
+    labels:
+      com.quicbaas.component: logs
+      com.quicbaas.node: "1"
+  cluster-logs-node2:
+    driver: local
+    labels:
+      com.quicbaas.component: logs
+      com.quicbaas.node: "2"
+  cluster-logs-node3:
+    driver: local
+    labels:
+      com.quicbaas.component: logs
+      com.quicbaas.node: "3"

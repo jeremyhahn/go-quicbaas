@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320" role="img" aria-labelledby="title desc">
+  <title id="title">QUICBaaS icon</title>
+  <desc id="desc">A QUICBaaS symbol with a service ring, connected backend modules, and a unified platform core.</desc>
+  <defs>
+    <linearGradient id="panel" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2d120b"/>
+      <stop offset="55%" stop-color="#5a1f10"/>
+      <stop offset="100%" stop-color="#240d09"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ea580c"/>
+      <stop offset="100%" stop-color="#ef4444"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffd5bf"/>
+      <stop offset="100%" stop-color="#ffb18f"/>
+    </linearGradient>
+    <linearGradient id="link" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffd1b3" stop-opacity="0.08"/>
+      <stop offset="50%" stop-color="#ffd1b3" stop-opacity="0.52"/>
+      <stop offset="100%" stop-color="#ffd1b3" stop-opacity="0.08"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="12" flood-color="#7c2d12" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <rect x="24" y="24" width="272" height="272" rx="52" fill="#fff7f2"/>
+
+  <g filter="url(#shadow)">
+    <rect x="48" y="48" width="224" height="224" rx="52" fill="url(#panel)"/>
+
+    <path d="M160 96
+             a64 64 0 1 1 -0.01 0"
+          fill="none"
+          stroke="url(#ring)"
+          stroke-width="16"
+          stroke-linecap="round"
+          stroke-dasharray="320 56"/>
+
+    <path d="M197 188
+             q18 10 29 28"
+          fill="none"
+          stroke="url(#ring)"
+          stroke-width="12"
+          stroke-linecap="round"/>
+
+    <circle cx="160" cy="96" r="11" fill="#ffd9c4"/>
+    <circle cx="223" cy="206" r="11" fill="#ffd9c4"/>
+    <circle cx="97" cy="206" r="11" fill="#ffd9c4"/>
+
+    <path d="M98 188
+             C119 174 137 168 160 168
+             C183 168 201 174 222 188"
+          fill="none"
+          stroke="url(#link)"
+          stroke-width="8"
+          stroke-linecap="round"/>
+    <path d="M88 202
+             C114 186 135 182 160 182
+             C185 182 206 186 232 202"
+          fill="none"
+          stroke="url(#link)"
+          stroke-width="8"
+          stroke-linecap="round"/>
+
+    <g>
+      <rect x="121" y="121" width="30" height="30" rx="8" fill="url(#core)"/>
+      <rect x="169" y="121" width="30" height="30" rx="8" fill="url(#core)" opacity="0.96"/>
+      <rect x="121" y="169" width="30" height="30" rx="8" fill="url(#core)" opacity="0.92"/>
+      <rect x="169" y="169" width="30" height="30" rx="8" fill="url(#core)" opacity="0.88"/>
+
+      <path d="M151 136h18" stroke="#8a2b10" stroke-width="5" stroke-linecap="round"/>
+      <path d="M136 151v18" stroke="#8a2b10" stroke-width="5" stroke-linecap="round"/>
+      <path d="M184 151v18" stroke="#8a2b10" stroke-width="5" stroke-linecap="round"/>
+      <path d="M151 184h18" stroke="#8a2b10" stroke-width="5" stroke-linecap="round"/>
+
+      <circle cx="136" cy="136" r="4" fill="#8a2b10"/>
+      <circle cx="184" cy="136" r="4" fill="#8a2b10"/>
+      <circle cx="136" cy="184" r="4" fill="#8a2b10"/>
+      <circle cx="184" cy="184" r="4" fill="#8a2b10"/>
+    </g>
+  </g>
+</svg>

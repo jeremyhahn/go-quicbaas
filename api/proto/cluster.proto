@@ -1,0 +1,92 @@
+// QuicBaaS Cluster Management Protocol Buffer Definitions
+// Additional cluster operations for node and shard management
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// Additional cluster management RPCs
+// These extend the main QuicBaaS service
+
+// AddNodeRequest adds a new node to a Raft shard.
+message AddNodeRequest {
+  // shard_id is the shard to add the node to.
+  uint64 shard_id = 1;
+
+  // node_id is the unique identifier for the new node.
+  uint64 node_id = 2;
+
+  // address is the Raft address of the new node (host:port).
+  string address = 3;
+}
+
+// AddNodeResponse confirms node addition.
+message AddNodeResponse {
+  // success indicates if the node was added.
+  bool success = 1;
+
+  // message provides additional information.
+  string message = 2;
+
+  // shard_id is the shard the node was added to.
+  uint64 shard_id = 3;
+
+  // node_id is the added node ID.
+  uint64 node_id = 4;
+}
+
+// RemoveNodeRequest removes a node from a Raft shard.
+message RemoveNodeRequest {
+  // shard_id is the shard to remove the node from.
+  uint64 shard_id = 1;
+
+  // node_id is the node to remove.
+  uint64 node_id = 2;
+}
+
+// RemoveNodeResponse confirms node removal.
+message RemoveNodeResponse {
+  // success indicates if the node was removed.
+  bool success = 1;
+
+  // message provides additional information.
+  string message = 2;
+
+  // shard_id is the shard the node was removed from.
+  uint64 shard_id = 3;
+
+  // node_id is the removed node ID.
+  uint64 node_id = 4;
+}
+
+// CreateShardRequest creates a new Raft shard.
+message CreateShardRequest {
+  // shard_id is the unique identifier for the new shard.
+  uint64 shard_id = 1;
+
+  // initial_members maps node IDs to their Raft addresses.
+  map<uint64, string> initial_members = 2;
+
+  // entity_types are the data types that will be stored in this shard.
+  repeated string entity_types = 3;
+}
+
+// CreateShardResponse confirms shard creation.
+message CreateShardResponse {
+  // success indicates if the shard was created.
+  bool success = 1;
+
+  // message provides additional information.
+  string message = 2;
+
+  // shard_id is the created shard ID.
+  uint64 shard_id = 3;
+
+  // leader_id is the initial leader (may be 0 if not elected yet).
+  uint64 leader_id = 4;
+}

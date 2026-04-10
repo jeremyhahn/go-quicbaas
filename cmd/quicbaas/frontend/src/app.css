@@ -1,0 +1,57 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: quicbaas-dark --default, quicbaas-light;
+}
+
+@theme {
+  /* QuicBaaS brand tokens */
+  --color-brand-orange: oklch(0.65 0.19 30);
+  --color-brand-red: oklch(0.58 0.22 25);
+}
+
+/* QuicBaaS Dark Theme */
+[data-theme="quicbaas-dark"] {
+  --color-primary: oklch(0.65 0.19 30);
+  --color-secondary: oklch(0.58 0.22 25);
+  --color-accent: oklch(0.72 0.14 60);
+  --color-neutral: oklch(0.20 0.02 30);
+  --color-base-100: oklch(0.14 0.02 30);
+  --color-base-200: oklch(0.12 0.02 30);
+  --color-base-300: oklch(0.10 0.02 30);
+  --color-base-content: oklch(0.90 0.01 80);
+  --color-info: oklch(0.70 0.15 230);
+  --color-success: oklch(0.70 0.18 145);
+  --color-warning: oklch(0.75 0.18 85);
+  --color-error: oklch(0.60 0.22 25);
+}
+
+/* QuicBaaS Light Theme */
+[data-theme="quicbaas-light"] {
+  --color-primary: oklch(0.60 0.20 30);
+  --color-secondary: oklch(0.55 0.22 25);
+  --color-accent: oklch(0.65 0.15 60);
+  --color-neutral: oklch(0.25 0.02 30);
+  --color-base-100: oklch(0.98 0.005 80);
+  --color-base-200: oklch(0.94 0.005 80);
+  --color-base-300: oklch(0.90 0.01 80);
+  --color-base-content: oklch(0.20 0.02 30);
+}
+
+/* Gradient brand text */
+.gradient-text {
+  background: linear-gradient(135deg, oklch(0.65 0.19 30), oklch(0.58 0.22 25));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Content area background */
+.content-bg {
+  background: var(--color-base-100);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: oklch(0.30 0.02 30); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: oklch(0.40 0.02 30); }

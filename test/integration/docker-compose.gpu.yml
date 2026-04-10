@@ -1,0 +1,23 @@
+# GPU override for Ollama - applied automatically when NVIDIA GPU is detected.
+# This file is merged with docker-compose.integration.yml via:
+#   docker compose -f docker-compose.integration.yml -f docker-compose.gpu.yml up
+#
+# The Makefile detects nvidia-smi and applies this override automatically.
+#
+# Target a specific GPU by setting NVIDIA_VISIBLE_DEVICES to its UUID or index:
+#   NVIDIA_VISIBLE_DEVICES=GPU-a5fbbbac-... make integration-test
+#   NVIDIA_VISIBLE_DEVICES=0 make integration-test
+
+services:
+  ollama:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - OLLAMA_GPU_LAYERS=${OLLAMA_GPU_LAYERS:-999}
+      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_DEVICE_ID:-0}"]
+              capabilities: [gpu, compute, utility]

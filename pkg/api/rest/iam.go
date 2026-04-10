@@ -1,0 +1,269 @@
+//go:build rest && iam
+
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package rest
+
+import (
+	"context"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+)
+
+// IAMHandler handles all IAM-related REST API endpoints including
+// OIDC, tenant management, user/group/role management, policies, and WebAuthn.
+type IAMHandler struct {
+	server *Server
+}
+
+// IAMHandlerDependencies contains dependencies for the IAM handler.
+type IAMHandlerDependencies struct {
+	Server *Server
+}
+
+// NewIAMHandler creates a new IAM handler with the specified dependencies.
+func NewIAMHandler(deps IAMHandlerDependencies) *IAMHandler {
+	return &IAMHandler{
+		server: deps.Server,
+	}
+}
+
+// RegisterRoutes registers all IAM routes on the provided router.
+// Note: This expects the root router. OIDC endpoints are registered at root level,
+// while IAM API endpoints are registered under /api/v1/iam and /api/v1/tenants.
+func (h *IAMHandler) RegisterRoutes(router chi.Router) {
+	// OIDC/OAuth discovery endpoints (public) - must be at root level per specs
+	router.Get("/.well-known/openid-configuration", h.GetOIDCConfig)
+	router.Get("/.well-known/oauth-authorization-server", h.GetOAuthASMetadata) // RFC 8414
+	router.Get("/.well-known/jwks.json", h.GetJWKS)
+
+	// OAuth2/OIDC endpoints (public)
+	router.Get("/oauth2/authorize", h.Authorize)
+	router.Post("/oauth2/token", h.Token)
+	router.Get("/oauth2/userinfo", h.UserInfo)
+	router.Post("/oauth2/revoke", h.Revoke)
+
+	// Dynamic Client Registration (RFC 7591)
+	router.Post("/oauth2/register", h.RegisterDynamicClient)
+	router.Get("/oauth2/register/{client_id}", h.GetDynamicClient)
+	router.Put("/oauth2/register/{client_id}", h.UpdateDynamicClient)
+	router.Delete("/oauth2/register/{client_id}", h.DeleteDynamicClient)
+
+	// Password-based authentication endpoints (public when enabled)
+	// These are only functional when AllowPasswordAuth is enabled in config.
+	router.Route("/api/v1/auth", func(r chi.Router) {
+		r.Post("/login", h.Login)            // Authenticate with username/password
+		r.Post("/refresh", h.RefreshToken)   // Refresh access token
+		r.Post("/logout", h.Logout)          // Revoke access token
+		r.Post("/validate", h.ValidateToken) // Validate access token
+	})
+
+	// Federated authentication endpoints (public)
+	RegisterFederationAuthRoutes(router, h)
+
+	// IAM Management API (protected)
+	// Note: We register directly under /api/v1/tenants and /api/v1/iam
+	// to avoid conflicting with the main /api/v1 route block in server.go
+
+	// Tenants management
+	router.Route("/api/v1/tenants", func(r chi.Router) {
+		r.Get("/", h.ListTenants)
+		r.Post("/", h.CreateTenant)
+		r.Get("/{tenant_id}", h.GetTenant)
+		r.Put("/{tenant_id}", h.UpdateTenant)
+		r.Delete("/{tenant_id}", h.DeleteTenant)
+
+		// Tenant-scoped resources
+		r.Route("/{tenant_id}/users", func(r chi.Router) {
+			r.Get("/", h.ListUsers)
+			r.Post("/", h.CreateUser)
+			r.Get("/{user_id}", h.GetUser)
+			r.Put("/{user_id}", h.UpdateUser)
+			r.Delete("/{user_id}", h.DeleteUser)
+			r.Post("/{user_id}/roles", h.AssignRole)
+			r.Delete("/{user_id}/roles/{role}", h.RevokeRole)
+
+			// User sessions (tenant-scoped)
+			r.Route("/{user_id}/sessions", func(r chi.Router) {
+				r.Get("/", h.ListUserSessions)
+				r.Post("/", h.CreateSession)
+			})
+
+			// GDPR routes (nested under user)
+			r.Route("/{user_id}/gdpr", func(userRouter chi.Router) {
+				RegisterGDPRRoutes(userRouter, h)
+			})
+
+			// MFA endpoints (nested under user)
+			r.Route("/{user_id}/mfa", func(r chi.Router) {
+				r.Get("/", h.GetMFAStatus)
+				r.Delete("/", h.DisableMFA)
+				r.Post("/enroll", h.BeginMFAEnrollment)
+				r.Post("/verify", h.CompleteMFAEnrollment)
+				r.Delete("/enroll/{enrollment_id}", h.CancelMFAEnrollment)
+				r.Post("/challenge", h.BeginMFAChallenge)
+				r.Post("/verify-challenge", h.VerifyMFAChallenge)
+				r.Get("/backup-codes", h.GetBackupCodeStatus)
+				r.Post("/backup-codes", h.GenerateBackupCodes)
+			})
+
+			// Federation identity link routes (nested under user)
+			r.Route("/{user_id}/links", func(r chi.Router) {
+				r.Post("/", h.LinkAccount)
+				r.Get("/", h.GetUserLinks)
+				r.Delete("/{provider_id}", h.UnlinkAccount)
+			})
+		})
+
+		r.Route("/{tenant_id}/groups", func(r chi.Router) {
+			r.Get("/", h.ListGroups)
+			r.Post("/", h.CreateGroup)
+			r.Get("/{group_id}", h.GetGroup)
+			r.Put("/{group_id}", h.UpdateGroup)
+			r.Delete("/{group_id}", h.DeleteGroup)
+			r.Get("/{group_id}/members", h.ListMembers)
+			r.Post("/{group_id}/members", h.AddMember)
+			r.Delete("/{group_id}/members/{user_id}", h.RemoveMember)
+		})
+
+		r.Route("/{tenant_id}/roles", func(r chi.Router) {
+			r.Get("/", h.ListRoles)
+			r.Post("/", h.CreateRole)
+			r.Get("/{role_id}", h.GetRole)
+			r.Put("/{role_id}", h.UpdateRole)
+			r.Delete("/{role_id}", h.DeleteRole)
+		})
+
+		r.Route("/{tenant_id}/apps", func(r chi.Router) {
+			r.Get("/", h.ListApps)
+			r.Post("/", h.RegisterApp)
+			r.Get("/{client_id}", h.GetApp)
+			r.Put("/{client_id}", h.UpdateApp)
+			r.Delete("/{client_id}", h.DeleteApp)
+			r.Post("/{client_id}/rotate-secret", h.RotateSecret)
+		})
+
+		r.Route("/{tenant_id}/policies", func(r chi.Router) {
+			r.Get("/", h.ListPolicies)
+			r.Post("/", h.CreatePolicy)
+			r.Get("/{policy_name}", h.GetPolicy)
+			r.Put("/{policy_name}", h.UpdatePolicy)
+			r.Delete("/{policy_name}", h.DeletePolicy)
+			r.Post("/validate", h.ValidatePolicy)
+			r.Post("/test", h.TestPolicy)
+			r.Post("/simulate", h.SimulatePolicy)
+			r.Post("/effective-permissions", h.GetEffectivePermissions)
+		})
+
+		// WebAuthn endpoints
+		r.Route("/{tenant_id}/webauthn", func(r chi.Router) {
+			r.Post("/register/begin", h.BeginRegistration)
+			r.Post("/register/finish", h.FinishRegistration)
+			r.Post("/login/begin", h.BeginLogin)
+			r.Post("/login/finish", h.FinishLogin)
+		})
+
+		// Federation provider management (tenant-scoped)
+		r.Route("/{tenant_id}/providers", func(r chi.Router) {
+			r.Post("/", h.RegisterProvider)
+			r.Get("/", h.ListProviders)
+			r.Get("/{provider_id}", h.GetProvider)
+			r.Put("/{provider_id}", h.UpdateProvider)
+			r.Delete("/{provider_id}", h.DeleteProvider)
+		})
+
+	})
+
+	// IAM utility endpoints (not tenant-scoped)
+	router.Route("/api/v1/iam", func(r chi.Router) {
+		r.Post("/validate-client", h.ValidateClient)
+		// PEP (Policy Enforcement Point) endpoints
+		r.Post("/check", h.CheckAccess)
+		r.Post("/check/batch", h.BatchCheckAccess) // Also support /check/batch path
+		r.Post("/batch-check", h.BatchCheckAccess)
+
+		// Audit endpoints
+		r.Get("/audit", h.ListAuditEvents)
+		r.Get("/audit/{id}", h.GetAuditEvent)
+		r.Delete("/audit", h.DeleteOldAuditEvents)
+
+		// Session management endpoints
+		r.Get("/sessions", h.ListSessions)
+		r.Delete("/sessions", h.RevokeAllSessions)
+		r.Get("/sessions/{id}", h.GetSession)
+		r.Delete("/sessions/{id}", h.RevokeSession)
+		r.Post("/sessions/revoke-others", h.RevokeOtherSessions)
+	})
+
+	// Register delegated admin routes
+	RegisterAdminRoutes(router, h)
+}
+
+// Type aliases to iam package interfaces.
+// These are used by the REST handlers to interact with IAM functionality.
+
+// TenantManager interface defines tenant management operations.
+type TenantManager = iam.TenantManager
+
+// IdentityStore is the identity store for user/group/role management.
+type IdentityStore = iam.IdentityStore
+
+// PolicyEngine is the policy engine for ABAC policy management.
+type PolicyEngine = iam.PolicyEngine
+
+// AppManager manages OAuth2 applications.
+type AppManager = iam.AppManager
+
+// OIDCProvider handles OIDC operations.
+type OIDCProvider = iam.OIDCProvider
+
+// WebAuthnManager handles WebAuthn operations.
+type WebAuthnManager = service.WebAuthnManager
+
+// logAuditEvent logs an audit event for IAM operations.
+// It fails silently if the audit logger is not available.
+func (h *IAMHandler) logAuditEvent(ctx context.Context, tenantID string, eventType iam.AuditEventType, category iam.AuditCategory, action string, outcome iam.AuditOutcome, resource *iam.AuditResource, details map[string]interface{}) {
+	// Get audit logger from service
+	auditLogger, ok := h.server.service.(interface {
+		GetAuditLogger(ctx context.Context) (iam.AuditLogger, error)
+	})
+	if !ok {
+		return
+	}
+
+	logger, err := auditLogger.GetAuditLogger(ctx)
+	if err != nil || logger == nil {
+		return
+	}
+
+	event := &iam.AuditEvent{
+		ID:        uuid.New().String(),
+		TenantID:  tenantID,
+		Timestamp: time.Now().UTC(),
+		EventType: eventType,
+		Category:  category,
+		Action:    action,
+		Outcome:   outcome,
+		Resource:  resource,
+		Details:   details,
+	}
+
+	// Log asynchronously to avoid blocking the request
+	logger.LogAsync(event)
+}

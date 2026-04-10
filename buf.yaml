@@ -1,0 +1,32 @@
+version: v1
+
+# Directory configuration
+# Buf will look for .proto files in the api/proto directory
+breaking:
+  use:
+    - FILE
+  ignore:
+    - api/proto/quicbaas_test.proto
+
+# Linting configuration
+lint:
+  use:
+    - DEFAULT
+    - COMMENTS
+    - FILE_LOWER_SNAKE_CASE
+    - PACKAGE_DEFINED
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_SAME_DIRECTORY
+  except:
+    # Allow proto3 optional fields
+    - FIELD_NO_DESCRIPTOR
+  enum_zero_value_suffix: _UNSPECIFIED
+  rpc_allow_same_request_response: false
+  rpc_allow_google_protobuf_empty_requests: false
+  rpc_allow_google_protobuf_empty_responses: false
+  service_suffix: ""
+
+# Build configuration
+build:
+  excludes:
+    - api/proto/vendor

@@ -1,0 +1,384 @@
+// QuicBaaS Parameter Store Protocol Buffer Definitions v1
+// Hierarchical parameter management with encryption, TTL, and tagging
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.parameterstore.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// Parameter Store Service
+// =============================================================================
+
+// ParameterStore provides hierarchical parameter management operations.
+// Parameters are tenant-scoped and support encryption, TTL, and tagging.
+service ParameterStore {
+  // GetParameter retrieves a single parameter by path.
+  // Returns ErrParameterNotFound if the parameter doesn't exist.
+  // Returns ErrParameterExpired if the parameter has expired.
+  rpc GetParameter(GetParameterRequest) returns (GetParameterResponse);
+
+  // SetParameter creates or updates a parameter.
+  // Creates a new parameter if the path doesn't exist.
+  // Updates the existing parameter if the path exists (and Overwrite is true).
+  rpc SetParameter(SetParameterRequest) returns (SetParameterResponse);
+
+  // DeleteParameter removes a parameter by path.
+  // Returns ErrParameterNotFound if the parameter doesn't exist.
+  rpc DeleteParameter(DeleteParameterRequest) returns (DeleteParameterResponse);
+
+  // GetParameters retrieves multiple parameters by paths (batch get).
+  // Missing or expired parameters are reported in errors map.
+  rpc GetParameters(GetParametersRequest) returns (GetParametersResponse);
+
+  // SetParameters creates or updates multiple parameters atomically.
+  // All parameters succeed or all fail.
+  rpc SetParameters(SetParametersRequest) returns (SetParametersResponse);
+
+  // DeleteParameters removes multiple parameters by paths (batch delete).
+  // Missing parameters are reported in results.
+  rpc DeleteParameters(DeleteParametersRequest) returns (DeleteParametersResponse);
+
+  // ListParameters returns parameters matching a path prefix.
+  // Results are sorted by path and support pagination.
+  rpc ListParameters(ListParametersRequest) returns (ListParametersResponse);
+
+  // SearchByTags finds parameters matching tag key-value pairs.
+  // Multiple tags are ANDed together.
+  rpc SearchByTags(SearchByTagsRequest) returns (SearchByTagsResponse);
+}
+
+// =============================================================================
+// Parameter Store Types
+// =============================================================================
+
+// ParameterType specifies the value type of a parameter.
+enum ParameterType {
+  PARAMETER_TYPE_UNSPECIFIED = 0;
+  PARAMETER_TYPE_STRING = 1;   // Plain text string
+  PARAMETER_TYPE_NUMBER = 2;   // Numeric value (int or float)
+  PARAMETER_TYPE_JSON = 3;     // JSON structured data
+  PARAMETER_TYPE_BINARY = 4;   // Binary blob data
+}
+
+// Parameter represents a parameter with its value and metadata.
+message Parameter {
+  // path is the hierarchical parameter path (e.g., "/app/database/host").
+  string path = 1;
+
+  // value is the parameter value (decrypted if requested).
+  bytes value = 2;
+
+  // type is the value type (string, number, json, binary).
+  ParameterType type = 3;
+
+  // description is the parameter description.
+  string description = 4;
+
+  // tags are key-value labels for categorization and search.
+  map<string, string> tags = 5;
+
+  // encrypted indicates if the value is encrypted at rest.
+  bool encrypted = 6;
+
+  // kms_key_id is the encryption key identifier (if encrypted).
+  string kms_key_id = 7;
+
+  // expires_at is when the parameter expires (Unix nanoseconds, 0 = no expiration).
+  int64 expires_at = 8;
+
+  // audit_enabled indicates if audit logging is enabled for this parameter.
+  bool audit_enabled = 9;
+
+  // created_at is when the parameter was created (Unix nanoseconds).
+  int64 created_at = 10;
+
+  // updated_at is when the parameter was last modified (Unix nanoseconds).
+  int64 updated_at = 11;
+
+  // created_by is the user who created the parameter.
+  string created_by = 12;
+
+  // updated_by is the user who last modified the parameter.
+  string updated_by = 13;
+}
+
+// =============================================================================
+// Single Parameter Operations
+// =============================================================================
+
+// GetParameterRequest retrieves a single parameter.
+message GetParameterRequest {
+  // path is the parameter path (required).
+  string path = 1;
+
+  // with_decryption decrypts the value if encrypted (default: true).
+  bool with_decryption = 2;
+}
+
+// GetParameterResponse contains the retrieved parameter.
+message GetParameterResponse {
+  // parameter is the retrieved parameter.
+  Parameter parameter = 1;
+
+  // timestamp is when the response was generated (Unix nanoseconds).
+  int64 timestamp = 2;
+}
+
+// SetParameterRequest creates or updates a parameter.
+message SetParameterRequest {
+  // path is the parameter path (required).
+  string path = 1;
+
+  // value is the parameter value (required).
+  bytes value = 2;
+
+  // type specifies the value type (default: STRING).
+  ParameterType type = 3;
+
+  // description is optional documentation.
+  string description = 4;
+
+  // kms_key_id enables encryption with the specified key (empty = no encryption).
+  string kms_key_id = 5;
+
+  // tags are key-value labels.
+  map<string, string> tags = 6;
+
+  // ttl_seconds sets the time-to-live in seconds (0 = no expiration).
+  int64 ttl_seconds = 7;
+
+  // audit_enabled enables audit logging for this parameter.
+  bool audit_enabled = 8;
+
+  // overwrite allows updating existing parameters (default: true).
+  bool overwrite = 9;
+}
+
+// SetParameterResponse confirms parameter creation/update.
+message SetParameterResponse {
+  // path is the parameter path.
+  string path = 1;
+
+  // created indicates if a new parameter was created (false = updated).
+  bool created = 2;
+
+  // timestamp is when the operation completed (Unix nanoseconds).
+  int64 timestamp = 3;
+}
+
+// DeleteParameterRequest removes a parameter.
+message DeleteParameterRequest {
+  // path is the parameter path to delete.
+  string path = 1;
+}
+
+// DeleteParameterResponse confirms parameter deletion.
+message DeleteParameterResponse {
+  // path is the deleted parameter path.
+  string path = 1;
+
+  // deleted indicates if deletion succeeded.
+  bool deleted = 2;
+
+  // timestamp is when deletion occurred (Unix nanoseconds).
+  int64 timestamp = 3;
+}
+
+// =============================================================================
+// Batch Parameter Operations
+// =============================================================================
+
+// GetParametersRequest retrieves multiple parameters.
+message GetParametersRequest {
+  // paths are the parameter paths to retrieve.
+  repeated string paths = 1;
+
+  // with_decryption decrypts values if encrypted (default: true).
+  bool with_decryption = 2;
+}
+
+// GetParametersResponse contains batch get results.
+message GetParametersResponse {
+  // parameters contains successfully retrieved parameters.
+  repeated Parameter parameters = 1;
+
+  // errors contains per-path error messages for failed retrievals.
+  map<string, string> errors = 2;
+
+  // timestamp is when the response was generated (Unix nanoseconds).
+  int64 timestamp = 3;
+}
+
+// SetParameterItem is a single parameter in a batch set request.
+message SetParameterItem {
+  // path is the parameter path (required).
+  string path = 1;
+
+  // value is the parameter value (required).
+  bytes value = 2;
+
+  // type specifies the value type (default: STRING).
+  ParameterType type = 3;
+
+  // description is optional documentation.
+  string description = 4;
+
+  // kms_key_id enables encryption with the specified key.
+  string kms_key_id = 5;
+
+  // tags are key-value labels.
+  map<string, string> tags = 6;
+
+  // ttl_seconds sets the time-to-live in seconds (0 = no expiration).
+  int64 ttl_seconds = 7;
+
+  // audit_enabled enables audit logging for this parameter.
+  bool audit_enabled = 8;
+
+  // overwrite allows updating existing parameters (default: true).
+  bool overwrite = 9;
+}
+
+// SetParametersRequest creates or updates multiple parameters.
+message SetParametersRequest {
+  // parameters are the parameters to set.
+  repeated SetParameterItem parameters = 1;
+}
+
+// SetParameterResult contains the result of setting a single parameter.
+message SetParameterResult {
+  // path is the parameter path.
+  string path = 1;
+
+  // created indicates if a new parameter was created.
+  bool created = 2;
+
+  // success indicates if the operation succeeded.
+  bool success = 3;
+
+  // error contains the error message if failed.
+  string error = 4;
+}
+
+// SetParametersResponse confirms batch set operation.
+message SetParametersResponse {
+  // results contains per-path results.
+  repeated SetParameterResult results = 1;
+
+  // timestamp is when the operation completed (Unix nanoseconds).
+  int64 timestamp = 2;
+}
+
+// DeleteParametersRequest removes multiple parameters.
+message DeleteParametersRequest {
+  // paths are the parameter paths to delete.
+  repeated string paths = 1;
+}
+
+// DeleteParameterResult contains the result of deleting a single parameter.
+message DeleteParameterResult {
+  // path is the parameter path.
+  string path = 1;
+
+  // deleted indicates if deletion succeeded.
+  bool deleted = 2;
+
+  // error contains the error message if failed.
+  string error = 3;
+}
+
+// DeleteParametersResponse confirms batch delete operation.
+message DeleteParametersResponse {
+  // results contains per-path deletion results.
+  repeated DeleteParameterResult results = 1;
+
+  // deleted_count is the number of parameters successfully deleted.
+  int32 deleted_count = 2;
+
+  // timestamp is when the operation completed (Unix nanoseconds).
+  int64 timestamp = 3;
+}
+
+// =============================================================================
+// List and Search Operations
+// =============================================================================
+
+// ListParametersRequest retrieves parameters by prefix.
+message ListParametersRequest {
+  // prefix filters by path prefix (e.g., "/app/" returns all under /app).
+  string prefix = 1;
+
+  // recursive includes nested paths (default: true).
+  bool recursive = 2;
+
+  // with_decryption decrypts values if encrypted (default: false for listing).
+  bool with_decryption = 3;
+
+  // with_values includes parameter values (default: false for metadata only).
+  bool with_values = 4;
+
+  // limit is the maximum number of results (default: 100).
+  int32 limit = 5;
+
+  // cursor is the pagination cursor from a previous response.
+  string cursor = 6;
+}
+
+// ListParametersResponse contains list results.
+message ListParametersResponse {
+  // parameters contains the listed parameters.
+  repeated Parameter parameters = 1;
+
+  // next_cursor is the cursor for the next page (empty if last page).
+  string next_cursor = 2;
+
+  // has_more indicates if there are more results.
+  bool has_more = 3;
+
+  // total_count is the total number of matching parameters (if available).
+  int64 total_count = 4;
+
+  // timestamp is when the response was generated (Unix nanoseconds).
+  int64 timestamp = 5;
+}
+
+// SearchByTagsRequest finds parameters by tag values.
+message SearchByTagsRequest {
+  // tags are required tag key-value pairs (ANDed together).
+  map<string, string> tags = 1;
+
+  // prefix optionally filters by path prefix as well.
+  string prefix = 2;
+
+  // with_values includes parameter values (default: false).
+  bool with_values = 3;
+
+  // with_decryption decrypts values if encrypted (default: false).
+  bool with_decryption = 4;
+
+  // limit is the maximum number of results (default: 100).
+  int32 limit = 5;
+
+  // cursor is the pagination cursor from a previous response.
+  string cursor = 6;
+}
+
+// SearchByTagsResponse contains search results.
+message SearchByTagsResponse {
+  // parameters contains matching parameters.
+  repeated Parameter parameters = 1;
+
+  // next_cursor is the cursor for the next page (empty if last page).
+  string next_cursor = 2;
+
+  // has_more indicates if there are more results.
+  bool has_more = 3;
+
+  // timestamp is when the response was generated (Unix nanoseconds).
+  int64 timestamp = 4;
+}

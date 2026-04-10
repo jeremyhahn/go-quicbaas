@@ -1,0 +1,261 @@
+# QuicBaaS Example Configuration File
+# Copy this file to ~/.quicbaas.yaml or /etc/quicbaas/.quicbaas.yaml
+
+# Server configuration
+# The server section defines network interfaces and protocol-specific settings
+server:
+  # Bind address for all server interfaces
+  host: "127.0.0.1"
+
+  # HTTP timeout settings (applies to REST and other HTTP-based protocols)
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 60s
+  shutdown_timeout: 30s
+  max_connections: 1000
+
+  # gRPC server configuration
+  grpc:
+    enabled: true
+    port: 9443
+
+  # REST API server configuration
+  rest:
+    enabled: true
+    port: 8443
+
+  # QUIC server configuration (HTTP/3)
+  quic:
+    enabled: true
+    port: 10443
+    max_streams: 1000
+    max_idle_timeout: 30s
+    handshake_idle_timeout: 5s
+    max_stream_receive_window: 6291456  # 6MB
+
+  # MCP (Model Context Protocol) server configuration
+  mcp:
+    enabled: true
+    port: 11443
+    authorization:
+      enabled: true
+      require_https_redirects: true
+    dynamic_registration:
+      enabled: true
+
+  # Unix domain socket configuration
+  unix:
+    enabled: true
+    socket: "/var/run/quicbaas.sock"
+
+# Raft consensus configuration
+raft:
+  node_id: 1
+  election_rtt: 10
+  heartbeat_rtt: 1
+  snapshot_entries: 10000
+  compaction_overhead: 5000
+  request_timeout: 5s
+  rtt_millisecond: 200
+  raft_address: "127.0.0.1:63000"
+  listen_address: "127.0.0.1:63000"
+  mutual_tls: false
+  max_in_mem_log_size: 67108864  # 64MB
+  max_send_queue_size: 1024
+  max_receive_queue_size: 1024
+  max_snapshot_send_bps: 0  # unlimited
+  max_snapshot_recv_bps: 0  # unlimited
+  notify_commit: false
+  enable_metrics: true
+
+# Storage engine configuration
+storage:
+  # Storage backend type: memory, file, pebble, raft
+  # - memory: In-memory storage. No persistence.
+  # - file: Simple file-based storage. Each key is a file.
+  # - pebble: Direct PebbleDB backend. Fast, single-node.
+  # - raft: Raft consensus + PebbleDB. Multi-node cluster.
+  backend: "pebble"
+
+  data_dir: "./data"
+  wal_dir: "./data/wal"
+  cache_size: 134217728  # 128MB
+  max_open_files: 1000
+  max_concurrent_reads: 100
+  max_concurrent_writes: 100
+  disable_wal: false
+  sync_writes: true
+  bytes_per_sync: 1048576  # 1MB
+  mem_table_size: 67108864  # 64MB
+  mem_table_stop_writes: 2
+  l0_compaction_threshold: 4
+  l0_stop_writes_threshold: 12
+  block_size: 4096
+  target_file_size: 67108864  # 64MB
+  compression_type: "snappy"
+
+# Object storage configuration
+# Named backends that can be referenced by other components (backup, keyring, etc.)
+object_storage:
+  backends:
+    # Primary local storage for large values
+    primary:
+      type: "local"
+      description: "Primary local object storage"
+      config:
+        path: "./data/objects"
+
+    # S3-compatible storage (MinIO example)
+    # minio:
+    #   type: "minio"
+    #   description: "MinIO object storage"
+    #   config:
+    #     endpoint: "localhost:9000"
+    #     bucket: "quicbaas"
+    #     access_key: "${MINIO_ACCESS_KEY}"
+    #     secret_key: "${MINIO_SECRET_KEY}"
+    #     use_ssl: "false"
+
+    # AWS S3 storage
+    # s3:
+    #   type: "s3"
+    #   description: "AWS S3 object storage"
+    #   config:
+    #     bucket: "my-quicbaas-bucket"
+    #     region: "us-east-1"
+    #     access_key_id: "${AWS_ACCESS_KEY_ID}"
+    #     secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+
+    # Google Cloud Storage
+    # gcs:
+    #   type: "gcs"
+    #   description: "Google Cloud Storage"
+    #   config:
+    #     bucket: "my-quicbaas-bucket"
+    #     credentials_file: "/path/to/service-account.json"
+
+    # Azure Blob Storage
+    # azure:
+    #   type: "azure"
+    #   description: "Azure Blob Storage"
+    #   config:
+    #     container: "quicbaas"
+    #     account_name: "mystorageaccount"
+    #     account_key: "${AZURE_STORAGE_KEY}"
+
+    # In-memory storage for testing
+    # memory:
+    #   type: "memory"
+    #   description: "In-memory storage for testing"
+
+# Security configuration
+security:
+  tls_enabled: false
+  tls_cert_file: ""
+  tls_key_file: ""
+  tls_ca_file: ""
+  tls_client_auth: false
+  api_key_enabled: false
+  api_keys: []
+  encryption_enabled: false
+  encryption_key_file: ""
+  fips_mode: false
+  audit_log_enabled: false
+  audit_log_file: "./audit.log"
+
+  # Key storage backend (references object_storage.backends)
+  # key_storage_backend: "primary"
+
+  # Authorization configuration
+  authorization:
+    provider: "rbac"  # Options: rbac, abac, hybrid
+    rbac:
+      enabled: true
+      default_role: ""  # Empty means deny unauthenticated requests
+      allow_anonymous: true  # Allow anonymous access to health/metrics endpoints
+    abac:
+      enabled: false  # Requires iam build tag
+      cache_ttl: "5m"
+      policy_dir: ""
+    audit:
+      enabled: true
+      log_denied: true
+      log_allowed: false  # Set to true for verbose logging
+
+# Backup configuration
+backup:
+  enabled: false
+  # References a named backend from object_storage.backends
+  storage_backend: "primary"
+  default_compression: "zstd"  # Options: none, gzip, zstd
+  default_encryption: "none"   # Options: none, aes-256-gcm
+  encryption_key: ""           # Base64 encoded key or path to key file
+  work_dir: "/tmp/quicbaas-backup"
+  timeout: "30m"
+
+# KMS (Key Management Service) configuration
+kms:
+  enabled: true  # Enable/disable KMS service
+  backend: software  # Backend type: software, tpm2, pkcs11, awskms, azurekv, gcpkms
+  cache:
+    enabled: true  # Cache key material in memory
+  raft:
+    shard_id: 1000  # Dedicated Raft shard for KMS operations
+  auto_generate_key: true  # Auto-generate default DEK on startup
+
+# Secrets Engine configuration
+secrets:
+  enabled: true  # Enable/disable Secrets service
+  raft:
+    shard_id: 1001  # Dedicated Raft shard for Secrets operations
+  encryption:
+    default_key_id: "quicbaas-secrets-key"
+
+# Logging configuration
+logging:
+  level: "info"  # trace, debug, info, warn, error, fatal, panic
+  format: "json"  # json or console
+  output: "stdout"  # stdout, stderr, or file
+  file: "./quicbaas.log"
+  max_size: 100  # MB
+  max_backups: 3
+  max_age: 28  # days
+  compress: true
+
+# Cache configuration with entity-level control
+cache:
+  # Global cache settings
+  enabled: true
+  default_ttl: 5m  # Default time-to-live for cache entries
+  max_size: 10000  # Global maximum number of entries across all entity types
+  cleanup_interval: 1m  # How often to clean up expired entries
+  write_through: true  # Default write-through behavior
+
+  # L2 cache (Redis) configuration
+  l2_enabled: false  # Enable L2 cache tier
+  l2_ttl: 30m  # Time-to-live for L2 cache entries
+  l2_redis_addr: "localhost:6379"  # Redis server address
+  l2_redis_password: ""  # Redis password (optional)
+  l2_redis_db: 0  # Redis database number
+
+  # Entity-specific cache configurations
+  # Each entity type can have its own cache settings
+  entities:
+    # Example: User entity with custom configuration
+    user:
+      enabled: true  # Enable caching for user entities
+      ttl: 10m  # Users cached for 10 minutes
+      max_size: 5000  # Maximum 5000 user entries in cache
+      write_through: true  # Write immediately to L2 cache
+
+    # Example: Post entity with caching disabled
+    post:
+      enabled: false  # Disable caching for posts
+
+    # Example: Comment entity with short TTL
+    # comment:
+    #   enabled: true
+    #   ttl: 2m  # Comments cached for only 2 minutes
+    #   max_size: 1000
+
+    # Entities not listed here will use the global default settings

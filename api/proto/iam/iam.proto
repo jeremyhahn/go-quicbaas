@@ -1,0 +1,1558 @@
+syntax = "proto3";
+
+package quicbaas.iam.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto/iam;iam";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// IAM Service for identity and access management
+service IAMService {
+  // Tenant management
+  rpc CreateTenant(CreateTenantRequest) returns (Tenant);
+  rpc GetTenant(GetTenantRequest) returns (Tenant);
+  rpc UpdateTenant(UpdateTenantRequest) returns (Tenant);
+  rpc DeleteTenant(DeleteTenantRequest) returns (DeleteTenantResponse);
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+
+  // User management
+  rpc CreateUser(CreateUserRequest) returns (User);
+  rpc GetUser(GetUserRequest) returns (User);
+  rpc UpdateUser(UpdateUserRequest) returns (User);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+
+  // Group management
+  rpc CreateGroup(CreateGroupRequest) returns (Group);
+  rpc GetGroup(GetGroupRequest) returns (Group);
+  rpc UpdateGroup(UpdateGroupRequest) returns (Group);
+  rpc DeleteGroup(DeleteGroupRequest) returns (DeleteGroupResponse);
+  rpc ListGroups(ListGroupsRequest) returns (ListGroupsResponse);
+  rpc AddUserToGroup(AddUserToGroupRequest) returns (AddUserToGroupResponse);
+  rpc RemoveUserFromGroup(RemoveUserFromGroupRequest) returns (RemoveUserFromGroupResponse);
+
+  // Role management
+  rpc CreateRole(CreateRoleRequest) returns (Role);
+  rpc GetRole(GetRoleRequest) returns (Role);
+  rpc UpdateRole(UpdateRoleRequest) returns (Role);
+  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse);
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+  rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse);
+  rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse);
+
+  // Application (OAuth client) management
+  rpc RegisterApp(RegisterAppRequest) returns (Application);
+  rpc GetApp(GetAppRequest) returns (Application);
+  rpc UpdateApp(UpdateAppRequest) returns (Application);
+  rpc DeleteApp(DeleteAppRequest) returns (DeleteAppResponse);
+  rpc ListApps(ListAppsRequest) returns (ListAppsResponse);
+  rpc RotateAppSecret(RotateAppSecretRequest) returns (Application);
+
+  // Policy management
+  rpc CreatePolicy(CreatePolicyRequest) returns (Policy);
+  rpc GetPolicy(GetPolicyRequest) returns (Policy);
+  rpc UpdatePolicy(UpdatePolicyRequest) returns (Policy);
+  rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+  rpc ValidatePolicy(ValidatePolicyRequest) returns (ValidatePolicyResponse);
+  rpc TestPolicy(TestPolicyRequest) returns (TestPolicyResponse);
+
+  // Delegated Administration
+  rpc CreateAdminAssignment(CreateAdminAssignmentRequest) returns (AdminAssignment);
+  rpc GetAdminAssignment(GetAdminAssignmentRequest) returns (AdminAssignment);
+  rpc UpdateAdminAssignment(UpdateAdminAssignmentRequest) returns (AdminAssignment);
+  rpc DeleteAdminAssignment(DeleteAdminAssignmentRequest) returns (DeleteAdminAssignmentResponse);
+  rpc ListAdminAssignments(ListAdminAssignmentsRequest) returns (AdminAssignmentList);
+  rpc CheckAdminPermission(CheckAdminPermissionRequest) returns (CheckAdminPermissionResponse);
+  rpc StartImpersonation(StartImpersonationRequest) returns (ImpersonationSession);
+  rpc EndImpersonation(EndImpersonationRequest) returns (EndImpersonationResponse);
+  rpc GetActiveImpersonations(GetActiveImpersonationsRequest) returns (ImpersonationSessionList);
+
+  // GDPR Consent Management
+  rpc GrantConsent(GrantConsentRequest) returns (Consent);
+  rpc WithdrawConsent(WithdrawConsentRequest) returns (WithdrawConsentResponse);
+  rpc GetConsent(GetConsentRequest) returns (Consent);
+  rpc ListUserConsents(ListUserConsentsRequest) returns (ConsentList);
+
+  // GDPR Data Export
+  rpc RequestExport(RequestExportRequest) returns (DataExportRequest);
+  rpc GetExportStatus(GetExportStatusRequest) returns (DataExportRequest);
+  rpc GenerateExport(GenerateExportRequest) returns (UserDataExport);
+
+  // GDPR Data Deletion
+  rpc RequestDeletion(RequestDeletionRequest) returns (DataDeletionRequest);
+  rpc CancelDeletion(CancelDeletionRequest) returns (CancelDeletionResponse);
+  rpc ProcessDeletion(ProcessDeletionRequest) returns (DeletionSummary);
+  rpc GetDeletionStatus(GetDeletionStatusRequest) returns (DataDeletionRequest);
+}
+
+// Policy Enforcement Point Service
+service PEPService {
+  // Single authorization check
+  rpc Check(CheckRequest) returns (CheckResponse);
+
+  // Batch authorization check
+  rpc CheckBatch(CheckBatchRequest) returns (CheckBatchResponse);
+
+  // Subscribe to policy updates (streaming)
+  rpc Subscribe(SubscribeRequest) returns (stream PolicyUpdate);
+}
+
+// MFA Service for multi-factor authentication operations
+service MFAService {
+  // Enrollment operations
+  rpc BeginEnrollment(BeginMFAEnrollmentRequest) returns (BeginMFAEnrollmentResponse);
+  rpc CompleteEnrollment(CompleteMFAEnrollmentRequest) returns (CompleteMFAEnrollmentResponse);
+  rpc CancelEnrollment(CancelMFAEnrollmentRequest) returns (CancelMFAEnrollmentResponse);
+
+  // Challenge/verification operations
+  rpc BeginChallenge(BeginMFAChallengeRequest) returns (BeginMFAChallengeResponse);
+  rpc VerifyChallenge(VerifyMFAChallengeRequest) returns (VerifyMFAChallengeResponse);
+  rpc VerifyCode(VerifyMFACodeRequest) returns (VerifyMFACodeResponse);
+
+  // Status operations
+  rpc GetStatus(GetMFAStatusRequest) returns (GetMFAStatusResponse);
+  rpc Disable(DisableMFARequest) returns (DisableMFAResponse);
+
+  // Backup code operations
+  rpc GenerateBackupCodes(GenerateBackupCodesRequest) returns (GenerateBackupCodesResponse);
+  rpc VerifyBackupCode(VerifyBackupCodeRequest) returns (VerifyBackupCodeResponse);
+  rpc GetBackupCodeStatus(GetBackupCodeStatusRequest) returns (GetBackupCodeStatusResponse);
+}
+
+// Federation Service for OIDC Consumer federation with external identity providers
+service FederationService {
+  // Provider management
+  rpc CreateProvider(CreateProviderRequest) returns (ExternalProvider);
+  rpc GetProvider(GetProviderRequest) returns (ExternalProvider);
+  rpc UpdateProvider(UpdateProviderRequest) returns (ExternalProvider);
+  rpc DeleteProvider(DeleteProviderRequest) returns (DeleteProviderResponse);
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+
+  // Authentication flow
+  rpc BeginFederatedLogin(BeginFederatedLoginRequest) returns (BeginFederatedLoginResponse);
+  rpc HandleFederatedCallback(HandleFederatedCallbackRequest) returns (HandleFederatedCallbackResponse);
+
+  // Account linking
+  rpc LinkAccount(LinkAccountRequest) returns (LinkAccountResponse);
+  rpc UnlinkAccount(UnlinkAccountRequest) returns (UnlinkAccountResponse);
+  rpc GetUserLinks(GetUserLinksRequest) returns (GetUserLinksResponse);
+}
+
+// Core messages
+message Tenant {
+  string id = 1;
+  string name = 2;
+  TenantSettings settings = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+message TenantSettings {
+  int32 max_users = 1;
+  bool mfa_required = 2;
+  map<string, string> named_networks = 3;
+}
+
+message User {
+  string id = 1;
+  string tenant_id = 2;
+  string email = 3;
+  string name = 4;
+  repeated string roles = 5;
+  repeated string groups = 6;
+  map<string, string> attributes = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  google.protobuf.Timestamp last_auth = 10;
+  bool mfa_verified = 11;
+  google.protobuf.Timestamp mfa_timestamp = 12;
+}
+
+message Group {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string description = 4;
+  repeated string members = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message Role {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string description = 4;
+  repeated string permissions = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message Application {
+  string client_id = 1;
+  string client_secret = 2;  // Only returned on create/rotate
+  string tenant_id = 3;
+  string name = 4;
+  repeated string redirect_uris = 5;
+  string resource_prefix = 6;
+  repeated string grant_types = 7;
+  repeated string response_types = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message Policy {
+  string name = 1;
+  string tenant_id = 2;
+  string description = 3;
+  map<string, string> labels = 4;
+  int32 priority = 5;
+  bytes spec_yaml = 6;  // YAML policy spec
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// PEP messages
+message Subject {
+  string id = 1;
+  string tenant_id = 2;
+  repeated string roles = 3;
+  repeated string groups = 4;
+  map<string, string> attributes = 5;
+  bool mfa_verified = 6;
+  google.protobuf.Timestamp mfa_timestamp = 7;
+}
+
+message CheckRequest {
+  Subject subject = 1;
+  string action = 2;
+  string resource = 3;
+  map<string, string> context = 4;
+}
+
+message CheckResponse {
+  bool allowed = 1;
+  string matched_policy = 2;
+  string matched_rule = 3;
+  int64 evaluation_time_ns = 4;
+}
+
+message CheckBatchRequest {
+  Subject subject = 1;
+  string action = 2;
+  repeated string resources = 3;
+  map<string, string> context = 4;
+}
+
+message CheckBatchResponse {
+  repeated bool results = 1;
+  int64 evaluation_time_ns = 2;
+}
+
+message SubscribeRequest {
+  string service_id = 1;
+  repeated string resource_patterns = 2;
+}
+
+message PolicyUpdate {
+  enum Type {
+    SNAPSHOT = 0;
+    CREATED = 1;
+    UPDATED = 2;
+    DELETED = 3;
+  }
+  Type type = 1;
+  bytes policy_data = 2;
+  string policy_id = 3;
+  int64 version = 4;
+}
+
+// Tenant CRUD messages
+message CreateTenantRequest {
+  string id = 1;
+  string name = 2;
+  TenantSettings settings = 3;
+}
+
+message GetTenantRequest {
+  string id = 1;
+}
+
+message UpdateTenantRequest {
+  string id = 1;
+  string name = 2;
+  TenantSettings settings = 3;
+}
+
+message DeleteTenantRequest {
+  string id = 1;
+}
+
+message DeleteTenantResponse {
+  bool success = 1;
+}
+
+message ListTenantsRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+}
+
+message ListTenantsResponse {
+  repeated Tenant tenants = 1;
+  int32 total = 2;
+}
+
+// User CRUD messages
+message CreateUserRequest {
+  string tenant_id = 1;
+  string email = 2;
+  string name = 3;
+  repeated string roles = 4;
+  repeated string groups = 5;
+  map<string, string> attributes = 6;
+}
+
+message GetUserRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+message UpdateUserRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  string email = 3;
+  string name = 4;
+  repeated string roles = 5;
+  repeated string groups = 6;
+  map<string, string> attributes = 7;
+}
+
+message DeleteUserRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+message DeleteUserResponse {
+  bool success = 1;
+}
+
+message ListUsersRequest {
+  string tenant_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+  string email = 4;
+  string role = 5;
+  string group = 6;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  int32 total = 2;
+}
+
+// Group CRUD messages
+message CreateGroupRequest {
+  string tenant_id = 1;
+  string id = 2;
+  string name = 3;
+  string description = 4;
+}
+
+message GetGroupRequest {
+  string tenant_id = 1;
+  string group_id = 2;
+}
+
+message UpdateGroupRequest {
+  string tenant_id = 1;
+  string group_id = 2;
+  string name = 3;
+  string description = 4;
+}
+
+message DeleteGroupRequest {
+  string tenant_id = 1;
+  string group_id = 2;
+}
+
+message DeleteGroupResponse {
+  bool success = 1;
+}
+
+message ListGroupsRequest {
+  string tenant_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message ListGroupsResponse {
+  repeated Group groups = 1;
+  int32 total = 2;
+}
+
+message AddUserToGroupRequest {
+  string tenant_id = 1;
+  string group_id = 2;
+  string user_id = 3;
+}
+
+message AddUserToGroupResponse {
+  bool success = 1;
+}
+
+message RemoveUserFromGroupRequest {
+  string tenant_id = 1;
+  string group_id = 2;
+  string user_id = 3;
+}
+
+message RemoveUserFromGroupResponse {
+  bool success = 1;
+}
+
+// Role CRUD messages
+message CreateRoleRequest {
+  string tenant_id = 1;
+  string id = 2;
+  string name = 3;
+  string description = 4;
+  repeated string permissions = 5;
+}
+
+message GetRoleRequest {
+  string tenant_id = 1;
+  string role_id = 2;
+}
+
+message UpdateRoleRequest {
+  string tenant_id = 1;
+  string role_id = 2;
+  string name = 3;
+  string description = 4;
+  repeated string permissions = 5;
+}
+
+message DeleteRoleRequest {
+  string tenant_id = 1;
+  string role_id = 2;
+}
+
+message DeleteRoleResponse {
+  bool success = 1;
+}
+
+message ListRolesRequest {
+  string tenant_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message ListRolesResponse {
+  repeated Role roles = 1;
+  int32 total = 2;
+}
+
+message AssignRoleRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  string role = 3;
+}
+
+message AssignRoleResponse {
+  bool success = 1;
+}
+
+message RevokeRoleRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  string role = 3;
+}
+
+message RevokeRoleResponse {
+  bool success = 1;
+}
+
+// Application CRUD messages
+message RegisterAppRequest {
+  string tenant_id = 1;
+  string name = 2;
+  repeated string redirect_uris = 3;
+  string resource_prefix = 4;
+  repeated string grant_types = 5;
+  repeated string response_types = 6;
+}
+
+message GetAppRequest {
+  string tenant_id = 1;
+  string client_id = 2;
+}
+
+message UpdateAppRequest {
+  string tenant_id = 1;
+  string client_id = 2;
+  string name = 3;
+  repeated string redirect_uris = 4;
+  string resource_prefix = 5;
+  repeated string grant_types = 6;
+  repeated string response_types = 7;
+}
+
+message DeleteAppRequest {
+  string tenant_id = 1;
+  string client_id = 2;
+}
+
+message DeleteAppResponse {
+  bool success = 1;
+}
+
+message ListAppsRequest {
+  string tenant_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message ListAppsResponse {
+  repeated Application apps = 1;
+  int32 total = 2;
+}
+
+message RotateAppSecretRequest {
+  string tenant_id = 1;
+  string client_id = 2;
+}
+
+// Policy CRUD messages
+message CreatePolicyRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string description = 3;
+  map<string, string> labels = 4;
+  int32 priority = 5;
+  bytes spec_yaml = 6;
+}
+
+message GetPolicyRequest {
+  string tenant_id = 1;
+  string policy_name = 2;
+}
+
+message UpdatePolicyRequest {
+  string tenant_id = 1;
+  string policy_name = 2;
+  string description = 3;
+  map<string, string> labels = 4;
+  int32 priority = 5;
+  bytes spec_yaml = 6;
+}
+
+message DeletePolicyRequest {
+  string tenant_id = 1;
+  string policy_name = 2;
+}
+
+message DeletePolicyResponse {
+  bool success = 1;
+}
+
+message ListPoliciesRequest {
+  string tenant_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message ListPoliciesResponse {
+  repeated Policy policies = 1;
+  int32 total = 2;
+}
+
+message ValidatePolicyRequest {
+  string tenant_id = 1;
+  bytes spec_yaml = 2;
+}
+
+message ValidatePolicyResponse {
+  bool valid = 1;
+  repeated string errors = 2;
+}
+
+message TestPolicyRequest {
+  string tenant_id = 1;
+  Subject subject = 2;
+  string action = 3;
+  string resource = 4;
+  map<string, string> context = 5;
+}
+
+message TestPolicyResponse {
+  bool allowed = 1;
+  string matched_policy = 2;
+  string matched_rule = 3;
+  int64 evaluation_time_ns = 4;
+}
+
+// =============================================================================
+// Delegated Administration Messages
+// =============================================================================
+
+// AdminRole represents a delegated administration role type
+enum AdminRole {
+  ADMIN_ROLE_UNSPECIFIED = 0;
+  ADMIN_ROLE_SUPER_ADMIN = 1;
+  ADMIN_ROLE_TENANT_ADMIN = 2;
+  ADMIN_ROLE_USER_ADMIN = 3;
+  ADMIN_ROLE_GROUP_ADMIN = 4;
+  ADMIN_ROLE_POLICY_ADMIN = 5;
+  ADMIN_ROLE_AUDIT_ADMIN = 6;
+  ADMIN_ROLE_READ_ONLY = 7;
+}
+
+// ResourceScope defines a scope limitation for admin access
+message ResourceScope {
+  string resource_type = 1;
+  string resource_pattern = 2;
+}
+
+// AdminAssignment represents a user's administrative assignment
+message AdminAssignment {
+  string id = 1;
+  string user_id = 2;
+  AdminRole admin_role = 3;
+  repeated string tenant_ids = 4;
+  repeated string permissions = 5;
+  repeated string denied_permissions = 6;
+  repeated ResourceScope resource_scopes = 7;
+  google.protobuf.Timestamp expires_at = 8;
+  string granted_by = 9;
+  google.protobuf.Timestamp granted_at = 10;
+  google.protobuf.Timestamp last_used_at = 11;
+  bool active = 12;
+  map<string, string> metadata = 13;
+}
+
+// AdminAssignmentList contains a list of admin assignments
+message AdminAssignmentList {
+  repeated AdminAssignment assignments = 1;
+  int32 total = 2;
+}
+
+// CreateAdminAssignmentRequest creates a new admin assignment
+message CreateAdminAssignmentRequest {
+  string user_id = 1;
+  AdminRole admin_role = 2;
+  repeated string tenant_ids = 3;
+  repeated string permissions = 4;
+  repeated string denied_permissions = 5;
+  repeated ResourceScope resource_scopes = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  string granted_by = 8;
+  map<string, string> metadata = 9;
+}
+
+// GetAdminAssignmentRequest retrieves an admin assignment by ID
+message GetAdminAssignmentRequest {
+  string id = 1;
+}
+
+// UpdateAdminAssignmentRequest updates an existing admin assignment
+message UpdateAdminAssignmentRequest {
+  string id = 1;
+  AdminRole admin_role = 2;
+  repeated string tenant_ids = 3;
+  repeated string permissions = 4;
+  repeated string denied_permissions = 5;
+  repeated ResourceScope resource_scopes = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  bool active = 8;
+  map<string, string> metadata = 9;
+}
+
+// DeleteAdminAssignmentRequest deletes an admin assignment
+message DeleteAdminAssignmentRequest {
+  string id = 1;
+}
+
+// DeleteAdminAssignmentResponse confirms deletion
+message DeleteAdminAssignmentResponse {
+  bool success = 1;
+}
+
+// ListAdminAssignmentsRequest lists admin assignments with filters
+message ListAdminAssignmentsRequest {
+  string user_id = 1;
+  string tenant_id = 2;
+  AdminRole admin_role = 3;
+  bool active_only = 4;
+  int32 limit = 5;
+  int32 offset = 6;
+}
+
+// CheckAdminPermissionRequest checks if an admin has a specific permission
+message CheckAdminPermissionRequest {
+  string user_id = 1;
+  string permission = 2;
+  string tenant_id = 3;
+  string resource_type = 4;
+  string resource_id = 5;
+}
+
+// CheckAdminPermissionResponse returns the permission check result
+message CheckAdminPermissionResponse {
+  bool allowed = 1;
+  string assignment_id = 2;
+  AdminRole admin_role = 3;
+  string reason = 4;
+}
+
+// ImpersonationSession represents an active impersonation session
+message ImpersonationSession {
+  string id = 1;
+  string admin_user_id = 2;
+  string target_user_id = 3;
+  string tenant_id = 4;
+  string reason = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  google.protobuf.Timestamp ended_at = 8;
+  string audit_log_id = 9;
+}
+
+// ImpersonationSessionList contains a list of impersonation sessions
+message ImpersonationSessionList {
+  repeated ImpersonationSession sessions = 1;
+}
+
+// StartImpersonationRequest starts an impersonation session
+message StartImpersonationRequest {
+  string admin_user_id = 1;
+  string target_user_id = 2;
+  string tenant_id = 3;
+  string reason = 4;
+  google.protobuf.Duration duration = 5;
+}
+
+// EndImpersonationRequest ends an impersonation session
+message EndImpersonationRequest {
+  string session_id = 1;
+}
+
+// EndImpersonationResponse confirms session ended
+message EndImpersonationResponse {
+  bool success = 1;
+}
+
+// GetActiveImpersonationsRequest retrieves active impersonation sessions
+message GetActiveImpersonationsRequest {
+  string admin_user_id = 1;
+}
+
+// =============================================================================
+// GDPR Consent Messages
+// =============================================================================
+
+// ConsentPurpose represents a purpose for which consent can be granted
+enum ConsentPurpose {
+  CONSENT_PURPOSE_UNSPECIFIED = 0;
+  CONSENT_PURPOSE_MARKETING = 1;
+  CONSENT_PURPOSE_ANALYTICS = 2;
+  CONSENT_PURPOSE_PERSONALIZATION = 3;
+  CONSENT_PURPOSE_THIRD_PARTY = 4;
+  CONSENT_PURPOSE_DATA_PROCESSING = 5;
+  CONSENT_PURPOSE_DATA_RETENTION = 6;
+  CONSENT_PURPOSE_FUNCTIONAL = 7;
+}
+
+// ConsentStatus represents the status of a consent
+enum ConsentStatus {
+  CONSENT_STATUS_UNSPECIFIED = 0;
+  CONSENT_STATUS_GRANTED = 1;
+  CONSENT_STATUS_DENIED = 2;
+  CONSENT_STATUS_WITHDRAWN = 3;
+  CONSENT_STATUS_PENDING = 4;
+}
+
+// Consent represents a user's consent for a specific purpose
+message Consent {
+  string id = 1;
+  string user_id = 2;
+  string tenant_id = 3;
+  ConsentPurpose purpose = 4;
+  ConsentStatus status = 5;
+  string version = 6;
+  google.protobuf.Timestamp granted_at = 7;
+  google.protobuf.Timestamp withdrawn_at = 8;
+  google.protobuf.Timestamp expires_at = 9;
+  string ip_address = 10;
+  string user_agent = 11;
+  map<string, string> metadata = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+// ConsentList contains a list of consents
+message ConsentList {
+  repeated Consent consents = 1;
+  int32 total = 2;
+}
+
+// GrantConsentRequest grants consent for a specific purpose
+message GrantConsentRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  ConsentPurpose purpose = 3;
+  string version = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  string ip_address = 6;
+  string user_agent = 7;
+}
+
+// WithdrawConsentRequest withdraws a previously granted consent
+message WithdrawConsentRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  ConsentPurpose purpose = 3;
+  string ip_address = 4;
+  string user_agent = 5;
+}
+
+// WithdrawConsentResponse confirms consent withdrawal
+message WithdrawConsentResponse {
+  bool success = 1;
+}
+
+// GetConsentRequest retrieves a specific consent
+message GetConsentRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  ConsentPurpose purpose = 3;
+}
+
+// ListUserConsentsRequest lists all consents for a user
+message ListUserConsentsRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+// =============================================================================
+// GDPR Data Export Messages
+// =============================================================================
+
+// DataExportFormat represents the format for data exports
+enum DataExportFormat {
+  DATA_EXPORT_FORMAT_UNSPECIFIED = 0;
+  DATA_EXPORT_FORMAT_JSON = 1;
+  DATA_EXPORT_FORMAT_CSV = 2;
+  DATA_EXPORT_FORMAT_XML = 3;
+}
+
+// DataExportStatus represents the status of a data export request
+enum DataExportStatus {
+  DATA_EXPORT_STATUS_UNSPECIFIED = 0;
+  DATA_EXPORT_STATUS_PENDING = 1;
+  DATA_EXPORT_STATUS_PROCESSING = 2;
+  DATA_EXPORT_STATUS_COMPLETED = 3;
+  DATA_EXPORT_STATUS_FAILED = 4;
+  DATA_EXPORT_STATUS_EXPIRED = 5;
+}
+
+// DataExportRequest represents a request to export user data
+message DataExportRequest {
+  string id = 1;
+  string user_id = 2;
+  string tenant_id = 3;
+  string requested_by = 4;
+  DataExportFormat format = 5;
+  DataExportStatus status = 6;
+  repeated string include_categories = 7;
+  repeated string exclude_categories = 8;
+  google.protobuf.Timestamp requested_at = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp completed_at = 11;
+  google.protobuf.Timestamp expires_at = 12;
+  string download_url = 13;
+  int64 file_size_bytes = 14;
+  string error_message = 15;
+  map<string, string> metadata = 16;
+}
+
+// RequestExportRequest creates a new data export request
+message RequestExportRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  string requested_by = 3;
+  DataExportFormat format = 4;
+  repeated string include_categories = 5;
+  repeated string exclude_categories = 6;
+}
+
+// GetExportStatusRequest retrieves the status of an export request
+message GetExportStatusRequest {
+  string export_id = 1;
+}
+
+// GenerateExportRequest triggers generation of a user data export
+message GenerateExportRequest {
+  string export_id = 1;
+}
+
+// UserDataExport contains all exportable user data
+message UserDataExport {
+  ExportMetadata export_metadata = 1;
+  UserProfileExport profile = 2;
+  repeated SessionExport sessions = 3;
+  repeated ConsentExport consents = 4;
+  repeated GroupMembershipExport groups = 5;
+  repeated RoleAssignmentExport roles = 6;
+  repeated AuditLogExport audit_logs = 7;
+  repeated CredentialExport credentials = 8;
+  MFAInfoExport mfa_info = 9;
+}
+
+// ExportMetadata contains metadata about the export
+message ExportMetadata {
+  string export_id = 1;
+  string user_id = 2;
+  string tenant_id = 3;
+  google.protobuf.Timestamp exported_at = 4;
+  DataExportFormat format = 5;
+  repeated string categories = 6;
+  string schema_version = 7;
+}
+
+// UserProfileExport contains exportable profile data
+message UserProfileExport {
+  string id = 1;
+  string email = 2;
+  string name = 3;
+  map<string, string> attributes = 4;
+  google.protobuf.Timestamp created = 5;
+  google.protobuf.Timestamp updated = 6;
+  google.protobuf.Timestamp last_auth = 7;
+}
+
+// SessionExport contains exportable session data
+message SessionExport {
+  string id = 1;
+  google.protobuf.Timestamp started_at = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  google.protobuf.Timestamp last_active = 4;
+  string ip_address = 5;
+  string user_agent = 6;
+  string auth_method = 7;
+  google.protobuf.Timestamp ended_at = 8;
+}
+
+// ConsentExport contains exportable consent data
+message ConsentExport {
+  ConsentPurpose purpose = 1;
+  ConsentStatus status = 2;
+  string version = 3;
+  google.protobuf.Timestamp granted_at = 4;
+  google.protobuf.Timestamp withdrawn_at = 5;
+}
+
+// GroupMembershipExport contains exportable group membership data
+message GroupMembershipExport {
+  string group_id = 1;
+  string group_name = 2;
+  google.protobuf.Timestamp joined_at = 3;
+}
+
+// RoleAssignmentExport contains exportable role assignment data
+message RoleAssignmentExport {
+  string role_id = 1;
+  string role_name = 2;
+  google.protobuf.Timestamp assigned_at = 3;
+}
+
+// AuditLogExport contains exportable audit log data
+message AuditLogExport {
+  google.protobuf.Timestamp timestamp = 1;
+  string action = 2;
+  string resource = 3;
+  string ip_address = 4;
+  bool success = 5;
+}
+
+// CredentialExport contains exportable credential metadata
+message CredentialExport {
+  string id = 1;
+  string type = 2;
+  string name = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp last_used_at = 5;
+  string attestation = 6;
+  repeated string transports = 7;
+}
+
+// MFAInfoExport contains exportable MFA information
+message MFAInfoExport {
+  bool enabled = 1;
+  string method = 2;
+  google.protobuf.Timestamp enrolled_at = 3;
+  int32 backup_codes_remaining = 4;
+}
+
+// =============================================================================
+// GDPR Data Deletion Messages
+// =============================================================================
+
+// DeletionStatus represents the status of a deletion request
+enum DeletionStatus {
+  DELETION_STATUS_UNSPECIFIED = 0;
+  DELETION_STATUS_PENDING = 1;
+  DELETION_STATUS_PROCESSING = 2;
+  DELETION_STATUS_COMPLETED = 3;
+  DELETION_STATUS_FAILED = 4;
+  DELETION_STATUS_CANCELLED = 5;
+}
+
+// DataDeletionRequest represents a request to delete user data
+message DataDeletionRequest {
+  string id = 1;
+  string user_id = 2;
+  string tenant_id = 3;
+  string requested_by = 4;
+  string reason = 5;
+  DeletionStatus status = 6;
+  repeated string delete_categories = 7;
+  repeated string preserve_categories = 8;
+  google.protobuf.Timestamp requested_at = 9;
+  google.protobuf.Timestamp grace_period_ends_at = 10;
+  google.protobuf.Timestamp started_at = 11;
+  google.protobuf.Timestamp completed_at = 12;
+  google.protobuf.Timestamp cancelled_at = 13;
+  string cancelled_by = 14;
+  DeletionSummary deleted_data_summary = 15;
+  string error_message = 16;
+  map<string, string> metadata = 17;
+}
+
+// RequestDeletionRequest creates a new data deletion request
+message RequestDeletionRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  string requested_by = 3;
+  string reason = 4;
+  repeated string delete_categories = 5;
+  repeated string preserve_categories = 6;
+  int32 grace_period_days = 7;
+}
+
+// CancelDeletionRequest cancels a pending deletion request
+message CancelDeletionRequest {
+  string deletion_id = 1;
+  string cancelled_by = 2;
+}
+
+// CancelDeletionResponse confirms deletion cancellation
+message CancelDeletionResponse {
+  bool success = 1;
+}
+
+// ProcessDeletionRequest triggers processing of a deletion request
+message ProcessDeletionRequest {
+  string deletion_id = 1;
+}
+
+// GetDeletionStatusRequest retrieves the status of a deletion request
+message GetDeletionStatusRequest {
+  string deletion_id = 1;
+}
+
+// DeletionSummary summarizes what data was deleted
+message DeletionSummary {
+  bool profile_deleted = 1;
+  int32 sessions_deleted = 2;
+  int32 audit_logs_anonymized = 3;
+  int32 consents_deleted = 4;
+  int32 credentials_deleted = 5;
+  int32 group_memberships_removed = 6;
+  int32 role_assignments_removed = 7;
+  int32 tokens_revoked = 8;
+  map<string, int32> additional_data = 9;
+}
+
+// =============================================================================
+// MFA Messages
+// =============================================================================
+
+// MFA method types
+enum MFAMethod {
+  MFA_METHOD_UNSPECIFIED = 0;
+  MFA_METHOD_TOTP = 1;
+  MFA_METHOD_WEBAUTHN = 2;
+}
+
+// MFA enrollment request
+message BeginMFAEnrollmentRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  MFAMethod method = 3;
+}
+
+// MFA enrollment response with secret and provisioning URI
+message BeginMFAEnrollmentResponse {
+  string enrollment_id = 1;
+  string secret = 2;
+  string provisioning_uri = 3;
+  string qr_code = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+// Complete MFA enrollment request
+message CompleteMFAEnrollmentRequest {
+  string enrollment_id = 1;
+  string code = 2;
+}
+
+// Complete MFA enrollment response
+message CompleteMFAEnrollmentResponse {
+  bool success = 1;
+  repeated string backup_codes = 2;
+}
+
+// Cancel MFA enrollment request
+message CancelMFAEnrollmentRequest {
+  string enrollment_id = 1;
+}
+
+// Cancel MFA enrollment response
+message CancelMFAEnrollmentResponse {
+  bool success = 1;
+}
+
+// Begin MFA challenge request
+message BeginMFAChallengeRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  string session_token = 3;
+}
+
+// Begin MFA challenge response
+message BeginMFAChallengeResponse {
+  string challenge_id = 1;
+  MFAMethod method = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// Verify MFA challenge request
+message VerifyMFAChallengeRequest {
+  string challenge_id = 1;
+  string code = 2;
+}
+
+// Verify MFA challenge response
+message VerifyMFAChallengeResponse {
+  bool success = 1;
+  string session_token = 2;
+  google.protobuf.Timestamp verified_at = 3;
+}
+
+// Verify MFA code request (stateless verification)
+message VerifyMFACodeRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  string code = 3;
+}
+
+// Verify MFA code response
+message VerifyMFACodeResponse {
+  bool success = 1;
+}
+
+// Get MFA status request
+message GetMFAStatusRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+// Get MFA status response
+message GetMFAStatusResponse {
+  bool enabled = 1;
+  MFAMethod method = 2;
+  google.protobuf.Timestamp enrolled_at = 3;
+  google.protobuf.Timestamp last_verified = 4;
+  int32 backup_codes_remaining = 5;
+}
+
+// Disable MFA request
+message DisableMFARequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+// Disable MFA response
+message DisableMFAResponse {
+  bool success = 1;
+}
+
+// Generate backup codes request
+message GenerateBackupCodesRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+// Generate backup codes response
+message GenerateBackupCodesResponse {
+  repeated string codes = 1;
+}
+
+// Verify backup code request
+message VerifyBackupCodeRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  string code = 3;
+}
+
+// Verify backup code response
+message VerifyBackupCodeResponse {
+  bool success = 1;
+  int32 remaining_codes = 2;
+}
+
+// Get backup code status request
+message GetBackupCodeStatusRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+// Get backup code status response
+message GetBackupCodeStatusResponse {
+  int32 total_codes = 1;
+  int32 remaining_codes = 2;
+  google.protobuf.Timestamp generated_at = 3;
+}
+
+// =============================================================================
+// Session Service
+// =============================================================================
+
+// Session Service for managing user sessions
+service SessionService {
+  // List sessions for a tenant/user
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+
+  // Get a specific session
+  rpc GetSession(GetSessionRequest) returns (Session);
+
+  // Revoke a specific session
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
+
+  // Revoke all sessions for a user/tenant
+  rpc RevokeAllSessions(RevokeAllSessionsRequest) returns (RevokeAllSessionsResponse);
+
+  // Revoke all sessions except the specified one
+  rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse);
+}
+
+// Session represents a user session
+message Session {
+  string id = 1;
+  string user_id = 2;
+  string tenant_id = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp last_active = 5;
+  google.protobuf.Timestamp expires_at = 6;
+  bool mfa_verified = 7;
+  string ip_address = 8;
+  string user_agent = 9;
+  string device_info = 10;
+}
+
+message ListSessionsRequest {
+  string tenant_id = 1;
+  string user_id = 2;  // Optional: filter by user
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+  int32 total = 2;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message RevokeSessionRequest {
+  string session_id = 1;
+}
+
+message RevokeSessionResponse {
+  bool success = 1;
+}
+
+message RevokeAllSessionsRequest {
+  string tenant_id = 1;
+  string user_id = 2;  // Optional: revoke for specific user
+}
+
+message RevokeAllSessionsResponse {
+  int32 revoked_count = 1;
+}
+
+message RevokeOtherSessionsRequest {
+  string tenant_id = 1;
+  string keep_session_id = 2;
+}
+
+message RevokeOtherSessionsResponse {
+  int32 revoked_count = 1;
+}
+
+// =============================================================================
+// Audit Service
+// =============================================================================
+
+// Audit Service for querying audit logs
+service AuditService {
+  // Query audit events with filters
+  rpc QueryAuditEvents(QueryAuditEventsRequest) returns (QueryAuditEventsResponse);
+
+  // Get a specific audit event
+  rpc GetAuditEvent(GetAuditEventRequest) returns (AuditEvent);
+}
+
+// AuditEvent represents a single audit log entry
+message AuditEvent {
+  string id = 1;
+  string tenant_id = 2;
+  string event_type = 3;
+  string category = 4;
+  string outcome = 5;
+  string actor_id = 6;
+  string actor_type = 7;
+  string resource_id = 8;
+  string action = 9;
+  map<string, string> details = 10;
+  string ip_address = 11;
+  string user_agent = 12;
+  google.protobuf.Timestamp timestamp = 13;
+}
+
+message QueryAuditEventsRequest {
+  string tenant_id = 1;
+  repeated string event_types = 2;
+  repeated string categories = 3;
+  repeated string outcomes = 4;
+  string actor_id = 5;
+  string resource_id = 6;
+  google.protobuf.Timestamp start_time = 7;
+  google.protobuf.Timestamp end_time = 8;
+  int32 limit = 9;
+  int32 offset = 10;
+}
+
+message QueryAuditEventsResponse {
+  repeated AuditEvent events = 1;
+  int32 total = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message GetAuditEventRequest {
+  string tenant_id = 1;
+  string event_id = 2;
+}
+
+// =============================================================================
+// Federation Service Messages (OIDC Consumer)
+// =============================================================================
+
+// ProviderType represents the type of external identity provider
+enum ProviderType {
+  PROVIDER_TYPE_UNSPECIFIED = 0;
+  PROVIDER_TYPE_OIDC = 1;
+  PROVIDER_TYPE_SAML = 2;
+  PROVIDER_TYPE_OAUTH2 = 3;
+}
+
+// ClaimMappings defines how IdP claims map to QuicBaaS user attributes
+message ClaimMappings {
+  string subject = 1;     // Claim for user ID (default: "sub")
+  string email = 2;       // Claim for email (default: "email")
+  string name = 3;        // Claim for display name (default: "name")
+  string groups = 4;      // Claim for group memberships
+  string roles = 5;       // Claim for role assignments
+  map<string, string> attributes = 6;  // Custom claim to attribute mappings
+}
+
+// ExternalProvider represents an external identity provider configuration
+message ExternalProvider {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  ProviderType type = 4;
+  bool enabled = 5;
+  string client_id = 6;
+  string client_secret = 7;  // Only set on create, not returned in responses
+  string issuer_url = 8;
+  string auth_url = 9;
+  string token_url = 10;
+  string userinfo_url = 11;
+  repeated string scopes = 12;
+  ClaimMappings claim_mappings = 13;
+  bool auto_provision = 14;
+  bool allow_linking = 15;
+  repeated string default_roles = 16;
+  repeated string default_groups = 17;
+  google.protobuf.Timestamp created_at = 18;
+  google.protobuf.Timestamp updated_at = 19;
+}
+
+// FederatedIdentity represents a link between a QuicBaaS user and an external identity
+message FederatedIdentity {
+  string id = 1;
+  string user_id = 2;
+  string tenant_id = 3;
+  string provider_id = 4;
+  string external_id = 5;
+  string external_email = 6;
+  string external_name = 7;
+  map<string, string> claims = 8;
+  google.protobuf.Timestamp last_login = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+// CreateProviderRequest creates a new external identity provider
+message CreateProviderRequest {
+  string id = 1;  // Optional, will be generated if not provided
+  string tenant_id = 2;
+  string name = 3;
+  ProviderType type = 4;
+  bool enabled = 5;
+  string client_id = 6;
+  string client_secret = 7;
+  string issuer_url = 8;
+  string auth_url = 9;
+  string token_url = 10;
+  string userinfo_url = 11;
+  repeated string scopes = 12;
+  ClaimMappings claim_mappings = 13;
+  bool auto_provision = 14;
+  bool allow_linking = 15;
+  repeated string default_roles = 16;
+  repeated string default_groups = 17;
+}
+
+// GetProviderRequest retrieves an external provider by ID
+message GetProviderRequest {
+  string tenant_id = 1;
+  string provider_id = 2;
+}
+
+// UpdateProviderRequest updates an existing external provider
+message UpdateProviderRequest {
+  string tenant_id = 1;
+  string provider_id = 2;
+  string name = 3;
+  ProviderType type = 4;
+  bool enabled = 5;
+  string client_id = 6;
+  string client_secret = 7;
+  string issuer_url = 8;
+  string auth_url = 9;
+  string token_url = 10;
+  string userinfo_url = 11;
+  repeated string scopes = 12;
+  ClaimMappings claim_mappings = 13;
+  bool auto_provision = 14;
+  bool allow_linking = 15;
+  repeated string default_roles = 16;
+  repeated string default_groups = 17;
+}
+
+// DeleteProviderRequest removes an external provider
+message DeleteProviderRequest {
+  string tenant_id = 1;
+  string provider_id = 2;
+}
+
+// DeleteProviderResponse confirms provider deletion
+message DeleteProviderResponse {
+  bool success = 1;
+}
+
+// ListProvidersRequest lists external providers for a tenant
+message ListProvidersRequest {
+  string tenant_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+// ListProvidersResponse contains a list of external providers
+message ListProvidersResponse {
+  repeated ExternalProvider providers = 1;
+  int32 total = 2;
+}
+
+// BeginFederatedLoginRequest initiates the OAuth2/OIDC authorization flow
+message BeginFederatedLoginRequest {
+  string tenant_id = 1;
+  string provider_name = 2;  // Provider name to use for login
+  string redirect_uri = 3;   // URI to redirect after authentication
+}
+
+// BeginFederatedLoginResponse contains the redirect URL for the IdP
+message BeginFederatedLoginResponse {
+  string auth_url = 1;       // URL to redirect the user to
+  string state = 2;          // CSRF protection state token
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// HandleFederatedCallbackRequest processes the OAuth2/OIDC callback
+message HandleFederatedCallbackRequest {
+  string state = 1;   // State token from the initial request
+  string code = 2;    // Authorization code from the IdP
+}
+
+// HandleFederatedCallbackResponse contains the authentication result
+message HandleFederatedCallbackResponse {
+  User user = 1;                          // The authenticated user
+  FederatedIdentity federated_identity = 2;  // The identity link
+  string access_token = 3;                // QuicBaaS access token
+  string refresh_token = 4;               // QuicBaaS refresh token
+  int64 expires_in = 5;                   // Token lifetime in seconds
+  bool provisioned = 6;                   // True if user was newly created
+}
+
+// LinkAccountRequest links an external identity to an existing user
+message LinkAccountRequest {
+  string user_id = 1;
+  string tenant_id = 2;
+  string provider_id = 3;
+  string external_token = 4;  // Access token from the external IdP
+}
+
+// LinkAccountResponse confirms account linking
+message LinkAccountResponse {
+  bool success = 1;
+}
+
+// UnlinkAccountRequest removes the link between a user and an external provider
+message UnlinkAccountRequest {
+  string user_id = 1;
+  string tenant_id = 2;
+  string provider_id = 3;
+}
+
+// UnlinkAccountResponse confirms account unlinking
+message UnlinkAccountResponse {
+  bool success = 1;
+}
+
+// GetUserLinksRequest retrieves all linked identities for a user
+message GetUserLinksRequest {
+  string user_id = 1;
+  string tenant_id = 2;
+}
+
+// GetUserLinksResponse contains all linked identities for a user
+message GetUserLinksResponse {
+  repeated FederatedIdentity identities = 1;
+}

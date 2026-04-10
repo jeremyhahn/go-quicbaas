@@ -1,0 +1,894 @@
+# QuicBaaS Integration Test Environment
+# Complete isolated environment for running integration tests
+# Includes 3-node cluster + optional 4th/5th nodes and test runner with proper health checks
+#
+# All images are based on consistent tooling from the devcontainer setup.
+# The node images use a lightweight runtime, while the test runner includes
+# full Go tooling for test execution.
+
+services:
+  # Ollama Embedding Service for vector/embedding tests
+  ollama:
+    image: ollama/ollama:latest
+    hostname: ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-4}
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-2}
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - integration-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    restart: on-failure
+
+  # Ollama model setup - pulls all-minilm model
+  ollama-setup:
+    image: curlimages/curl:latest
+    hostname: ollama-setup
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - integration-test-network
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo 'Pulling all-minilm embedding model...'
+        curl -X POST http://ollama:11434/api/pull -d '{"name": "all-minilm"}' --max-time 300
+        echo 'Pulling tinyllama model...'
+        curl -X POST http://ollama:11434/api/pull -d '{"name": "tinyllama"}' --max-time 300
+        echo 'Verifying models are available...'
+        curl -s http://ollama:11434/api/tags | grep -q 'all-minilm' && echo 'all-minilm ready!' || echo 'all-minilm pull may still be in progress'
+        curl -s http://ollama:11434/api/tags | grep -q 'tinyllama' && echo 'tinyllama ready!' || echo 'tinyllama pull may still be in progress'
+    restart: "no"
+
+  # LocalStack - AWS services emulator (KMS, S3)
+  localstack:
+    image: localstack/localstack:latest
+    hostname: localstack
+    environment:
+      - SERVICES=kms,s3
+      - DEBUG=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - integration-test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: on-failure
+
+  # Fake GCS Server - Google Cloud Storage emulator
+  fake-gcs-server:
+    image: fsouza/fake-gcs-server:latest
+    hostname: fake-gcs-server
+    command: ["-scheme", "http", "-port", "4443", "-external-url", "http://fake-gcs-server:4443"]
+    networks:
+      - integration-test-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4443/storage/v1/b"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: on-failure
+
+  # Azurite - Azure Storage emulator (Blob, Queue, Table)
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    hostname: azurite
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --loose"
+    networks:
+      - integration-test-network
+    healthcheck:
+      # Use node to check if the blob service is listening (node is available in azurite image)
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:10000/', (r) => process.exit(r.statusCode === 400 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    restart: on-failure
+
+  # MinIO - S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    hostname: minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio-data:/data
+    networks:
+      - integration-test-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: on-failure
+
+  # Integration Test Runner
+  integration-test:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile
+      args:
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+    hostname: integration-test
+    user: "0:0"
+    # Increase memory limit to handle test compilation
+    mem_limit: 6g
+    memswap_limit: 6g
+    # DNS options to improve resolver reliability under load
+    dns_opt:
+      - "attempts:5"
+      - "timeout:2"
+      - "ndots:0"
+    # Add capabilities required for multicast networking
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      # Test configuration
+      - QUICBAAS_TEST_MODE=integration
+      - QUICBAAS_LOG_LEVEL=debug
+      - QUICBAAS_LOG_FORMAT=text
+      - CGO_ENABLED=0
+
+      # Cluster configuration
+      - QUICBAAS_NODES=test-node1:8080,test-node2:8080,test-node3:8080
+      - QUICBAAS_NODE1_URL=https://test-node1:8080
+      - QUICBAAS_NODE2_URL=https://test-node2:8080
+      - QUICBAAS_NODE3_URL=https://test-node3:8080
+      - QUICBAAS_NODE1_GRPC=test-node1:50051
+      - QUICBAAS_NODE2_GRPC=test-node2:50051
+      - QUICBAAS_NODE3_GRPC=test-node3:50051
+      - QUICBAAS_NODE1_QUIC=test-node1:4433
+      - QUICBAAS_NODE2_QUIC=test-node2:4433
+      - QUICBAAS_NODE3_QUIC=test-node3:4433
+      - QUICBAAS_NODE1_MCP=http://test-node1:8888/mcp
+      - QUICBAAS_NODE2_MCP=http://test-node2:8888/mcp
+      - QUICBAAS_NODE3_MCP=http://test-node3:8888/mcp
+      - QUICBAAS_MCP_ENDPOINT=http://test-node1:8888/mcp
+      - QUICBAAS_NODE1_UNIX=/var/run/quicbaas/node1.sock
+      - QUICBAAS_NODE2_UNIX=/var/run/quicbaas/node2.sock
+      - QUICBAAS_NODE3_UNIX=/var/run/quicbaas/node3.sock
+      - QUICBAAS_UNIX_ENABLED=true
+      - QUICBAAS_UNIX_SOCKET=/var/run/quicbaas/node1.sock
+      - QUICBAAS_QUIC_ENABLED=true
+      - QUICBAAS_QUIC_ADDRESS=test-node1:4433
+      - QUICBAAS_MCP_ENABLED=true
+      - QUICBAAS_BACKUP_ENABLED=true
+      - QUICBAAS_OBJECTSTORAGE_ENABLED=true
+      - QUICBAAS_OLLAMA_ENABLED=true
+      - QUICBAAS_MESSAGING_ENABLED=true
+      - QUICBAAS_ORCHESTRATION_ENABLED=true
+
+      # Test timeouts
+      - QUICBAAS_HEALTH_TIMEOUT=180
+      - QUICBAAS_CHECK_INTERVAL=2
+      - QUICBAAS_TEST_TIMEOUT=30m
+
+      # Ollama embedding service (for vector/embedding tests)
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=tinyllama
+      - QUICBAAS_URL=https://test-node1:8080
+
+      # Cloud storage emulator endpoints
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - GCS_ENDPOINT=http://fake-gcs-server:4443
+      - STORAGE_EMULATOR_HOST=http://fake-gcs-server:4443
+      - AZURITE_ENDPOINT=http://azurite:10000
+      - AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - ../../:/app
+      # Mount the pre-built CLI binary (built by Makefile before docker-compose up)
+      - ../../bin/quicbaas:/app/bin/quicbaas:ro
+      - integration-test-results:/test-results
+      # Mount Docker socket for container management in tests
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Shared Unix socket directory for gRPC-over-Unix-socket testing
+      - quicbaas-sockets:/var/run/quicbaas
+    working_dir: /app
+    networks:
+      - integration-test-network
+    depends_on:
+      test-node1:
+        condition: service_healthy
+      test-node2:
+        condition: service_healthy
+      test-node3:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      fake-gcs-server:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: >
+      bash -c "
+        set -o pipefail;
+        echo 'Staging local dependencies for container paths...' &&
+        cp -a /app/.deps/ /deps/ 2>/dev/null || true &&
+        cp /app/go.mod /tmp/go.mod.orig &&
+        cp /app/sdk/go/go.mod /tmp/sdk-go.mod.orig &&
+        sed 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g; s|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g; s|=> [^ ]*/go-qrdb$$|=> /deps/go-qrdb|g; s|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g; s|=> [^ ]*/go-xkms$$|=> /deps/go-xkms|g; s|=> [^ ]*/go-signal|=> /deps/go-signal|g; s|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' /tmp/go.mod.orig > /app/go.mod &&
+        sed 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g; s|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g; s|=> [^ ]*/go-qrdb$$|=> /deps/go-qrdb|g; s|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g; s|=> [^ ]*/go-xkms$$|=> /deps/go-xkms|g; s|=> [^ ]*/go-signal|=> /deps/go-signal|g; s|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' /tmp/sdk-go.mod.orig > /app/sdk/go/go.mod &&
+        trap 'cp /tmp/go.mod.orig /app/go.mod; cp /tmp/sdk-go.mod.orig /app/sdk/go/go.mod' EXIT &&
+        echo 'Waiting for cluster to be fully operational...' &&
+        /usr/local/bin/health_check.sh &&
+        echo 'Cluster is ready.' &&
+        echo '' &&
+        echo 'Using pre-built CLI binary: /app/bin/quicbaas' &&
+        ls -la /app/bin/quicbaas &&
+        echo '' &&
+        TEST_TAGS=\"integration \$$TEST_BUILD_TAGS\" &&
+        echo \"Build tags: \$$TEST_TAGS\" &&
+        if [ -n \"\$$QUICBAAS_TEST_FILTER\" ]; then
+          echo \"Running filtered integration tests: \$$QUICBAAS_TEST_FILTER\" &&
+          echo '' &&
+          TEST_PKGS=\"\$$QUICBAAS_TEST_FILTER\";
+        else
+          echo 'Running integration tests (excluding ollama-dependent: embedding, rag)...' &&
+          echo '' &&
+          TEST_PKGS=\$$(GONOSUMCHECK='*' go list -mod=mod -tags \"\$$TEST_TAGS\" ./test/integration/... | grep -v '/embedding$$' | grep -v '/rag$$');
+        fi &&
+        echo 'Test configuration:' &&
+        echo '  - Sequential execution (-p 1) to prevent connection storms' &&
+        echo '  - Package timeout: 15 minutes' &&
+        echo '  - Total timeout: 60 minutes' &&
+        echo '' &&
+        GONOSUMCHECK='*' go test -mod=mod -v -p 1 -tags \"\$$TEST_TAGS\" -timeout 60m \$$TEST_PKGS 2>&1 | tee /test-results/integration-test.log;
+        TEST_EXIT=\$$?;
+        if [ \$$TEST_EXIT -eq 0 ]; then
+          echo '';
+          echo '========================================';
+          echo 'Integration tests completed successfully';
+          echo '========================================';
+        else
+          echo '';
+          echo '========================================';
+          echo 'Integration tests FAILED with exit code' \$$TEST_EXIT;
+          echo '========================================';
+        fi;
+        exit \$$TEST_EXIT
+      "
+
+  # Test Node 1 - Primary node
+  test-node1:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+      args:
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+    hostname: test-node1
+    # Add capabilities required for multicast networking
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=test-node1:63001
+      - QUICBAAS_RAFT_MUTUAL_TLS=true
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node1.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node1.key
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node2:63002,test-node3:63003
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_REST_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_QUIC_PORT=4433
+      - QUICBAAS_SERVER_GRPC_ENABLED=true
+      - QUICBAAS_SERVER_REST_ENABLED=true
+      - QUICBAAS_SERVER_QUIC_ENABLED=true
+      - QUICBAAS_SERVER_MCP_ENABLED=true
+      - QUICBAAS_SERVER_MCP_PORT=8888
+      - QUICBAAS_SERVER_UNIX_SOCKET=/var/run/quicbaas/node1.sock
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_ENABLE_DEBUG_ROUTES=1
+      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
+      # TLS enabled with auto-generated CA certs for gRPC/QUIC
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      # Enable KMS for secrets tests
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      # Enable Secrets engine
+      - QUICBAAS_SECRETS_ENABLED=true
+      # Enable Vector service
+      - QUICBAAS_VECTOR_ENABLED=true
+      # Enable Scheduler service
+      - QUICBAAS_ENABLE_SCHEDULER=true
+      # Enable Orchestration service
+      - QUICBAAS_ORCHESTRATION_ENABLED=true
+      # Enable password authentication for auth integration tests
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
+      # Enable Backup service
+      - QUICBAAS_BACKUP_ENABLED=true
+      # Enable Ollama/RAG service
+      - QUICBAAS_OLLAMA_ENABLED=true
+      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
+      # Enable Object Storage service
+      - QUICBAAS_OBJECTSTORAGE_ENABLED=true
+      # Cloud storage emulator endpoints
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - GCS_ENDPOINT=http://fake-gcs-server:4443
+      - STORAGE_EMULATOR_HOST=http://fake-gcs-server:4443
+      - AZURITE_ENDPOINT=http://azurite:10000
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - test-data-node1:/data
+      - test-logs-node1:/var/log/quicbaas
+      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - quicbaas-sockets:/var/run/quicbaas
+      - ./certs:/etc/quicbaas/certs:ro
+    expose:
+      - "4433/udp"         # QUIC for container-to-container
+      - "8888"             # MCP for container-to-container
+    ports:
+      - "18080:8080"       # REST API (host:container)
+      - "15051:50051"      # gRPC
+      - "14433:4433/udp"   # QUIC
+      - "18888:8888"       # MCP
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      integration-test-network:
+        aliases:
+          - node1
+    depends_on:
+      localstack:
+        condition: service_healthy
+      fake-gcs-server:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: on-failure
+    stop_grace_period: 10s
+
+  # Test Node 2
+  test-node2:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+      args:
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+    hostname: test-node2
+    # Add capabilities required for multicast networking
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_RAFT_NODE_ID=2
+      - QUICBAAS_RAFT_RAFT_ADDRESS=test-node2:63002
+      - QUICBAAS_RAFT_MUTUAL_TLS=true
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node2.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node2.key
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node1:63001,test-node3:63003
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_REST_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_QUIC_PORT=4433
+      - QUICBAAS_SERVER_GRPC_ENABLED=true
+      - QUICBAAS_SERVER_REST_ENABLED=true
+      - QUICBAAS_SERVER_QUIC_ENABLED=true
+      - QUICBAAS_SERVER_MCP_ENABLED=true
+      - QUICBAAS_SERVER_MCP_PORT=8888
+      - QUICBAAS_SERVER_UNIX_SOCKET=/var/run/quicbaas/node2.sock
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_ENABLE_DEBUG_ROUTES=1
+      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
+      # TLS enabled with auto-generated CA certs for gRPC/QUIC
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      # Enable KMS for secrets tests
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      # Enable Secrets engine
+      - QUICBAAS_SECRETS_ENABLED=true
+      # Enable Vector service
+      - QUICBAAS_VECTOR_ENABLED=true
+      # Enable Scheduler service
+      - QUICBAAS_ENABLE_SCHEDULER=true
+      # Enable Orchestration service
+      - QUICBAAS_ORCHESTRATION_ENABLED=true
+      # Enable password authentication for auth integration tests
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
+      # Enable Backup service
+      - QUICBAAS_BACKUP_ENABLED=true
+      # Enable Ollama/RAG service
+      - QUICBAAS_OLLAMA_ENABLED=true
+      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
+      # Enable Object Storage service
+      - QUICBAAS_OBJECTSTORAGE_ENABLED=true
+      # Cloud storage emulator endpoints
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - GCS_ENDPOINT=http://fake-gcs-server:4443
+      - STORAGE_EMULATOR_HOST=http://fake-gcs-server:4443
+      - AZURITE_ENDPOINT=http://azurite:10000
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - test-data-node2:/data
+      - test-logs-node2:/var/log/quicbaas
+      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - quicbaas-sockets:/var/run/quicbaas
+      - ./certs:/etc/quicbaas/certs:ro
+    expose:
+      - "4433/udp"         # QUIC for container-to-container
+      - "8888"             # MCP for container-to-container
+    ports:
+      - "18081:8080"       # REST API (host:container)
+      - "15052:50051"      # gRPC
+      - "14434:4433/udp"   # QUIC
+      - "18889:8888"       # MCP
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      integration-test-network:
+        aliases:
+          - node2
+    depends_on:
+      test-node1:
+        condition: service_started
+      localstack:
+        condition: service_healthy
+      fake-gcs-server:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: on-failure
+    stop_grace_period: 10s
+
+  # Test Node 3
+  test-node3:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+      args:
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+    hostname: test-node3
+    # Add capabilities required for multicast networking
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_RAFT_NODE_ID=3
+      - QUICBAAS_RAFT_RAFT_ADDRESS=test-node3:63003
+      - QUICBAAS_RAFT_MUTUAL_TLS=true
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node3.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node3.key
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node1:63001,test-node2:63002
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_REST_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_QUIC_PORT=4433
+      - QUICBAAS_SERVER_GRPC_ENABLED=true
+      - QUICBAAS_SERVER_REST_ENABLED=true
+      - QUICBAAS_SERVER_QUIC_ENABLED=true
+      - QUICBAAS_SERVER_MCP_ENABLED=true
+      - QUICBAAS_SERVER_MCP_PORT=8888
+      - QUICBAAS_SERVER_UNIX_SOCKET=/var/run/quicbaas/node3.sock
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_ENABLE_DEBUG_ROUTES=1
+      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
+      # TLS enabled with auto-generated CA certs for gRPC/QUIC
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      # Enable KMS for secrets tests
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      # Enable Secrets engine
+      - QUICBAAS_SECRETS_ENABLED=true
+      # Enable Vector service
+      - QUICBAAS_VECTOR_ENABLED=true
+      # Enable Scheduler service
+      - QUICBAAS_ENABLE_SCHEDULER=true
+      # Enable Orchestration service
+      - QUICBAAS_ORCHESTRATION_ENABLED=true
+      # Enable password authentication for auth integration tests
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
+      # Enable Backup service
+      - QUICBAAS_BACKUP_ENABLED=true
+      # Enable Ollama/RAG service
+      - QUICBAAS_OLLAMA_ENABLED=true
+      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
+      # Enable Object Storage service
+      - QUICBAAS_OBJECTSTORAGE_ENABLED=true
+      # Cloud storage emulator endpoints
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - GCS_ENDPOINT=http://fake-gcs-server:4443
+      - STORAGE_EMULATOR_HOST=http://fake-gcs-server:4443
+      - AZURITE_ENDPOINT=http://azurite:10000
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - test-data-node3:/data
+      - test-logs-node3:/var/log/quicbaas
+      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - quicbaas-sockets:/var/run/quicbaas
+      - ./certs:/etc/quicbaas/certs:ro
+    expose:
+      - "4433/udp"         # QUIC for container-to-container
+      - "8888"             # MCP for container-to-container
+    ports:
+      - "18082:8080"       # REST API (host:container)
+      - "15053:50051"      # gRPC
+      - "14435:4433/udp"   # QUIC
+      - "18890:8888"       # MCP
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      integration-test-network:
+        aliases:
+          - node3
+    depends_on:
+      test-node1:
+        condition: service_started
+      test-node2:
+        condition: service_started
+      localstack:
+        condition: service_healthy
+      fake-gcs-server:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: on-failure
+    stop_grace_period: 10s
+
+  # Test Node 4 - For dynamic membership tests
+  # Only started when needed via profiles
+  test-node4:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+      args:
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+    hostname: test-node4
+    profiles:
+      - membership-tests
+    # Add capabilities required for multicast networking
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_RAFT_NODE_ID=4
+      - QUICBAAS_RAFT_RAFT_ADDRESS=test-node4:63004
+      - QUICBAAS_RAFT_MUTUAL_TLS=true
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node4.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node4.key
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node1:63001,test-node2:63002,test-node3:63003
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_REST_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_QUIC_PORT=4433
+      - QUICBAAS_SERVER_GRPC_ENABLED=true
+      - QUICBAAS_SERVER_REST_ENABLED=true
+      - QUICBAAS_SERVER_QUIC_ENABLED=true
+      - QUICBAAS_SERVER_MCP_ENABLED=true
+      - QUICBAAS_SERVER_MCP_PORT=8888
+      - QUICBAAS_SERVER_UNIX_SOCKET=/var/run/quicbaas/node4.sock
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_ENABLE_DEBUG_ROUTES=1
+      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
+      # TLS enabled with auto-generated CA certs for gRPC/QUIC
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      # Enable KMS for secrets tests
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      # Enable Secrets engine
+      - QUICBAAS_SECRETS_ENABLED=true
+      # Enable Vector service
+      - QUICBAAS_VECTOR_ENABLED=true
+      # Enable Scheduler service
+      - QUICBAAS_ENABLE_SCHEDULER=true
+      # Enable Orchestration service
+      - QUICBAAS_ORCHESTRATION_ENABLED=true
+      # Enable password authentication for auth integration tests
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
+      # Enable Backup service
+      - QUICBAAS_BACKUP_ENABLED=true
+      # Enable Ollama/RAG service
+      - QUICBAAS_OLLAMA_ENABLED=true
+      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
+      # Enable Object Storage service
+      - QUICBAAS_OBJECTSTORAGE_ENABLED=true
+      # Cloud storage emulator endpoints
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - GCS_ENDPOINT=http://fake-gcs-server:4443
+      - STORAGE_EMULATOR_HOST=http://fake-gcs-server:4443
+      - AZURITE_ENDPOINT=http://azurite:10000
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - test-data-node4:/data
+      - test-logs-node4:/var/log/quicbaas
+      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - quicbaas-sockets:/var/run/quicbaas
+      - ./certs:/etc/quicbaas/certs:ro
+    expose:
+      - "8888"             # MCP for container-to-container
+    ports:
+      - "4436:4433/udp"
+      - "18891:8888"       # MCP
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      integration-test-network:
+        aliases:
+          - node4
+    healthcheck:
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: on-failure
+    stop_grace_period: 10s
+
+  # Test Node 5 - For dynamic membership tests
+  test-node5:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+      args:
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+    hostname: test-node5
+    profiles:
+      - membership-tests
+    # Add capabilities required for multicast networking
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_RAFT_NODE_ID=5
+      - QUICBAAS_RAFT_RAFT_ADDRESS=test-node5:63005
+      - QUICBAAS_RAFT_MUTUAL_TLS=true
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node5.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node5.key
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node1:63001,test-node2:63002,test-node3:63003,test-node4:63004
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_REST_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_QUIC_PORT=4433
+      - QUICBAAS_SERVER_GRPC_ENABLED=true
+      - QUICBAAS_SERVER_REST_ENABLED=true
+      - QUICBAAS_SERVER_QUIC_ENABLED=true
+      - QUICBAAS_SERVER_MCP_ENABLED=true
+      - QUICBAAS_SERVER_MCP_PORT=8888
+      - QUICBAAS_SERVER_UNIX_SOCKET=/var/run/quicbaas/node5.sock
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_ENABLE_DEBUG_ROUTES=1
+      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
+      # TLS enabled with auto-generated CA certs for gRPC/QUIC
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      # Enable KMS for secrets tests
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      # Enable Secrets engine
+      - QUICBAAS_SECRETS_ENABLED=true
+      # Enable Vector service
+      - QUICBAAS_VECTOR_ENABLED=true
+      # Enable Scheduler service
+      - QUICBAAS_ENABLE_SCHEDULER=true
+      # Enable Orchestration service
+      - QUICBAAS_ORCHESTRATION_ENABLED=true
+      # Enable password authentication for auth integration tests
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
+      # Enable Backup service
+      - QUICBAAS_BACKUP_ENABLED=true
+      # Enable Ollama/RAG service
+      - QUICBAAS_OLLAMA_ENABLED=true
+      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
+      # Enable Object Storage service
+      - QUICBAAS_OBJECTSTORAGE_ENABLED=true
+      # Cloud storage emulator endpoints
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - GCS_ENDPOINT=http://fake-gcs-server:4443
+      - STORAGE_EMULATOR_HOST=http://fake-gcs-server:4443
+      - AZURITE_ENDPOINT=http://azurite:10000
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - test-data-node5:/data
+      - test-logs-node5:/var/log/quicbaas
+      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - quicbaas-sockets:/var/run/quicbaas
+      - ./certs:/etc/quicbaas/certs:ro
+    expose:
+      - "8888"             # MCP for container-to-container
+    ports:
+      - "4437:4433/udp"
+      - "18892:8888"       # MCP
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      integration-test-network:
+        aliases:
+          - node5
+    healthcheck:
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: on-failure
+    stop_grace_period: 10s
+
+networks:
+  integration-test-network:
+    driver: bridge
+    # Enable multicast support via driver options
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.bridge.enable_icc: "true"
+    # Use a predictable subnet to ensure multicast routing works
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  # Data volumes for cluster nodes
+  test-data-node1:
+    driver: local
+  test-data-node2:
+    driver: local
+  test-data-node3:
+    driver: local
+  test-data-node4:
+    driver: local
+  test-data-node5:
+    driver: local
+
+  # Log volumes
+  test-logs-node1:
+    driver: local
+  test-logs-node2:
+    driver: local
+  test-logs-node3:
+    driver: local
+  test-logs-node4:
+    driver: local
+  test-logs-node5:
+    driver: local
+
+  # Test results volume
+  integration-test-results:
+    driver: local
+
+  # Shared Unix socket directory
+  quicbaas-sockets:
+    driver: local
+
+  # Ollama model storage
+  ollama-data:
+    driver: local
+
+  # MinIO data storage
+  minio-data:
+    driver: local

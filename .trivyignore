@@ -1,0 +1,4 @@
+# Development/test certificates - not production secrets
+pkg/server/certs/admin.key
+pkg/server/certs/ca.key
+pkg/server/certs/server.key

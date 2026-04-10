@@ -1,0 +1,590 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  GO_VERSION: '1.26.0'
+  REGISTRY: ghcr.io
+  IMAGE_NAME_DAEMON: jeremyhahn/quicbaasd
+  IMAGE_NAME_CLI: jeremyhahn/quicbaas
+  GOPROXY: direct
+  GOSUMDB: off
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "First release - generating full changelog"
+            CHANGELOG=$(git log --pretty=format:"* %s (%h)" --no-merges)
+          else
+            echo "Generating changelog from ${PREV_TAG} to ${GITHUB_REF_NAME}"
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)" --no-merges)
+          fi
+
+          # Save changelog to file
+          cat > CHANGELOG.md << EOF
+          ## What's Changed
+
+          ${CHANGELOG}
+
+          ## Installation
+
+          ### Binary Downloads
+          Download platform-specific binaries directly - ready to use immediately!
+
+          **Available Binaries**:
+          - \`quicbaasd-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard Daemon
+          - \`quicbaas-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard CLI
+          - \`quicbaasd-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant Daemon
+          - \`quicbaas-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant CLI
+
+          **Quick Start**:
+          \`\`\`bash
+          # Download and run daemon directly (Linux amd64 example)
+          wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.get_version.outputs.version }}/quicbaasd-${{ steps.get_version.outputs.version }}-linux-amd64
+          chmod +x quicbaasd-${{ steps.get_version.outputs.version }}-linux-amd64
+          ./quicbaasd-${{ steps.get_version.outputs.version }}-linux-amd64 --help
+
+          # Download and run CLI directly
+          wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.get_version.outputs.version }}/quicbaas-${{ steps.get_version.outputs.version }}-linux-amd64
+          chmod +x quicbaas-${{ steps.get_version.outputs.version }}-linux-amd64
+          ./quicbaas-${{ steps.get_version.outputs.version }}-linux-amd64 --help
+          \`\`\`
+
+          ### Docker Images
+          \`\`\`bash
+          # QuicBaaS daemon (multi-arch: amd64, arm64)
+          docker pull ghcr.io/jeremyhahn/quicbaasd:${{ steps.get_version.outputs.version }}
+
+          # QuicBaaS CLI tool (multi-arch: amd64, arm64)
+          docker pull ghcr.io/jeremyhahn/quicbaas:${{ steps.get_version.outputs.version }}
+
+          # FIPS 140-3 compliant daemon (Linux only)
+          docker pull ghcr.io/jeremyhahn/quicbaasd:${{ steps.get_version.outputs.version }}-fips
+          \`\`\`
+
+          ### Verify Checksums
+          \`\`\`bash
+          sha256sum -c checksums.txt
+          \`\`\`
+
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${GITHUB_REF_NAME}
+          EOF
+
+          cat CHANGELOG.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.version, 'alpha') || contains(steps.get_version.outputs.version, 'beta') || contains(steps.get_version.outputs.version, 'rc') }}
+          generate_release_notes: false
+
+  build-binaries:
+    name: Build Binaries (${{ matrix.platform }}, ${{ matrix.variant }})
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Standard builds
+          - platform: linux/amd64
+            arch: amd64
+            variant: standard
+            fips: false
+          - platform: linux/arm64
+            arch: arm64
+            variant: standard
+            fips: false
+          # FIPS 140-3 compliant builds (Linux only, uses GOFIPS140)
+          - platform: linux/amd64
+            arch: amd64
+            variant: fips
+            fips: true
+          - platform: linux/arm64
+            arch: arm64
+            variant: fips
+            fips: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.platform }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build binaries in native container
+        run: |
+          # Create a build script
+          cat > build.sh << 'EOF'
+          #!/bin/bash
+          set -e
+
+          # Install build dependencies
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            git
+
+          # Build information
+          VERSION="${VERSION}"
+          GOARCH="${GOARCH}"
+          WITH_FIPS="${WITH_FIPS}"
+
+          # Handle FIPS builds (uses Go's built-in FIPS 140-3 mode)
+          if [ "$WITH_FIPS" = "true" ]; then
+            export GOFIPS140=v1.0.0
+            echo "Building FIPS 140-3 compliant binaries with GOFIPS140=v1.0.0"
+            echo "Note: Using static linking with CGO_ENABLED=0"
+          else
+            echo "Building standard binaries"
+          fi
+
+          # Static linking flags
+          LDFLAGS="-X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.BuildTime=${DATE} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${COMMIT} -s -w"
+
+          echo "Building for linux/${GOARCH} with CGO_ENABLED=0"
+
+          mkdir -p /workspace/dist
+
+          # Build daemon
+          echo "Building quicbaasd..."
+          CGO_ENABLED=0 go build -buildvcs=false -ldflags="${LDFLAGS}" \
+            -o /workspace/dist/quicbaasd \
+            ./cmd/quicbaasd
+
+          # Build CLI
+          echo "Building quicbaas CLI..."
+          CGO_ENABLED=0 go build -buildvcs=false -ldflags="${LDFLAGS}" \
+            -o /workspace/dist/quicbaas \
+            ./cmd/quicbaas
+
+          # Verify binaries are statically linked
+          echo ""
+          echo "Verifying static builds..."
+          for binary in /workspace/dist/*; do
+            echo "Checking $binary:"
+            file "$binary"
+            ldd "$binary" 2>&1 || echo "  ✓ Static binary (no dynamic dependencies)"
+            echo ""
+          done
+
+          # Set permissions
+          chmod +x /workspace/dist/*
+          EOF
+
+          chmod +x build.sh
+
+          # Run build in native container for the target architecture
+          docker run --rm \
+            --platform=${{ matrix.platform }} \
+            -v $(pwd):/workspace \
+            -w /workspace \
+            -e VERSION=${{ needs.create-release.outputs.version }} \
+            -e COMMIT=${{ github.sha }} \
+            -e DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            -e GOARCH=${{ matrix.arch }} \
+            -e WITH_FIPS=${{ matrix.fips }} \
+            golang:1.26-bookworm \
+            bash /workspace/build.sh
+
+          # Verify binaries were created
+          echo "Build artifacts:"
+          ls -lh dist/
+
+      - name: Prepare release assets
+        run: |
+          # Set variant suffix based on build type
+          if [ "${{ matrix.variant }}" = "fips" ]; then
+            VARIANT_SUFFIX="-fips"
+          else
+            VARIANT_SUFFIX=""
+          fi
+
+          VERSION="${{ needs.create-release.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+
+          # Create renamed binaries with platform/variant info
+          cd dist
+
+          for binary in quicbaasd quicbaas; do
+            if [ -f "$binary" ]; then
+              # Create binary with full name including platform/arch/variant
+              NEW_NAME="${binary}-${VERSION}-linux-${ARCH}${VARIANT_SUFFIX}"
+              cp "$binary" "../${NEW_NAME}"
+
+              # Generate SHA256 for individual binary
+              cd ..
+              sha256sum "${NEW_NAME}" > "${NEW_NAME}.sha256"
+              cd dist
+            fi
+          done
+
+          cd ..
+
+          echo "Created release assets:"
+          ls -lh quicbaasd-* quicbaas-*
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            quicbaasd-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}
+            quicbaasd-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}.sha256
+            quicbaas-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}
+            quicbaas-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}.sha256
+
+  build-darwin-binaries:
+    name: Build Darwin Binaries (${{ matrix.arch }})
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build darwin binaries
+        env:
+          GOOS: darwin
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          LDFLAGS="-X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${{ github.sha }} -s -w"
+
+          mkdir -p dist
+
+          echo "Building for darwin/${{ matrix.arch }} with CGO_ENABLED=0"
+
+          # Build daemon
+          echo "Building quicbaasd..."
+          go build -buildvcs=false -ldflags="${LDFLAGS}" \
+            -o dist/quicbaasd \
+            ./cmd/quicbaasd
+
+          # Build CLI
+          echo "Building quicbaas..."
+          go build -buildvcs=false -ldflags="${LDFLAGS}" \
+            -o dist/quicbaas \
+            ./cmd/quicbaas
+
+          # Verify binaries
+          echo "Build artifacts:"
+          ls -lh dist/
+          file dist/*
+
+      - name: Prepare release assets
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+
+          # Create renamed binaries with platform info
+          cd dist
+
+          for binary in quicbaasd quicbaas; do
+            if [ -f "$binary" ]; then
+              # Create binary with full name including platform/arch
+              NEW_NAME="${binary}-${VERSION}-darwin-${ARCH}"
+              cp "$binary" "../${NEW_NAME}"
+
+              # Generate SHA256 for individual binary
+              cd ..
+              shasum -a 256 "${NEW_NAME}" > "${NEW_NAME}.sha256"
+              cd dist
+            fi
+          done
+
+          cd ..
+
+          echo "Created release assets:"
+          ls -lh quicbaasd-* quicbaas-*
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            quicbaasd-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}
+            quicbaasd-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
+            quicbaas-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}
+            quicbaas-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
+
+  build-docker:
+    name: Build Docker Daemon Image
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_DAEMON }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.create-release.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-docker-cli:
+    name: Build Docker CLI Image
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_CLI }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push CLI Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.cli
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.create-release.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-docker-fips:
+    name: Build Docker FIPS Image
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_DAEMON }}
+          tags: |
+            type=semver,pattern={{version}}-fips
+            type=raw,value=latest-fips,enable={{is_default_branch}}
+
+      - name: Build and push FIPS Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.fips
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.create-release.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  create-checksums:
+    name: Create Master Checksums
+    needs: [create-release, build-binaries, build-darwin-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the tag name
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+
+          # Download all release assets
+          gh release download ${TAG_NAME} --pattern "*.sha256" --dir checksums || true
+
+      - name: Create master checksums file
+        run: |
+          if [ -d checksums ]; then
+            cd checksums
+            cat *.sha256 > ../checksums.txt 2>/dev/null || echo "No checksums found" > ../checksums.txt
+            cd ..
+          else
+            echo "No checksums directory found" > checksums.txt
+          fi
+
+          echo "Master checksums file created:"
+          cat checksums.txt
+
+      - name: Upload master checksums to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: checksums.txt
+
+  announce-release:
+    name: Announce Release
+    needs: [create-release, build-binaries, build-darwin-binaries, build-docker, build-docker-cli, build-docker-fips, create-checksums]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Update release notes
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const release = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: context.ref.replace('refs/tags/', '')
+            });
+
+            const currentBody = release.data.body || '';
+            const dockerInfo = `\n\n## Docker Images\n\nQuicBaaS Daemon (multi-arch: amd64, arm64):\n\n- \`ghcr.io/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}\`\n\nQuicBaaS CLI (multi-arch: amd64, arm64):\n\n- \`ghcr.io/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}\`\n\nQuicBaaS FIPS 140-3 Daemon (multi-arch: amd64, arm64):\n\n- \`ghcr.io/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips\`\n\nAll images support both \`linux/amd64\` and \`linux/arm64\` platforms.\n`;
+
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.data.id,
+              body: currentBody + dockerInfo
+            });
+
+      - name: Release summary
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Version: **${{ needs.create-release.outputs.version }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Linux Binaries" >> $GITHUB_STEP_SUMMARY
+          echo "- **Standard** (amd64, arm64) - quicbaasd, quicbaas" >> $GITHUB_STEP_SUMMARY
+          echo "- **FIPS 140-3** (amd64, arm64) - quicbaasd-fips, quicbaas-fips (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### macOS/Darwin Binaries" >> $GITHUB_STEP_SUMMARY
+          echo "- **Standard** (amd64, arm64) - quicbaasd, quicbaas" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Docker Images" >> $GITHUB_STEP_SUMMARY
+          echo "- Multi-arch (amd64, arm64) daemon and CLI images" >> $GITHUB_STEP_SUMMARY
+          echo "- FIPS 140-3 compliant daemon image (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All artifacts include SHA256 checksums for verification" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# QuicBaaS daemon (multi-Raft distributed KV store)" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# QuicBaaS CLI tool" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# FIPS 140-3 compliant daemon" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

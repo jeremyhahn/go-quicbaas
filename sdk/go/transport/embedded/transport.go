@@ -1,0 +1,315 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package embedded
+
+import (
+	"context"
+	"sync/atomic"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
+)
+
+// handlerFunc is the function signature for unary request handlers.
+type handlerFunc func(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error)
+
+// streamHandlerFunc is the function signature for streaming request handlers.
+type streamHandlerFunc func(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error
+
+// Transport implements the transport.Transport interface for embedded in-process access.
+type Transport struct {
+	service service.QuicBaaS
+	closed  atomic.Bool
+}
+
+// unaryHandlers maps service/method to handler functions for O(1) dispatch.
+var unaryHandlers = map[string]handlerFunc{
+	// KV operations
+	"quicbaas.KV/Put":             handlePut,
+	"quicbaas.KV/Get":             handleGet,
+	"quicbaas.KV/Delete":          handleDelete,
+	"quicbaas.KV/List":            handleList,
+	"quicbaas.KV/ListEntityTypes": handleListEntityTypes,
+
+	// Batch operations
+	"quicbaas.Batch/Put":    handleBatchPut,
+	"quicbaas.Batch/Get":    handleBatchGet,
+	"quicbaas.Batch/Delete": handleBatchDelete,
+
+	// Transaction operations
+	"quicbaas.Transaction/Execute": handleTransaction,
+
+	// Cluster operations
+	"quicbaas.Cluster/Status":             handleClusterStatus,
+	"quicbaas.Cluster/GetLeader":          handleGetLeader,
+	"quicbaas.Cluster/AddNode":            handleAddNode,
+	"quicbaas.Cluster/RemoveNode":         handleRemoveNode,
+	"quicbaas.Cluster/CreateShard":        handleCreateShard,
+	"quicbaas.Cluster/Rebalance":          handleRebalanceCluster,
+	"quicbaas.Cluster/GetRebalanceStatus": handleGetRebalanceProgress,
+
+	// Backup operations
+	"quicbaas.Backup/Create":  handleCreateBackup,
+	"quicbaas.Backup/List":    handleListBackups,
+	"quicbaas.Backup/Restore": handleRestoreBackup,
+	"quicbaas.Backup/Delete":  handleDeleteBackup,
+	"quicbaas.Backup/Verify":  handleVerifyBackup,
+
+	// Auth operations
+	"quicbaas.Auth/Login":         handleLogin,
+	"quicbaas.Auth/Logout":        handleLogout,
+	"quicbaas.Auth/RefreshToken":  handleRefreshToken,
+	"quicbaas.Auth/ValidateToken": handleValidateToken,
+
+	// RBAC operations
+	"quicbaas.RBAC/CreateUser": handleCreateUser,
+	"quicbaas.RBAC/DeleteUser": handleDeleteUser,
+	"quicbaas.RBAC/ListUsers":  handleListUsers,
+	"quicbaas.RBAC/CreateRole": handleCreateAuthRole,
+	"quicbaas.RBAC/DeleteRole": handleDeleteAuthRole,
+	"quicbaas.RBAC/ListRoles":  handleListAuthRoles,
+	"quicbaas.RBAC/AssignRole": handleAssignRole,
+	"quicbaas.RBAC/RevokeRole": handleRevokeRole,
+
+	// Cache operations
+	"quicbaas.Cache/GetStats":     handleGetCacheStats,
+	"quicbaas.Cache/Clear":        handleClearCache,
+	"quicbaas.Cache/GetConfig":    handleGetCacheConfig,
+	"quicbaas.Cache/UpdateConfig": handleUpdateCacheConfig,
+
+	// Health operations
+	"quicbaas.Health/Check":     handleHealth,
+	"quicbaas.Health/Liveness":  handleLiveness,
+	"quicbaas.Health/Readiness": handleReadiness,
+	"quicbaas.Health/Ping":      handlePing,
+
+	// Secrets operations
+	"quicbaas.Secrets/Store":  handleSecretsStore,
+	"quicbaas.Secrets/Get":    handleSecretsGet,
+	"quicbaas.Secrets/List":   handleSecretsList,
+	"quicbaas.Secrets/Delete": handleSecretsDelete,
+	"quicbaas.Secrets/Ensure": handleSecretsEnsure,
+
+	// TimeSeries operations
+	"quicbaas.TimeSeries/Aggregate":          handleAggregate,
+	"quicbaas.TimeSeries/WritePoint":         handleWritePoint,
+	"quicbaas.TimeSeries/WriteBatch":         handleWriteBatch,
+	"quicbaas.TimeSeries/Query":              handleTSQuery,
+	"quicbaas.TimeSeries/DeleteSeries":       handleDeleteSeries,
+	"quicbaas.TimeSeries/GetRetentionPolicy": handleGetRetentionPolicy,
+	"quicbaas.TimeSeries/SetRetentionPolicy": handleSetRetentionPolicy,
+	"quicbaas.TimeSeries/ListMetrics":        handleListMetrics,
+
+	// Operations
+	"quicbaas.Operations/MigrateData":          handleMigrateData,
+	"quicbaas.Operations/GetMigrationProgress": handleGetMigrationProgress,
+	"quicbaas.Operations/ReplaceNode":          handleReplaceNode,
+	"quicbaas.Operations/UpgradeNode":          handleUpgradeNode,
+	"quicbaas.Operations/GetUpgradeStatus":     handleGetUpgradeStatus,
+
+	// KMS operations
+	"quicbaas.KMS/GenerateKey":             handleKMSGenerateKey,
+	"quicbaas.KMS/ImportKey":               handleKMSImportKey,
+	"quicbaas.KMS/GetKey":                  handleKMSGetKey,
+	"quicbaas.KMS/GetPublicKey":            handleKMSGetPublicKey,
+	"quicbaas.KMS/ListKeys":                handleKMSListKeys,
+	"quicbaas.KMS/RotateKey":               handleKMSRotateKey,
+	"quicbaas.KMS/RevokeKey":               handleKMSRevokeKey,
+	"quicbaas.KMS/DeleteKey":               handleKMSDeleteKey,
+	"quicbaas.KMS/GetKeyMetadata":          handleKMSGetKeyMetadata,
+	"quicbaas.KMS/UpdateKeyMetadata":       handleKMSUpdateKeyMetadata,
+	"quicbaas.KMS/UpdateKeyStatus":         handleKMSUpdateKeyStatus,
+	"quicbaas.KMS/ListKeyVersions":         handleKMSListKeyVersions,
+	"quicbaas.KMS/SetKeyPolicy":            handleKMSSetKeyPolicy,
+	"quicbaas.KMS/GetKeyPolicy":            handleKMSGetKeyPolicy,
+	"quicbaas.KMS/GetSupportedAlgorithms":  handleKMSGetSupportedAlgorithms,
+	"quicbaas.KMS/BackendStatus":           handleKMSBackendStatus,
+	"quicbaas.KMS/BackendTest":             handleKMSBackendTest,
+	"quicbaas.KMS/ExportKey":               handleKMSExportKey,
+	"quicbaas.KMS/UnwrapKey":               handleKMSUnwrapKey,
+	"quicbaas.KMS/SetKeySafety":            handleKMSSetKeySafety,
+	"quicbaas.KMS/ClearKeySafety":          handleKMSClearKeySafety,
+	"quicbaas.KMS/SafetyCheck":             handleKMSSafetyCheck,
+	"quicbaas.KMS/SafetyReport":            handleKMSSafetyReport,
+	"quicbaas.KMS/CreateDEK":               handleKMSCreateDEK,
+	"quicbaas.KMS/GetDEK":                  handleKMSGetDEK,
+	"quicbaas.KMS/ListDEKs":                handleKMSListDEKs,
+	"quicbaas.KMS/RotateDEK":               handleKMSRotateDEK,
+	"quicbaas.KMS/DeleteDEK":               handleKMSDeleteDEK,
+	"quicbaas.KMS/GetDEKStatus":            handleKMSGetDEKStatus,
+	"quicbaas.KMS/SetDefaultDEK":           handleKMSSetDefaultDEK,
+	"quicbaas.KMS/SetDEKSafety":            handleKMSSetDEKSafety,
+	"quicbaas.KMS/ClearDEKSafety":          handleKMSClearDEKSafety,
+	"quicbaas.KMS/StartReencryption":       handleKMSStartReencryption,
+	"quicbaas.KMS/GetReencryptionProgress": handleKMSGetReencryptionProgress,
+
+	// Crypto operations
+	"quicbaas.Crypto/Encrypt":                handleCryptoEncrypt,
+	"quicbaas.Crypto/Decrypt":                handleCryptoDecrypt,
+	"quicbaas.Crypto/Rewrap":                 handleCryptoRewrap,
+	"quicbaas.Crypto/EncryptBatch":           handleCryptoEncryptBatch,
+	"quicbaas.Crypto/DecryptBatch":           handleCryptoDecryptBatch,
+	"quicbaas.Crypto/GenerateDataKey":        handleCryptoGenerateDataKey,
+	"quicbaas.Crypto/GenerateWrappedDataKey": handleCryptoGenerateWrappedDataKey,
+	"quicbaas.Crypto/Sign":                   handleCryptoSign,
+	"quicbaas.Crypto/Verify":                 handleCryptoVerify,
+	"quicbaas.Crypto/GenerateHMAC":           handleCryptoGenerateHMAC,
+	"quicbaas.Crypto/VerifyHMAC":             handleCryptoVerifyHMAC,
+	"quicbaas.Crypto/GenerateRandom":         handleCryptoGenerateRandom,
+	"quicbaas.Crypto/Hash":                   handleCryptoHash,
+
+	// Certificate operations
+	"quicbaas.Certificate/IssueCertificate":  handleCertIssueCertificate,
+	"quicbaas.Certificate/SignCSR":           handleCertSignCSR,
+	"quicbaas.Certificate/RevokeCertificate": handleCertRevokeCertificate,
+	"quicbaas.Certificate/VerifyCertificate": handleCertVerifyCertificate,
+	"quicbaas.Certificate/GetCACertificate":  handleCertGetCACertificate,
+	"quicbaas.Certificate/GetCABundle":       handleCertGetCABundle,
+	"quicbaas.Certificate/GetTLSConfig":      handleCertGetTLSConfig,
+	"quicbaas.Certificate/IsInitialized":     handleCertIsInitialized,
+	"quicbaas.Certificate/GenerateCRL":       handleCertGenerateCRL,
+	"quicbaas.Certificate/IsRevoked":         handleCertIsRevoked,
+
+	// ObjectStorage operations
+	"quicbaas.ObjectStorage/PutObject":          handleObjPutObject,
+	"quicbaas.ObjectStorage/GetObject":          handleObjGetObject,
+	"quicbaas.ObjectStorage/DeleteObject":       handleObjDeleteObject,
+	"quicbaas.ObjectStorage/HeadObject":         handleObjHeadObject,
+	"quicbaas.ObjectStorage/ListObjects":        handleObjListObjects,
+	"quicbaas.ObjectStorage/ListByTag":          handleObjListByTag,
+	"quicbaas.ObjectStorage/ListByTenant":       handleObjListByTenant,
+	"quicbaas.ObjectStorage/CopyObject":         handleObjCopyObject,
+	"quicbaas.ObjectStorage/ReplicateObject":    handleObjReplicateObject,
+	"quicbaas.ObjectStorage/MigrateObject":      handleObjMigrateObject,
+	"quicbaas.ObjectStorage/ArchiveObject":      handleObjArchiveObject,
+	"quicbaas.ObjectStorage/RestoreObject":      handleObjRestoreObject,
+	"quicbaas.ObjectStorage/VerifyObject":       handleObjVerifyObject,
+	"quicbaas.ObjectStorage/SetObjectPolicy":    handleObjSetObjectPolicy,
+	"quicbaas.ObjectStorage/GetObjectPolicy":    handleObjGetObjectPolicy,
+	"quicbaas.ObjectStorage/ListBackends":       handleObjListBackends,
+	"quicbaas.ObjectStorage/GetBackendHealth":   handleObjGetBackendHealth,
+	"quicbaas.ObjectStorage/GetTenantUsage":     handleObjGetTenantUsage,
+	"quicbaas.ObjectStorage/GetTenantQuotas":    handleObjGetTenantQuotas,
+	"quicbaas.ObjectStorage/SetTenantQuotas":    handleObjSetTenantQuotas,
+	"quicbaas.ObjectStorage/BatchPutObjects":    handleObjBatchPutObjects,
+	"quicbaas.ObjectStorage/BatchGetObjects":    handleObjBatchGetObjects,
+	"quicbaas.ObjectStorage/BatchDeleteObjects": handleObjBatchDeleteObjects,
+}
+
+// streamHandlers maps service/method to stream handler functions for O(1) dispatch.
+var streamHandlers = map[string]streamHandlerFunc{
+	"quicbaas.KV/List":                         handleListStream,
+	"quicbaas.KV/Watch":                        handleWatchStream,
+	"quicbaas.Query/Query":                     handleQueryStream,
+	"quicbaas.Query/ScanIndex":                 handleScanIndexStream,
+	"quicbaas.TimeSeries/Query":                handleTimeSeriesQueryStream,
+	"quicbaas.Orchestrator/SubscribeJobEvents": handleSubscribeJobEventsStream,
+}
+
+// New creates a new embedded transport with the given service.
+func New(svc service.QuicBaaS) (*Transport, error) {
+	if svc == nil {
+		return nil, ErrNilService
+	}
+	return &Transport{
+		service: svc,
+	}, nil
+}
+
+// Request sends a unary request and returns the response.
+func (t *Transport) Request(ctx context.Context, svcName, method string, req interface{}) (interface{}, error) {
+	if t.closed.Load() {
+		return nil, ErrTransportClosed
+	}
+
+	key := svcName + "/" + method
+	handler, ok := unaryHandlers[key]
+	if !ok {
+		return nil, NewUnknownMethodError(svcName, method)
+	}
+
+	return handler(ctx, t.service, req)
+}
+
+// RequestStream initiates a streaming request.
+func (t *Transport) RequestStream(ctx context.Context, svcName, method string, req interface{}) (transport.Stream, error) {
+	if t.closed.Load() {
+		return nil, ErrTransportClosed
+	}
+
+	key := svcName + "/" + method
+	handler, ok := streamHandlers[key]
+	if !ok {
+		return nil, NewStreamNotSupportedError(svcName, method)
+	}
+
+	s := newStream(ctx, 100)
+
+	// Start the stream handler in a goroutine
+	go func() {
+		err := handler(ctx, t.service, req, s)
+		if err != nil {
+			// Try to send error through the stream if it's still open
+			// Check closed state before attempting to send to avoid panic
+			if !s.isClosed() {
+				select {
+				case s.recvCh <- err:
+				case <-s.ctx.Done():
+				default:
+					// Channel full or closed, error is lost but that's acceptable
+				}
+			}
+		}
+		// Close the stream after the handler completes
+		s.Close()
+	}()
+
+	return s, nil
+}
+
+// Conn returns the underlying connection (the service instance for embedded transport).
+func (t *Transport) Conn() interface{} {
+	return t.service
+}
+
+// Close closes the transport.
+func (t *Transport) Close() error {
+	t.closed.Store(true)
+	return nil
+}
+
+// Healthy returns true if the transport is healthy.
+func (t *Transport) Healthy() bool {
+	return !t.closed.Load() && t.service != nil
+}
+
+// Service returns the underlying QuicBaaS service for direct access.
+func (t *Transport) Service() service.QuicBaaS {
+	return t.service
+}
+
+// Factory implements transport.Factory for embedded transport.
+type Factory struct {
+	service service.QuicBaaS
+}
+
+// NewFactory creates a new embedded transport factory.
+func NewFactory(svc service.QuicBaaS) *Factory {
+	return &Factory{service: svc}
+}
+
+// Create creates a new embedded transport.
+func (f *Factory) Create(cfg *transport.Config) (transport.Transport, error) {
+	return New(f.service)
+}

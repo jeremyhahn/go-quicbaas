@@ -1,0 +1,46 @@
+# QuicBaaS File-Based Local Configuration - Docker Compose
+# Simple file-based storage with persistence
+# Each key-value pair is stored as a separate file
+# Best for: Development, debugging, low-volume deployments
+#
+# Usage:
+#   docker compose -f configs/docker/docker-compose.file-local.yaml up
+#   docker compose -f configs/docker/docker-compose.file-local.yaml up -d  # detached
+#
+# Access:
+#   REST API: http://localhost:8443
+#   gRPC:     localhost:9443
+
+services:
+  quicbaas:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: quicbaas:latest
+    container_name: quicbaas-file
+    ports:
+      - "8443:8443"   # REST API
+      - "9443:9443"   # gRPC
+    volumes:
+      - quicbaas-data:/data/quicbaas
+    environment:
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_STORAGE_BACKEND=file
+      - QUICBAAS_SERVER_GRPC_ENABLED=true
+      - QUICBAAS_SERVER_GRPC_PORT=9443
+      - QUICBAAS_SERVER_REST_ENABLED=true
+      - QUICBAAS_SERVER_REST_PORT=8443
+      - QUICBAAS_STORAGE_DATA_DIR=/data/quicbaas/kv
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=console
+    healthcheck:
+      test: ["CMD", "quicbaas", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  quicbaas-data:
+    driver: local

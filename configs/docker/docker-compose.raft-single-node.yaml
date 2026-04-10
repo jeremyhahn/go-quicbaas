@@ -1,0 +1,52 @@
+# QuicBaaS Single-Node Raft Configuration - Docker Compose
+# Single-node Raft cluster for development and testing
+# Provides Raft consensus semantics without multi-node complexity
+# Best for: Testing Raft behavior, development, CI/CD
+#
+# Usage:
+#   docker compose -f configs/docker/docker-compose.raft-single-node.yaml up
+#   docker compose -f configs/docker/docker-compose.raft-single-node.yaml up -d  # detached
+#
+# Access:
+#   REST API: http://localhost:8443
+#   gRPC:     localhost:9443
+#   Raft:     localhost:63000 (internal)
+
+services:
+  quicbaas:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: quicbaas:latest
+    container_name: quicbaas-raft-single
+    ports:
+      - "8443:8443"   # REST API
+      - "9443:9443"   # gRPC
+      - "63000:63000" # Raft (for debugging)
+    volumes:
+      - quicbaas-data:/data/quicbaas
+    environment:
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_STORAGE_BACKEND=raft
+      - QUICBAAS_SERVER_GRPC_ENABLED=true
+      - QUICBAAS_SERVER_GRPC_PORT=9443
+      - QUICBAAS_SERVER_REST_ENABLED=true
+      - QUICBAAS_SERVER_REST_PORT=8443
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=127.0.0.1:63000
+      - QUICBAAS_RAFT_LISTEN_ADDRESS=0.0.0.0:63000
+      - QUICBAAS_STORAGE_DATA_DIR=/data/quicbaas
+      - QUICBAAS_STORAGE_WAL_DIR=/data/quicbaas/wal
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=console
+    healthcheck:
+      test: ["CMD", "quicbaas", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  quicbaas-data:
+    driver: local

@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: quicbaas-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - quicbaas-test
+
+  # Helper container to pull the model on startup
+  ollama-setup:
+    image: curlimages/curl:latest
+    container_name: quicbaas-ollama-setup
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - quicbaas-test
+    command: >
+      sh -c "
+        echo 'Waiting for Ollama to be ready...';
+        sleep 5;
+        echo 'Pulling all-minilm model...';
+        curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"all-minilm\"}';
+        echo 'Model pull initiated. Waiting for completion...';
+        sleep 30;
+        echo 'Verifying model is available...';
+        curl http://ollama:11434/api/tags;
+        echo 'Setup complete!';
+      "
+    restart: "no"
+
+volumes:
+  ollama-data:
+    driver: local
+
+networks:
+  quicbaas-test:
+    driver: bridge

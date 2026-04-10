@@ -1,0 +1,1060 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package service re-exports ALL types from pkg/service as type aliases.
+// This allows cmd/quicbaas to change imports from:
+//
+//	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+//
+// to:
+//
+//	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
+//
+// Without any type conversion needed. Changes to pkg/service types
+// automatically propagate to SDK consumers.
+package service
+
+import (
+	pkgservice "github.com/jeremyhahn/go-quicbaas/pkg/service"
+)
+
+// =============================================================================
+// Core Service Interfaces
+// =============================================================================
+
+type (
+	// QuicBaaS is the unified service facade providing ALL database operations.
+	QuicBaaS = pkgservice.QuicBaaS
+
+	// KVService defines basic key-value store operations.
+	KVService = pkgservice.KVService
+
+	// BatchService defines atomic batch operations.
+	BatchService = pkgservice.BatchService
+
+	// TransactionService defines atomic compare-and-swap transactions.
+	TransactionService = pkgservice.TransactionService
+
+	// QueryService defines query and index operations.
+	QueryService = pkgservice.QueryService
+
+	// ClusterService defines cluster management operations.
+	ClusterService = pkgservice.ClusterService
+
+	// BackupService defines backup and restore operations.
+	BackupService = pkgservice.BackupService
+
+	// AuthService defines authentication operations.
+	AuthService = pkgservice.AuthService
+
+	// RBACService defines role-based access control operations.
+	RBACService = pkgservice.RBACService
+
+	// CacheService defines cache management operations.
+	CacheService = pkgservice.CacheService
+
+	// HealthService defines health check operations.
+	HealthService = pkgservice.HealthService
+
+	// TimeSeriesService defines time-series operations.
+	TimeSeriesService = pkgservice.TimeSeriesService
+
+	// OperationsService defines operational management operations.
+	OperationsService = pkgservice.OperationsService
+
+	// KMSService defines KMS operations.
+	KMSService = pkgservice.KMSService
+
+	// SecretsService handles secret storage and retrieval with versioning and rotation.
+	SecretsService = pkgservice.SecretsService
+
+	// CryptoService defines crypto/transit operations.
+	CryptoService = pkgservice.CryptoService
+
+	// VectorService defines vector database operations.
+	VectorService = pkgservice.VectorService
+
+	// EmbeddingService provides semantic embedding generation and management.
+	EmbeddingService = pkgservice.EmbeddingService
+
+	// OllamaService provides access to Ollama API operations.
+	OllamaService = pkgservice.OllamaService
+
+	// CertificateService provides certificate operations.
+	CertificateService = pkgservice.CertificateService
+
+	// DynamicSecretsService handles dynamic credential generation.
+	DynamicSecretsService = pkgservice.DynamicSecretsService
+
+	// ClusterDEKService handles cluster-wide Data Encryption Key management.
+	ClusterDEKService = pkgservice.ClusterDEKService
+
+	// ObjectStorageService provides object storage operations.
+	ObjectStorageService = pkgservice.ObjectStorageService
+
+	// ObjectStorageAdminService provides object storage admin operations.
+	ObjectStorageAdminService = pkgservice.ObjectStorageAdminService
+
+	// ParameterStoreService provides parameter store operations.
+	ParameterStoreService = pkgservice.ParameterStoreService
+
+	// ObjectTransferService provides peer-to-peer object data transfer.
+	ObjectTransferService = pkgservice.ObjectTransferService
+
+	// SchedulerService handles job scheduling and execution.
+	SchedulerService = pkgservice.SchedulerService
+
+	// IAMComponents provides IAM components.
+	IAMComponents = pkgservice.IAMComponents
+)
+
+// =============================================================================
+// Common Types and Enums
+// =============================================================================
+
+type (
+	// ConsistencyLevel defines read/write consistency guarantees.
+	ConsistencyLevel = pkgservice.ConsistencyLevel
+
+	// WriteMode defines write durability guarantees.
+	WriteMode = pkgservice.WriteMode
+
+	// HealthStatus defines component health status.
+	HealthStatus = pkgservice.HealthStatus
+
+	// AggregateFunction defines time-series aggregation functions.
+	AggregateFunction = pkgservice.AggregateFunction
+
+	// CompareTarget defines transaction comparison targets.
+	CompareTarget = pkgservice.CompareTarget
+
+	// CompareOperator defines transaction comparison operators.
+	CompareOperator = pkgservice.CompareOperator
+
+	// TransactionOpType defines transaction operation types.
+	TransactionOpType = pkgservice.TransactionOpType
+
+	// WatchEventType represents the type of watch event.
+	WatchEventType = pkgservice.WatchEventType
+)
+
+// ConsistencyLevel constants.
+const (
+	ConsistencyLevelUnspecified  = pkgservice.ConsistencyLevelUnspecified
+	ConsistencyLevelEventual     = pkgservice.ConsistencyLevelEventual
+	ConsistencyLevelLinearizable = pkgservice.ConsistencyLevelLinearizable
+	ConsistencyLevelStrong       = pkgservice.ConsistencyLevelStrong
+)
+
+// WriteMode constants.
+const (
+	WriteModeSync       = pkgservice.WriteModeSync
+	WriteModeWALDurable = pkgservice.WriteModeWALDurable
+	WriteModeBatched    = pkgservice.WriteModeBatched
+)
+
+// HealthStatus constants.
+const (
+	HealthStatusUnknown   = pkgservice.HealthStatusUnknown
+	HealthStatusHealthy   = pkgservice.HealthStatusHealthy
+	HealthStatusDegraded  = pkgservice.HealthStatusDegraded
+	HealthStatusUnhealthy = pkgservice.HealthStatusUnhealthy
+)
+
+// AggregateFunction constants.
+const (
+	AggregateFunctionUnspecified = pkgservice.AggregateFunctionUnspecified
+	AggregateFunctionSum         = pkgservice.AggregateFunctionSum
+	AggregateFunctionAvg         = pkgservice.AggregateFunctionAvg
+	AggregateFunctionMin         = pkgservice.AggregateFunctionMin
+	AggregateFunctionMax         = pkgservice.AggregateFunctionMax
+	AggregateFunctionCount       = pkgservice.AggregateFunctionCount
+)
+
+// CompareTarget constants.
+const (
+	CompareTargetUnspecified = pkgservice.CompareTargetUnspecified
+	CompareTargetVersion     = pkgservice.CompareTargetVersion
+	CompareTargetValue       = pkgservice.CompareTargetValue
+	CompareTargetExists      = pkgservice.CompareTargetExists
+)
+
+// CompareOperator constants.
+const (
+	CompareOperatorUnspecified  = pkgservice.CompareOperatorUnspecified
+	CompareOperatorEqual        = pkgservice.CompareOperatorEqual
+	CompareOperatorNotEqual     = pkgservice.CompareOperatorNotEqual
+	CompareOperatorGreater      = pkgservice.CompareOperatorGreater
+	CompareOperatorLess         = pkgservice.CompareOperatorLess
+	CompareOperatorGreaterEqual = pkgservice.CompareOperatorGreaterEqual
+	CompareOperatorLessEqual    = pkgservice.CompareOperatorLessEqual
+)
+
+// TransactionOpType constants.
+const (
+	TransactionOpTypeUnspecified = pkgservice.TransactionOpTypeUnspecified
+	TransactionOpTypePut         = pkgservice.TransactionOpTypePut
+	TransactionOpTypeGet         = pkgservice.TransactionOpTypeGet
+	TransactionOpTypeDelete      = pkgservice.TransactionOpTypeDelete
+)
+
+// WatchEventType constants.
+const (
+	WatchEventTypeUnspecified = pkgservice.WatchEventTypeUnspecified
+	WatchEventTypePut         = pkgservice.WatchEventTypePut
+	WatchEventTypeDelete      = pkgservice.WatchEventTypeDelete
+)
+
+// =============================================================================
+// KV Operations Types
+// =============================================================================
+
+type (
+	PutRequest              = pkgservice.PutRequest
+	PutResponse             = pkgservice.PutResponse
+	GetRequest              = pkgservice.GetRequest
+	GetResponse             = pkgservice.GetResponse
+	DeleteRequest           = pkgservice.DeleteRequest
+	DeleteResponse          = pkgservice.DeleteResponse
+	ListRequest             = pkgservice.ListRequest
+	ListResponse            = pkgservice.ListResponse
+	Entity                  = pkgservice.Entity
+	ListEntityTypesRequest  = pkgservice.ListEntityTypesRequest
+	ListEntityTypesResponse = pkgservice.ListEntityTypesResponse
+)
+
+// =============================================================================
+// Watch Operations Types
+// =============================================================================
+
+type (
+	WatchRequest  = pkgservice.WatchRequest
+	WatchResponse = pkgservice.WatchResponse
+	WatchEvent    = pkgservice.WatchEvent
+)
+
+// =============================================================================
+// Batch Operations Types
+// =============================================================================
+
+type (
+	BatchPutRequest     = pkgservice.BatchPutRequest
+	BatchPutResponse    = pkgservice.BatchPutResponse
+	BatchGetRequest     = pkgservice.BatchGetRequest
+	BatchGetResponse    = pkgservice.BatchGetResponse
+	BatchDeleteRequest  = pkgservice.BatchDeleteRequest
+	BatchDeleteResponse = pkgservice.BatchDeleteResponse
+)
+
+// =============================================================================
+// Transaction Operations Types
+// =============================================================================
+
+type (
+	TransactionRequest    = pkgservice.TransactionRequest
+	TransactionResponse   = pkgservice.TransactionResponse
+	CompareCondition      = pkgservice.CompareCondition
+	TransactionOp         = pkgservice.TransactionOp
+	TransactionOpResponse = pkgservice.TransactionOpResponse
+)
+
+// =============================================================================
+// Query Operations Types
+// =============================================================================
+
+type (
+	QueryRequest  = pkgservice.QueryRequest
+	QueryResponse = pkgservice.QueryResponse
+	ScanRequest   = pkgservice.ScanRequest
+	ScanResponse  = pkgservice.ScanResponse
+)
+
+// =============================================================================
+// Cluster Operations Types
+// =============================================================================
+
+type (
+	ClusterStatusRequest         = pkgservice.ClusterStatusRequest
+	ClusterStatusResponse        = pkgservice.ClusterStatusResponse
+	NodeInfo                     = pkgservice.NodeInfo
+	ShardInfo                    = pkgservice.ShardInfo
+	GetLeaderRequest             = pkgservice.GetLeaderRequest
+	GetLeaderResponse            = pkgservice.GetLeaderResponse
+	AddNodeRequest               = pkgservice.AddNodeRequest
+	AddNodeResponse              = pkgservice.AddNodeResponse
+	RemoveNodeRequest            = pkgservice.RemoveNodeRequest
+	RemoveNodeResponse           = pkgservice.RemoveNodeResponse
+	CreateShardRequest           = pkgservice.CreateShardRequest
+	CreateShardResponse          = pkgservice.CreateShardResponse
+	RebalanceClusterRequest      = pkgservice.RebalanceClusterRequest
+	RebalanceClusterResponse     = pkgservice.RebalanceClusterResponse
+	GetRebalanceProgressRequest  = pkgservice.GetRebalanceProgressRequest
+	GetRebalanceProgressResponse = pkgservice.GetRebalanceProgressResponse
+)
+
+// =============================================================================
+// Backup Operations Types
+// =============================================================================
+
+type (
+	CreateBackupRequest   = pkgservice.CreateBackupRequest
+	CreateBackupResponse  = pkgservice.CreateBackupResponse
+	ListBackupsRequest    = pkgservice.ListBackupsRequest
+	ListBackupsResponse   = pkgservice.ListBackupsResponse
+	BackupMetadata        = pkgservice.BackupMetadata
+	RestoreBackupRequest  = pkgservice.RestoreBackupRequest
+	RestoreBackupResponse = pkgservice.RestoreBackupResponse
+	DeleteBackupRequest   = pkgservice.DeleteBackupRequest
+	DeleteBackupResponse  = pkgservice.DeleteBackupResponse
+	VerifyBackupRequest   = pkgservice.VerifyBackupRequest
+	VerifyBackupResponse  = pkgservice.VerifyBackupResponse
+)
+
+// =============================================================================
+// Auth Operations Types (Basic)
+// =============================================================================
+
+type (
+	LoginRequest          = pkgservice.LoginRequest
+	LoginResponse         = pkgservice.LoginResponse
+	LogoutRequest         = pkgservice.LogoutRequest
+	LogoutResponse        = pkgservice.LogoutResponse
+	RefreshTokenRequest   = pkgservice.RefreshTokenRequest
+	RefreshTokenResponse  = pkgservice.RefreshTokenResponse
+	ValidateTokenRequest  = pkgservice.ValidateTokenRequest
+	ValidateTokenResponse = pkgservice.ValidateTokenResponse
+)
+
+// =============================================================================
+// Auth Extended Types (MFA, OIDC, Sessions, etc.)
+// =============================================================================
+
+type (
+	// MFAType represents the type of multi-factor authentication.
+	MFAType = pkgservice.MFAType
+
+	// MFAChallenge contains MFA verification requirements.
+	MFAChallenge = pkgservice.MFAChallenge
+
+	// ExtendedLoginRequest contains credentials for authentication with MFA support.
+	ExtendedLoginRequest = pkgservice.ExtendedLoginRequest
+
+	// ExtendedLoginResponse contains the authentication tokens with MFA support.
+	ExtendedLoginResponse = pkgservice.ExtendedLoginResponse
+
+	// ExtendedRefreshTokenResponse contains the new access token with rotation support.
+	ExtendedRefreshTokenResponse = pkgservice.ExtendedRefreshTokenResponse
+
+	// TokenClaims contains the validated token claims.
+	TokenClaims = pkgservice.TokenClaims
+
+	// ProviderType represents the type of identity provider.
+	ProviderType = pkgservice.ProviderType
+
+	// BeginFederatedLoginRequest initiates an OIDC/OAuth2 flow.
+	BeginFederatedLoginRequest = pkgservice.BeginFederatedLoginRequest
+
+	// BeginFederatedLoginResponse contains the authorization URL.
+	BeginFederatedLoginResponse = pkgservice.BeginFederatedLoginResponse
+
+	// HandleFederatedCallbackRequest processes the IdP callback.
+	HandleFederatedCallbackRequest = pkgservice.HandleFederatedCallbackRequest
+
+	// HandleFederatedCallbackResponse contains the authentication result.
+	HandleFederatedCallbackResponse = pkgservice.HandleFederatedCallbackResponse
+
+	// AuthProvider represents an identity provider configuration.
+	AuthProvider = pkgservice.AuthProvider
+
+	// AuthListProvidersResponse contains the list of providers.
+	AuthListProvidersResponse = pkgservice.AuthListProvidersResponse
+
+	// AuthSession represents a user session.
+	AuthSession = pkgservice.AuthSession
+
+	// AuthListSessionsResponse contains the list of sessions.
+	AuthListSessionsResponse = pkgservice.AuthListSessionsResponse
+
+	// TokenIntrospection contains detailed token information.
+	TokenIntrospection = pkgservice.TokenIntrospection
+
+	// JWKS represents a JSON Web Key Set.
+	JWKS = pkgservice.JWKS
+
+	// JWK represents a JSON Web Key.
+	JWK = pkgservice.JWK
+
+	// OpenIDConfiguration represents the OIDC discovery document.
+	OpenIDConfiguration = pkgservice.OpenIDConfiguration
+)
+
+// MFAType constants.
+const (
+	MFATypeTOTP       = pkgservice.MFATypeTOTP
+	MFATypeWebAuthn   = pkgservice.MFATypeWebAuthn
+	MFATypeSMS        = pkgservice.MFATypeSMS
+	MFATypeEmail      = pkgservice.MFATypeEmail
+	MFATypeBackupCode = pkgservice.MFATypeBackupCode
+)
+
+// ProviderType constants.
+const (
+	ProviderTypeUnspecified = pkgservice.ProviderTypeUnspecified
+	ProviderTypeOIDC        = pkgservice.ProviderTypeOIDC
+	ProviderTypeSAML        = pkgservice.ProviderTypeSAML
+	ProviderTypeOAuth2      = pkgservice.ProviderTypeOAuth2
+)
+
+// =============================================================================
+// Cache Operations Types
+// =============================================================================
+
+type (
+	GetCacheStatsRequest      = pkgservice.GetCacheStatsRequest
+	GetCacheStatsResponse     = pkgservice.GetCacheStatsResponse
+	ClearCacheRequest         = pkgservice.ClearCacheRequest
+	ClearCacheResponse        = pkgservice.ClearCacheResponse
+	GetCacheConfigRequest     = pkgservice.GetCacheConfigRequest
+	GetCacheConfigResponse    = pkgservice.GetCacheConfigResponse
+	UpdateCacheConfigRequest  = pkgservice.UpdateCacheConfigRequest
+	UpdateCacheConfigResponse = pkgservice.UpdateCacheConfigResponse
+)
+
+// =============================================================================
+// Health Operations Types
+// =============================================================================
+
+type (
+	HealthRequest     = pkgservice.HealthRequest
+	HealthResponse    = pkgservice.HealthResponse
+	ComponentHealth   = pkgservice.ComponentHealth
+	LivenessRequest   = pkgservice.LivenessRequest
+	LivenessResponse  = pkgservice.LivenessResponse
+	ReadinessRequest  = pkgservice.ReadinessRequest
+	ReadinessResponse = pkgservice.ReadinessResponse
+)
+
+// =============================================================================
+// TimeSeries Operations Types
+// =============================================================================
+
+type (
+	AggregateRequest             = pkgservice.AggregateRequest
+	AggregateResponse            = pkgservice.AggregateResponse
+	TimeSeriesQueryRequest       = pkgservice.TimeSeriesQueryRequest
+	TimeSeriesQueryResponse      = pkgservice.TimeSeriesQueryResponse
+	TimeSeriesPoint              = pkgservice.TimeSeriesPoint
+	WritePointRequest            = pkgservice.WritePointRequest
+	WritePointResponse           = pkgservice.WritePointResponse
+	WriteBatchRequest            = pkgservice.WriteBatchRequest
+	WriteBatchResponse           = pkgservice.WriteBatchResponse
+	TSQueryRequest               = pkgservice.TSQueryRequest
+	TSQueryResponse              = pkgservice.TSQueryResponse
+	TSDataPoint                  = pkgservice.TSDataPoint
+	TSGroupedResult              = pkgservice.TSGroupedResult
+	TSDeleteRequest              = pkgservice.TSDeleteRequest
+	TSDeleteResponse             = pkgservice.TSDeleteResponse
+	TSGetRetentionPolicyRequest  = pkgservice.TSGetRetentionPolicyRequest
+	TSGetRetentionPolicyResponse = pkgservice.TSGetRetentionPolicyResponse
+	TSSetRetentionPolicyRequest  = pkgservice.TSSetRetentionPolicyRequest
+	TSSetRetentionPolicyResponse = pkgservice.TSSetRetentionPolicyResponse
+	TSRetentionPolicy            = pkgservice.TSRetentionPolicy
+	TSListMetricsRequest         = pkgservice.TSListMetricsRequest
+	TSListMetricsResponse        = pkgservice.TSListMetricsResponse
+)
+
+// =============================================================================
+// Operations Types
+// =============================================================================
+
+type (
+	MigrateDataRequest           = pkgservice.MigrateDataRequest
+	MigrateDataResponse          = pkgservice.MigrateDataResponse
+	GetMigrationProgressRequest  = pkgservice.GetMigrationProgressRequest
+	GetMigrationProgressResponse = pkgservice.GetMigrationProgressResponse
+	ReplaceNodeRequest           = pkgservice.ReplaceNodeRequest
+	ReplaceNodeResponse          = pkgservice.ReplaceNodeResponse
+	UpgradeNodeRequest           = pkgservice.UpgradeNodeRequest
+	UpgradeNodeResponse          = pkgservice.UpgradeNodeResponse
+	GetUpgradeStatusRequest      = pkgservice.GetUpgradeStatusRequest
+	GetUpgradeStatusResponse     = pkgservice.GetUpgradeStatusResponse
+)
+
+// =============================================================================
+// KMS Types and Constants
+// =============================================================================
+
+type (
+	// KeyAlgorithm specifies the cryptographic algorithm for a key.
+	KeyAlgorithm = pkgservice.KeyAlgorithm
+
+	// KeyUsage specifies permitted operations for a key.
+	KeyUsage = pkgservice.KeyUsage
+
+	// KeyStatus represents the lifecycle state of a key.
+	KeyStatus = pkgservice.KeyStatus
+
+	// HashAlgorithm specifies a cryptographic hash function.
+	HashAlgorithm = pkgservice.HashAlgorithm
+
+	// KeyHandle is an opaque reference to a key.
+	KeyHandle = pkgservice.KeyHandle
+
+	// KeyMetadata contains non-sensitive metadata about a key.
+	KeyMetadata = pkgservice.KeyMetadata
+
+	// KeyPolicy defines access control and usage policies for a key.
+	KeyPolicy = pkgservice.KeyPolicy
+
+	// RotationPolicy defines automatic key rotation behavior.
+	RotationPolicy = pkgservice.RotationPolicy
+
+	// KeyVersionInfo represents information about a specific key version.
+	KeyVersionInfo = pkgservice.KeyVersionInfo
+)
+
+// KeyAlgorithm constants.
+const (
+	KeyAlgAES128GCM         = pkgservice.KeyAlgAES128GCM
+	KeyAlgAES192GCM         = pkgservice.KeyAlgAES192GCM
+	KeyAlgAES256GCM         = pkgservice.KeyAlgAES256GCM
+	KeyAlgChaCha20Poly1305  = pkgservice.KeyAlgChaCha20Poly1305
+	KeyAlgXChaCha20Poly1305 = pkgservice.KeyAlgXChaCha20Poly1305
+	KeyAlgRSA2048           = pkgservice.KeyAlgRSA2048
+	KeyAlgRSA3072           = pkgservice.KeyAlgRSA3072
+	KeyAlgRSA4096           = pkgservice.KeyAlgRSA4096
+	KeyAlgECDSAP256         = pkgservice.KeyAlgECDSAP256
+	KeyAlgECDSAP384         = pkgservice.KeyAlgECDSAP384
+	KeyAlgECDSAP521         = pkgservice.KeyAlgECDSAP521
+	KeyAlgEd25519           = pkgservice.KeyAlgEd25519
+	KeyAlgEd448             = pkgservice.KeyAlgEd448
+	KeyAlgX25519            = pkgservice.KeyAlgX25519
+	KeyAlgX448              = pkgservice.KeyAlgX448
+	KeyAlgHMACSHA256        = pkgservice.KeyAlgHMACSHA256
+	KeyAlgHMACSHA384        = pkgservice.KeyAlgHMACSHA384
+	KeyAlgHMACSHA512        = pkgservice.KeyAlgHMACSHA512
+)
+
+// KeyUsage constants.
+const (
+	KeyUsageEncrypt     = pkgservice.KeyUsageEncrypt
+	KeyUsageDecrypt     = pkgservice.KeyUsageDecrypt
+	KeyUsageSign        = pkgservice.KeyUsageSign
+	KeyUsageVerify      = pkgservice.KeyUsageVerify
+	KeyUsageWrapKey     = pkgservice.KeyUsageWrapKey
+	KeyUsageDeriveKey   = pkgservice.KeyUsageDeriveKey
+	KeyUsageGenerateMAC = pkgservice.KeyUsageGenerateMAC
+	KeyUsageVerifyMAC   = pkgservice.KeyUsageVerifyMAC
+)
+
+// KeyStatus constants.
+const (
+	KeyStatusEnabled         = pkgservice.KeyStatusEnabled
+	KeyStatusDisabled        = pkgservice.KeyStatusDisabled
+	KeyStatusPendingDeletion = pkgservice.KeyStatusPendingDeletion
+	KeyStatusDeleted         = pkgservice.KeyStatusDeleted
+	KeyStatusRotating        = pkgservice.KeyStatusRotating
+	KeyStatusCompromised     = pkgservice.KeyStatusCompromised
+)
+
+// HashAlgorithm constants.
+const (
+	HashAlgSHA256     = pkgservice.HashAlgSHA256
+	HashAlgSHA384     = pkgservice.HashAlgSHA384
+	HashAlgSHA512     = pkgservice.HashAlgSHA512
+	HashAlgSHA3_256   = pkgservice.HashAlgSHA3_256
+	HashAlgSHA3_384   = pkgservice.HashAlgSHA3_384
+	HashAlgSHA3_512   = pkgservice.HashAlgSHA3_512
+	HashAlgBLAKE2b256 = pkgservice.HashAlgBLAKE2b256
+	HashAlgBLAKE2b512 = pkgservice.HashAlgBLAKE2b512
+)
+
+// =============================================================================
+// KMS Request/Response Types
+// =============================================================================
+
+type (
+	GenerateKeyRequest        = pkgservice.GenerateKeyRequest
+	GenerateKeyResponse       = pkgservice.GenerateKeyResponse
+	ImportKeyRequest          = pkgservice.ImportKeyRequest
+	ImportKeyResponse         = pkgservice.ImportKeyResponse
+	GetKeyRequest             = pkgservice.GetKeyRequest
+	GetKeyResponse            = pkgservice.GetKeyResponse
+	ListKeysRequest           = pkgservice.ListKeysRequest
+	ListKeysResponse          = pkgservice.ListKeysResponse
+	RotateKeyRequest          = pkgservice.RotateKeyRequest
+	RotateKeyResponse         = pkgservice.RotateKeyResponse
+	ListKeyVersionsRequest    = pkgservice.ListKeyVersionsRequest
+	ListKeyVersionsResponse   = pkgservice.ListKeyVersionsResponse
+	UpdateKeyStatusRequest    = pkgservice.UpdateKeyStatusRequest
+	UpdateKeyStatusResponse   = pkgservice.UpdateKeyStatusResponse
+	RevokeKeyRequest          = pkgservice.RevokeKeyRequest
+	RevokeKeyResponse         = pkgservice.RevokeKeyResponse
+	DeleteKeyRequest          = pkgservice.DeleteKeyRequest
+	DeleteKeyResponse         = pkgservice.DeleteKeyResponse
+	GetKeyMetadataRequest     = pkgservice.GetKeyMetadataRequest
+	GetKeyMetadataResponse    = pkgservice.GetKeyMetadataResponse
+	UpdateKeyMetadataRequest  = pkgservice.UpdateKeyMetadataRequest
+	UpdateKeyMetadataResponse = pkgservice.UpdateKeyMetadataResponse
+	SetKeyPolicyRequest       = pkgservice.SetKeyPolicyRequest
+	SetKeyPolicyResponse      = pkgservice.SetKeyPolicyResponse
+	GetKeyPolicyRequest       = pkgservice.GetKeyPolicyRequest
+	GetKeyPolicyResponse      = pkgservice.GetKeyPolicyResponse
+	ExportKeyRequest          = pkgservice.ExportKeyRequest
+	ExportKeyResponse         = pkgservice.ExportKeyResponse
+	UnwrapKeyRequest          = pkgservice.UnwrapKeyRequest
+	UnwrapKeyResponse         = pkgservice.UnwrapKeyResponse
+	SetKeySafetyRequest       = pkgservice.SetKeySafetyRequest
+	SetKeySafetyResponse      = pkgservice.SetKeySafetyResponse
+	ClearKeySafetyRequest     = pkgservice.ClearKeySafetyRequest
+	ClearKeySafetyResponse    = pkgservice.ClearKeySafetyResponse
+	GetPublicKeyRequest       = pkgservice.GetPublicKeyRequest
+	GetPublicKeyResponse      = pkgservice.GetPublicKeyResponse
+	ClearDEKSafetyRequest     = pkgservice.ClearDEKSafetyRequest
+	ClearDEKSafetyResponse    = pkgservice.ClearDEKSafetyResponse
+)
+
+// =============================================================================
+// Secrets Types and Constants
+// =============================================================================
+
+type (
+	// Secret represents a versioned secret with metadata.
+	Secret = pkgservice.Secret
+
+	// SecretVersion represents a specific version of a secret.
+	SecretVersion = pkgservice.SecretVersion
+
+	// SecretRotationPolicy defines automatic secret rotation behavior.
+	SecretRotationPolicy = pkgservice.SecretRotationPolicy
+
+	// SecretStatus represents the status of a secret.
+	SecretStatus = pkgservice.SecretStatus
+
+	// SecretChangeType indicates what kind of change occurred.
+	SecretChangeType = pkgservice.SecretChangeType
+
+	// SecretChange represents a change to a secret.
+	SecretChange = pkgservice.SecretChange
+)
+
+// SecretStatus constants.
+const (
+	SecretStatusEnabled  = pkgservice.SecretStatusEnabled
+	SecretStatusDisabled = pkgservice.SecretStatusDisabled
+	SecretStatusDeleted  = pkgservice.SecretStatusDeleted
+)
+
+// SecretChangeType constants.
+const (
+	SecretChangeCreated = pkgservice.SecretChangeCreated
+	SecretChangeUpdated = pkgservice.SecretChangeUpdated
+	SecretChangeDeleted = pkgservice.SecretChangeDeleted
+)
+
+// =============================================================================
+// Secrets Request/Response Types
+// =============================================================================
+
+type (
+	StoreSecretRequest         = pkgservice.StoreSecretRequest
+	StoreSecretResponse        = pkgservice.StoreSecretResponse
+	EnsureSecretRequest        = pkgservice.EnsureSecretRequest
+	EnsureSecretResponse       = pkgservice.EnsureSecretResponse
+	GetSecretRequest           = pkgservice.GetSecretRequest
+	GetSecretResponse          = pkgservice.GetSecretResponse
+	ListSecretsRequest         = pkgservice.ListSecretsRequest
+	ListSecretsResponse        = pkgservice.ListSecretsResponse
+	DeleteSecretRequest        = pkgservice.DeleteSecretRequest
+	DeleteSecretResponse       = pkgservice.DeleteSecretResponse
+	GetSecretVersionRequest    = pkgservice.GetSecretVersionRequest
+	GetSecretVersionResponse   = pkgservice.GetSecretVersionResponse
+	ListSecretVersionsRequest  = pkgservice.ListSecretVersionsRequest
+	ListSecretVersionsResponse = pkgservice.ListSecretVersionsResponse
+	RollbackSecretRequest      = pkgservice.RollbackSecretRequest
+	RollbackSecretResponse     = pkgservice.RollbackSecretResponse
+	RotateSecretRequest        = pkgservice.RotateSecretRequest
+	RotateSecretResponse       = pkgservice.RotateSecretResponse
+	SetRotationPolicyRequest   = pkgservice.SetRotationPolicyRequest
+	SetRotationPolicyResponse  = pkgservice.SetRotationPolicyResponse
+	GetRotationPolicyRequest   = pkgservice.GetRotationPolicyRequest
+	GetRotationPolicyResponse  = pkgservice.GetRotationPolicyResponse
+	UpdateSecretStatusRequest  = pkgservice.UpdateSecretStatusRequest
+	UpdateSecretStatusResponse = pkgservice.UpdateSecretStatusResponse
+	GetSecretsByPrefixRequest  = pkgservice.GetSecretsByPrefixRequest
+	GetSecretsByPrefixResponse = pkgservice.GetSecretsByPrefixResponse
+	WatchSecretsRequest        = pkgservice.WatchSecretsRequest
+	ReencryptionProgress       = pkgservice.ReencryptionProgress
+)
+
+// =============================================================================
+// Crypto/Transit Request/Response Types
+// =============================================================================
+
+type (
+	EncryptRequest                 = pkgservice.EncryptRequest
+	EncryptResponse                = pkgservice.EncryptResponse
+	DecryptRequest                 = pkgservice.DecryptRequest
+	DecryptResponse                = pkgservice.DecryptResponse
+	RewrapRequest                  = pkgservice.RewrapRequest
+	RewrapResponse                 = pkgservice.RewrapResponse
+	BatchEncryptItem               = pkgservice.BatchEncryptItem
+	EncryptBatchRequest            = pkgservice.EncryptBatchRequest
+	BatchEncryptResult             = pkgservice.BatchEncryptResult
+	EncryptBatchResponse           = pkgservice.EncryptBatchResponse
+	BatchDecryptItem               = pkgservice.BatchDecryptItem
+	DecryptBatchRequest            = pkgservice.DecryptBatchRequest
+	BatchDecryptResult             = pkgservice.BatchDecryptResult
+	DecryptBatchResponse           = pkgservice.DecryptBatchResponse
+	GenerateDataKeyRequest         = pkgservice.GenerateDataKeyRequest
+	GenerateDataKeyResponse        = pkgservice.GenerateDataKeyResponse
+	GenerateWrappedDataKeyRequest  = pkgservice.GenerateWrappedDataKeyRequest
+	GenerateWrappedDataKeyResponse = pkgservice.GenerateWrappedDataKeyResponse
+	SignRequest                    = pkgservice.SignRequest
+	SignResponse                   = pkgservice.SignResponse
+	VerifyRequest                  = pkgservice.VerifyRequest
+	VerifyResponse                 = pkgservice.VerifyResponse
+	HMACRequest                    = pkgservice.HMACRequest
+	HMACResponse                   = pkgservice.HMACResponse
+	VerifyHMACRequest              = pkgservice.VerifyHMACRequest
+	VerifyHMACResponse             = pkgservice.VerifyHMACResponse
+	GenerateRandomRequest          = pkgservice.GenerateRandomRequest
+	GenerateRandomResponse         = pkgservice.GenerateRandomResponse
+	HashRequest                    = pkgservice.HashRequest
+	HashResponse                   = pkgservice.HashResponse
+)
+
+// =============================================================================
+// Seal Types
+// =============================================================================
+
+type (
+	SealStatusResponse          = pkgservice.SealStatusResponse
+	SealInitRequest             = pkgservice.SealInitRequest
+	SealInitResponse            = pkgservice.SealInitResponse
+	UnsealRequest               = pkgservice.UnsealRequest
+	UnsealResponse              = pkgservice.UnsealResponse
+	RekeyRequest                = pkgservice.RekeyRequest
+	RekeyResponse               = pkgservice.RekeyResponse
+	GenerateRecoveryKeyRequest  = pkgservice.GenerateRecoveryKeyRequest
+	GenerateRecoveryKeyResponse = pkgservice.GenerateRecoveryKeyResponse
+	DeleteRecoveryKeyRequest    = pkgservice.DeleteRecoveryKeyRequest
+	DeleteRecoveryKeyResponse   = pkgservice.DeleteRecoveryKeyResponse
+	GenerateRootTokenRequest    = pkgservice.GenerateRootTokenRequest
+	GenerateRootTokenResponse   = pkgservice.GenerateRootTokenResponse
+)
+
+// =============================================================================
+// DEK Types and Constants
+// =============================================================================
+
+type (
+	// DEKStatus represents the status of a DEK.
+	DEKStatus = pkgservice.DEKStatus
+
+	// DEKMetadata contains metadata about a Data Encryption Key.
+	DEKMetadata = pkgservice.DEKMetadata
+
+	// DEKSafetyConfig contains AEAD safety configuration for a DEK.
+	DEKSafetyConfig = pkgservice.DEKSafetyConfig
+)
+
+// DEKStatus constants.
+const (
+	DEKStatusActive   = pkgservice.DEKStatusActive
+	DEKStatusDisabled = pkgservice.DEKStatusDisabled
+	DEKStatusDeleted  = pkgservice.DEKStatusDeleted
+	DEKStatusRotating = pkgservice.DEKStatusRotating
+)
+
+// =============================================================================
+// DEK Request/Response Types
+// =============================================================================
+
+type (
+	CreateDEKRequest      = pkgservice.CreateDEKRequest
+	CreateDEKResponse     = pkgservice.CreateDEKResponse
+	GetDEKRequest         = pkgservice.GetDEKRequest
+	GetDEKResponse        = pkgservice.GetDEKResponse
+	ListDEKsRequest       = pkgservice.ListDEKsRequest
+	ListDEKsResponse      = pkgservice.ListDEKsResponse
+	RotateDEKRequest      = pkgservice.RotateDEKRequest
+	RotateDEKResponse     = pkgservice.RotateDEKResponse
+	DeleteDEKRequest      = pkgservice.DeleteDEKRequest
+	DeleteDEKResponse     = pkgservice.DeleteDEKResponse
+	GetDEKStatusRequest   = pkgservice.GetDEKStatusRequest
+	GetDEKStatusResponse  = pkgservice.GetDEKStatusResponse
+	SetDefaultDEKRequest  = pkgservice.SetDefaultDEKRequest
+	SetDefaultDEKResponse = pkgservice.SetDefaultDEKResponse
+	SetDEKSafetyRequest   = pkgservice.SetDEKSafetyRequest
+	SetDEKSafetyResponse  = pkgservice.SetDEKSafetyResponse
+)
+
+// =============================================================================
+// Safety Types
+// =============================================================================
+
+type (
+	SafetyCheckItem      = pkgservice.SafetyCheckItem
+	SafetyCheckRequest   = pkgservice.SafetyCheckRequest
+	SafetyCheckResponse  = pkgservice.SafetyCheckResponse
+	SafetyReportRequest  = pkgservice.SafetyReportRequest
+	SafetyReportResponse = pkgservice.SafetyReportResponse
+	AEADServerConfig     = pkgservice.AEADServerConfig
+	AEADSafetyConfigDTO  = pkgservice.AEADSafetyConfigDTO
+
+	GetReencryptionProgressRequest  = pkgservice.GetReencryptionProgressRequest
+	GetReencryptionProgressResponse = pkgservice.GetReencryptionProgressResponse
+)
+
+// =============================================================================
+// Backend Types
+// =============================================================================
+
+type (
+	BackendStatusResponse = pkgservice.BackendStatusResponse
+	BackendTestResponse   = pkgservice.BackendTestResponse
+)
+
+// =============================================================================
+// Embedding Types and Constants
+// =============================================================================
+
+type (
+	// EmbeddingProvider specifies the embedding provider type.
+	EmbeddingProvider = pkgservice.EmbeddingProvider
+
+	// EmbeddingInputType specifies the type of text being embedded.
+	EmbeddingInputType = pkgservice.EmbeddingInputType
+
+	// EmbeddingStatus indicates provider availability status.
+	EmbeddingStatus = pkgservice.EmbeddingStatus
+
+	// EmbeddingMetadata contains information about an embedding request.
+	EmbeddingMetadata = pkgservice.EmbeddingMetadata
+
+	// ProviderInfo contains detailed information about an embedding provider.
+	ProviderInfo = pkgservice.ProviderInfo
+
+	// EmbeddingCacheConfig contains cache configuration settings.
+	EmbeddingCacheConfig = pkgservice.EmbeddingCacheConfig
+)
+
+// EmbeddingProvider constants.
+const (
+	EmbeddingProviderVoyage   = pkgservice.EmbeddingProviderVoyage
+	EmbeddingProviderOpenAI   = pkgservice.EmbeddingProviderOpenAI
+	EmbeddingProviderOllama   = pkgservice.EmbeddingProviderOllama
+	EmbeddingProviderLMStudio = pkgservice.EmbeddingProviderLMStudio
+)
+
+// EmbeddingInputType constants.
+const (
+	EmbeddingInputTypeDocument = pkgservice.EmbeddingInputTypeDocument
+	EmbeddingInputTypeQuery    = pkgservice.EmbeddingInputTypeQuery
+	EmbeddingInputTypeCode     = pkgservice.EmbeddingInputTypeCode
+)
+
+// EmbeddingStatus constants.
+const (
+	EmbeddingStatusAvailable   = pkgservice.EmbeddingStatusAvailable
+	EmbeddingStatusUnavailable = pkgservice.EmbeddingStatusUnavailable
+	EmbeddingStatusRateLimited = pkgservice.EmbeddingStatusRateLimited
+	EmbeddingStatusError       = pkgservice.EmbeddingStatusError
+)
+
+// =============================================================================
+// Embedding Request/Response Types
+// =============================================================================
+
+type (
+	GenerateEmbeddingRequest        = pkgservice.GenerateEmbeddingRequest
+	GenerateEmbeddingResponse       = pkgservice.GenerateEmbeddingResponse
+	BatchEmbeddingItem              = pkgservice.BatchEmbeddingItem
+	BatchGenerateEmbeddingsRequest  = pkgservice.BatchGenerateEmbeddingsRequest
+	BatchEmbeddingResult            = pkgservice.BatchEmbeddingResult
+	BatchGenerateEmbeddingsResponse = pkgservice.BatchGenerateEmbeddingsResponse
+	ListProvidersRequest            = pkgservice.ListProvidersRequest
+	ListProvidersResponse           = pkgservice.ListProvidersResponse
+	GetProviderInfoRequest          = pkgservice.GetProviderInfoRequest
+	GetProviderInfoResponse         = pkgservice.GetProviderInfoResponse
+	SetDefaultProviderRequest       = pkgservice.SetDefaultProviderRequest
+	SetDefaultProviderResponse      = pkgservice.SetDefaultProviderResponse
+	GetEmbeddingCacheStatsRequest   = pkgservice.GetEmbeddingCacheStatsRequest
+	GetEmbeddingCacheStatsResponse  = pkgservice.GetEmbeddingCacheStatsResponse
+	ClearEmbeddingCacheRequest      = pkgservice.ClearEmbeddingCacheRequest
+	ClearEmbeddingCacheResponse     = pkgservice.ClearEmbeddingCacheResponse
+)
+
+// =============================================================================
+// Scheduler Types and Constants
+// =============================================================================
+
+type (
+	// SchedulerJobType defines the scheduling type.
+	SchedulerJobType = pkgservice.SchedulerJobType
+
+	// SchedulerJobStatus defines the job lifecycle state.
+	SchedulerJobStatus = pkgservice.SchedulerJobStatus
+
+	// SchedulerOwnerType defines job ownership.
+	SchedulerOwnerType = pkgservice.SchedulerOwnerType
+
+	// SchedulerJob represents a scheduled job.
+	SchedulerJob = pkgservice.SchedulerJob
+
+	// SchedulerJobExecution represents a job execution record.
+	SchedulerJobExecution = pkgservice.SchedulerJobExecution
+
+	// SchedulerStats contains scheduler statistics.
+	SchedulerStats = pkgservice.SchedulerStats
+)
+
+// SchedulerJobType constants.
+const (
+	SchedulerJobTypeOneShot   = pkgservice.SchedulerJobTypeOneShot
+	SchedulerJobTypeRecurring = pkgservice.SchedulerJobTypeRecurring
+	SchedulerJobTypeDelayed   = pkgservice.SchedulerJobTypeDelayed
+)
+
+// SchedulerJobStatus constants.
+const (
+	SchedulerJobStatusPending   = pkgservice.SchedulerJobStatusPending
+	SchedulerJobStatusRunning   = pkgservice.SchedulerJobStatusRunning
+	SchedulerJobStatusCompleted = pkgservice.SchedulerJobStatusCompleted
+	SchedulerJobStatusFailed    = pkgservice.SchedulerJobStatusFailed
+	SchedulerJobStatusPaused    = pkgservice.SchedulerJobStatusPaused
+	SchedulerJobStatusCanceled  = pkgservice.SchedulerJobStatusCanceled
+)
+
+// SchedulerOwnerType constants.
+const (
+	SchedulerOwnerTypeSystem    = pkgservice.SchedulerOwnerTypeSystem
+	SchedulerOwnerTypeTenant    = pkgservice.SchedulerOwnerTypeTenant
+	SchedulerOwnerTypeDelegated = pkgservice.SchedulerOwnerTypeDelegated
+)
+
+// =============================================================================
+// Scheduler Request/Response Types
+// =============================================================================
+
+type (
+	CreateSchedulerJobRequest      = pkgservice.CreateSchedulerJobRequest
+	CreateSchedulerJobResponse     = pkgservice.CreateSchedulerJobResponse
+	GetSchedulerJobRequest         = pkgservice.GetSchedulerJobRequest
+	GetSchedulerJobResponse        = pkgservice.GetSchedulerJobResponse
+	UpdateSchedulerJobRequest      = pkgservice.UpdateSchedulerJobRequest
+	UpdateSchedulerJobResponse     = pkgservice.UpdateSchedulerJobResponse
+	DeleteSchedulerJobRequest      = pkgservice.DeleteSchedulerJobRequest
+	DeleteSchedulerJobResponse     = pkgservice.DeleteSchedulerJobResponse
+	ListSchedulerJobsRequest       = pkgservice.ListSchedulerJobsRequest
+	ListSchedulerJobsResponse      = pkgservice.ListSchedulerJobsResponse
+	TriggerSchedulerJobRequest     = pkgservice.TriggerSchedulerJobRequest
+	TriggerSchedulerJobResponse    = pkgservice.TriggerSchedulerJobResponse
+	PauseSchedulerJobRequest       = pkgservice.PauseSchedulerJobRequest
+	PauseSchedulerJobResponse      = pkgservice.PauseSchedulerJobResponse
+	ResumeSchedulerJobRequest      = pkgservice.ResumeSchedulerJobRequest
+	ResumeSchedulerJobResponse     = pkgservice.ResumeSchedulerJobResponse
+	CancelSchedulerJobRequest      = pkgservice.CancelSchedulerJobRequest
+	CancelSchedulerJobResponse     = pkgservice.CancelSchedulerJobResponse
+	GetSchedulerJobHistoryRequest  = pkgservice.GetSchedulerJobHistoryRequest
+	GetSchedulerJobHistoryResponse = pkgservice.GetSchedulerJobHistoryResponse
+	GetSchedulerStatusResponse     = pkgservice.GetSchedulerStatusResponse
+)
+
+// =============================================================================
+// Service Configuration
+// =============================================================================
+
+type (
+	// ServiceConfig contains configuration for the service facade.
+	ServiceConfig = pkgservice.ServiceConfig
+
+	// ServiceBuilder builds a QuicBaaS instance.
+	ServiceBuilder = pkgservice.ServiceBuilder
+
+	// StreamWriter is a helper interface for streaming responses.
+	StreamWriter = pkgservice.StreamWriter
+
+	// StreamReader is a helper interface for streaming requests.
+	StreamReader = pkgservice.StreamReader
+)
+
+// NewServiceBuilder creates a new service builder.
+var NewServiceBuilder = pkgservice.NewServiceBuilder
+
+// =============================================================================
+// Ollama Types
+// =============================================================================
+
+type (
+	OllamaEmbedRequest          = pkgservice.OllamaEmbedRequest
+	OllamaEmbedWithModelRequest = pkgservice.OllamaEmbedWithModelRequest
+	OllamaEmbedResponse         = pkgservice.OllamaEmbedResponse
+	OllamaEmbedBatchRequest     = pkgservice.OllamaEmbedBatchRequest
+	OllamaEmbedBatchResponse    = pkgservice.OllamaEmbedBatchResponse
+	OllamaListModelsRequest     = pkgservice.OllamaListModelsRequest
+	OllamaModelInfo             = pkgservice.OllamaModelInfo
+	OllamaListModelsResponse    = pkgservice.OllamaListModelsResponse
+	OllamaGetModelInfoRequest   = pkgservice.OllamaGetModelInfoRequest
+	OllamaModelDetails          = pkgservice.OllamaModelDetails
+	OllamaGetModelInfoResponse  = pkgservice.OllamaGetModelInfoResponse
+	OllamaHealthRequest         = pkgservice.OllamaHealthRequest
+	OllamaHealthResponse        = pkgservice.OllamaHealthResponse
+)
+
+// =============================================================================
+// Certificate Types
+// =============================================================================
+
+type (
+	IssueCertificateRequest   = pkgservice.IssueCertificateRequest
+	IssueCertificateResponse  = pkgservice.IssueCertificateResponse
+	SignCSRRequest            = pkgservice.SignCSRRequest
+	SignCSRResponse           = pkgservice.SignCSRResponse
+	RevokeCertificateRequest  = pkgservice.RevokeCertificateRequest
+	RevokeCertificateResponse = pkgservice.RevokeCertificateResponse
+	VerifyCertificateRequest  = pkgservice.VerifyCertificateRequest
+	VerifyCertificateResponse = pkgservice.VerifyCertificateResponse
+	GetCACertificateRequest   = pkgservice.GetCACertificateRequest
+	GetCACertificateResponse  = pkgservice.GetCACertificateResponse
+	GetTLSConfigRequest       = pkgservice.GetTLSConfigRequest
+	GetTLSConfigResponse      = pkgservice.GetTLSConfigResponse
+)
+
+// =============================================================================
+// Cluster DEK Types
+// =============================================================================
+
+type (
+	InitClusterDEKRequest      = pkgservice.InitClusterDEKRequest
+	InitClusterDEKResponse     = pkgservice.InitClusterDEKResponse
+	ClusterDEKStatusResponse   = pkgservice.ClusterDEKStatusResponse
+	RotateClusterDEKRequest    = pkgservice.RotateClusterDEKRequest
+	RotateClusterDEKResponse   = pkgservice.RotateClusterDEKResponse
+	SyncNodeDEKRequest         = pkgservice.SyncNodeDEKRequest
+	SyncNodeDEKResponse        = pkgservice.SyncNodeDEKResponse
+	GetNodeDEKStatusRequest    = pkgservice.GetNodeDEKStatusRequest
+	GetNodeDEKStatusResponse   = pkgservice.GetNodeDEKStatusResponse
+	StartReencryptionRequest   = pkgservice.StartReencryptionRequest
+	StartReencryptionResponse  = pkgservice.StartReencryptionResponse
+	ReencryptionStatusResponse = pkgservice.ReencryptionStatusResponse
+	RecoverDEKRequest          = pkgservice.RecoverDEKRequest
+	RecoverDEKResponse         = pkgservice.RecoverDEKResponse
+	DEKRotationPolicy          = pkgservice.DEKRotationPolicy
+	NodeDEKInfo                = pkgservice.NodeDEKInfo
+	DEKVersionInfo             = pkgservice.DEKVersionInfo
+	NodeDEKSyncStatus          = pkgservice.NodeDEKSyncStatus
+	ReencryptionState          = pkgservice.ReencryptionState
+	RecoveryMethod             = pkgservice.RecoveryMethod
+)

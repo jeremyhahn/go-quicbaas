@@ -1,0 +1,220 @@
+# QuicBaaS AI Agent Integration Test Environment
+# Orchestrates QuicBaaS server, Ollama inference, and AI agent containers.
+#
+# Usage:
+#   docker compose -f docker-compose.agents.yml up
+#   docker compose -f docker-compose.agents.yml --profile gpu up   # GPU-accelerated Ollama
+#
+# Required environment variables (or .env file):
+#   ANTHROPIC_API_KEY   - Anthropic API key for Claude Code agent
+#   OPENAI_API_KEY      - OpenAI API key for Codex and OpenCode agents
+
+services:
+
+  # QuicBaaS server - orchestration and MCP endpoint for agents
+  quicbaas:
+    image: quicbaas:test
+    container_name: quicbaas-agents-server
+    hostname: quicbaas
+    ports:
+      - "8080:8080"   # HTTP/REST API + MCP endpoint
+      - "50051:50051" # gRPC API
+      - "4433:4433"   # QUIC transport
+      - "9090:9090"   # Prometheus metrics
+    environment:
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas:63001
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_ENABLE_TCP=true
+      - QUICBAAS_SERVER_ENABLE_REST=true
+      - QUICBAAS_SERVER_UNIX_SOCKET=
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+    volumes:
+      - quicbaas-agents-data:/data
+      - quicbaas-agents-logs:/var/log/quicbaas
+    networks:
+      - agents-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  # Ollama - local LLM inference server (CPU mode by default)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: quicbaas-agents-ollama
+    hostname: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-agents-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-4}
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-2}
+      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
+    networks:
+      - agents-net
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+
+  # Claude Code agent - Anthropic Claude via CLI
+  claude-code-agent:
+    build:
+      context: ./claude-code
+      dockerfile: Dockerfile
+    container_name: quicbaas-claude-code-agent
+    hostname: claude-code-agent
+    depends_on:
+      quicbaas:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      # Route through Ollama when ANTHROPIC_BASE_URL points to it;
+      # falls back to the official Anthropic API when unset.
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-http://ollama:11434}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-test-key}
+      - QUICBAAS_ADDRESS=http://quicbaas:8080
+    volumes:
+      - claude-code-workspace:/workspace
+    networks:
+      - agents-net
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # Codex agent - OpenAI Codex CLI
+  codex-agent:
+    build:
+      context: ./codex
+      dockerfile: Dockerfile
+    container_name: quicbaas-codex-agent
+    hostname: codex-agent
+    depends_on:
+      quicbaas:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-test-key}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://ollama:11434/v1}
+      - QUICBAAS_ADDRESS=http://quicbaas:8080
+    volumes:
+      - codex-workspace:/workspace
+    networks:
+      - agents-net
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # OpenCode agent - opencode-ai/opencode CLI
+  opencode-agent:
+    build:
+      context: ./opencode
+      dockerfile: Dockerfile
+    container_name: quicbaas-opencode-agent
+    hostname: opencode-agent
+    depends_on:
+      quicbaas:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-test-key}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://ollama:11434/v1}
+      - QUICBAAS_ADDRESS=http://quicbaas:8080
+    volumes:
+      - opencode-workspace:/workspace
+    networks:
+      - agents-net
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+networks:
+  agents-net:
+    driver: bridge
+    labels:
+      com.quicbaas.component: agents
+      com.quicbaas.environment: integration-test
+
+volumes:
+  quicbaas-agents-data:
+    driver: local
+    labels:
+      com.quicbaas.component: storage
+      com.quicbaas.environment: agents
+  quicbaas-agents-logs:
+    driver: local
+    labels:
+      com.quicbaas.component: logs
+      com.quicbaas.environment: agents
+  ollama-agents-data:
+    driver: local
+    labels:
+      com.quicbaas.component: ollama
+      com.quicbaas.environment: agents
+  claude-code-workspace:
+    driver: local
+    labels:
+      com.quicbaas.component: claude-code
+      com.quicbaas.environment: agents
+  codex-workspace:
+    driver: local
+    labels:
+      com.quicbaas.component: codex
+      com.quicbaas.environment: agents
+  opencode-workspace:
+    driver: local
+    labels:
+      com.quicbaas.component: opencode
+      com.quicbaas.environment: agents

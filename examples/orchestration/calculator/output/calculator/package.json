@@ -1,0 +1,1 @@
+{"name": "calculator", "version": "1.0.0", "description": "A simple calculator project", "main": "index.js", "scripts": {"test": "jest", "coverage": "jest --coverage"}, "keywords": [], "author": "Your Name", "license": "MIT", "dependencies": {}, "devDependencies": {"jest": "^29.0.3"}}

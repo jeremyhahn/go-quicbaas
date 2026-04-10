@@ -1,0 +1,25 @@
+name: code-review
+description: "Code review workflow with lead and reviewer agents"
+mode: constrained
+agents:
+  - role: lead
+    backend: claude
+    model: claude-sonnet-4-5-20250514
+    capabilities: [persistent_sessions, tool_use]
+    mcp_scopes: [orchestrator:read, orchestrator:write]
+  - role: reviewer
+    backend: claude
+    model: claude-sonnet-4-5-20250514
+    capabilities: [persistent_sessions, tool_use]
+    mcp_scopes: [orchestrator:read]
+settings:
+  max_iterations: 5
+  max_parallelism: 2
+  poll_interval: 5s
+  timeout_per_item: 10m
+  total_timeout: 20m
+  review_criteria:
+    - name: lint_pass
+      validator: command
+      config: "make lint"
+      required: true

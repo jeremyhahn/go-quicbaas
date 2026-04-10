@@ -1,0 +1,93 @@
+# QuicBaaS CLI Dockerfile
+# Minimal image containing only the CLI tool
+
+# Build arguments
+ARG GO_VERSION=1.26
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG DATE=unknown
+ARG BUILD_TAGS=iam
+
+# Stage 1: Build stage
+FROM golang:${GO_VERSION}-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git make ca-certificates
+
+# Set working directory
+WORKDIR /build
+
+# Copy module files first for caching
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+
+# Copy local dependencies (staged by Makefile into .deps/)
+COPY .deps/ /deps/
+
+# Rewrite local replace directives to point to staged deps
+RUN sed -i 's|=> /home/.*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> /home/.*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> /home/.*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> /home/.*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> /home/.*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod
+
+# Download remaining dependencies
+RUN GONOSUMCHECK='*' go mod download
+
+# Copy source code
+COPY . .
+
+# Rewrite replace directives again (COPY . . overwrites go.mod)
+RUN sed -i 's|=> /home/.*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> /home/.*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> /home/.*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> /home/.*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
+    sed -i 's|=> /home/.*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod
+
+# Build arguments
+ARG VERSION
+ARG COMMIT
+ARG DATE
+ARG BUILD_TAGS
+
+# Build static CLI binary using downloaded dependencies
+RUN CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
+    -ldflags="-w -s -X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.BuildTime=${DATE} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${COMMIT}" \
+    -o quicbaas ./cmd/quicbaas
+
+# Verify static binary
+RUN file quicbaas
+
+# Stage 2: Minimal runtime stage
+FROM alpine:latest
+
+# Install minimal runtime dependencies
+RUN apk --no-cache add ca-certificates
+
+# Create non-root user
+RUN addgroup -g 1000 quicbaas && \
+    adduser -D -u 1000 -G quicbaas quicbaas
+
+# Copy binary from builder
+COPY --from=builder /build/quicbaas /usr/local/bin/quicbaas
+
+# Set ownership
+RUN chown quicbaas:quicbaas /usr/local/bin/quicbaas
+
+# Switch to non-root user
+USER quicbaas
+
+# Set working directory
+WORKDIR /home/quicbaas
+
+# Entry point - the CLI
+ENTRYPOINT ["quicbaas"]
+
+# Default command - show help
+CMD ["--help"]
+
+# Labels
+LABEL org.opencontainers.image.title="QuicBaaS CLI" \
+      org.opencontainers.image.description="QuicBaaS command-line client" \
+      org.opencontainers.image.vendor="QuicBaaS" \
+      org.opencontainers.image.licenses="Apache-2.0"

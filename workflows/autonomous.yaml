@@ -1,0 +1,15 @@
+name: autonomous
+description: "Autonomous single-agent workflow with full control over task decomposition and execution"
+mode: autonomous
+agents:
+  - role: lead
+    backend: claude
+    model: claude-sonnet-4-5-20250514
+    capabilities: [persistent_sessions, tool_use, file_access]
+    mcp_scopes: [orchestrator:read, orchestrator:write, kms:read]
+settings:
+  max_iterations: 20
+  max_parallelism: 1
+  poll_interval: 5s
+  timeout_per_item: 15m
+  total_timeout: 60m

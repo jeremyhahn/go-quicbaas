@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package quicbaas.codec;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/pkg/codec/proto;proto";
+
+// GenericMessage is a wrapper for arbitrary data encoded as JSON
+// This allows the protobuf codec to work with any Go type by
+// serializing it to JSON first, then wrapping in protobuf.
+//
+// This is a pragmatic approach that gives us:
+// 1. Protocol buffer efficiency for the wire format
+// 2. Flexibility to encode any Go type without defining schemas
+// 3. Backward compatibility with existing JSON data
+message GenericMessage {
+  // json_data contains the JSON-encoded entity
+  bytes json_data = 1;
+
+  // type_name is the fully qualified Go type name (for debugging)
+  string type_name = 2;
+}

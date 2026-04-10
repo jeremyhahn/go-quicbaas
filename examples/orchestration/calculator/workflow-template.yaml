@@ -1,0 +1,41 @@
+name: calculator-{{PROFILE}}
+description: "Calculator app development ({{PROFILE_DESC}})"
+mode: constrained
+agents:
+  - role: lead
+    backend: opencode
+    model: ollama/{{OLLAMA_MODEL}}
+    capabilities: [persistent_sessions]
+    sandboxed: true
+    container_image: quicbaas-opencode-agent
+    env:
+      OPENAI_BASE_URL: http://localhost:11434/v1
+      OPENAI_API_KEY: ollama
+  - role: coder
+    backend: opencode
+    model: ollama/{{OLLAMA_MODEL}}
+    capabilities: [persistent_sessions, tool_use, file_access]
+    mcp_scopes: [orchestrator:read]
+    workspace_path: {{WORKSPACE_PATH}}
+    sandboxed: true
+    container_image: quicbaas-opencode-agent
+    env:
+      OPENAI_BASE_URL: http://localhost:11434/v1
+      OPENAI_API_KEY: ollama
+  - role: reviewer
+    backend: opencode
+    model: ollama/{{OLLAMA_MODEL}}
+    capabilities: [persistent_sessions, tool_use]
+    mcp_scopes: [orchestrator:read]
+    workspace_path: {{WORKSPACE_PATH}}
+    sandboxed: true
+    container_image: quicbaas-opencode-agent
+    env:
+      OPENAI_BASE_URL: http://localhost:11434/v1
+      OPENAI_API_KEY: ollama
+settings:
+  max_iterations: {{MAX_ITERATIONS}}
+  max_parallelism: 1
+  poll_interval: 5s
+  total_timeout: {{TOTAL_TIMEOUT}}
+  verbosity: debug

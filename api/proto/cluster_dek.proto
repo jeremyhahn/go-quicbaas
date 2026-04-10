@@ -1,0 +1,588 @@
+// QuicBaaS Cluster DEK Protocol Buffer Definitions v1
+// Cluster-Wide Data Encryption Key Management
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under AGPL-3.0
+
+syntax = "proto3";
+
+package quicbaas.clusterdek.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// =============================================================================
+// Cluster DEK Service
+// =============================================================================
+
+// ClusterDEKService handles cluster-wide Data Encryption Key (DEK) management.
+// The cluster DEK is distributed via Raft consensus and used for encrypting
+// data at rest across all nodes in the cluster.
+service ClusterDEKService {
+  // InitializeClusterDEK creates and distributes the initial cluster DEK.
+  rpc InitializeClusterDEK(InitClusterDEKRequest) returns (InitClusterDEKResponse);
+
+  // GetClusterDEKStatus retrieves current cluster DEK status and metadata.
+  rpc GetClusterDEKStatus(GetClusterDEKStatusRequest) returns (ClusterDEKStatusResponse);
+
+  // RotateClusterDEK generates a new cluster DEK and initiates re-encryption.
+  rpc RotateClusterDEK(RotateClusterDEKRequest) returns (RotateClusterDEKResponse);
+
+  // SyncNodeDEK synchronizes cluster DEK to a specific node.
+  rpc SyncNodeDEK(SyncNodeDEKRequest) returns (SyncNodeDEKResponse);
+
+  // GetNodeDEKStatus retrieves DEK sync status for a specific node.
+  rpc GetNodeDEKStatus(GetNodeDEKStatusRequest) returns (GetNodeDEKStatusResponse);
+
+  // StartReencryption manually initiates re-encryption of data with new DEK.
+  rpc StartReencryption(ClusterStartReencryptionRequest) returns (ClusterStartReencryptionResponse);
+
+  // GetReencryptionStatus retrieves current re-encryption progress.
+  rpc GetReencryptionStatus(GetReencryptionStatusRequest) returns (ReencryptionStatusResponse);
+
+  // CancelReencryption cancels ongoing re-encryption process.
+  rpc CancelReencryption(CancelReencryptionRequest) returns (CancelReencryptionResponse);
+
+  // RecoverDEK recovers cluster DEK using recovery keys or backup mechanism.
+  rpc RecoverDEK(RecoverDEKRequest) returns (RecoverDEKResponse);
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+// NodeDEKSyncStatus represents node DEK synchronization state.
+enum NodeDEKSyncStatus {
+  // NODE_DEK_SYNC_STATUS_UNSPECIFIED is the default unspecified value.
+  NODE_DEK_SYNC_STATUS_UNSPECIFIED = 0;
+
+  // NODE_DEK_SYNC_STATUS_SYNCED indicates node has current DEK.
+  NODE_DEK_SYNC_STATUS_SYNCED = 1;
+
+  // NODE_DEK_SYNC_STATUS_OUT_OF_DATE indicates node has old DEK version.
+  NODE_DEK_SYNC_STATUS_OUT_OF_DATE = 2;
+
+  // NODE_DEK_SYNC_STATUS_MISSING indicates node has no DEK.
+  NODE_DEK_SYNC_STATUS_MISSING = 3;
+
+  // NODE_DEK_SYNC_STATUS_SYNC_FAILED indicates sync attempt failed.
+  NODE_DEK_SYNC_STATUS_SYNC_FAILED = 4;
+}
+
+// ReencryptionState represents re-encryption operation state.
+enum ReencryptionState {
+  // REENCRYPTION_STATE_UNSPECIFIED is the default unspecified value.
+  REENCRYPTION_STATE_UNSPECIFIED = 0;
+
+  // REENCRYPTION_STATE_RUNNING indicates operation is in progress.
+  REENCRYPTION_STATE_RUNNING = 1;
+
+  // REENCRYPTION_STATE_PAUSED indicates operation is paused.
+  REENCRYPTION_STATE_PAUSED = 2;
+
+  // REENCRYPTION_STATE_COMPLETED indicates operation finished successfully.
+  REENCRYPTION_STATE_COMPLETED = 3;
+
+  // REENCRYPTION_STATE_FAILED indicates operation failed.
+  REENCRYPTION_STATE_FAILED = 4;
+
+  // REENCRYPTION_STATE_CANCELLED indicates operation was cancelled.
+  REENCRYPTION_STATE_CANCELLED = 5;
+}
+
+// RecoveryMethod specifies the DEK recovery method.
+enum RecoveryMethod {
+  // RECOVERY_METHOD_UNSPECIFIED is the default unspecified value.
+  RECOVERY_METHOD_UNSPECIFIED = 0;
+
+  // RECOVERY_METHOD_KEYS uses Shamir recovery keys.
+  RECOVERY_METHOD_KEYS = 1;
+
+  // RECOVERY_METHOD_BACKUP uses encrypted backup.
+  RECOVERY_METHOD_BACKUP = 2;
+
+  // RECOVERY_METHOD_MANUAL uses manually injected key.
+  RECOVERY_METHOD_MANUAL = 3;
+}
+
+// =============================================================================
+// Common Types
+// =============================================================================
+
+// DEKRotationPolicy defines automatic DEK rotation settings.
+message DEKRotationPolicy {
+  // Enabled turns on automatic rotation.
+  bool enabled = 1;
+
+  // RotationInterval is time between rotations.
+  google.protobuf.Duration rotation_interval = 2;
+
+  // AutoReencrypt automatically starts re-encryption after rotation.
+  bool auto_reencrypt = 3;
+}
+
+// NodeDEKInfo contains information about a node's DEK state.
+message NodeDEKInfo {
+  // NodeID of the node.
+  uint64 node_id = 1;
+
+  // NodeName for human readability.
+  string node_name = 2;
+
+  // CurrentVersion is the DEK version on this node.
+  uint64 current_version = 3;
+
+  // LastSyncedAt is when this node last synced.
+  google.protobuf.Timestamp last_synced_at = 4;
+}
+
+// DEKVersionInfo contains information about a DEK version.
+message DEKVersionInfo {
+  // Version number.
+  uint64 version = 1;
+
+  // CreatedAt is when this version was created.
+  google.protobuf.Timestamp created_at = 2;
+
+  // DeprecatedAt is when this version was superseded.
+  google.protobuf.Timestamp deprecated_at = 3;
+
+  // EntitiesEncrypted is count of entities still using this version.
+  int64 entities_encrypted = 4;
+
+  // CanDelete indicates if this version can be safely removed.
+  bool can_delete = 5;
+}
+
+// NodeReencryptionProgress contains per-node re-encryption progress.
+message NodeReencryptionProgress {
+  // NodeID of the node.
+  uint64 node_id = 1;
+
+  // NodeName for human readability.
+  string node_name = 2;
+
+  // Progress percentage (0-100).
+  double progress = 3;
+
+  // ProcessedEntities on this node.
+  int64 processed_entities = 4;
+
+  // TotalEntities on this node.
+  int64 total_entities = 5;
+
+  // ThroughputRate for this node (entities/sec).
+  double throughput_rate = 6;
+
+  // LastUpdatedAt is when progress was last updated.
+  google.protobuf.Timestamp last_updated_at = 7;
+}
+
+// ReencryptionError contains information about a re-encryption error.
+message ReencryptionError {
+  // Timestamp when error occurred.
+  google.protobuf.Timestamp timestamp = 1;
+
+  // NodeID where error occurred.
+  uint64 node_id = 2;
+
+  // EntityID that failed.
+  string entity_id = 3;
+
+  // Error message.
+  string error = 4;
+
+  // Retried indicates if operation was retried.
+  bool retried = 5;
+}
+
+// =============================================================================
+// Initialize Cluster DEK Request/Response
+// =============================================================================
+
+// InitClusterDEKRequest contains parameters for initializing cluster DEK.
+message InitClusterDEKRequest {
+  // Algorithm specifies the encryption algorithm (e.g., "AES-256-GCM").
+  string algorithm = 1;
+
+  // KeySize is the key size in bits (e.g., 256).
+  int32 key_size = 2;
+
+  // Metadata for audit and tracking.
+  map<string, string> metadata = 3;
+
+  // RotationPolicy defines automatic rotation settings.
+  DEKRotationPolicy rotation_policy = 4;
+}
+
+// InitClusterDEKResponse contains the result of DEK initialization.
+message InitClusterDEKResponse {
+  // Version is the initial DEK version (typically 1).
+  uint64 version = 1;
+
+  // CreatedAt is when the DEK was created.
+  google.protobuf.Timestamp created_at = 2;
+
+  // NodesSynced is the count of nodes that have the DEK.
+  int32 nodes_synced = 3;
+
+  // Algorithm used for the DEK.
+  string algorithm = 4;
+
+  // KeySize in bits.
+  int32 key_size = 5;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+// =============================================================================
+// Get Cluster DEK Status Request/Response
+// =============================================================================
+
+// GetClusterDEKStatusRequest requests cluster DEK status.
+message GetClusterDEKStatusRequest {
+  // No parameters needed.
+}
+
+// ClusterDEKStatusResponse contains comprehensive cluster DEK status.
+message ClusterDEKStatusResponse {
+  // Initialized indicates if cluster DEK has been set up.
+  bool initialized = 1;
+
+  // CurrentVersion is the active DEK version.
+  uint64 current_version = 2;
+
+  // CreatedAt is when current DEK was created.
+  google.protobuf.Timestamp created_at = 3;
+
+  // RotatedAt is when DEK was last rotated.
+  google.protobuf.Timestamp rotated_at = 4;
+
+  // NextRotation is scheduled rotation time (if configured).
+  google.protobuf.Timestamp next_rotation = 5;
+
+  // NodesSynced is count of nodes with current DEK.
+  int32 nodes_synced = 6;
+
+  // TotalNodes is total nodes in cluster.
+  int32 total_nodes = 7;
+
+  // NodesOutOfSync lists nodes missing current DEK.
+  repeated NodeDEKInfo nodes_out_of_sync = 8;
+
+  // Algorithm for current DEK.
+  string algorithm = 9;
+
+  // KeySize in bits.
+  int32 key_size = 10;
+
+  // PreviousVersions lists historical DEK versions still in use.
+  repeated DEKVersionInfo previous_versions = 11;
+
+  // ReencryptionInProgress indicates if re-encryption is running.
+  bool reencryption_in_progress = 12;
+
+  // ReencryptionProgress is percentage complete (0-100).
+  double reencryption_progress = 13;
+
+  // Timestamp is when the status was retrieved.
+  google.protobuf.Timestamp timestamp = 14;
+}
+
+// =============================================================================
+// Rotate Cluster DEK Request/Response
+// =============================================================================
+
+// RotateClusterDEKRequest contains parameters for DEK rotation.
+message RotateClusterDEKRequest {
+  // Reason for rotation (audit trail).
+  string reason = 1;
+
+  // ScheduledTime for rotation (optional, immediate if not set).
+  google.protobuf.Timestamp scheduled_time = 2;
+
+  // ForceRotation skips safety checks (use with caution).
+  bool force_rotation = 3;
+
+  // AutoStartReencryption starts re-encryption automatically.
+  bool auto_start_reencryption = 4;
+
+  // Metadata for audit and tracking.
+  map<string, string> metadata = 5;
+}
+
+// RotateClusterDEKResponse contains the result of DEK rotation.
+message RotateClusterDEKResponse {
+  // NewVersion is the new DEK version.
+  uint64 new_version = 1;
+
+  // OldVersion is the previous DEK version.
+  uint64 old_version = 2;
+
+  // RotatedAt is when rotation occurred.
+  google.protobuf.Timestamp rotated_at = 3;
+
+  // RotationID for tracking this rotation operation.
+  string rotation_id = 4;
+
+  // NodesSynced is count of nodes with new DEK.
+  int32 nodes_synced = 5;
+
+  // ReencryptionStarted indicates if re-encryption was initiated.
+  bool reencryption_started = 6;
+
+  // EstimatedReencryptionTime is estimated completion duration.
+  google.protobuf.Duration estimated_reencryption_time = 7;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 8;
+}
+
+// =============================================================================
+// Sync Node DEK Request/Response
+// =============================================================================
+
+// SyncNodeDEKRequest contains parameters for node DEK synchronization.
+message SyncNodeDEKRequest {
+  // NodeID is the node requesting sync.
+  uint64 node_id = 1;
+
+  // CurrentVersion is the DEK version node currently has (0 if none).
+  uint64 current_version = 2;
+
+  // ForceResync forces sync even if version matches.
+  bool force_resync = 3;
+}
+
+// SyncNodeDEKResponse contains the result of node DEK sync.
+message SyncNodeDEKResponse {
+  // NodeID that was synced.
+  uint64 node_id = 1;
+
+  // VersionsSynced lists all DEK versions provided to node.
+  repeated uint64 versions_synced = 2;
+
+  // CurrentVersion is the active DEK version.
+  uint64 current_version = 3;
+
+  // SyncedAt is when sync completed.
+  google.protobuf.Timestamp synced_at = 4;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// =============================================================================
+// Get Node DEK Status Request/Response
+// =============================================================================
+
+// GetNodeDEKStatusRequest contains parameters for getting node DEK status.
+message GetNodeDEKStatusRequest {
+  // NodeID to get status for.
+  uint64 node_id = 1;
+}
+
+// GetNodeDEKStatusResponse contains node-specific DEK status.
+message GetNodeDEKStatusResponse {
+  // NodeID of the node.
+  uint64 node_id = 1;
+
+  // NodeName for human readability.
+  string node_name = 2;
+
+  // CurrentVersion is DEK version on this node.
+  uint64 current_version = 3;
+
+  // LastSyncedAt is when node last synced DEK.
+  google.protobuf.Timestamp last_synced_at = 4;
+
+  // Status indicates sync state.
+  NodeDEKSyncStatus status = 5;
+
+  // Error message if sync failed.
+  string error = 6;
+
+  // VersionsAvailable lists all DEK versions node has.
+  repeated uint64 versions_available = 7;
+
+  // Timestamp is when the status was retrieved.
+  google.protobuf.Timestamp timestamp = 8;
+}
+
+// =============================================================================
+// Start Reencryption Request/Response
+// =============================================================================
+
+// ClusterStartReencryptionRequest contains parameters for starting re-encryption.
+message ClusterStartReencryptionRequest {
+  // Path is the DEK path to re-encrypt (optional, empty means all DEKs).
+  string path = 1;
+
+  // FromVersion is the old DEK version to re-encrypt from.
+  uint64 from_version = 2;
+
+  // ToVersion is the new DEK version to re-encrypt to.
+  uint64 to_version = 3;
+
+  // BatchSize is entities to process per batch.
+  int32 batch_size = 4;
+
+  // Concurrency is parallel re-encryption workers.
+  int32 concurrency = 5;
+
+  // ThrottleRate limits re-encryption rate (entities/sec, 0 = unlimited).
+  int32 throttle_rate = 6;
+
+  // Force re-encryption even if already in progress.
+  bool force = 7;
+}
+
+// ClusterStartReencryptionResponse contains the result of starting re-encryption.
+message ClusterStartReencryptionResponse {
+  // OperationID for tracking this re-encryption.
+  string operation_id = 1;
+
+  // Path of the DEK being re-encrypted.
+  string path = 2;
+
+  // Started indicates if the re-encryption was started.
+  bool started = 3;
+
+  // EstimatedItems is the estimated number of items to process.
+  int32 estimated_items = 4;
+
+  // StartedAt is when re-encryption began.
+  google.protobuf.Timestamp started_at = 5;
+
+  // TotalEntities is estimated total entities to re-encrypt.
+  int64 total_entities = 6;
+
+  // EstimatedCompletion is estimated completion time.
+  google.protobuf.Timestamp estimated_completion = 7;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 8;
+}
+
+// =============================================================================
+// Get Reencryption Status Request/Response
+// =============================================================================
+
+// GetReencryptionStatusRequest requests re-encryption status.
+message GetReencryptionStatusRequest {
+  // OperationID to get status for (optional, returns current if not specified).
+  string operation_id = 1;
+}
+
+// ReencryptionStatusResponse contains re-encryption progress status.
+message ReencryptionStatusResponse {
+  // OperationID of the re-encryption operation.
+  string operation_id = 1;
+
+  // State of the operation.
+  ReencryptionState state = 2;
+
+  // StartedAt is when operation started.
+  google.protobuf.Timestamp started_at = 3;
+
+  // CompletedAt is when operation finished (if complete).
+  google.protobuf.Timestamp completed_at = 4;
+
+  // EstimatedCompletion is estimated finish time (if running).
+  google.protobuf.Timestamp estimated_completion = 5;
+
+  // Progress is completion percentage (0-100).
+  double progress = 6;
+
+  // TotalEntities is total entities to re-encrypt.
+  int64 total_entities = 7;
+
+  // ProcessedEntities is entities already re-encrypted.
+  int64 processed_entities = 8;
+
+  // FailedEntities is count of failures.
+  int64 failed_entities = 9;
+
+  // ThroughputRate is current entities/second.
+  double throughput_rate = 10;
+
+  // NodeProgress is per-node progress breakdown.
+  repeated NodeReencryptionProgress node_progress = 11;
+
+  // Errors lists recent errors (limited to last 100).
+  repeated ReencryptionError errors = 12;
+
+  // Timestamp is when the status was retrieved.
+  google.protobuf.Timestamp timestamp = 13;
+}
+
+// =============================================================================
+// Cancel Reencryption Request/Response
+// =============================================================================
+
+// CancelReencryptionRequest requests cancellation of re-encryption.
+message CancelReencryptionRequest {
+  // OperationID to cancel (optional, cancels current if not specified).
+  string operation_id = 1;
+}
+
+// CancelReencryptionResponse confirms re-encryption cancellation.
+message CancelReencryptionResponse {
+  // Success indicates if cancellation was successful.
+  bool success = 1;
+
+  // OperationID that was cancelled.
+  string operation_id = 2;
+
+  // Timestamp is when cancellation occurred.
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// =============================================================================
+// Recover DEK Request/Response
+// =============================================================================
+
+// RecoverDEKRequest contains parameters for DEK recovery.
+message RecoverDEKRequest {
+  // RecoveryKeys are Shamir-split recovery keys.
+  repeated bytes recovery_keys = 1;
+
+  // BackupLocation is path/URL to encrypted DEK backup.
+  string backup_location = 2;
+
+  // ManualKey is directly injected DEK (break-glass only).
+  bytes manual_key = 3;
+
+  // RecoveryMethod specifies which recovery method to use.
+  RecoveryMethod recovery_method = 4;
+
+  // Reason for recovery (audit trail).
+  string reason = 5;
+}
+
+// RecoverDEKResponse contains the result of DEK recovery.
+message RecoverDEKResponse {
+  // Success indicates if recovery succeeded.
+  bool success = 1;
+
+  // RecoveredVersion is the DEK version recovered.
+  uint64 recovered_version = 2;
+
+  // RecoveredAt is when recovery completed.
+  google.protobuf.Timestamp recovered_at = 3;
+
+  // NodesSynced is count of nodes that received recovered DEK.
+  int32 nodes_synced = 4;
+
+  // AuditID for tracking this recovery operation.
+  string audit_id = 5;
+
+  // Warnings lists any issues encountered during recovery.
+  repeated string warnings = 6;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 7;
+}

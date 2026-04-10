@@ -1,0 +1,46 @@
+# QuicBaaS PebbleDB Local Configuration - Docker Compose
+# Single-node with PebbleDB storage, no Raft consensus
+# Best for: Single-node deployments, development with persistence
+#
+# Usage:
+#   docker compose -f configs/docker/docker-compose.pebble-local.yaml up
+#   docker compose -f configs/docker/docker-compose.pebble-local.yaml up -d  # detached
+#
+# Access:
+#   REST API: http://localhost:8443
+#   gRPC:     localhost:9443
+
+services:
+  quicbaas:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: quicbaas:latest
+    container_name: quicbaas-pebble
+    ports:
+      - "8443:8443"   # REST API
+      - "9443:9443"   # gRPC
+    volumes:
+      - quicbaas-data:/data/quicbaas
+    environment:
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_STORAGE_BACKEND=pebble
+      - QUICBAAS_SERVER_GRPC_ENABLED=true
+      - QUICBAAS_SERVER_GRPC_PORT=9443
+      - QUICBAAS_SERVER_REST_ENABLED=true
+      - QUICBAAS_SERVER_REST_PORT=8443
+      - QUICBAAS_STORAGE_DATA_DIR=/data/quicbaas
+      - QUICBAAS_STORAGE_WAL_DIR=/data/quicbaas/wal
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=console
+    healthcheck:
+      test: ["CMD", "quicbaas", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  quicbaas-data:
+    driver: local

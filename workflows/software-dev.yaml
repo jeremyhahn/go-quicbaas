@@ -1,0 +1,31 @@
+name: software-dev
+description: "Multi-agent software development workflow with lead, coder, and reviewer roles"
+mode: constrained
+agents:
+  - role: lead
+    backend: claude
+    model: claude-sonnet-4-5-20250514
+    capabilities: [persistent_sessions, tool_use]
+    mcp_scopes: [orchestrator:read, orchestrator:write]
+  - role: coder
+    backend: claude
+    model: claude-sonnet-4-5-20250514
+    capabilities: [persistent_sessions, tool_use, file_access]
+    mcp_scopes: [kms:read]
+    count: 2
+  - role: reviewer
+    backend: claude
+    model: claude-sonnet-4-5-20250514
+    capabilities: [persistent_sessions, tool_use]
+    mcp_scopes: [orchestrator:read]
+settings:
+  max_iterations: 10
+  max_parallelism: 3
+  poll_interval: 5s
+  timeout_per_item: 10m
+  total_timeout: 30m
+  review_criteria:
+    - name: tests_pass
+      validator: command
+      config: "make test"
+      required: true

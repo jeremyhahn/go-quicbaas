@@ -1,0 +1,161 @@
+// QuicBaaS RAG Protocol Buffer Definitions v1
+// Retrieval-Augmented Generation context building
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under AGPL-3.0
+
+syntax = "proto3";
+
+package quicbaas.rag.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// RAG Service
+// =============================================================================
+
+// RAGService provides RAG context building operations.
+// This service enables embedding, search, and context assembly for LLM consumption.
+service RAGService {
+  // Query performs an all-in-one RAG query: embed, search, and build context.
+  rpc Query(RAGQueryRequest) returns (RAGQueryResponse);
+
+  // BuildContext assembles context from user-provided search results.
+  rpc BuildContext(RAGBuildContextRequest) returns (RAGBuildContextResponse);
+}
+
+// =============================================================================
+// Query Messages
+// =============================================================================
+
+// RAGQueryRequest is the request for RAG query.
+message RAGQueryRequest {
+  // Query text to search for
+  string query = 1;
+
+  // Vector namespace to search in
+  string namespace = 2;
+
+  // Number of results to return (default: 10)
+  int32 top_k = 3;
+
+  // Maximum tokens for assembled context (default: 4000)
+  int32 max_tokens = 4;
+
+  // Minimum similarity score 0.0-1.0 (default: 0.7)
+  float min_score = 5;
+
+  // Output format template
+  RAGTemplate template = 6;
+
+  // Include source citations in context
+  bool include_citations = 7;
+
+  // Embedding model to use (uses default if not specified)
+  string model = 8;
+}
+
+// RAGTemplate specifies the output format.
+enum RAGTemplate {
+  RAG_TEMPLATE_UNSPECIFIED = 0;
+  RAG_TEMPLATE_MARKDOWN = 1;
+  RAG_TEMPLATE_JSON = 2;
+  RAG_TEMPLATE_XML = 3;
+  RAG_TEMPLATE_PLAIN = 4;
+}
+
+// RAGQueryResponse contains the assembled context.
+message RAGQueryResponse {
+  // Assembled context text ready for LLM consumption
+  string context = 1;
+
+  // Estimated token count
+  int32 tokens = 2;
+
+  // Whether the context was truncated to fit max_tokens
+  bool truncated = 3;
+
+  // Number of results included in context
+  int32 result_count = 4;
+
+  // Source citations (if include_citations was true)
+  repeated RAGCitation citations = 5;
+}
+
+// RAGCitation represents a source citation.
+message RAGCitation {
+  // Citation index (1-based)
+  int32 index = 1;
+
+  // Source file path
+  string file_path = 2;
+
+  // Start line number
+  int32 start_line = 3;
+
+  // End line number
+  int32 end_line = 4;
+
+  // Similarity score
+  float score = 5;
+}
+
+// =============================================================================
+// Build Context Messages
+// =============================================================================
+
+// RAGBuildContextRequest is the request for context building.
+message RAGBuildContextRequest {
+  // Results to build context from
+  repeated RAGResultInput results = 1;
+
+  // Maximum tokens for assembled context (default: 4000)
+  int32 max_tokens = 2;
+
+  // Output format template
+  RAGTemplate template = 3;
+
+  // Include source citations in context
+  bool include_citations = 4;
+
+  // Truncation strategy
+  RAGTruncationStrategy truncation_strategy = 5;
+}
+
+// RAGTruncationStrategy specifies how to handle context overflow.
+enum RAGTruncationStrategy {
+  RAG_TRUNCATION_UNSPECIFIED = 0;
+  RAG_TRUNCATION_SMART = 1;   // Smart truncation preserving complete chunks
+  RAG_TRUNCATION_HARD = 2;    // Hard truncation at token limit
+  RAG_TRUNCATION_NONE = 3;    // No truncation
+}
+
+// RAGResultInput represents a single result for context building.
+message RAGResultInput {
+  // Content text
+  string content = 1;
+
+  // Similarity/relevance score
+  float score = 2;
+
+  // Optional metadata
+  map<string, string> metadata = 3;
+}
+
+// RAGBuildContextResponse contains the assembled context.
+message RAGBuildContextResponse {
+  // Assembled context text ready for LLM consumption
+  string context = 1;
+
+  // Estimated token count
+  int32 tokens = 2;
+
+  // Whether the context was truncated
+  bool truncated = 3;
+
+  // Number of results included in context
+  int32 result_count = 4;
+
+  // Source citations (if include_citations was true)
+  repeated RAGCitation citations = 5;
+}

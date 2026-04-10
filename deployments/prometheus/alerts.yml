@@ -1,0 +1,243 @@
+# QuicBaaS Prometheus Alert Rules
+# These alert rules monitor critical metrics and trigger alerts for operational issues
+
+groups:
+  - name: quicbaas_availability
+    interval: 30s
+    rules:
+      - alert: QuicBaaSNodeDown
+        expr: up{job="quicbaas"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: availability
+        annotations:
+          summary: "QuicBaaS node {{ $labels.instance }} is down"
+          description: "QuicBaaS node {{ $labels.instance }} has been down for more than 1 minute."
+          runbook_url: "https://docs.quicbaas.io/runbooks/node-down"
+
+      - alert: RaftLeaderMissing
+        expr: quicbaas_raft_leader_id == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: raft
+        annotations:
+          summary: "Raft shard {{ $labels.shard }} has no leader"
+          description: "Shard {{ $labels.shard }} has been without a leader for more than 30 seconds."
+          runbook_url: "https://docs.quicbaas.io/runbooks/raft-leader-missing"
+
+      - alert: ClusterQuorumLost
+        expr: count(up{job="quicbaas"} == 1) < (count(up{job="quicbaas"}) / 2 + 1)
+        for: 30s
+        labels:
+          severity: critical
+          component: cluster
+        annotations:
+          summary: "QuicBaaS cluster has lost quorum"
+          description: "Cluster has {{ $value }} healthy nodes, less than quorum of {{ printf `(count(up{job=\"quicbaas\"}) / 2 + 1)` | query | first | value }} nodes."
+          runbook_url: "https://docs.quicbaas.io/runbooks/quorum-lost"
+
+  - name: quicbaas_performance
+    interval: 1m
+    rules:
+      - alert: HighReadLatency
+        expr: histogram_quantile(0.99, rate(quicbaas_request_duration_seconds_bucket{operation="get"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "High read latency detected"
+          description: "P99 read latency is {{ $value | humanizeDuration }} (above 100ms threshold) for the last 5 minutes."
+          runbook_url: "https://docs.quicbaas.io/runbooks/high-latency"
+
+      - alert: HighWriteLatency
+        expr: histogram_quantile(0.99, rate(quicbaas_request_duration_seconds_bucket{operation="set"}[5m])) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "High write latency detected"
+          description: "P99 write latency is {{ $value | humanizeDuration }} (above 250ms threshold) for the last 5 minutes."
+          runbook_url: "https://docs.quicbaas.io/runbooks/high-latency"
+
+      - alert: HighErrorRate
+        expr: (rate(quicbaas_request_duration_seconds_count{status="error"}[5m]) / rate(quicbaas_request_duration_seconds_count[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: reliability
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (above 5% threshold) for the last 5 minutes."
+          runbook_url: "https://docs.quicbaas.io/runbooks/high-error-rate"
+
+      - alert: LowThroughput
+        expr: rate(quicbaas_request_duration_seconds_count[5m]) < 10
+        for: 10m
+        labels:
+          severity: info
+          component: performance
+        annotations:
+          summary: "Low request throughput"
+          description: "Request rate is {{ $value | humanize }} ops/sec (below 10 ops/sec) for the last 10 minutes."
+
+  - name: quicbaas_resources
+    interval: 1m
+    rules:
+      - alert: HighMemoryUsage
+        expr: (process_resident_memory_bytes{job="quicbaas"} / node_memory_MemTotal_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanizePercentage }} (above 90% threshold) for the last 5 minutes."
+          runbook_url: "https://docs.quicbaas.io/runbooks/high-memory"
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total{job="quicbaas"}[5m]) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanizePercentage }} (above 80% threshold) for the last 10 minutes."
+          runbook_url: "https://docs.quicbaas.io/runbooks/high-cpu"
+
+      - alert: HighDiskUsage
+        expr: (node_filesystem_avail_bytes{job="quicbaas",mountpoint="/data"} / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+          component: resources
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Disk space available is {{ $value | humanizePercentage }} (below 10% threshold)."
+          runbook_url: "https://docs.quicbaas.io/runbooks/low-disk-space"
+
+      - alert: HighGoRoutines
+        expr: go_goroutines{job="quicbaas"} > 10000
+        for: 5m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High number of goroutines on {{ $labels.instance }}"
+          description: "Goroutine count is {{ $value }} (above 10000 threshold), possible goroutine leak."
+          runbook_url: "https://docs.quicbaas.io/runbooks/goroutine-leak"
+
+  - name: quicbaas_storage
+    interval: 1m
+    rules:
+      - alert: HighCompactionBacklog
+        expr: quicbaas_storage_compaction_pending_bytes > 10737418240
+        for: 10m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "High compaction backlog on {{ $labels.instance }}"
+          description: "Compaction backlog is {{ $value | humanize1024 }} (above 10GB threshold) for the last 10 minutes."
+          runbook_url: "https://docs.quicbaas.io/runbooks/compaction-backlog"
+
+      - alert: SlowCompactions
+        expr: rate(quicbaas_storage_compaction_duration_seconds_sum[10m]) / rate(quicbaas_storage_compaction_duration_seconds_count[10m]) > 300
+        for: 15m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Slow compactions on {{ $labels.instance }}"
+          description: "Average compaction duration is {{ $value | humanizeDuration }} (above 5 minute threshold)."
+          runbook_url: "https://docs.quicbaas.io/runbooks/slow-compactions"
+
+      - alert: HighCacheEvictionRate
+        expr: rate(quicbaas_cache_evictions_total[5m]) > 100
+        for: 10m
+        labels:
+          severity: info
+          component: cache
+        annotations:
+          summary: "High cache eviction rate on {{ $labels.instance }}"
+          description: "Cache eviction rate is {{ $value | humanize }} evictions/sec (above 100/sec threshold)."
+          runbook_url: "https://docs.quicbaas.io/runbooks/cache-evictions"
+
+  - name: quicbaas_raft
+    interval: 30s
+    rules:
+      - alert: RaftHighProposalLatency
+        expr: histogram_quantile(0.99, rate(quicbaas_raft_proposal_latency_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: raft
+        annotations:
+          summary: "High Raft proposal latency in shard {{ $labels.shard }}"
+          description: "P99 Raft proposal latency is {{ $value | humanizeDuration }} (above 500ms threshold)."
+          runbook_url: "https://docs.quicbaas.io/runbooks/raft-high-latency"
+
+      - alert: RaftSnapshotFailed
+        expr: rate(quicbaas_raft_snapshot_failures_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: raft
+        annotations:
+          summary: "Raft snapshot failures in shard {{ $labels.shard }}"
+          description: "Raft snapshots are failing at {{ $value | humanize }} failures/sec."
+          runbook_url: "https://docs.quicbaas.io/runbooks/raft-snapshot-failure"
+
+  - name: quicbaas_backup
+    interval: 1m
+    rules:
+      - alert: BackupFailed
+        expr: increase(quicbaas_backup_errors_total[1h]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: backup
+        annotations:
+          summary: "Backup failures detected on {{ $labels.instance }}"
+          description: "{{ $value }} backup failures in the last hour."
+          runbook_url: "https://docs.quicbaas.io/runbooks/backup-failure"
+
+      - alert: BackupTooOld
+        expr: (time() - quicbaas_backup_last_backup_timestamp_seconds) > 86400
+        for: 1h
+        labels:
+          severity: warning
+          component: backup
+        annotations:
+          summary: "Last backup is too old on {{ $labels.instance }}"
+          description: "Last successful backup was {{ $value | humanizeDuration }} ago (over 24 hours)."
+          runbook_url: "https://docs.quicbaas.io/runbooks/backup-too-old"
+
+  - name: quicbaas_operations
+    interval: 1m
+    rules:
+      - alert: UpgradeFailed
+        expr: increase(quicbaas_upgrade_failed_total[1h]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: operations
+        annotations:
+          summary: "Rolling upgrade failed"
+          description: "{{ $value }} upgrade failures in the last hour."
+          runbook_url: "https://docs.quicbaas.io/runbooks/upgrade-failure"
+
+      - alert: RebalanceFailed
+        expr: increase(quicbaas_rebalance_failed_total[1h]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: operations
+        annotations:
+          summary: "Cluster rebalancing failed"
+          description: "{{ $value }} rebalance failures in the last hour."
+          runbook_url: "https://docs.quicbaas.io/runbooks/rebalance-failure"

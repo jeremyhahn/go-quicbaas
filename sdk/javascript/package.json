@@ -1,0 +1,74 @@
+{
+  "name": "@quicbaas/client",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "QuicBaaS JavaScript Client SDK for browser and Node.js applications",
+  "main": "dist/quicbaas.js",
+  "module": "dist/quicbaas.esm.js",
+  "browser": "dist/quicbaas.browser.js",
+  "types": "dist/quicbaas.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/quicbaas.esm.js",
+      "require": "./dist/quicbaas.js",
+      "browser": "./dist/quicbaas.browser.js",
+      "types": "./dist/quicbaas.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "build:dev": "rollup -c --watch",
+    "test": "jest --testPathIgnorePatterns=integration",
+    "test:watch": "jest --watch --testPathIgnorePatterns=integration",
+    "test:coverage": "jest --coverage --testPathIgnorePatterns=integration",
+    "test:integration": "jest --testPathPattern=integration --testTimeout=30000",
+    "test:integration:scheduler": "jest --testPathPattern=integration/scheduler --testTimeout=30000",
+    "lint": "eslint src test",
+    "lint:fix": "eslint src test --fix",
+    "format": "prettier --write 'src/**/*.js' 'test/**/*.js'",
+    "docs": "jsdoc -c jsdoc.json",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jeremyhahn/go-quicbaas.git",
+    "directory": "sdk/javascript"
+  },
+  "keywords": [
+    "quicbaas",
+    "database",
+    "key-value",
+    "distributed",
+    "raft",
+    "consensus",
+    "client",
+    "sdk"
+  ],
+  "author": "Jeremy Hahn <jeremy@automatethethings.com>",
+  "license": "AGPL-3.0-or-later",
+  "bugs": {
+    "url": "https://github.com/jeremyhahn/go-quicbaas/issues"
+  },
+  "homepage": "https://github.com/jeremyhahn/go-quicbaas#readme",
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@babel/preset-env": "^7.24.0",
+    "@rollup/plugin-babel": "^6.0.4",
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-terser": "^0.4.4",
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "jsdoc": "^4.0.2",
+    "prettier": "^3.2.5",
+    "rollup": "^4.12.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
