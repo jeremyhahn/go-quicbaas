@@ -28,7 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag/adapters"
 	ragcontext "github.com/jeremyhahn/go-quicbaas/pkg/rag/context"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag/pipeline"
@@ -2684,10 +2684,10 @@ func TestErrorTypesExist(t *testing.T) {
 
 func TestErrorWrapping(t *testing.T) {
 	// Test that errors can be properly wrapped and unwrapped
-	wrappedErr := &dragonerrors.WrappedMessageError{Message: "outer", Cause: ErrSystemClosed}
+	wrappedErr := &qberrors.WrappedMessageError{Message: "outer", Cause: ErrSystemClosed}
 	assert.ErrorIs(t, wrappedErr, ErrSystemClosed)
 
-	wrappedErr = &dragonerrors.WrappedMessageError{Message: "outer", Cause: ErrDimensionMismatch}
+	wrappedErr = &qberrors.WrappedMessageError{Message: "outer", Cause: ErrDimensionMismatch}
 	assert.ErrorIs(t, wrappedErr, ErrDimensionMismatch)
 }
 

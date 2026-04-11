@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -66,18 +66,18 @@ func (c *restKMSClient) GetSecret(ctx context.Context, secretID string) ([]byte,
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to execute request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to execute request", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response body", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response body", Cause: err}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -88,12 +88,12 @@ func (c *restKMSClient) GetSecret(ctx context.Context, secretID string) ([]byte,
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: fmt.Sprintf("unexpected status %d: %s", resp.StatusCode, string(respBody))}
+		return nil, &qberrors.MessageError{Message: fmt.Sprintf("unexpected status %d: %s", resp.StatusCode, string(respBody))}
 	}
 
 	var result service.GetSecretResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	return result.Data, nil

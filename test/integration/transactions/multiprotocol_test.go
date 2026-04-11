@@ -38,7 +38,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	quicpkg "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -390,12 +390,12 @@ func (c *embeddedTransactionClient) HashKeyToID(entityType, key string) uint64 {
 func (c *embeddedTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 	svc, err := helpers.GetEmbeddedService(t)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 
 	client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(svc))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}
 
 	c.client = client
@@ -500,7 +500,7 @@ func (c *embeddedTransactionClient) Transaction(ctx context.Context, req *rest.T
 
 	// Embedded transaction operations use the SDK's Transaction client
 	// For now, return not implemented as the SDK's Transaction interface may differ
-	return nil, &dragonerrors.MessageError{Message: "embedded transaction operations not yet implemented in test client"}
+	return nil, &qberrors.MessageError{Message: "embedded transaction operations not yet implemented in test client"}
 }
 
 // =============================================================================
@@ -522,7 +522,7 @@ func (c *restTransactionClient) HashKeyToID(entityType, key string) uint64 {
 func (c *restTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no REST endpoints available"}
+		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
 	c.httpClient = &http.Client{
@@ -694,7 +694,7 @@ func (c *grpcTransactionClient) HashKeyToID(entityType, key string) uint64 {
 func (c *grpcTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetClusterEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no gRPC endpoints available"}
+		return &qberrors.MessageError{Message: "no gRPC endpoints available"}
 	}
 
 	endpoint := endpoints[0]
@@ -707,7 +707,7 @@ func (c *grpcTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 		grpc.WithBlock(),
 	)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoint, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoint, Cause: err}
 	}
 
 	c.conn = conn
@@ -736,7 +736,7 @@ func (c *grpcTransactionClient) Put(ctx context.Context, entityType, key string,
 		Consistency: pb.ConsistencyLevel_CONSISTENCY_LEVEL_LINEARIZABLE,
 	})
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "gRPC Put failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "gRPC Put failed", Cause: err}
 	}
 
 	// Store key -> ID mapping for subsequent Get/Delete
@@ -932,7 +932,7 @@ func (c *quicTransactionClient) HashKeyToID(entityType, key string) uint64 {
 func (c *quicTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetQUICEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no QUIC endpoints available"}
+		return &qberrors.MessageError{Message: "no QUIC endpoints available"}
 	}
 	c.address = endpoints[0]
 
@@ -947,7 +947,7 @@ func (c *quicTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 
 	conn, err := quic.DialAddr(dialCtx, c.address, tlsConf, nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to dial QUIC server at " + c.address, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to dial QUIC server at " + c.address, Cause: err}
 	}
 
 	c.conn = conn
@@ -970,7 +970,7 @@ func (c *quicTransactionClient) sendRequest(ctx context.Context, opcode byte, re
 
 	stream, err := c.conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
 	}
 	defer stream.Close()
 
@@ -981,13 +981,13 @@ func (c *quicTransactionClient) sendRequest(ctx context.Context, opcode byte, re
 	}
 
 	if err := quicpkg.WriteRequest(stream, req); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to write request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
 	}
 
 	// Read response
 	resp, err := quicpkg.ReadResponse(stream)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	// Check status
@@ -1015,17 +1015,17 @@ func (c *quicTransactionClient) Put(ctx context.Context, entityType, key string,
 
 	payload, err := quicpkg.EncodePayload(putReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to encode put request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to encode put request", Cause: err}
 	}
 
 	resp, err := c.sendRequest(ctx, quicpkg.OpPut, payload)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "QUIC Put failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "QUIC Put failed", Cause: err}
 	}
 
 	var putResp service.PutResponse
 	if err := quicpkg.DecodePayload(resp.Payload, &putResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to decode put response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to decode put response", Cause: err}
 	}
 
 	// Store key -> ID mapping for subsequent Get/Delete
@@ -1053,17 +1053,17 @@ func (c *quicTransactionClient) Get(ctx context.Context, entityType, key string)
 
 	payload, err := quicpkg.EncodePayload(getReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to encode get request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to encode get request", Cause: err}
 	}
 
 	resp, err := c.sendRequest(ctx, quicpkg.OpGet, payload)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "QUIC Get failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "QUIC Get failed", Cause: err}
 	}
 
 	var getResp service.GetResponse
 	if err := quicpkg.DecodePayload(resp.Payload, &getResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to decode get response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to decode get response", Cause: err}
 	}
 
 	return &CRUDResult{
@@ -1088,17 +1088,17 @@ func (c *quicTransactionClient) Delete(ctx context.Context, entityType, key stri
 
 	payload, err := quicpkg.EncodePayload(delReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to encode delete request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to encode delete request", Cause: err}
 	}
 
 	resp, err := c.sendRequest(ctx, quicpkg.OpDelete, payload)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "QUIC Delete failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "QUIC Delete failed", Cause: err}
 	}
 
 	var delResp service.DeleteResponse
 	if err := quicpkg.DecodePayload(resp.Payload, &delResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to decode delete response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to decode delete response", Cause: err}
 	}
 
 	// Remove from mapping after delete
@@ -1185,17 +1185,17 @@ func (c *quicTransactionClient) Transaction(ctx context.Context, req *rest.Trans
 
 	payload, err := quicpkg.EncodePayload(txnReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to encode transaction request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to encode transaction request", Cause: err}
 	}
 
 	resp, err := c.sendRequest(ctx, quicpkg.OpTransaction, payload)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "QUIC Transaction failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "QUIC Transaction failed", Cause: err}
 	}
 
 	var txnResp service.TransactionResponse
 	if err := quicpkg.DecodePayload(resp.Payload, &txnResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to decode transaction response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to decode transaction response", Cause: err}
 	}
 
 	result := &TransactionResult{
@@ -1246,7 +1246,7 @@ func (c *unixSocketTransactionClient) HashKeyToID(entityType, key string) uint64
 func (c *unixSocketTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 	socketPath := helpers.GetUnixSocketPath()
 	if socketPath == "" {
-		return &dragonerrors.MessageError{Message: "no Unix socket path available"}
+		return &qberrors.MessageError{Message: "no Unix socket path available"}
 	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -1261,7 +1261,7 @@ func (c *unixSocketTransactionClient) Setup(t *testing.T, ctx context.Context) e
 		}),
 	)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to Unix socket " + socketPath, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to Unix socket " + socketPath, Cause: err}
 	}
 
 	c.conn = conn
@@ -1289,7 +1289,7 @@ func (c *unixSocketTransactionClient) Put(ctx context.Context, entityType, key s
 		Consistency: pb.ConsistencyLevel_CONSISTENCY_LEVEL_LINEARIZABLE,
 	})
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "UnixSocket Put failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "UnixSocket Put failed", Cause: err}
 	}
 
 	// Store key -> ID mapping for subsequent Get/Delete
@@ -1398,7 +1398,7 @@ func (c *mcpTransactionClient) HashKeyToID(entityType, key string) uint64 {
 func (c *mcpTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetMCPEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no MCP endpoints available"}
+		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.baseURL = endpoints[0]
 	c.httpClient = &http.Client{
@@ -1415,7 +1415,7 @@ func (c *mcpTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 
 	// Authenticate with the MCP server
 	if err := c.authenticate(ctx); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to authenticate", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to authenticate", Cause: err}
 	}
 
 	return nil
@@ -1514,7 +1514,7 @@ func (c *mcpTransactionClient) callMCPTool(ctx context.Context, method string, a
 	}
 
 	if mcpResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
+		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
 	}
 
 	if len(mcpResp.Result.Content) > 0 {
@@ -1585,7 +1585,7 @@ func (c *mcpTransactionClient) callMCP(ctx context.Context, method string, args 
 	}
 
 	if mcpResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
+		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
 	}
 
 	if len(mcpResp.Result.Content) > 0 {

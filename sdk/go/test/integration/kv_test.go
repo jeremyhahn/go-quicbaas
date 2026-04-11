@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // entityRequest represents an entity operation request matching the REST API.
@@ -292,7 +292,7 @@ func TestEntityConcurrent(t *testing.T) {
 				data := map[string]interface{}{"goroutine": idx}
 				_, err := entityPut(ctx, entityType, id, data)
 				if err != nil {
-					errors <- &dragonerrors.WrappedMessageError{
+					errors <- &qberrors.WrappedMessageError{
 						Message: "goroutine " + strconv.Itoa(idx),
 						Cause:   err,
 					}
@@ -332,7 +332,7 @@ func TestEntityConcurrent(t *testing.T) {
 				data := map[string]interface{}{"goroutine": idx}
 				_, err := entityPut(ctx, entityType, id, data)
 				if err != nil {
-					errors <- &dragonerrors.WrappedMessageError{
+					errors <- &qberrors.WrappedMessageError{
 						Message: "goroutine " + strconv.Itoa(idx),
 						Cause:   err,
 					}
@@ -401,36 +401,36 @@ func entityPut(ctx context.Context, entityType string, id uint64, data interface
 
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal data", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal data", Cause: err}
 	}
 
 	body, err := json.Marshal(entityRequest{
 		Data: dataJSON,
 	})
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, putURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "put failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -438,7 +438,7 @@ func entityPut(ctx context.Context, entityType string, id uint64, data interface
 	var entityResp entityResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &entityResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -450,27 +450,27 @@ func entityGet(ctx context.Context, entityType string, id uint64) (*entityRespon
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, &dragonerrors.MessageError{Message: "entity not found"}
+		return nil, &qberrors.MessageError{Message: "entity not found"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "get failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -478,7 +478,7 @@ func entityGet(ctx context.Context, entityType string, id uint64) (*entityRespon
 	var entityResp entityResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &entityResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -490,23 +490,23 @@ func entityDelete(ctx context.Context, entityType string, id uint64) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, deleteURL, nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return &dragonerrors.MessageError{
+		return &qberrors.MessageError{
 			Message: "delete failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -532,23 +532,23 @@ func entityList(ctx context.Context, entityType string, limit int, cursor string
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "list failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -556,7 +556,7 @@ func entityList(ctx context.Context, entityType string, limit int, cursor string
 	var listResp listEntitiesResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &listResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 

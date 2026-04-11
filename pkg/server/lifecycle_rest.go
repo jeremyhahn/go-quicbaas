@@ -22,7 +22,7 @@ import (
 	"time"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
@@ -73,8 +73,8 @@ func (s *Server) startRESTServer() error {
 	// Create REST server using QuicBaaS facade
 	restServer, err := newREST(s.quicBaaSService, restConfig, s.logger)
 	if err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "server.startRESTServer",
 			Err:  &ServerCauseError{Message: "failed to create REST server", Cause: err},
 		}
@@ -91,8 +91,8 @@ func (s *Server) startRESTServer() error {
 	}
 	restKVShards := kvShards(s.config.Server.Shards, restVectorShardID, s.config.TimeSeries.ShardID, restKMSShardID)
 	if err := validateRouting(restKVShards, s.config.Server.EntityShardPins); err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrConfiguration,
+		return &qberrors.QBError{
+			Code: qberrors.ErrConfiguration,
 			Op:   "server.startRESTServer",
 			Err:  &ServerCauseError{Message: "invalid routing config", Cause: err},
 		}
@@ -106,8 +106,8 @@ func (s *Server) startRESTServer() error {
 	// Start REST server
 	address := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.REST.Port)
 	if err := restServer.Start(address); err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "server.startRESTServer",
 			Err:  &ServerCauseError{Message: "failed to start REST server", Cause: err},
 		}
@@ -138,8 +138,8 @@ func (s *Server) stopRESTServer(ctx context.Context) error {
 	}
 
 	if err := restShutdownFn(s.restServer, ctx); err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "server.stopRESTServer",
 			Err:  &ServerCauseError{Message: "failed to shutdown REST server", Cause: err},
 		}

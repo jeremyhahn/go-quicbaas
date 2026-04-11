@@ -33,7 +33,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -948,7 +948,7 @@ func TestHandleServiceError(t *testing.T) {
 			expectedStatus: http.StatusRequestTimeout,
 		},
 		{
-			name: "generic dragon error",
+			name: "generic qb error",
 			err: &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "test",
@@ -957,7 +957,7 @@ func TestHandleServiceError(t *testing.T) {
 			expectedStatus: http.StatusInternalServerError,
 		},
 		{
-			name:           "non-dragon error",
+			name:           "non-qb error",
 			err:            &errors.MessageError{Message: "generic error"},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -3165,8 +3165,8 @@ func TestHandleGetParametersBatch_ServiceErrors(t *testing.T) {
 		defer cleanup()
 
 		mockParamService.On("GetParameters", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.QBError{
-				Code: dragonerrors.ErrInternal,
+			nil, &qberrors.QBError{
+				Code: qberrors.ErrInternal,
 				Op:   "GetParameters",
 				Err:  stderrors.New("database connection failed"),
 			}).Once()
@@ -3205,8 +3205,8 @@ func TestHandleSetParametersBatch_ServiceErrors(t *testing.T) {
 		defer cleanup()
 
 		mockParamService.On("SetParameters", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.QBError{
-				Code: dragonerrors.ErrInternal,
+			nil, &qberrors.QBError{
+				Code: qberrors.ErrInternal,
 				Op:   "SetParameters",
 				Err:  stderrors.New("storage full"),
 			}).Once()
@@ -3244,8 +3244,8 @@ func TestHandleDeleteParametersBatch_ServiceErrors(t *testing.T) {
 		defer cleanup()
 
 		mockParamService.On("DeleteParameters", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.QBError{
-				Code: dragonerrors.ErrInternal,
+			nil, &qberrors.QBError{
+				Code: qberrors.ErrInternal,
 				Op:   "DeleteParameters",
 				Err:  stderrors.New("write error"),
 			}).Once()
@@ -3283,8 +3283,8 @@ func TestHandleSearchParametersByTags_ServiceErrors(t *testing.T) {
 		defer cleanup()
 
 		mockParamService.On("SearchByTags", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.QBError{
-				Code: dragonerrors.ErrInternal,
+			nil, &qberrors.QBError{
+				Code: qberrors.ErrInternal,
 				Op:   "SearchByTags",
 				Err:  stderrors.New("index error"),
 			}).Once()
@@ -4408,7 +4408,7 @@ func TestHandleServiceError_ConflictError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	conflictErr := dragonerrors.New(dragonerrors.ErrConflict, "Get", "entity already exists")
+	conflictErr := qberrors.New(qberrors.ErrConflict, "Get", "entity already exists")
 	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), conflictErr)
 
 	rctx := chi.NewRouteContext()
@@ -4427,7 +4427,7 @@ func TestHandleServiceError_LeaderNotAvailable(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	leaderErr := dragonerrors.New(dragonerrors.ErrLeaderNotAvailable, "Get", "no leader")
+	leaderErr := qberrors.New(qberrors.ErrLeaderNotAvailable, "Get", "no leader")
 	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), leaderErr)
 
 	rctx := chi.NewRouteContext()
@@ -4446,7 +4446,7 @@ func TestHandleServiceError_Timeout(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	timeoutErr := dragonerrors.New(dragonerrors.ErrTimeout, "Get", "operation timed out")
+	timeoutErr := qberrors.New(qberrors.ErrTimeout, "Get", "operation timed out")
 	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), timeoutErr)
 
 	rctx := chi.NewRouteContext()
@@ -4465,7 +4465,7 @@ func TestHandleServiceError_InvalidInput(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	validationErr := dragonerrors.New(dragonerrors.ErrInvalidInput, "Get", "bad input")
+	validationErr := qberrors.New(qberrors.ErrInvalidInput, "Get", "bad input")
 	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), validationErr)
 
 	rctx := chi.NewRouteContext()
@@ -4484,7 +4484,7 @@ func TestHandleServiceError_Forbidden(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	forbiddenErr := dragonerrors.New(dragonerrors.ErrForbidden, "Get", "access denied")
+	forbiddenErr := qberrors.New(qberrors.ErrForbidden, "Get", "access denied")
 	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), forbiddenErr)
 
 	rctx := chi.NewRouteContext()
@@ -4503,7 +4503,7 @@ func TestHandleServiceError_Unauthorized(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	unauthorizedErr := dragonerrors.New(dragonerrors.ErrUnauthorized, "Get", "not authorized")
+	unauthorizedErr := qberrors.New(qberrors.ErrUnauthorized, "Get", "not authorized")
 	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), unauthorizedErr)
 
 	rctx := chi.NewRouteContext()
@@ -4522,7 +4522,7 @@ func TestHandleServiceError_Unavailable(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	unavailableErr := dragonerrors.New(dragonerrors.ErrUnavailable, "Get", "service unavailable")
+	unavailableErr := qberrors.New(qberrors.ErrUnavailable, "Get", "service unavailable")
 	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), unavailableErr)
 
 	rctx := chi.NewRouteContext()
@@ -4541,7 +4541,7 @@ func TestHandleServiceError_Internal(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	internalErr := dragonerrors.New(dragonerrors.ErrInternal, "Get", "internal error")
+	internalErr := qberrors.New(qberrors.ErrInternal, "Get", "internal error")
 	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), internalErr)
 
 	rctx := chi.NewRouteContext()

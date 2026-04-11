@@ -49,6 +49,7 @@ type SecurityService interface {
 	Crypto() CryptoClient
 	Certificate() CertificateClient
 	ClusterDEK() ClusterDEKClient
+	DEK() DEKClient
 	DynamicSecrets() DynamicSecretsClient
 	RBAC() RBACClient
 	SealStore() (QRDBSealStoreClient, error)
@@ -152,6 +153,7 @@ func (s *securityService) Secrets() SecretsClient               { return s.c.Sec
 func (s *securityService) Crypto() CryptoClient                 { return s.c.Crypto() }
 func (s *securityService) Certificate() CertificateClient       { return s.c.Certificate() }
 func (s *securityService) ClusterDEK() ClusterDEKClient         { return s.c.ClusterDEK() }
+func (s *securityService) DEK() DEKClient                       { return s.c.DEK() }
 func (s *securityService) DynamicSecrets() DynamicSecretsClient { return s.c.DynamicSecrets() }
 func (s *securityService) RBAC() RBACClient                     { return s.c.RBAC() }
 

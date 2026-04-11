@@ -81,7 +81,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/discovery"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
@@ -177,7 +177,7 @@ func runDNSDiscoveryExample(ctx context.Context) error {
 	fmt.Printf("  SRV Record: %s\n", *srvRecord)
 
 	if *srvRecord == "" {
-		return &dragonerrors.MessageError{Message: "SRV record cannot be empty"}
+		return &qberrors.MessageError{Message: "SRV record cannot be empty"}
 	}
 
 	// Check SRV record format
@@ -197,7 +197,7 @@ func runDNSDiscoveryExample(ctx context.Context) error {
 
 	dnsDiscovery, err := discovery.NewDNSDiscovery(dnsConfig)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create DNS discovery", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create DNS discovery", Cause: err}
 	}
 	defer dnsDiscovery.Close()
 
@@ -264,11 +264,11 @@ func runMulticastDiscoveryExample(ctx context.Context) error {
 
 	// Validate node configuration
 	if *nodeID == 0 {
-		return &dragonerrors.MessageError{Message: "node-id is required for multicast discovery"}
+		return &qberrors.MessageError{Message: "node-id is required for multicast discovery"}
 	}
 
 	if *address == "" {
-		return &dragonerrors.MessageError{Message: "address is required for multicast discovery"}
+		return &qberrors.MessageError{Message: "address is required for multicast discovery"}
 	}
 
 	// Step 1: Create multicast configuration
@@ -302,7 +302,7 @@ func runMulticastDiscoveryExample(ctx context.Context) error {
 
 	multicastDiscovery, err := discovery.NewMulticastDiscovery(multicastConfig)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create multicast discovery", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create multicast discovery", Cause: err}
 	}
 	defer multicastDiscovery.Close()
 
@@ -326,7 +326,7 @@ func runMulticastDiscoveryExample(ctx context.Context) error {
 	}
 
 	if err := multicastDiscovery.Register(ctx, self); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to register node", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to register node", Cause: err}
 	}
 
 	fmt.Printf("  Registered as node %d at %s\n", self.NodeID, self.Address)
@@ -439,7 +439,7 @@ func runStaticDiscoveryExample(ctx context.Context) error {
 
 	staticDiscovery, err := discovery.NewStaticDiscovery(peerAddresses)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create static discovery", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create static discovery", Cause: err}
 	}
 	defer staticDiscovery.Close()
 
@@ -452,7 +452,7 @@ func runStaticDiscoveryExample(ctx context.Context) error {
 
 	discoveredPeers, err := staticDiscovery.Discover(ctx)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "discovery failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "discovery failed", Cause: err}
 	}
 
 	printDiscoveredPeers("Static", discoveredPeers)
@@ -532,7 +532,7 @@ func runKubernetesDiscoveryExample(ctx context.Context) error {
 
 	k8sDiscovery, err := discovery.NewKubernetesDiscovery(k8sConfig)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create Kubernetes discovery", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create Kubernetes discovery", Cause: err}
 	}
 	defer k8sDiscovery.Close()
 
@@ -578,7 +578,7 @@ func runDiscoveryManagerExample(ctx context.Context) error {
 
 	// Validate node configuration
 	if *nodeID == 0 {
-		return &dragonerrors.MessageError{Message: "node-id is required for manager mode"}
+		return &qberrors.MessageError{Message: "node-id is required for manager mode"}
 	}
 
 	// Step 1: Create discovery methods
@@ -647,7 +647,7 @@ func runDiscoveryManagerExample(ctx context.Context) error {
 	}
 
 	if len(methods) == 0 {
-		return &dragonerrors.MessageError{Message: "no discovery methods could be created"}
+		return &qberrors.MessageError{Message: "no discovery methods could be created"}
 	}
 
 	// Step 2: Create discovery manager configuration
@@ -676,7 +676,7 @@ func runDiscoveryManagerExample(ctx context.Context) error {
 		Output: "stdout",
 	})
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create logger", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create logger", Cause: err}
 	}
 
 	// Step 4: Create discovery manager
@@ -694,7 +694,7 @@ func runDiscoveryManagerExample(ctx context.Context) error {
 
 	manager, err := discovery.NewManager(managerConfig, self, log)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create discovery manager", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create discovery manager", Cause: err}
 	}
 	defer manager.Close()
 

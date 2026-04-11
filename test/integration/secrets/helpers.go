@@ -29,7 +29,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -499,7 +499,7 @@ func tryGetSecret(t *testing.T, endpoint, path string) (*service.GetSecretRespon
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: fmt.Sprintf("status %d: %s", resp.StatusCode, string(respBody))}
+		return nil, &qberrors.MessageError{Message: fmt.Sprintf("status %d: %s", resp.StatusCode, string(respBody))}
 	}
 
 	var result service.GetSecretResponse

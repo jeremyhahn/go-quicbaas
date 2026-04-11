@@ -26,7 +26,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 const (
@@ -134,7 +134,7 @@ func setup() error {
 	// Find docker-compose.yml directory
 	dir, err := findDockerComposeDir()
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to find docker-compose.yml", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to find docker-compose.yml", Cause: err}
 	}
 	env.DockerComposeDir = dir
 
@@ -147,7 +147,7 @@ func setup() error {
 
 	// Start containers
 	if err := startContainers(env.DockerComposeDir); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to start containers", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to start containers", Cause: err}
 	}
 	env.ContainersStarted = true
 
@@ -157,7 +157,7 @@ func setup() error {
 		if logs, logErr := getContainerLogs(env.DockerComposeDir); logErr == nil {
 			fmt.Printf("Container logs:\n%s\n", logs)
 		}
-		return &dragonerrors.WrappedMessageError{Message: "server did not become healthy", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "server did not become healthy", Cause: err}
 	}
 
 	fmt.Println("QuicBaaS server is ready for tests")
@@ -175,7 +175,7 @@ func teardown() error {
 	if testEnv.ContainersStarted {
 		fmt.Println("Stopping test containers...")
 		if err := stopContainers(testEnv.DockerComposeDir); err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to stop containers", Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to stop containers", Cause: err}
 		}
 		fmt.Println("Test containers stopped")
 	}
@@ -232,7 +232,7 @@ func findDockerComposeDir() (string, error) {
 		}
 	}
 
-	return "", &dragonerrors.MessageError{Message: "docker-compose.yml not found in any expected location"}
+	return "", &qberrors.MessageError{Message: "docker-compose.yml not found in any expected location"}
 }
 
 // startContainers starts the Docker containers.
@@ -247,7 +247,7 @@ func startContainers(dir string) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "docker compose up failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "docker compose up failed", Cause: err}
 	}
 
 	return nil
@@ -263,7 +263,7 @@ func stopContainers(dir string) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "docker compose down failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "docker compose down failed", Cause: err}
 	}
 
 	return nil
@@ -315,7 +315,7 @@ func waitForHealthy(timeout time.Duration) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return &dragonerrors.MessageError{Message: "timeout waiting for server to become healthy"}
+			return &qberrors.MessageError{Message: "timeout waiting for server to become healthy"}
 		case <-ticker.C:
 			if isServerHealthy() {
 				return nil

@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
 )
@@ -480,9 +480,9 @@ func isNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var de *dragonerrors.QBError
+	var de *qberrors.QBError
 	if stderrors.As(err, &de) {
-		return de.Code == dragonerrors.ErrNotFound
+		return de.Code == qberrors.ErrNotFound
 	}
 	errStr := err.Error()
 	return errStr == "not found" || errStr == "key not found"

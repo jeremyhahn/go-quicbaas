@@ -35,7 +35,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
@@ -223,12 +223,12 @@ func (c *embeddedSealClient) Name() string { return "Embedded" }
 func (c *embeddedSealClient) Setup(t *testing.T, ctx context.Context) error {
 	svc, err := helpers.GetEmbeddedService(t)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 
 	client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(svc))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}
 
 	c.client = client
@@ -282,7 +282,7 @@ func (c *restSealClient) Name() string { return "REST" }
 func (c *restSealClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no REST endpoints available"}
+		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
 	c.httpClient = &http.Client{
@@ -303,9 +303,9 @@ func (c *restSealClient) Setup(t *testing.T, ctx context.Context) error {
 	if err != nil {
 		// Check if the error indicates seal service is not available
 		if strings.Contains(err.Error(), "seal service not available") {
-			return &dragonerrors.MessageError{Message: "REST seal service not available on this deployment"}
+			return &qberrors.MessageError{Message: "REST seal service not available on this deployment"}
 		}
-		return &dragonerrors.WrappedMessageError{Message: "REST seal service probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "REST seal service probe failed", Cause: err}
 	}
 
 	return nil
@@ -333,7 +333,7 @@ func (c *restSealClient) SealStatus(ctx context.Context) (*SealStatusResult, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "REST SealStatus failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(body),
 		}
 	}
@@ -360,7 +360,7 @@ func (c *grpcSealClient) Name() string { return "gRPC" }
 func (c *grpcSealClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetClusterEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no gRPC endpoints available"}
+		return &qberrors.MessageError{Message: "no gRPC endpoints available"}
 	}
 
 	conn, err := grpc.DialContext(ctx, endpoints[0],
@@ -420,7 +420,7 @@ func (c *quicSealClient) Name() string { return "QUIC" }
 func (c *quicSealClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetQUICEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no QUIC endpoints available"}
+		return &qberrors.MessageError{Message: "no QUIC endpoints available"}
 	}
 	c.address = endpoints[0]
 
@@ -453,7 +453,7 @@ func (c *unixSocketSealClient) Name() string { return "UnixSocket" }
 func (c *unixSocketSealClient) Setup(t *testing.T, ctx context.Context) error {
 	socketPath := helpers.GetUnixSocketPath()
 	if socketPath == "" {
-		return &dragonerrors.MessageError{Message: "no Unix socket path available"}
+		return &qberrors.MessageError{Message: "no Unix socket path available"}
 	}
 
 	conn, err := grpc.DialContext(ctx,
@@ -510,7 +510,7 @@ func (c *mcpSealClient) Name() string { return "MCP" }
 func (c *mcpSealClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetMCPEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no MCP endpoints available"}
+		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.baseURL = endpoints[0]
 	c.httpClient = &http.Client{
@@ -531,9 +531,9 @@ func (c *mcpSealClient) Setup(t *testing.T, ctx context.Context) error {
 		// Check if the error indicates MCP seal tool failed
 		if strings.Contains(err.Error(), "Tool execution failed") ||
 			strings.Contains(err.Error(), "seal service not available") {
-			return &dragonerrors.MessageError{Message: "MCP seal tool not available on this deployment"}
+			return &qberrors.MessageError{Message: "MCP seal tool not available on this deployment"}
 		}
-		return &dragonerrors.WrappedMessageError{Message: "MCP seal service probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP seal service probe failed", Cause: err}
 	}
 
 	return nil
@@ -584,7 +584,7 @@ func (c *mcpSealClient) SealStatus(ctx context.Context) (*SealStatusResult, erro
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "MCP SealStatus failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -606,7 +606,7 @@ func (c *mcpSealClient) SealStatus(ctx context.Context) (*SealStatusResult, erro
 	}
 
 	if mcpResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
+		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
 	}
 
 	// Parse seal status from MCP response content

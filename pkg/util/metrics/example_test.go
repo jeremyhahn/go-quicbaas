@@ -19,7 +19,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -291,7 +291,7 @@ func ExampleCollector_errorHandling() {
 		time.Sleep(50 * time.Millisecond)
 
 		// Simulate error
-		err := &dragonerrors.MessageError{Message: "connection timeout"}
+		err := &qberrors.MessageError{Message: "connection timeout"}
 		if err != nil {
 			timer.DoneWithError("500", "timeout")
 			return err

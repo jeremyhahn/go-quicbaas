@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 const (
@@ -138,7 +138,7 @@ func setupSecretsEncryptionKey() error {
 	// Check if key already exists
 	exists, err := keyExists(endpoint, secretsEncryptionKeyName)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "checking key existence", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "checking key existence", Cause: err}
 	}
 
 	if exists {
@@ -162,13 +162,13 @@ func setupSecretsEncryptionKey() error {
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "marshaling request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "marshaling request", Cause: err}
 	}
 
 	url := fmt.Sprintf("%s/api/v1/kms/keys", endpoint)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "creating request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "creating request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -178,17 +178,17 @@ func setupSecretsEncryptionKey() error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "sending request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "sending request", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "reading response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "reading response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return &dragonerrors.MessageError{Message: fmt.Sprintf("failed to create key (status %d): %s", resp.StatusCode, string(respBody))}
+		return &qberrors.MessageError{Message: fmt.Sprintf("failed to create key (status %d): %s", resp.StatusCode, string(respBody))}
 	}
 
 	fmt.Printf("Created secrets encryption key '%s'\n", secretsEncryptionKeyName)
@@ -210,7 +210,7 @@ func setupTestSecrets() error {
 		// Check if secret already exists
 		exists, err := secretExists(endpoint, fullName)
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "checking secret existence for " + fullName, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "checking secret existence for " + fullName, Cause: err}
 		}
 
 		if exists {
@@ -235,30 +235,30 @@ func setupTestSecrets() error {
 
 		bodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "marshaling request for " + fullName, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "marshaling request for " + fullName, Cause: err}
 		}
 
 		// Include the secret path in the URL
 		url := fmt.Sprintf("%s/api/v1/secrets/%s", endpoint, fullName)
 		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(bodyBytes))
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "creating request for " + fullName, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "creating request for " + fullName, Cause: err}
 		}
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "sending request for " + fullName, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "sending request for " + fullName, Cause: err}
 		}
 
 		respBody, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "reading response for " + fullName, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "reading response for " + fullName, Cause: err}
 		}
 
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-			return &dragonerrors.MessageError{Message: fmt.Sprintf("failed to create secret %s (status %d): %s", fullName, resp.StatusCode, string(respBody))}
+			return &qberrors.MessageError{Message: fmt.Sprintf("failed to create secret %s (status %d): %s", fullName, resp.StatusCode, string(respBody))}
 		}
 
 		fmt.Printf("Created test secret '%s'\n", fullName)
@@ -282,7 +282,7 @@ func cleanupTestSecrets() error {
 		// Check if secret exists before attempting deletion
 		exists, err := secretExists(endpoint, fullName)
 		if err != nil {
-			lastErr = &dragonerrors.WrappedMessageError{Message: "checking secret existence for " + fullName, Cause: err}
+			lastErr = &qberrors.WrappedMessageError{Message: "checking secret existence for " + fullName, Cause: err}
 			continue
 		}
 
@@ -295,19 +295,19 @@ func cleanupTestSecrets() error {
 		url := fmt.Sprintf("%s/api/v1/secrets/%s", endpoint, fullName)
 		req, err := http.NewRequest(http.MethodDelete, url, nil)
 		if err != nil {
-			lastErr = &dragonerrors.WrappedMessageError{Message: "creating delete request for " + fullName, Cause: err}
+			lastErr = &qberrors.WrappedMessageError{Message: "creating delete request for " + fullName, Cause: err}
 			continue
 		}
 
 		resp, err := client.Do(req)
 		if err != nil {
-			lastErr = &dragonerrors.WrappedMessageError{Message: "sending delete request for " + fullName, Cause: err}
+			lastErr = &qberrors.WrappedMessageError{Message: "sending delete request for " + fullName, Cause: err}
 			continue
 		}
 		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-			lastErr = &dragonerrors.MessageError{Message: fmt.Sprintf("failed to delete secret %s (status %d)", fullName, resp.StatusCode)}
+			lastErr = &qberrors.MessageError{Message: fmt.Sprintf("failed to delete secret %s (status %d)", fullName, resp.StatusCode)}
 			continue
 		}
 
@@ -323,7 +323,7 @@ func keyExists(endpoint, keyID string) (bool, error) {
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return false, &dragonerrors.WrappedMessageError{Message: "creating request", Cause: err}
+		return false, &qberrors.WrappedMessageError{Message: "creating request", Cause: err}
 	}
 
 	client := &http.Client{
@@ -332,7 +332,7 @@ func keyExists(endpoint, keyID string) (bool, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, &dragonerrors.WrappedMessageError{Message: "sending request", Cause: err}
+		return false, &qberrors.WrappedMessageError{Message: "sending request", Cause: err}
 	}
 	defer resp.Body.Close()
 
@@ -345,7 +345,7 @@ func secretExists(endpoint, secretID string) (bool, error) {
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return false, &dragonerrors.WrappedMessageError{Message: "creating request", Cause: err}
+		return false, &qberrors.WrappedMessageError{Message: "creating request", Cause: err}
 	}
 
 	client := &http.Client{
@@ -354,7 +354,7 @@ func secretExists(endpoint, secretID string) (bool, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, &dragonerrors.WrappedMessageError{Message: "sending request", Cause: err}
+		return false, &qberrors.WrappedMessageError{Message: "sending request", Cause: err}
 	}
 	defer resp.Body.Close()
 

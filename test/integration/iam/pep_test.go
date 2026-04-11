@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -460,7 +460,7 @@ func TestPEPConcurrency(t *testing.T) {
 					}
 
 					if !response.Allowed {
-						errors <- &dragonerrors.MessageError{Message: fmt.Sprintf("unexpected denial for goroutine %d, check %d", id, j)}
+						errors <- &qberrors.MessageError{Message: fmt.Sprintf("unexpected denial for goroutine %d, check %d", id, j)}
 						return
 					}
 				}

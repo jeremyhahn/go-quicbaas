@@ -37,7 +37,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -427,12 +427,12 @@ func (c *embeddedBatchClient) Name() string { return "Embedded" }
 func (c *embeddedBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	svc, err := helpers.GetEmbeddedService(t)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 
 	client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(svc))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}
 
 	c.client = client
@@ -546,7 +546,7 @@ func (c *restBatchClient) Name() string { return "REST" }
 func (c *restBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no REST endpoints available"}
+		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
 	c.httpClient = &http.Client{
@@ -573,7 +573,7 @@ func (c *restBatchClient) Setup(t *testing.T, ctx context.Context) error {
 		// Check if it's a connectivity error vs not implemented
 		if strings.Contains(err.Error(), "connection refused") ||
 			strings.Contains(err.Error(), "no such host") {
-			return &dragonerrors.WrappedMessageError{Message: "REST endpoint not available", Cause: err}
+			return &qberrors.WrappedMessageError{Message: "REST endpoint not available", Cause: err}
 		}
 		// Other errors may be OK - batch might work but probe failed for other reasons
 	}
@@ -640,7 +640,7 @@ func (c *restBatchClient) BatchPut(ctx context.Context, requests []*service.PutR
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "REST BatchPut failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "REST BatchPut failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var restResp restBatchPutResponse
@@ -718,7 +718,7 @@ func (c *restBatchClient) BatchGet(ctx context.Context, requests []*service.GetR
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "REST BatchGet failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "REST BatchGet failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var restResp restBatchGetResponse
@@ -796,7 +796,7 @@ func (c *restBatchClient) BatchDelete(ctx context.Context, requests []*service.D
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "REST BatchDelete failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "REST BatchDelete failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var restResp restBatchDeleteResponse
@@ -835,7 +835,7 @@ func (c *grpcBatchClient) Name() string { return "gRPC" }
 func (c *grpcBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetClusterEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no gRPC endpoints available"}
+		return &qberrors.MessageError{Message: "no gRPC endpoints available"}
 	}
 
 	// Create a context with timeout to prevent indefinite blocking on dial
@@ -847,7 +847,7 @@ func (c *grpcBatchClient) Setup(t *testing.T, ctx context.Context) error {
 		grpc.WithBlock(),
 	)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "gRPC dial to " + endpoints[0] + " failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "gRPC dial to " + endpoints[0] + " failed", Cause: err}
 	}
 
 	c.conn = conn
@@ -985,7 +985,7 @@ func (c *quicBatchClient) Name() string { return "QUIC" }
 func (c *quicBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetQUICEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no QUIC endpoints available"}
+		return &qberrors.MessageError{Message: "no QUIC endpoints available"}
 	}
 	c.address = endpoints[0]
 
@@ -1008,7 +1008,7 @@ func (c *quicBatchClient) Setup(t *testing.T, ctx context.Context) error {
 
 	conn, err := quicgo.DialAddr(dialCtx, c.address, c.tlsConfig, c.quicConfig)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to QUIC server at " + c.address, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to QUIC server at " + c.address, Cause: err}
 	}
 	c.conn = conn
 
@@ -1021,7 +1021,7 @@ func (c *quicBatchClient) Setup(t *testing.T, ctx context.Context) error {
 		// Close the connection since the server isn't responding properly
 		c.conn.CloseWithError(0, "probe failed")
 		c.conn = nil
-		return &dragonerrors.WrappedMessageError{Message: "QUIC server health check failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "QUIC server health check failed", Cause: err}
 	}
 
 	return nil
@@ -1046,12 +1046,12 @@ func (c *quicBatchClient) sendRequest(ctx context.Context, opcode byte, payload 
 	c.mu.Unlock()
 
 	if conn == nil {
-		return nil, &dragonerrors.MessageError{Message: "QUIC connection not established"}
+		return nil, &qberrors.MessageError{Message: "QUIC connection not established"}
 	}
 
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
 	}
 	defer stream.Close()
 
@@ -1062,13 +1062,13 @@ func (c *quicBatchClient) sendRequest(ctx context.Context, opcode byte, payload 
 	}
 
 	if err := quic.WriteRequest(stream, req); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to write request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
 	}
 
 	// Read response
 	resp, err := quic.ReadResponse(stream)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	// Check status
@@ -1091,7 +1091,7 @@ func (c *quicBatchClient) BatchPut(ctx context.Context, requests []*service.PutR
 
 	payload, err := quic.EncodePayload(batchReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to encode batch put request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to encode batch put request", Cause: err}
 	}
 
 	resp, err := c.sendRequest(ctx, quic.OpBatchPut, payload)
@@ -1102,7 +1102,7 @@ func (c *quicBatchClient) BatchPut(ctx context.Context, requests []*service.PutR
 	// Decode the response
 	var batchResp service.BatchPutResponse
 	if err := quic.DecodePayload(resp.Payload, &batchResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to decode batch put response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to decode batch put response", Cause: err}
 	}
 
 	// Convert to BatchPutResult
@@ -1135,7 +1135,7 @@ func (c *quicBatchClient) BatchGet(ctx context.Context, requests []*service.GetR
 
 	payload, err := quic.EncodePayload(batchReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to encode batch get request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to encode batch get request", Cause: err}
 	}
 
 	resp, err := c.sendRequest(ctx, quic.OpBatchGet, payload)
@@ -1146,7 +1146,7 @@ func (c *quicBatchClient) BatchGet(ctx context.Context, requests []*service.GetR
 	// Decode the response
 	var batchResp service.BatchGetResponse
 	if err := quic.DecodePayload(resp.Payload, &batchResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to decode batch get response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to decode batch get response", Cause: err}
 	}
 
 	// Convert to BatchGetResult
@@ -1180,7 +1180,7 @@ func (c *quicBatchClient) BatchDelete(ctx context.Context, requests []*service.D
 
 	payload, err := quic.EncodePayload(batchReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to encode batch delete request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to encode batch delete request", Cause: err}
 	}
 
 	resp, err := c.sendRequest(ctx, quic.OpBatchDelete, payload)
@@ -1191,7 +1191,7 @@ func (c *quicBatchClient) BatchDelete(ctx context.Context, requests []*service.D
 	// Decode the response
 	var batchResp service.BatchDeleteResponse
 	if err := quic.DecodePayload(resp.Payload, &batchResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to decode batch delete response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to decode batch delete response", Cause: err}
 	}
 
 	// Convert to BatchDeleteResult
@@ -1229,7 +1229,7 @@ func (c *unixSocketBatchClient) Name() string { return "UnixSocket" }
 func (c *unixSocketBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	socketPath := helpers.GetUnixSocketPath()
 	if socketPath == "" {
-		return &dragonerrors.MessageError{Message: "no Unix socket path available"}
+		return &qberrors.MessageError{Message: "no Unix socket path available"}
 	}
 
 	// Create a context with timeout to prevent indefinite blocking on dial
@@ -1245,7 +1245,7 @@ func (c *unixSocketBatchClient) Setup(t *testing.T, ctx context.Context) error {
 		}),
 	)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "Unix socket dial to " + socketPath + " failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "Unix socket dial to " + socketPath + " failed", Cause: err}
 	}
 
 	c.conn = conn
@@ -1391,7 +1391,7 @@ func (c *mcpBatchClient) Name() string { return "MCP" }
 func (c *mcpBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetMCPEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no MCP endpoints available"}
+		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.baseURL = endpoints[0]
 	c.httpClient = &http.Client{
@@ -1409,7 +1409,7 @@ func (c *mcpBatchClient) Setup(t *testing.T, ctx context.Context) error {
 
 	// Authenticate before probing
 	if err := c.authenticate(ctx); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
 	}
 
 	// Probe to verify MCP batch operations are available
@@ -1421,7 +1421,7 @@ func (c *mcpBatchClient) Setup(t *testing.T, ctx context.Context) error {
 		// Check if it's a connectivity error
 		if strings.Contains(err.Error(), "connection refused") ||
 			strings.Contains(err.Error(), "no such host") {
-			return &dragonerrors.WrappedMessageError{Message: "MCP endpoint not available", Cause: err}
+			return &qberrors.WrappedMessageError{Message: "MCP endpoint not available", Cause: err}
 		}
 		// Check for tool not available errors
 		errStr := err.Error()
@@ -1429,7 +1429,7 @@ func (c *mcpBatchClient) Setup(t *testing.T, ctx context.Context) error {
 			strings.Contains(errStr, "not found") ||
 			strings.Contains(errStr, "not implemented") ||
 			strings.Contains(errStr, "Tool execution failed") {
-			return &dragonerrors.WrappedMessageError{Message: "MCP batch operations not available", Cause: err}
+			return &qberrors.WrappedMessageError{Message: "MCP batch operations not available", Cause: err}
 		}
 		// Other errors may be OK
 	}
@@ -1585,7 +1585,7 @@ func (c *mcpBatchClient) mcpToolCall(ctx context.Context, toolName string, argum
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", &dragonerrors.MessageError{Message: "MCP " + toolName + " failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return "", &qberrors.MessageError{Message: "MCP " + toolName + " failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var mcpResp mcpJSONRPCResponse
@@ -1594,18 +1594,18 @@ func (c *mcpBatchClient) mcpToolCall(ctx context.Context, toolName string, argum
 	}
 
 	if mcpResp.Error != nil {
-		return "", &dragonerrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
+		return "", &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
 	}
 
 	if mcpResp.Result.IsError {
 		if len(mcpResp.Result.Content) > 0 {
-			return "", &dragonerrors.MessageError{Message: "MCP tool execution failed: " + mcpResp.Result.Content[0].Text}
+			return "", &qberrors.MessageError{Message: "MCP tool execution failed: " + mcpResp.Result.Content[0].Text}
 		}
-		return "", &dragonerrors.MessageError{Message: "MCP tool execution failed"}
+		return "", &qberrors.MessageError{Message: "MCP tool execution failed"}
 	}
 
 	if len(mcpResp.Result.Content) == 0 {
-		return "", &dragonerrors.MessageError{Message: "MCP " + toolName + " returned empty content"}
+		return "", &qberrors.MessageError{Message: "MCP " + toolName + " returned empty content"}
 	}
 
 	return mcpResp.Result.Content[0].Text, nil
@@ -1644,7 +1644,7 @@ func (c *mcpBatchClient) BatchPut(ctx context.Context, requests []*service.PutRe
 
 	var srvResp mcpBatchPutResp
 	if err := json.Unmarshal([]byte(contentText), &srvResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP BatchPut response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP BatchPut response", Cause: err}
 	}
 
 	result := &BatchPutResult{
@@ -1703,7 +1703,7 @@ func (c *mcpBatchClient) BatchGet(ctx context.Context, requests []*service.GetRe
 
 	var srvResp mcpBatchGetResp
 	if err := json.Unmarshal([]byte(contentText), &srvResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP BatchGet response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP BatchGet response", Cause: err}
 	}
 
 	result := &BatchGetResult{
@@ -1761,7 +1761,7 @@ func (c *mcpBatchClient) BatchDelete(ctx context.Context, requests []*service.De
 
 	var srvResp mcpBatchDeleteResp
 	if err := json.Unmarshal([]byte(contentText), &srvResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP BatchDelete response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP BatchDelete response", Cause: err}
 	}
 
 	result := &BatchDeleteResult{

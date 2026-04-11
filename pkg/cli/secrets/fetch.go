@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // OutputFormat represents the output format for fetched secrets.
@@ -49,7 +49,7 @@ func ParseOutputFormat(s string) (OutputFormat, error) {
 	case "json":
 		return OutputFormatJSON, nil
 	default:
-		return "", dragonerrors.InvalidInputf("secrets.ParseOutputFormat", "unknown output format: %s (valid: file, env, json)", s)
+		return "", qberrors.InvalidInputf("secrets.ParseOutputFormat", "unknown output format: %s (valid: file, env, json)", s)
 	}
 }
 
@@ -133,15 +133,15 @@ type Fetcher struct {
 // NewFetcher creates a new secrets fetcher.
 func NewFetcher(provider SecretsProvider, config FetchConfig) (*Fetcher, error) {
 	if provider == nil {
-		return nil, dragonerrors.InvalidInput("secrets.NewFetcher", "provider is required")
+		return nil, qberrors.InvalidInput("secrets.NewFetcher", "provider is required")
 	}
 
 	if config.Prefix == "" {
-		return nil, dragonerrors.InvalidInput("secrets.NewFetcher", "prefix is required")
+		return nil, qberrors.InvalidInput("secrets.NewFetcher", "prefix is required")
 	}
 
 	if config.OutputDir == "" {
-		return nil, dragonerrors.InvalidInput("secrets.NewFetcher", "output directory is required")
+		return nil, qberrors.InvalidInput("secrets.NewFetcher", "output directory is required")
 	}
 
 	return &Fetcher{
@@ -155,14 +155,14 @@ func (f *Fetcher) Fetch(ctx context.Context) (*FetchResult, error) {
 	// Create output directory if needed
 	if f.config.CreateDirs {
 		if err := os.MkdirAll(f.config.OutputDir, f.config.DirMode); err != nil {
-			return nil, dragonerrors.Wrapf(err, dragonerrors.ErrInternal, "secrets.Fetch", "failed to create output directory")
+			return nil, qberrors.Wrapf(err, qberrors.ErrInternal, "secrets.Fetch", "failed to create output directory")
 		}
 	}
 
 	// Fetch secrets from provider
 	secrets, err := f.provider.GetSecretsByPrefix(ctx, f.config.Prefix)
 	if err != nil {
-		return nil, dragonerrors.Wrapf(err, dragonerrors.ErrInternal, "secrets.Fetch", "failed to fetch secrets")
+		return nil, qberrors.Wrapf(err, qberrors.ErrInternal, "secrets.Fetch", "failed to fetch secrets")
 	}
 
 	// Filter keys if specified
@@ -180,7 +180,7 @@ func (f *Fetcher) Fetch(ctx context.Context) (*FetchResult, error) {
 	case OutputFormatJSON:
 		result, err = f.writeAsJSON(secrets)
 	default:
-		return nil, dragonerrors.InvalidInputf("secrets.Fetch", "unknown output format: %s", f.config.Format)
+		return nil, qberrors.InvalidInputf("secrets.Fetch", "unknown output format: %s", f.config.Format)
 	}
 
 	if err != nil {
@@ -237,7 +237,7 @@ func (f *Fetcher) writeAsFiles(secrets []SecretData) (*FetchResult, error) {
 				basePath = filepath.Join(f.config.OutputDir, relativePath)
 				if f.config.CreateDirs {
 					if err := os.MkdirAll(basePath, f.config.DirMode); err != nil {
-						return nil, dragonerrors.Wrapf(err, dragonerrors.ErrInternal, "secrets.writeAsFiles", "failed to create directory %s", basePath)
+						return nil, qberrors.Wrapf(err, qberrors.ErrInternal, "secrets.writeAsFiles", "failed to create directory %s", basePath)
 					}
 				}
 			}
@@ -247,7 +247,7 @@ func (f *Fetcher) writeAsFiles(secrets []SecretData) (*FetchResult, error) {
 		for key, value := range secret.Data {
 			filename := filepath.Join(basePath, key)
 			if err := os.WriteFile(filename, []byte(value), f.config.FileMode); err != nil {
-				return nil, dragonerrors.Wrapf(err, dragonerrors.ErrInternal, "secrets.writeAsFiles", "failed to write file %s", filename)
+				return nil, qberrors.Wrapf(err, qberrors.ErrInternal, "secrets.writeAsFiles", "failed to write file %s", filename)
 			}
 			result.FilesWritten = append(result.FilesWritten, filename)
 			result.KeysCount++
@@ -287,7 +287,7 @@ func (f *Fetcher) writeAsEnv(secrets []SecretData) (*FetchResult, error) {
 	// Write the .env file
 	filename := filepath.Join(f.config.OutputDir, ".env")
 	if err := os.WriteFile(filename, []byte(builder.String()), f.config.FileMode); err != nil {
-		return nil, dragonerrors.Wrapf(err, dragonerrors.ErrInternal, "secrets.writeAsEnv", "failed to write .env file")
+		return nil, qberrors.Wrapf(err, qberrors.ErrInternal, "secrets.writeAsEnv", "failed to write .env file")
 	}
 	result.FilesWritten = append(result.FilesWritten, filename)
 
@@ -333,7 +333,7 @@ func (f *Fetcher) writeAsJSON(secrets []SecretData) (*FetchResult, error) {
 					}
 					nested, ok := current[part].(map[string]interface{})
 					if !ok {
-						return nil, dragonerrors.Internalf("secrets.writeAsJSON", "path conflict: %s is not a map", part)
+						return nil, qberrors.Internalf("secrets.writeAsJSON", "path conflict: %s is not a map", part)
 					}
 					current = nested
 				}
@@ -344,13 +344,13 @@ func (f *Fetcher) writeAsJSON(secrets []SecretData) (*FetchResult, error) {
 	// Marshal to JSON with indentation
 	jsonData, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
-		return nil, dragonerrors.Wrapf(err, dragonerrors.ErrInternal, "secrets.writeAsJSON", "failed to marshal JSON")
+		return nil, qberrors.Wrapf(err, qberrors.ErrInternal, "secrets.writeAsJSON", "failed to marshal JSON")
 	}
 
 	// Write the JSON file
 	filename := filepath.Join(f.config.OutputDir, "secrets.json")
 	if err := os.WriteFile(filename, jsonData, f.config.FileMode); err != nil {
-		return nil, dragonerrors.Wrapf(err, dragonerrors.ErrInternal, "secrets.writeAsJSON", "failed to write JSON file")
+		return nil, qberrors.Wrapf(err, qberrors.ErrInternal, "secrets.writeAsJSON", "failed to write JSON file")
 	}
 	result.FilesWritten = append(result.FilesWritten, filename)
 

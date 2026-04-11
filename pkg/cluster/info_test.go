@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -752,9 +752,9 @@ func TestNewNodeNotFoundError(t *testing.T) {
 	err := NewNodeNotFoundError("test.op", 42)
 	require.NotNil(t, err)
 
-	var de *dragonerrors.QBError
+	var de *qberrors.QBError
 	require.True(t, errors.As(err, &de))
-	assert.Equal(t, dragonerrors.ErrNotFound, de.Code)
+	assert.Equal(t, qberrors.ErrNotFound, de.Code)
 	assert.Equal(t, "test.op", de.Op)
 
 	nodeID, ok := de.Context["node_id"]

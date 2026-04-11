@@ -289,7 +289,7 @@ func TestIsInternalKey(t *testing.T) {
 		},
 		{
 			name:     "partial prefix is not internal",
-			key:      []byte("__dragon"),
+			key:      []byte("__qrdb"),
 			expected: false,
 		},
 		{

@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
@@ -82,7 +82,7 @@ func (a *restAdapter) doRequest(ctx context.Context, method, path string, body i
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal request body", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request body", Cause: err}
 		}
 		reqBody = bytes.NewReader(jsonBody)
 	}
@@ -90,7 +90,7 @@ func (a *restAdapter) doRequest(ctx context.Context, method, path string, body i
 	url := a.baseURL + path
 	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	if body != nil {
@@ -100,17 +100,17 @@ func (a *restAdapter) doRequest(ctx context.Context, method, path string, body i
 
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response body", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response body", Cause: err}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &dragonerrors.MessageError{Message: "request failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "request failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return respBody, nil
@@ -135,7 +135,7 @@ func (a *restAdapter) CreateChannel(ctx context.Context, req *grpc.MessagingCrea
 		Channel *restChannelResponse `json:"channel"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	return &grpc.MessagingCreateChannelResponse{
@@ -157,7 +157,7 @@ func (a *restAdapter) DeleteChannel(ctx context.Context, req *grpc.MessagingDele
 		Deleted bool   `json:"deleted"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	return &grpc.MessagingDeleteChannelResponse{
@@ -179,11 +179,11 @@ func (a *restAdapter) GetChannel(ctx context.Context, req *grpc.MessagingGetChan
 		Channel *restChannelResponse `json:"channel"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	if response.Channel == nil {
-		return nil, &dragonerrors.MessageError{Message: "channel not found: " + req.Name}
+		return nil, &qberrors.MessageError{Message: "channel not found: " + req.Name}
 	}
 
 	return &grpc.MessagingGetChannelResponse{
@@ -220,7 +220,7 @@ func (a *restAdapter) ListChannels(ctx context.Context, req *grpc.MessagingListC
 		TotalCount int32                  `json:"total_count"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	channels := make([]*grpc.MessagingChannel, len(response.Channels))
@@ -268,11 +268,11 @@ func (a *restAdapter) Subscribe(ctx context.Context, req *grpc.MessagingSubscrib
 		} `json:"subscription"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	if response.Subscription == nil {
-		return nil, &dragonerrors.MessageError{Message: "failed to create subscription"}
+		return nil, &qberrors.MessageError{Message: "failed to create subscription"}
 	}
 
 	return &grpc.MessagingSubscribeResponse{
@@ -299,7 +299,7 @@ func (a *restAdapter) Unsubscribe(ctx context.Context, req *grpc.MessagingUnsubs
 		Unsubscribed   bool   `json:"unsubscribed"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	return &grpc.MessagingUnsubscribeResponse{
@@ -330,7 +330,7 @@ func (a *restAdapter) Publish(ctx context.Context, req *grpc.MessagingPublishReq
 		Timestamp   int64  `json:"timestamp"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	return &grpc.MessagingPublishResponse{
@@ -368,7 +368,7 @@ func (a *restAdapter) PublishDelta(ctx context.Context, req *grpc.MessagingPubli
 		} `json:"delta"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	var delta *grpc.MessagingDeltaPayload
@@ -404,7 +404,7 @@ func (a *restAdapter) GetChannelStats(ctx context.Context, req *grpc.MessagingGe
 		Timestamp         int64  `json:"timestamp"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	return &grpc.MessagingGetChannelStatsResponse{
@@ -431,7 +431,7 @@ func (a *restAdapter) GetDedupStats(ctx context.Context, req *grpc.MessagingGetD
 		TotalDuplicates int64  `json:"total_duplicates"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	return &grpc.MessagingGetDedupStatsResponse{
@@ -461,7 +461,7 @@ func (a *restAdapter) GetStats(ctx context.Context) (*grpc.MessagingGetStatsResp
 		BufferUtilization  float64 `json:"buffer_utilization"`
 	}
 	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse response", Cause: err}
 	}
 
 	return &grpc.MessagingGetStatsResponse{

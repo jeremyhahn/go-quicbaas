@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
@@ -113,7 +113,7 @@ func TestClusterReadiness(t *testing.T) {
 					return // Success
 				}
 
-				lastErr = &dragonerrors.MessageError{Message: "status=" + strconv.Itoa(resp.StatusCode) + ", body=" + lastBody}
+				lastErr = &qberrors.MessageError{Message: "status=" + strconv.Itoa(resp.StatusCode) + ", body=" + lastBody}
 				t.Logf("Attempt %d/%d: Node %d not ready: %v", attempt+1, maxAttempts, i+1, lastErr)
 				time.Sleep(baseDelay)
 			}

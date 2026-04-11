@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -150,7 +150,7 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 
 	result, err := c.call(ctx, req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP login failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP login failed", Cause: err}
 	}
 
 	// Parse login response to get access token
@@ -162,14 +162,14 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 		IsError bool `json:"isError"`
 	}
 	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to unmarshal login result", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to unmarshal login result", Cause: err}
 	}
 
 	if toolResult.IsError {
 		if len(toolResult.Content) > 0 {
-			return &dragonerrors.MessageError{Message: "MCP login error: " + toolResult.Content[0].Text}
+			return &qberrors.MessageError{Message: "MCP login error: " + toolResult.Content[0].Text}
 		}
-		return &dragonerrors.MessageError{Message: "MCP login error: unknown error"}
+		return &qberrors.MessageError{Message: "MCP login error: unknown error"}
 	}
 
 	// Extract access token from response
@@ -178,7 +178,7 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 		if content.Type == "text" && content.Text != "" {
 			var loginResp map[string]interface{}
 			if err := json.Unmarshal([]byte(content.Text), &loginResp); err != nil {
-				return &dragonerrors.WrappedMessageError{Message: "failed to unmarshal login response", Cause: err}
+				return &qberrors.WrappedMessageError{Message: "failed to unmarshal login response", Cause: err}
 			}
 			// Try snake_case first (access_token), then PascalCase (AccessToken)
 			var token string
@@ -194,7 +194,7 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 		}
 	}
 
-	return &dragonerrors.MessageError{Message: "no access token in login response"}
+	return &qberrors.MessageError{Message: "no access token in login response"}
 }
 
 // ListTools lists available MCP tools.
@@ -215,7 +215,7 @@ func (c *MCPClient) ListTools(ctx context.Context) ([]map[string]interface{}, er
 		Tools []map[string]interface{} `json:"tools"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal tools list", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal tools list", Cause: err}
 	}
 
 	return result.Tools, nil
@@ -264,7 +264,7 @@ func extractMCPContent(result json.RawMessage) (json.RawMessage, error) {
 	}
 
 	if len(wrapper.Content) == 0 {
-		return nil, &dragonerrors.MessageError{Message: "no content in MCP response"}
+		return nil, &qberrors.MessageError{Message: "no content in MCP response"}
 	}
 
 	// Return the text content as raw JSON
@@ -275,12 +275,12 @@ func extractMCPContent(result json.RawMessage) (json.RawMessage, error) {
 func (c *MCPClient) call(ctx context.Context, req JSONRPCRequest) (json.RawMessage, error) {
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create HTTP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create HTTP request", Cause: err}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
@@ -291,26 +291,26 @@ func (c *MCPClient) call(ctx context.Context, req JSONRPCRequest) (json.RawMessa
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to make HTTP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to make HTTP request", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response body", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response body", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: fmt.Sprintf("HTTP status %d: %s", resp.StatusCode, string(respBody))}
+		return nil, &qberrors.MessageError{Message: fmt.Sprintf("HTTP status %d: %s", resp.StatusCode, string(respBody))}
 	}
 
 	var rpcResp JSONRPCResponse
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	if rpcResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: fmt.Sprintf("JSON-RPC error %d: %s (data: %s)", rpcResp.Error.Code, rpcResp.Error.Message, rpcResp.Error.Data)}
+		return nil, &qberrors.MessageError{Message: fmt.Sprintf("JSON-RPC error %d: %s (data: %s)", rpcResp.Error.Code, rpcResp.Error.Message, rpcResp.Error.Data)}
 	}
 
 	return rpcResp.Result, nil
@@ -343,7 +343,7 @@ func (c *mcpProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	err := c.client.Initialize(ctx)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP server not available at " + endpoint, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP server not available at " + endpoint, Cause: err}
 	}
 
 	return nil
@@ -380,7 +380,7 @@ func (c *mcpProtocolClient) StoreSecret(ctx context.Context, req *service.StoreS
 
 	var resp service.StoreSecretResponse
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	return &resp, nil
@@ -402,7 +402,7 @@ func (c *mcpProtocolClient) GetSecret(ctx context.Context, req *service.GetSecre
 
 	var resp service.GetSecretResponse
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	return &resp, nil
@@ -428,7 +428,7 @@ func (c *mcpProtocolClient) ListSecrets(ctx context.Context, req *service.ListSe
 
 	var resp service.ListSecretsResponse
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	return &resp, nil
@@ -447,7 +447,7 @@ func (c *mcpProtocolClient) DeleteSecret(ctx context.Context, req *service.Delet
 
 	var resp service.DeleteSecretResponse
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	return &resp, nil
@@ -472,7 +472,7 @@ func (c *mcpProtocolClient) ListVersions(ctx context.Context, req *service.ListS
 
 	var resp service.ListSecretVersionsResponse
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	return &resp, nil
@@ -491,7 +491,7 @@ func (c *mcpProtocolClient) Rollback(ctx context.Context, req *service.RollbackS
 
 	var resp service.RollbackSecretResponse
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	return &resp, nil
@@ -517,7 +517,7 @@ func (c *mcpProtocolClient) Rotate(ctx context.Context, req *service.RotateSecre
 
 	var resp service.RotateSecretResponse
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	return &resp, nil
@@ -532,7 +532,7 @@ func (c *mcpProtocolClient) UpdateSecretStatus(ctx context.Context, req *service
 	case service.SecretStatusDisabled:
 		toolName = "quicbaas_secrets_disable"
 	default:
-		return nil, &dragonerrors.MessageError{Message: "unsupported status: " + string(req.Status)}
+		return nil, &qberrors.MessageError{Message: "unsupported status: " + string(req.Status)}
 	}
 
 	args := map[string]interface{}{
@@ -546,7 +546,7 @@ func (c *mcpProtocolClient) UpdateSecretStatus(ctx context.Context, req *service
 
 	var resp service.UpdateSecretStatusResponse
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	return &resp, nil

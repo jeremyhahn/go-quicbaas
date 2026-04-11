@@ -31,7 +31,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
@@ -860,7 +860,7 @@ func TestConditionalBatchConcurrent(t *testing.T) {
 
 			stream, err := client.StreamBatchPut(workerCtx)
 			if err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to create stream", Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to create stream", Cause: err}
 				return
 			}
 
@@ -881,12 +881,12 @@ func TestConditionalBatchConcurrent(t *testing.T) {
 			if err := stream.Send(&pb.StreamBatchPutRequest{
 				Payload: &pb.StreamBatchPutRequest_Header{Header: header},
 			}); err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to send header", Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to send header", Cause: err}
 				return
 			}
 
 			if _, err := stream.Recv(); err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to receive initial progress", Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to receive initial progress", Cause: err}
 				return
 			}
 
@@ -904,12 +904,12 @@ func TestConditionalBatchConcurrent(t *testing.T) {
 			if err := stream.Send(&pb.StreamBatchPutRequest{
 				Payload: &pb.StreamBatchPutRequest_Chunk{Chunk: chunk},
 			}); err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to send chunk", Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to send chunk", Cause: err}
 				return
 			}
 
 			if _, err := stream.Recv(); err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to receive chunk progress", Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to receive chunk progress", Cause: err}
 				return
 			}
 
@@ -918,19 +918,19 @@ func TestConditionalBatchConcurrent(t *testing.T) {
 					Complete: &pb.StreamBatchComplete{Commit: true},
 				},
 			}); err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to send complete", Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to send complete", Cause: err}
 				return
 			}
 
 			resp, err := stream.Recv()
 			if err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to receive result", Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "worker " + workerIDStr + ": failed to receive result", Cause: err}
 				return
 			}
 
 			result, ok := resp.Payload.(*pb.StreamBatchPutResponse_Result)
 			if !ok {
-				errors <- &dragonerrors.MessageError{Message: "worker " + workerIDStr + ": unexpected response type"}
+				errors <- &qberrors.MessageError{Message: "worker " + workerIDStr + ": unexpected response type"}
 				return
 			}
 

@@ -432,7 +432,7 @@ func TestValidateSocketPath_EdgeCases(t *testing.T) {
 		},
 		{
 			name:        "path with spaces",
-			path:        "/var/run/dragon db.sock",
+			path:        "/var/run/quicbaas db.sock",
 			expectError: false,
 		},
 		{

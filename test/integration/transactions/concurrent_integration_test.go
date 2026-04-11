@@ -33,7 +33,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 )
@@ -44,7 +44,7 @@ import (
 func issueTokenForUser(ctx context.Context, authManager *auth.InMemoryAuthManager, username string) (*auth.Token, error) {
 	userInfo := authManager.GetUserStore().GetByUsername(username)
 	if userInfo == nil {
-		return nil, &dragonerrors.MessageError{Message: "user not found: " + username}
+		return nil, &qberrors.MessageError{Message: "user not found: " + username}
 	}
 	return authManager.IssueTokenForUser(ctx, userInfo)
 }

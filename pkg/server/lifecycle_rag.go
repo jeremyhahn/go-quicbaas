@@ -20,7 +20,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -80,8 +80,8 @@ func (s *Server) stopRAG() error {
 
 	s.logger.Debug("Closing RAG system...")
 	if err := s.ragSystem.Close(); err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "server.stopRAG",
 			Err:  &ServerCauseError{Message: "failed to close RAG system", Cause: err},
 		}

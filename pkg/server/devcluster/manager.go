@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
@@ -89,16 +89,16 @@ func NewManager(cfg *ManagerConfig) (*Manager, error) {
 	}
 
 	if cfg.BaseConfig == nil {
-		return nil, &dragonerrors.QBError{
-			Code: dragonerrors.ErrInvalidInput,
+		return nil, &qberrors.QBError{
+			Code: qberrors.ErrInvalidInput,
 			Op:   "devcluster.NewManager",
 			Err:  ErrBaseConfigRequired,
 		}
 	}
 
 	if cfg.DevCluster.NodeCount <= 0 {
-		return nil, &dragonerrors.QBError{
-			Code: dragonerrors.ErrInvalidInput,
+		return nil, &qberrors.QBError{
+			Code: qberrors.ErrInvalidInput,
 			Op:   "devcluster.NewManager",
 			Err:  &InvalidNodeCountError{Count: cfg.DevCluster.NodeCount},
 		}
@@ -109,8 +109,8 @@ func NewManager(cfg *ManagerConfig) (*Manager, error) {
 		var err error
 		log, err = logger.New(logger.Default())
 		if err != nil {
-			return nil, &dragonerrors.QBError{
-				Code: dragonerrors.ErrInternal,
+			return nil, &qberrors.QBError{
+				Code: qberrors.ErrInternal,
 				Op:   "devcluster.NewManager",
 				Err:  &DevClusterCauseError{Message: "failed to create default logger", Cause: err},
 			}
@@ -129,8 +129,8 @@ func NewManager(cfg *ManagerConfig) (*Manager, error) {
 // It does not start actual server instances; that is handled by the server package.
 func (m *Manager) Start(ctx context.Context) error {
 	if !m.started.CompareAndSwap(false, true) {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "devcluster.Start",
 			Err:  ErrManagerAlreadyStarted,
 		}
@@ -141,8 +141,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	// Check for context cancellation.
 	select {
 	case <-ctx.Done():
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrCanceled,
+		return &qberrors.QBError{
+			Code: qberrors.ErrCanceled,
 			Op:   "devcluster.Start",
 			Err:  ctx.Err(),
 		}
@@ -287,8 +287,8 @@ func (m *Manager) Stop(ctx context.Context) error {
 		m.logger.Info("All devcluster nodes stopped")
 	case <-ctx.Done():
 		m.logger.Warn("Devcluster stop timed out waiting for context")
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrTimeout,
+		return &qberrors.QBError{
+			Code: qberrors.ErrTimeout,
 			Op:   "devcluster.Stop",
 			Err:  ctx.Err(),
 		}
@@ -326,8 +326,8 @@ func (m *Manager) GetNodeConfig(nodeID uint64) (*config.Config, error) {
 		}
 	}
 
-	return nil, &dragonerrors.QBError{
-		Code: dragonerrors.ErrNotFound,
+	return nil, &qberrors.QBError{
+		Code: qberrors.ErrNotFound,
 		Op:   "devcluster.GetNodeConfig",
 		Err:  &NodeNotFoundError{NodeID: nodeID},
 	}
@@ -344,8 +344,8 @@ func (m *Manager) GetNode(nodeID uint64) (*NodeInstance, error) {
 		}
 	}
 
-	return nil, &dragonerrors.QBError{
-		Code: dragonerrors.ErrNotFound,
+	return nil, &qberrors.QBError{
+		Code: qberrors.ErrNotFound,
 		Op:   "devcluster.GetNode",
 		Err:  &NodeNotFoundError{NodeID: nodeID},
 	}

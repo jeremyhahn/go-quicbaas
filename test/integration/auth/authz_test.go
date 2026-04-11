@@ -28,7 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -109,7 +109,7 @@ func (tc *testAuthzContext) createTestUser(username string, roles []string) (*au
 	// Get user from store and issue token (replaces deprecated password-based authentication)
 	userInfo := tc.authManager.GetUserStore().GetByUsername(username)
 	if userInfo == nil {
-		return nil, nil, &dragonerrors.MessageError{Message: "user not found after creation: " + username}
+		return nil, nil, &qberrors.MessageError{Message: "user not found after creation: " + username}
 	}
 
 	token, err := tc.authManager.IssueTokenForUser(tc.ctx, userInfo)

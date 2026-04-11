@@ -45,6 +45,42 @@ type Client interface {
 
 	// DeleteKey deletes a key.
 	DeleteKey(ctx context.Context, keyID string) error
+
+	// ImportKey imports an externally generated key into the KMS.
+	ImportKey(ctx context.Context, req *ImportKeyRequest) (*ImportKeyResponse, error)
+
+	// ExportKey exports a key wrapped with a wrapping key.
+	ExportKey(ctx context.Context, req *ExportKeyRequest) (*ExportKeyResponse, error)
+
+	// RevokeKey marks a key as revoked and unusable.
+	RevokeKey(ctx context.Context, keyID string) error
+
+	// ListKeyVersions returns all versions of a key.
+	ListKeyVersions(ctx context.Context, keyID string) (*ListKeyVersionsResponse, error)
+
+	// UpdateKeyStatus enables or disables a key or key version.
+	UpdateKeyStatus(ctx context.Context, req *UpdateKeyStatusRequest) (*UpdateKeyStatusResponse, error)
+
+	// GetKeyMetadata retrieves metadata for a key without exposing key material.
+	GetKeyMetadata(ctx context.Context, keyID string) (*KeyMetadataResponse, error)
+
+	// UpdateKeyMetadata updates mutable metadata fields for a key.
+	UpdateKeyMetadata(ctx context.Context, req *UpdateKeyMetadataRequest) (*KeyMetadataResponse, error)
+
+	// SetKeyPolicy sets the access control policy for a key.
+	SetKeyPolicy(ctx context.Context, req *SetKeyPolicyRequest) error
+
+	// GetKeyPolicy retrieves the access control policy for a key.
+	GetKeyPolicy(ctx context.Context, keyID string) (*KeyPolicy, error)
+
+	// GetSupportedAlgorithms returns the list of supported algorithms.
+	GetSupportedAlgorithms(ctx context.Context) (*SupportedAlgorithmsResponse, error)
+
+	// BackendStatus returns health and capability information about the KMS backend.
+	BackendStatus(ctx context.Context) (*BackendStatusResponse, error)
+
+	// UnwrapKey imports a wrapped key into the KMS.
+	UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (*UnwrapKeyResponse, error)
 }
 
 // GenerateKeyRequest is a request to generate a key.
@@ -134,6 +170,90 @@ func (u KeyUsage) String() string {
 	}
 }
 
+// KeyStatus represents the lifecycle state of a key.
+type KeyStatus int
+
+const (
+	// KeyStatusEnabled indicates the key is active.
+	KeyStatusEnabled KeyStatus = iota
+	// KeyStatusDisabled indicates the key is disabled.
+	KeyStatusDisabled
+	// KeyStatusPendingDeletion indicates the key is pending deletion.
+	KeyStatusPendingDeletion
+	// KeyStatusDeleted indicates the key has been deleted.
+	KeyStatusDeleted
+	// KeyStatusRotating indicates the key is being rotated.
+	KeyStatusRotating
+	// KeyStatusCompromised indicates the key has been compromised.
+	KeyStatusCompromised
+)
+
+// String returns the string representation of the key status.
+func (s KeyStatus) String() string {
+	switch s {
+	case KeyStatusEnabled:
+		return "ENABLED"
+	case KeyStatusDisabled:
+		return "DISABLED"
+	case KeyStatusPendingDeletion:
+		return "PENDING_DELETION"
+	case KeyStatusDeleted:
+		return "DELETED"
+	case KeyStatusRotating:
+		return "ROTATING"
+	case KeyStatusCompromised:
+		return "COMPROMISED"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// ExportFormat specifies the format for exported key material.
+type ExportFormat int
+
+const (
+	// ExportFormatRaw exports raw key bytes.
+	ExportFormatRaw ExportFormat = iota
+	// ExportFormatJWK exports as JSON Web Key.
+	ExportFormatJWK
+	// ExportFormatPEM exports as PEM.
+	ExportFormatPEM
+)
+
+// String returns the string representation of the export format.
+func (f ExportFormat) String() string {
+	switch f {
+	case ExportFormatRaw:
+		return "RAW"
+	case ExportFormatJWK:
+		return "JWK"
+	case ExportFormatPEM:
+		return "PEM"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// WrappingAlgorithm specifies the algorithm used for key wrapping.
+type WrappingAlgorithm int
+
+const (
+	// WrapAlgAESKW is RFC 3394 AES Key Wrap.
+	WrapAlgAESKW WrappingAlgorithm = iota
+	// WrapAlgAESKWP is RFC 5649 AES Key Wrap with Padding.
+	WrapAlgAESKWP
+	// WrapAlgAESGCM is AES-GCM envelope encryption.
+	WrapAlgAESGCM
+	// WrapAlgRSAOAEPSHA256 is RSA-OAEP with SHA-256.
+	WrapAlgRSAOAEPSHA256
+	// WrapAlgRSAOAEPSHA384 is RSA-OAEP with SHA-384.
+	WrapAlgRSAOAEPSHA384
+	// WrapAlgRSAOAEPSHA512 is RSA-OAEP with SHA-512.
+	WrapAlgRSAOAEPSHA512
+	// WrapAlgECDHESA256KW is ECDH-ES+A256KW.
+	WrapAlgECDHESA256KW
+)
+
 // GenerateKeyResponse is the response from key generation.
 type GenerateKeyResponse struct {
 	KeyID     string
@@ -171,6 +291,216 @@ type GetPublicKeyResponse struct {
 	Version   int
 }
 
+// ImportKeyRequest is a request to import a key into the KMS.
+type ImportKeyRequest struct {
+	// KeyMaterial is the raw key material to import.
+	KeyMaterial []byte
+
+	// WrappingKeyID is the key used to decrypt the material (if wrapped).
+	WrappingKeyID string
+
+	// Name is the display name for the imported key.
+	Name string
+
+	// Description is a human-readable description.
+	Description string
+
+	// Algorithm specifies the key algorithm.
+	Algorithm KeyAlgorithm
+
+	// Usage specifies permitted operations.
+	Usage []KeyUsage
+
+	// Tags are optional key-value metadata.
+	Tags map[string]string
+}
+
+// ImportKeyResponse is the response from importing a key.
+type ImportKeyResponse struct {
+	KeyID     string
+	Version   int
+	Algorithm KeyAlgorithm
+}
+
+// ExportKeyRequest is a request to export a key.
+type ExportKeyRequest struct {
+	// KeyID is the key to export.
+	KeyID string
+
+	// WrappingKeyID is the key used to wrap the exported material.
+	WrappingKeyID string
+
+	// WrappingAlgorithm specifies the wrapping algorithm.
+	WrappingAlgorithm WrappingAlgorithm
+
+	// Format specifies the export format.
+	Format ExportFormat
+
+	// Version optionally specifies a specific key version (0 = latest).
+	Version int
+}
+
+// ExportKeyResponse is the response from exporting a key.
+type ExportKeyResponse struct {
+	KeyID             string
+	Format            ExportFormat
+	WrappingKeyID     string
+	WrappingAlgorithm WrappingAlgorithm
+	WrappedMaterial   []byte
+	Version           int
+}
+
+// KeyVersionInfo represents metadata for a specific key version.
+type KeyVersionInfo struct {
+	Version    int
+	Status     KeyStatus
+	Algorithm  KeyAlgorithm
+	CreatedAt  time.Time
+	DisabledAt time.Time
+}
+
+// ListKeyVersionsResponse is the response from listing key versions.
+type ListKeyVersionsResponse struct {
+	KeyID    string
+	Versions []KeyVersionInfo
+}
+
+// UpdateKeyStatusRequest is a request to update a key's status.
+type UpdateKeyStatusRequest struct {
+	// KeyID is the key to update.
+	KeyID string
+
+	// Version optionally targets a specific version (0 = all versions).
+	Version int
+
+	// Status is the new status.
+	Status KeyStatus
+}
+
+// UpdateKeyStatusResponse is the response from updating a key's status.
+type UpdateKeyStatusResponse struct {
+	KeyID   string
+	Version int
+	Status  KeyStatus
+}
+
+// KeyMetadataResponse contains non-sensitive metadata about a key.
+type KeyMetadataResponse struct {
+	KeyID              string
+	Name               string
+	Description        string
+	Algorithm          KeyAlgorithm
+	Status             KeyStatus
+	Usage              []KeyUsage
+	Version            int
+	Exportable         bool
+	DeletionProtection bool
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	LastUsedAt         time.Time
+	Tags               map[string]string
+	Owner              string
+}
+
+// UpdateKeyMetadataRequest is a request to update key metadata.
+type UpdateKeyMetadataRequest struct {
+	// KeyID is the key to update.
+	KeyID string
+
+	// Name is the new display name (empty = no change).
+	Name string
+
+	// Description is the new description (empty = no change).
+	Description string
+
+	// Tags are tags to add or update.
+	Tags map[string]string
+
+	// RemoveTags are tag keys to remove.
+	RemoveTags []string
+}
+
+// KeyPolicy defines access control and usage policies for a key.
+type KeyPolicy struct {
+	KeyID             string
+	Version           int
+	AllowedOperations []KeyUsage
+	AllowedPrincipals []string
+	DeniedPrincipals  []string
+	ExpiresAt         time.Time
+	RotationRequired  bool
+	MaxUsageCount     uint64
+	RequireMFA        bool
+	UpdatedAt         time.Time
+}
+
+// SetKeyPolicyRequest is a request to set a key's access policy.
+type SetKeyPolicyRequest struct {
+	// KeyID is the key to set policy for.
+	KeyID string
+
+	// Policy is the policy to apply.
+	Policy *KeyPolicy
+}
+
+// SupportedAlgorithmsResponse contains the list of supported algorithms.
+type SupportedAlgorithmsResponse struct {
+	Algorithms []string
+}
+
+// BackendStatusResponse contains health and capability information about the KMS backend.
+type BackendStatusResponse struct {
+	BackendType  string
+	Status       string
+	Device       string
+	Region       string
+	KeyID        string
+	PCRBanks     []string
+	PCRRegisters []int
+	Capabilities map[string]bool
+}
+
+// UnwrapKeyRequest is a request to import a wrapped key.
+type UnwrapKeyRequest struct {
+	// KeyID is the target key ID for the imported key.
+	KeyID string
+
+	// WrappingKeyID is the key used to unwrap the material.
+	WrappingKeyID string
+
+	// WrappingAlgorithm specifies the wrapping algorithm.
+	WrappingAlgorithm WrappingAlgorithm
+
+	// WrappedMaterial is the wrapped key bytes.
+	WrappedMaterial []byte
+
+	// Algorithm is the algorithm of the unwrapped key.
+	Algorithm KeyAlgorithm
+
+	// Name is the display name for the imported key.
+	Name string
+
+	// Description is a human-readable description.
+	Description string
+
+	// SourceKeyID is the source key ID for AAD verification.
+	SourceKeyID string
+
+	// SourceVersion is the source key version for AAD verification.
+	SourceVersion int
+}
+
+// UnwrapKeyResponse is the response from unwrapping a key.
+type UnwrapKeyResponse struct {
+	KeyID     string
+	Version   int
+	Algorithm KeyAlgorithm
+}
+
+// =============================================================================
+// Internal request types (unexported, used for transport serialization)
+// =============================================================================
+
 // getKeyRequest is the internal get key request.
 type getKeyRequest struct {
 	KeyID string
@@ -196,6 +526,38 @@ type deleteKeyRequest struct {
 
 // deleteKeyResponse is the internal delete key response.
 type deleteKeyResponse struct{}
+
+// revokeKeyRequest is the internal revoke key request.
+type revokeKeyRequest struct {
+	KeyID string
+}
+
+// revokeKeyResponse is the internal revoke key response.
+type revokeKeyResponse struct{}
+
+// listKeyVersionsRequest is the internal list key versions request.
+type listKeyVersionsRequest struct {
+	KeyID string
+}
+
+// getKeyMetadataRequest is the internal get key metadata request.
+type getKeyMetadataRequest struct {
+	KeyID string
+}
+
+// getKeyPolicyRequest is the internal get key policy request.
+type getKeyPolicyRequest struct {
+	KeyID string
+}
+
+// setKeyPolicyResponse is the internal set key policy response.
+type setKeyPolicyResponse struct{}
+
+// getSupportedAlgorithmsRequest is the internal get supported algorithms request.
+type getSupportedAlgorithmsRequest struct{}
+
+// backendStatusRequest is the internal backend status request.
+type backendStatusRequest struct{}
 
 // client implements the Client interface.
 type client struct {
@@ -445,7 +807,436 @@ func (c *client) DeleteKey(ctx context.Context, keyID string) error {
 	}
 }
 
+// ImportKey imports an externally generated key into the KMS.
+func (c *client) ImportKey(ctx context.Context, req *ImportKeyRequest) (*ImportKeyResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("kms.ImportKey", "request is required")
+	}
+	if len(req.KeyMaterial) == 0 {
+		return nil, errors.NewInvalidInput("kms.ImportKey", "key material is required")
+	}
+	if req.Name == "" {
+		return nil, errors.NewInvalidInput("kms.ImportKey", "key name is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.ImportKey", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "ImportKey", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("kms.ImportKey", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *ImportKeyResponse:
+		return r, nil
+	case *service.ImportKeyResponse:
+		importResp := &ImportKeyResponse{
+			KeyID: r.Metadata.KeyID,
+		}
+		if r.Key != nil {
+			importResp.Version = int(r.Key.Version)
+			importResp.Algorithm = serviceAlgToSDKAlg(r.Key.Algorithm)
+		}
+		return importResp, nil
+	default:
+		return nil, errors.NewInternal("kms.ImportKey", "invalid response type")
+	}
+}
+
+// ExportKey exports a key wrapped with a wrapping key.
+func (c *client) ExportKey(ctx context.Context, req *ExportKeyRequest) (*ExportKeyResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("kms.ExportKey", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("kms.ExportKey", "key ID is required")
+	}
+	if req.WrappingKeyID == "" {
+		return nil, errors.NewInvalidInput("kms.ExportKey", "wrapping key ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.ExportKey", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "ExportKey", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("kms.ExportKey", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *ExportKeyResponse:
+		return r, nil
+	case *service.ExportKeyResponse:
+		return &ExportKeyResponse{
+			KeyID:           r.KeyID,
+			WrappingKeyID:   r.WrappingKeyID,
+			WrappedMaterial: r.WrappedKey,
+			Version:         int(r.Version),
+		}, nil
+	default:
+		return nil, errors.NewInternal("kms.ExportKey", "invalid response type")
+	}
+}
+
+// RevokeKey marks a key as revoked and unusable.
+func (c *client) RevokeKey(ctx context.Context, keyID string) error {
+	if keyID == "" {
+		return errors.NewInvalidInput("kms.RevokeKey", "key ID is required")
+	}
+	if ctx == nil {
+		return errors.NewInvalidInput("kms.RevokeKey", "context is required")
+	}
+
+	req := &revokeKeyRequest{
+		KeyID: keyID,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "RevokeKey", req)
+	if err != nil {
+		return err
+	}
+
+	if resp == nil {
+		return nil
+	}
+
+	switch resp.(type) {
+	case *revokeKeyResponse:
+		return nil
+	case *service.RevokeKeyResponse:
+		return nil
+	default:
+		return errors.NewInternal("kms.RevokeKey", "invalid response type")
+	}
+}
+
+// ListKeyVersions returns all versions of a key.
+func (c *client) ListKeyVersions(ctx context.Context, keyID string) (*ListKeyVersionsResponse, error) {
+	if keyID == "" {
+		return nil, errors.NewInvalidInput("kms.ListKeyVersions", "key ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.ListKeyVersions", "context is required")
+	}
+
+	req := &listKeyVersionsRequest{
+		KeyID: keyID,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "ListKeyVersions", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return &ListKeyVersionsResponse{KeyID: keyID, Versions: []KeyVersionInfo{}}, nil
+	}
+
+	switch r := resp.(type) {
+	case *ListKeyVersionsResponse:
+		return r, nil
+	case *service.ListKeyVersionsResponse:
+		versions := make([]KeyVersionInfo, len(r.Versions))
+		for i, v := range r.Versions {
+			versions[i] = KeyVersionInfo{
+				Version:   int(v.Version),
+				Status:    serviceStatusToSDKStatus(v.Status),
+				Algorithm: serviceAlgToSDKAlg(v.Algorithm),
+				CreatedAt: v.CreatedAt,
+			}
+		}
+		return &ListKeyVersionsResponse{
+			KeyID:    r.KeyID,
+			Versions: versions,
+		}, nil
+	default:
+		return nil, errors.NewInternal("kms.ListKeyVersions", "invalid response type")
+	}
+}
+
+// UpdateKeyStatus enables or disables a key or key version.
+func (c *client) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStatusRequest) (*UpdateKeyStatusResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("kms.UpdateKeyStatus", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("kms.UpdateKeyStatus", "key ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.UpdateKeyStatus", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "UpdateKeyStatus", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("kms.UpdateKeyStatus", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *UpdateKeyStatusResponse:
+		return r, nil
+	case *service.UpdateKeyStatusResponse:
+		return &UpdateKeyStatusResponse{
+			KeyID:   r.KeyID,
+			Version: int(r.Version),
+			Status:  serviceStatusToSDKStatus(r.NewStatus),
+		}, nil
+	default:
+		return nil, errors.NewInternal("kms.UpdateKeyStatus", "invalid response type")
+	}
+}
+
+// GetKeyMetadata retrieves metadata for a key without exposing key material.
+func (c *client) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMetadataResponse, error) {
+	if keyID == "" {
+		return nil, errors.NewInvalidInput("kms.GetKeyMetadata", "key ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.GetKeyMetadata", "context is required")
+	}
+
+	req := &getKeyMetadataRequest{
+		KeyID: keyID,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GetKeyMetadata", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewNotFound("kms.GetKeyMetadata", "key metadata not found")
+	}
+
+	switch r := resp.(type) {
+	case *KeyMetadataResponse:
+		return r, nil
+	case *service.GetKeyMetadataResponse:
+		return serviceMetadataToSDK(r.Metadata), nil
+	default:
+		return nil, errors.NewInternal("kms.GetKeyMetadata", "invalid response type")
+	}
+}
+
+// UpdateKeyMetadata updates mutable metadata fields for a key.
+func (c *client) UpdateKeyMetadata(ctx context.Context, req *UpdateKeyMetadataRequest) (*KeyMetadataResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("kms.UpdateKeyMetadata", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("kms.UpdateKeyMetadata", "key ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.UpdateKeyMetadata", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "UpdateKeyMetadata", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("kms.UpdateKeyMetadata", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *KeyMetadataResponse:
+		return r, nil
+	case *service.UpdateKeyMetadataResponse:
+		return serviceMetadataToSDK(r.Metadata), nil
+	default:
+		return nil, errors.NewInternal("kms.UpdateKeyMetadata", "invalid response type")
+	}
+}
+
+// SetKeyPolicy sets the access control policy for a key.
+func (c *client) SetKeyPolicy(ctx context.Context, req *SetKeyPolicyRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("kms.SetKeyPolicy", "request is required")
+	}
+	if req.KeyID == "" {
+		return errors.NewInvalidInput("kms.SetKeyPolicy", "key ID is required")
+	}
+	if req.Policy == nil {
+		return errors.NewInvalidInput("kms.SetKeyPolicy", "policy is required")
+	}
+	if ctx == nil {
+		return errors.NewInvalidInput("kms.SetKeyPolicy", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "SetKeyPolicy", req)
+	if err != nil {
+		return err
+	}
+
+	if resp == nil {
+		return nil
+	}
+
+	switch resp.(type) {
+	case *setKeyPolicyResponse:
+		return nil
+	case *service.SetKeyPolicyResponse:
+		return nil
+	default:
+		return errors.NewInternal("kms.SetKeyPolicy", "invalid response type")
+	}
+}
+
+// GetKeyPolicy retrieves the access control policy for a key.
+func (c *client) GetKeyPolicy(ctx context.Context, keyID string) (*KeyPolicy, error) {
+	if keyID == "" {
+		return nil, errors.NewInvalidInput("kms.GetKeyPolicy", "key ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.GetKeyPolicy", "context is required")
+	}
+
+	req := &getKeyPolicyRequest{
+		KeyID: keyID,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GetKeyPolicy", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewNotFound("kms.GetKeyPolicy", "key policy not found")
+	}
+
+	switch r := resp.(type) {
+	case *KeyPolicy:
+		return r, nil
+	case *service.GetKeyPolicyResponse:
+		return servicePolicyToSDK(r.Policy), nil
+	default:
+		return nil, errors.NewInternal("kms.GetKeyPolicy", "invalid response type")
+	}
+}
+
+// GetSupportedAlgorithms returns the list of supported algorithms.
+func (c *client) GetSupportedAlgorithms(ctx context.Context) (*SupportedAlgorithmsResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.GetSupportedAlgorithms", "context is required")
+	}
+
+	req := &getSupportedAlgorithmsRequest{}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GetSupportedAlgorithms", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return &SupportedAlgorithmsResponse{Algorithms: []string{}}, nil
+	}
+
+	switch r := resp.(type) {
+	case *SupportedAlgorithmsResponse:
+		return r, nil
+	case []string:
+		return &SupportedAlgorithmsResponse{
+			Algorithms: r,
+		}, nil
+	default:
+		return nil, errors.NewInternal("kms.GetSupportedAlgorithms", "invalid response type")
+	}
+}
+
+// BackendStatus returns health and capability information about the KMS backend.
+func (c *client) BackendStatus(ctx context.Context) (*BackendStatusResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.BackendStatus", "context is required")
+	}
+
+	req := &backendStatusRequest{}
+
+	resp, err := c.transport.Request(ctx, serviceName, "BackendStatus", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("kms.BackendStatus", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *BackendStatusResponse:
+		return r, nil
+	case *service.BackendStatusResponse:
+		pcrRegisters := make([]int, len(r.PCRRegisters))
+		for i, v := range r.PCRRegisters {
+			pcrRegisters[i] = int(v)
+		}
+		return &BackendStatusResponse{
+			BackendType:  r.BackendType,
+			Status:       r.Status,
+			Device:       r.Device,
+			Region:       r.Region,
+			KeyID:        r.KeyID,
+			PCRBanks:     r.PCRBanks,
+			PCRRegisters: pcrRegisters,
+			Capabilities: r.Capabilities,
+		}, nil
+	default:
+		return nil, errors.NewInternal("kms.BackendStatus", "invalid response type")
+	}
+}
+
+// UnwrapKey imports a wrapped key into the KMS.
+func (c *client) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (*UnwrapKeyResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("kms.UnwrapKey", "request is required")
+	}
+	if req.WrappingKeyID == "" {
+		return nil, errors.NewInvalidInput("kms.UnwrapKey", "wrapping key ID is required")
+	}
+	if len(req.WrappedMaterial) == 0 {
+		return nil, errors.NewInvalidInput("kms.UnwrapKey", "wrapped material is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.UnwrapKey", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "UnwrapKey", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("kms.UnwrapKey", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *UnwrapKeyResponse:
+		return r, nil
+	case *service.UnwrapKeyResponse:
+		return &UnwrapKeyResponse{
+			KeyID:     r.KeyID,
+			Version:   int(r.Version),
+			Algorithm: serviceAlgToSDKAlg(r.Algorithm),
+		}, nil
+	default:
+		return nil, errors.NewInternal("kms.UnwrapKey", "invalid response type")
+	}
+}
+
+// =============================================================================
 // Validation functions
+// =============================================================================
 
 func validateGenerateKeyRequest(req *GenerateKeyRequest) error {
 	if req == nil {
@@ -478,6 +1269,58 @@ func validateGenerateKeyRequest(req *GenerateKeyRequest) error {
 	}
 
 	return nil
+}
+
+// =============================================================================
+// Conversion helpers
+// =============================================================================
+
+// serviceMetadataToSDK converts service KeyMetadata to SDK KeyMetadataResponse.
+func serviceMetadataToSDK(m *service.KeyMetadata) *KeyMetadataResponse {
+	if m == nil {
+		return nil
+	}
+	resp := &KeyMetadataResponse{
+		KeyID:              m.KeyID,
+		Name:               m.Name,
+		Description:        m.Description,
+		Algorithm:          serviceAlgToSDKAlg(m.Algorithm),
+		Status:             serviceStatusToSDKStatus(m.Status),
+		Version:            int(m.Version),
+		Exportable:         m.Exportable,
+		DeletionProtection: m.DeletionProtection,
+		CreatedAt:          m.CreatedAt,
+		UpdatedAt:          m.UpdatedAt,
+		Tags:               m.Tags,
+		Owner:              m.Owner,
+	}
+	resp.Usage = make([]KeyUsage, len(m.Usage))
+	for i, u := range m.Usage {
+		resp.Usage[i] = serviceUsageToSDKUsage(u)
+	}
+	return resp
+}
+
+// servicePolicyToSDK converts service KeyPolicy to SDK KeyPolicy.
+func servicePolicyToSDK(p *service.KeyPolicy) *KeyPolicy {
+	if p == nil {
+		return nil
+	}
+	policy := &KeyPolicy{
+		KeyID:             p.KeyID,
+		Version:           int(p.Version),
+		AllowedPrincipals: p.AllowedPrincipals,
+		DeniedPrincipals:  p.DeniedPrincipals,
+		RotationRequired:  p.RotationRequired,
+		MaxUsageCount:     derefUint64(p.MaxUsageCount),
+		RequireMFA:        p.RequireMFA,
+		UpdatedAt:         p.UpdatedAt,
+	}
+	policy.AllowedOperations = make([]KeyUsage, len(p.AllowedOperations))
+	for i, u := range p.AllowedOperations {
+		policy.AllowedOperations[i] = serviceUsageToSDKUsage(u)
+	}
+	return policy
 }
 
 // sdkAlgToServiceAlg converts SDK KeyAlgorithm to service KeyAlgorithm.
@@ -524,6 +1367,26 @@ func serviceAlgToSDKAlg(alg service.KeyAlgorithm) KeyAlgorithm {
 	}
 }
 
+// serviceStatusToSDKStatus converts service KeyStatus to SDK KeyStatus.
+func serviceStatusToSDKStatus(s service.KeyStatus) KeyStatus {
+	switch s {
+	case service.KeyStatusEnabled:
+		return KeyStatusEnabled
+	case service.KeyStatusDisabled:
+		return KeyStatusDisabled
+	case service.KeyStatusPendingDeletion:
+		return KeyStatusPendingDeletion
+	case service.KeyStatusDeleted:
+		return KeyStatusDeleted
+	case service.KeyStatusRotating:
+		return KeyStatusRotating
+	case service.KeyStatusCompromised:
+		return KeyStatusCompromised
+	default:
+		return KeyStatusEnabled
+	}
+}
+
 // sdkUsageToServiceUsage converts SDK KeyUsage to service KeyUsage.
 func sdkUsageToServiceUsage(usage KeyUsage) service.KeyUsage {
 	switch usage {
@@ -560,4 +1423,12 @@ func serviceUsageToSDKUsage(usage service.KeyUsage) KeyUsage {
 	default:
 		return KeyUsageEncrypt
 	}
+}
+
+// derefUint64 safely dereferences a *uint64, returning 0 if nil.
+func derefUint64(p *uint64) uint64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }

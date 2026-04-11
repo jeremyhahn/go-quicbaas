@@ -35,7 +35,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -338,7 +338,7 @@ func (c *testMultiTenantContext) close() {
 func issueTokenForUser(ctx context.Context, authManager *auth.AuthManager, username string) (*auth.Token, error) {
 	userInfo := authManager.GetUserStore().GetByUsername(username)
 	if userInfo == nil {
-		return nil, &dragonerrors.MessageError{Message: "user not found: " + username}
+		return nil, &qberrors.MessageError{Message: "user not found: " + username}
 	}
 	return authManager.IssueTokenForUser(ctx, userInfo)
 }
@@ -602,7 +602,7 @@ func TestMultiTenantConcurrentOperations(t *testing.T) {
 					},
 				})
 				if err != nil {
-					errors <- &dragonerrors.WrappedMessageError{Message: "tenant " + strconv.Itoa(idx) + " upsert " + strconv.Itoa(j), Cause: err}
+					errors <- &qberrors.WrappedMessageError{Message: "tenant " + strconv.Itoa(idx) + " upsert " + strconv.Itoa(j), Cause: err}
 					continue
 				}
 
@@ -612,11 +612,11 @@ func TestMultiTenantConcurrentOperations(t *testing.T) {
 					Id:        vecID,
 				})
 				if err != nil {
-					errors <- &dragonerrors.WrappedMessageError{Message: "tenant " + strconv.Itoa(idx) + " get " + strconv.Itoa(j), Cause: err}
+					errors <- &qberrors.WrappedMessageError{Message: "tenant " + strconv.Itoa(idx) + " get " + strconv.Itoa(j), Cause: err}
 					continue
 				}
 				if !resp.Found {
-					errors <- &dragonerrors.MessageError{Message: "tenant " + strconv.Itoa(idx) + " get " + strconv.Itoa(j) + ": not found"}
+					errors <- &qberrors.MessageError{Message: "tenant " + strconv.Itoa(idx) + " get " + strconv.Itoa(j) + ": not found"}
 				}
 			}
 		}(i)

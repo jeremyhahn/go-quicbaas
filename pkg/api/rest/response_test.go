@@ -86,7 +86,7 @@ func TestRespondError(t *testing.T) {
 		checkResponse func(*testing.T, *ErrorResponse)
 	}{
 		{
-			name: "dragon error with context",
+			name: "qb error with context",
 			err: &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "test.operation",
@@ -105,7 +105,7 @@ func TestRespondError(t *testing.T) {
 			},
 		},
 		{
-			name: "dragon error without context",
+			name: "qb error without context",
 			err: &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "test.operation",

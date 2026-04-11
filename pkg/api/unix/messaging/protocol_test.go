@@ -418,7 +418,7 @@ func TestErrorToStatus(t *testing.T) {
 		{"ResourceExhausted", &dberrors.QBError{Code: dberrors.ErrResourceExhausted}, StatusResourceExhausted},
 		{"Unavailable", &dberrors.QBError{Code: dberrors.ErrUnavailable}, StatusUnavailable},
 		{"Internal", &dberrors.QBError{Code: dberrors.ErrInternal}, StatusInternalError},
-		{"non-dragon error returns Internal", errors.New("generic error"), StatusInternalError},
+		{"non-qb error returns Internal", errors.New("generic error"), StatusInternalError},
 	}
 
 	for _, tt := range tests {

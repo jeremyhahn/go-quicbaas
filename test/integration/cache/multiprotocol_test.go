@@ -39,7 +39,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -618,12 +618,12 @@ func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.endpoint+"/api/v1/health", nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create health check request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create health check request", Cause: err}
 	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "REST endpoint not reachable at " + c.endpoint, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "REST endpoint not reachable at " + c.endpoint, Cause: err}
 	}
 	resp.Body.Close()
 
@@ -631,20 +631,20 @@ func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	statsReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.endpoint+"/api/v1/cache/stats", nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create cache stats probe request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create cache stats probe request", Cause: err}
 	}
 
 	statsResp, err := c.client.Do(statsReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "cache stats probe request failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "cache stats probe request failed", Cause: err}
 	}
 	defer statsResp.Body.Close()
 
 	if statsResp.StatusCode == http.StatusNotFound {
-		return &dragonerrors.MessageError{Message: "cache stats feature not available: endpoint returned 404"}
+		return &qberrors.MessageError{Message: "cache stats feature not available: endpoint returned 404"}
 	}
 	if statsResp.StatusCode == http.StatusNotImplemented {
-		return &dragonerrors.MessageError{Message: "cache stats feature not available: endpoint returned 501 not implemented"}
+		return &qberrors.MessageError{Message: "cache stats feature not available: endpoint returned 501 not implemented"}
 	}
 
 	return nil
@@ -675,7 +675,7 @@ func (c *restProtocolClient) GetStats(ctx context.Context) (*CacheStatsResult, e
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	var result struct {
@@ -729,7 +729,7 @@ func (c *restProtocolClient) ClearCache(ctx context.Context, cacheType string) e
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	return nil
@@ -755,7 +755,7 @@ func (c *restProtocolClient) GetConfig(ctx context.Context) (*CacheConfigResult,
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	var result struct {
@@ -811,7 +811,7 @@ func (c *restProtocolClient) UpdateConfig(ctx context.Context, config *CacheConf
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	return nil
@@ -831,14 +831,14 @@ func (c *grpcProtocolClient) Name() string { return "gRPC" }
 func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetClusterEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no gRPC endpoints available"}
+		return &qberrors.MessageError{Message: "no gRPC endpoints available"}
 	}
 
 	endpoint := endpoints[0]
 
 	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, endpoint)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoint, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoint, Cause: err}
 	}
 	c.conn = conn
 	c.client = proto.NewQuicBaaSClient(conn)
@@ -848,11 +848,11 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	if err != nil {
 		if isGRPCUnimplementedError(err) {
 			c.conn.Close()
-			return &dragonerrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
+			return &qberrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
 		}
 		// Other errors might be transient, still return them to skip
 		c.conn.Close()
-		return &dragonerrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
 	}
 
 	return nil
@@ -938,7 +938,7 @@ func (c *quicProtocolClient) Name() string { return "QUIC" }
 func (c *quicProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := getQUICEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no QUIC endpoints available"}
+		return &qberrors.MessageError{Message: "no QUIC endpoints available"}
 	}
 
 	addr := endpoints[0]
@@ -954,7 +954,7 @@ func (c *quicProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	conn, err := quicgo.DialAddr(dialCtx, addr, tlsConf, nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + addr, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + addr, Cause: err}
 	}
 
 	clientCtx, clientCancel := context.WithCancel(context.Background())
@@ -971,7 +971,7 @@ func (c *quicProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	if err != nil {
 		c.cancelFunc()
 		c.conn.CloseWithError(0, "probe failed")
-		return &dragonerrors.WrappedMessageError{Message: "failed to encode cache stats probe request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to encode cache stats probe request", Cause: err}
 	}
 
 	_, err = c.sendRequest(ctx, quic.OpGetCacheStats, payload)
@@ -982,9 +982,9 @@ func (c *quicProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 		if strings.Contains(errStr, "not implemented") ||
 			strings.Contains(errStr, "Unimplemented") ||
 			strings.Contains(errStr, "unknown opcode") {
-			return &dragonerrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
+			return &qberrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
 		}
-		return &dragonerrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
 	}
 
 	return nil
@@ -1004,7 +1004,7 @@ func (c *quicProtocolClient) Teardown(t *testing.T) error {
 func (c *quicProtocolClient) sendRequest(ctx context.Context, opcode byte, reqPayload []byte) (*quic.Response, error) {
 	stream, err := c.conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
 	}
 	defer stream.Close()
 
@@ -1014,12 +1014,12 @@ func (c *quicProtocolClient) sendRequest(ctx context.Context, opcode byte, reqPa
 	}
 
 	if err := quic.WriteRequest(stream, req); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to write request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
 	}
 
 	resp, err := quic.ReadResponse(stream)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.Status != quic.StatusOK {
@@ -1133,7 +1133,7 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 
 	// Check if socket exists
 	if _, err := net.Dial("unix", socketPath); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "unix socket not available at " + socketPath, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "unix socket not available at " + socketPath, Cause: err}
 	}
 
 	// Create gRPC connection over unix socket
@@ -1143,7 +1143,7 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to unix socket", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to unix socket", Cause: err}
 	}
 	c.conn = conn
 	c.client = proto.NewQuicBaaSClient(conn)
@@ -1153,11 +1153,11 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	if err != nil {
 		if isGRPCUnimplementedError(err) {
 			c.conn.Close()
-			return &dragonerrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
+			return &qberrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
 		}
 		// Other errors might be transient, still return them to skip
 		c.conn.Close()
-		return &dragonerrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
 	}
 
 	return nil
@@ -1242,7 +1242,7 @@ func (c *mcpProtocolClient) Name() string { return "MCP" }
 func (c *mcpProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetMCPEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no MCP endpoints available"}
+		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.endpoint = endpoints[0]
 	c.httpClient = &http.Client{
@@ -1276,29 +1276,29 @@ func (c *mcpProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	body, err := json.Marshal(initReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + c.endpoint, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + c.endpoint, Cause: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "MCP initialize failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "MCP initialize failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	// Authenticate with the MCP server
 	if err := c.authenticate(ctx); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
 	}
 
 	// Probe to verify cache stats feature is available
@@ -1309,9 +1309,9 @@ func (c *mcpProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 			strings.Contains(errStr, "Unimplemented") ||
 			strings.Contains(errStr, "not found") ||
 			strings.Contains(errStr, "unknown tool") {
-			return &dragonerrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
+			return &qberrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
 		}
-		return &dragonerrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
 	}
 
 	return nil
@@ -1336,29 +1336,29 @@ func (c *mcpProtocolClient) authenticate(ctx context.Context) error {
 
 	body, err := json.Marshal(mcpReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "marshaling login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "marshaling login request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "creating login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "creating login request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	// Do NOT set Authorization header since we're not authenticated yet
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "executing login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "executing login request", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "reading login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "reading login response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return &dragonerrors.MessageError{Message: "login failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "login failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var mcpResp struct {
@@ -1376,22 +1376,22 @@ func (c *mcpProtocolClient) authenticate(ctx context.Context) error {
 	}
 
 	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "unmarshaling login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "unmarshaling login response", Cause: err}
 	}
 
 	if mcpResp.Error != nil {
-		return &dragonerrors.MessageError{Message: "login error: " + mcpResp.Error.Message}
+		return &qberrors.MessageError{Message: "login error: " + mcpResp.Error.Message}
 	}
 
 	if mcpResp.Result.IsError {
 		if len(mcpResp.Result.Content) > 0 {
-			return &dragonerrors.MessageError{Message: "login tool error: " + mcpResp.Result.Content[0].Text}
+			return &qberrors.MessageError{Message: "login tool error: " + mcpResp.Result.Content[0].Text}
 		}
-		return &dragonerrors.MessageError{Message: "login tool returned error"}
+		return &qberrors.MessageError{Message: "login tool returned error"}
 	}
 
 	if len(mcpResp.Result.Content) == 0 {
-		return &dragonerrors.MessageError{Message: "login response has no content"}
+		return &qberrors.MessageError{Message: "login response has no content"}
 	}
 
 	// Parse the login response content which contains JSON with AccessToken (PascalCase)
@@ -1400,11 +1400,11 @@ func (c *mcpProtocolClient) authenticate(ctx context.Context) error {
 		AccessToken string `json:"AccessToken"`
 	}
 	if err := json.Unmarshal([]byte(mcpResp.Result.Content[0].Text), &loginResult); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "parsing login result", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "parsing login result", Cause: err}
 	}
 
 	if loginResult.AccessToken == "" {
-		return &dragonerrors.MessageError{Message: "login response missing access token"}
+		return &qberrors.MessageError{Message: "login response missing access token"}
 	}
 
 	c.accessToken = loginResult.AccessToken
@@ -1434,12 +1434,12 @@ func (c *mcpProtocolClient) callMCPTool(ctx context.Context, toolName string, ar
 
 	body, err := json.Marshal(mcpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "marshaling MCP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "marshaling MCP request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "creating MCP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "creating MCP request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.authenticated {
@@ -1448,17 +1448,17 @@ func (c *mcpProtocolClient) callMCPTool(ctx context.Context, toolName string, ar
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "executing MCP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "executing MCP request", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "reading MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "reading MCP response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "MCP call failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "MCP call failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var mcpResp struct {
@@ -1476,18 +1476,18 @@ func (c *mcpProtocolClient) callMCPTool(ctx context.Context, toolName string, ar
 	}
 
 	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "unmarshaling MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "unmarshaling MCP response", Cause: err}
 	}
 
 	if mcpResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
+		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
 	}
 
 	if mcpResp.Result.IsError {
 		if len(mcpResp.Result.Content) > 0 {
-			return nil, &dragonerrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
+			return nil, &qberrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
 		}
-		return nil, &dragonerrors.MessageError{Message: "MCP tool returned error"}
+		return nil, &qberrors.MessageError{Message: "MCP tool returned error"}
 	}
 
 	if len(mcpResp.Result.Content) > 0 {
@@ -1505,7 +1505,7 @@ func (c *mcpProtocolClient) GetStats(ctx context.Context) (*CacheStatsResult, er
 
 	var stats CacheStatsResult
 	if err := json.Unmarshal(result, &stats); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "parsing cache stats", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "parsing cache stats", Cause: err}
 	}
 
 	return &stats, nil
@@ -1533,7 +1533,7 @@ func (c *mcpProtocolClient) GetConfig(ctx context.Context) (*CacheConfigResult, 
 		Enabled                bool  `json:"enabled"`
 	}
 	if err := json.Unmarshal(result, &config); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "parsing cache config", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "parsing cache config", Cause: err}
 	}
 
 	return &CacheConfigResult{
@@ -1578,13 +1578,13 @@ func (c *embeddedProtocolClient) Setup(t *testing.T, ctx context.Context) error 
 	// Start an embedded server for testing
 	svc, err := helpers.GetEmbeddedService(t)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 
 	// Create SDK client with embedded transport
 	client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(svc))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}
 
 	c.client = client
@@ -1596,9 +1596,9 @@ func (c *embeddedProtocolClient) Setup(t *testing.T, ctx context.Context) error 
 		errStr := err.Error()
 		if strings.Contains(errStr, "not implemented") ||
 			strings.Contains(errStr, "Unimplemented") {
-			return &dragonerrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
+			return &qberrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
 		}
-		return &dragonerrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
 	}
 
 	return nil
@@ -1613,7 +1613,7 @@ func (c *embeddedProtocolClient) Teardown(t *testing.T) error {
 
 func (c *embeddedProtocolClient) GetStats(ctx context.Context) (*CacheStatsResult, error) {
 	if c.client == nil {
-		return nil, &dragonerrors.MessageError{Message: "embedded client not initialized"}
+		return nil, &qberrors.MessageError{Message: "embedded client not initialized"}
 	}
 
 	resp, err := c.client.Cache().GetCacheStats(ctx, &quicbaas.GetCacheStatsRequest{})
@@ -1633,7 +1633,7 @@ func (c *embeddedProtocolClient) GetStats(ctx context.Context) (*CacheStatsResul
 
 func (c *embeddedProtocolClient) ClearCache(ctx context.Context, cacheType string) error {
 	if c.client == nil {
-		return &dragonerrors.MessageError{Message: "embedded client not initialized"}
+		return &qberrors.MessageError{Message: "embedded client not initialized"}
 	}
 
 	_, err := c.client.Cache().ClearCache(ctx, &quicbaas.ClearCacheRequest{
@@ -1645,7 +1645,7 @@ func (c *embeddedProtocolClient) ClearCache(ctx context.Context, cacheType strin
 
 func (c *embeddedProtocolClient) GetConfig(ctx context.Context) (*CacheConfigResult, error) {
 	if c.client == nil {
-		return nil, &dragonerrors.MessageError{Message: "embedded client not initialized"}
+		return nil, &qberrors.MessageError{Message: "embedded client not initialized"}
 	}
 
 	resp, err := c.client.Cache().GetCacheConfig(ctx, &quicbaas.GetCacheConfigRequest{})
@@ -1663,7 +1663,7 @@ func (c *embeddedProtocolClient) GetConfig(ctx context.Context) (*CacheConfigRes
 
 func (c *embeddedProtocolClient) UpdateConfig(ctx context.Context, config *CacheConfigUpdate) error {
 	if c.client == nil {
-		return &dragonerrors.MessageError{Message: "embedded client not initialized"}
+		return &qberrors.MessageError{Message: "embedded client not initialized"}
 	}
 
 	req := &quicbaas.UpdateCacheConfigRequest{

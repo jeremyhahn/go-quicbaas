@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -37,7 +37,7 @@ func TestNewProvider_NilConfig(t *testing.T) {
 		t.Errorf("expected ErrNilConfig, got: %v", err)
 	}
 
-	var qbErr *dragonerrors.QBError
+	var qbErr *qberrors.QBError
 	if !errors.As(err, &qbErr) {
 		t.Error("expected QBError type")
 	}
@@ -142,7 +142,7 @@ func TestNewProvider_InvalidType(t *testing.T) {
 		t.Fatal("expected nil provider")
 	}
 
-	var qbErr *dragonerrors.QBError
+	var qbErr *qberrors.QBError
 	if !errors.As(err, &qbErr) {
 		t.Error("expected QBError type")
 	}
@@ -325,7 +325,7 @@ func TestParseProviderType_Invalid(t *testing.T) {
 				t.Errorf("expected empty ProviderType, got %v", pt)
 			}
 
-			var qbErr *dragonerrors.QBError
+			var qbErr *qberrors.QBError
 			if !errors.As(err, &qbErr) {
 				t.Error("expected QBError type")
 			}

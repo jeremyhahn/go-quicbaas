@@ -1985,7 +1985,7 @@ func TestSchedulerServer_ConvertSchedulerError(t *testing.T) {
 		})
 	}
 
-	t.Run("non_dragon_error", func(t *testing.T) {
+	t.Run("non_qb_error", func(t *testing.T) {
 		err := context.DeadlineExceeded
 		result := convertSchedulerError(err)
 		require.NotNil(t, result)

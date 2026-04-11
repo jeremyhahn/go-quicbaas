@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
@@ -747,12 +747,12 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, adapter Messagi
 
 			pubResp, pubErr := adapter.Publish(ctx, pubReq)
 			if pubErr != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "publish error " + strconv.Itoa(idx), Cause: pubErr}
+				errors <- &qberrors.WrappedMessageError{Message: "publish error " + strconv.Itoa(idx), Cause: pubErr}
 				return
 			}
 
 			if pubResp == nil || pubResp.MessageID == "" {
-				errors <- &dragonerrors.MessageError{Message: "publish " + strconv.Itoa(idx) + " returned empty response"}
+				errors <- &qberrors.MessageError{Message: "publish " + strconv.Itoa(idx) + " returned empty response"}
 				return
 			}
 		}(i)

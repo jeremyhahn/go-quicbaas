@@ -39,7 +39,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -400,23 +400,23 @@ func (c *restVectorClient) Setup(t *testing.T, ctx context.Context) error {
 	healthURL := c.baseURL + "/api/v1/vector/health"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create health check request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create health check request", Cause: err}
 	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "vector service health check failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "vector service health check failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusServiceUnavailable {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "vector service health check returned 503: " + string(respBody)}
+		return &qberrors.MessageError{Message: "vector service health check returned 503: " + string(respBody)}
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "vector service health check returned unexpected status: " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "vector service health check returned unexpected status: " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return nil
@@ -436,7 +436,7 @@ func (c *restVectorClient) CreateNamespace(ctx context.Context, name string, dim
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -454,7 +454,7 @@ func (c *restVectorClient) CreateNamespace(ctx context.Context, name string, dim
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return nil
@@ -475,7 +475,7 @@ func (c *restVectorClient) DeleteNamespace(ctx context.Context, name string) err
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return nil
@@ -491,7 +491,7 @@ func (c *restVectorClient) UpsertVector(ctx context.Context, namespace string, i
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -509,7 +509,7 @@ func (c *restVectorClient) UpsertVector(ctx context.Context, namespace string, i
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return nil
@@ -534,7 +534,7 @@ func (c *restVectorClient) GetVector(ctx context.Context, namespace string, id s
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var data map[string]interface{}
@@ -584,7 +584,7 @@ func (c *restVectorClient) DeleteVector(ctx context.Context, namespace string, i
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return nil
@@ -600,7 +600,7 @@ func (c *restVectorClient) SearchVectors(ctx context.Context, namespace string, 
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -618,7 +618,7 @@ func (c *restVectorClient) SearchVectors(ctx context.Context, namespace string, 
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var data map[string]interface{}
@@ -708,7 +708,7 @@ func (c *grpcVectorClient) Setup(t *testing.T, ctx context.Context) error {
 		return nil
 	}
 
-	return &dragonerrors.WrappedMessageError{Message: "no endpoint is leader for vector shard", Cause: lastErr}
+	return &qberrors.WrappedMessageError{Message: "no endpoint is leader for vector shard", Cause: lastErr}
 }
 
 func (c *grpcVectorClient) Teardown(t *testing.T) error {
@@ -881,7 +881,7 @@ func (c *quicVectorClient) Setup(t *testing.T, ctx context.Context) error {
 
 	conn, err := quicgo.DialAddr(dialCtx, addr, tlsConf, nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + addr, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + addr, Cause: err}
 	}
 
 	clientCtx, clientCancel := context.WithCancel(context.Background())
@@ -909,7 +909,7 @@ func (c *quicVectorClient) Teardown(t *testing.T) error {
 func (c *quicVectorClient) sendRequest(ctx context.Context, opcode byte, reqPayload []byte) (*quic.Response, error) {
 	stream, err := c.conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
 	}
 	defer stream.Close()
 
@@ -919,12 +919,12 @@ func (c *quicVectorClient) sendRequest(ctx context.Context, opcode byte, reqPayl
 	}
 
 	if err := quic.WriteRequest(stream, req); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to write request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
 	}
 
 	resp, err := quic.ReadResponse(stream)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.Status != quic.StatusOK {
@@ -1145,7 +1145,7 @@ func (c *unixSocketVectorClient) Setup(t *testing.T, ctx context.Context) error 
 
 	// Check if socket exists
 	if _, err := net.Dial("unix", socketPath); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "unix socket not available at " + socketPath, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "unix socket not available at " + socketPath, Cause: err}
 	}
 
 	// Create gRPC connection over unix socket
@@ -1155,14 +1155,14 @@ func (c *unixSocketVectorClient) Setup(t *testing.T, ctx context.Context) error 
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to unix socket", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to unix socket", Cause: err}
 	}
 	c.conn = conn
 
 	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
 	if err != nil {
 		conn.Close()
-		return &dragonerrors.WrappedMessageError{Message: "failed to create gRPC client over unix socket", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create gRPC client over unix socket", Cause: err}
 	}
 	c.grpcClient = client
 
@@ -1320,7 +1320,7 @@ func (c *mcpVectorClient) Name() string { return "MCP" }
 func (c *mcpVectorClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetMCPEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no MCP endpoints available"}
+		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.endpoint = endpoints[0]
 	c.httpClient = &http.Client{
@@ -1354,24 +1354,24 @@ func (c *mcpVectorClient) Setup(t *testing.T, ctx context.Context) error {
 
 	body, err := json.Marshal(initReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + c.endpoint, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + c.endpoint, Cause: err}
 	}
 	defer resp.Body.Close()
 
 	// Authenticate using bootstrap credentials
 	if err := c.authenticate(ctx); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
 	}
 
 	return nil
@@ -1394,24 +1394,24 @@ func (c *mcpVectorClient) authenticate(ctx context.Context) error {
 
 	body, err := json.Marshal(loginReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to marshal login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to marshal login request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create login request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "login request failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "login request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to read login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to read login response", Cause: err}
 	}
 
 	var loginResp struct {
@@ -1428,18 +1428,18 @@ func (c *mcpVectorClient) authenticate(ctx context.Context) error {
 	}
 
 	if err := json.Unmarshal(respBody, &loginResp); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to parse login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to parse login response", Cause: err}
 	}
 
 	if loginResp.Error != nil {
-		return &dragonerrors.MessageError{Message: "login error: " + loginResp.Error.Message}
+		return &qberrors.MessageError{Message: "login error: " + loginResp.Error.Message}
 	}
 
 	if loginResp.Result.IsError {
 		if len(loginResp.Result.Content) > 0 {
-			return &dragonerrors.MessageError{Message: "login failed: " + loginResp.Result.Content[0].Text}
+			return &qberrors.MessageError{Message: "login failed: " + loginResp.Result.Content[0].Text}
 		}
-		return &dragonerrors.MessageError{Message: "login failed with unknown error"}
+		return &qberrors.MessageError{Message: "login failed with unknown error"}
 	}
 
 	// Parse the token from the response
@@ -1522,11 +1522,11 @@ func (c *mcpVectorClient) callMCPTool(ctx context.Context, toolName string, args
 	}
 
 	if mcpResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
+		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
 	}
 
 	if mcpResp.Result.IsError && len(mcpResp.Result.Content) > 0 {
-		return nil, &dragonerrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
+		return nil, &qberrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
 	}
 
 	if len(mcpResp.Result.Content) > 0 {
@@ -1678,11 +1678,11 @@ func (c *embeddedVectorClient) Name() string { return "Embedded" }
 func (c *embeddedVectorClient) Setup(t *testing.T, ctx context.Context) error {
 	svc, err := helpers.GetEmbeddedService(t)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 	client, err := quicbaas.NewClient("embedded://local", quicbaas.WithEmbedded(svc))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}
 	c.client = client
 	return nil

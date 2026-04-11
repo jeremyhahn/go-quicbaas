@@ -558,12 +558,12 @@ func TestIsSubprotocolNotSupported(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  NewSubprotocolNotSupportedError("op", "mqtt", []string{}),
 			want: true,
 		},
 		{
-			name: "dragon error with different code",
+			name: "qb error with different code",
 			err:  NewUpgradeFailedError("op", "cause"),
 			want: false,
 		},
@@ -600,12 +600,12 @@ func TestIsUpgradeFailed(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  NewUpgradeFailedError("op", "cause"),
 			want: true,
 		},
 		{
-			name: "dragon error with different code",
+			name: "qb error with different code",
 			err:  NewSessionNotFoundError("op", "id"),
 			want: false,
 		},
@@ -642,12 +642,12 @@ func TestIsAuthenticationFailed(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  NewAuthenticationFailedError("op", "reason"),
 			want: true,
 		},
 		{
-			name: "dragon error with different code",
+			name: "qb error with different code",
 			err:  NewSessionClosedError("op", "id"),
 			want: false,
 		},
@@ -684,12 +684,12 @@ func TestIsSessionNotFound(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  NewSessionNotFoundError("op", "id"),
 			want: true,
 		},
 		{
-			name: "dragon error with different code",
+			name: "qb error with different code",
 			err:  NewServerClosedError("op"),
 			want: false,
 		},
@@ -726,12 +726,12 @@ func TestIsSessionClosed(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  NewSessionClosedError("op", "id"),
 			want: true,
 		},
 		{
-			name: "dragon error with different code",
+			name: "qb error with different code",
 			err:  NewMessageTooLargeError("op", 100, 50),
 			want: false,
 		},
@@ -768,12 +768,12 @@ func TestIsMessageTooLarge(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  NewMessageTooLargeError("op", 100, 50),
 			want: true,
 		},
 		{
-			name: "dragon error with different code",
+			name: "qb error with different code",
 			err:  NewReadTimeoutError("op", "id"),
 			want: false,
 		},
@@ -810,12 +810,12 @@ func TestIsServerClosed(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  NewServerClosedError("op"),
 			want: true,
 		},
 		{
-			name: "dragon error with different code",
+			name: "qb error with different code",
 			err:  NewInvalidMessageError("op", "reason"),
 			want: false,
 		},

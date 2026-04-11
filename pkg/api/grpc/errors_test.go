@@ -164,7 +164,7 @@ func TestToGRPCError(t *testing.T) {
 			expectedCode: codes.NotFound,
 		},
 		{
-			name: "dragon not found error",
+			name: "qb not found error",
 			err: &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
@@ -173,7 +173,7 @@ func TestToGRPCError(t *testing.T) {
 			expectedCode: codes.NotFound,
 		},
 		{
-			name: "dragon conflict error",
+			name: "qb conflict error",
 			err: &dberrors.QBError{
 				Code: dberrors.ErrConflict,
 				Op:   "test",
@@ -182,7 +182,7 @@ func TestToGRPCError(t *testing.T) {
 			expectedCode: codes.AlreadyExists,
 		},
 		{
-			name: "dragon timeout error",
+			name: "qb timeout error",
 			err: &dberrors.QBError{
 				Code: dberrors.ErrTimeout,
 				Op:   "test",
@@ -191,7 +191,7 @@ func TestToGRPCError(t *testing.T) {
 			expectedCode: codes.DeadlineExceeded,
 		},
 		{
-			name: "dragon invalid input error",
+			name: "qb invalid input error",
 			err: &dberrors.QBError{
 				Code: dberrors.ErrInvalidInput,
 				Op:   "test",
@@ -200,7 +200,7 @@ func TestToGRPCError(t *testing.T) {
 			expectedCode: codes.InvalidArgument,
 		},
 		{
-			name: "dragon unauthorized error",
+			name: "qb unauthorized error",
 			err: &dberrors.QBError{
 				Code: dberrors.ErrUnauthorized,
 				Op:   "test",
@@ -209,7 +209,7 @@ func TestToGRPCError(t *testing.T) {
 			expectedCode: codes.Unauthenticated,
 		},
 		{
-			name: "dragon forbidden error",
+			name: "qb forbidden error",
 			err: &dberrors.QBError{
 				Code: dberrors.ErrForbidden,
 				Op:   "test",
@@ -218,7 +218,7 @@ func TestToGRPCError(t *testing.T) {
 			expectedCode: codes.PermissionDenied,
 		},
 		{
-			name: "dragon unavailable error",
+			name: "qb unavailable error",
 			err: &dberrors.QBError{
 				Code: dberrors.ErrUnavailable,
 				Op:   "test",

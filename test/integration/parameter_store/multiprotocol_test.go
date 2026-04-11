@@ -36,7 +36,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -512,12 +512,12 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, protocol parame
 				// stream flow control issues on shared connections
 				endpoints := helpers.GetQUICEndpoints()
 				if len(endpoints) == 0 {
-					errors <- &dragonerrors.MessageError{Message: "no QUIC endpoints available for goroutine " + idxStr}
+					errors <- &qberrors.MessageError{Message: "no QUIC endpoints available for goroutine " + idxStr}
 					return
 				}
 				quicClient, err := NewParameterStoreQUICClient(endpoints[0])
 				if err != nil {
-					errors <- &dragonerrors.WrappedMessageError{Message: "failed to create QUIC client " + idxStr, Cause: err}
+					errors <- &qberrors.WrappedMessageError{Message: "failed to create QUIC client " + idxStr, Cause: err}
 					return
 				}
 				defer quicClient.Close()
@@ -583,26 +583,26 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, protocol parame
 			// Set
 			_, err := setParameter(opCtx, path, value, "string", "", nil, true)
 			if err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "set error " + idxStr, Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "set error " + idxStr, Cause: err}
 				return
 			}
 
 			// Get
 			getResult, err := getParameter(opCtx, path, true)
 			if err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "get error " + idxStr, Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "get error " + idxStr, Cause: err}
 				return
 			}
 
 			if !bytes.Equal(getResult.Parameter.Value, value) {
-				errors <- &dragonerrors.MessageError{Message: "value mismatch " + idxStr}
+				errors <- &qberrors.MessageError{Message: "value mismatch " + idxStr}
 				return
 			}
 
 			// Delete
 			_, err = deleteParameter(opCtx, path)
 			if err != nil {
-				errors <- &dragonerrors.WrappedMessageError{Message: "delete error " + idxStr, Cause: err}
+				errors <- &qberrors.WrappedMessageError{Message: "delete error " + idxStr, Cause: err}
 			}
 		}(i)
 	}
@@ -720,7 +720,7 @@ func (c *restProtocolClient) SetParameter(ctx context.Context, path string, valu
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result map[string]interface{}
@@ -757,7 +757,7 @@ func (c *restProtocolClient) GetParameter(ctx context.Context, path string, with
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result map[string]interface{}
@@ -809,7 +809,7 @@ func (c *restProtocolClient) DeleteParameter(ctx context.Context, path string) (
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result map[string]interface{}
@@ -842,7 +842,7 @@ func (c *restProtocolClient) ListParameters(ctx context.Context, prefix string, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result map[string]interface{}
@@ -905,7 +905,7 @@ func (c *restProtocolClient) SetParameters(ctx context.Context, params []*Parame
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result map[string]interface{}
@@ -959,7 +959,7 @@ func (c *restProtocolClient) GetParameters(ctx context.Context, paths []string, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result map[string]interface{}
@@ -1016,7 +1016,7 @@ func (c *restProtocolClient) DeleteParameters(ctx context.Context, paths []strin
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result map[string]interface{}
@@ -1067,7 +1067,7 @@ func (c *restProtocolClient) SearchParameters(ctx context.Context, tags map[stri
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result map[string]interface{}
@@ -1330,12 +1330,12 @@ func (c *quicProtocolClient) Reconnect(ctx context.Context) error {
 
 	endpoints := helpers.GetQUICEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no QUIC endpoints available for reconnect"}
+		return &qberrors.MessageError{Message: "no QUIC endpoints available for reconnect"}
 	}
 
 	client, err := NewParameterStoreQUICClient(endpoints[0])
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to reconnect", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to reconnect", Cause: err}
 	}
 	c.client = client
 	return nil
@@ -1991,7 +1991,7 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 
 	// Initialize first if not already done
 	if err := c.Initialize(ctx); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "initialize failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "initialize failed", Cause: err}
 	}
 
 	// Call the login tool to authenticate
@@ -2011,28 +2011,28 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 
 	bodyBytes, err := json.Marshal(loginReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "marshaling login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "marshaling login request", Cause: err}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "creating login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "creating login request", Cause: err}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "login request failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "login request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "reading login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "reading login response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return &dragonerrors.MessageError{Message: "login failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "login failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	// Parse response to extract access token
@@ -2050,21 +2050,21 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 	}
 
 	if err := json.Unmarshal(respBody, &loginResp); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "parsing login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "parsing login response", Cause: err}
 	}
 
 	if loginResp.Error != nil {
-		return &dragonerrors.MessageError{Message: "login error: " + loginResp.Error.Message}
+		return &qberrors.MessageError{Message: "login error: " + loginResp.Error.Message}
 	}
 
 	if len(loginResp.Result.Content) == 0 {
-		return &dragonerrors.MessageError{Message: "no content in login response"}
+		return &qberrors.MessageError{Message: "no content in login response"}
 	}
 
 	// Parse the inner JSON to get the access token
 	var tokenResp map[string]interface{}
 	if err := json.Unmarshal([]byte(loginResp.Result.Content[0].Text), &tokenResp); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "parsing token response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "parsing token response", Cause: err}
 	}
 
 	// Try both snake_case and PascalCase for access_token
@@ -2073,7 +2073,7 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 	} else if token, ok := tokenResp["AccessToken"].(string); ok {
 		c.accessToken = token
 	} else {
-		return &dragonerrors.MessageError{Message: "no access_token in login response"}
+		return &qberrors.MessageError{Message: "no access_token in login response"}
 	}
 
 	c.authenticated = true
@@ -2084,7 +2084,7 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 func (c *MCPClient) CallTool(ctx context.Context, name string, args map[string]interface{}) (json.RawMessage, error) {
 	// Ensure authenticated before making tool calls
 	if err := c.ensureAuthenticated(ctx); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "authentication failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "authentication failed", Cause: err}
 	}
 
 	req := JSONRPCRequest{
@@ -2120,7 +2120,7 @@ func extractMCPContent(result json.RawMessage) (json.RawMessage, error) {
 	}
 
 	if len(wrapper.Content) == 0 {
-		return nil, &dragonerrors.MessageError{Message: "no content in MCP response"}
+		return nil, &qberrors.MessageError{Message: "no content in MCP response"}
 	}
 
 	return json.RawMessage(wrapper.Content[0].Text), nil
@@ -2130,12 +2130,12 @@ func extractMCPContent(result json.RawMessage) (json.RawMessage, error) {
 func (c *MCPClient) call(ctx context.Context, req JSONRPCRequest) (json.RawMessage, error) {
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create HTTP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create HTTP request", Cause: err}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
@@ -2146,26 +2146,26 @@ func (c *MCPClient) call(ctx context.Context, req JSONRPCRequest) (json.RawMessa
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to make HTTP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to make HTTP request", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response body", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response body", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "HTTP status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "HTTP status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var rpcResp JSONRPCResponse
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	if rpcResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: "JSON-RPC error " + strconv.Itoa(rpcResp.Error.Code) + ": " + rpcResp.Error.Message + " (data: " + rpcResp.Error.Data + ")"}
+		return nil, &qberrors.MessageError{Message: "JSON-RPC error " + strconv.Itoa(rpcResp.Error.Code) + ": " + rpcResp.Error.Message + " (data: " + rpcResp.Error.Data + ")"}
 	}
 
 	return rpcResp.Result, nil
@@ -2178,7 +2178,7 @@ func (c *MCPClient) call(ctx context.Context, req JSONRPCRequest) (json.RawMessa
 func parseMCPSetParameterResponse(result json.RawMessage) (*SetParameterResult, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(result, &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
 	}
 
 	return &SetParameterResult{
@@ -2190,16 +2190,16 @@ func parseMCPSetParameterResponse(result json.RawMessage) (*SetParameterResult, 
 func parseMCPGetParameterResponse(result json.RawMessage) (*GetParameterResult, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(result, &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
 	}
 
 	paramRaw, ok := data["parameter"]
 	if !ok || paramRaw == nil {
-		return nil, &dragonerrors.MessageError{Message: "missing 'parameter' field in MCP response"}
+		return nil, &qberrors.MessageError{Message: "missing 'parameter' field in MCP response"}
 	}
 	param, ok := paramRaw.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid 'parameter' field type in MCP response"}
+		return nil, &qberrors.MessageError{Message: "invalid 'parameter' field type in MCP response"}
 	}
 
 	// MCP returns value as plain string, not base64 encoded
@@ -2231,7 +2231,7 @@ func parseMCPGetParameterResponse(result json.RawMessage) (*GetParameterResult, 
 func parseMCPDeleteParameterResponse(result json.RawMessage) (*DeleteParameterResult, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(result, &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
 	}
 
 	return &DeleteParameterResult{
@@ -2243,7 +2243,7 @@ func parseMCPDeleteParameterResponse(result json.RawMessage) (*DeleteParameterRe
 func parseMCPListParametersResponse(result json.RawMessage) (*ListParametersResult, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(result, &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
 	}
 
 	params := make([]*ParameterItem, 0)
@@ -2265,7 +2265,7 @@ func parseMCPListParametersResponse(result json.RawMessage) (*ListParametersResu
 func parseMCPSetParametersResponse(result json.RawMessage) (*SetParametersResult, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(result, &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
 	}
 
 	results := make([]*SetParameterItemResult, 0)
@@ -2288,7 +2288,7 @@ func parseMCPSetParametersResponse(result json.RawMessage) (*SetParametersResult
 func parseMCPGetParametersResponse(result json.RawMessage) (*GetParametersResult, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(result, &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
 	}
 
 	params := make([]*ParameterItem, 0)
@@ -2319,7 +2319,7 @@ func parseMCPGetParametersResponse(result json.RawMessage) (*GetParametersResult
 func parseMCPDeleteParametersResponse(result json.RawMessage) (*DeleteParametersResult, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(result, &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
 	}
 
 	deletedCount := 0
@@ -2335,7 +2335,7 @@ func parseMCPDeleteParametersResponse(result json.RawMessage) (*DeleteParameters
 func parseMCPSearchParametersResponse(result json.RawMessage) (*SearchParametersResult, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(result, &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse MCP response", Cause: err}
 	}
 
 	params := make([]*ParameterItem, 0)
@@ -2359,11 +2359,11 @@ func parseMCPSearchParametersResponse(result json.RawMessage) (*SearchParameters
 // =============================================================================
 
 // ErrEmbeddedClientNotInitialized is returned when the embedded client is not initialized.
-var ErrEmbeddedClientNotInitialized = &dragonerrors.MessageError{Message: "embedded client not initialized"}
+var ErrEmbeddedClientNotInitialized = &qberrors.MessageError{Message: "embedded client not initialized"}
 
 // ErrEmbeddedProtocolNotAvailable is returned when the embedded protocol is not available
 // in the integration test context.
-var ErrEmbeddedProtocolNotAvailable = &dragonerrors.MessageError{Message: "embedded protocol not available in integration test context (requires in-process service instance)"}
+var ErrEmbeddedProtocolNotAvailable = &qberrors.MessageError{Message: "embedded protocol not available in integration test context (requires in-process service instance)"}
 
 type embeddedProtocolClient struct {
 	client quicbaas.Client
@@ -2374,11 +2374,11 @@ func (c *embeddedProtocolClient) Name() string { return "Embedded" }
 func (c *embeddedProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	svc, err := helpers.GetEmbeddedService(t)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 	client, err := quicbaas.NewClient("embedded://local", quicbaas.WithEmbedded(svc))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}
 	c.client = client
 	return nil

@@ -36,7 +36,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -227,12 +227,12 @@ func (c *embeddedBackupClient) Name() string { return "Embedded" }
 func (c *embeddedBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	svc, err := helpers.GetEmbeddedService(t)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 
 	client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(svc))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}
 
 	c.client = client
@@ -245,7 +245,7 @@ func (c *embeddedBackupClient) Setup(t *testing.T, ctx context.Context) error {
 			t.Logf("Warning: failed to close client during setup: %v", closeErr)
 		}
 		c.client = nil
-		return &dragonerrors.WrappedMessageError{Message: "backup service probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "backup service probe failed", Cause: err}
 	}
 
 	return nil
@@ -299,7 +299,7 @@ func (c *restBackupClient) Name() string { return "REST" }
 func (c *restBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no REST endpoints available"}
+		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
 	c.httpClient = &http.Client{
@@ -318,22 +318,22 @@ func (c *restBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	url := fmt.Sprintf("%s/api/v1/backups", c.baseURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create probe request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create probe request", Cause: err}
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to probe backup endpoint", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to probe backup endpoint", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to read probe response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to read probe response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return &dragonerrors.MessageError{Message: "backup service probe failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return &qberrors.MessageError{Message: "backup service probe failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	return nil
@@ -366,7 +366,7 @@ func (c *restBackupClient) ListBackups(ctx context.Context, limit int) (*BackupL
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "REST ListBackups failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return nil, &qberrors.MessageError{Message: "REST ListBackups failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	var listResp struct {
@@ -402,7 +402,7 @@ func (c *grpcBackupClient) Name() string { return "gRPC" }
 func (c *grpcBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetClusterEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no gRPC endpoints available"}
+		return &qberrors.MessageError{Message: "no gRPC endpoints available"}
 	}
 
 	conn, err := grpc.DialContext(ctx, endpoints[0],
@@ -425,7 +425,7 @@ func (c *grpcBackupClient) Setup(t *testing.T, ctx context.Context) error {
 		}
 		c.conn = nil
 		c.client = nil
-		return &dragonerrors.WrappedMessageError{Message: "backup service probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "backup service probe failed", Cause: err}
 	}
 
 	return nil
@@ -490,7 +490,7 @@ func (c *quicBackupClient) Name() string { return "QUIC" }
 func (c *quicBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetQUICEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no QUIC endpoints available"}
+		return &qberrors.MessageError{Message: "no QUIC endpoints available"}
 	}
 	c.addr = endpoints[0]
 
@@ -505,7 +505,7 @@ func (c *quicBackupClient) Setup(t *testing.T, ctx context.Context) error {
 
 	conn, err := quicgo.DialAddr(dialCtx, c.addr, tlsConf, nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + c.addr, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + c.addr, Cause: err}
 	}
 
 	clientCtx, clientCancel := context.WithCancel(context.Background())
@@ -520,7 +520,7 @@ func (c *quicBackupClient) Setup(t *testing.T, ctx context.Context) error {
 			t.Logf("Warning: failed to close QUIC connection during setup: %v", closeErr)
 		}
 		c.cancelFunc()
-		return &dragonerrors.WrappedMessageError{Message: "QUIC authentication failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "QUIC authentication failed", Cause: err}
 	}
 
 	// Verify backup feature is available
@@ -531,7 +531,7 @@ func (c *quicBackupClient) Setup(t *testing.T, ctx context.Context) error {
 			t.Logf("Warning: failed to close QUIC connection during setup: %v", closeErr)
 		}
 		c.cancelFunc()
-		return &dragonerrors.WrappedMessageError{Message: "backup service probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "backup service probe failed", Cause: err}
 	}
 
 	return nil
@@ -546,22 +546,22 @@ func (c *quicBackupClient) authenticate(ctx context.Context) error {
 
 	payload, err := quic.EncodePayload(loginReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to encode login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to encode login request", Cause: err}
 	}
 
 	// Login is a public operation, no token required
 	resp, err := c.sendRequest(ctx, quic.OpLogin, "", payload)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "login request failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "login request failed", Cause: err}
 	}
 
 	var loginResp service.LoginResponse
 	if err := quic.DecodePayload(resp.Payload, &loginResp); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to decode login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to decode login response", Cause: err}
 	}
 
 	if loginResp.AccessToken == "" {
-		return &dragonerrors.MessageError{Message: "login response missing access token"}
+		return &qberrors.MessageError{Message: "login response missing access token"}
 	}
 
 	c.authToken = loginResp.AccessToken
@@ -582,7 +582,7 @@ func (c *quicBackupClient) Teardown(t *testing.T) error {
 func (c *quicBackupClient) sendRequest(ctx context.Context, opcode byte, token string, reqPayload []byte) (*quic.Response, error) {
 	stream, err := c.conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
 	}
 	defer stream.Close()
 
@@ -593,12 +593,12 @@ func (c *quicBackupClient) sendRequest(ctx context.Context, opcode byte, token s
 	}
 
 	if err := quic.WriteRequest(stream, req); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to write request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
 	}
 
 	resp, err := quic.ReadResponse(stream)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.Status != quic.StatusOK {
@@ -619,7 +619,7 @@ func (c *quicBackupClient) ListBackups(ctx context.Context, limit int) (*BackupL
 
 	payload, err := quic.EncodePayload(listReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to encode list backups request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to encode list backups request", Cause: err}
 	}
 
 	resp, err := c.sendRequest(ctx, quic.OpListBackups, c.authToken, payload)
@@ -629,7 +629,7 @@ func (c *quicBackupClient) ListBackups(ctx context.Context, limit int) (*BackupL
 
 	var listResp service.ListBackupsResponse
 	if err := quic.DecodePayload(resp.Payload, &listResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to decode list backups response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to decode list backups response", Cause: err}
 	}
 
 	result := &BackupListResult{
@@ -662,7 +662,7 @@ func (c *unixSocketBackupClient) Name() string { return "UnixSocket" }
 func (c *unixSocketBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	socketPath := helpers.GetUnixSocketPath()
 	if socketPath == "" {
-		return &dragonerrors.MessageError{Message: "no Unix socket path available"}
+		return &qberrors.MessageError{Message: "no Unix socket path available"}
 	}
 
 	conn, err := grpc.DialContext(ctx,
@@ -689,7 +689,7 @@ func (c *unixSocketBackupClient) Setup(t *testing.T, ctx context.Context) error 
 		}
 		c.conn = nil
 		c.client = nil
-		return &dragonerrors.WrappedMessageError{Message: "backup service probe failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "backup service probe failed", Cause: err}
 	}
 
 	return nil
@@ -754,7 +754,7 @@ func (c *mcpBackupClient) Name() string { return "MCP" }
 func (c *mcpBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetMCPEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no MCP endpoints available"}
+		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.endpoint = endpoints[0]
 	c.httpClient = &http.Client{
@@ -788,35 +788,35 @@ func (c *mcpBackupClient) Setup(t *testing.T, ctx context.Context) error {
 
 	body, err := json.Marshal(initReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + c.endpoint, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + c.endpoint, Cause: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "MCP initialize failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "MCP initialize failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	// Authenticate with the MCP server
 	if err := c.authenticate(ctx); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
 	}
 
 	// Verify backup feature is available
 	_, err = c.callMCPTool(ctx, "quicbaas_backup_list", map[string]interface{}{})
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "backup service probe failed via MCP", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "backup service probe failed via MCP", Cause: err}
 	}
 
 	return nil
@@ -846,29 +846,29 @@ func (c *mcpBackupClient) authenticate(ctx context.Context) error {
 
 	body, err := json.Marshal(mcpReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "marshaling login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "marshaling login request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "creating login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "creating login request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	// Do NOT set Authorization header since we're not authenticated yet
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "executing login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "executing login request", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "reading login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "reading login response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return &dragonerrors.MessageError{Message: "login failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "login failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var mcpResp struct {
@@ -886,22 +886,22 @@ func (c *mcpBackupClient) authenticate(ctx context.Context) error {
 	}
 
 	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "unmarshaling login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "unmarshaling login response", Cause: err}
 	}
 
 	if mcpResp.Error != nil {
-		return &dragonerrors.MessageError{Message: "login error: " + mcpResp.Error.Message}
+		return &qberrors.MessageError{Message: "login error: " + mcpResp.Error.Message}
 	}
 
 	if mcpResp.Result.IsError {
 		if len(mcpResp.Result.Content) > 0 {
-			return &dragonerrors.MessageError{Message: "login tool error: " + mcpResp.Result.Content[0].Text}
+			return &qberrors.MessageError{Message: "login tool error: " + mcpResp.Result.Content[0].Text}
 		}
-		return &dragonerrors.MessageError{Message: "login tool returned error"}
+		return &qberrors.MessageError{Message: "login tool returned error"}
 	}
 
 	if len(mcpResp.Result.Content) == 0 {
-		return &dragonerrors.MessageError{Message: "login response has no content"}
+		return &qberrors.MessageError{Message: "login response has no content"}
 	}
 
 	// Parse the login response content which contains JSON with AccessToken (PascalCase)
@@ -910,11 +910,11 @@ func (c *mcpBackupClient) authenticate(ctx context.Context) error {
 		AccessToken string `json:"AccessToken"`
 	}
 	if err := json.Unmarshal([]byte(mcpResp.Result.Content[0].Text), &loginResult); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "parsing login result", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "parsing login result", Cause: err}
 	}
 
 	if loginResult.AccessToken == "" {
-		return &dragonerrors.MessageError{Message: "login response missing access token"}
+		return &qberrors.MessageError{Message: "login response missing access token"}
 	}
 
 	c.accessToken = loginResult.AccessToken
@@ -946,12 +946,12 @@ func (c *mcpBackupClient) callMCPTool(ctx context.Context, toolName string, args
 
 	body, err := json.Marshal(mcpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "marshaling MCP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "marshaling MCP request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "creating MCP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "creating MCP request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.authenticated {
@@ -960,17 +960,17 @@ func (c *mcpBackupClient) callMCPTool(ctx context.Context, toolName string, args
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "executing MCP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "executing MCP request", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "reading MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "reading MCP response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "MCP call failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "MCP call failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var mcpResp struct {
@@ -988,18 +988,18 @@ func (c *mcpBackupClient) callMCPTool(ctx context.Context, toolName string, args
 	}
 
 	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "unmarshaling MCP response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "unmarshaling MCP response", Cause: err}
 	}
 
 	if mcpResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
+		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
 	}
 
 	if mcpResp.Result.IsError {
 		if len(mcpResp.Result.Content) > 0 {
-			return nil, &dragonerrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
+			return nil, &qberrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
 		}
-		return nil, &dragonerrors.MessageError{Message: "MCP tool returned error"}
+		return nil, &qberrors.MessageError{Message: "MCP tool returned error"}
 	}
 
 	if len(mcpResp.Result.Content) > 0 {

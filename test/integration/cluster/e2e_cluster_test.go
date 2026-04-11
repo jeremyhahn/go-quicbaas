@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 
@@ -534,20 +534,20 @@ func TestE2EConcurrentWrites(t *testing.T) {
 
 			req, reqErr := http.NewRequestWithContext(opCtx, http.MethodPost, writeURL, bytes.NewReader(writeBody))
 			if reqErr != nil {
-				results <- &dragonerrors.WrappedMessageError{Message: "write " + strconv.Itoa(index) + " request creation failed", Cause: reqErr}
+				results <- &qberrors.WrappedMessageError{Message: "write " + strconv.Itoa(index) + " request creation failed", Cause: reqErr}
 				return
 			}
 			req.Header.Set("Content-Type", "application/json")
 
 			resp, err := e2eHTTPClient.Do(req)
 			if err != nil {
-				results <- &dragonerrors.WrappedMessageError{Message: "write " + strconv.Itoa(index) + " failed", Cause: err}
+				results <- &qberrors.WrappedMessageError{Message: "write " + strconv.Itoa(index) + " failed", Cause: err}
 				return
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-				results <- &dragonerrors.MessageError{Message: "write " + strconv.Itoa(index) + " failed with status " + strconv.Itoa(resp.StatusCode)}
+				results <- &qberrors.MessageError{Message: "write " + strconv.Itoa(index) + " failed with status " + strconv.Itoa(resp.StatusCode)}
 				return
 			}
 

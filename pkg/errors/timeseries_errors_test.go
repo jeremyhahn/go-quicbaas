@@ -575,7 +575,7 @@ func TestIsTimeSeriesError(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "non-time series dragon error",
+			name: "non-time series qb error",
 			err:  &QBError{Code: ErrNotFound, Op: "test"},
 			want: false,
 		},
@@ -617,7 +617,7 @@ func TestIsTimeSeriesNotFound(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "different dragon error",
+			name: "different qb error",
 			err:  &QBError{Code: ErrNotFound, Op: "test"},
 			want: false,
 		},

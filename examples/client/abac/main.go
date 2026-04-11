@@ -47,7 +47,7 @@ import (
 	"log"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 )
@@ -289,7 +289,7 @@ func createDataAccessPolicy(ctx context.Context, client quicbaas.Client) (*iam.P
 func validatePolicy(ctx context.Context, client quicbaas.Client, policy *iam.Policy) error {
 	result, err := client.IAM().Policy().Validate(ctx, tenantID, policy)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "validation request failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "validation request failed", Cause: err}
 	}
 
 	if result.Valid {
@@ -387,7 +387,7 @@ func testPolicyWithCases(ctx context.Context, client quicbaas.Client, policyName
 		},
 	})
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "test request failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "test request failed", Cause: err}
 	}
 
 	fmt.Printf("  Test Results: %d passed, %d failed\n", resp.Passed, resp.Failed)

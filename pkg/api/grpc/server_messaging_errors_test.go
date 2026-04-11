@@ -89,7 +89,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.ResourceExhausted, status.Code(result))
 	})
 
-	t.Run("dragon_error_not_found", func(t *testing.T) {
+	t.Run("qb_error_not_found", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "GetChannel",
@@ -99,7 +99,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.NotFound, status.Code(result))
 	})
 
-	t.Run("dragon_error_already_exists", func(t *testing.T) {
+	t.Run("qb_error_already_exists", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrAlreadyExists,
 			Op:   "CreateChannel",
@@ -109,7 +109,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.AlreadyExists, status.Code(result))
 	})
 
-	t.Run("dragon_error_invalid_input", func(t *testing.T) {
+	t.Run("qb_error_invalid_input", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Subscribe",
@@ -119,7 +119,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.InvalidArgument, status.Code(result))
 	})
 
-	t.Run("dragon_error_unauthorized", func(t *testing.T) {
+	t.Run("qb_error_unauthorized", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrUnauthorized,
 			Op:   "Subscribe",
@@ -129,7 +129,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.Unauthenticated, status.Code(result))
 	})
 
-	t.Run("dragon_error_forbidden", func(t *testing.T) {
+	t.Run("qb_error_forbidden", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrForbidden,
 			Op:   "DeleteChannel",
@@ -139,7 +139,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.PermissionDenied, status.Code(result))
 	})
 
-	t.Run("dragon_error_timeout", func(t *testing.T) {
+	t.Run("qb_error_timeout", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Publish",
@@ -149,7 +149,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.DeadlineExceeded, status.Code(result))
 	})
 
-	t.Run("dragon_error_canceled", func(t *testing.T) {
+	t.Run("qb_error_canceled", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrCanceled,
 			Op:   "Subscribe",
@@ -159,7 +159,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.Canceled, status.Code(result))
 	})
 
-	t.Run("dragon_error_unavailable", func(t *testing.T) {
+	t.Run("qb_error_unavailable", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "Connect",
@@ -169,7 +169,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.Unavailable, status.Code(result))
 	})
 
-	t.Run("dragon_error_resource_exhausted", func(t *testing.T) {
+	t.Run("qb_error_resource_exhausted", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrResourceExhausted,
 			Op:   "Publish",
@@ -179,7 +179,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.ResourceExhausted, status.Code(result))
 	})
 
-	t.Run("dragon_error_internal", func(t *testing.T) {
+	t.Run("qb_error_internal", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Process",
@@ -189,7 +189,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.Internal, status.Code(result))
 	})
 
-	t.Run("dragon_error_unknown_code_returns_internal", func(t *testing.T) {
+	t.Run("qb_error_unknown_code_returns_internal", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrorCode(9999),
 			Op:   "Unknown",

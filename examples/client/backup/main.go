@@ -59,7 +59,7 @@ import (
 	"strings"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
@@ -244,14 +244,14 @@ func createSampleData(ctx context.Context, client quicbaas.Client) error {
 	for i, cfg := range configs {
 		data, err := json.Marshal(cfg)
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to marshal config " + cfg.Key, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to marshal config " + cfg.Key, Cause: err}
 		}
 		if _, err := client.KV().Put(ctx, &quicbaas.PutRequest{
 			EntityType: "config",
 			ID:         uint64(i + 1),
 			Data:       data,
 		}); err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to put config " + cfg.Key, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to put config " + cfg.Key, Cause: err}
 		}
 	}
 
@@ -265,14 +265,14 @@ func createSampleData(ctx context.Context, client quicbaas.Client) error {
 	for i, session := range sessions {
 		data, err := json.Marshal(session)
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to marshal session " + session.UserID, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to marshal session " + session.UserID, Cause: err}
 		}
 		if _, err := client.KV().Put(ctx, &quicbaas.PutRequest{
 			EntityType: "session",
 			ID:         uint64(i + 1),
 			Data:       data,
 		}); err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to put session " + session.UserID, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to put session " + session.UserID, Cause: err}
 		}
 	}
 
@@ -290,14 +290,14 @@ func createSampleData(ctx context.Context, client quicbaas.Client) error {
 	for i, metric := range metrics {
 		data, err := json.Marshal(metric)
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to marshal metric " + metric.Name, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to marshal metric " + metric.Name, Cause: err}
 		}
 		if _, err := client.KV().Put(ctx, &quicbaas.PutRequest{
 			EntityType: "metric",
 			ID:         uint64(i + 1),
 			Data:       data,
 		}); err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to put metric " + metric.Name, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to put metric " + metric.Name, Cause: err}
 		}
 	}
 
@@ -323,14 +323,14 @@ func modifySampleData(ctx context.Context, client quicbaas.Client) error {
 	for _, update := range updates {
 		data, err := json.Marshal(update.data)
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to marshal config update " + update.data.Key, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to marshal config update " + update.data.Key, Cause: err}
 		}
 		if _, err := client.KV().Put(ctx, &quicbaas.PutRequest{
 			EntityType: "config",
 			ID:         update.id,
 			Data:       data,
 		}); err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to update config " + update.data.Key, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to update config " + update.data.Key, Cause: err}
 		}
 	}
 
@@ -342,14 +342,14 @@ func modifySampleData(ctx context.Context, client quicbaas.Client) error {
 	}
 	sessionData, err := json.Marshal(newSession)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to marshal new session", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to marshal new session", Cause: err}
 	}
 	if _, err := client.KV().Put(ctx, &quicbaas.PutRequest{
 		EntityType: "session",
 		ID:         4,
 		Data:       sessionData,
 	}); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to add new session", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to add new session", Cause: err}
 	}
 
 	// Update metrics (IDs 1 and 2)
@@ -364,14 +364,14 @@ func modifySampleData(ctx context.Context, client quicbaas.Client) error {
 	for _, update := range metricUpdates {
 		data, err := json.Marshal(update.data)
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to marshal metric update " + update.data.Name, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to marshal metric update " + update.data.Name, Cause: err}
 		}
 		if _, err := client.KV().Put(ctx, &quicbaas.PutRequest{
 			EntityType: "metric",
 			ID:         update.id,
 			Data:       data,
 		}); err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to update metric " + update.data.Name, Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to update metric " + update.data.Name, Cause: err}
 		}
 	}
 
@@ -406,7 +406,7 @@ func createIncrementalBackup(ctx context.Context, client quicbaas.Client, destin
 func listBackups(ctx context.Context, client quicbaas.Client) error {
 	resp, err := client.Backup().List(ctx)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to list backups", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to list backups", Cause: err}
 	}
 
 	if len(resp.Backups) == 0 {
@@ -441,7 +441,7 @@ func verifyBackup(ctx context.Context, client quicbaas.Client, backupID string) 
 	// validate the backup metadata. The server performs checksum verification.
 	resp, err := client.Backup().List(ctx)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to verify backup", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to verify backup", Cause: err}
 	}
 
 	found := false
@@ -457,7 +457,7 @@ func verifyBackup(ctx context.Context, client quicbaas.Client, backupID string) 
 	}
 
 	if !found {
-		return &dragonerrors.MessageError{Message: "backup " + backupID + " not found"}
+		return &qberrors.MessageError{Message: "backup " + backupID + " not found"}
 	}
 
 	return nil

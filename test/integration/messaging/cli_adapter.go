@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
@@ -83,16 +83,16 @@ func (a *cliAdapter) CreateChannel(ctx context.Context, req *grpc.MessagingCreat
 
 	result, err := a.executor.Execute(ctx, args...)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "CLI create-channel failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "CLI create-channel failed", Cause: err}
 	}
 
 	if result.ExitCode != 0 {
-		return nil, &dragonerrors.MessageError{Message: "CLI create-channel returned error: " + result.Stderr}
+		return nil, &qberrors.MessageError{Message: "CLI create-channel returned error: " + result.Stderr}
 	}
 
 	var response cliChannelResponse
 	if err := json.Unmarshal([]byte(result.Stdout), &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
 	}
 
 	return &grpc.MessagingCreateChannelResponse{
@@ -111,11 +111,11 @@ func (a *cliAdapter) DeleteChannel(ctx context.Context, req *grpc.MessagingDelet
 
 	result, err := a.executor.Execute(ctx, args...)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "CLI delete-channel failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "CLI delete-channel failed", Cause: err}
 	}
 
 	if result.ExitCode != 0 {
-		return nil, &dragonerrors.MessageError{Message: "CLI delete-channel returned error: " + result.Stderr}
+		return nil, &qberrors.MessageError{Message: "CLI delete-channel returned error: " + result.Stderr}
 	}
 
 	var response struct {
@@ -123,7 +123,7 @@ func (a *cliAdapter) DeleteChannel(ctx context.Context, req *grpc.MessagingDelet
 		Deleted bool   `json:"Deleted"`
 	}
 	if err := json.Unmarshal([]byte(result.Stdout), &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
 	}
 
 	return &grpc.MessagingDeleteChannelResponse{
@@ -142,22 +142,22 @@ func (a *cliAdapter) GetChannel(ctx context.Context, req *grpc.MessagingGetChann
 
 	result, err := a.executor.Execute(ctx, args...)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "CLI channel-info failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "CLI channel-info failed", Cause: err}
 	}
 
 	if result.ExitCode != 0 {
-		return nil, &dragonerrors.MessageError{Message: "CLI channel-info returned error: " + result.Stderr}
+		return nil, &qberrors.MessageError{Message: "CLI channel-info returned error: " + result.Stderr}
 	}
 
 	var response struct {
 		Channel *cliChannelResponse `json:"channel"`
 	}
 	if err := json.Unmarshal([]byte(result.Stdout), &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
 	}
 
 	if response.Channel == nil {
-		return nil, &dragonerrors.MessageError{Message: "channel not found: " + req.Name}
+		return nil, &qberrors.MessageError{Message: "channel not found: " + req.Name}
 	}
 
 	return &grpc.MessagingGetChannelResponse{
@@ -182,11 +182,11 @@ func (a *cliAdapter) ListChannels(ctx context.Context, req *grpc.MessagingListCh
 
 	result, err := a.executor.Execute(ctx, args...)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "CLI list-channels failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "CLI list-channels failed", Cause: err}
 	}
 
 	if result.ExitCode != 0 {
-		return nil, &dragonerrors.MessageError{Message: "CLI list-channels returned error: " + result.Stderr}
+		return nil, &qberrors.MessageError{Message: "CLI list-channels returned error: " + result.Stderr}
 	}
 
 	var response struct {
@@ -196,7 +196,7 @@ func (a *cliAdapter) ListChannels(ctx context.Context, req *grpc.MessagingListCh
 		TotalCount int32                 `json:"TotalCount"`
 	}
 	if err := json.Unmarshal([]byte(result.Stdout), &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
 	}
 
 	channels := make([]*grpc.MessagingChannel, len(response.Channels))
@@ -221,7 +221,7 @@ func (a *cliAdapter) Subscribe(ctx context.Context, req *grpc.MessagingSubscribe
 	// command or flag to support.
 	//
 	// For now, we use the gRPC client directly for subscription testing.
-	return nil, &dragonerrors.MessageError{Message: "CLI subscribe is interactive; use gRPC adapter for subscription testing"}
+	return nil, &qberrors.MessageError{Message: "CLI subscribe is interactive; use gRPC adapter for subscription testing"}
 }
 
 // Unsubscribe removes a subscription via CLI.
@@ -234,11 +234,11 @@ func (a *cliAdapter) Unsubscribe(ctx context.Context, req *grpc.MessagingUnsubsc
 
 	result, err := a.executor.Execute(ctx, args...)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "CLI unsubscribe failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "CLI unsubscribe failed", Cause: err}
 	}
 
 	if result.ExitCode != 0 {
-		return nil, &dragonerrors.MessageError{Message: "CLI unsubscribe returned error: " + result.Stderr}
+		return nil, &qberrors.MessageError{Message: "CLI unsubscribe returned error: " + result.Stderr}
 	}
 
 	var response struct {
@@ -246,7 +246,7 @@ func (a *cliAdapter) Unsubscribe(ctx context.Context, req *grpc.MessagingUnsubsc
 		Unsubscribed   bool   `json:"Unsubscribed"`
 	}
 	if err := json.Unmarshal([]byte(result.Stdout), &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
 	}
 
 	return &grpc.MessagingUnsubscribeResponse{
@@ -270,11 +270,11 @@ func (a *cliAdapter) Publish(ctx context.Context, req *grpc.MessagingPublishRequ
 
 	result, err := a.executor.Execute(ctx, args...)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "CLI publish failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "CLI publish failed", Cause: err}
 	}
 
 	if result.ExitCode != 0 {
-		return nil, &dragonerrors.MessageError{Message: "CLI publish returned error: " + result.Stderr}
+		return nil, &qberrors.MessageError{Message: "CLI publish returned error: " + result.Stderr}
 	}
 
 	var response struct {
@@ -284,7 +284,7 @@ func (a *cliAdapter) Publish(ctx context.Context, req *grpc.MessagingPublishRequ
 		Timestamp   time.Time `json:"Timestamp"`
 	}
 	if err := json.Unmarshal([]byte(result.Stdout), &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
 	}
 
 	return &grpc.MessagingPublishResponse{
@@ -318,11 +318,11 @@ func (a *cliAdapter) PublishDelta(ctx context.Context, req *grpc.MessagingPublis
 
 	result, err := a.executor.Execute(ctx, args...)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "CLI publish-delta failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "CLI publish-delta failed", Cause: err}
 	}
 
 	if result.ExitCode != 0 {
-		return nil, &dragonerrors.MessageError{Message: "CLI publish-delta returned error: " + result.Stderr}
+		return nil, &qberrors.MessageError{Message: "CLI publish-delta returned error: " + result.Stderr}
 	}
 
 	var response struct {
@@ -333,7 +333,7 @@ func (a *cliAdapter) PublishDelta(ctx context.Context, req *grpc.MessagingPublis
 		Timestamp   time.Time                   `json:"Timestamp"`
 	}
 	if err := json.Unmarshal([]byte(result.Stdout), &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
 	}
 
 	return &grpc.MessagingPublishDeltaResponse{
@@ -354,11 +354,11 @@ func (a *cliAdapter) GetChannelStats(ctx context.Context, req *grpc.MessagingGet
 
 	result, err := a.executor.Execute(ctx, args...)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "CLI channel-info failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "CLI channel-info failed", Cause: err}
 	}
 
 	if result.ExitCode != 0 {
-		return nil, &dragonerrors.MessageError{Message: "CLI channel-info returned error: " + result.Stderr}
+		return nil, &qberrors.MessageError{Message: "CLI channel-info returned error: " + result.Stderr}
 	}
 
 	var response struct {
@@ -370,11 +370,11 @@ func (a *cliAdapter) GetChannelStats(ctx context.Context, req *grpc.MessagingGet
 		} `json:"stats"`
 	}
 	if err := json.Unmarshal([]byte(result.Stdout), &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
 	}
 
 	if response.Stats == nil {
-		return nil, &dragonerrors.MessageError{Message: "stats not available for channel: " + req.Name}
+		return nil, &qberrors.MessageError{Message: "stats not available for channel: " + req.Name}
 	}
 
 	return &grpc.MessagingGetChannelStatsResponse{
@@ -397,11 +397,11 @@ func (a *cliAdapter) GetDedupStats(ctx context.Context, req *grpc.MessagingGetDe
 
 	result, err := a.executor.Execute(ctx, args...)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "CLI dedup-stats failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "CLI dedup-stats failed", Cause: err}
 	}
 
 	if result.ExitCode != 0 {
-		return nil, &dragonerrors.MessageError{Message: "CLI dedup-stats returned error: " + result.Stderr}
+		return nil, &qberrors.MessageError{Message: "CLI dedup-stats returned error: " + result.Stderr}
 	}
 
 	var response struct {
@@ -412,11 +412,11 @@ func (a *cliAdapter) GetDedupStats(ctx context.Context, req *grpc.MessagingGetDe
 		} `json:"Stats"`
 	}
 	if err := json.Unmarshal([]byte(result.Stdout), &response); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse CLI response", Cause: err}
 	}
 
 	if response.Stats == nil {
-		return nil, &dragonerrors.MessageError{Message: "dedup stats not available for channel: " + req.Channel}
+		return nil, &qberrors.MessageError{Message: "dedup stats not available for channel: " + req.Channel}
 	}
 
 	return &grpc.MessagingGetDedupStatsResponse{
@@ -433,7 +433,7 @@ func (a *cliAdapter) GetDedupStats(ctx context.Context, req *grpc.MessagingGetDe
 func (a *cliAdapter) GetStats(ctx context.Context) (*grpc.MessagingGetStatsResponse, error) {
 	// There is no dedicated stats command in the CLI for global messaging stats.
 	// This would need to be added to the CLI or we return an error.
-	return nil, &dragonerrors.MessageError{Message: "CLI GetStats not implemented; use gRPC adapter"}
+	return nil, &qberrors.MessageError{Message: "CLI GetStats not implemented; use gRPC adapter"}
 }
 
 // cliChannelResponse represents the CLI JSON response for a channel.

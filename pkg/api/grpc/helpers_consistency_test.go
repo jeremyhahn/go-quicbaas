@@ -250,7 +250,7 @@ func TestToServiceError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.NotFound, status.Code(result))
 	})
 
-	t.Run("dragon_error_maps_correctly", func(t *testing.T) {
+	t.Run("qb_error_maps_correctly", func(t *testing.T) {
 		qbErr := &errors.QBError{
 			Code: errors.ErrForbidden,
 			Op:   "test_operation",
@@ -268,7 +268,7 @@ func TestToServiceError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.Internal, status.Code(result))
 	})
 
-	t.Run("wrapped_dragon_error", func(t *testing.T) {
+	t.Run("wrapped_qb_error", func(t *testing.T) {
 		qbErr := &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "get",
@@ -279,7 +279,7 @@ func TestToServiceError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.NotFound, status.Code(result))
 	})
 
-	t.Run("dragon_error_timeout", func(t *testing.T) {
+	t.Run("qb_error_timeout", func(t *testing.T) {
 		qbErr := &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "operation",
@@ -290,7 +290,7 @@ func TestToServiceError_AllCases(t *testing.T) {
 		assert.Equal(t, codes.DeadlineExceeded, status.Code(result))
 	})
 
-	t.Run("dragon_error_unavailable", func(t *testing.T) {
+	t.Run("qb_error_unavailable", func(t *testing.T) {
 		qbErr := &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "connect",

@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
@@ -436,7 +436,7 @@ func TestReadThroughCache(t *testing.T) {
 		// Cache miss - fetch from backend
 		value, exists := backendStorage[key]
 		if !exists {
-			return nil, &dragonerrors.MessageError{Message: "key not found in backend"}
+			return nil, &qberrors.MessageError{Message: "key not found in backend"}
 		}
 
 		// Populate cache

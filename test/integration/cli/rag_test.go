@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1029,12 +1029,12 @@ func createTempResultsFile(t *testing.T) (string, error) {
 
 	data, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
-		return "", &dragonerrors.WrappedMessageError{Message: "failed to marshal results", Cause: err}
+		return "", &qberrors.WrappedMessageError{Message: "failed to marshal results", Cause: err}
 	}
 
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("rag_results_%d.json", time.Now().UnixNano()))
 	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
-		return "", &dragonerrors.WrappedMessageError{Message: "failed to write temp file", Cause: err}
+		return "", &qberrors.WrappedMessageError{Message: "failed to write temp file", Cause: err}
 	}
 
 	return tmpFile, nil
@@ -1069,12 +1069,12 @@ func createTempResultsFileWithCitations(t *testing.T) (string, error) {
 
 	data, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
-		return "", &dragonerrors.WrappedMessageError{Message: "failed to marshal results", Cause: err}
+		return "", &qberrors.WrappedMessageError{Message: "failed to marshal results", Cause: err}
 	}
 
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("rag_citations_%d.json", time.Now().UnixNano()))
 	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
-		return "", &dragonerrors.WrappedMessageError{Message: "failed to write temp file", Cause: err}
+		return "", &qberrors.WrappedMessageError{Message: "failed to write temp file", Cause: err}
 	}
 
 	return tmpFile, nil
@@ -1086,7 +1086,7 @@ func createEmptyResultsFile(t *testing.T) (string, error) {
 
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("rag_empty_%d.json", time.Now().UnixNano()))
 	if err := os.WriteFile(tmpFile, []byte("[]"), 0644); err != nil {
-		return "", &dragonerrors.WrappedMessageError{Message: "failed to write temp file", Cause: err}
+		return "", &qberrors.WrappedMessageError{Message: "failed to write temp file", Cause: err}
 	}
 
 	return tmpFile, nil
@@ -1098,7 +1098,7 @@ func createInvalidJSONFile(t *testing.T) (string, error) {
 
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("rag_invalid_%d.json", time.Now().UnixNano()))
 	if err := os.WriteFile(tmpFile, []byte("{ invalid json content }"), 0644); err != nil {
-		return "", &dragonerrors.WrappedMessageError{Message: "failed to write temp file", Cause: err}
+		return "", &qberrors.WrappedMessageError{Message: "failed to write temp file", Cause: err}
 	}
 
 	return tmpFile, nil

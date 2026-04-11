@@ -21,7 +21,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tracing"
 )
 
@@ -267,7 +267,7 @@ func ExampleTracer_errorHandling() {
 	ctx, finish := tracer.TraceDBOperation(ctx, "get", "missing-key", 1)
 
 	// Simulate operation that returns an error
-	err := &dragonerrors.MessageError{Message: "key not found"}
+	err := &qberrors.MessageError{Message: "key not found"}
 
 	// Record error on span
 	tracer.RecordError(ctx, err)

@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // =============================================================================
@@ -142,7 +142,7 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	}
 
 	if err != nil {
-		return stdout.String(), &dragonerrors.WrappedMessageError{
+		return stdout.String(), &qberrors.WrappedMessageError{
 			Message: "command failed, stderr: " + stderr.String(),
 			Cause:   err,
 		}
@@ -184,7 +184,7 @@ func (c *cliTestContext) runWithStdin(stdinInput string, args ...string) (string
 	}
 
 	if err != nil {
-		return stdout.String(), &dragonerrors.WrappedMessageError{
+		return stdout.String(), &qberrors.WrappedMessageError{
 			Message: "command failed, stderr: " + stderr.String(),
 			Cause:   err,
 		}

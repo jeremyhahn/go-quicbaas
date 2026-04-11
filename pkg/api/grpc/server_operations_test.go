@@ -26,7 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
@@ -296,7 +296,7 @@ func TestGetRebalanceProgress(t *testing.T) {
 		srv, mockSvc := createTestServerForOperations(t)
 
 		mockSvc.On("GetRebalanceProgress", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.QBError{Code: dragonerrors.ErrNotFound, Op: "test", Err: &dragonerrors.MessageError{Message: "operation not found"}},
+			nil, &qberrors.QBError{Code: qberrors.ErrNotFound, Op: "test", Err: &qberrors.MessageError{Message: "operation not found"}},
 		).Once()
 
 		req := &pb.GetRebalanceProgressRequest{

@@ -38,7 +38,38 @@ type Client interface {
 
 	// Verify verifies a signature using the specified key.
 	Verify(ctx context.Context, req *VerifyRequest) (*VerifyResponse, error)
+
+	// Rewrap re-encrypts ciphertext with the latest version of the key.
+	Rewrap(ctx context.Context, req *RewrapRequest) (*RewrapResponse, error)
+
+	// EncryptBatch performs multiple encrypt operations in a single request.
+	EncryptBatch(ctx context.Context, req *EncryptBatchRequest) (*EncryptBatchResponse, error)
+
+	// DecryptBatch performs multiple decrypt operations in a single request.
+	DecryptBatch(ctx context.Context, req *DecryptBatchRequest) (*DecryptBatchResponse, error)
+
+	// GenerateDataKey generates a data encryption key for envelope encryption.
+	GenerateDataKey(ctx context.Context, req *GenerateDataKeyRequest) (*GenerateDataKeyResponse, error)
+
+	// GenerateWrappedDataKey generates an encrypted data key without plaintext.
+	GenerateWrappedDataKey(ctx context.Context, req *GenerateWrappedDataKeyRequest) (*GenerateWrappedDataKeyResponse, error)
+
+	// GenerateHMAC generates an HMAC of data using a named key.
+	GenerateHMAC(ctx context.Context, req *GenerateHMACRequest) (*GenerateHMACResponse, error)
+
+	// VerifyHMAC verifies an HMAC against data using a named key.
+	VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) (*VerifyHMACResponse, error)
+
+	// GenerateRandom generates high-quality random bytes.
+	GenerateRandom(ctx context.Context, req *GenerateRandomRequest) (*GenerateRandomResponse, error)
+
+	// Hash computes a cryptographic hash of data.
+	Hash(ctx context.Context, req *HashRequest) (*HashResponse, error)
 }
+
+// =============================================================================
+// Types
+// =============================================================================
 
 // EncryptRequest is a request to encrypt data.
 type EncryptRequest struct {
@@ -117,6 +148,166 @@ type VerifyRequest struct {
 type VerifyResponse struct {
 	Valid bool
 }
+
+// RewrapRequest is a request to re-encrypt ciphertext with the latest key version.
+type RewrapRequest struct {
+	KeyID      string
+	Ciphertext []byte
+	Context    []byte // Optional AAD
+	Nonce      []byte // Optional nonce
+}
+
+// RewrapResponse is the response from rewrapping.
+type RewrapResponse struct {
+	KeyID         string
+	OldKeyVersion int
+	NewKeyVersion int
+	Ciphertext    []byte
+	Nonce         []byte
+}
+
+// BatchEncryptItem represents a single item in a batch encrypt request.
+type BatchEncryptItem struct {
+	Plaintext []byte
+	Context   []byte
+}
+
+// EncryptBatchRequest is a request to encrypt multiple items.
+type EncryptBatchRequest struct {
+	KeyID string
+	Items []BatchEncryptItem
+}
+
+// BatchEncryptResult represents the result of encrypting one item.
+type BatchEncryptResult struct {
+	Ciphertext []byte
+	Nonce      []byte
+	Error      string
+}
+
+// EncryptBatchResponse is the response from batch encryption.
+type EncryptBatchResponse struct {
+	KeyID      string
+	KeyVersion int
+	Results    []BatchEncryptResult
+}
+
+// BatchDecryptItem represents a single item in a batch decrypt request.
+type BatchDecryptItem struct {
+	Ciphertext []byte
+	Context    []byte
+	Nonce      []byte
+}
+
+// DecryptBatchRequest is a request to decrypt multiple items.
+type DecryptBatchRequest struct {
+	KeyID string
+	Items []BatchDecryptItem
+}
+
+// BatchDecryptResult represents the result of decrypting one item.
+type BatchDecryptResult struct {
+	Plaintext []byte
+	Error     string
+}
+
+// DecryptBatchResponse is the response from batch decryption.
+type DecryptBatchResponse struct {
+	KeyID   string
+	Results []BatchDecryptResult
+}
+
+// GenerateDataKeyRequest is a request to generate a data encryption key.
+type GenerateDataKeyRequest struct {
+	// KeyID is the master key for wrapping.
+	KeyID string
+
+	// KeySize is the desired data key size in bits (e.g., 256).
+	KeySize int
+
+	// Context is optional additional authenticated data.
+	Context []byte
+}
+
+// GenerateDataKeyResponse is the response from generating a data key.
+type GenerateDataKeyResponse struct {
+	KeyID          string
+	Plaintext      []byte
+	CiphertextBlob []byte
+}
+
+// GenerateWrappedDataKeyRequest is a request to generate a wrapped-only data key.
+type GenerateWrappedDataKeyRequest struct {
+	// KeyID is the master key for wrapping.
+	KeyID string
+
+	// KeySize is the desired data key size in bits (e.g., 256).
+	KeySize int
+
+	// Context is optional additional authenticated data.
+	Context []byte
+}
+
+// GenerateWrappedDataKeyResponse is the response from generating a wrapped data key.
+type GenerateWrappedDataKeyResponse struct {
+	KeyID          string
+	CiphertextBlob []byte
+}
+
+// GenerateHMACRequest is a request to generate an HMAC.
+type GenerateHMACRequest struct {
+	KeyID   string
+	Message []byte
+	HashAlg HashAlgorithm
+}
+
+// GenerateHMACResponse is the response from HMAC generation.
+type GenerateHMACResponse struct {
+	KeyID      string
+	KeyVersion int
+	HMAC       []byte
+	HashAlg    HashAlgorithm
+}
+
+// VerifyHMACRequest is a request to verify an HMAC.
+type VerifyHMACRequest struct {
+	KeyID      string
+	Message    []byte
+	HMAC       []byte
+	HashAlg    HashAlgorithm
+	KeyVersion int
+}
+
+// VerifyHMACResponse is the response from HMAC verification.
+type VerifyHMACResponse struct {
+	Valid bool
+}
+
+// GenerateRandomRequest is a request to generate random bytes.
+type GenerateRandomRequest struct {
+	NumBytes int
+}
+
+// GenerateRandomResponse is the response from random byte generation.
+type GenerateRandomResponse struct {
+	RandomBytes []byte
+}
+
+// HashRequest is a request to compute a hash.
+type HashRequest struct {
+	Data    []byte
+	HashAlg HashAlgorithm
+}
+
+// HashResponse is the response from hashing.
+type HashResponse struct {
+	HashAlg HashAlgorithm
+	Hash    []byte
+}
+
+// =============================================================================
+// Client implementation
+// =============================================================================
 
 // client implements the Client interface.
 type client struct {
@@ -293,7 +484,418 @@ func (c *client) Verify(ctx context.Context, req *VerifyRequest) (*VerifyRespons
 	}
 }
 
+// Rewrap re-encrypts ciphertext with the latest version of the key.
+func (c *client) Rewrap(ctx context.Context, req *RewrapRequest) (*RewrapResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("crypto.Rewrap", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("crypto.Rewrap", "key ID is required")
+	}
+	if len(req.Ciphertext) == 0 {
+		return nil, errors.NewInvalidInput("crypto.Rewrap", "ciphertext is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("crypto.Rewrap", "context is required")
+	}
+
+	svcReq := &service.RewrapRequest{
+		KeyID:      req.KeyID,
+		Ciphertext: req.Ciphertext,
+		Context:    req.Context,
+		Nonce:      req.Nonce,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "Rewrap", svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("crypto.Rewrap", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *RewrapResponse:
+		return r, nil
+	case *service.RewrapResponse:
+		return &RewrapResponse{
+			KeyID:         r.KeyID,
+			OldKeyVersion: int(r.OldKeyVersion),
+			NewKeyVersion: int(r.NewKeyVersion),
+			Ciphertext:    r.Ciphertext,
+			Nonce:         r.Nonce,
+		}, nil
+	default:
+		return nil, errors.NewInternal("crypto.Rewrap", "invalid response type")
+	}
+}
+
+// EncryptBatch performs multiple encrypt operations in a single request.
+func (c *client) EncryptBatch(ctx context.Context, req *EncryptBatchRequest) (*EncryptBatchResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("crypto.EncryptBatch", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("crypto.EncryptBatch", "key ID is required")
+	}
+	if len(req.Items) == 0 {
+		return nil, errors.NewInvalidInput("crypto.EncryptBatch", "items are required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("crypto.EncryptBatch", "context is required")
+	}
+
+	svcItems := make([]service.BatchEncryptItem, len(req.Items))
+	for i, item := range req.Items {
+		svcItems[i] = service.BatchEncryptItem{
+			Plaintext: item.Plaintext,
+			Context:   item.Context,
+		}
+	}
+	svcReq := &service.EncryptBatchRequest{
+		KeyID: req.KeyID,
+		Items: svcItems,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "EncryptBatch", svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("crypto.EncryptBatch", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *EncryptBatchResponse:
+		return r, nil
+	case *service.EncryptBatchResponse:
+		results := make([]BatchEncryptResult, len(r.Results))
+		for i, res := range r.Results {
+			results[i] = BatchEncryptResult{
+				Ciphertext: res.Ciphertext,
+				Nonce:      res.Nonce,
+				Error:      res.Error,
+			}
+		}
+		return &EncryptBatchResponse{
+			KeyID:      r.KeyID,
+			KeyVersion: int(r.KeyVersion),
+			Results:    results,
+		}, nil
+	default:
+		return nil, errors.NewInternal("crypto.EncryptBatch", "invalid response type")
+	}
+}
+
+// DecryptBatch performs multiple decrypt operations in a single request.
+func (c *client) DecryptBatch(ctx context.Context, req *DecryptBatchRequest) (*DecryptBatchResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("crypto.DecryptBatch", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("crypto.DecryptBatch", "key ID is required")
+	}
+	if len(req.Items) == 0 {
+		return nil, errors.NewInvalidInput("crypto.DecryptBatch", "items are required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("crypto.DecryptBatch", "context is required")
+	}
+
+	svcItems := make([]service.BatchDecryptItem, len(req.Items))
+	for i, item := range req.Items {
+		svcItems[i] = service.BatchDecryptItem{
+			Ciphertext: item.Ciphertext,
+			Context:    item.Context,
+			Nonce:      item.Nonce,
+		}
+	}
+	svcReq := &service.DecryptBatchRequest{
+		KeyID: req.KeyID,
+		Items: svcItems,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "DecryptBatch", svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("crypto.DecryptBatch", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *DecryptBatchResponse:
+		return r, nil
+	case *service.DecryptBatchResponse:
+		results := make([]BatchDecryptResult, len(r.Results))
+		for i, res := range r.Results {
+			results[i] = BatchDecryptResult{
+				Plaintext: res.Plaintext,
+				Error:     res.Error,
+			}
+		}
+		return &DecryptBatchResponse{
+			KeyID:   r.KeyID,
+			Results: results,
+		}, nil
+	default:
+		return nil, errors.NewInternal("crypto.DecryptBatch", "invalid response type")
+	}
+}
+
+// GenerateDataKey generates a data encryption key for envelope encryption.
+func (c *client) GenerateDataKey(ctx context.Context, req *GenerateDataKeyRequest) (*GenerateDataKeyResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("crypto.GenerateDataKey", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("crypto.GenerateDataKey", "key ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("crypto.GenerateDataKey", "context is required")
+	}
+
+	svcReq := &service.GenerateDataKeyRequest{
+		KeyID:   req.KeyID,
+		Context: req.Context,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GenerateDataKey", svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("crypto.GenerateDataKey", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *GenerateDataKeyResponse:
+		return r, nil
+	case *service.GenerateDataKeyResponse:
+		return &GenerateDataKeyResponse{
+			KeyID:          r.KeyID,
+			Plaintext:      r.Plaintext,
+			CiphertextBlob: r.CiphertextBlob,
+		}, nil
+	default:
+		return nil, errors.NewInternal("crypto.GenerateDataKey", "invalid response type")
+	}
+}
+
+// GenerateWrappedDataKey generates an encrypted data key without plaintext.
+func (c *client) GenerateWrappedDataKey(ctx context.Context, req *GenerateWrappedDataKeyRequest) (*GenerateWrappedDataKeyResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("crypto.GenerateWrappedDataKey", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("crypto.GenerateWrappedDataKey", "key ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("crypto.GenerateWrappedDataKey", "context is required")
+	}
+
+	svcReq := &service.GenerateWrappedDataKeyRequest{
+		KeyID:   req.KeyID,
+		Context: req.Context,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GenerateWrappedDataKey", svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("crypto.GenerateWrappedDataKey", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *GenerateWrappedDataKeyResponse:
+		return r, nil
+	case *service.GenerateWrappedDataKeyResponse:
+		return &GenerateWrappedDataKeyResponse{
+			KeyID:          r.KeyID,
+			CiphertextBlob: r.CiphertextBlob,
+		}, nil
+	default:
+		return nil, errors.NewInternal("crypto.GenerateWrappedDataKey", "invalid response type")
+	}
+}
+
+// GenerateHMAC generates an HMAC of data using a named key.
+func (c *client) GenerateHMAC(ctx context.Context, req *GenerateHMACRequest) (*GenerateHMACResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("crypto.GenerateHMAC", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("crypto.GenerateHMAC", "key ID is required")
+	}
+	if len(req.Message) == 0 {
+		return nil, errors.NewInvalidInput("crypto.GenerateHMAC", "message is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("crypto.GenerateHMAC", "context is required")
+	}
+
+	svcReq := &service.HMACRequest{
+		KeyID:         req.KeyID,
+		Message:       req.Message,
+		HashAlgorithm: hashAlgToServiceHashAlg(req.HashAlg),
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GenerateHMAC", svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("crypto.GenerateHMAC", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *GenerateHMACResponse:
+		return r, nil
+	case *service.HMACResponse:
+		return &GenerateHMACResponse{
+			KeyID:      r.KeyID,
+			KeyVersion: int(r.KeyVersion),
+			HMAC:       r.HMAC,
+			HashAlg:    serviceHashAlgToHashAlg(r.HashAlgorithm),
+		}, nil
+	default:
+		return nil, errors.NewInternal("crypto.GenerateHMAC", "invalid response type")
+	}
+}
+
+// VerifyHMAC verifies an HMAC against data using a named key.
+func (c *client) VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) (*VerifyHMACResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("crypto.VerifyHMAC", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("crypto.VerifyHMAC", "key ID is required")
+	}
+	if len(req.Message) == 0 {
+		return nil, errors.NewInvalidInput("crypto.VerifyHMAC", "message is required")
+	}
+	if len(req.HMAC) == 0 {
+		return nil, errors.NewInvalidInput("crypto.VerifyHMAC", "HMAC is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("crypto.VerifyHMAC", "context is required")
+	}
+
+	svcReq := &service.VerifyHMACRequest{
+		KeyID:         req.KeyID,
+		Message:       req.Message,
+		HMAC:          req.HMAC,
+		HashAlgorithm: hashAlgToServiceHashAlg(req.HashAlg),
+		KeyVersion:    uint64(req.KeyVersion),
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "VerifyHMAC", svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("crypto.VerifyHMAC", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *VerifyHMACResponse:
+		return r, nil
+	case *service.VerifyHMACResponse:
+		return &VerifyHMACResponse{
+			Valid: r.Valid,
+		}, nil
+	default:
+		return nil, errors.NewInternal("crypto.VerifyHMAC", "invalid response type")
+	}
+}
+
+// GenerateRandom generates high-quality random bytes.
+func (c *client) GenerateRandom(ctx context.Context, req *GenerateRandomRequest) (*GenerateRandomResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("crypto.GenerateRandom", "request is required")
+	}
+	if req.NumBytes <= 0 {
+		return nil, errors.NewInvalidInput("crypto.GenerateRandom", "num bytes must be positive")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("crypto.GenerateRandom", "context is required")
+	}
+
+	svcReq := &service.GenerateRandomRequest{
+		NumBytes: req.NumBytes,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GenerateRandom", svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("crypto.GenerateRandom", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *GenerateRandomResponse:
+		return r, nil
+	case *service.GenerateRandomResponse:
+		return &GenerateRandomResponse{
+			RandomBytes: r.RandomBytes,
+		}, nil
+	default:
+		return nil, errors.NewInternal("crypto.GenerateRandom", "invalid response type")
+	}
+}
+
+// Hash computes a cryptographic hash of data.
+func (c *client) Hash(ctx context.Context, req *HashRequest) (*HashResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("crypto.Hash", "request is required")
+	}
+	if len(req.Data) == 0 {
+		return nil, errors.NewInvalidInput("crypto.Hash", "data is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("crypto.Hash", "context is required")
+	}
+
+	svcReq := &service.HashRequest{
+		Data:      req.Data,
+		Algorithm: hashAlgToServiceHashAlg(req.HashAlg),
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "Hash", svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("crypto.Hash", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *HashResponse:
+		return r, nil
+	case *service.HashResponse:
+		return &HashResponse{
+			HashAlg: serviceHashAlgToHashAlg(r.Algorithm),
+			Hash:    r.Hash,
+		}, nil
+	default:
+		return nil, errors.NewInternal("crypto.Hash", "invalid response type")
+	}
+}
+
+// =============================================================================
 // Validation functions
+// =============================================================================
 
 func validateEncryptRequest(req *EncryptRequest) error {
 	if req == nil {
@@ -368,6 +970,10 @@ func validateVerifyRequest(req *VerifyRequest) error {
 	return nil
 }
 
+// =============================================================================
+// Conversion helpers
+// =============================================================================
+
 // hashAlgToServiceHashAlg converts SDK HashAlgorithm to service HashAlgorithm.
 func hashAlgToServiceHashAlg(h HashAlgorithm) service.HashAlgorithm {
 	switch h {
@@ -379,5 +985,19 @@ func hashAlgToServiceHashAlg(h HashAlgorithm) service.HashAlgorithm {
 		return service.HashAlgSHA512
 	default:
 		return service.HashAlgSHA256
+	}
+}
+
+// serviceHashAlgToHashAlg converts service HashAlgorithm to SDK HashAlgorithm.
+func serviceHashAlgToHashAlg(h service.HashAlgorithm) HashAlgorithm {
+	switch h {
+	case service.HashAlgSHA256:
+		return HashSHA256
+	case service.HashAlgSHA384:
+		return HashSHA384
+	case service.HashAlgSHA512:
+		return HashSHA512
+	default:
+		return HashSHA256
 	}
 }

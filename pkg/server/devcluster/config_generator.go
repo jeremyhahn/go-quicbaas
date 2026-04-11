@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // ConfigGenerator generates configuration files and directories for devcluster nodes.
@@ -40,8 +40,8 @@ func NewConfigGenerator(mgr *Manager) *ConfigGenerator {
 // EnsureDataDirs creates data directories for all nodes.
 func (g *ConfigGenerator) EnsureDataDirs() error {
 	if g.manager == nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "devcluster.EnsureDataDirs",
 			Err:  ErrManagerNotStarted,
 		}
@@ -49,8 +49,8 @@ func (g *ConfigGenerator) EnsureDataDirs() error {
 
 	nodes := g.manager.Nodes()
 	if len(nodes) == 0 {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "devcluster.EnsureDataDirs",
 			Err:  &DevClusterMessageError{Message: "devcluster manager not started: no nodes configured"},
 		}
@@ -60,8 +60,8 @@ func (g *ConfigGenerator) EnsureDataDirs() error {
 		// Create main data directory.
 		// #nosec G301 - Data directories need 0750 for group access.
 		if err := os.MkdirAll(node.DataDir, 0750); err != nil {
-			return &dragonerrors.QBError{
-				Code: dragonerrors.ErrInternal,
+			return &qberrors.QBError{
+				Code: qberrors.ErrInternal,
 				Op:   "devcluster.EnsureDataDirs",
 				Err:  &DataDirNodeError{NodeID: node.NodeID, Cause: err},
 			}
@@ -71,8 +71,8 @@ func (g *ConfigGenerator) EnsureDataDirs() error {
 		if node.Config != nil && node.Config.Storage.WALDir != "" {
 			// #nosec G301 - WAL directories need 0750 for group access.
 			if err := os.MkdirAll(node.Config.Storage.WALDir, 0750); err != nil {
-				return &dragonerrors.QBError{
-					Code: dragonerrors.ErrInternal,
+				return &qberrors.QBError{
+					Code: qberrors.ErrInternal,
 					Op:   "devcluster.EnsureDataDirs",
 					Err:  &DataDirNodeError{NodeID: node.NodeID, Subdir: "WAL", Cause: err},
 				}
@@ -86,8 +86,8 @@ func (g *ConfigGenerator) EnsureDataDirs() error {
 // GenerateConfigFiles writes config files for each node to the specified output directory.
 func (g *ConfigGenerator) GenerateConfigFiles(outputDir string) error {
 	if g.manager == nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "devcluster.GenerateConfigFiles",
 			Err:  ErrManagerNotStarted,
 		}
@@ -95,8 +95,8 @@ func (g *ConfigGenerator) GenerateConfigFiles(outputDir string) error {
 
 	nodes := g.manager.Nodes()
 	if len(nodes) == 0 {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "devcluster.GenerateConfigFiles",
 			Err:  &DevClusterMessageError{Message: "devcluster manager not started: no nodes configured"},
 		}
@@ -105,8 +105,8 @@ func (g *ConfigGenerator) GenerateConfigFiles(outputDir string) error {
 	// Create output directory.
 	// #nosec G301 - Config directories need 0750 for group access.
 	if err := os.MkdirAll(outputDir, 0750); err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "devcluster.GenerateConfigFiles",
 			Err:  &DevClusterCauseError{Message: "failed to generate node configuration", Cause: err},
 		}
@@ -120,8 +120,8 @@ func (g *ConfigGenerator) GenerateConfigFiles(outputDir string) error {
 
 		// #nosec G306 - Config files need 0640 for owner read/write, group read.
 		if err := os.WriteFile(filename, []byte(content), 0640); err != nil {
-			return &dragonerrors.QBError{
-				Code: dragonerrors.ErrInternal,
+			return &qberrors.QBError{
+				Code: qberrors.ErrInternal,
 				Op:   "devcluster.GenerateConfigFiles",
 				Err:  &ConfigGenNodeError{NodeID: node.NodeID, Cause: err},
 			}
@@ -241,8 +241,8 @@ func (g *ConfigGenerator) ClusterAddresses() map[uint64]string {
 // Use with caution as this deletes all persisted data.
 func (g *ConfigGenerator) CleanupDataDirs() error {
 	if g.manager == nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "devcluster.CleanupDataDirs",
 			Err:  ErrManagerNotStarted,
 		}
@@ -255,8 +255,8 @@ func (g *ConfigGenerator) CleanupDataDirs() error {
 
 	// Remove the entire devcluster data directory.
 	if err := os.RemoveAll(cfg.DataDir); err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "devcluster.CleanupDataDirs",
 			Err:  &DevClusterCauseError{Message: "failed to remove data directory " + cfg.DataDir, Cause: err},
 		}

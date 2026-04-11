@@ -20,7 +20,7 @@ import (
 	"errors"
 	"testing"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -598,7 +598,7 @@ func TestHandleRebalanceStatus_JobIDVariant(t *testing.T) {
 func TestHandleRebalanceStatus_NotFoundError(t *testing.T) {
 	svc := &mockService{
 		getRebalanceProgressFn: func(ctx context.Context, req *service.GetRebalanceProgressRequest) (*service.GetRebalanceProgressResponse, error) {
-			return nil, dragonerrors.NotFound("test", "operation")
+			return nil, qberrors.NotFound("test", "operation")
 		},
 	}
 	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())

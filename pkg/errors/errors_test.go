@@ -687,7 +687,7 @@ func TestIsQuotaExceeded(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with resource exhausted code",
+			name: "qb error with resource exhausted code",
 			err:  NewQuotaExceededError("storage", "ns", "tenant", 100, 90, 20),
 			want: true,
 		},
@@ -761,7 +761,7 @@ func TestIsMissingJustification(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with missing justification code",
+			name: "qb error with missing justification code",
 			err:  &QBError{Code: ErrMissingJustification},
 			want: true,
 		},
@@ -803,7 +803,7 @@ func TestIsMissingUserContext(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with missing user context code",
+			name: "qb error with missing user context code",
 			err:  &QBError{Code: ErrMissingUserContext},
 			want: true,
 		},
@@ -952,7 +952,7 @@ func TestIsSystemKeyspaceViolation(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  &QBError{Code: ErrSystemKeyspaceViolation},
 			want: true,
 		},
@@ -992,7 +992,7 @@ func TestIsCrossTenantAccess(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  &QBError{Code: ErrCrossTenantAccess},
 			want: true,
 		},
@@ -1032,7 +1032,7 @@ func TestIsMissingTenantContext(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "dragon error with correct code",
+			name: "qb error with correct code",
 			err:  &QBError{Code: ErrMissingTenantContext},
 			want: true,
 		},

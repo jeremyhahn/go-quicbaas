@@ -462,7 +462,7 @@ func TestErrorToStatus(t *testing.T) {
 			expected: StatusInternalError,
 		},
 		{
-			name:     "non-dragon error",
+			name:     "non-qb error",
 			err:      io.EOF,
 			expected: StatusInternalError,
 		},

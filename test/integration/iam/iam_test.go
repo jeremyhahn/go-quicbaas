@@ -35,7 +35,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
@@ -357,7 +357,7 @@ func (tc *testCluster) getJSON(path string, target interface{}) error {
 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		lastErr = &dragonerrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
+		lastErr = &qberrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
 
 		// Check if this is a retryable error
 		if !isRetryableError(resp.StatusCode, string(respBody)) {
@@ -365,7 +365,7 @@ func (tc *testCluster) getJSON(path string, target interface{}) error {
 		}
 	}
 
-	return &dragonerrors.WrappedMessageError{Message: "max retries exceeded", Cause: lastErr}
+	return &qberrors.WrappedMessageError{Message: "max retries exceeded", Cause: lastErr}
 }
 
 // getJSONExpectNotFound performs a GET request expecting the resource to not exist (404).
@@ -403,21 +403,21 @@ func (tc *testCluster) getJSONExpectNotFound(path string) error {
 
 		// If resource still exists (200 OK), retry - deletion may not have propagated yet
 		if resp.StatusCode == http.StatusOK {
-			lastErr = &dragonerrors.MessageError{Message: "resource still exists (HTTP 200)"}
+			lastErr = &qberrors.MessageError{Message: "resource still exists (HTTP 200)"}
 			continue
 		}
 
 		// Check if this is a retryable error
 		if isRetryableError(resp.StatusCode, string(respBody)) {
-			lastErr = &dragonerrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
+			lastErr = &qberrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
 			continue
 		}
 
 		// Other errors (not 404, not 200, not retryable) - treat as unexpected
-		return &dragonerrors.MessageError{Message: fmt.Sprintf("unexpected HTTP %d: %s", resp.StatusCode, string(respBody))}
+		return &qberrors.MessageError{Message: fmt.Sprintf("unexpected HTTP %d: %s", resp.StatusCode, string(respBody))}
 	}
 
-	return &dragonerrors.WrappedMessageError{Message: fmt.Sprintf("resource still found after %d retries", maxRetries), Cause: lastErr}
+	return &qberrors.WrappedMessageError{Message: fmt.Sprintf("resource still found after %d retries", maxRetries), Cause: lastErr}
 }
 
 // postJSON performs a POST request with JSON body.
@@ -453,7 +453,7 @@ func (tc *testCluster) postJSON(path string, body interface{}, target interface{
 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		lastErr = &dragonerrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
+		lastErr = &qberrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
 
 		// Check if this is a retryable error
 		if !isRetryableError(resp.StatusCode, string(respBody)) {
@@ -461,7 +461,7 @@ func (tc *testCluster) postJSON(path string, body interface{}, target interface{
 		}
 	}
 
-	return &dragonerrors.WrappedMessageError{Message: "max retries exceeded", Cause: lastErr}
+	return &qberrors.WrappedMessageError{Message: "max retries exceeded", Cause: lastErr}
 }
 
 // putJSON performs a PUT request with JSON body.
@@ -497,7 +497,7 @@ func (tc *testCluster) putJSON(path string, body interface{}, target interface{}
 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		lastErr = &dragonerrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
+		lastErr = &qberrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
 
 		// Check if this is a retryable error
 		if !isRetryableError(resp.StatusCode, string(respBody)) {
@@ -505,7 +505,7 @@ func (tc *testCluster) putJSON(path string, body interface{}, target interface{}
 		}
 	}
 
-	return &dragonerrors.WrappedMessageError{Message: "max retries exceeded", Cause: lastErr}
+	return &qberrors.WrappedMessageError{Message: "max retries exceeded", Cause: lastErr}
 }
 
 // deleteJSON performs a DELETE request.
@@ -538,7 +538,7 @@ func (tc *testCluster) deleteJSON(path string) error {
 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		lastErr = &dragonerrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
+		lastErr = &qberrors.MessageError{Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody))}
 
 		// Check if this is a retryable error
 		if !isRetryableError(resp.StatusCode, string(respBody)) {
@@ -546,7 +546,7 @@ func (tc *testCluster) deleteJSON(path string) error {
 		}
 	}
 
-	return &dragonerrors.WrappedMessageError{Message: "max retries exceeded", Cause: lastErr}
+	return &qberrors.WrappedMessageError{Message: "max retries exceeded", Cause: lastErr}
 }
 
 // generateUniqueTenantID generates a unique tenant ID for testing.

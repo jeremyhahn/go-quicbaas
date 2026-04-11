@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -109,7 +109,7 @@ func (h *Handler) handleRebalanceStatus(ctx context.Context, req *Request) *Resp
 	resp, err := h.service.GetRebalanceProgress(ctx, serviceReq)
 	if err != nil {
 		// Return "not_running" status for non-existent operations instead of error
-		if dragonerrors.IsNotFound(err) {
+		if qberrors.IsNotFound(err) {
 			notFoundResp := &service.GetRebalanceProgressResponse{
 				OperationID: operationID,
 				Status:      "not_running",

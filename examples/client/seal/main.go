@@ -66,7 +66,7 @@ import (
 	"strings"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
@@ -277,7 +277,7 @@ func unsealServer(ctx context.Context, client quicbaas.Client, keys []string, th
 			Reset: false,
 		})
 		if err != nil {
-			return &dragonerrors.WrappedMessageError{Message: "failed to provide key " + strconv.Itoa(i+1), Cause: err}
+			return &qberrors.WrappedMessageError{Message: "failed to provide key " + strconv.Itoa(i+1), Cause: err}
 		}
 
 		fmt.Printf("  Key %d: progress %d/%d", i+1, resp.Progress, resp.Required)
@@ -309,7 +309,7 @@ func sealServer(ctx context.Context, client quicbaas.Client) error {
 // demonstratePartialUnsealAndReset shows the unseal reset functionality.
 func demonstratePartialUnsealAndReset(ctx context.Context, client quicbaas.Client, keys []string) error {
 	if len(keys) < 1 {
-		return &dragonerrors.MessageError{Message: "need at least 1 key to demonstrate"}
+		return &qberrors.MessageError{Message: "need at least 1 key to demonstrate"}
 	}
 
 	// Provide one key
@@ -319,7 +319,7 @@ func demonstratePartialUnsealAndReset(ctx context.Context, client quicbaas.Clien
 		Reset: false,
 	})
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to provide key", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to provide key", Cause: err}
 	}
 	fmt.Printf("  Progress after first key: %d/%d\n", resp.Progress, resp.Required)
 
@@ -330,7 +330,7 @@ func demonstratePartialUnsealAndReset(ctx context.Context, client quicbaas.Clien
 		Reset: true,
 	})
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to reset", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to reset", Cause: err}
 	}
 	fmt.Printf("  Progress after reset: %d/%d\n", resp.Progress, resp.Required)
 

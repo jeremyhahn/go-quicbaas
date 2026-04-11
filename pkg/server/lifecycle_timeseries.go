@@ -21,7 +21,7 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -40,8 +40,8 @@ func (s *Server) initTimeSeriesStorage() error {
 	// Create PebbleDB-backed time series storage
 	storage, err := xkmssdk.QRDBNewTimeSeriesStorageWithDir(dataDir)
 	if err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "server.initTimeSeriesStorage",
 			Err:  &ServerCauseError{Message: "failed to open time series storage", Cause: err},
 		}
@@ -79,8 +79,8 @@ func (s *Server) stopTimeSeries() error {
 	if ok {
 		if err := adapter.storage.Close(); err != nil {
 			s.timeSeriesStorage = nil
-			return &dragonerrors.QBError{
-				Code: dragonerrors.ErrInternal,
+			return &qberrors.QBError{
+				Code: qberrors.ErrInternal,
 				Op:   "server.stopTimeSeries",
 				Err:  &ServerCauseError{Message: "failed to close time series storage", Cause: err},
 			}

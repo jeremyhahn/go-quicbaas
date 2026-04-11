@@ -425,7 +425,7 @@ func TestUnixSocketPattern(t *testing.T) {
 			NodeCount:         3,
 			DataDir:           tempDir,
 			BasePorts:         config.DefaultDevClusterPorts(),
-			UnixSocketPattern: "/tmp/test-dragon-{n}.sock",
+			UnixSocketPattern: "/tmp/test-quicbaas-{n}.sock",
 		}
 
 		mgr, err := NewManager(&ManagerConfig{
@@ -440,9 +440,9 @@ func TestUnixSocketPattern(t *testing.T) {
 		require.NoError(t, err)
 
 		nodes := mgr.Nodes()
-		assert.Equal(t, "/tmp/test-dragon-1.sock", nodes[0].UnixSocket)
-		assert.Equal(t, "/tmp/test-dragon-2.sock", nodes[1].UnixSocket)
-		assert.Equal(t, "/tmp/test-dragon-3.sock", nodes[2].UnixSocket)
+		assert.Equal(t, "/tmp/test-quicbaas-1.sock", nodes[0].UnixSocket)
+		assert.Equal(t, "/tmp/test-quicbaas-2.sock", nodes[1].UnixSocket)
+		assert.Equal(t, "/tmp/test-quicbaas-3.sock", nodes[2].UnixSocket)
 	})
 
 	t.Run("EmptyPatternWithNoBaseSocket", func(t *testing.T) {

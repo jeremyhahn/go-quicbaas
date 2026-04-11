@@ -33,7 +33,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // =============================================================================
@@ -138,7 +138,7 @@ func (c *iamCLITestContext) run(args ...string) (string, error) {
 	}
 
 	if err != nil {
-		return stdout.String(), &dragonerrors.WrappedMessageError{Message: "command failed, stderr: " + stderr.String(), Cause: err}
+		return stdout.String(), &qberrors.WrappedMessageError{Message: "command failed, stderr: " + stderr.String(), Cause: err}
 	}
 
 	return stdout.String(), nil

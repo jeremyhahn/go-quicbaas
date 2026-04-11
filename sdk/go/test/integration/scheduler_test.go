@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // Job types.
@@ -902,7 +902,7 @@ func TestSchedulerConcurrent(t *testing.T) {
 					Payload: map[string]interface{}{"goroutine": idx},
 				})
 				if err != nil {
-					errors <- &dragonerrors.WrappedMessageError{
+					errors <- &qberrors.WrappedMessageError{
 						Message: "goroutine " + strconv.Itoa(idx),
 						Cause:   err,
 					}
@@ -985,29 +985,29 @@ func schedulerCreateJob(ctx context.Context, req createJobRequest) (*jobResponse
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "create job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1015,7 +1015,7 @@ func schedulerCreateJob(ctx context.Context, req createJobRequest) (*jobResponse
 	var jobResp jobResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -1027,27 +1027,27 @@ func schedulerGetJob(ctx context.Context, id string) (*jobResponse, error) {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, &dragonerrors.MessageError{Message: "job not found"}
+		return nil, &qberrors.MessageError{Message: "job not found"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "get job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1055,7 +1055,7 @@ func schedulerGetJob(ctx context.Context, id string) (*jobResponse, error) {
 	var jobResp jobResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -1067,33 +1067,33 @@ func schedulerUpdateJob(ctx context.Context, id string, req updateJobRequest) (*
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, &dragonerrors.MessageError{Message: "job not found"}
+		return nil, &qberrors.MessageError{Message: "job not found"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "update job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1101,7 +1101,7 @@ func schedulerUpdateJob(ctx context.Context, id string, req updateJobRequest) (*
 	var jobResp jobResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -1131,23 +1131,23 @@ func schedulerListJobs(ctx context.Context, limit int, cursor, status, jobType s
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "list jobs failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1155,7 +1155,7 @@ func schedulerListJobs(ctx context.Context, limit int, cursor, status, jobType s
 	var listResp listJobsResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &listResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -1167,27 +1167,27 @@ func schedulerTriggerJob(ctx context.Context, id string) (*jobResponse, error) {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, &dragonerrors.MessageError{Message: "job not found"}
+		return nil, &qberrors.MessageError{Message: "job not found"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "trigger job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1195,7 +1195,7 @@ func schedulerTriggerJob(ctx context.Context, id string) (*jobResponse, error) {
 	var jobResp jobResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -1207,27 +1207,27 @@ func schedulerPauseJob(ctx context.Context, id string) (*jobResponse, error) {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, &dragonerrors.MessageError{Message: "job not found"}
+		return nil, &qberrors.MessageError{Message: "job not found"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "pause job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1235,7 +1235,7 @@ func schedulerPauseJob(ctx context.Context, id string) (*jobResponse, error) {
 	var jobResp jobResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -1247,27 +1247,27 @@ func schedulerResumeJob(ctx context.Context, id string) (*jobResponse, error) {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, &dragonerrors.MessageError{Message: "job not found"}
+		return nil, &qberrors.MessageError{Message: "job not found"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "resume job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1275,7 +1275,7 @@ func schedulerResumeJob(ctx context.Context, id string) (*jobResponse, error) {
 	var jobResp jobResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -1287,27 +1287,27 @@ func schedulerCancelJob(ctx context.Context, id string) (*jobResponse, error) {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, &dragonerrors.MessageError{Message: "job not found"}
+		return nil, &qberrors.MessageError{Message: "job not found"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "cancel job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1315,7 +1315,7 @@ func schedulerCancelJob(ctx context.Context, id string) (*jobResponse, error) {
 	var jobResp jobResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -1327,23 +1327,23 @@ func schedulerDeleteJob(ctx context.Context, id string) error {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, reqURL, nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return &dragonerrors.MessageError{
+		return &qberrors.MessageError{
 			Message: "delete job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1360,27 +1360,27 @@ func schedulerGetJobHistory(ctx context.Context, id string, limit int) (*jobHist
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, &dragonerrors.MessageError{Message: "job not found"}
+		return nil, &qberrors.MessageError{Message: "job not found"}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "get job history failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1388,7 +1388,7 @@ func schedulerGetJobHistory(ctx context.Context, id string, limit int) (*jobHist
 	var historyResp jobHistoryResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &historyResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 
@@ -1400,23 +1400,23 @@ func schedulerGetStatus(ctx context.Context) (*schedulerStatusResponse, error) {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{
+		return nil, &qberrors.MessageError{
 			Message: "get scheduler status failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
 		}
 	}
@@ -1424,7 +1424,7 @@ func schedulerGetStatus(ctx context.Context) (*schedulerStatusResponse, error) {
 	var statusResp schedulerStatusResponse
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &statusResp); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
 

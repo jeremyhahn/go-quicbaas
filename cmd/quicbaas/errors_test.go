@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 func TestUnsupportedAlgorithmError(t *testing.T) {
@@ -40,7 +40,7 @@ func TestNewUnsupportedAlgorithmError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewUnsupportedAlgorithmError("test.op", "CHACHA20")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 		assert.Equal(t, "test.op", de.Op)
 		var inner *UnsupportedAlgorithmError
 		assert.True(t, errors.As(de.Err, &inner))
@@ -69,7 +69,7 @@ func TestNewInvalidDayFormatError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewInvalidDayFormatError("parse.duration", "xyz")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("InvalidInput", func(t *testing.T) {
@@ -94,7 +94,7 @@ func TestNewNegativeDurationError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewNegativeDurationError("op", "-10s")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("InvalidDuration", func(t *testing.T) {
@@ -119,7 +119,7 @@ func TestNewInvalidDurationFormatError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewInvalidDurationFormatError("op", "xyz")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("InvalidFormat", func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestNewUnsupportedOutputFormatError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewUnsupportedOutputFormatError("display", "yaml")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("InvalidFormat", func(t *testing.T) {
@@ -164,7 +164,7 @@ func TestNewNoActiveMigrationError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewNoActiveMigrationError("migrate.status")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrNotFound, de.Code)
+		assert.Equal(t, qberrors.ErrNotFound, de.Code)
 		assert.Equal(t, "migrate.status", de.Op)
 	})
 
@@ -191,7 +191,7 @@ func TestNewInvalidStorageURLError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewInvalidStorageURLError("storage.parse", "invalid-url")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("InvalidURL", func(t *testing.T) {
@@ -217,7 +217,7 @@ func TestNewUnsupportedStorageSchemeError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewUnsupportedStorageSchemeError("storage", "nfs")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("InvalidScheme", func(t *testing.T) {
@@ -242,7 +242,7 @@ func TestNewMigrationPartialFailureError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewMigrationPartialFailureError("migrate.run", 100)
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInternal, de.Code)
+		assert.Equal(t, qberrors.ErrInternal, de.Code)
 	})
 
 	t.Run("FailedKeysInMessage", func(t *testing.T) {
@@ -262,7 +262,7 @@ func TestNewKeyNotFoundError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewKeyNotFoundError("data.get")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrNotFound, de.Code)
+		assert.Equal(t, qberrors.ErrNotFound, de.Code)
 		assert.Equal(t, "data.get", de.Op)
 	})
 
@@ -289,7 +289,7 @@ func TestNewInvalidFilterFormatError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewInvalidFilterFormatError("vector.search", "no-equals")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("InvalidFilter", func(t *testing.T) {
@@ -310,7 +310,7 @@ func TestNewNoMetadataProvidedError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewNoMetadataProvidedError("vector.update")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("ErrorStringContainsMessage", func(t *testing.T) {
@@ -330,7 +330,7 @@ func TestNewFilterRequiredError(t *testing.T) {
 	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewFilterRequiredError("vector.metadata-search")
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("ErrorStringContainsMessage", func(t *testing.T) {
@@ -365,7 +365,7 @@ func TestNewInvalidMetadataJSONError(t *testing.T) {
 		cause := fmt.Errorf("bad json")
 		de := NewInvalidMetadataJSONError("vector.upsert", cause)
 		require.NotNil(t, de)
-		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
+		assert.Equal(t, qberrors.ErrInvalidInput, de.Code)
 	})
 
 	t.Run("WrappedError", func(t *testing.T) {
@@ -584,7 +584,7 @@ func TestJobFailedError(t *testing.T) {
 	t.Run("NewJobFailedError", func(t *testing.T) {
 		qbErr := NewJobFailedError("orchestrator.run", "job_789", "agent crashed")
 		require.NotNil(t, qbErr)
-		assert.Equal(t, dragonerrors.ErrInternal, qbErr.Code)
+		assert.Equal(t, qberrors.ErrInternal, qbErr.Code)
 		assert.Equal(t, "orchestrator.run", qbErr.Op)
 
 		var jobErr *JobFailedError

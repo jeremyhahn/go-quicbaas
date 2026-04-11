@@ -18,7 +18,7 @@ package server
 import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -36,8 +36,8 @@ func (s *Server) initVectorStorage() error {
 
 	// Validate vector configuration
 	if err := s.config.Vector.Validate(); err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrConfiguration,
+		return &qberrors.QBError{
+			Code: qberrors.ErrConfiguration,
 			Op:   "server.initVectorStorage",
 			Err:  &ServerCauseError{Message: "invalid vector configuration", Cause: err},
 		}
@@ -52,8 +52,8 @@ func (s *Server) initVectorStorage() error {
 	// Open PebbleDB vector storage
 	pebbleStorage, err := xkmssdk.QRDBNewPebbleVectorStorage(storageConfig, qrdbLogger)
 	if err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "server.initVectorStorage",
 			Err:  &ServerCauseError{Message: "failed to open vector storage", Cause: err},
 		}
@@ -99,8 +99,8 @@ func (s *Server) startVector() error {
 	// Create the vector service with storage and options
 	vectorSvc, err := service.NewVectorService(s.vectorStorage, logAdapter, opts...)
 	if err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "server.startVector",
 			Err:  &ServerCauseError{Message: "failed to create vector service", Cause: err},
 		}

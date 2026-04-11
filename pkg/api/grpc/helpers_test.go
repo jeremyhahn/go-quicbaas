@@ -166,7 +166,7 @@ func TestToProtoError_Detailed(t *testing.T) {
 			expectedCode: codes.NotFound,
 		},
 		{
-			name: "dragon error not found",
+			name: "qb error not found",
 			err: &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "test",
@@ -175,7 +175,7 @@ func TestToProtoError_Detailed(t *testing.T) {
 			expectedCode: codes.NotFound,
 		},
 		{
-			name: "dragon error invalid input",
+			name: "qb error invalid input",
 			err: &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "test",

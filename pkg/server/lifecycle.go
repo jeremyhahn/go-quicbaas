@@ -42,7 +42,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/cluster"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/crypto"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -54,7 +54,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
-	dragonstorage "github.com/jeremyhahn/go-quicbaas/pkg/storage"
+	qbstorage "github.com/jeremyhahn/go-quicbaas/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-quicbaas/pkg/storage/file"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watchbridge"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
@@ -357,8 +357,8 @@ func (s *Server) initializeCA() error {
 
 	// Export key from keystore's file storage for TLS transports.
 	if !xkmsBackend.KeyProvider().Capabilities().Export {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrConfiguration,
+		return &qberrors.QBError{
+			Code: qberrors.ErrConfiguration,
 			Op:   "server.initializeCA",
 			Err:  &api.ConfigurationError{Action: "TLS requires an exportable key backend (software/PKCS#8)"},
 		}
@@ -1739,7 +1739,7 @@ func (s *Server) startMessaging() error {
 	s.logger.Info("Initializing messaging subsystem...")
 
 	// Determine storage for the messaging service.
-	var storAdapter dragonstorage.Storage
+	var storAdapter qbstorage.Storage
 	// No local pebble storage available in BaaS mode; pass nil for in-memory only.
 
 	// Build service options from config

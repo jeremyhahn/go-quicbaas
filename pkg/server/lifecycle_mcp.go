@@ -20,7 +20,7 @@ import (
 	"time"
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -75,8 +75,8 @@ func (s *Server) stopMCPServer() error {
 	}
 
 	if err := mcpStopFn(s.mcpServer); err != nil {
-		return &dragonerrors.QBError{
-			Code: dragonerrors.ErrInternal,
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
 			Op:   "server.stopMCPServer",
 			Err:  &ServerCauseError{Message: "failed to shutdown MCP server", Cause: err},
 		}

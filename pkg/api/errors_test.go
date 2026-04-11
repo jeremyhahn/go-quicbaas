@@ -1497,14 +1497,14 @@ func TestConfigFileWriteError(t *testing.T) {
 	cause := errors.New("disk full")
 
 	t.Run("Constructor", func(t *testing.T) {
-		de := NewConfigFileWriteError("config.Save", "/etc/dragon.yaml", cause)
+		de := NewConfigFileWriteError("config.Save", "/etc/quicbaas.yaml", cause)
 		require.NotNil(t, de)
 		assert.Equal(t, dberrors.ErrConfiguration, de.Code)
 
 		var target *ConfigFileWriteError
 		require.True(t, errors.As(de.Err, &target))
-		assert.Equal(t, "/etc/dragon.yaml", target.Path)
-		assert.Contains(t, target.Error(), "/etc/dragon.yaml")
+		assert.Equal(t, "/etc/quicbaas.yaml", target.Path)
+		assert.Contains(t, target.Error(), "/etc/quicbaas.yaml")
 	})
 }
 

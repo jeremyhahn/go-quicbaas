@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/clusterdek"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/dek"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/crypto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/dynamicsecrets"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/embedding"
@@ -98,6 +99,7 @@ type Client interface {
 	DynamicSecrets() DynamicSecretsClient
 	Certificate() CertificateClient
 	ClusterDEK() ClusterDEKClient
+	DEK() DEKClient
 
 	// IAM operations (backward compatible)
 	IAM() IAMClient
@@ -440,6 +442,69 @@ const (
 	KeyUsageUnwrap  = kms.KeyUsageUnwrap
 )
 
+// KMS extended type aliases
+
+// ImportKeyRequest is an alias for kms.ImportKeyRequest.
+type ImportKeyRequest = kms.ImportKeyRequest
+
+// ImportKeyResponse is an alias for kms.ImportKeyResponse.
+type ImportKeyResponse = kms.ImportKeyResponse
+
+// ExportKeyRequest is an alias for kms.ExportKeyRequest.
+type ExportKeyRequest = kms.ExportKeyRequest
+
+// ExportKeyResponse is an alias for kms.ExportKeyResponse.
+type ExportKeyResponse = kms.ExportKeyResponse
+
+// UnwrapKeyRequest is an alias for kms.UnwrapKeyRequest.
+type UnwrapKeyRequest = kms.UnwrapKeyRequest
+
+// UnwrapKeyResponse is an alias for kms.UnwrapKeyResponse.
+type UnwrapKeyResponse = kms.UnwrapKeyResponse
+
+// KeyMetadataResponse is an alias for kms.KeyMetadataResponse.
+type KeyMetadataResponse = kms.KeyMetadataResponse
+
+// UpdateKeyMetadataRequest is an alias for kms.UpdateKeyMetadataRequest.
+type UpdateKeyMetadataRequest = kms.UpdateKeyMetadataRequest
+
+// UpdateKeyStatusRequest is an alias for kms.UpdateKeyStatusRequest.
+type UpdateKeyStatusRequest = kms.UpdateKeyStatusRequest
+
+// UpdateKeyStatusResponse is an alias for kms.UpdateKeyStatusResponse.
+type UpdateKeyStatusResponse = kms.UpdateKeyStatusResponse
+
+// ListKeyVersionsResponse is an alias for kms.ListKeyVersionsResponse.
+type ListKeyVersionsResponse = kms.ListKeyVersionsResponse
+
+// KeyVersionInfo is an alias for kms.KeyVersionInfo.
+type KeyVersionInfo = kms.KeyVersionInfo
+
+// KeyPolicy is an alias for kms.KeyPolicy.
+type KeyPolicy = kms.KeyPolicy
+
+// SetKeyPolicyRequest is an alias for kms.SetKeyPolicyRequest.
+type SetKeyPolicyRequest = kms.SetKeyPolicyRequest
+
+// SupportedAlgorithmsResponse is an alias for kms.SupportedAlgorithmsResponse.
+type SupportedAlgorithmsResponse = kms.SupportedAlgorithmsResponse
+
+// BackendStatusResponse is an alias for kms.BackendStatusResponse.
+type BackendStatusResponse = kms.BackendStatusResponse
+
+// KeyStatus is an alias for kms.KeyStatus.
+type KeyStatus = kms.KeyStatus
+
+// Key status constants
+const (
+	KeyStatusEnabled         = kms.KeyStatusEnabled
+	KeyStatusDisabled        = kms.KeyStatusDisabled
+	KeyStatusPendingDeletion = kms.KeyStatusPendingDeletion
+	KeyStatusDeleted         = kms.KeyStatusDeleted
+	KeyStatusRotating        = kms.KeyStatusRotating
+	KeyStatusCompromised     = kms.KeyStatusCompromised
+)
+
 // SecretsClient is an alias for the secrets.Client interface.
 type SecretsClient = secrets.Client
 
@@ -460,6 +525,38 @@ type SecretOption = secrets.GetOption
 
 // WithSecretVersion returns a secret with a specific version.
 var WithSecretVersion = secrets.WithVersion
+
+// Secrets extended type aliases
+
+// GetSecretVersionRequest is an alias for secrets.GetSecretVersionRequest.
+type GetSecretVersionRequest = secrets.GetSecretVersionRequest
+
+// SecretVersionInfo is an alias for secrets.SecretVersionInfo.
+type SecretVersionInfo = secrets.SecretVersionInfo
+
+// ListSecretVersionsResponse is an alias for secrets.ListSecretVersionsResponse.
+type ListSecretVersionsResponse = secrets.ListSecretVersionsResponse
+
+// RotateSecretRequest is an alias for secrets.RotateSecretRequest.
+type RotateSecretRequest = secrets.RotateSecretRequest
+
+// RotateSecretResponse is an alias for secrets.RotateSecretResponse.
+type RotateSecretResponse = secrets.RotateSecretResponse
+
+// RollbackSecretRequest is an alias for secrets.RollbackSecretRequest.
+type RollbackSecretRequest = secrets.RollbackSecretRequest
+
+// RollbackSecretResponse is an alias for secrets.RollbackSecretResponse.
+type RollbackSecretResponse = secrets.RollbackSecretResponse
+
+// UpdateSecretStatusRequest is an alias for secrets.UpdateSecretStatusRequest.
+type UpdateSecretStatusRequest = secrets.UpdateSecretStatusRequest
+
+// SecretRotationPolicy is an alias for secrets.RotationPolicy.
+type SecretRotationPolicy = secrets.RotationPolicy
+
+// SetSecretRotationPolicyRequest is an alias for secrets.SetRotationPolicyRequest.
+type SetSecretRotationPolicyRequest = secrets.SetRotationPolicyRequest
 
 // CryptoClient is an alias for the crypto.Client interface.
 type CryptoClient = crypto.Client
@@ -497,6 +594,62 @@ const (
 	HashSHA384 = crypto.HashSHA384
 	HashSHA512 = crypto.HashSHA512
 )
+
+// Crypto extended type aliases
+
+// RewrapRequest is an alias for crypto.RewrapRequest.
+type RewrapRequest = crypto.RewrapRequest
+
+// RewrapResponse is an alias for crypto.RewrapResponse.
+type RewrapResponse = crypto.RewrapResponse
+
+// EncryptBatchRequest is an alias for crypto.EncryptBatchRequest.
+type EncryptBatchRequest = crypto.EncryptBatchRequest
+
+// EncryptBatchResponse is an alias for crypto.EncryptBatchResponse.
+type EncryptBatchResponse = crypto.EncryptBatchResponse
+
+// DecryptBatchRequest is an alias for crypto.DecryptBatchRequest.
+type DecryptBatchRequest = crypto.DecryptBatchRequest
+
+// DecryptBatchResponse is an alias for crypto.DecryptBatchResponse.
+type DecryptBatchResponse = crypto.DecryptBatchResponse
+
+// GenerateDataKeyRequest is an alias for crypto.GenerateDataKeyRequest.
+type GenerateDataKeyRequest = crypto.GenerateDataKeyRequest
+
+// GenerateDataKeyResponse is an alias for crypto.GenerateDataKeyResponse.
+type GenerateDataKeyResponse = crypto.GenerateDataKeyResponse
+
+// GenerateWrappedDataKeyRequest is an alias for crypto.GenerateWrappedDataKeyRequest.
+type GenerateWrappedDataKeyRequest = crypto.GenerateWrappedDataKeyRequest
+
+// GenerateWrappedDataKeyResponse is an alias for crypto.GenerateWrappedDataKeyResponse.
+type GenerateWrappedDataKeyResponse = crypto.GenerateWrappedDataKeyResponse
+
+// GenerateHMACRequest is an alias for crypto.GenerateHMACRequest.
+type GenerateHMACRequest = crypto.GenerateHMACRequest
+
+// GenerateHMACResponse is an alias for crypto.GenerateHMACResponse.
+type GenerateHMACResponse = crypto.GenerateHMACResponse
+
+// VerifyHMACRequest is an alias for crypto.VerifyHMACRequest.
+type VerifyHMACRequest = crypto.VerifyHMACRequest
+
+// VerifyHMACResponse is an alias for crypto.VerifyHMACResponse.
+type VerifyHMACResponse = crypto.VerifyHMACResponse
+
+// GenerateRandomRequest is an alias for crypto.GenerateRandomRequest.
+type GenerateRandomRequest = crypto.GenerateRandomRequest
+
+// GenerateRandomResponse is an alias for crypto.GenerateRandomResponse.
+type GenerateRandomResponse = crypto.GenerateRandomResponse
+
+// HashRequest is an alias for crypto.HashRequest.
+type HashRequest = crypto.HashRequest
+
+// HashResponse is an alias for crypto.HashResponse.
+type HashResponse = crypto.HashResponse
 
 // VectorClient is an alias for the vector.Client interface.
 type VectorClient = vector.Client
@@ -830,6 +983,41 @@ type (
 	// RecoveryMethod is an alias for clusterdek.RecoveryMethod.
 	RecoveryMethod = clusterdek.RecoveryMethod
 )
+
+// DEKClient is an alias for the dek.Client interface.
+type DEKClient = dek.Client
+
+// DEK request/response type aliases
+
+// DEKInfo is an alias for dek.DEKInfo.
+type DEKInfo = dek.DEKInfo
+
+// CreateDEKRequest is an alias for dek.CreateDEKRequest.
+type CreateDEKSDKRequest = dek.CreateDEKRequest
+
+// CreateDEKResponse is an alias for dek.CreateDEKResponse.
+type CreateDEKSDKResponse = dek.CreateDEKResponse
+
+// ListDEKsRequest is an alias for dek.ListDEKsRequest.
+type ListDEKsSDKRequest = dek.ListDEKsRequest
+
+// ListDEKsResponse is an alias for dek.ListDEKsResponse.
+type ListDEKsSDKResponse = dek.ListDEKsResponse
+
+// RotateDEKRequest is an alias for dek.RotateDEKRequest.
+type RotateDEKSDKRequest = dek.RotateDEKRequest
+
+// RotateDEKResponse is an alias for dek.RotateDEKResponse.
+type RotateDEKSDKResponse = dek.RotateDEKResponse
+
+// DeleteDEKRequest is an alias for dek.DeleteDEKRequest.
+type DeleteDEKSDKRequest = dek.DeleteDEKRequest
+
+// DeleteDEKResponse is an alias for dek.DeleteDEKResponse.
+type DeleteDEKSDKResponse = dek.DeleteDEKResponse
+
+// DEKStatusResponse is an alias for dek.DEKStatusResponse.
+type DEKStatusResponse = dek.DEKStatusResponse
 
 // Node DEK sync status constants
 const (
@@ -1382,6 +1570,7 @@ type client struct {
 	dynamicSecretsClient     DynamicSecretsClient
 	certificateClient        CertificateClient
 	clusterDEKClient         ClusterDEKClient
+	dekClient                DEKClient
 	objectStorageClient      ObjectStorageClient
 	objectStorageAdminClient ObjectStorageAdminClient
 	objectTransferClient     ObjectTransferClient
@@ -2005,6 +2194,24 @@ func (c *client) ClusterDEK() ClusterDEKClient {
 	return c.clusterDEKClient
 }
 
+// DEK returns the DEK client for data encryption key management.
+func (c *client) DEK() DEKClient {
+	c.mu.RLock()
+	if c.dekClient != nil {
+		c.mu.RUnlock()
+		return c.dekClient
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.dekClient == nil {
+		c.dekClient = newDEKClient(c.transport)
+	}
+	return c.dekClient
+}
+
 // ObjectStorage returns the ObjectStorage client for object storage operations.
 func (c *client) ObjectStorage() ObjectStorageClient {
 	c.mu.RLock()
@@ -2207,6 +2414,7 @@ func newRBACClient(t Transport) RBACClient                     { return rbac.New
 func newDynamicSecretsClient(t Transport) DynamicSecretsClient { return dynamicsecrets.NewClient(t) }
 func newCertificateClient(t Transport) CertificateClient       { return certificate.NewClient(t) }
 func newClusterDEKClient(t Transport) ClusterDEKClient         { return clusterdek.NewClient(t) }
+func newDEKClient(t Transport) DEKClient                       { return dek.NewClient(t) }
 func newObjectStorageClient(t Transport) ObjectStorageClient   { return objectstorage.NewClient(t) }
 func newObjectStorageAdminClient(t Transport) ObjectStorageAdminClient {
 	return objectstorageadmin.NewClient(t)

@@ -42,7 +42,7 @@ func TestToProtoError_Coverage(t *testing.T) {
 		assert.Equal(t, codes.NotFound, status.Code(result))
 	})
 
-	t.Run("dragon_error", func(t *testing.T) {
+	t.Run("qb_error", func(t *testing.T) {
 		err := &errors.QBError{
 			Code: errors.ErrForbidden,
 			Op:   "test",

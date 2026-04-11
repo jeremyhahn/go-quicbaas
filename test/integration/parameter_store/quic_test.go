@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	quicpkg "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -53,7 +53,7 @@ func NewParameterStoreQUICClient(addr string) (*ParameterStoreQUICClient, error)
 
 	conn, err := quic.DialAddr(ctx, addr, tlsConf, nil)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to dial QUIC server at " + addr, Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to dial QUIC server at " + addr, Cause: err}
 	}
 
 	clientCtx, clientCancel := context.WithCancel(context.Background())
@@ -80,7 +80,7 @@ func (c *ParameterStoreQUICClient) Close() error {
 func (c *ParameterStoreQUICClient) sendRequest(ctx context.Context, opcode byte, reqPayload []byte) (*quicpkg.Response, error) {
 	stream, err := c.conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
 	}
 	defer stream.Close()
 
@@ -91,13 +91,13 @@ func (c *ParameterStoreQUICClient) sendRequest(ctx context.Context, opcode byte,
 	}
 
 	if err := quicpkg.WriteRequest(stream, req); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to write request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
 	}
 
 	// Read response
 	resp, err := quicpkg.ReadResponse(stream)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	// Check status

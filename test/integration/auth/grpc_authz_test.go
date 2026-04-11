@@ -32,7 +32,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -186,7 +186,7 @@ func (tc *testGRPCContext) createTestUser(username string, roles []string) (stri
 	// Get user from store and issue token (replaces deprecated password-based authentication)
 	userInfo := tc.authManager.GetUserStore().GetByUsername(username)
 	if userInfo == nil {
-		return "", &dragonerrors.MessageError{Message: "user not found after creation: " + username}
+		return "", &qberrors.MessageError{Message: "user not found after creation: " + username}
 	}
 
 	token, err := tc.authManager.IssueTokenForUser(tc.ctx, userInfo)

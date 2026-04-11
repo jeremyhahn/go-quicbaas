@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // TestMain sets up the test environment before running secrets tests.
@@ -59,7 +59,7 @@ func setupSecretsEncryptionKey() error {
 	// Check if key already exists
 	exists, err := keyExists(endpoint, keyName)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "checking key existence", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "checking key existence", Cause: err}
 	}
 
 	if exists {
@@ -83,13 +83,13 @@ func setupSecretsEncryptionKey() error {
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "marshaling request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "marshaling request", Cause: err}
 	}
 
 	url := fmt.Sprintf("%s/api/v1/kms/keys", endpoint)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "creating request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "creating request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -106,17 +106,17 @@ func setupSecretsEncryptionKey() error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "sending request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "sending request", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "reading response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "reading response", Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return &dragonerrors.MessageError{Message: fmt.Sprintf("failed to create key (status %d): %s", resp.StatusCode, string(respBody))}
+		return &qberrors.MessageError{Message: fmt.Sprintf("failed to create key (status %d): %s", resp.StatusCode, string(respBody))}
 	}
 
 	fmt.Printf("Created secrets encryption key '%s'\n", keyName)

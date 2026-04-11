@@ -37,7 +37,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 	quictransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/quic"
@@ -386,7 +386,7 @@ func NewGRPCClient(endpoint string) (*GRPCClient, error) {
 		grpc.WithBlock(),
 	)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint", Cause: err}
 	}
 
 	return &GRPCClient{
@@ -722,7 +722,7 @@ func (c *GRPCClient) CreatePolicy(ctx context.Context, tenantID, name, descripti
 	// Convert to YAML for gRPC
 	specYAML, err := yaml.Marshal(policy.Spec)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal policy spec", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal policy spec", Cause: err}
 	}
 
 	req := &iampb.CreatePolicyRequest{
@@ -959,7 +959,7 @@ func NewUnixSocketClient(socketPath string) (*UnixSocketClient, error) {
 		grpc.WithBlock(),
 	)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to connect to Unix socket", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to connect to Unix socket", Cause: err}
 	}
 
 	return &UnixSocketClient{
@@ -1069,7 +1069,7 @@ func (c *MCPClient) ensureInitialized(ctx context.Context) error {
 
 	_, err := c.sendRPC(ctx, "initialize", params)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP initialization failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP initialization failed", Cause: err}
 	}
 
 	c.initialized.Store(true)
@@ -1099,20 +1099,20 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 
 	result, err := c.sendRPC(ctx, "tools/call", loginParams)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP login failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP login failed", Cause: err}
 	}
 
 	// Parse login response to get access token
 	var toolResult mcpToolCallResult
 	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to unmarshal login result", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to unmarshal login result", Cause: err}
 	}
 
 	if toolResult.IsError {
 		if len(toolResult.Content) > 0 {
-			return &dragonerrors.MessageError{Message: "MCP login error: " + toolResult.Content[0].Text}
+			return &qberrors.MessageError{Message: "MCP login error: " + toolResult.Content[0].Text}
 		}
-		return &dragonerrors.MessageError{Message: "MCP login error: unknown error"}
+		return &qberrors.MessageError{Message: "MCP login error: unknown error"}
 	}
 
 	// Extract access token from response
@@ -1122,7 +1122,7 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 		if content.Text != "" {
 			var loginResp map[string]interface{}
 			if err := json.Unmarshal([]byte(content.Text), &loginResp); err != nil {
-				return &dragonerrors.WrappedMessageError{Message: "failed to unmarshal login response", Cause: err}
+				return &qberrors.WrappedMessageError{Message: "failed to unmarshal login response", Cause: err}
 			}
 			// Try snake_case first (access_token), then PascalCase (AccessToken)
 			var token string
@@ -1138,7 +1138,7 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 		}
 	}
 
-	return &dragonerrors.MessageError{Message: "no access token in login response"}
+	return &qberrors.MessageError{Message: "no access token in login response"}
 }
 
 // sendRPC sends a JSON-RPC request to the MCP endpoint.
@@ -1154,12 +1154,12 @@ func (c *MCPClient) sendRPC(ctx context.Context, method string, params interface
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create HTTP request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create HTTP request", Cause: err}
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -1172,22 +1172,22 @@ func (c *MCPClient) sendRPC(ctx context.Context, method string, params interface
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "HTTP request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "HTTP request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	var rpcResp mcpJSONRPCResponse
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 	}
 
 	if rpcResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: fmt.Sprintf("MCP error: %s (code %d)", rpcResp.Error.Message, rpcResp.Error.Code)}
+		return nil, &qberrors.MessageError{Message: fmt.Sprintf("MCP error: %s (code %d)", rpcResp.Error.Message, rpcResp.Error.Code)}
 	}
 
 	return rpcResp.Result, nil
@@ -1212,14 +1212,14 @@ func (c *MCPClient) callTool(ctx context.Context, toolName string, args map[stri
 
 	var toolResult mcpToolCallResult
 	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal tool result", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal tool result", Cause: err}
 	}
 
 	if toolResult.IsError {
 		if len(toolResult.Content) > 0 {
-			return nil, &dragonerrors.MessageError{Message: "MCP tool error: " + toolResult.Content[0].Text}
+			return nil, &qberrors.MessageError{Message: "MCP tool error: " + toolResult.Content[0].Text}
 		}
-		return nil, &dragonerrors.MessageError{Message: "MCP tool error: unknown error"}
+		return nil, &qberrors.MessageError{Message: "MCP tool error: unknown error"}
 	}
 
 	// Extract JSON from text content
@@ -1227,22 +1227,22 @@ func (c *MCPClient) callTool(ctx context.Context, toolName string, args map[stri
 		if content.Type == "text" && content.Text != "" {
 			var data map[string]interface{}
 			if err := json.Unmarshal([]byte(content.Text), &data); err != nil {
-				return nil, &dragonerrors.WrappedMessageError{Message: "failed to unmarshal tool response", Cause: err}
+				return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal tool response", Cause: err}
 			}
 			return data, nil
 		}
 	}
 
-	return nil, &dragonerrors.MessageError{Message: "no valid response content from MCP tool"}
+	return nil, &qberrors.MessageError{Message: "no valid response content from MCP tool"}
 }
 
 func (c *MCPClient) CreateTenant(ctx context.Context, id, name string, settings map[string]interface{}) (*iam.Tenant, error) {
 	// Validate required fields
 	if id == "" {
-		return nil, &dragonerrors.MessageError{Message: "tenant ID is required"}
+		return nil, &qberrors.MessageError{Message: "tenant ID is required"}
 	}
 	if name == "" {
-		return nil, &dragonerrors.MessageError{Message: "tenant name is required"}
+		return nil, &qberrors.MessageError{Message: "tenant name is required"}
 	}
 
 	args := map[string]interface{}{
@@ -1663,7 +1663,7 @@ func NewQUICClient(endpoint string) (*QUICClient, error) {
 
 	t, err := quictransport.New(cfg)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create QUIC transport", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create QUIC transport", Cause: err}
 	}
 
 	return &QUICClient{
@@ -1685,10 +1685,10 @@ func (c *QUICClient) Close() error {
 func (c *QUICClient) CreateTenant(ctx context.Context, id, name string, settings map[string]interface{}) (*iam.Tenant, error) {
 	// Validate required fields
 	if id == "" {
-		return nil, &dragonerrors.MessageError{Message: "tenant ID is required"}
+		return nil, &qberrors.MessageError{Message: "tenant ID is required"}
 	}
 	if name == "" {
-		return nil, &dragonerrors.MessageError{Message: "tenant name is required"}
+		return nil, &qberrors.MessageError{Message: "tenant name is required"}
 	}
 
 	req := map[string]interface{}{
@@ -2051,7 +2051,7 @@ func (c *QUICClient) GetMFAStatus(ctx context.Context, tenantID, userID string) 
 
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return false, "", &dragonerrors.MessageError{Message: "invalid response type"}
+		return false, "", &qberrors.MessageError{Message: "invalid response type"}
 	}
 
 	enabled, _ := data["enabled"].(bool)
@@ -2073,7 +2073,7 @@ func (c *QUICClient) BeginMFAEnrollment(ctx context.Context, tenantID, userID, m
 
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return "", "", &dragonerrors.MessageError{Message: "invalid response type"}
+		return "", "", &qberrors.MessageError{Message: "invalid response type"}
 	}
 
 	enrollmentID, _ := data["enrollment_id"].(string)
@@ -2116,85 +2116,85 @@ func (c *EmbeddedClient) Close() error       { return nil }
 // Embedded IAM operations - placeholder implementations
 // These would use direct SDK client calls in a full implementation
 func (c *EmbeddedClient) CreateTenant(ctx context.Context, id, name string, settings map[string]interface{}) (*iam.Tenant, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) GetTenant(ctx context.Context, id string) (*iam.Tenant, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) UpdateTenant(ctx context.Context, id, name string, settings map[string]interface{}) (*iam.Tenant, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) DeleteTenant(ctx context.Context, id string) error {
-	return &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) ListTenants(ctx context.Context) ([]iam.Tenant, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) CreateUser(ctx context.Context, tenantID, email, name string) (*iam.User, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) UpdateUser(ctx context.Context, tenantID, userID, name string) (*iam.User, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) DeleteUser(ctx context.Context, tenantID, userID string) error {
-	return &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) ListUsers(ctx context.Context, tenantID string) ([]iam.User, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) CreateGroup(ctx context.Context, tenantID, id, name, description string) (*iam.Group, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) UpdateGroup(ctx context.Context, tenantID, groupID, name, description string) (*iam.Group, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	return &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) ListGroups(ctx context.Context, tenantID string) ([]iam.Group, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) CreateRole(ctx context.Context, tenantID, id, name, description string, permissions []string) (*iam.Role, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) GetRole(ctx context.Context, tenantID, roleID string) (*iam.Role, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) UpdateRole(ctx context.Context, tenantID, roleID, name, description string, permissions []string) (*iam.Role, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) DeleteRole(ctx context.Context, tenantID, roleID string) error {
-	return &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) ListRoles(ctx context.Context, tenantID string) ([]iam.Role, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) CreatePolicy(ctx context.Context, tenantID, name, description string) (*iam.Policy, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) GetPolicy(ctx context.Context, tenantID, policyName string) (*iam.Policy, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) DeletePolicy(ctx context.Context, tenantID, policyName string) error {
-	return &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) ListPolicies(ctx context.Context, tenantID string) ([]iam.Policy, error) {
-	return nil, &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) GetMFAStatus(ctx context.Context, tenantID, userID string) (bool, string, error) {
-	return false, "", &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return false, "", &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) BeginMFAEnrollment(ctx context.Context, tenantID, userID, method string) (string, string, error) {
-	return "", "", &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return "", "", &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 func (c *EmbeddedClient) CancelMFAEnrollment(ctx context.Context, tenantID, userID, enrollmentID string) error {
-	return &dragonerrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
+	return &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
 
 // =============================================================================
@@ -2510,7 +2510,7 @@ func mapToPolicyList(data map[string]interface{}, tenantID string) ([]iam.Policy
 func convertQUICResponseToTenant(resp interface{}) (*iam.Tenant, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToTenant(data)
 }
@@ -2518,7 +2518,7 @@ func convertQUICResponseToTenant(resp interface{}) (*iam.Tenant, error) {
 func convertQUICResponseToTenantList(resp interface{}) ([]iam.Tenant, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToTenantList(data)
 }
@@ -2526,7 +2526,7 @@ func convertQUICResponseToTenantList(resp interface{}) ([]iam.Tenant, error) {
 func convertQUICResponseToUser(resp interface{}) (*iam.User, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToUser(data)
 }
@@ -2534,7 +2534,7 @@ func convertQUICResponseToUser(resp interface{}) (*iam.User, error) {
 func convertQUICResponseToUserList(resp interface{}) ([]iam.User, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToUserList(data)
 }
@@ -2542,7 +2542,7 @@ func convertQUICResponseToUserList(resp interface{}) ([]iam.User, error) {
 func convertQUICResponseToGroup(resp interface{}) (*iam.Group, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToGroup(data)
 }
@@ -2550,7 +2550,7 @@ func convertQUICResponseToGroup(resp interface{}) (*iam.Group, error) {
 func convertQUICResponseToGroupList(resp interface{}) ([]iam.Group, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToGroupList(data)
 }
@@ -2558,7 +2558,7 @@ func convertQUICResponseToGroupList(resp interface{}) ([]iam.Group, error) {
 func convertQUICResponseToRole(resp interface{}) (*iam.Role, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToRole(data)
 }
@@ -2566,7 +2566,7 @@ func convertQUICResponseToRole(resp interface{}) (*iam.Role, error) {
 func convertQUICResponseToRoleList(resp interface{}) ([]iam.Role, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToRoleList(data)
 }
@@ -2574,7 +2574,7 @@ func convertQUICResponseToRoleList(resp interface{}) ([]iam.Role, error) {
 func convertQUICResponseToPolicy(resp interface{}, tenantID string) (*iam.Policy, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToPolicy(data, tenantID)
 }
@@ -2582,7 +2582,7 @@ func convertQUICResponseToPolicy(resp interface{}, tenantID string) (*iam.Policy
 func convertQUICResponseToPolicyList(resp interface{}, tenantID string) ([]iam.Policy, error) {
 	data, ok := resp.(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response type"}
+		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToPolicyList(data, tenantID)
 }

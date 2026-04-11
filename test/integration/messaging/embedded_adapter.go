@@ -22,7 +22,7 @@ import (
 	"time"
 
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
@@ -56,12 +56,12 @@ func (a *embeddedAdapter) Name() string {
 func (a *embeddedAdapter) Setup(ctx context.Context) error {
 	svc, err := helpers.GetEmbeddedService(a.t)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 
 	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}
 
 	a.client = client

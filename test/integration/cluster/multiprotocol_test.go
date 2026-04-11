@@ -36,7 +36,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	quicapi "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -383,7 +383,7 @@ func (c *restClusterClient) ClusterStatus(ctx context.Context) (*ClusterStatusRe
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, &dragonerrors.MessageError{Message: "unexpected status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return nil, &qberrors.MessageError{Message: "unexpected status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	var data map[string]interface{}
@@ -487,7 +487,7 @@ func (c *restClusterClient) GetLeader(ctx context.Context, shardID uint64) (*Get
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, &dragonerrors.MessageError{Message: "unexpected status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return nil, &qberrors.MessageError{Message: "unexpected status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	var data map[string]interface{}
@@ -564,7 +564,7 @@ func (c *restClusterClient) CreateShard(ctx context.Context, shardID uint64, mem
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	var data map[string]interface{}
@@ -590,7 +590,7 @@ func (c *restClusterClient) RebalanceCluster(ctx context.Context, strategy strin
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	var data map[string]interface{}
@@ -961,29 +961,29 @@ func (c *mcpClusterClient) callTool(ctx context.Context, name string, args map[s
 func (c *mcpClusterClient) sendRequest(ctx context.Context, reqBody map[string]interface{}) (map[string]interface{}, error) {
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(jsonBody))
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "request failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to decode response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to decode response", Cause: err}
 	}
 
 	if errObj, ok := result["error"].(map[string]interface{}); ok {
 		msg, _ := errObj["message"].(string)
-		return nil, &dragonerrors.MessageError{Message: "MCP error: " + msg}
+		return nil, &qberrors.MessageError{Message: "MCP error: " + msg}
 	}
 
 	return result, nil
@@ -999,27 +999,27 @@ func (c *mcpClusterClient) ClusterStatus(ctx context.Context) (*ClusterStatusRes
 
 	resultData, ok := resp["result"].(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response format"}
+		return nil, &qberrors.MessageError{Message: "invalid response format"}
 	}
 
 	content, ok := resultData["content"].([]interface{})
 	if !ok || len(content) == 0 {
-		return nil, &dragonerrors.MessageError{Message: "no content in response"}
+		return nil, &qberrors.MessageError{Message: "no content in response"}
 	}
 
 	contentItem, ok := content[0].(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid content format"}
+		return nil, &qberrors.MessageError{Message: "invalid content format"}
 	}
 
 	text, ok := contentItem["text"].(string)
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "no text in content"}
+		return nil, &qberrors.MessageError{Message: "no text in content"}
 	}
 
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
 	}
 
 	result := &ClusterStatusResult{
@@ -1067,12 +1067,12 @@ func (c *mcpClusterClient) GetLeader(ctx context.Context, shardID uint64) (*GetL
 
 	resultData, ok := resp["result"].(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response format"}
+		return nil, &qberrors.MessageError{Message: "invalid response format"}
 	}
 
 	content, ok := resultData["content"].([]interface{})
 	if !ok || len(content) == 0 {
-		return nil, &dragonerrors.MessageError{Message: "no content in response"}
+		return nil, &qberrors.MessageError{Message: "no content in response"}
 	}
 
 	contentItem := content[0].(map[string]interface{})
@@ -1080,7 +1080,7 @@ func (c *mcpClusterClient) GetLeader(ctx context.Context, shardID uint64) (*GetL
 
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
 	}
 
 	return &GetLeaderResult{
@@ -1101,12 +1101,12 @@ func (c *mcpClusterClient) AddNode(ctx context.Context, shardID, nodeID uint64, 
 
 	resultData, ok := resp["result"].(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response format"}
+		return nil, &qberrors.MessageError{Message: "invalid response format"}
 	}
 
 	content, ok := resultData["content"].([]interface{})
 	if !ok || len(content) == 0 {
-		return nil, &dragonerrors.MessageError{Message: "no content in response"}
+		return nil, &qberrors.MessageError{Message: "no content in response"}
 	}
 
 	contentItem := content[0].(map[string]interface{})
@@ -1114,7 +1114,7 @@ func (c *mcpClusterClient) AddNode(ctx context.Context, shardID, nodeID uint64, 
 
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
 	}
 
 	return &AddNodeResult{
@@ -1134,12 +1134,12 @@ func (c *mcpClusterClient) RemoveNode(ctx context.Context, shardID, nodeID uint6
 
 	resultData, ok := resp["result"].(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response format"}
+		return nil, &qberrors.MessageError{Message: "invalid response format"}
 	}
 
 	content, ok := resultData["content"].([]interface{})
 	if !ok || len(content) == 0 {
-		return nil, &dragonerrors.MessageError{Message: "no content in response"}
+		return nil, &qberrors.MessageError{Message: "no content in response"}
 	}
 
 	contentItem := content[0].(map[string]interface{})
@@ -1147,7 +1147,7 @@ func (c *mcpClusterClient) RemoveNode(ctx context.Context, shardID, nodeID uint6
 
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
 	}
 
 	return &RemoveNodeResult{
@@ -1172,12 +1172,12 @@ func (c *mcpClusterClient) CreateShard(ctx context.Context, shardID uint64, memb
 
 	resultData, ok := resp["result"].(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response format"}
+		return nil, &qberrors.MessageError{Message: "invalid response format"}
 	}
 
 	content, ok := resultData["content"].([]interface{})
 	if !ok || len(content) == 0 {
-		return nil, &dragonerrors.MessageError{Message: "no content in response"}
+		return nil, &qberrors.MessageError{Message: "no content in response"}
 	}
 
 	contentItem := content[0].(map[string]interface{})
@@ -1185,7 +1185,7 @@ func (c *mcpClusterClient) CreateShard(ctx context.Context, shardID uint64, memb
 
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
 	}
 
 	return &CreateShardResult{
@@ -1205,12 +1205,12 @@ func (c *mcpClusterClient) RebalanceCluster(ctx context.Context, strategy string
 
 	resultData, ok := resp["result"].(map[string]interface{})
 	if !ok {
-		return nil, &dragonerrors.MessageError{Message: "invalid response format"}
+		return nil, &qberrors.MessageError{Message: "invalid response format"}
 	}
 
 	content, ok := resultData["content"].([]interface{})
 	if !ok || len(content) == 0 {
-		return nil, &dragonerrors.MessageError{Message: "no content in response"}
+		return nil, &qberrors.MessageError{Message: "no content in response"}
 	}
 
 	contentItem := content[0].(map[string]interface{})
@@ -1218,7 +1218,7 @@ func (c *mcpClusterClient) RebalanceCluster(ctx context.Context, strategy string
 
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &data); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to parse content", Cause: err}
 	}
 
 	return &RebalanceResult{

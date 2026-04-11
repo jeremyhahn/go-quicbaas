@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,14 +65,14 @@ func TestMain(m *testing.M) {
 func setupEmbeddedServer() error {
 	tempDir, err := os.MkdirTemp("", "quicbaas-embedded-integration-*")
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create temp dir", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create temp dir", Cause: err}
 	}
 	testTempDir = tempDir
 
 	raftPort, err := getFreePort()
 	if err != nil {
 		os.RemoveAll(tempDir)
-		return &dragonerrors.WrappedMessageError{Message: "failed to get free port", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get free port", Cause: err}
 	}
 
 	cfg := config.EmbeddedConfig()
@@ -92,12 +92,12 @@ func setupEmbeddedServer() error {
 	srv, err := server.NewServer(cfg)
 	if err != nil {
 		os.RemoveAll(tempDir)
-		return &dragonerrors.WrappedMessageError{Message: "failed to create server", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create server", Cause: err}
 	}
 
 	if err := srv.Start(); err != nil {
 		os.RemoveAll(tempDir)
-		return &dragonerrors.WrappedMessageError{Message: "failed to start server", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to start server", Cause: err}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -124,7 +124,7 @@ func setupEmbeddedServer() error {
 	case <-ctx.Done():
 		srv.Shutdown(context.Background())
 		os.RemoveAll(tempDir)
-		return &dragonerrors.MessageError{Message: "embedded server startup timed out"}
+		return &qberrors.MessageError{Message: "embedded server startup timed out"}
 	}
 
 	// Wait for Raft leader election
@@ -134,7 +134,7 @@ func setupEmbeddedServer() error {
 	if svc == nil {
 		srv.Shutdown(context.Background())
 		os.RemoveAll(tempDir)
-		return &dragonerrors.MessageError{Message: "service is nil after server start"}
+		return &qberrors.MessageError{Message: "service is nil after server start"}
 	}
 
 	testServer = srv
@@ -1128,7 +1128,7 @@ func TestEmbedded_ConcurrentKVOperations(t *testing.T) {
 			}
 
 			if !getResp.Found {
-				errCh <- &dragonerrors.MessageError{Message: "entity " + strconv.FormatUint(putResp.ID, 10) + " not found after put"}
+				errCh <- &qberrors.MessageError{Message: "entity " + strconv.FormatUint(putResp.ID, 10) + " not found after put"}
 				return
 			}
 

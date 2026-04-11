@@ -39,7 +39,7 @@ import (
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
@@ -551,11 +551,11 @@ func (e *embeddedTimeseriesProtocol) Name() string { return "Embedded" }
 func (e *embeddedTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error {
 	svc, err := helpers.GetEmbeddedService(t)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 	client, err := quicbaas.NewClient("embedded://local", quicbaas.WithEmbedded(svc))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}
 	e.client = client
 	return nil
@@ -652,7 +652,7 @@ func (e *embeddedTimeseriesProtocol) Delete(ctx context.Context, metric string, 
 	}
 	// The SDK TimeSeries client doesn't have a Delete method
 	// This would need to be implemented if the SDK supports it
-	return &dragonerrors.MessageError{Message: "delete not supported in SDK TimeSeries client"}
+	return &qberrors.MessageError{Message: "delete not supported in SDK TimeSeries client"}
 }
 
 func (e *embeddedTimeseriesProtocol) ListMetrics(ctx context.Context, prefix string) ([]string, error) {
@@ -661,7 +661,7 @@ func (e *embeddedTimeseriesProtocol) ListMetrics(ctx context.Context, prefix str
 	}
 	// The SDK TimeSeries client doesn't have a ListMetrics method
 	// This would need to be implemented if the SDK supports it
-	return nil, &dragonerrors.MessageError{Message: "list metrics not supported in SDK TimeSeries client"}
+	return nil, &qberrors.MessageError{Message: "list metrics not supported in SDK TimeSeries client"}
 }
 
 func (e *embeddedTimeseriesProtocol) GetRetentionPolicy(ctx context.Context, metric string) (*RetentionPolicy, error) {
@@ -678,7 +678,7 @@ func (e *embeddedTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, met
 		return ErrEmbeddedClientNotInitialized{}
 	}
 	// The SDK TimeSeries client doesn't have a SetRetentionPolicy method
-	return &dragonerrors.MessageError{Message: "set retention policy not supported in SDK TimeSeries client"}
+	return &qberrors.MessageError{Message: "set retention policy not supported in SDK TimeSeries client"}
 }
 
 // =============================================================================
@@ -745,7 +745,7 @@ func (r *restTimeseriesProtocol) WritePoint(ctx context.Context, metric string, 
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return nil
@@ -789,7 +789,7 @@ func (r *restTimeseriesProtocol) WriteBatch(ctx context.Context, points []*TimeS
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return nil
@@ -830,7 +830,7 @@ func (r *restTimeseriesProtocol) Query(ctx context.Context, metric string, start
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result struct {
@@ -871,7 +871,7 @@ func (r *restTimeseriesProtocol) Delete(ctx context.Context, metric string, star
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return nil
@@ -897,7 +897,7 @@ func (r *restTimeseriesProtocol) ListMetrics(ctx context.Context, prefix string)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	var result struct {
@@ -930,7 +930,7 @@ func (r *restTimeseriesProtocol) GetRetentionPolicy(ctx context.Context, metric 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return nil, &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	// The REST API returns duration/resolution in seconds
@@ -988,7 +988,7 @@ func (r *restTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, metric 
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
+		return &qberrors.MessageError{Message: "status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
 	}
 
 	return nil
@@ -1010,7 +1010,7 @@ func (g *grpcTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error 
 
 	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoints[0], Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoints[0], Cause: err}
 	}
 	g.client = client
 
@@ -1167,7 +1167,7 @@ func (q *quicTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error 
 
 	conn, err := quicgo.DialAddr(dialCtx, addr, tlsConf, nil)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + addr, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + addr, Cause: err}
 	}
 
 	clientCtx, clientCancel := context.WithCancel(context.Background())
@@ -1194,7 +1194,7 @@ func (q *quicTimeseriesProtocol) Teardown(t *testing.T) error {
 func (q *quicTimeseriesProtocol) sendRequest(ctx context.Context, opcode byte, reqPayload []byte) (*quic.Response, error) {
 	stream, err := q.conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
 	}
 	defer stream.Close()
 
@@ -1204,12 +1204,12 @@ func (q *quicTimeseriesProtocol) sendRequest(ctx context.Context, opcode byte, r
 	}
 
 	if err := quic.WriteRequest(stream, req); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to write request", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
 	}
 
 	resp, err := quic.ReadResponse(stream)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
 	if resp.Status != quic.StatusOK {
@@ -1408,7 +1408,7 @@ func (u *unixSocketTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) 
 	// Check if socket exists by attempting a test dial
 	testConn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "unix socket not available at " + socketPath, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "unix socket not available at " + socketPath, Cause: err}
 	}
 	// Close the test connection immediately
 	testConn.Close()
@@ -1416,7 +1416,7 @@ func (u *unixSocketTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) 
 	// Create gRPC client over unix socket
 	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create gRPC client over unix socket", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create gRPC client over unix socket", Cause: err}
 	}
 	u.client = client
 
@@ -1564,7 +1564,7 @@ func (m *mcpTimeseriesProtocol) authenticate(ctx context.Context) error {
 
 	result, err := m.callMCPToolUnauthenticated(ctx, "quicbaas_login", args)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "authentication failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "authentication failed", Cause: err}
 	}
 
 	// Parse the response - the service uses PascalCase for JSON fields
@@ -1572,11 +1572,11 @@ func (m *mcpTimeseriesProtocol) authenticate(ctx context.Context) error {
 		AccessToken string `json:"AccessToken"`
 	}
 	if err := json.Unmarshal(result, &loginResp); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to parse login response", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to parse login response", Cause: err}
 	}
 
 	if loginResp.AccessToken == "" {
-		return &dragonerrors.MessageError{Message: "no access token in login response"}
+		return &qberrors.MessageError{Message: "no access token in login response"}
 	}
 
 	m.accessToken = loginResp.AccessToken
@@ -1635,11 +1635,11 @@ func (m *mcpTimeseriesProtocol) callMCPToolUnauthenticated(ctx context.Context, 
 	}
 
 	if mcpResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
+		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
 	}
 
 	if mcpResp.Result.IsError && len(mcpResp.Result.Content) > 0 {
-		return nil, &dragonerrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
+		return nil, &qberrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
 	}
 
 	if len(mcpResp.Result.Content) > 0 {
@@ -1652,7 +1652,7 @@ func (m *mcpTimeseriesProtocol) callMCPToolUnauthenticated(ctx context.Context, 
 func (m *mcpTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetMCPEndpoints()
 	if len(endpoints) == 0 {
-		return &dragonerrors.MessageError{Message: "no MCP endpoints available"}
+		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	m.endpoint = endpoints[0]
 	m.httpClient = &http.Client{
@@ -1686,24 +1686,24 @@ func (m *mcpTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error {
 
 	body, err := json.Marshal(initReq)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + m.endpoint, Cause: err}
+		return &qberrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + m.endpoint, Cause: err}
 	}
 	defer resp.Body.Close()
 
 	// Authenticate after initialization
 	if err := m.authenticate(ctx); err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "failed to authenticate", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "failed to authenticate", Cause: err}
 	}
 
 	return nil
@@ -1770,11 +1770,11 @@ func (m *mcpTimeseriesProtocol) callMCPTool(ctx context.Context, toolName string
 	}
 
 	if mcpResp.Error != nil {
-		return nil, &dragonerrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
+		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
 	}
 
 	if mcpResp.Result.IsError && len(mcpResp.Result.Content) > 0 {
-		return nil, &dragonerrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
+		return nil, &qberrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
 	}
 
 	if len(mcpResp.Result.Content) > 0 {

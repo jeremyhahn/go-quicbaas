@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
@@ -355,7 +355,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 			for time.Now().Before(deadline) {
 				nodeIndex := readerID % len(nodes)
 				if _, err := readEntity(nodes[nodeIndex], entityType, entityID); err != nil {
-					errors <- &dragonerrors.WrappedMessageError{Message: "reader " + strconv.Itoa(readerID), Cause: err}
+					errors <- &qberrors.WrappedMessageError{Message: "reader " + strconv.Itoa(readerID), Cause: err}
 					done <- false
 					return
 				}
@@ -395,7 +395,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 func writeEntity(nodeURL, entityType string, entityID uint64, data map[string]interface{}) error {
 	dataBytes, err := json.Marshal(data)
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "marshal failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "marshal failed", Cause: err}
 	}
 
 	payload := map[string]interface{}{
@@ -409,13 +409,13 @@ func writeEntity(nodeURL, entityType string, entityID uint64, data map[string]in
 
 	resp, err := failoverHTTPClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
 	if err != nil {
-		return &dragonerrors.WrappedMessageError{Message: "post failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "post failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return &dragonerrors.MessageError{Message: "write failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return &qberrors.MessageError{Message: "write failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	return nil
@@ -426,36 +426,36 @@ func readEntity(nodeURL, entityType string, entityID uint64) (map[string]interfa
 
 	resp, err := failoverHTTPClient.Get(url)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "get failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "get failed", Cause: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, &dragonerrors.MessageError{Message: "read failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
+		return nil, &qberrors.MessageError{Message: "read failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(body)}
 	}
 
 	// Read the raw body first
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "read body failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "read body failed", Cause: err}
 	}
 
 	var readResp map[string]json.RawMessage
 	if err := json.Unmarshal(bodyBytes, &readResp); err != nil {
-		return nil, &dragonerrors.WrappedMessageError{Message: "decode failed", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "decode failed", Cause: err}
 	}
 
 	// Extract and parse the data field
 	if dataRaw, ok := readResp["data"]; ok {
 		var data map[string]interface{}
 		if err := json.Unmarshal(dataRaw, &data); err != nil {
-			return nil, &dragonerrors.WrappedMessageError{Message: "parse data failed", Cause: err}
+			return nil, &qberrors.WrappedMessageError{Message: "parse data failed", Cause: err}
 		}
 		return data, nil
 	}
 
-	return nil, &dragonerrors.MessageError{Message: "no data field in response"}
+	return nil, &qberrors.MessageError{Message: "no data field in response"}
 }
 
 func deleteEntity(nodeURL, entityType string, entityID uint64) error {
