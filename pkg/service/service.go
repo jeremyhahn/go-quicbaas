@@ -39,6 +39,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
 
@@ -167,6 +168,11 @@ type QuicBaaS interface {
 	// SetQRDBClient sets the qrdb SDK client provider for core KV operations.
 	// This is called after the ShardedClient is initialized.
 	SetQRDBClient(provider QRDBClientProvider)
+
+	// SetTenantIsolationManager replaces the tenant isolation manager at runtime.
+	// This is called by the server when barrier mode is configured and the
+	// BarrierRegistry has been initialized with the system barrier.
+	SetTenantIsolationManager(m security.TenantIsolationManager)
 
 	// Close gracefully shuts down the service and all backend components
 	Close() error
@@ -1495,6 +1501,10 @@ type ServiceConfig struct {
 	// TimeSeriesShardID is the Raft shard used for time series write operations.
 	// When zero, defaults to 1.
 	TimeSeriesShardID uint64
+
+	// TenantIsolation configures the tenant isolation strategy used when
+	// tenants are created or removed. Defaults to keyspace mode.
+	TenantIsolation config.TenantIsolationConfig
 }
 
 // =============================================================================

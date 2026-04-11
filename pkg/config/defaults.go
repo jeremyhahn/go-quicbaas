@@ -326,6 +326,9 @@ func DefaultSecurityConfig() SecurityConfig {
 		EncryptionAlgorithm: "aes-256-gcm",
 		SealEnabled:         false,
 		Authorization:       DefaultAuthorizationConfig(),
+		TenantIsolation: TenantIsolationConfig{
+			Mode: TenantIsolationKeyspace,
+		},
 	}
 }
 

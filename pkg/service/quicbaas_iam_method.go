@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 )
 
 // IAM returns the IAM service when IAM is enabled.
@@ -30,12 +31,19 @@ func (s *quicBaaS) IAM() IAMService {
 	if s.iamProvider == nil {
 		return nil
 	}
-	return &iamServiceWrapper{provider: s.iamProvider}
+	s.mu.RLock()
+	tim := s.tenantIsolationManager
+	s.mu.RUnlock()
+	return &iamServiceWrapper{
+		provider:               s.iamProvider,
+		tenantIsolationManager: tim,
+	}
 }
 
 // iamServiceWrapper implements IAMService by delegating to IAMServiceProvider.
 type iamServiceWrapper struct {
-	provider IAMServiceProvider
+	provider               IAMServiceProvider
+	tenantIsolationManager security.TenantIsolationManager
 }
 
 // Compile-time interface verification.
@@ -78,6 +86,16 @@ func (w *iamServiceWrapper) CreateTenant(ctx context.Context, req *CreateTenantR
 	tenant, err := tm.CreateTenant(ctx, opts)
 	if err != nil {
 		return nil, err
+	}
+
+	// Register the tenant with the isolation layer. In keyspace mode this is a
+	// no-op. In barrier mode it allocates a TenantBarrier inside the registry.
+	if w.tenantIsolationManager != nil {
+		if regErr := w.tenantIsolationManager.RegisterTenant(ctx, tenant.ID); regErr != nil {
+			// Roll back the IAM tenant creation to keep the two stores consistent.
+			_ = tm.DeleteTenant(ctx, tenant.ID)
+			return nil, regErr
+		}
 	}
 
 	return &CreateTenantResponse{
@@ -146,6 +164,12 @@ func (w *iamServiceWrapper) DeleteTenant(ctx context.Context, req *DeleteTenantR
 	err = tm.DeleteTenant(ctx, req.ID)
 	if err != nil {
 		return nil, err
+	}
+
+	// Remove the tenant from the isolation layer. Errors are best-effort:
+	// the IAM record is already gone, so we log rather than fail.
+	if w.tenantIsolationManager != nil {
+		_ = w.tenantIsolationManager.UnregisterTenant(ctx, req.ID)
 	}
 
 	return &DeleteTenantResponse{

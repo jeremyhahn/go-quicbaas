@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -50,11 +51,15 @@ import (
 	quicbaasseal "github.com/jeremyhahn/go-quicbaas/pkg/seal"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 	dragonstorage "github.com/jeremyhahn/go-quicbaas/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-quicbaas/pkg/storage/file"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watchbridge"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 )
 
 // Seam injection points for unit testing.
@@ -546,6 +551,37 @@ func (s *Server) initBarrier() error {
 	}).Info("Seal barrier initialized")
 
 	return nil
+}
+
+// initBarrierIsolation wires a BarrierIsolationManager into svc when barrier
+// tenant isolation is configured. It extracts the system StorageBarrier from
+// the seal manager, constructs a BarrierRegistry around it, and injects the
+// resulting TenantIsolationManager. Falls back gracefully to keyspace mode if
+// any prerequisite is missing.
+func (s *Server) initBarrierIsolation(svc service.QuicBaaS) {
+	if s.sealManager == nil {
+		s.logger.Warn("Barrier tenant isolation configured but seal is not enabled, falling back to keyspace isolation")
+		return
+	}
+
+	type systemBarrierProvider interface {
+		SystemBarrier() *qrdbsdk.StorageBarrier
+	}
+
+	sb, ok := s.sealManager.(systemBarrierProvider)
+	if !ok {
+		s.logger.Warn("Seal manager does not expose SystemBarrier, falling back to keyspace isolation")
+		return
+	}
+
+	registry, err := qrdbsdk.NewBarrierRegistry(slog.Default(), sb.SystemBarrier())
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to create BarrierRegistry, falling back to keyspace isolation")
+		return
+	}
+
+	svc.SetTenantIsolationManager(security.NewBarrierIsolationManager(registry))
+	s.logger.Info("Barrier tenant isolation active")
 }
 
 // fileExists returns true if the file at path exists and is a regular file.
@@ -1177,6 +1213,7 @@ func (s *Server) startService() error {
 		SchedulerTickInterval:      s.config.Scheduler.TickInterval,
 		SchedulerMaxConcurrentJobs: s.config.Scheduler.MaxConcurrentJobs,
 		TimeSeriesShardID:          s.config.TimeSeries.ShardID,
+		TenantIsolation:            s.config.Security.TenantIsolation,
 	}
 
 	// Build the QuicBaaS service using the builder pattern
@@ -1352,6 +1389,14 @@ func (s *Server) startService() error {
 	} else if iamComponents != nil {
 		svc.SetIAMProvider(iamComponents)
 		s.logger.Info("IAM components attached to service")
+	}
+
+	// When barrier isolation mode is configured and the system seal is enabled,
+	// construct a BarrierRegistry from the system barrier and inject a
+	// BarrierIsolationManager so that tenant creation allocates cryptographic
+	// barriers instead of relying solely on key prefixes.
+	if s.config.Security.TenantIsolation.Mode == config.TenantIsolationBarrier {
+		s.initBarrierIsolation(svc)
 	}
 
 	return nil

@@ -19,6 +19,17 @@ const (
 	ServerModeDevCluster = "devcluster"
 )
 
+// TenantIsolationMode constants define the supported tenant isolation strategies.
+const (
+	// TenantIsolationKeyspace uses key prefixes (__t:{tenantID}:) to scope all
+	// data to a tenant. This is the default mode and is backward compatible.
+	TenantIsolationKeyspace = "keyspace"
+
+	// TenantIsolationBarrier uses go-qrdb's per-tenant cryptographic barrier to
+	// provide full encryption isolation between tenants. Opt-in only.
+	TenantIsolationBarrier = "barrier"
+)
+
 // Storage backend types determine the storage engine used.
 // NOTE: The server.mode field determines whether Raft consensus is used:
 //   - standalone: No Raft (single node)
@@ -598,6 +609,20 @@ type SecurityConfig struct {
 
 	// Authorization configures the unified authorization system.
 	Authorization AuthorizationConfig `mapstructure:"authorization"`
+
+	// TenantIsolation configures the tenant isolation strategy.
+	TenantIsolation TenantIsolationConfig `mapstructure:"tenant_isolation"`
+}
+
+// TenantIsolationConfig selects the per-tenant isolation strategy.
+type TenantIsolationConfig struct {
+	// Mode is the isolation strategy. Accepted values: "keyspace" (default), "barrier".
+	// keyspace — data is isolated via key prefixes (__t:{tenantID}:). Zero overhead,
+	//            fully backward compatible.
+	// barrier  — each tenant gets its own cryptographic barrier backed by go-qrdb's
+	//            BarrierRegistry. Provides encryption isolation at the cost of an
+	//            initialize/unseal step per tenant.
+	Mode string `mapstructure:"mode" json:"mode" yaml:"mode"`
 }
 
 // AuthorizationConfig contains authorization provider configuration.

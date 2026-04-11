@@ -36,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
@@ -43,6 +44,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
 	schedulerstorage "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/storage/quicbaas"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -184,6 +186,10 @@ type quicBaaS struct {
 	// Keyspace resolver for multi-tenant key isolation
 	keyspaceResolver KeyspaceResolver
 
+	// tenantIsolationManager enforces the configured tenant isolation strategy
+	// (keyspace prefix or cryptographic barrier).
+	tenantIsolationManager security.TenantIsolationManager
+
 	// Lifecycle management
 	mu        sync.RWMutex
 	closed    bool
@@ -218,6 +224,20 @@ type QRDBClientNotSetError struct{}
 // Error implements the error interface.
 func (e *QRDBClientNotSetError) Error() string {
 	return "qrdb client provider not configured"
+}
+
+// newTenantIsolationManager constructs the appropriate TenantIsolationManager
+// based on the configuration. Defaults to keyspace mode when mode is empty or
+// unrecognized so that existing deployments are unaffected.
+func newTenantIsolationManager(cfg config.TenantIsolationConfig) security.TenantIsolationManager {
+	if cfg.Mode == config.TenantIsolationBarrier {
+		// BarrierIsolationManager requires a BarrierRegistry which is only
+		// available after a system barrier has been initialized. Return a
+		// no-op keyspace manager here; callers that need barrier mode must
+		// replace this via SetTenantIsolationManager once the registry is ready.
+		return security.NewKeyspaceIsolationManager()
+	}
+	return security.NewKeyspaceIsolationManager()
 }
 
 // newQuicBaaS creates a new QuicBaaS service from the builder.
@@ -336,8 +356,9 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		authManager:      authManager,
 		backupMgr:        backupMgr,
 		logger:           logger,
-		keyspaceResolver: NewKeyspaceResolver(),
-		startTime:        time.Now(),
+		keyspaceResolver:       NewKeyspaceResolver(),
+		tenantIsolationManager: newTenantIsolationManager(b.config.TenantIsolation),
+		startTime:              time.Now(),
 	}
 
 	// Wire qrdb SDK client provider if provided.
@@ -5028,6 +5049,15 @@ func (s *quicBaaS) Messaging() messaging.Service {
 // This is called after the messaging service is initialized externally.
 func (s *quicBaaS) SetMessagingService(ms messaging.Service) {
 	s.messagingService = ms
+}
+
+// SetTenantIsolationManager replaces the tenant isolation manager.
+// Called by the server when barrier mode is active and the BarrierRegistry
+// has been initialized with the system barrier.
+func (s *quicBaaS) SetTenantIsolationManager(m security.TenantIsolationManager) {
+	s.mu.Lock()
+	s.tenantIsolationManager = m
+	s.mu.Unlock()
 }
 
 // Database returns the Database service (returns nil if not configured).

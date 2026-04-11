@@ -20,6 +20,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -804,6 +805,9 @@ func (m *MockQuicBaaS) SetDatabaseService(ds service.DatabaseService) {
 func (m *MockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider) {
 	// No-op in mock
 }
+
+// SetTenantIsolationManager is a no-op in the mock.
+func (m *MockQuicBaaS) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
 
 func (m *MockQuicBaaS) Close() error {
 	if m.CloseFunc != nil {
