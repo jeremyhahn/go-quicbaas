@@ -132,13 +132,13 @@ func newParamStoreLoggerMock() *paramStoreLoggerMock {
 	}
 }
 
-func (l *paramStoreLoggerMock) Debug(msg string)                                           {}
+func (l *paramStoreLoggerMock) Debug(msg string, args ...any)                                           {}
 func (l *paramStoreLoggerMock) Debugf(format string, args ...interface{})                  {}
-func (l *paramStoreLoggerMock) Info(msg string)                                            {}
+func (l *paramStoreLoggerMock) Info(msg string, args ...any)                                            {}
 func (l *paramStoreLoggerMock) Infof(format string, args ...interface{})                   {}
-func (l *paramStoreLoggerMock) Warn(msg string)                                            {}
+func (l *paramStoreLoggerMock) Warn(msg string, args ...any)                                            {}
 func (l *paramStoreLoggerMock) Warnf(format string, args ...interface{})                   {}
-func (l *paramStoreLoggerMock) Error(msg string)                                           {}
+func (l *paramStoreLoggerMock) Error(msg string, args ...any)                                           {}
 func (l *paramStoreLoggerMock) Errorf(format string, args ...interface{})                  {}
 func (l *paramStoreLoggerMock) Fatal(msg string)                                           {}
 func (l *paramStoreLoggerMock) Fatalf(format string, args ...interface{})                  {}

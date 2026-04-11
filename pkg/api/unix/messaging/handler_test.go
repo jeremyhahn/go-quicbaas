@@ -46,13 +46,13 @@ func newTestLogger() *testLogger {
 	}
 }
 
-func (l *testLogger) Debug(_ string)                      {}
+func (l *testLogger) Debug(_ string, _ ...any)                      {}
 func (l *testLogger) Debugf(_ string, _ ...interface{})   {}
-func (l *testLogger) Info(_ string)                       {}
+func (l *testLogger) Info(_ string, _ ...any)                       {}
 func (l *testLogger) Infof(_ string, _ ...interface{})    {}
-func (l *testLogger) Warn(_ string)                       {}
+func (l *testLogger) Warn(_ string, _ ...any)                       {}
 func (l *testLogger) Warnf(_ string, _ ...interface{})    {}
-func (l *testLogger) Error(_ string)                      {}
+func (l *testLogger) Error(_ string, _ ...any)                      {}
 func (l *testLogger) Errorf(_ string, _ ...interface{})   {}
 func (l *testLogger) Fatal(_ string)                      {}
 func (l *testLogger) Fatalf(_ string, _ ...interface{})   {}

@@ -627,25 +627,25 @@ func (l *simpleMockLogger) logEvent(event string) {
 	l.events = append(l.events, event)
 }
 
-func (l *simpleMockLogger) Debug(msg string) { l.logEvent("DEBUG: " + msg) }
+func (l *simpleMockLogger) Debug(msg string, args ...any) { l.logEvent("DEBUG: " + msg) }
 
 func (l *simpleMockLogger) Debugf(format string, args ...interface{}) {
 	l.logEvent("DEBUG: " + fmt.Sprintf(format, args...))
 }
 
-func (l *simpleMockLogger) Info(msg string) { l.logEvent("INFO: " + msg) }
+func (l *simpleMockLogger) Info(msg string, args ...any) { l.logEvent("INFO: " + msg) }
 
 func (l *simpleMockLogger) Infof(format string, args ...interface{}) {
 	l.logEvent("INFO: " + fmt.Sprintf(format, args...))
 }
 
-func (l *simpleMockLogger) Warn(msg string) { l.logEvent("WARN: " + msg) }
+func (l *simpleMockLogger) Warn(msg string, args ...any) { l.logEvent("WARN: " + msg) }
 
 func (l *simpleMockLogger) Warnf(format string, args ...interface{}) {
 	l.logEvent("WARN: " + fmt.Sprintf(format, args...))
 }
 
-func (l *simpleMockLogger) Error(msg string) { l.logEvent("ERROR: " + msg) }
+func (l *simpleMockLogger) Error(msg string, args ...any) { l.logEvent("ERROR: " + msg) }
 
 func (l *simpleMockLogger) Errorf(format string, args ...interface{}) {
 	l.logEvent("ERROR: " + fmt.Sprintf(format, args...))

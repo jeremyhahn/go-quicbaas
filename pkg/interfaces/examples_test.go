@@ -232,13 +232,13 @@ func newMockLogger() *mockLogger {
 	}
 }
 
-func (m *mockLogger) Debug(msg string)                          { m.logs = append(m.logs, msg) }
+func (m *mockLogger) Debug(msg string, args ...any)                          { m.logs = append(m.logs, msg) }
 func (m *mockLogger) Debugf(format string, args ...interface{}) {}
-func (m *mockLogger) Info(msg string)                           { m.logs = append(m.logs, msg) }
+func (m *mockLogger) Info(msg string, args ...any)                           { m.logs = append(m.logs, msg) }
 func (m *mockLogger) Infof(format string, args ...interface{})  {}
-func (m *mockLogger) Warn(msg string)                           { m.logs = append(m.logs, msg) }
+func (m *mockLogger) Warn(msg string, args ...any)                           { m.logs = append(m.logs, msg) }
 func (m *mockLogger) Warnf(format string, args ...interface{})  {}
-func (m *mockLogger) Error(msg string)                          { m.logs = append(m.logs, msg) }
+func (m *mockLogger) Error(msg string, args ...any)                          { m.logs = append(m.logs, msg) }
 func (m *mockLogger) Errorf(format string, args ...interface{}) {}
 func (m *mockLogger) Fatal(msg string)                          { m.logs = append(m.logs, msg) }
 func (m *mockLogger) Fatalf(format string, args ...interface{}) {}

@@ -33,13 +33,13 @@ import (
 // channelTestLogger implements interfaces.Logger for tests.
 type channelTestLogger struct{}
 
-func (l *channelTestLogger) Debug(msg string)                                           {}
+func (l *channelTestLogger) Debug(msg string, args ...any)                                           {}
 func (l *channelTestLogger) Debugf(format string, args ...interface{})                  {}
-func (l *channelTestLogger) Info(msg string)                                            {}
+func (l *channelTestLogger) Info(msg string, args ...any)                                            {}
 func (l *channelTestLogger) Infof(format string, args ...interface{})                   {}
-func (l *channelTestLogger) Warn(msg string)                                            {}
+func (l *channelTestLogger) Warn(msg string, args ...any)                                            {}
 func (l *channelTestLogger) Warnf(format string, args ...interface{})                   {}
-func (l *channelTestLogger) Error(msg string)                                           {}
+func (l *channelTestLogger) Error(msg string, args ...any)                                           {}
 func (l *channelTestLogger) Errorf(format string, args ...interface{})                  {}
 func (l *channelTestLogger) Fatal(msg string)                                           {}
 func (l *channelTestLogger) Fatalf(format string, args ...interface{})                  {}

@@ -14,12 +14,12 @@
 package logger
 
 import (
-	qrdblogger "github.com/jeremyhahn/go-qrdb/pkg/logger"
+	sdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // LogConfig contains configuration for the logger.
 // It re-exports the canonical type from go-qrdb.
-type LogConfig = qrdblogger.LogConfig
+type LogConfig = sdk.LogConfig
 
 // Default returns a default LogConfig with sensible values.
-var Default = qrdblogger.Default
+var Default = sdk.DefaultLogConfig

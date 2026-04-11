@@ -249,7 +249,7 @@ func newMockLogger() *mockLogger {
 	}
 }
 
-func (m *mockLogger) Debug(msg string) {
+func (m *mockLogger) Debug(msg string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logs = append(m.logs, fmt.Sprintf("DEBUG: %s", msg))
@@ -259,7 +259,7 @@ func (m *mockLogger) Debugf(format string, args ...interface{}) {
 	m.Debug(fmt.Sprintf(format, args...))
 }
 
-func (m *mockLogger) Info(msg string) {
+func (m *mockLogger) Info(msg string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logs = append(m.logs, fmt.Sprintf("INFO: %s", msg))
@@ -269,7 +269,7 @@ func (m *mockLogger) Infof(format string, args ...interface{}) {
 	m.Info(fmt.Sprintf(format, args...))
 }
 
-func (m *mockLogger) Warn(msg string) {
+func (m *mockLogger) Warn(msg string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logs = append(m.logs, fmt.Sprintf("WARN: %s", msg))
@@ -279,7 +279,7 @@ func (m *mockLogger) Warnf(format string, args ...interface{}) {
 	m.Warn(fmt.Sprintf(format, args...))
 }
 
-func (m *mockLogger) Error(msg string) {
+func (m *mockLogger) Error(msg string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logs = append(m.logs, fmt.Sprintf("ERROR: %s", msg))

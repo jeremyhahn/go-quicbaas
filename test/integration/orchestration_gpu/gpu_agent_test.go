@@ -74,22 +74,22 @@ type gpuLogger struct{ t *testing.T }
 
 var _ interfaces.Logger = (*gpuLogger)(nil)
 
-func (l *gpuLogger) Debug(msg string) { l.t.Helper(); l.t.Log("[DEBUG] " + msg) }
+func (l *gpuLogger) Debug(msg string, args ...any) { l.t.Helper(); l.t.Log("[DEBUG] " + msg) }
 func (l *gpuLogger) Debugf(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("[DEBUG] "+format, args...)
 }
-func (l *gpuLogger) Info(msg string) { l.t.Helper(); l.t.Log("[INFO] " + msg) }
+func (l *gpuLogger) Info(msg string, args ...any) { l.t.Helper(); l.t.Log("[INFO] " + msg) }
 func (l *gpuLogger) Infof(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("[INFO] "+format, args...)
 }
-func (l *gpuLogger) Warn(msg string) { l.t.Helper(); l.t.Log("[WARN] " + msg) }
+func (l *gpuLogger) Warn(msg string, args ...any) { l.t.Helper(); l.t.Log("[WARN] " + msg) }
 func (l *gpuLogger) Warnf(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("[WARN] "+format, args...)
 }
-func (l *gpuLogger) Error(msg string) { l.t.Helper(); l.t.Log("[ERROR] " + msg) }
+func (l *gpuLogger) Error(msg string, args ...any) { l.t.Helper(); l.t.Log("[ERROR] " + msg) }
 func (l *gpuLogger) Errorf(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("[ERROR] "+format, args...)

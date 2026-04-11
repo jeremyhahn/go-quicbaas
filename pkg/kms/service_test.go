@@ -4771,13 +4771,13 @@ func (l *trackingLogger) reset() {
 	l.fields = make(map[string]interface{})
 }
 
-func (l *trackingLogger) Debug(msg string)                          { l.debugCallCount++ }
+func (l *trackingLogger) Debug(msg string, args ...any)                          { l.debugCallCount++ }
 func (l *trackingLogger) Debugf(format string, args ...interface{}) { l.debugCallCount++ }
-func (l *trackingLogger) Info(msg string)                           { l.infoCallCount++ }
+func (l *trackingLogger) Info(msg string, args ...any)                           { l.infoCallCount++ }
 func (l *trackingLogger) Infof(format string, args ...interface{})  { l.infoCallCount++ }
-func (l *trackingLogger) Warn(msg string)                           { l.warnCallCount++ }
+func (l *trackingLogger) Warn(msg string, args ...any)                           { l.warnCallCount++ }
 func (l *trackingLogger) Warnf(format string, args ...interface{})  { l.warnCallCount++ }
-func (l *trackingLogger) Error(msg string)                          { l.errorCallCount++ }
+func (l *trackingLogger) Error(msg string, args ...any)                          { l.errorCallCount++ }
 func (l *trackingLogger) Errorf(format string, args ...interface{}) { l.errorCallCount++ }
 func (l *trackingLogger) Fatal(msg string)                          {}
 func (l *trackingLogger) Fatalf(format string, args ...interface{}) {}

@@ -245,13 +245,13 @@ func (n *testFileLockRaftNode) GetShardRaftState(_ uint64) (uint64, uint64, erro
 // testFileLockLogger is a no-op logger for file lock testing.
 type testFileLockLogger struct{}
 
-func (l *testFileLockLogger) Debug(_ string)                                        {}
+func (l *testFileLockLogger) Debug(_ string, _ ...any)                                        {}
 func (l *testFileLockLogger) Debugf(_ string, _ ...interface{})                     {}
-func (l *testFileLockLogger) Info(_ string)                                         {}
+func (l *testFileLockLogger) Info(_ string, _ ...any)                                         {}
 func (l *testFileLockLogger) Infof(_ string, _ ...interface{})                      {}
-func (l *testFileLockLogger) Warn(_ string)                                         {}
+func (l *testFileLockLogger) Warn(_ string, _ ...any)                                         {}
 func (l *testFileLockLogger) Warnf(_ string, _ ...interface{})                      {}
-func (l *testFileLockLogger) Error(_ string)                                        {}
+func (l *testFileLockLogger) Error(_ string, _ ...any)                                        {}
 func (l *testFileLockLogger) Errorf(_ string, _ ...interface{})                     {}
 func (l *testFileLockLogger) Fatal(_ string)                                        {}
 func (l *testFileLockLogger) Fatalf(_ string, _ ...interface{})                     {}

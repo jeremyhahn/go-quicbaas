@@ -100,13 +100,13 @@ func newMockEmbeddingLogger() *mockEmbeddingLogger {
 	}
 }
 
-func (l *mockEmbeddingLogger) Debug(msg string)                                           {}
+func (l *mockEmbeddingLogger) Debug(msg string, args ...any)                                           {}
 func (l *mockEmbeddingLogger) Debugf(format string, args ...interface{})                  {}
-func (l *mockEmbeddingLogger) Info(msg string)                                            {}
+func (l *mockEmbeddingLogger) Info(msg string, args ...any)                                            {}
 func (l *mockEmbeddingLogger) Infof(format string, args ...interface{})                   {}
-func (l *mockEmbeddingLogger) Warn(msg string)                                            {}
+func (l *mockEmbeddingLogger) Warn(msg string, args ...any)                                            {}
 func (l *mockEmbeddingLogger) Warnf(format string, args ...interface{})                   {}
-func (l *mockEmbeddingLogger) Error(msg string)                                           {}
+func (l *mockEmbeddingLogger) Error(msg string, args ...any)                                           {}
 func (l *mockEmbeddingLogger) Errorf(format string, args ...interface{})                  {}
 func (l *mockEmbeddingLogger) Fatal(msg string)                                           {}
 func (l *mockEmbeddingLogger) Fatalf(format string, args ...interface{})                  {}

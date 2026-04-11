@@ -17,19 +17,19 @@ import (
 	"context"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-qrdb/pkg/retry"
+	sdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Operation is a function that can be retried.
 // It should return an error if the operation fails.
-type Operation = retry.Operation
+type Operation = sdk.RetryOperation
 
 // Config configures retry behavior.
-type Config = retry.Config
+type Config = sdk.RetryConfig
 
 // DefaultConfig returns a retry config with sensible defaults.
 func DefaultConfig() *Config {
-	return retry.DefaultConfig()
+	return sdk.DefaultRetryConfig()
 }
 
 // Do executes the operation with retry logic according to the config.
@@ -38,28 +38,28 @@ func DefaultConfig() *Config {
 // - MaxAttempts has not been exceeded
 // - The context has not been canceled.
 func Do(ctx context.Context, cfg *Config, op Operation) error {
-	return retry.Do(ctx, cfg, op)
+	return sdk.RetryDo(ctx, cfg, op)
 }
 
 // DoWithBackoff is a convenience function that retries an operation with the specified
 // max attempts and backoff strategy.
 func DoWithBackoff(ctx context.Context, maxAttempts int, backoff Backoff, op Operation) error {
-	return retry.DoWithBackoff(ctx, maxAttempts, backoff, op)
+	return sdk.RetryDoWithBackoff(ctx, maxAttempts, backoff, op)
 }
 
 // DoExponential is a convenience function that retries an operation with exponential backoff.
 func DoExponential(ctx context.Context, maxAttempts int, op Operation) error {
-	return retry.DoExponential(ctx, maxAttempts, op)
+	return sdk.RetryDoExponential(ctx, maxAttempts, op)
 }
 
 // DoLinear is a convenience function that retries an operation with linear backoff.
 func DoLinear(ctx context.Context, maxAttempts int, op Operation) error {
-	return retry.DoLinear(ctx, maxAttempts, op)
+	return sdk.RetryDoLinear(ctx, maxAttempts, op)
 }
 
 // DoConstant is a convenience function that retries an operation with constant backoff.
 func DoConstant(ctx context.Context, maxAttempts int, op Operation) error {
-	return retry.DoConstant(ctx, maxAttempts, op)
+	return sdk.RetryDoConstant(ctx, maxAttempts, op)
 }
 
 // shouldRetry determines if an error is retryable based on the config.

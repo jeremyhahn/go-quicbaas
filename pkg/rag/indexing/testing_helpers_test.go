@@ -212,28 +212,28 @@ func newTestLogger() *testLogger {
 	return &testLogger{logs: make([]string, 0)}
 }
 
-func (l *testLogger) Debug(msg string) {
+func (l *testLogger) Debug(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.logs = append(l.logs, msg)
 }
 
 func (l *testLogger) Debugf(_ string, _ ...interface{}) {}
-func (l *testLogger) Info(msg string) {
+func (l *testLogger) Info(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.logs = append(l.logs, msg)
 }
 
 func (l *testLogger) Infof(_ string, _ ...interface{}) {}
-func (l *testLogger) Warn(msg string) {
+func (l *testLogger) Warn(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.logs = append(l.logs, msg)
 }
 
 func (l *testLogger) Warnf(_ string, _ ...interface{}) {}
-func (l *testLogger) Error(msg string) {
+func (l *testLogger) Error(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.logs = append(l.logs, msg)

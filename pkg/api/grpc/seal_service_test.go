@@ -30,13 +30,13 @@ import (
 // noopLogger implements interfaces.Logger as a no-op for unit tests.
 type noopLogger struct{}
 
-func (l *noopLogger) Debug(msg string)                                           {}
+func (l *noopLogger) Debug(msg string, args ...any)                                           {}
 func (l *noopLogger) Debugf(format string, args ...interface{})                  {}
-func (l *noopLogger) Info(msg string)                                            {}
+func (l *noopLogger) Info(msg string, args ...any)                                            {}
 func (l *noopLogger) Infof(format string, args ...interface{})                   {}
-func (l *noopLogger) Warn(msg string)                                            {}
+func (l *noopLogger) Warn(msg string, args ...any)                                            {}
 func (l *noopLogger) Warnf(format string, args ...interface{})                   {}
-func (l *noopLogger) Error(msg string)                                           {}
+func (l *noopLogger) Error(msg string, args ...any)                                           {}
 func (l *noopLogger) Errorf(format string, args ...interface{})                  {}
 func (l *noopLogger) Fatal(msg string)                                           {}
 func (l *noopLogger) Fatalf(format string, args ...interface{})                  {}

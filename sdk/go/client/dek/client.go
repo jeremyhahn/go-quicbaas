@@ -103,7 +103,6 @@ type CreateDEKRequest struct {
 
 	// WarningPercent is the percentage threshold for warnings.
 	WarningPercent int
-
 }
 
 // CreateDEKResponse is the response from creating a DEK.

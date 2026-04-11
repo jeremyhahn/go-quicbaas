@@ -596,7 +596,7 @@ func NewMockLogger() *MockLogger {
 }
 
 // Debug logs a debug message.
-func (m *MockLogger) Debug(msg string) {
+func (m *MockLogger) Debug(msg string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.DebugLogs = append(m.DebugLogs, msg)
@@ -608,7 +608,7 @@ func (m *MockLogger) Debugf(format string, args ...interface{}) {
 }
 
 // Info logs an info message.
-func (m *MockLogger) Info(msg string) {
+func (m *MockLogger) Info(msg string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.InfoLogs = append(m.InfoLogs, msg)
@@ -620,7 +620,7 @@ func (m *MockLogger) Infof(format string, args ...interface{}) {
 }
 
 // Warn logs a warning message.
-func (m *MockLogger) Warn(msg string) {
+func (m *MockLogger) Warn(msg string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.WarnLogs = append(m.WarnLogs, msg)
@@ -632,7 +632,7 @@ func (m *MockLogger) Warnf(format string, args ...interface{}) {
 }
 
 // Error logs an error message.
-func (m *MockLogger) Error(msg string) {
+func (m *MockLogger) Error(msg string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ErrorLogs = append(m.ErrorLogs, msg)

@@ -231,22 +231,22 @@ type testLogger struct {
 // Compile-time interface satisfaction check.
 var _ interfaces.Logger = (*testLogger)(nil)
 
-func (l *testLogger) Debug(msg string) { l.t.Helper(); l.t.Log("[DEBUG] " + msg) }
+func (l *testLogger) Debug(msg string, args ...any) { l.t.Helper(); l.t.Log("[DEBUG] " + msg) }
 func (l *testLogger) Debugf(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("[DEBUG] "+format, args...)
 }
-func (l *testLogger) Info(msg string) { l.t.Helper(); l.t.Log("[INFO] " + msg) }
+func (l *testLogger) Info(msg string, args ...any) { l.t.Helper(); l.t.Log("[INFO] " + msg) }
 func (l *testLogger) Infof(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("[INFO] "+format, args...)
 }
-func (l *testLogger) Warn(msg string) { l.t.Helper(); l.t.Log("[WARN] " + msg) }
+func (l *testLogger) Warn(msg string, args ...any) { l.t.Helper(); l.t.Log("[WARN] " + msg) }
 func (l *testLogger) Warnf(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("[WARN] "+format, args...)
 }
-func (l *testLogger) Error(msg string) { l.t.Helper(); l.t.Log("[ERROR] " + msg) }
+func (l *testLogger) Error(msg string, args ...any) { l.t.Helper(); l.t.Log("[ERROR] " + msg) }
 func (l *testLogger) Errorf(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("[ERROR] "+format, args...)

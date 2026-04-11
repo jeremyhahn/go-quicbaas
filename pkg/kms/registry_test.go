@@ -1566,13 +1566,13 @@ func (b *storeTestBackend) CreateKey(ctx context.Context, attrs *xkmssdk.KeyAttr
 // registryTestLogger implements interfaces.Logger for testing
 type registryTestLogger struct{}
 
-func (l *registryTestLogger) Debug(msg string)                          {}
+func (l *registryTestLogger) Debug(msg string, args ...any)                          {}
 func (l *registryTestLogger) Debugf(format string, args ...interface{}) {}
-func (l *registryTestLogger) Info(msg string)                           {}
+func (l *registryTestLogger) Info(msg string, args ...any)                           {}
 func (l *registryTestLogger) Infof(format string, args ...interface{})  {}
-func (l *registryTestLogger) Warn(msg string)                           {}
+func (l *registryTestLogger) Warn(msg string, args ...any)                           {}
 func (l *registryTestLogger) Warnf(format string, args ...interface{})  {}
-func (l *registryTestLogger) Error(msg string)                          {}
+func (l *registryTestLogger) Error(msg string, args ...any)                          {}
 func (l *registryTestLogger) Errorf(format string, args ...interface{}) {}
 func (l *registryTestLogger) Fatal(msg string)                          {}
 func (l *registryTestLogger) Fatalf(format string, args ...interface{}) {}
@@ -1836,7 +1836,7 @@ func newCapturingLogger() *capturingLogger {
 	}
 }
 
-func (l *capturingLogger) Debug(msg string) {
+func (l *capturingLogger) Debug(msg string, args ...any) {
 	l.storage.addDebug(msg)
 }
 
@@ -1844,7 +1844,7 @@ func (l *capturingLogger) Debugf(format string, args ...interface{}) {
 	l.storage.addDebug(format)
 }
 
-func (l *capturingLogger) Info(msg string) {
+func (l *capturingLogger) Info(msg string, args ...any) {
 	l.storage.addInfo(msg)
 }
 
@@ -1852,7 +1852,7 @@ func (l *capturingLogger) Infof(format string, args ...interface{}) {
 	l.storage.addInfo(format)
 }
 
-func (l *capturingLogger) Warn(msg string) {
+func (l *capturingLogger) Warn(msg string, args ...any) {
 	l.storage.addWarn(msg)
 }
 
@@ -1860,7 +1860,7 @@ func (l *capturingLogger) Warnf(format string, args ...interface{}) {
 	l.storage.addWarn(format)
 }
 
-func (l *capturingLogger) Error(msg string) {
+func (l *capturingLogger) Error(msg string, args ...any) {
 	l.storage.addError(msg)
 }
 

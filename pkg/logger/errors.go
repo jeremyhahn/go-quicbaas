@@ -14,8 +14,8 @@
 package logger
 
 import (
-	qrdblogger "github.com/jeremyhahn/go-qrdb/pkg/logger"
+	sdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // InvalidLogLevelError is returned when an unsupported log level is specified.
-type InvalidLogLevelError = qrdblogger.InvalidLogLevelError
+type InvalidLogLevelError = sdk.InvalidLogLevelError

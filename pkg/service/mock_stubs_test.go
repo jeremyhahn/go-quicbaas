@@ -75,13 +75,13 @@ func (m *coverageEmbeddingManager) GetStats() interfaces.EmbeddingStats {
 }
 
 // coverageEmbeddingLogger implements interfaces.Logger
-func (l *coverageEmbeddingLogger) Debug(_ string)                                        {}
+func (l *coverageEmbeddingLogger) Debug(_ string, _ ...any)                                        {}
 func (l *coverageEmbeddingLogger) Debugf(_ string, _ ...interface{})                     {}
-func (l *coverageEmbeddingLogger) Info(_ string)                                         {}
+func (l *coverageEmbeddingLogger) Info(_ string, _ ...any)                                         {}
 func (l *coverageEmbeddingLogger) Infof(_ string, _ ...interface{})                      {}
-func (l *coverageEmbeddingLogger) Warn(_ string)                                         {}
+func (l *coverageEmbeddingLogger) Warn(_ string, _ ...any)                                         {}
 func (l *coverageEmbeddingLogger) Warnf(_ string, _ ...interface{})                      {}
-func (l *coverageEmbeddingLogger) Error(_ string)                                        {}
+func (l *coverageEmbeddingLogger) Error(_ string, _ ...any)                                        {}
 func (l *coverageEmbeddingLogger) Errorf(_ string, _ ...interface{})                     {}
 func (l *coverageEmbeddingLogger) Fatal(_ string)                                        {}
 func (l *coverageEmbeddingLogger) Fatalf(_ string, _ ...interface{})                     {}

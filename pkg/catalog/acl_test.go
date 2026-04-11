@@ -206,13 +206,13 @@ func (m *aclTestCatalogManager) Sync() error {
 // aclTestLogger implements interfaces.Logger for ACL testing.
 type aclTestLogger struct{}
 
-func (l *aclTestLogger) Debug(msg string)                          {}
+func (l *aclTestLogger) Debug(msg string, args ...any)                          {}
 func (l *aclTestLogger) Debugf(format string, args ...interface{}) {}
-func (l *aclTestLogger) Info(msg string)                           {}
+func (l *aclTestLogger) Info(msg string, args ...any)                           {}
 func (l *aclTestLogger) Infof(format string, args ...interface{})  {}
-func (l *aclTestLogger) Warn(msg string)                           {}
+func (l *aclTestLogger) Warn(msg string, args ...any)                           {}
 func (l *aclTestLogger) Warnf(format string, args ...interface{})  {}
-func (l *aclTestLogger) Error(msg string)                          {}
+func (l *aclTestLogger) Error(msg string, args ...any)                          {}
 func (l *aclTestLogger) Errorf(format string, args ...interface{}) {}
 func (l *aclTestLogger) Fatal(msg string)                          {}
 func (l *aclTestLogger) Fatalf(format string, args ...interface{}) {}

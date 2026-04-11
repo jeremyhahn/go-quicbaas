@@ -266,13 +266,13 @@ func (l *clusterDEKMockLogger) WithFields(fields map[string]interface{}) interfa
 	return newLogger
 }
 
-func (l *clusterDEKMockLogger) Debug(msg string)                          {}
+func (l *clusterDEKMockLogger) Debug(msg string, args ...any)                          {}
 func (l *clusterDEKMockLogger) Debugf(format string, args ...interface{}) {}
-func (l *clusterDEKMockLogger) Info(msg string)                           {}
+func (l *clusterDEKMockLogger) Info(msg string, args ...any)                           {}
 func (l *clusterDEKMockLogger) Infof(format string, args ...interface{})  {}
-func (l *clusterDEKMockLogger) Warn(msg string)                           {}
+func (l *clusterDEKMockLogger) Warn(msg string, args ...any)                           {}
 func (l *clusterDEKMockLogger) Warnf(format string, args ...interface{})  {}
-func (l *clusterDEKMockLogger) Error(msg string)                          {}
+func (l *clusterDEKMockLogger) Error(msg string, args ...any)                          {}
 func (l *clusterDEKMockLogger) Errorf(format string, args ...interface{}) {}
 func (l *clusterDEKMockLogger) Fatal(msg string)                          {}
 func (l *clusterDEKMockLogger) Fatalf(format string, args ...interface{}) {}

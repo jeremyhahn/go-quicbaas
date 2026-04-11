@@ -48,7 +48,7 @@ type mockLoggerForAdapter struct {
 	errorCalls []string
 }
 
-func (m *mockLoggerForAdapter) Debug(msg string) {
+func (m *mockLoggerForAdapter) Debug(msg string, args ...any) {
 	m.debugCalls = append(m.debugCalls, msg)
 }
 
@@ -56,11 +56,11 @@ func (m *mockLoggerForAdapter) Debugf(format string, args ...interface{}) {
 	m.debugCalls = append(m.debugCalls, format)
 }
 
-func (m *mockLoggerForAdapter) Info(msg string) {}
+func (m *mockLoggerForAdapter) Info(msg string, args ...any) {}
 
 func (m *mockLoggerForAdapter) Infof(format string, args ...interface{}) {}
 
-func (m *mockLoggerForAdapter) Warn(msg string) {
+func (m *mockLoggerForAdapter) Warn(msg string, args ...any) {
 	m.warnCalls = append(m.warnCalls, msg)
 }
 
@@ -68,7 +68,7 @@ func (m *mockLoggerForAdapter) Warnf(format string, args ...interface{}) {
 	m.warnCalls = append(m.warnCalls, format)
 }
 
-func (m *mockLoggerForAdapter) Error(msg string) {
+func (m *mockLoggerForAdapter) Error(msg string, args ...any) {
 	m.errorCalls = append(m.errorCalls, msg)
 }
 
@@ -1003,10 +1003,10 @@ func (l *boost82MockLogger) Infof(format string, args ...interface{})  {}
 func (l *boost82MockLogger) Warnf(format string, args ...interface{})  { l.warnfCalled = true }
 func (l *boost82MockLogger) Errorf(format string, args ...interface{}) { l.errorfCalled = true }
 func (l *boost82MockLogger) Fatalf(format string, args ...interface{}) {}
-func (l *boost82MockLogger) Debug(msg string)                          {}
-func (l *boost82MockLogger) Info(msg string)                           {}
-func (l *boost82MockLogger) Warn(msg string)                           {}
-func (l *boost82MockLogger) Error(msg string)                          {}
+func (l *boost82MockLogger) Debug(msg string, args ...any)                          {}
+func (l *boost82MockLogger) Info(msg string, args ...any)                           {}
+func (l *boost82MockLogger) Warn(msg string, args ...any)                           {}
+func (l *boost82MockLogger) Error(msg string, args ...any)                          {}
 func (l *boost82MockLogger) Fatal(msg string)                          {}
 
 func (l *boost82MockLogger) WithField(key string, value interface{}) interfaces.Logger  { return l }

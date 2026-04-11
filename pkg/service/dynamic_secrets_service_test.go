@@ -327,13 +327,13 @@ func newMockDSLogger() *mockDSLogger {
 	return &mockDSLogger{fields: make(map[string]interface{})}
 }
 
-func (l *mockDSLogger) Debug(msg string)                                           {}
+func (l *mockDSLogger) Debug(msg string, args ...any)                                           {}
 func (l *mockDSLogger) Debugf(format string, args ...interface{})                  {}
-func (l *mockDSLogger) Info(msg string)                                            {}
+func (l *mockDSLogger) Info(msg string, args ...any)                                            {}
 func (l *mockDSLogger) Infof(format string, args ...interface{})                   {}
-func (l *mockDSLogger) Warn(msg string)                                            {}
+func (l *mockDSLogger) Warn(msg string, args ...any)                                            {}
 func (l *mockDSLogger) Warnf(format string, args ...interface{})                   {}
-func (l *mockDSLogger) Error(msg string)                                           {}
+func (l *mockDSLogger) Error(msg string, args ...any)                                           {}
 func (l *mockDSLogger) Errorf(format string, args ...interface{})                  {}
 func (l *mockDSLogger) Fatal(msg string)                                           {}
 func (l *mockDSLogger) Fatalf(format string, args ...interface{})                  {}

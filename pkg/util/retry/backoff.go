@@ -16,35 +16,35 @@
 package retry
 
 import (
-	"github.com/jeremyhahn/go-qrdb/pkg/retry"
+	sdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Backoff defines the interface for backoff strategies.
-type Backoff = retry.Backoff
+type Backoff = sdk.Backoff
 
 // ExponentialBackoff implements exponential backoff with jitter.
-type ExponentialBackoff = retry.ExponentialBackoff
+type ExponentialBackoff = sdk.ExponentialBackoff
 
 // LinearBackoff implements linear backoff with optional jitter.
-type LinearBackoff = retry.LinearBackoff
+type LinearBackoff = sdk.LinearBackoff
 
 // ConstantBackoff implements constant backoff with optional jitter.
-type ConstantBackoff = retry.ConstantBackoff
+type ConstantBackoff = sdk.ConstantBackoff
 
 // DefaultExponentialBackoff returns a preconfigured exponential backoff
 // with sensible defaults: 100ms initial, 10s max, 2x multiplier, 0.1 jitter.
 func DefaultExponentialBackoff() *ExponentialBackoff {
-	return retry.DefaultExponentialBackoff()
+	return sdk.DefaultExponentialBackoff()
 }
 
 // DefaultLinearBackoff returns a preconfigured linear backoff
 // with sensible defaults: 100ms initial, 5s max, 200ms increment, 0.1 jitter.
 func DefaultLinearBackoff() *LinearBackoff {
-	return retry.DefaultLinearBackoff()
+	return sdk.DefaultLinearBackoff()
 }
 
 // DefaultConstantBackoff returns a preconfigured constant backoff
 // with sensible defaults: 500ms delay, 0.1 jitter.
 func DefaultConstantBackoff() *ConstantBackoff {
-	return retry.DefaultConstantBackoff()
+	return sdk.DefaultConstantBackoff()
 }

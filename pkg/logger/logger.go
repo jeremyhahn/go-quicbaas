@@ -19,12 +19,12 @@ package logger
 import (
 	"log/slog"
 
-	qrdblogger "github.com/jeremyhahn/go-qrdb/pkg/logger"
+	sdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Logger is the structured logger type. It re-exports the canonical
 // implementation from go-qrdb so callers of this package are unaffected.
-type Logger = qrdblogger.Logger
+type Logger = sdk.ConcreteLogger
 
 // Custom log levels for trace, fatal, and panic.
 const (
@@ -34,8 +34,8 @@ const (
 )
 
 // New creates a new Logger with the given configuration.
-var New = qrdblogger.New
+var New = sdk.NewLogger
 
 // FromContext retrieves the logger stored in a context.
 // If no logger is found, a default logger is returned.
-var FromContext = qrdblogger.FromContext
+var FromContext = sdk.LoggerFromContext

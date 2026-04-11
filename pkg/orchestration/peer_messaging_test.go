@@ -131,13 +131,13 @@ func (m *peerTestKVStore) Exists(_ context.Context, key string) (bool, error) {
 // peerTestLogger implements interfaces.Logger for peer messaging tests.
 type peerTestLogger struct{}
 
-func (l *peerTestLogger) Debug(string)                                        {}
+func (l *peerTestLogger) Debug(string, ...any)                                        {}
 func (l *peerTestLogger) Debugf(string, ...interface{})                       {}
-func (l *peerTestLogger) Info(string)                                         {}
+func (l *peerTestLogger) Info(string, ...any)                                         {}
 func (l *peerTestLogger) Infof(string, ...interface{})                        {}
-func (l *peerTestLogger) Warn(string)                                         {}
+func (l *peerTestLogger) Warn(string, ...any)                                         {}
 func (l *peerTestLogger) Warnf(string, ...interface{})                        {}
-func (l *peerTestLogger) Error(string)                                        {}
+func (l *peerTestLogger) Error(string, ...any)                                        {}
 func (l *peerTestLogger) Errorf(string, ...interface{})                       {}
 func (l *peerTestLogger) Fatal(string)                                        {}
 func (l *peerTestLogger) Fatalf(string, ...interface{})                       {}

@@ -51,7 +51,7 @@ func newRouterTestLogger() *routerTestLogger {
 	}
 }
 
-func (m *routerTestLogger) Debug(msg string) {
+func (m *routerTestLogger) Debug(msg string, args ...any) {
 	m.log("debug", msg)
 }
 
@@ -59,7 +59,7 @@ func (m *routerTestLogger) Debugf(format string, args ...interface{}) {
 	m.log("debug", format)
 }
 
-func (m *routerTestLogger) Info(msg string) {
+func (m *routerTestLogger) Info(msg string, args ...any) {
 	m.log("info", msg)
 }
 
@@ -67,7 +67,7 @@ func (m *routerTestLogger) Infof(format string, args ...interface{}) {
 	m.log("info", format)
 }
 
-func (m *routerTestLogger) Warn(msg string) {
+func (m *routerTestLogger) Warn(msg string, args ...any) {
 	m.log("warn", msg)
 }
 
@@ -75,7 +75,7 @@ func (m *routerTestLogger) Warnf(format string, args ...interface{}) {
 	m.log("warn", format)
 }
 
-func (m *routerTestLogger) Error(msg string) {
+func (m *routerTestLogger) Error(msg string, args ...any) {
 	m.log("error", msg)
 }
 

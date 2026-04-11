@@ -28,22 +28,22 @@ type containerTestLogger struct {
 	t *testing.T
 }
 
-func (l *containerTestLogger) Debug(msg string) { l.t.Helper(); l.t.Log("DEBUG: " + msg) }
+func (l *containerTestLogger) Debug(msg string, args ...any) { l.t.Helper(); l.t.Log("DEBUG: " + msg) }
 func (l *containerTestLogger) Debugf(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("DEBUG: "+format, args...)
 }
-func (l *containerTestLogger) Info(msg string) { l.t.Helper(); l.t.Log("INFO: " + msg) }
+func (l *containerTestLogger) Info(msg string, args ...any) { l.t.Helper(); l.t.Log("INFO: " + msg) }
 func (l *containerTestLogger) Infof(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("INFO: "+format, args...)
 }
-func (l *containerTestLogger) Warn(msg string) { l.t.Helper(); l.t.Log("WARN: " + msg) }
+func (l *containerTestLogger) Warn(msg string, args ...any) { l.t.Helper(); l.t.Log("WARN: " + msg) }
 func (l *containerTestLogger) Warnf(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("WARN: "+format, args...)
 }
-func (l *containerTestLogger) Error(msg string) { l.t.Helper(); l.t.Log("ERROR: " + msg) }
+func (l *containerTestLogger) Error(msg string, args ...any) { l.t.Helper(); l.t.Log("ERROR: " + msg) }
 func (l *containerTestLogger) Errorf(format string, args ...interface{}) {
 	l.t.Helper()
 	l.t.Logf("ERROR: "+format, args...)

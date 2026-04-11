@@ -31,13 +31,13 @@ import (
 
 type agentTestLogger struct{}
 
-func (l *agentTestLogger) Debug(msg string)                                           {}
+func (l *agentTestLogger) Debug(msg string, args ...any)                                           {}
 func (l *agentTestLogger) Debugf(format string, args ...interface{})                  {}
-func (l *agentTestLogger) Info(msg string)                                            {}
+func (l *agentTestLogger) Info(msg string, args ...any)                                            {}
 func (l *agentTestLogger) Infof(format string, args ...interface{})                   {}
-func (l *agentTestLogger) Warn(msg string)                                            {}
+func (l *agentTestLogger) Warn(msg string, args ...any)                                            {}
 func (l *agentTestLogger) Warnf(format string, args ...interface{})                   {}
-func (l *agentTestLogger) Error(msg string)                                           {}
+func (l *agentTestLogger) Error(msg string, args ...any)                                           {}
 func (l *agentTestLogger) Errorf(format string, args ...interface{})                  {}
 func (l *agentTestLogger) Fatal(msg string)                                           {}
 func (l *agentTestLogger) Fatalf(format string, args ...interface{})                  {}

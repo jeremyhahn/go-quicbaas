@@ -478,10 +478,10 @@ type mockLogger struct {
 	errorCalled bool
 }
 
-func (m *mockLogger) Debug(msg string)                          { m.debugCalled = true }
-func (m *mockLogger) Info(msg string)                           { m.infoCalled = true }
-func (m *mockLogger) Warn(msg string)                           { m.warnCalled = true }
-func (m *mockLogger) Error(msg string)                          { m.errorCalled = true }
+func (m *mockLogger) Debug(msg string, args ...any)                          { m.debugCalled = true }
+func (m *mockLogger) Info(msg string, args ...any)                           { m.infoCalled = true }
+func (m *mockLogger) Warn(msg string, args ...any)                           { m.warnCalled = true }
+func (m *mockLogger) Error(msg string, args ...any)                          { m.errorCalled = true }
 func (m *mockLogger) Fatal(msg string)                          {}
 func (m *mockLogger) Debugf(format string, args ...interface{}) { m.debugCalled = true }
 func (m *mockLogger) Infof(format string, args ...interface{})  { m.infoCalled = true }

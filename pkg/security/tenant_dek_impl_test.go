@@ -237,13 +237,13 @@ var _ interfaces.KVStore = (*mockKVStore)(nil)
 
 type mockLogger struct{}
 
-func (l *mockLogger) Debug(_ string)                                   {}
+func (l *mockLogger) Debug(_ string, _ ...any)                                   {}
 func (l *mockLogger) Debugf(_ string, _ ...interface{})               {}
-func (l *mockLogger) Info(_ string)                                    {}
+func (l *mockLogger) Info(_ string, _ ...any)                                    {}
 func (l *mockLogger) Infof(_ string, _ ...interface{})                 {}
-func (l *mockLogger) Warn(_ string)                                    {}
+func (l *mockLogger) Warn(_ string, _ ...any)                                    {}
 func (l *mockLogger) Warnf(_ string, _ ...interface{})                 {}
-func (l *mockLogger) Error(_ string)                                   {}
+func (l *mockLogger) Error(_ string, _ ...any)                                   {}
 func (l *mockLogger) Errorf(_ string, _ ...interface{})                {}
 func (l *mockLogger) Fatal(_ string)                                   {}
 func (l *mockLogger) Fatalf(_ string, _ ...interface{})                {}

@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	dberrors "github.com/jeremyhahn/go-qrdb/pkg/errors"
+	dberrors "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 

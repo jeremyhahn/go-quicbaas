@@ -113,13 +113,13 @@ func (m *costTestKVStore) Exists(_ context.Context, key string) (bool, error) {
 // costTestLogger implements interfaces.Logger for cost tracker tests.
 type costTestLogger struct{}
 
-func (l *costTestLogger) Debug(string)                                        {}
+func (l *costTestLogger) Debug(string, ...any)                                        {}
 func (l *costTestLogger) Debugf(string, ...interface{})                       {}
-func (l *costTestLogger) Info(string)                                         {}
+func (l *costTestLogger) Info(string, ...any)                                         {}
 func (l *costTestLogger) Infof(string, ...interface{})                        {}
-func (l *costTestLogger) Warn(string)                                         {}
+func (l *costTestLogger) Warn(string, ...any)                                         {}
 func (l *costTestLogger) Warnf(string, ...interface{})                        {}
-func (l *costTestLogger) Error(string)                                        {}
+func (l *costTestLogger) Error(string, ...any)                                        {}
 func (l *costTestLogger) Errorf(string, ...interface{})                       {}
 func (l *costTestLogger) Fatal(string)                                        {}
 func (l *costTestLogger) Fatalf(string, ...interface{})                       {}

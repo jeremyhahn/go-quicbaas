@@ -189,26 +189,26 @@ const (
 // LoggerInterface defines logging operations needed by Server.
 // Abstracts the logger for dependency injection.
 type LoggerInterface interface {
-	// Debug logs a debug message.
-	Debug(msg string)
+	// Debug logs a debug message with optional structured key-value pairs.
+	Debug(msg string, args ...any)
 
 	// Debugf logs a formatted debug message.
 	Debugf(format string, args ...interface{})
 
-	// Info logs an info message.
-	Info(msg string)
+	// Info logs an info message with optional structured key-value pairs.
+	Info(msg string, args ...any)
 
 	// Infof logs a formatted info message.
 	Infof(format string, args ...interface{})
 
-	// Warn logs a warning message.
-	Warn(msg string)
+	// Warn logs a warning message with optional structured key-value pairs.
+	Warn(msg string, args ...any)
 
 	// Warnf logs a formatted warning message.
 	Warnf(format string, args ...interface{})
 
-	// Error logs an error message.
-	Error(msg string)
+	// Error logs an error message with optional structured key-value pairs.
+	Error(msg string, args ...any)
 
 	// Errorf logs a formatted error message.
 	Errorf(format string, args ...interface{})

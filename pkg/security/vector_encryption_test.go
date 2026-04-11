@@ -152,7 +152,7 @@ func newVectorTestLogger() *vectorTestLogger {
 	}
 }
 
-func (l *vectorTestLogger) Debug(msg string) {
+func (l *vectorTestLogger) Debug(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.debugMessages = append(l.debugMessages, msg)
@@ -162,7 +162,7 @@ func (l *vectorTestLogger) Debugf(format string, args ...interface{}) {
 	l.Debug(format)
 }
 
-func (l *vectorTestLogger) Info(msg string) {
+func (l *vectorTestLogger) Info(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.infoMessages = append(l.infoMessages, msg)
@@ -172,7 +172,7 @@ func (l *vectorTestLogger) Infof(format string, args ...interface{}) {
 	l.Info(format)
 }
 
-func (l *vectorTestLogger) Warn(msg string) {
+func (l *vectorTestLogger) Warn(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.warnMessages = append(l.warnMessages, msg)
@@ -182,7 +182,7 @@ func (l *vectorTestLogger) Warnf(format string, args ...interface{}) {
 	l.Warn(format)
 }
 
-func (l *vectorTestLogger) Error(msg string) {
+func (l *vectorTestLogger) Error(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.errorMessages = append(l.errorMessages, msg)

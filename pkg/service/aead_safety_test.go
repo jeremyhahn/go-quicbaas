@@ -42,14 +42,14 @@ func newAEADTestLogger() *aeadTestLogger {
 	}
 }
 
-func (l *aeadTestLogger) Debug(msg string)                          {}
+func (l *aeadTestLogger) Debug(msg string, args ...any)                          {}
 func (l *aeadTestLogger) Debugf(format string, args ...interface{}) {}
-func (l *aeadTestLogger) Info(msg string)                           {}
+func (l *aeadTestLogger) Info(msg string, args ...any)                           {}
 func (l *aeadTestLogger) Infof(format string, args ...interface{})  {}
 func (l *aeadTestLogger) Fatal(msg string)                          {}
 func (l *aeadTestLogger) Fatalf(format string, args ...interface{}) {}
 
-func (l *aeadTestLogger) Warn(msg string) {
+func (l *aeadTestLogger) Warn(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.warnings = append(l.warnings, msg)
@@ -59,7 +59,7 @@ func (l *aeadTestLogger) Warnf(format string, args ...interface{}) {
 	l.Warn(format)
 }
 
-func (l *aeadTestLogger) Error(msg string) {
+func (l *aeadTestLogger) Error(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.errors = append(l.errors, msg)

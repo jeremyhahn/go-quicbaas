@@ -137,13 +137,13 @@ func (m *vecMockStorage) Close() error {
 type vecTestLogger struct{}
 
 func newVecTestLogger() *vecTestLogger                                              { return &vecTestLogger{} }
-func (l *vecTestLogger) Debug(msg string)                                           {}
+func (l *vecTestLogger) Debug(msg string, args ...any)                                           {}
 func (l *vecTestLogger) Debugf(format string, args ...interface{})                  {}
-func (l *vecTestLogger) Info(msg string)                                            {}
+func (l *vecTestLogger) Info(msg string, args ...any)                                            {}
 func (l *vecTestLogger) Infof(format string, args ...interface{})                   {}
-func (l *vecTestLogger) Warn(msg string)                                            {}
+func (l *vecTestLogger) Warn(msg string, args ...any)                                            {}
 func (l *vecTestLogger) Warnf(format string, args ...interface{})                   {}
-func (l *vecTestLogger) Error(msg string)                                           {}
+func (l *vecTestLogger) Error(msg string, args ...any)                                           {}
 func (l *vecTestLogger) Errorf(format string, args ...interface{})                  {}
 func (l *vecTestLogger) Fatal(msg string)                                           {}
 func (l *vecTestLogger) Fatalf(format string, args ...interface{})                  {}

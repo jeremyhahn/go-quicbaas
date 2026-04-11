@@ -259,19 +259,19 @@ type controlLoopMockLogger struct {
 	errorMessages []string
 }
 
-func (l *controlLoopMockLogger) Debug(_ string) {}
+func (l *controlLoopMockLogger) Debug(_ string, _ ...any) {}
 func (l *controlLoopMockLogger) Debugf(format string, _ ...interface{}) {
 	l.debugMessages = append(l.debugMessages, format)
 }
-func (l *controlLoopMockLogger) Info(_ string) {}
+func (l *controlLoopMockLogger) Info(_ string, _ ...any) {}
 func (l *controlLoopMockLogger) Infof(format string, _ ...interface{}) {
 	l.infoMessages = append(l.infoMessages, format)
 }
-func (l *controlLoopMockLogger) Warn(_ string) {}
+func (l *controlLoopMockLogger) Warn(_ string, _ ...any) {}
 func (l *controlLoopMockLogger) Warnf(format string, _ ...interface{}) {
 	l.warnMessages = append(l.warnMessages, format)
 }
-func (l *controlLoopMockLogger) Error(_ string) {}
+func (l *controlLoopMockLogger) Error(_ string, _ ...any) {}
 func (l *controlLoopMockLogger) Errorf(format string, _ ...interface{}) {
 	l.errorMessages = append(l.errorMessages, format)
 }

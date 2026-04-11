@@ -51,10 +51,10 @@ func newObjstoreMockLogger() *objstoreMockLogger {
 	}
 }
 
-func (l *objstoreMockLogger) Debug(msg string)                          {}
-func (l *objstoreMockLogger) Info(msg string)                           {}
-func (l *objstoreMockLogger) Warn(msg string)                           {}
-func (l *objstoreMockLogger) Error(msg string)                          {}
+func (l *objstoreMockLogger) Debug(msg string, args ...any)                          {}
+func (l *objstoreMockLogger) Info(msg string, args ...any)                           {}
+func (l *objstoreMockLogger) Warn(msg string, args ...any)                           {}
+func (l *objstoreMockLogger) Error(msg string, args ...any)                          {}
 func (l *objstoreMockLogger) Fatal(msg string)                          {}
 func (l *objstoreMockLogger) Debugf(format string, args ...interface{}) {}
 func (l *objstoreMockLogger) Infof(format string, args ...interface{})  {}

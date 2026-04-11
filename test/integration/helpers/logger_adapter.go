@@ -46,7 +46,7 @@ func NewLoggerAdapter(impl *logger.Logger) interfaces.Logger {
 	return &LoggerAdapter{impl: impl}
 }
 
-func (l *LoggerAdapter) Debug(msg string) {
+func (l *LoggerAdapter) Debug(msg string, args ...any) {
 	l.impl.Debug(msg)
 }
 
@@ -54,7 +54,7 @@ func (l *LoggerAdapter) Debugf(format string, args ...interface{}) {
 	l.impl.Debugf(format, args...)
 }
 
-func (l *LoggerAdapter) Info(msg string) {
+func (l *LoggerAdapter) Info(msg string, args ...any) {
 	l.impl.Info(msg)
 }
 
@@ -62,7 +62,7 @@ func (l *LoggerAdapter) Infof(format string, args ...interface{}) {
 	l.impl.Infof(format, args...)
 }
 
-func (l *LoggerAdapter) Warn(msg string) {
+func (l *LoggerAdapter) Warn(msg string, args ...any) {
 	l.impl.Warn(msg)
 }
 
@@ -70,7 +70,7 @@ func (l *LoggerAdapter) Warnf(format string, args ...interface{}) {
 	l.impl.Warnf(format, args...)
 }
 
-func (l *LoggerAdapter) Error(msg string) {
+func (l *LoggerAdapter) Error(msg string, args ...any) {
 	l.impl.Error(msg)
 }
 
