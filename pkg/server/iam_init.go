@@ -31,6 +31,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
+	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -254,6 +257,16 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 
 	// Create tenant manager backed by the memory storage
 	tenantManager := iam.NewDefaultTenantManager(memStorage)
+
+	// Wire the hardware-backed TenantDEKManager when KMS is available.
+	// The DEK provisioner ensures each tenant receives a dedicated DEK on
+	// creation and that the DEK is destroyed on deletion.
+	if s.kmsManager != nil {
+		dekStore := s.GetKVStore(qbshards.PlatformShardID)
+		dekMgr := security.NewTenantDEKManager(s.kmsManager, dekStore, security.TenantDEKMasterKeyID, logger.NewAdapter(s.logger))
+		tenantManager.SetDEKProvisioner(security.NewTenantDEKProvisioner(dekMgr))
+		s.logger.Info("TenantDEKManager wired into tenant lifecycle")
+	}
 
 	// Create identity store with storage backends
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
