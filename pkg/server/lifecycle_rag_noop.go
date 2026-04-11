@@ -16,14 +16,8 @@
 package server
 
 import (
-	"errors"
-
 	ggrpc "google.golang.org/grpc"
 )
-
-// ErrRAGNotCompiled is returned when RAG operations are attempted
-// but the binary was not compiled with the rag build tag.
-var ErrRAGNotCompiled = errors.New("rag support not compiled - build with -tags rag")
 
 // startRAG is a no-op when RAG support is not compiled.
 func (s *Server) startRAG() error {

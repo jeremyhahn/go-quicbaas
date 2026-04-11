@@ -17,220 +17,157 @@ package embedding
 
 import (
 	"context"
-	"sync"
+	"errors"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+	qembed "github.com/jeremyhahn/go-qrdb/pkg/embedding"
 )
 
-// Manager manages multiple embedding providers with caching and fallbacks.
-type Manager struct {
-	providers map[string]Provider
-	cache     *Cache
-	config    Config
-	mu        sync.RWMutex
+// EmbeddingManagerInterface defines the interface that Manager implements.
+// This is kept local to avoid circular imports with pkg/interfaces.
+type EmbeddingManagerInterface interface {
+	Embed(ctx context.Context, text string) ([]float32, error)
+	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
+	Dimensions() (int, error)
+	GetProvider(name string) (Provider, error)
+	GetStats() Stats
 }
 
-// NewManager creates a new embedding manager.
+// Manager manages multiple embedding providers with caching.
+// It wraps qembed.Manager and exposes the single-text Embed/EmbedBatch API
+// used throughout go-quicbaas while delegating all real work to go-qrdb.
+type Manager struct {
+	inner    *qembed.Manager
+	provider string // default provider name from Config.Provider
+}
+
+// Compile-time assertion that Manager satisfies EmbeddingManagerInterface.
+var _ EmbeddingManagerInterface = (*Manager)(nil)
+
+// NewManager creates a new Manager from the given Config.
 func NewManager(config Config) (*Manager, error) {
-	if err := config.Validate(); err != nil {
-		return nil, api.NewConfigurationError("embedding.NewManager", "validate config", err)
+	inner, err := qembed.NewManager(config)
+	if err != nil {
+		return nil, err
 	}
-
-	m := &Manager{
-		providers: make(map[string]Provider),
-		config:    config,
-	}
-
-	// Initialize cache if enabled
-	if config.CacheEnabled {
-		var err error
-		m.cache, err = NewCache(config.CacheSize, config.CacheTTL, config.CacheCompress)
-		if err != nil {
-			return nil, api.NewConfigurationError("embedding.NewManager", "create cache", err)
-		}
-	}
-
-	return m, nil
+	return &Manager{inner: inner, provider: config.Provider}, nil
 }
 
 // RegisterProvider registers a new embedding provider.
+// The provider must implement the go-quicbaas Provider interface.
+// It is wrapped internally into the go-qrdb Provider shape.
 func (m *Manager) RegisterProvider(name string, provider Provider) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.providers[name]; exists {
-		return api.NewEmbeddingProviderAlreadyRegisteredError("embedding.Manager.RegisterProvider", name)
+	if m.inner == nil {
+		return ErrProviderNotFound
 	}
-
-	m.providers[name] = provider
-	return nil
+	return m.inner.RegisterProvider(name, &providerBridgeOut{inner: provider})
 }
 
-// GetProvider returns a provider by name.
+// GetProvider returns a provider by name as a go-quicbaas Provider.
 func (m *Manager) GetProvider(name string) (Provider, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	provider, exists := m.providers[name]
-	if !exists {
+	if m.inner == nil {
 		return nil, ErrProviderNotFound
 	}
-
-	return provider, nil
+	qp, err := m.inner.GetProvider(name)
+	if err != nil {
+		return nil, mapQRDBError(err)
+	}
+	// If the underlying provider is a providerBridgeOut wrapping a go-quicbaas
+	// Provider, unwrap it to avoid double-wrapping.
+	if pbo, ok := qp.(*providerBridgeOut); ok {
+		return pbo.inner, nil
+	}
+	return &providerBridgeIn{inner: qp, model: ""}, nil
 }
 
-// Embed generates an embedding using the configured provider.
+// Embed generates an embedding for a single text using the configured provider.
 func (m *Manager) Embed(ctx context.Context, text string) ([]float32, error) {
-	// Check cache first
-	if m.cache != nil {
-		if cached, ok := m.cache.Get(text); ok {
-			return cached, nil
-		}
+	if m.inner == nil {
+		return nil, ErrProviderNotFound
 	}
-
-	// Get provider
-	provider, err := m.GetProvider(m.config.Provider)
+	result, err := m.inner.Embed(ctx, text)
 	if err != nil {
-		return nil, err
+		return nil, mapQRDBError(err)
 	}
-
-	// Generate embedding
-	embedding, err := provider.Embed(ctx, text)
-	if err != nil {
-		return nil, err
-	}
-
-	// Cache result
-	if m.cache != nil {
-		m.cache.Put(text, embedding)
-	}
-
-	return embedding, nil
+	return result, nil
 }
 
 // EmbedBatch generates embeddings for multiple texts.
+// It retrieves the registered provider directly and calls EmbedBatch to
+// preserve the distinct batch execution path expected by callers and mocks.
 func (m *Manager) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	if m.inner == nil {
+		return nil, ErrProviderNotFound
+	}
 	if len(texts) == 0 {
 		return nil, ErrInvalidInput
 	}
 
-	// Get provider
-	provider, err := m.GetProvider(m.config.Provider)
+	// Retrieve the underlying provider so we can call EmbedBatch directly.
+	// This mirrors the old Manager behaviour and preserves test mock semantics.
+	qp, err := m.inner.GetProvider(m.provider)
 	if err != nil {
-		return nil, err
+		return nil, mapQRDBError(err)
 	}
 
-	// Check cache for each text
-	var uncachedTexts []string
-	var uncachedIndices []int
-	results := make([][]float32, len(texts))
-
-	if m.cache != nil {
-		for i, text := range texts {
-			if cached, ok := m.cache.Get(text); ok {
-				results[i] = cached
-			} else {
-				uncachedTexts = append(uncachedTexts, text)
-				uncachedIndices = append(uncachedIndices, i)
-			}
-		}
-	} else {
-		uncachedTexts = texts
-		uncachedIndices = make([]int, len(texts))
-		for i := range texts {
-			uncachedIndices[i] = i
-		}
+	// If the underlying provider is our bridgeOut wrapper, unwrap and call
+	// EmbedBatch on the go-quicbaas Provider to honour the EmbedBatch hook.
+	if pbo, ok := qp.(*providerBridgeOut); ok {
+		return pbo.inner.EmbedBatch(ctx, texts)
 	}
 
-	// Generate embeddings for uncached texts
-	if len(uncachedTexts) > 0 {
-		embeddings, err := provider.EmbedBatch(ctx, uncachedTexts)
-		if err != nil {
-			return nil, err
-		}
-
-		// Store in cache and results
-		for i, embedding := range embeddings {
-			idx := uncachedIndices[i]
-			results[idx] = embedding
-
-			if m.cache != nil {
-				m.cache.Put(uncachedTexts[i], embedding)
-			}
-		}
+	// Native go-qrdb provider — use the Manager's batching path.
+	result, err := m.inner.EmbedBatch(ctx, texts)
+	if err != nil {
+		return nil, mapQRDBError(err)
 	}
-
-	return results, nil
+	return result, nil
 }
 
 // Dimensions returns the dimensions of embeddings from the current provider.
 func (m *Manager) Dimensions() (int, error) {
-	provider, err := m.GetProvider(m.config.Provider)
-	if err != nil {
-		return 0, err
+	if m.inner == nil {
+		return 0, ErrProviderNotFound
 	}
-	return provider.Dimensions(), nil
+	return m.inner.Dimensions()
 }
 
 // Close closes all providers and releases resources.
 func (m *Manager) Close() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	var errs []error
-	for name, provider := range m.providers {
-		if err := provider.Close(); err != nil {
-			errs = append(errs, &api.EmbeddingCloseProviderError{Name: name, Cause: err})
-		}
+	if m.inner == nil {
+		return nil
 	}
-
-	if m.cache != nil {
-		m.cache.Clear()
-	}
-
-	if len(errs) > 0 {
-		return api.NewEmbeddingCloseError("embedding.Manager.Close", errs)
-	}
-
-	return nil
+	return m.inner.Close()
 }
 
 // GetStats returns statistics about the manager.
 func (m *Manager) GetStats() Stats {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	stats := Stats{
-		ProvidersRegistered: len(m.providers),
-		ProviderNames:       make([]string, 0, len(m.providers)),
-		DefaultProvider:     m.config.Provider,
-		CacheEnabled:        m.cache != nil,
+	if m.inner == nil {
+		return Stats{}
 	}
-
-	for name := range m.providers {
-		stats.ProviderNames = append(stats.ProviderNames, name)
-	}
-
-	if m.cache != nil {
-		stats.CacheSize = m.cache.Size()
-		stats.CacheHits = m.cache.Hits()
-		stats.CacheMisses = m.cache.Misses()
-		if stats.CacheHits+stats.CacheMisses > 0 {
-			stats.CacheHitRate = float64(stats.CacheHits) / float64(stats.CacheHits+stats.CacheMisses)
-		}
-	}
-
-	return stats
+	return statsFromManager(m.inner.GetStats())
 }
 
-// Stats holds statistics about the embedding manager.
-type Stats struct {
-	ProvidersRegistered int
-	ProviderNames       []string
-	DefaultProvider     string
-	CacheEnabled        bool
-	CacheSize           int
-	CacheHits           uint64
-	CacheMisses         uint64
-	CacheHitRate        float64
+// mapQRDBError translates go-qrdb embedding errors to go-quicbaas sentinel
+// errors where an exact match exists, passing through all other errors unchanged.
+func mapQRDBError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var pnf *qembed.ProviderNotFoundError
+	if errors.As(err, &pnf) {
+		return ErrProviderNotFound
+	}
+	switch err {
+	case qembed.ErrProviderRequired:
+		return ErrProviderRequired
+	case qembed.ErrProviderInvalid:
+		return ErrProviderInvalid
+	case qembed.ErrAPIURLRequired:
+		return ErrAPIURLRequired
+	case qembed.ErrAPIKeyRequired:
+		return ErrAPIKeyRequired
+	case qembed.ErrModelRequired:
+		return ErrModelRequired
+	}
+	return err
 }

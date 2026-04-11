@@ -1,3 +1,5 @@
+//go:build !vector
+
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -11,26 +13,11 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !vector
-
 package embedding
 
 import (
 	"context"
-	"errors"
 	"time"
-)
-
-// Common errors.
-var (
-	ErrProviderNotFound    = errors.New("embedding provider not found")
-	ErrInvalidCredentials  = errors.New("invalid credentials")
-	ErrRateLimitExceeded   = errors.New("rate limit exceeded")
-	ErrInvalidInput        = errors.New("invalid input")
-	ErrDimensionsMismatch  = errors.New("dimensions mismatch")
-	ErrTokenLimitExceeded  = errors.New("token limit exceeded")
-	ErrModelNotFound       = errors.New("model not found")
-	ErrProviderUnavailable = errors.New("provider unavailable")
 )
 
 // OpenAI model constants.
@@ -47,7 +34,7 @@ const (
 	VoyageAPIURL = "https://api.voyageai.com/v1/embeddings"
 )
 
-// Provider defines the interface for embedding providers.
+// Provider defines the embedding provider interface (stub for non-vector builds).
 type Provider interface {
 	Embed(ctx context.Context, text string) ([]float32, error)
 	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
@@ -96,12 +83,10 @@ type Config struct {
 	RetryBackoffMS int    `yaml:"retry_backoff_ms" json:"retry_backoff_ms"`
 }
 
-// DefaultConfig returns default configuration.
+// DefaultConfig returns the default Config.
 func DefaultConfig() Config {
 	return Config{
 		Provider:       "voyage",
-		APIURL:         "",
-		APIKey:         "",
 		Model:          "voyage-code-2",
 		Dimensions:     1536,
 		MaxBatchSize:   128,
@@ -132,160 +117,135 @@ type Stats struct {
 	CacheHitRate        float64
 }
 
-// Manager manages multiple embedding providers with caching and fallbacks.
+// EmbeddingManagerInterface defines the interface that Manager implements.
+type EmbeddingManagerInterface interface {
+	Embed(ctx context.Context, text string) ([]float32, error)
+	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
+	Dimensions() (int, error)
+	GetProvider(name string) (Provider, error)
+	GetStats() Stats
+}
+
+// Manager stub for non-vector builds.
 type Manager struct{}
 
-// NewManager creates a new embedding manager.
+// NewManager returns an error since vector support is disabled.
 func NewManager(_ Config) (*Manager, error) {
 	return nil, ErrVectorNotEnabled
 }
 
-// RegisterProvider registers a new embedding provider.
-func (m *Manager) RegisterProvider(_ string, _ Provider) error {
-	return ErrVectorNotEnabled
-}
-
-// GetProvider returns a provider by name.
-func (m *Manager) GetProvider(_ string) (Provider, error) {
-	return nil, ErrVectorNotEnabled
-}
-
-// Embed generates an embedding using the configured provider.
+func (m *Manager) RegisterProvider(_ string, _ Provider) error { return ErrVectorNotEnabled }
+func (m *Manager) GetProvider(_ string) (Provider, error)      { return nil, ErrVectorNotEnabled }
 func (m *Manager) Embed(_ context.Context, _ string) ([]float32, error) {
 	return nil, ErrVectorNotEnabled
 }
-
-// EmbedBatch generates embeddings for multiple texts.
 func (m *Manager) EmbedBatch(_ context.Context, _ []string) ([][]float32, error) {
 	return nil, ErrVectorNotEnabled
 }
+func (m *Manager) Dimensions() (int, error) { return 0, ErrVectorNotEnabled }
+func (m *Manager) Close() error             { return ErrVectorNotEnabled }
+func (m *Manager) GetStats() Stats          { return Stats{} }
 
-// Dimensions returns the dimensions of embeddings from the current provider.
-func (m *Manager) Dimensions() (int, error) {
-	return 0, ErrVectorNotEnabled
+// OllamaConfig holds configuration for the Ollama provider stub.
+type OllamaConfig struct {
+	BaseURL      string
+	Model        string
+	Dimensions   int
+	Timeout      time.Duration
+	MaxRetries   int
+	RetryBackoff time.Duration
 }
 
-// Close closes all providers and releases resources.
-func (m *Manager) Close() error {
-	return ErrVectorNotEnabled
+// DefaultOllamaConfig returns the default Ollama configuration.
+func DefaultOllamaConfig() OllamaConfig {
+	return OllamaConfig{
+		BaseURL:      "http://localhost:11434",
+		Model:        "nomic-embed-text",
+		Timeout:      120 * time.Second,
+		MaxRetries:   3,
+		RetryBackoff: time.Second,
+	}
 }
 
-// GetStats returns statistics about the manager.
-func (m *Manager) GetStats() Stats {
-	return Stats{}
+// LMStudioConfig holds configuration for the LMStudio provider stub.
+type LMStudioConfig struct {
+	BaseURL        string
+	Model          string
+	Dimensions     int
+	Timeout        int
+	MaxRetries     int
+	RetryBackoffMS int
 }
 
-// Cache is an LRU cache for embeddings with optional compression.
-type Cache struct{}
-
-// NewCache creates a new LRU cache.
-func NewCache(_, _ int, _ bool) (*Cache, error) {
-	return nil, ErrVectorNotEnabled
+// DefaultLMStudioConfig returns the default LMStudio configuration.
+func DefaultLMStudioConfig() LMStudioConfig {
+	return LMStudioConfig{
+		BaseURL:        "http://localhost:1234",
+		Model:          "nomic-ai/nomic-embed-text-v1.5-GGUF",
+		Timeout:        60,
+		MaxRetries:     3,
+		RetryBackoffMS: 1000,
+	}
 }
 
-// Get retrieves an embedding from the cache.
-func (c *Cache) Get(_ string) ([]float32, bool) {
-	return nil, false
-}
-
-// Put stores an embedding in the cache.
-func (c *Cache) Put(_ string, _ []float32) {}
-
-// Size returns the current number of items in the cache.
-func (c *Cache) Size() int {
-	return 0
-}
-
-// Hits returns the number of cache hits.
-func (c *Cache) Hits() uint64 {
-	return 0
-}
-
-// Misses returns the number of cache misses.
-func (c *Cache) Misses() uint64 {
-	return 0
-}
-
-// Evictions returns the number of evictions.
-func (c *Cache) Evictions() uint64 {
-	return 0
-}
-
-// Clear removes all items from the cache.
-func (c *Cache) Clear() {}
-
-// OpenAIProvider implements the Provider interface for OpenAI-compatible embeddings.
+// OpenAIProvider stub.
 type OpenAIProvider struct{}
 
-// NewOpenAIProvider creates a new OpenAI-compatible embedding provider.
-func NewOpenAIProvider(_ Config) (*OpenAIProvider, error) {
-	return nil, ErrVectorNotEnabled
-}
-
-// Embed generates an embedding for a single text.
+func NewOpenAIProvider(_ Config) (*OpenAIProvider, error) { return nil, ErrVectorNotEnabled }
 func (p *OpenAIProvider) Embed(_ context.Context, _ string) ([]float32, error) {
 	return nil, ErrVectorNotEnabled
 }
-
-// EmbedBatch generates embeddings for multiple texts in a single request.
 func (p *OpenAIProvider) EmbedBatch(_ context.Context, _ []string) ([][]float32, error) {
 	return nil, ErrVectorNotEnabled
 }
+func (p *OpenAIProvider) Dimensions() int { return 0 }
+func (p *OpenAIProvider) MaxTokens() int  { return 0 }
+func (p *OpenAIProvider) Name() string    { return "openai" }
+func (p *OpenAIProvider) Close() error    { return nil }
 
-// Dimensions returns the dimensionality of embeddings produced by this provider.
-func (p *OpenAIProvider) Dimensions() int {
-	return 0
-}
+// OllamaProvider stub.
+type OllamaProvider struct{}
 
-// MaxTokens returns the maximum number of tokens this provider can handle.
-func (p *OpenAIProvider) MaxTokens() int {
-	return 0
-}
-
-// Name returns the name of this provider.
-func (p *OpenAIProvider) Name() string {
-	return "openai"
-}
-
-// Close closes the provider and releases resources.
-func (p *OpenAIProvider) Close() error {
-	return nil
-}
-
-// VoyageProvider implements the Provider interface for Voyage AI.
-type VoyageProvider struct{}
-
-// NewVoyageProvider creates a new Voyage AI embedding provider.
-func NewVoyageProvider(_ Config) (*VoyageProvider, error) {
+func NewOllamaProvider(_ OllamaConfig) (*OllamaProvider, error) { return nil, ErrVectorNotEnabled }
+func (p *OllamaProvider) Embed(_ context.Context, _ string) ([]float32, error) {
 	return nil, ErrVectorNotEnabled
 }
+func (p *OllamaProvider) EmbedBatch(_ context.Context, _ []string) ([][]float32, error) {
+	return nil, ErrVectorNotEnabled
+}
+func (p *OllamaProvider) Dimensions() int { return 0 }
+func (p *OllamaProvider) MaxTokens() int  { return 0 }
+func (p *OllamaProvider) Name() string    { return "ollama" }
+func (p *OllamaProvider) Close() error    { return nil }
 
-// Embed generates an embedding for a single text.
+// LMStudioProvider stub.
+type LMStudioProvider struct{}
+
+func NewLMStudioProvider(_ LMStudioConfig) (*LMStudioProvider, error) {
+	return nil, ErrVectorNotEnabled
+}
+func (p *LMStudioProvider) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, ErrVectorNotEnabled
+}
+func (p *LMStudioProvider) EmbedBatch(_ context.Context, _ []string) ([][]float32, error) {
+	return nil, ErrVectorNotEnabled
+}
+func (p *LMStudioProvider) Dimensions() int { return 0 }
+func (p *LMStudioProvider) MaxTokens() int  { return 0 }
+func (p *LMStudioProvider) Name() string    { return "lmstudio" }
+func (p *LMStudioProvider) Close() error    { return nil }
+
+// VoyageProvider stub.
+type VoyageProvider struct{}
+
+func NewVoyageProvider(_ Config) (*VoyageProvider, error) { return nil, ErrVectorNotEnabled }
 func (v *VoyageProvider) Embed(_ context.Context, _ string) ([]float32, error) {
 	return nil, ErrVectorNotEnabled
 }
-
-// EmbedBatch generates embeddings for multiple texts in a single request.
 func (v *VoyageProvider) EmbedBatch(_ context.Context, _ []string) ([][]float32, error) {
 	return nil, ErrVectorNotEnabled
 }
-
-// Dimensions returns the dimensionality of embeddings produced by this provider.
-func (v *VoyageProvider) Dimensions() int {
-	return 0
-}
-
-// MaxTokens returns the maximum number of tokens this provider can handle.
-func (v *VoyageProvider) MaxTokens() int {
-	return 0
-}
-
-// Name returns the name of this provider.
-func (v *VoyageProvider) Name() string {
-	return "voyage"
-}
-
-// Close closes the provider and releases resources.
-func (v *VoyageProvider) Close() error {
-	return nil
-}
+func (v *VoyageProvider) Dimensions() int { return 0 }
+func (v *VoyageProvider) MaxTokens() int  { return 0 }
+func (v *VoyageProvider) Name() string    { return "voyage" }
+func (v *VoyageProvider) Close() error    { return nil }

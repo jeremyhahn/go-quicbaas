@@ -23,6 +23,14 @@ var (
 	// ErrDataDirRequired indicates a data directory path is required but was not provided.
 	ErrDataDirRequired = errors.New("data directory is required")
 
+	// ErrEmbeddingNotCompiled is returned when embedding operations are attempted
+	// but the binary was not compiled with the vector build tag.
+	ErrEmbeddingNotCompiled = errors.New("embedding support not compiled - build with -tags vector")
+
+	// ErrRAGNotCompiled is returned when RAG operations are attempted
+	// but the binary was not compiled with the rag build tag.
+	ErrRAGNotCompiled = errors.New("rag support not compiled - build with -tags rag")
+
 	// ErrServerNotRunning indicates an operation was attempted on a stopped server.
 	ErrServerNotRunning = errors.New("server is not running")
 

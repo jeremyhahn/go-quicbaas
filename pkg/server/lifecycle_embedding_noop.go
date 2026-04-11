@@ -15,14 +15,6 @@
 
 package server
 
-import (
-	"errors"
-)
-
-// ErrEmbeddingNotCompiled is returned when embedding operations are attempted
-// but the binary was not compiled with the vector build tag.
-var ErrEmbeddingNotCompiled = errors.New("embedding support not compiled - build with -tags vector")
-
 // startEmbedding is a no-op when vector support is not compiled.
 func (s *Server) startEmbedding() error {
 	s.logger.Debug("Embedding not compiled, skipping initialization")

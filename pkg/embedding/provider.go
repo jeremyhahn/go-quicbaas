@@ -17,144 +17,106 @@ package embedding
 
 import (
 	"context"
-	"errors"
+	"time"
+
+	qembed "github.com/jeremyhahn/go-qrdb/pkg/embedding"
 )
 
-// Common errors.
-var (
-	ErrProviderNotFound    = errors.New("embedding provider not found")
-	ErrInvalidCredentials  = errors.New("invalid credentials")
-	ErrRateLimitExceeded   = errors.New("rate limit exceeded")
-	ErrInvalidInput        = errors.New("invalid input")
-	ErrDimensionsMismatch  = errors.New("dimensions mismatch")
-	ErrTokenLimitExceeded  = errors.New("token limit exceeded")
-	ErrModelNotFound       = errors.New("model not found")
-	ErrProviderUnavailable = errors.New("provider unavailable")
+// OpenAI model name constants.
+const (
+	DefaultOpenAIURL         = "https://api.openai.com"
+	DefaultOpenAITimeout     = 30 * time.Second
+	ModelTextEmbedding3Small = "text-embedding-3-small"
+	ModelTextEmbedding3Large = "text-embedding-3-large"
+	ModelTextEmbeddingAda002 = "text-embedding-ada-002"
 )
 
-// Provider defines the interface for embedding providers.
+// Voyage API constants.
+const (
+	VoyageAPIURL = "https://api.voyageai.com/v1/embeddings"
+)
+
+// Provider defines the embedding provider interface used throughout go-quicbaas.
+// It accepts a single text per Embed call (convenience wrapper) and provides
+// batch support via EmbedBatch.
+//
+// The underlying implementations delegate to go-qrdb's batch-first Provider,
+// which uses Embed(ctx, []string, model) *EmbeddingResult.
 type Provider interface {
-	// Embed generates an embedding for a single text
+	// Embed generates an embedding for a single text.
 	Embed(ctx context.Context, text string) ([]float32, error)
 
-	// EmbedBatch generates embeddings for multiple texts in a single request
+	// EmbedBatch generates embeddings for multiple texts in a single request.
 	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
 
-	// Dimensions returns the dimensionality of embeddings produced by this provider
+	// Dimensions returns the dimensionality of embeddings produced by this provider.
 	Dimensions() int
 
-	// MaxTokens returns the maximum number of tokens this provider can handle
+	// MaxTokens returns the maximum number of tokens this provider can handle.
 	MaxTokens() int
 
-	// Name returns the name of this provider
+	// Name returns the name of this provider.
 	Name() string
 
-	// Close closes the provider and releases resources
+	// Close closes the provider and releases resources.
 	Close() error
 }
 
 // Metadata contains information about the embedding request.
 type Metadata struct {
-	Model      string            // Model name
-	Dimensions int               // Embedding dimensions
-	Tokens     int               // Number of tokens processed
-	Source     string            // Source file or identifier
-	Language   string            // Programming language or natural language
-	Tags       map[string]string // Custom tags
+	Model      string
+	Dimensions int
+	Tokens     int
+	Source     string
+	Language   string
+	Tags       map[string]string
 }
 
 // Result represents an embedding result with metadata.
 type Result struct {
-	Embedding []float32 // The embedding vector
-	Metadata  Metadata  // Associated metadata
+	Embedding []float32
+	Metadata  Metadata
 }
 
 // BatchResult represents a batch embedding result.
 type BatchResult struct {
-	Embeddings [][]float32 // The embedding vectors
-	Metadata   []Metadata  // Metadata for each embedding
+	Embeddings [][]float32
+	Metadata   []Metadata
 }
 
-// Config holds configuration for embedding providers.
-type Config struct {
-	// Provider type: "voyage", "ollama", "lmstudio", "openai"
-	Provider string `yaml:"provider" json:"provider"`
+// Config holds the full configuration for the embedding subsystem.
+// It is identical to qembed.Config, re-exported here so callers within
+// go-quicbaas do not need to import go-qrdb directly.
+type Config = qembed.Config
 
-	// API configuration
-	APIURL string `yaml:"api_url" json:"api_url"`
-	APIKey string `yaml:"api_key" json:"api_key"`
-
-	// Model configuration
-	Model      string `yaml:"model" json:"model"`
-	Dimensions int    `yaml:"dimensions" json:"dimensions"`
-
-	// Performance tuning
-	MaxBatchSize int `yaml:"max_batch_size" json:"max_batch_size"`
-	Timeout      int `yaml:"timeout_seconds" json:"timeout_seconds"`
-
-	// Cache configuration
-	CacheEnabled  bool `yaml:"cache_enabled" json:"cache_enabled"`
-	CacheSize     int  `yaml:"cache_size" json:"cache_size"`
-	CacheTTL      int  `yaml:"cache_ttl_seconds" json:"cache_ttl_seconds"`
-	CacheCompress bool `yaml:"cache_compress" json:"cache_compress"`
-
-	// Retry configuration
-	MaxRetries     int `yaml:"max_retries" json:"max_retries"`
-	RetryBackoffMS int `yaml:"retry_backoff_ms" json:"retry_backoff_ms"`
-}
-
-// DefaultConfig returns default configuration.
+// DefaultConfig returns the default Config.
 func DefaultConfig() Config {
-	return Config{
-		Provider:       "voyage",
-		APIURL:         "",
-		APIKey:         "",
-		Model:          "voyage-code-2",
-		Dimensions:     1536,
-		MaxBatchSize:   128,
-		Timeout:        30,
-		CacheEnabled:   true,
-		CacheSize:      10000,
-		CacheTTL:       3600,
-		CacheCompress:  true,
-		MaxRetries:     3,
-		RetryBackoffMS: 1000,
-	}
+	return qembed.DefaultConfig()
 }
 
-// Validate validates the configuration.
-func (c *Config) Validate() error {
-	if c.Provider == "" {
-		return ErrProviderRequired
-	}
+// Stats holds statistics about the embedding manager.
+// It mirrors qembed.ManagerStats with the same field names.
+type Stats struct {
+	ProvidersRegistered int
+	ProviderNames       []string
+	DefaultProvider     string
+	CacheEnabled        bool
+	CacheSize           int
+	CacheHits           uint64
+	CacheMisses         uint64
+	CacheHitRate        float64
+}
 
-	if c.Provider != "voyage" && c.Provider != "ollama" && c.Provider != "lmstudio" && c.Provider != "openai" {
-		return ErrProviderInvalid
+// statsFromManager converts qembed.ManagerStats to Stats.
+func statsFromManager(s qembed.ManagerStats) Stats {
+	return Stats{
+		ProvidersRegistered: s.ProvidersRegistered,
+		ProviderNames:       s.ProviderNames,
+		DefaultProvider:     s.DefaultProvider,
+		CacheEnabled:        s.CacheEnabled,
+		CacheSize:           s.CacheSize,
+		CacheHits:           s.CacheHits,
+		CacheMisses:         s.CacheMisses,
+		CacheHitRate:        s.CacheHitRate,
 	}
-
-	if c.APIURL == "" {
-		return ErrAPIURLRequired
-	}
-
-	if c.Provider == "voyage" && c.APIKey == "" {
-		return ErrAPIKeyRequired
-	}
-
-	if c.Model == "" {
-		return ErrModelRequired
-	}
-
-	if c.Dimensions <= 0 {
-		return ErrDimensionsPositive
-	}
-
-	if c.MaxBatchSize <= 0 {
-		return ErrMaxBatchSizePositive
-	}
-
-	if c.Timeout <= 0 {
-		return ErrTimeoutPositive
-	}
-
-	return nil
 }
