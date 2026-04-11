@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/ceremony"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -81,26 +82,34 @@ func (e *BaasTransportNotSupportedError) Error() string {
 // set, timeseries write and read operations delegate to the real PebbleDB
 // timeseries storage so that data is visible to the timeSeriesService
 // read path. When timeSeriesStorage is nil, timeseries operations fall
-// back to the KV-backed implementation. Admin, MVCC, Transaction, Batch,
-// Watch, Lease, Index, User, Role, Cert, Barrier, Ceremony, Credential,
-// Collection, Backup, and Rebalance operations return
-// BaasTransportNotSupportedError.
+// back to the KV-backed implementation. Ceremony, Credential,
+// CustodianGroup, and Share operations delegate to their respective
+// injected services when available; otherwise they return
+// BaasTransportNotSupportedError. Admin, MVCC, Transaction, Batch,
+// Watch, Lease, Index, User, Role, Cert, Barrier, Collection, Backup,
+// and Rebalance operations return BaasTransportNotSupportedError.
 type baasTransport struct {
 	store             interfaces.KVStore
 	vectorStorage     interfaces.VectorStorage
 	timeSeriesStorage interfaces.TimeSeriesStorage
 	dbService         service.DatabaseService
 	lockService       BaasLockService
+	ceremonySvc       BasCeremonyService
+	ceremonyCA        ceremony.CeremonyCA
+	credentialSvc     BaasCredentialService
+	custodianGroupSvc BaasCustodianGroupService
+	shareSvc          BaasShareService
 	closed            atomic.Bool
 }
 
-// newBaasTransport creates a new BaaS embedded transport backed by
-// the given KV store. An optional VectorStorage can be provided to
-// route vector write operations to the real storage backend so that
-// writes are visible to the vectorService read path. An optional
-// TimeSeriesStorage can be provided to route timeseries operations
-// to the real storage backend so that writes are visible to the
-// timeSeriesService read path.
+// newBaasTransport creates a new BaaS embedded transport backed by the given
+// KV store. An optional VectorStorage can be provided to route vector write
+// operations to the real storage backend so that writes are visible to the
+// vectorService read path. An optional TimeSeriesStorage can be provided to
+// route timeseries operations to the real storage backend so that writes are
+// visible to the timeSeriesService read path. Ceremony, credential, custodian
+// group, and share services must be set separately on the returned struct when
+// they are available.
 func newBaasTransport(store interfaces.KVStore, vectorStorage interfaces.VectorStorage, timeSeriesStorage interfaces.TimeSeriesStorage, dbService service.DatabaseService, lockService BaasLockService) *baasTransport {
 	return &baasTransport{
 		store:             store,
@@ -507,48 +516,12 @@ func (t *baasTransport) BarrierGenerateRootToken(_ context.Context, _ *transport
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// transport.CeremonyClient - stub implementations
+// transport.CeremonyClient - implemented in baas_transport_ceremony.go
 // ---------------------------------------------------------------------------
 
-func (t *baasTransport) CeremonyInitialize(_ context.Context, _ *transport.CeremonyInitializeRequest) (*transport.CeremonyInitializeResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "CeremonyInitialize"}
-}
-
-func (t *baasTransport) CeremonyStatus(_ context.Context) (*transport.CeremonyStatusResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "CeremonyStatus"}
-}
-
-func (t *baasTransport) CeremonyClaimCertBegin(_ context.Context, _ *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "CeremonyClaimCertBegin"}
-}
-
-func (t *baasTransport) CeremonyClaimCertComplete(_ context.Context, _ *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "CeremonyClaimCertComplete"}
-}
-
-func (t *baasTransport) CeremonyClaimShare(_ context.Context, _ *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "CeremonyClaimShare"}
-}
-
-func (t *baasTransport) CeremonySignCSR(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "CeremonySignCSR"}
-}
-
 // ---------------------------------------------------------------------------
-// transport.CredentialClient - stub implementations
+// transport.CredentialClient - implemented in baas_transport_ceremony.go
 // ---------------------------------------------------------------------------
-
-func (t *baasTransport) CredentialSubmit(_ context.Context, _ *transport.CredentialSubmitRequest) error {
-	return &BaasTransportNotSupportedError{Operation: "CredentialSubmit"}
-}
-
-func (t *baasTransport) CredentialStrategy(_ context.Context) (*transport.CredentialStrategyResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "CredentialStrategy"}
-}
-
-func (t *baasTransport) CredentialDelete(_ context.Context, _ string) error {
-	return &BaasTransportNotSupportedError{Operation: "CredentialDelete"}
-}
 
 // ---------------------------------------------------------------------------
 // transport.CollectionClient - stub implementations
@@ -687,7 +660,8 @@ func (e *BaasTransportStoreError) Unwrap() error {
 // vector write operations to the real vector storage backend. When
 // timeSeriesStorage is set and a shard matches the timeseries shard
 // ID, the transport delegates timeseries operations to the real
-// timeseries storage backend. Thread-safe via sync.Map.
+// timeseries storage backend. When ceremony services are configured
+// they are forwarded to every per-shard transport. Thread-safe via sync.Map.
 type baasTransportStore struct {
 	storageCfg        *config.StorageConfig
 	vectorStorage     interfaces.VectorStorage
@@ -696,6 +670,11 @@ type baasTransportStore struct {
 	timeSeriesShardID uint64
 	dbService         service.DatabaseService
 	lockService       BaasLockService
+	ceremonySvc       BasCeremonyService
+	ceremonyCA        ceremony.CeremonyCA
+	credentialSvc     BaasCredentialService
+	custodianGroupSvc BaasCustodianGroupService
+	shareSvc          BaasShareService
 	stores            sync.Map // map[uint64]interfaces.KVStore
 }
 
@@ -799,7 +778,13 @@ func (s *baasTransportStore) transportForShard(shardID uint64) (*baasTransport, 
 		ts = s.timeSeriesStorage
 	}
 
-	return newBaasTransport(store, vs, ts, s.dbService, s.lockService), nil
+	t := newBaasTransport(store, vs, ts, s.dbService, s.lockService)
+	t.ceremonySvc = s.ceremonySvc
+	t.ceremonyCA = s.ceremonyCA
+	t.credentialSvc = s.credentialSvc
+	t.custodianGroupSvc = s.custodianGroupSvc
+	t.shareSvc = s.shareSvc
+	return t, nil
 }
 
 // Close closes all per-shard stores that implement io.Closer (PebbleDB, File).
@@ -891,52 +876,12 @@ func (t *baasTransport) SealStoreStatus(_ context.Context) (*transport.SealStore
 }
 
 // ---------------------------------------------------------------------------
-// transport.CustodianGroupClient - stub implementations
+// transport.CustodianGroupClient - implemented in baas_transport_ceremony.go
 // ---------------------------------------------------------------------------
 
-func (t *baasTransport) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "CreateCustodianGroup"}
-}
-
-func (t *baasTransport) GetCustodianGroup(_ context.Context, _ string) (*transport.GetCustodianGroupResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "GetCustodianGroup"}
-}
-
-func (t *baasTransport) ListCustodianGroups(_ context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "ListCustodianGroups"}
-}
-
-func (t *baasTransport) DeleteCustodianGroup(_ context.Context, _ string) error {
-	return &BaasTransportNotSupportedError{Operation: "DeleteCustodianGroup"}
-}
-
-func (t *baasTransport) AddCustodianMember(_ context.Context, _ *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "AddCustodianMember"}
-}
-
-func (t *baasTransport) RemoveCustodianMember(_ context.Context, _ *transport.RemoveCustodianMemberRequest) error {
-	return &BaasTransportNotSupportedError{Operation: "RemoveCustodianMember"}
-}
-
-func (t *baasTransport) DistributeShares(_ context.Context, _ *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "DistributeShares"}
-}
-
 // ---------------------------------------------------------------------------
-// transport.ShareClient - stub implementations
+// transport.ShareClient - implemented in baas_transport_ceremony.go
 // ---------------------------------------------------------------------------
-
-func (t *baasTransport) SubmitShare(_ context.Context, _ *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "SubmitShare"}
-}
-
-func (t *baasTransport) ListShares(_ context.Context) (*transport.ListSharesResponse, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "ListShares"}
-}
-
-func (t *baasTransport) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
-	return nil, &BaasTransportNotSupportedError{Operation: "GetShareCollectionStatus"}
-}
 
 // ---------------------------------------------------------------------------
 // transport.TenantClient - stub implementations

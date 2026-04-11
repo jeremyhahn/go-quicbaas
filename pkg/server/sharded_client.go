@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/ceremony"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -83,6 +84,51 @@ func WithLockService(lockSvc BaasLockService) ShardedClientOption {
 	}
 }
 
+// WithCeremonyService sets the ceremony lifecycle service for the sharded
+// client. When provided, the embedded transport will delegate ceremony
+// operations to this service instead of returning BaasTransportNotSupportedError.
+func WithCeremonyService(svc BasCeremonyService) ShardedClientOption {
+	return func(sc *ShardedClient) {
+		sc.ceremonySvc = svc
+	}
+}
+
+// WithCeremonyCA sets the ceremony CA for the sharded client. The CA is
+// forwarded to CeremonyInitialize calls. Both a ceremony service and a CA
+// must be set for CeremonyInitialize to succeed.
+func WithCeremonyCA(ca ceremony.CeremonyCA) ShardedClientOption {
+	return func(sc *ShardedClient) {
+		sc.ceremonyCA = ca
+	}
+}
+
+// WithCredentialService sets the credential management service for the sharded
+// client. When provided, the embedded transport will delegate credential
+// operations to this service instead of returning BaasTransportNotSupportedError.
+func WithCredentialService(svc BaasCredentialService) ShardedClientOption {
+	return func(sc *ShardedClient) {
+		sc.credentialSvc = svc
+	}
+}
+
+// WithCustodianGroupService sets the custodian group service for the sharded
+// client. When provided, the embedded transport will delegate custodian group
+// operations to this service instead of returning BaasTransportNotSupportedError.
+func WithCustodianGroupService(svc BaasCustodianGroupService) ShardedClientOption {
+	return func(sc *ShardedClient) {
+		sc.custodianGroupSvc = svc
+	}
+}
+
+// WithShareService sets the Shamir share service for the sharded client.
+// When provided, the embedded transport will delegate share operations to this
+// service instead of returning BaasTransportNotSupportedError.
+func WithShareService(svc BaasShareService) ShardedClientOption {
+	return func(sc *ShardedClient) {
+		sc.shareSvc = svc
+	}
+}
+
 // ShardedClient manages per-shard SDK clients. QuicBaaS operates as a
 // BaaS client and connects through the qrdb SDK. For embedded transport,
 // each shard gets an SDK client backed by a per-shard baasTransport
@@ -98,6 +144,11 @@ type ShardedClient struct {
 	timeSeriesShardID uint64
 	dbService         service.DatabaseService
 	lockService       BaasLockService
+	ceremonySvc       BasCeremonyService
+	ceremonyCA        ceremony.CeremonyCA
+	credentialSvc     BaasCredentialService
+	custodianGroupSvc BaasCustodianGroupService
+	shareSvc          BaasShareService
 	transportStore    *baasTransportStore // per-shard stores for embedded mode
 	clients           sync.Map            // map[uint64]*qrdbsdk.Client
 	closed            atomic.Bool
@@ -135,6 +186,21 @@ func NewShardedClient(serviceHost interface{}, opts ...ShardedClientOption) *Sha
 		}
 		if sc.lockService != nil {
 			sc.transportStore.lockService = sc.lockService
+		}
+		if sc.ceremonySvc != nil {
+			sc.transportStore.ceremonySvc = sc.ceremonySvc
+		}
+		if sc.ceremonyCA != nil {
+			sc.transportStore.ceremonyCA = sc.ceremonyCA
+		}
+		if sc.credentialSvc != nil {
+			sc.transportStore.credentialSvc = sc.credentialSvc
+		}
+		if sc.custodianGroupSvc != nil {
+			sc.transportStore.custodianGroupSvc = sc.custodianGroupSvc
+		}
+		if sc.shareSvc != nil {
+			sc.transportStore.shareSvc = sc.shareSvc
 		}
 	}
 
