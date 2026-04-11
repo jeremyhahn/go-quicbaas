@@ -196,10 +196,10 @@ func TestNewRBACProvider(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, provider)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-		assert.ErrorIs(t, dragonErr.Err, ErrNilRoleManager)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+		assert.ErrorIs(t, qbErr.Err, ErrNilRoleManager)
 	})
 }
 
@@ -355,9 +355,9 @@ func TestRBACProviderAuthorize(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decision)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("canceled context returns error", func(t *testing.T) {
@@ -379,9 +379,9 @@ func TestRBACProviderAuthorize(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decision)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrCanceled, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrCanceled, qbErr.Code)
 	})
 }
 
@@ -561,9 +561,9 @@ func TestRBACProviderBatchAuthorize(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decisions)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrCanceled, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrCanceled, qbErr.Code)
 	})
 }
 
@@ -599,9 +599,9 @@ func TestRBACProviderClose(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decision)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	})
 
 	t.Run("batch authorize after close returns error", func(t *testing.T) {

@@ -206,7 +206,7 @@ func TestParameterStoreServer_GetParameter_EmptyPath(t *testing.T) {
 func TestParameterStoreServer_GetParameter_NotFound(t *testing.T) {
 	mock := &mockParameterStoreService{
 		getParameterFunc: func(ctx context.Context, req *interfaces.GetParameterRequest) (*interfaces.GetParameterResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "GetParameter",
 				Err:  &errors.MessageError{Message: "parameter not found: " + req.Path},
@@ -999,7 +999,7 @@ func TestTimeToUnixNano(t *testing.T) {
 func TestParameterStoreServer_ServiceError(t *testing.T) {
 	mock := &mockParameterStoreService{
 		getParameterFunc: func(ctx context.Context, req *interfaces.GetParameterRequest) (*interfaces.GetParameterResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "GetParameter",
 				Err:  &errors.MessageError{Message: "internal error"},

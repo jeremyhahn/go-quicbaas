@@ -148,8 +148,8 @@ func TestParseEncryptionTags(t *testing.T) {
 
 			if tt.wantErr {
 				assert.Error(t, err)
-				var dragonErr *errors.DragonError
-				assert.ErrorAs(t, err, &dragonErr)
+				var qbErr *errors.QBError
+				assert.ErrorAs(t, err, &qbErr)
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.want, got)
@@ -187,9 +187,9 @@ func TestParseEncryptionTags_NonStruct(t *testing.T) {
 			_, err := ParseEncryptionTags(reflect.TypeOf(tt.input))
 			assert.Error(t, err)
 
-			var dragonErr *errors.DragonError
-			assert.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+			var qbErr *errors.QBError
+			assert.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 		})
 	}
 }
@@ -472,9 +472,9 @@ func TestGetFieldEncryption_NonStruct(t *testing.T) {
 			_, err := GetFieldEncryption(reflect.TypeOf(tt.input))
 			assert.Error(t, err)
 
-			var dragonErr *errors.DragonError
-			assert.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+			var qbErr *errors.QBError
+			assert.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 		})
 	}
 }
@@ -497,9 +497,9 @@ func TestGetFieldEncryption_InvalidAlgorithm(t *testing.T) {
 	_, err := GetFieldEncryption(reflect.TypeOf(TestInvalidAlgorithmTag{}))
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // Test GetFieldEncryption with invalid field types.
@@ -519,9 +519,9 @@ func TestGetFieldEncryption_InvalidFieldTypes(t *testing.T) {
 			_, err := GetFieldEncryption(reflect.TypeOf(tt.input))
 			assert.Error(t, err)
 
-			var dragonErr *errors.DragonError
-			assert.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+			var qbErr *errors.QBError
+			assert.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 		})
 	}
 }
@@ -574,9 +574,9 @@ func TestParseEncryptionTags_InvalidFieldTypes(t *testing.T) {
 			_, err := ParseEncryptionTags(reflect.TypeOf(tt.input))
 			assert.Error(t, err)
 
-			var dragonErr *errors.DragonError
-			assert.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+			var qbErr *errors.QBError
+			assert.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 		})
 	}
 }
@@ -630,9 +630,9 @@ func TestValidateEncryptionTags_InvalidAlgorithms(t *testing.T) {
 	err := ValidateEncryptionTags(reflect.TypeOf(TestInvalidAlgorithmTag{}))
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // Test ValidateEncryptionTags with empty tags.

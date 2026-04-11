@@ -334,7 +334,7 @@ func TestObjectStorageServer_ListByTag_NilService(t *testing.T) {
 func TestObjectStorageServer_ListByTag_ServiceError(t *testing.T) {
 	mockSvc := &testMockObjectStorageService{
 		listByTagFunc: func(_ context.Context, _ *service.ListByTagRequest) (*service.ListByTagResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrInternal,
 				Op:   "ListByTag",
 				Err:  &dberrors.MessageError{Message: "database error"},

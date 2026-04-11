@@ -107,7 +107,7 @@ func TestDEKServer_StartReencryption_ServiceError(t *testing.T) {
 
 	mockSvc.On("StartReencryption", mock.Anything, mock.Anything).Return(
 		(*service.StartReencryptionResponse)(nil),
-		&dberrors.DragonError{
+		&dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "StartReencryption",
 			Err:  &dberrors.MessageError{Message: "reencryption failed"},
@@ -295,7 +295,7 @@ func TestDEKServer_GetReencryptionProgress_ServiceError(t *testing.T) {
 
 	mockSvc.On("GetReencryptionProgress", mock.Anything, mock.Anything).Return(
 		(*service.GetReencryptionProgressResponse)(nil),
-		&dberrors.DragonError{
+		&dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "GetReencryptionProgress",
 			Err:  &dberrors.MessageError{Message: "operation not found"},

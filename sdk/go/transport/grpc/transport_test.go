@@ -328,7 +328,7 @@ func TestConvertGRPCError_AllCodes(t *testing.T) {
 	}
 }
 
-func TestIsRetryableError_DragonError(t *testing.T) {
+func TestIsRetryableError_QBError(t *testing.T) {
 	tests := []struct {
 		err       error
 		retryable bool

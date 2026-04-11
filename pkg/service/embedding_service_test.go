@@ -269,7 +269,7 @@ func TestEmbeddingService_GenerateEmbedding_EmptyText(t *testing.T) {
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "text is required")
 
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dErr.Code)
 	}
@@ -292,7 +292,7 @@ func TestEmbeddingService_GenerateEmbedding_ProviderError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrUnavailable, dErr.Code)
 	}
@@ -315,7 +315,7 @@ func TestEmbeddingService_GenerateEmbedding_RateLimitError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrRateLimited, dErr.Code)
 	}
@@ -338,7 +338,7 @@ func TestEmbeddingService_GenerateEmbedding_TokenLimitError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrResourceExhausted, dErr.Code)
 	}
@@ -361,7 +361,7 @@ func TestEmbeddingService_GenerateEmbedding_InvalidInputError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dErr.Code)
 	}
@@ -384,7 +384,7 @@ func TestEmbeddingService_GenerateEmbedding_ProviderNotFound(t *testing.T) {
 	if err != nil {
 		// Error path - provider not found
 		assert.Nil(t, resp)
-		var dErr *quicbaasErrors.DragonError
+		var dErr *quicbaasErrors.QBError
 		if errors.As(err, &dErr) {
 			assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 		}
@@ -715,7 +715,7 @@ func TestEmbeddingService_GetProviderInfo_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -793,7 +793,7 @@ func TestEmbeddingService_SetDefaultProvider_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -1006,7 +1006,7 @@ func TestEmbeddingService_ErrorMapping(t *testing.T) {
 			_, err := svc.GenerateEmbedding(context.Background(), req)
 
 			require.Error(t, err)
-			var dErr *quicbaasErrors.DragonError
+			var dErr *quicbaasErrors.QBError
 			if errors.As(err, &dErr) {
 				assert.Equal(t, tt.expectedCode, dErr.Code)
 			}
@@ -1342,9 +1342,9 @@ func TestEmbeddingSvc_GenerateEmbedding_EmptyText(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *quicbaasErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestEmbeddingSvc_GenerateEmbedding_ProviderError(t *testing.T) {
@@ -1794,9 +1794,9 @@ func TestHandleEmbeddingError_CoverageProviderNotFound(t *testing.T) {
 
 	err := svc.handleEmbeddingError(embedding.ErrProviderNotFound, "test", "openai")
 
-	var dragonErr *quicbaasErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrNotFound, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrNotFound, qbErr.Code)
 }
 
 func TestHandleEmbeddingError_CoverageInvalidInput(t *testing.T) {
@@ -1806,9 +1806,9 @@ func TestHandleEmbeddingError_CoverageInvalidInput(t *testing.T) {
 
 	err := svc.handleEmbeddingError(embedding.ErrInvalidInput, "test", "openai")
 
-	var dragonErr *quicbaasErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestHandleEmbeddingError_CoverageProviderUnavailable(t *testing.T) {
@@ -1818,9 +1818,9 @@ func TestHandleEmbeddingError_CoverageProviderUnavailable(t *testing.T) {
 
 	err := svc.handleEmbeddingError(embedding.ErrProviderUnavailable, "test", "openai")
 
-	var dragonErr *quicbaasErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleEmbeddingError_CoverageRateLimitExceeded(t *testing.T) {
@@ -1830,9 +1830,9 @@ func TestHandleEmbeddingError_CoverageRateLimitExceeded(t *testing.T) {
 
 	err := svc.handleEmbeddingError(embedding.ErrRateLimitExceeded, "test", "openai")
 
-	var dragonErr *quicbaasErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrRateLimited, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrRateLimited, qbErr.Code)
 }
 
 func TestHandleEmbeddingError_CoverageTokenLimitExceeded(t *testing.T) {
@@ -1842,9 +1842,9 @@ func TestHandleEmbeddingError_CoverageTokenLimitExceeded(t *testing.T) {
 
 	err := svc.handleEmbeddingError(embedding.ErrTokenLimitExceeded, "test", "openai")
 
-	var dragonErr *quicbaasErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrResourceExhausted, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrResourceExhausted, qbErr.Code)
 }
 
 func TestHandleEmbeddingError_CoverageUnknownError(t *testing.T) {
@@ -1854,9 +1854,9 @@ func TestHandleEmbeddingError_CoverageUnknownError(t *testing.T) {
 
 	err := svc.handleEmbeddingError(errors.New("unknown error"), "test", "openai")
 
-	var dragonErr *quicbaasErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrInternal, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrInternal, qbErr.Code)
 }
 
 func TestCoverageEstimateTokens(t *testing.T) {
@@ -2007,19 +2007,19 @@ func TestEmbeddingService_ValidateGenerateEmbeddingRequest(t *testing.T) {
 	t.Run("nil request returns error", func(t *testing.T) {
 		err := svc.validateGenerateEmbeddingRequest(nil)
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "request is nil")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "request is nil")
 	})
 
 	t.Run("empty text returns error", func(t *testing.T) {
 		err := svc.validateGenerateEmbeddingRequest(&GenerateEmbeddingRequest{Text: ""})
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "text is required")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "text is required")
 	})
 
 	t.Run("valid request with text returns no error", func(t *testing.T) {
@@ -2039,19 +2039,19 @@ func TestEmbeddingService_ValidateBatchGenerateEmbeddingsRequest(t *testing.T) {
 	t.Run("nil request returns error", func(t *testing.T) {
 		err := svc.validateBatchGenerateEmbeddingsRequest(nil)
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "request is nil")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "request is nil")
 	})
 
 	t.Run("empty items returns error", func(t *testing.T) {
 		err := svc.validateBatchGenerateEmbeddingsRequest(&BatchGenerateEmbeddingsRequest{Items: []*BatchEmbeddingItem{}})
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "items is required")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "items is required")
 	})
 
 	t.Run("item with empty text returns error", func(t *testing.T) {
@@ -2059,10 +2059,10 @@ func TestEmbeddingService_ValidateBatchGenerateEmbeddingsRequest(t *testing.T) {
 			Items: []*BatchEmbeddingItem{{ID: "1", Text: ""}},
 		})
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "text is required")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "text is required")
 	})
 
 	t.Run("item with empty ID returns error", func(t *testing.T) {
@@ -2070,10 +2070,10 @@ func TestEmbeddingService_ValidateBatchGenerateEmbeddingsRequest(t *testing.T) {
 			Items: []*BatchEmbeddingItem{{ID: "", Text: "hello"}},
 		})
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "id is required")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "id is required")
 	})
 
 	t.Run("valid request returns no error", func(t *testing.T) {
@@ -2093,19 +2093,19 @@ func TestEmbeddingService_ValidateGetProviderInfoRequest(t *testing.T) {
 	t.Run("nil request returns error", func(t *testing.T) {
 		err := svc.validateGetProviderInfoRequest(nil)
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "request is nil")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "request is nil")
 	})
 
 	t.Run("empty provider returns error", func(t *testing.T) {
 		err := svc.validateGetProviderInfoRequest(&GetProviderInfoRequest{Provider: ""})
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "provider is required")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "provider is required")
 	})
 
 	t.Run("valid request returns no error", func(t *testing.T) {
@@ -2120,19 +2120,19 @@ func TestEmbeddingService_ValidateSetDefaultProviderRequest(t *testing.T) {
 	t.Run("nil request returns error", func(t *testing.T) {
 		err := svc.validateSetDefaultProviderRequest(nil)
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "request is nil")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "request is nil")
 	})
 
 	t.Run("empty provider returns error", func(t *testing.T) {
 		err := svc.validateSetDefaultProviderRequest(&SetDefaultProviderRequest{Provider: ""})
 		require.Error(t, err)
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-		assert.Contains(t, dragonErr.Err.Error(), "provider is required")
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+		assert.Contains(t, qbErr.Err.Error(), "provider is required")
 	})
 
 	t.Run("valid request returns no error", func(t *testing.T) {

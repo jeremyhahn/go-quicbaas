@@ -106,7 +106,7 @@ func (r *ResolverRegistry) Register(resolver SecretResolver) {
 // Thread-safe for concurrent use.
 func (r *ResolverRegistry) Resolve(ctx context.Context, raw string) (*SecretValue, error) {
 	if ctx == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ResolverRegistry.Resolve",
 			Err:  ErrNilContext,
@@ -122,7 +122,7 @@ func (r *ResolverRegistry) Resolve(ctx context.Context, raw string) (*SecretValu
 		if resolver.CanResolve(raw) {
 			value, err := resolver.Resolve(ctx, raw)
 			if err != nil {
-				return nil, &errors.DragonError{
+				return nil, &errors.QBError{
 					Code: errors.ErrConfiguration,
 					Op:   "ResolverRegistry.Resolve",
 					Err:  err,

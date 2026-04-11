@@ -128,9 +128,9 @@ func (e *WatchBridgePublishFailedError) Error() string {
 	return "failed to publish to channel '" + e.Channel + "': " + e.Cause
 }
 
-// NewWatchBridgeNotRunningError creates a new DragonError for bridge not running.
-func NewWatchBridgeNotRunningError(op, operation string) *errors.DragonError {
-	return &errors.DragonError{
+// NewWatchBridgeNotRunningError creates a new QBError for bridge not running.
+func NewWatchBridgeNotRunningError(op, operation string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeWatchBridgeNotRunning,
 		Op:   op,
 		Err: &WatchBridgeNotRunningError{
@@ -142,36 +142,36 @@ func NewWatchBridgeNotRunningError(op, operation string) *errors.DragonError {
 	}
 }
 
-// NewWatchBridgeAlreadyRunningError creates a new DragonError for bridge already running.
-func NewWatchBridgeAlreadyRunningError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewWatchBridgeAlreadyRunningError creates a new QBError for bridge already running.
+func NewWatchBridgeAlreadyRunningError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeWatchBridgeAlreadyRunning,
 		Op:   op,
 		Err:  &WatchBridgeAlreadyRunningError{},
 	}
 }
 
-// NewWatchBridgeNilManagerError creates a new DragonError for nil watch manager.
-func NewWatchBridgeNilManagerError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewWatchBridgeNilManagerError creates a new QBError for nil watch manager.
+func NewWatchBridgeNilManagerError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeWatchBridgeNilManager,
 		Op:   op,
 		Err:  &WatchBridgeNilManagerError{},
 	}
 }
 
-// NewWatchBridgeNilServiceError creates a new DragonError for nil messaging service.
-func NewWatchBridgeNilServiceError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewWatchBridgeNilServiceError creates a new QBError for nil messaging service.
+func NewWatchBridgeNilServiceError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeWatchBridgeNilService,
 		Op:   op,
 		Err:  &WatchBridgeNilServiceError{},
 	}
 }
 
-// NewWatchBridgeInvalidMappingError creates a new DragonError for invalid mapping.
-func NewWatchBridgeInvalidMappingError(op, keyPrefix, reason string) *errors.DragonError {
-	return &errors.DragonError{
+// NewWatchBridgeInvalidMappingError creates a new QBError for invalid mapping.
+func NewWatchBridgeInvalidMappingError(op, keyPrefix, reason string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeWatchBridgeInvalidMapping,
 		Op:   op,
 		Err: &WatchBridgeInvalidMappingError{
@@ -185,9 +185,9 @@ func NewWatchBridgeInvalidMappingError(op, keyPrefix, reason string) *errors.Dra
 	}
 }
 
-// NewWatchBridgePublishFailedError creates a new DragonError for publish failure.
-func NewWatchBridgePublishFailedError(op, channel, cause string) *errors.DragonError {
-	return &errors.DragonError{
+// NewWatchBridgePublishFailedError creates a new QBError for publish failure.
+func NewWatchBridgePublishFailedError(op, channel, cause string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeWatchBridgePublishFailed,
 		Op:   op,
 		Err: &WatchBridgePublishFailedError{
@@ -211,7 +211,7 @@ func IsWatchBridgeNotRunning(err error) bool {
 	if stderrors.As(err, &wbnr) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeWatchBridgeNotRunning
 	}
@@ -227,7 +227,7 @@ func IsWatchBridgeAlreadyRunning(err error) bool {
 	if stderrors.As(err, &wbar) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeWatchBridgeAlreadyRunning
 	}
@@ -243,7 +243,7 @@ func IsWatchBridgeNilManager(err error) bool {
 	if stderrors.As(err, &wnm) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeWatchBridgeNilManager
 	}
@@ -259,7 +259,7 @@ func IsWatchBridgeNilService(err error) bool {
 	if stderrors.As(err, &wns) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeWatchBridgeNilService
 	}
@@ -275,7 +275,7 @@ func IsWatchBridgeInvalidMapping(err error) bool {
 	if stderrors.As(err, &wim) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeWatchBridgeInvalidMapping
 	}

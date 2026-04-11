@@ -49,18 +49,18 @@ func createTestClient(t *testing.T) *Client {
 	}
 }
 
-// verifyNilRequestError verifies that an error is a DragonError with ErrInvalidInput code.
+// verifyNilRequestError verifies that an error is a QBError with ErrInvalidInput code.
 func verifyNilRequestError(t *testing.T, err error, methodName string) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("%s: expected error for nil request", methodName)
 	}
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	if !ok {
-		t.Fatalf("%s: expected DragonError, got %T", methodName, err)
+		t.Fatalf("%s: expected QBError, got %T", methodName, err)
 	}
-	if dragonErr.Code != errors.ErrInvalidInput {
-		t.Errorf("%s: expected ErrInvalidInput, got %v", methodName, dragonErr.Code)
+	if qbErr.Code != errors.ErrInvalidInput {
+		t.Errorf("%s: expected ErrInvalidInput, got %v", methodName, qbErr.Code)
 	}
 }
 
@@ -526,12 +526,12 @@ func TestClient_sendRequest_ClientClosed(t *testing.T) {
 		t.Fatal("expected error for closed client")
 	}
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	if !ok {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
-	if dragonErr.Code != errors.ErrUnavailable {
-		t.Errorf("expected ErrUnavailable, got %v", dragonErr.Code)
+	if qbErr.Code != errors.ErrUnavailable {
+		t.Errorf("expected ErrUnavailable, got %v", qbErr.Code)
 	}
 }
 
@@ -1065,17 +1065,17 @@ func TestClient_WatchSecretsByPrefix_FeatureUnsupported(t *testing.T) {
 		t.Fatal("expected error for unsupported streaming operation")
 	}
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	if !ok {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
-	if dragonErr.Code != errors.ErrInternal {
-		t.Errorf("expected ErrInternal (feature unsupported), got %v", dragonErr.Code)
+	if qbErr.Code != errors.ErrInternal {
+		t.Errorf("expected ErrInternal (feature unsupported), got %v", qbErr.Code)
 	}
 
 	var featureErr *api.FeatureUnsupportedError
-	if !stderrors.As(dragonErr.Err, &featureErr) {
-		t.Fatalf("expected FeatureUnsupportedError, got %T: %v", dragonErr.Err, dragonErr.Err)
+	if !stderrors.As(qbErr.Err, &featureErr) {
+		t.Fatalf("expected FeatureUnsupportedError, got %T: %v", qbErr.Err, qbErr.Err)
 	}
 }
 

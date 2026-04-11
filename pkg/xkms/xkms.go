@@ -54,7 +54,7 @@ func PublicKey(kid string) (crypto.PublicKey, error) {
 	// Get the signer, which has access to the public key
 	signer, err := SignerByID(kid)
 	if err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "xkms.publicKey",
 			Err:  &api.OperationFailedError{Operation: "get signer for public key", Cause: err},
@@ -509,7 +509,7 @@ func ImportSymmetricKey(backendName string, attrs *xkmssdk.KeyAttributes, materi
 	// Get the keystore for this backend
 	keyStore, err := xkmssdk.ServiceGetBackend(backendName)
 	if err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "xkms.importSymmetricKey",
 			Err:  &api.OperationFailedError{Operation: "get backend", Cause: err},
@@ -536,7 +536,7 @@ func ImportSymmetricKey(backendName string, attrs *xkmssdk.KeyAttributes, materi
 	// Fall back to the standard import flow with proper wrapping
 	importBackend, ok := underlyingBackend.(xkmssdk.ImportExportBackend)
 	if !ok {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "xkms.importSymmetricKey",
 			Err:  &api.UnsupportedBackendOperationError{Backend: backendName, Operation: "key import"},
@@ -933,7 +933,7 @@ func WrapKeyWithECDHES(wrappingKeyID string, keyMaterial []byte, algorithm strin
 	// Get the wrapping key's public key
 	publicKey, err := PublicKey(wrappingKeyID)
 	if err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "xkms.wrapKeyWithECDHES",
 			Err:  &api.OperationFailedError{Operation: "get wrapping public key", Cause: err},
@@ -943,7 +943,7 @@ func WrapKeyWithECDHES(wrappingKeyID string, keyMaterial []byte, algorithm strin
 	// Ensure it's an EC public key
 	ecPublicKey, ok := publicKey.(*ecdsa.PublicKey)
 	if !ok {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "xkms.wrapKeyWithECDHES",
 			Err:  &api.UnexpectedKeyTypeError{Expected: "ECDH-ES EC public key", Actual: fmt.Sprintf("%T", publicKey)},
@@ -967,7 +967,7 @@ func WrapKeyWithECDHES(wrappingKeyID string, keyMaterial []byte, algorithm strin
 	// Create JWE encrypter
 	encrypter, err := xkmssdk.NewJWEEncrypter(algorithm, contentEnc, ecPublicKey)
 	if err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "xkms.wrapKeyWithECDHES",
 			Err:  &api.OperationFailedError{Operation: "create JWE encrypter", Cause: err},
@@ -977,7 +977,7 @@ func WrapKeyWithECDHES(wrappingKeyID string, keyMaterial []byte, algorithm strin
 	// Encrypt the key material
 	jweStr, err := encrypter.Encrypt(keyMaterial)
 	if err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrEncryption,
 			Op:   "xkms.wrapKeyWithECDHES",
 			Err:  &api.OperationFailedError{Operation: "encrypt key material", Cause: err},
@@ -1015,7 +1015,7 @@ func UnwrapKeyWithECDHES(privateKeyID string, jweData string) ([]byte, error) {
 
 		plaintext, err := xkmsDec.DecryptWithKeyID(jweData, privateKeyID)
 		if err != nil {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrDecryption,
 				Op:   "xkms.unwrapKeyWithECDHES",
 				Err:  &api.OperationFailedError{Operation: "decrypt JWE with xkms", Cause: err},
@@ -1028,7 +1028,7 @@ func UnwrapKeyWithECDHES(privateKeyID string, jweData string) ([]byte, error) {
 	// Fall back to getting the private key directly (for software keys)
 	privateKey, err := KeyByID(privateKeyID)
 	if err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "xkms.unwrapKeyWithECDHES",
 			Err:  &api.OperationFailedError{Operation: "get private key", Cause: err},
@@ -1038,7 +1038,7 @@ func UnwrapKeyWithECDHES(privateKeyID string, jweData string) ([]byte, error) {
 	// Use the private key directly
 	ecPrivateKey, ok := privateKey.(*ecdsa.PrivateKey)
 	if !ok {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "xkms.unwrapKeyWithECDHES",
 			Err:  &api.UnexpectedKeyTypeError{Expected: "ECDH-ES EC private key", Actual: fmt.Sprintf("%T", privateKey)},
@@ -1048,7 +1048,7 @@ func UnwrapKeyWithECDHES(privateKeyID string, jweData string) ([]byte, error) {
 	jweDecrypter := xkmssdk.NewJWEDecrypter()
 	plaintext, err := jweDecrypter.Decrypt(jweData, ecPrivateKey)
 	if err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrDecryption,
 			Op:   "xkms.unwrapKeyWithECDHES",
 			Err:  &api.OperationFailedError{Operation: "decrypt JWE", Cause: err},

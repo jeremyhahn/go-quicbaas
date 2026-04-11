@@ -46,7 +46,7 @@ func newMockTenantDEKManagerForVectors() *mockTenantDEKManagerForVectors {
 
 func (m *mockTenantDEKManagerForVectors) GetOrCreateTenantDEK(ctx context.Context, tenantID string) ([]byte, error) {
 	if m.failCreateDEK {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "mockTenantDEKManager.GetOrCreateTenantDEK",
 		}
@@ -75,7 +75,7 @@ func (m *mockTenantDEKManagerForVectors) GetOrCreateTenantDEK(ctx context.Contex
 
 func (m *mockTenantDEKManagerForVectors) GetTenantDEK(ctx context.Context, tenantID string) ([]byte, error) {
 	if m.failGetDEK {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "mockTenantDEKManager.GetTenantDEK",
 		}
@@ -86,7 +86,7 @@ func (m *mockTenantDEKManagerForVectors) GetTenantDEK(ctx context.Context, tenan
 
 	dek, ok := m.tenantDEKs[tenantID]
 	if !ok {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "mockTenantDEKManager.GetTenantDEK",
 		}
@@ -637,9 +637,9 @@ func TestVectorDEKManagerErrors(t *testing.T) {
 		_, err := svc.EncryptVector(ctx, "tenant", "ns", "vec", []float32{1.0})
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrEncryption, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrEncryption, qbErr.Code)
 	})
 
 	t.Run("decrypt fails when DEK retrieval fails", func(t *testing.T) {
@@ -655,9 +655,9 @@ func TestVectorDEKManagerErrors(t *testing.T) {
 		_, err = svc.DecryptVector(ctx, "tenant-get-fail", "ns", "vec", encrypted)
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrDecryption, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrDecryption, qbErr.Code)
 	})
 }
 

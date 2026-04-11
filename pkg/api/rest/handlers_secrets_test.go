@@ -115,7 +115,7 @@ func TestHandleStoreSecret(t *testing.T) {
 				"data": []byte("test-data"),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("StoreSecret", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("StoreSecret", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "StoreSecret",
 					Err:  assert.AnError,
@@ -273,7 +273,7 @@ func TestHandleGetSecret(t *testing.T) {
 			name: "secret not found",
 			path: "nonexistent/secret",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("GetSecret", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetSecret", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "GetSecret",
 					Err:  assert.AnError,
@@ -285,7 +285,7 @@ func TestHandleGetSecret(t *testing.T) {
 			name: "service error",
 			path: "test/secret",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("GetSecret", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetSecret", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GetSecret",
 					Err:  assert.AnError,
@@ -402,7 +402,7 @@ func TestHandleListSecrets(t *testing.T) {
 		{
 			name: "service error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("ListSecrets", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ListSecrets", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "ListSecrets",
 					Err:  assert.AnError,
@@ -481,7 +481,7 @@ func TestHandleDeleteSecret(t *testing.T) {
 			name: "secret not found",
 			path: "nonexistent/secret",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("DeleteSecret", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DeleteSecret", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "DeleteSecret",
 					Err:  assert.AnError,
@@ -493,7 +493,7 @@ func TestHandleDeleteSecret(t *testing.T) {
 			name: "service error",
 			path: "test/secret",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("DeleteSecret", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DeleteSecret", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "DeleteSecret",
 					Err:  assert.AnError,
@@ -561,7 +561,7 @@ func TestHandleEnableSecret(t *testing.T) {
 			name: "secret not found",
 			path: "nonexistent/secret/enable",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("UpdateSecretStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("UpdateSecretStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "UpdateSecretStatus",
 					Err:  assert.AnError,
@@ -573,7 +573,7 @@ func TestHandleEnableSecret(t *testing.T) {
 			name: "service error",
 			path: "test/secret/enable",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("UpdateSecretStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("UpdateSecretStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "UpdateSecretStatus",
 					Err:  assert.AnError,
@@ -636,7 +636,7 @@ func TestHandleDisableSecret(t *testing.T) {
 			name: "secret not found",
 			path: "nonexistent/secret/disable",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("UpdateSecretStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("UpdateSecretStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "UpdateSecretStatus",
 					Err:  assert.AnError,
@@ -648,7 +648,7 @@ func TestHandleDisableSecret(t *testing.T) {
 			name: "service error",
 			path: "test/secret/disable",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("UpdateSecretStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("UpdateSecretStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "UpdateSecretStatus",
 					Err:  assert.AnError,
@@ -729,7 +729,7 @@ func TestHandleGetSecretsByPrefix(t *testing.T) {
 			name:   "service error",
 			prefix: "test/",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("GetSecretsByPrefix", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetSecretsByPrefix", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GetSecretsByPrefix",
 					Err:  assert.AnError,
@@ -816,7 +816,7 @@ func TestHandleWatchSecrets(t *testing.T) {
 			name:   "service error",
 			prefix: "test/",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("WatchSecretsByPrefix", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("WatchSecretsByPrefix", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "WatchSecretsByPrefix",
 					Err:  assert.AnError,
@@ -1492,7 +1492,7 @@ func TestHandleDestroySecret(t *testing.T) {
 			name: "secret not found",
 			path: "nonexistent/secret/destroy",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("DeleteSecret", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DeleteSecret", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "DeleteSecret",
 					Err:  assert.AnError,
@@ -1504,7 +1504,7 @@ func TestHandleDestroySecret(t *testing.T) {
 			name: "service error",
 			path: "test/secret/destroy",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("DeleteSecret", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DeleteSecret", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "DeleteSecret",
 					Err:  assert.AnError,
@@ -1583,7 +1583,7 @@ func TestHandleListSecretVersions(t *testing.T) {
 			name: "service error",
 			path: "test/secret/versions",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("ListSecretVersions", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ListSecretVersions", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "ListSecretVersions",
 					Err:  assert.AnError,
@@ -1663,7 +1663,7 @@ func TestHandleRollbackSecret(t *testing.T) {
 			path: "test/secret",
 			body: map[string]interface{}{"version": 1},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("RollbackSecret", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RollbackSecret", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "RollbackSecret",
 					Err:  assert.AnError,
@@ -1747,7 +1747,7 @@ func TestHandleRotateSecret(t *testing.T) {
 			path: "test/secret",
 			body: map[string]interface{}{"data": "dGVzdA=="},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("RotateSecret", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RotateSecret", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "RotateSecret",
 					Err:  assert.AnError,

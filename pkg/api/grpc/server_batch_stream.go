@@ -176,7 +176,7 @@ func (s *Server) StreamBatchPut(stream pb.QuicBaaS_StreamBatchPutServer) error {
 			streamMetrics.streamsTotal.With("error").Inc()
 			streamMetrics.streamDuration.With("error").Observe(duration)
 			s.logger.WithError(err).WithField("session_id", sessionID).Error("Error receiving stream message")
-			return toServiceError(&errors.DragonError{
+			return toServiceError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.StreamBatchPut",
 				Err:  err,
@@ -209,7 +209,7 @@ func (s *Server) StreamBatchPut(stream pb.QuicBaaS_StreamBatchPutServer) error {
 			}
 			if err := stream.Send(resp); err != nil {
 				s.logger.WithError(err).Error("Failed to send final result")
-				return toServiceError(&errors.DragonError{
+				return toServiceError(&errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "grpc.StreamBatchPut",
 					Err:  err,
@@ -294,7 +294,7 @@ func (s *Server) handleStreamBatchHeader(
 
 	if err := stream.Send(resp); err != nil {
 		s.logger.WithError(err).Error("Failed to send initial progress")
-		return toServiceError(&errors.DragonError{
+		return toServiceError(&errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "grpc.StreamBatchPut.header",
 			Err:  err,
@@ -383,7 +383,7 @@ func (s *Server) handleStreamBatchChunk(
 	if err := stream.Send(resp); err != nil {
 		s.logger.WithError(err).Error("Failed to send progress")
 		streamMetrics.backpressure.Inc()
-		return toServiceError(&errors.DragonError{
+		return toServiceError(&errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "grpc.StreamBatchPut.chunk",
 			Err:  err,

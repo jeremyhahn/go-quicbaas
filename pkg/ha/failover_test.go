@@ -439,9 +439,9 @@ func TestNewFailoverManager(t *testing.T) {
 			if tt.expectError {
 				require.Error(t, err)
 				if tt.errorCode != errors.ErrUnknown {
-					dragonErr, ok := err.(*errors.DragonError)
-					require.True(t, ok, "expected DragonError")
-					assert.Equal(t, tt.errorCode, dragonErr.Code)
+					qbErr, ok := err.(*errors.QBError)
+					require.True(t, ok, "expected QBError")
+					assert.Equal(t, tt.errorCode, qbErr.Code)
 				}
 				assert.Nil(t, fm)
 			} else {
@@ -694,9 +694,9 @@ func TestFailoverManager_CheckShardHealth(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				require.True(t, ok)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 			}
@@ -785,9 +785,9 @@ func TestFailoverManager_TriggerFailover(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				require.True(t, ok)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 				// Verify event was recorded
@@ -877,9 +877,9 @@ func TestFailoverManager_WaitForNewLeader(t *testing.T) {
 			if tt.expectError {
 				require.Error(t, err)
 				if tt.expectTimeout {
-					dragonErr, ok := err.(*errors.DragonError)
+					qbErr, ok := err.(*errors.QBError)
 					require.True(t, ok)
-					assert.Equal(t, tt.errorCode, dragonErr.Code)
+					assert.Equal(t, tt.errorCode, qbErr.Code)
 				}
 			} else {
 				require.NoError(t, err)

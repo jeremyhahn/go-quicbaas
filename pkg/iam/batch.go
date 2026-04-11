@@ -27,42 +27,42 @@ import (
 // Batch operation error types.
 var (
 	// ErrBatchOperationFailed is returned when a batch operation fails.
-	ErrBatchOperationFailed = &dberrors.DragonError{
+	ErrBatchOperationFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.batch",
 		Err:  errBatchOperationFailed,
 	}
 
 	// ErrBatchTimeout is returned when a batch operation times out.
-	ErrBatchTimeout = &dberrors.DragonError{
+	ErrBatchTimeout = &dberrors.QBError{
 		Code: dberrors.ErrTimeout,
 		Op:   "iam.batch",
 		Err:  errBatchTimeout,
 	}
 
 	// ErrBatchValidationFailed is returned when batch validation fails.
-	ErrBatchValidationFailed = &dberrors.DragonError{
+	ErrBatchValidationFailed = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.batch",
 		Err:  errBatchValidationFailed,
 	}
 
 	// ErrBatchCanceled is returned when a batch operation is canceled.
-	ErrBatchCanceled = &dberrors.DragonError{
+	ErrBatchCanceled = &dberrors.QBError{
 		Code: dberrors.ErrCanceled,
 		Op:   "iam.batch",
 		Err:  errBatchCanceled,
 	}
 
 	// ErrBatchEmpty is returned when a batch operation has no items.
-	ErrBatchEmpty = &dberrors.DragonError{
+	ErrBatchEmpty = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.batch",
 		Err:  errBatchEmpty,
 	}
 
 	// ErrInvalidBatchOptions is returned when batch options are invalid.
-	ErrInvalidBatchOptions = &dberrors.DragonError{
+	ErrInvalidBatchOptions = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.batch",
 		Err:  errInvalidBatchOptions,

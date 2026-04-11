@@ -235,7 +235,7 @@ func TestAuthorizationService_Authorize(t *testing.T) {
 			name: "provider returns error",
 			setupFunc: func(m *mockAuthorizationProvider) {
 				m.authorizeFunc = func(ctx context.Context, req *interfaces.AuthorizationRequest) (*interfaces.AuthorizationDecision, error) {
-					return nil, &dragonerrors.DragonError{
+					return nil, &dragonerrors.QBError{
 						Code: dragonerrors.ErrInternal,
 						Op:   "provider.Authorize",
 						Err:  errors.New("internal provider error"),
@@ -273,7 +273,7 @@ func TestAuthorizationService_Authorize(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error but got nil")
 				}
-				var de *dragonerrors.DragonError
+				var de *dragonerrors.QBError
 				if errors.As(err, &de) && tt.errCode != 0 {
 					if de.Code != tt.errCode {
 						t.Errorf("expected error code %v, got %v", tt.errCode, de.Code)
@@ -332,9 +332,9 @@ func TestAuthorizationService_Authorize_ContextCanceled(t *testing.T) {
 		t.Fatal("expected error for canceled context")
 	}
 
-	var de *dragonerrors.DragonError
+	var de *dragonerrors.QBError
 	if !errors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 	if de.Code != dragonerrors.ErrCanceled {
 		t.Errorf("expected ErrCanceled, got %v", de.Code)
@@ -366,9 +366,9 @@ func TestAuthorizationService_Authorize_ServiceClosed(t *testing.T) {
 		t.Fatal("expected error for closed service")
 	}
 
-	var de *dragonerrors.DragonError
+	var de *dragonerrors.QBError
 	if !errors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 	if de.Code != dragonerrors.ErrUnavailable {
 		t.Errorf("expected ErrUnavailable, got %v", de.Code)
@@ -426,7 +426,7 @@ func TestAuthorizationService_BatchAuthorize(t *testing.T) {
 			name: "provider returns error",
 			setupFunc: func(m *mockAuthorizationProvider) {
 				m.batchAuthorizeFunc = func(ctx context.Context, reqs []*interfaces.AuthorizationRequest) ([]*interfaces.AuthorizationDecision, error) {
-					return nil, &dragonerrors.DragonError{
+					return nil, &dragonerrors.QBError{
 						Code: dragonerrors.ErrInternal,
 						Op:   "provider.BatchAuthorize",
 						Err:  errors.New("batch processing failed"),
@@ -466,7 +466,7 @@ func TestAuthorizationService_BatchAuthorize(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error but got nil")
 				}
-				var de *dragonerrors.DragonError
+				var de *dragonerrors.QBError
 				if errors.As(err, &de) && tt.errCode != 0 {
 					if de.Code != tt.errCode {
 						t.Errorf("expected error code %v, got %v", tt.errCode, de.Code)
@@ -526,9 +526,9 @@ func TestAuthorizationService_BatchAuthorize_ContextCanceled(t *testing.T) {
 		t.Fatal("expected error for canceled context")
 	}
 
-	var de *dragonerrors.DragonError
+	var de *dragonerrors.QBError
 	if !errors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 	if de.Code != dragonerrors.ErrCanceled {
 		t.Errorf("expected ErrCanceled, got %v", de.Code)
@@ -562,9 +562,9 @@ func TestAuthorizationService_BatchAuthorize_ServiceClosed(t *testing.T) {
 		t.Fatal("expected error for closed service")
 	}
 
-	var de *dragonerrors.DragonError
+	var de *dragonerrors.QBError
 	if !errors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 	if de.Code != dragonerrors.ErrUnavailable {
 		t.Errorf("expected ErrUnavailable, got %v", de.Code)

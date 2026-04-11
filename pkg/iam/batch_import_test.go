@@ -2645,9 +2645,9 @@ func TestErrAlreadyExistsHandling(t *testing.T) {
 	})
 }
 
-// TestDragonErrorHandling tests proper handling of DragonError types
-func TestDragonErrorHandling(t *testing.T) {
-	t.Run("nil identity store returns DragonError", func(t *testing.T) {
+// TestQBErrorHandling tests proper handling of QBError types
+func TestQBErrorHandling(t *testing.T) {
+	t.Run("nil identity store returns QBError", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{})
 		ctx := context.Background()
 
@@ -2661,13 +2661,13 @@ func TestDragonErrorHandling(t *testing.T) {
 			t.Error("expected error for nil identity store")
 		}
 
-		var dragonErr *dberrors.DragonError
-		if !errors.As(err, &dragonErr) {
-			t.Errorf("expected DragonError, got %T: %v", err, err)
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError, got %T: %v", err, err)
 		}
 	})
 
-	t.Run("nil identity store in importGroup returns DragonError", func(t *testing.T) {
+	t.Run("nil identity store in importGroup returns QBError", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{})
 		ctx := context.Background()
 
@@ -2680,13 +2680,13 @@ func TestDragonErrorHandling(t *testing.T) {
 			t.Error("expected error for nil identity store")
 		}
 
-		var dragonErr *dberrors.DragonError
-		if !errors.As(err, &dragonErr) {
-			t.Errorf("expected DragonError, got %T: %v", err, err)
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError, got %T: %v", err, err)
 		}
 	})
 
-	t.Run("nil identity store in importRole returns DragonError", func(t *testing.T) {
+	t.Run("nil identity store in importRole returns QBError", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{})
 		ctx := context.Background()
 
@@ -2699,13 +2699,13 @@ func TestDragonErrorHandling(t *testing.T) {
 			t.Error("expected error for nil identity store")
 		}
 
-		var dragonErr *dberrors.DragonError
-		if !errors.As(err, &dragonErr) {
-			t.Errorf("expected DragonError, got %T: %v", err, err)
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError, got %T: %v", err, err)
 		}
 	})
 
-	t.Run("nil policy engine in importPolicy returns DragonError", func(t *testing.T) {
+	t.Run("nil policy engine in importPolicy returns QBError", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{
 			IdentityStore: NewIdentityStore(IdentityStoreOptions{}),
 		})
@@ -2723,9 +2723,9 @@ func TestDragonErrorHandling(t *testing.T) {
 			t.Error("expected error for nil policy engine")
 		}
 
-		var dragonErr *dberrors.DragonError
-		if !errors.As(err, &dragonErr) {
-			t.Errorf("expected DragonError, got %T: %v", err, err)
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError, got %T: %v", err, err)
 		}
 	})
 }

@@ -39,9 +39,9 @@ func (e *BackendRoutingError) Unwrap() error {
 	return e.Cause
 }
 
-// NewBackendRoutingError creates a DragonError for a backend routing failure.
-func NewBackendRoutingError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewBackendRoutingError creates a QBError for a backend routing failure.
+func NewBackendRoutingError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err:  &BackendRoutingError{Cause: cause},
@@ -58,9 +58,9 @@ func (e *InvalidAlgorithmError) Error() string {
 	return "unsupported algorithm: " + e.Algorithm
 }
 
-// NewInvalidAlgorithmError creates a DragonError for an invalid algorithm.
-func NewInvalidAlgorithmError(op, algorithm string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewInvalidAlgorithmError creates a QBError for an invalid algorithm.
+func NewInvalidAlgorithmError(op, algorithm string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InvalidAlgorithmError{Algorithm: algorithm},
@@ -77,9 +77,9 @@ func (e *KeyDisabledError) Error() string {
 	return "key " + e.KeyID + " is disabled"
 }
 
-// NewKeyDisabledError creates a DragonError for a disabled key.
-func NewKeyDisabledError(op, keyID string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKeyDisabledError creates a QBError for a disabled key.
+func NewKeyDisabledError(op, keyID string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &KeyDisabledError{KeyID: keyID},
@@ -96,9 +96,9 @@ func (e *KeyDeletedError) Error() string {
 	return "key " + e.KeyID + " is deleted"
 }
 
-// NewKeyDeletedError creates a DragonError for a deleted key.
-func NewKeyDeletedError(op, keyID string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKeyDeletedError creates a QBError for a deleted key.
+func NewKeyDeletedError(op, keyID string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &KeyDeletedError{KeyID: keyID},
@@ -115,9 +115,9 @@ func (e *KeyPendingDeletionError) Error() string {
 	return "key " + e.KeyID + " is pending deletion"
 }
 
-// NewKeyPendingDeletionError creates a DragonError for a key pending deletion.
-func NewKeyPendingDeletionError(op, keyID string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKeyPendingDeletionError creates a QBError for a key pending deletion.
+func NewKeyPendingDeletionError(op, keyID string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &KeyPendingDeletionError{KeyID: keyID},
@@ -135,9 +135,9 @@ func (e *AlgorithmOperationUnsupportedError) Error() string {
 	return "algorithm " + e.Algorithm + " does not support operation " + e.Operation
 }
 
-// NewAlgorithmOperationUnsupportedError creates a DragonError for an unsupported algorithm operation.
-func NewAlgorithmOperationUnsupportedError(op, algorithm, operation string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewAlgorithmOperationUnsupportedError creates a QBError for an unsupported algorithm operation.
+func NewAlgorithmOperationUnsupportedError(op, algorithm, operation string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &AlgorithmOperationUnsupportedError{Algorithm: algorithm, Operation: operation},
@@ -154,9 +154,9 @@ func (e *UnknownAlgorithmError) Error() string {
 	return "unknown algorithm: " + e.Name
 }
 
-// NewUnknownAlgorithmError creates a DragonError for an unknown algorithm.
-func NewUnknownAlgorithmError(op, name string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewUnknownAlgorithmError creates a QBError for an unknown algorithm.
+func NewUnknownAlgorithmError(op, name string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &UnknownAlgorithmError{Name: name},
@@ -173,9 +173,9 @@ func (e *AlgorithmSigningUnsupportedError) Error() string {
 	return "algorithm " + e.Algorithm + " does not support signing"
 }
 
-// NewAlgorithmSigningUnsupportedError creates a DragonError for an algorithm that does not support signing.
-func NewAlgorithmSigningUnsupportedError(op, algorithm string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewAlgorithmSigningUnsupportedError creates a QBError for an algorithm that does not support signing.
+func NewAlgorithmSigningUnsupportedError(op, algorithm string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &AlgorithmSigningUnsupportedError{Algorithm: algorithm},
@@ -198,9 +198,9 @@ func (e *FailoverExhaustedError) Unwrap() error {
 	return e.Cause
 }
 
-// NewFailoverExhaustedError creates a DragonError for exhausted failover attempts.
-func NewFailoverExhaustedError(op string, attempts int, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewFailoverExhaustedError creates a QBError for exhausted failover attempts.
+func NewFailoverExhaustedError(op string, attempts int, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err:  &FailoverExhaustedError{Attempts: attempts, Cause: cause},
@@ -223,9 +223,9 @@ func (e *BackendRegistrationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewBackendRegistrationError creates a DragonError for a backend registration failure.
-func NewBackendRegistrationError(op, name string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewBackendRegistrationError creates a QBError for a backend registration failure.
+func NewBackendRegistrationError(op, name string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &BackendRegistrationError{Name: name, Cause: cause},
@@ -242,9 +242,9 @@ func (e *NoBackendsAvailableError) Error() string {
 	return "no backends available in " + e.Source
 }
 
-// NewNoBackendsAvailableError creates a DragonError for no available backends.
-func NewNoBackendsAvailableError(op, source string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewNoBackendsAvailableError creates a QBError for no available backends.
+func NewNoBackendsAvailableError(op, source string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err:  &NoBackendsAvailableError{Source: source},
@@ -259,9 +259,9 @@ func (e *NoBackendsRegisteredError) Error() string {
 	return "no backends were successfully registered"
 }
 
-// NewNoBackendsRegisteredError creates a DragonError for no registered backends.
-func NewNoBackendsRegisteredError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewNoBackendsRegisteredError creates a QBError for no registered backends.
+func NewNoBackendsRegisteredError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err:  &NoBackendsRegisteredError{},
@@ -283,9 +283,9 @@ func (e *RegistryCloseError) Unwrap() error {
 	return e.Cause
 }
 
-// NewRegistryCloseError creates a DragonError for a registry close failure.
-func NewRegistryCloseError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewRegistryCloseError creates a QBError for a registry close failure.
+func NewRegistryCloseError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &RegistryCloseError{Cause: cause},
@@ -307,9 +307,9 @@ func (e *SymmetricKeyGenerationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewSymmetricKeyGenerationError creates a DragonError for a symmetric key generation failure.
-func NewSymmetricKeyGenerationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewSymmetricKeyGenerationError creates a QBError for a symmetric key generation failure.
+func NewSymmetricKeyGenerationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &SymmetricKeyGenerationError{Cause: cause},
@@ -331,9 +331,9 @@ func (e *AsymmetricKeyGenerationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewAsymmetricKeyGenerationError creates a DragonError for an asymmetric key generation failure.
-func NewAsymmetricKeyGenerationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewAsymmetricKeyGenerationError creates a QBError for an asymmetric key generation failure.
+func NewAsymmetricKeyGenerationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &AsymmetricKeyGenerationError{Cause: cause},
@@ -355,9 +355,9 @@ func (e *KeyVersionGenerationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewKeyVersionGenerationError creates a DragonError for a key version generation failure.
-func NewKeyVersionGenerationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKeyVersionGenerationError creates a QBError for a key version generation failure.
+func NewKeyVersionGenerationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &KeyVersionGenerationError{Cause: cause},
@@ -379,9 +379,9 @@ func (e *KeyDeletionError) Unwrap() error {
 	return e.Cause
 }
 
-// NewKeyDeletionError creates a DragonError for a key deletion failure.
-func NewKeyDeletionError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKeyDeletionError creates a QBError for a key deletion failure.
+func NewKeyDeletionError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &KeyDeletionError{Cause: cause},
@@ -403,9 +403,9 @@ func (e *KeyMetadataRetrievalError) Unwrap() error {
 	return e.Cause
 }
 
-// NewKeyMetadataRetrievalError creates a DragonError for a key metadata retrieval failure.
-func NewKeyMetadataRetrievalError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKeyMetadataRetrievalError creates a QBError for a key metadata retrieval failure.
+func NewKeyMetadataRetrievalError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &KeyMetadataRetrievalError{Cause: cause},
@@ -427,9 +427,9 @@ func (e *EncryptionOperationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewEncryptionOperationError creates a DragonError for an encryption operation failure.
-func NewEncryptionOperationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewEncryptionOperationError creates a QBError for an encryption operation failure.
+func NewEncryptionOperationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrEncryption,
 		Op:   op,
 		Err:  &EncryptionOperationError{Cause: cause},
@@ -451,9 +451,9 @@ func (e *DecryptionOperationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewDecryptionOperationError creates a DragonError for a decryption operation failure.
-func NewDecryptionOperationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDecryptionOperationError creates a QBError for a decryption operation failure.
+func NewDecryptionOperationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrDecryption,
 		Op:   op,
 		Err:  &DecryptionOperationError{Cause: cause},
@@ -475,9 +475,9 @@ func (e *CiphertextDeserializationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewCiphertextDeserializationError creates a DragonError for a ciphertext deserialization failure.
-func NewCiphertextDeserializationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewCiphertextDeserializationError creates a QBError for a ciphertext deserialization failure.
+func NewCiphertextDeserializationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrDecryption,
 		Op:   op,
 		Err:  &CiphertextDeserializationError{Cause: cause},
@@ -499,9 +499,9 @@ func (e *SignerRetrievalError) Unwrap() error {
 	return e.Cause
 }
 
-// NewSignerRetrievalError creates a DragonError for a signer retrieval failure.
-func NewSignerRetrievalError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewSignerRetrievalError creates a QBError for a signer retrieval failure.
+func NewSignerRetrievalError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &SignerRetrievalError{Cause: cause},
@@ -523,9 +523,9 @@ func (e *SigningOperationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewSigningOperationError creates a DragonError for a signing operation failure.
-func NewSigningOperationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewSigningOperationError creates a QBError for a signing operation failure.
+func NewSigningOperationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &SigningOperationError{Cause: cause},
@@ -542,9 +542,9 @@ func (e *UnsupportedPublicKeyTypeError) Error() string {
 	return "unsupported public key type: " + e.TypeName
 }
 
-// NewUnsupportedPublicKeyTypeError creates a DragonError for an unsupported public key type.
-func NewUnsupportedPublicKeyTypeError(op, typeName string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewUnsupportedPublicKeyTypeError creates a QBError for an unsupported public key type.
+func NewUnsupportedPublicKeyTypeError(op, typeName string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &UnsupportedPublicKeyTypeError{TypeName: typeName},
@@ -566,9 +566,9 @@ func (e *RandomGenerationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewRandomGenerationError creates a DragonError for a random generation failure.
-func NewRandomGenerationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewRandomGenerationError creates a QBError for a random generation failure.
+func NewRandomGenerationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &RandomGenerationError{Cause: cause},
@@ -590,9 +590,9 @@ func (e *DEKWrappingError) Unwrap() error {
 	return e.Cause
 }
 
-// NewDEKWrappingError creates a DragonError for a DEK wrapping failure.
-func NewDEKWrappingError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDEKWrappingError creates a QBError for a DEK wrapping failure.
+func NewDEKWrappingError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrEncryption,
 		Op:   op,
 		Err:  &DEKWrappingError{Cause: cause},
@@ -607,9 +607,9 @@ func (e *NoPublicComponentError) Error() string {
 	return "key has no public component"
 }
 
-// NewNoPublicComponentError creates a DragonError for a missing public component.
-func NewNoPublicComponentError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewNoPublicComponentError creates a QBError for a missing public component.
+func NewNoPublicComponentError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &NoPublicComponentError{},
@@ -631,9 +631,9 @@ func (e *PublicKeyMarshalError) Unwrap() error {
 	return e.Cause
 }
 
-// NewPublicKeyMarshalError creates a DragonError for a public key marshaling failure.
-func NewPublicKeyMarshalError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewPublicKeyMarshalError creates a QBError for a public key marshaling failure.
+func NewPublicKeyMarshalError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &PublicKeyMarshalError{Cause: cause},
@@ -652,9 +652,9 @@ func (e *CacheLimitExceededError) Error() string {
 	return e.LimitType + ": " + e.Value + " exceeds " + e.Limit
 }
 
-// NewCacheLimitExceededError creates a DragonError for a cache limit violation.
-func NewCacheLimitExceededError(op string, sentinel error, limitType, value, limit string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewCacheLimitExceededError creates a QBError for a cache limit violation.
+func NewCacheLimitExceededError(op string, sentinel error, limitType, value, limit string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &CacheLimitExceededError{LimitType: limitType, Value: value, Limit: limit},
@@ -676,9 +676,9 @@ func (e *CacheCloseError) Unwrap() error {
 	return e.Cause
 }
 
-// NewCacheCloseError creates a DragonError for a cache close failure.
-func NewCacheCloseError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewCacheCloseError creates a QBError for a cache close failure.
+func NewCacheCloseError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &CacheCloseError{Cause: cause},
@@ -695,9 +695,9 @@ func (e *UnsupportedHashAlgorithmError) Error() string {
 	return "unsupported hash algorithm: " + e.Algorithm
 }
 
-// NewUnsupportedHashAlgorithmError creates a DragonError for an unsupported hash algorithm.
-func NewUnsupportedHashAlgorithmError(op, algorithm string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewUnsupportedHashAlgorithmError creates a QBError for an unsupported hash algorithm.
+func NewUnsupportedHashAlgorithmError(op, algorithm string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &UnsupportedHashAlgorithmError{Algorithm: algorithm},
@@ -719,9 +719,9 @@ func (e *DEKDecryptionError) Unwrap() error {
 	return e.Cause
 }
 
-// NewDEKDecryptionError creates a DragonError for a DEK decryption failure.
-func NewDEKDecryptionError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDEKDecryptionError creates a QBError for a DEK decryption failure.
+func NewDEKDecryptionError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrDecryption,
 		Op:   op,
 		Err:  &DEKDecryptionError{Cause: cause},
@@ -743,9 +743,9 @@ func (e *KeyRotationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewKeyRotationError creates a DragonError for a key rotation failure.
-func NewKeyRotationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKeyRotationError creates a QBError for a key rotation failure.
+func NewKeyRotationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &KeyRotationError{Cause: cause},
@@ -768,9 +768,9 @@ func (e *InitializationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewInitializationError creates a DragonError for an initialization failure.
-func NewInitializationError(op, component string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewInitializationError creates a QBError for an initialization failure.
+func NewInitializationError(op, component string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &InitializationError{Component: component, Cause: cause},
@@ -793,9 +793,9 @@ func (e *ComponentCreationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewComponentCreationError creates a DragonError for a component creation failure.
-func NewComponentCreationError(op, component string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewComponentCreationError creates a QBError for a component creation failure.
+func NewComponentCreationError(op, component string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &ComponentCreationError{Component: component, Cause: cause},
@@ -817,9 +817,9 @@ func (e *RandomKeyGenerationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewRandomKeyGenerationError creates a DragonError for a random key generation failure.
-func NewRandomKeyGenerationError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewRandomKeyGenerationError creates a QBError for a random key generation failure.
+func NewRandomKeyGenerationError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &RandomKeyGenerationError{Cause: cause},

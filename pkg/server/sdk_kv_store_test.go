@@ -43,10 +43,10 @@ func TestSDKKVStore_PutGetRoundTrip(t *testing.T) {
 		assert.Equal(t, []byte("sdk-value"), val)
 	})
 
-	t.Run("get missing key returns DragonError ErrNotFound", func(t *testing.T) {
+	t.Run("get missing key returns QBError ErrNotFound", func(t *testing.T) {
 		_, err := store.Get(ctx, "no-such-key")
 		require.Error(t, err)
-		var de *dberrors.DragonError
+		var de *dberrors.QBError
 		assert.ErrorAs(t, err, &de)
 		assert.Equal(t, dberrors.ErrNotFound, de.Code)
 	})

@@ -298,14 +298,14 @@ func TestMemoryKVStore_ScanCallbackError(t *testing.T) {
 	})
 }
 
-func TestMemoryKVStore_GetNotFound_DragonError(t *testing.T) {
+func TestMemoryKVStore_GetNotFound_QBError(t *testing.T) {
 	store := NewMemoryKVStore()
 	ctx := context.Background()
 
-	t.Run("returns DragonError with ErrNotFound code", func(t *testing.T) {
+	t.Run("returns QBError with ErrNotFound code", func(t *testing.T) {
 		_, err := store.Get(ctx, "no-key")
 		require.Error(t, err)
-		var de *dberrors.DragonError
+		var de *dberrors.QBError
 		require.True(t, errors.As(err, &de))
 		assert.Equal(t, dberrors.ErrNotFound, de.Code)
 		assert.Equal(t, "kv.get", de.Op)

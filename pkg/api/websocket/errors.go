@@ -142,9 +142,9 @@ func (e *InvalidMessageError) Error() string {
 	return "invalid message: " + e.Reason
 }
 
-// NewSubprotocolNotSupportedError creates a new DragonError for unsupported subprotocol.
-func NewSubprotocolNotSupportedError(op, requested string, supported []string) *errors.DragonError {
-	return &errors.DragonError{
+// NewSubprotocolNotSupportedError creates a new QBError for unsupported subprotocol.
+func NewSubprotocolNotSupportedError(op, requested string, supported []string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeSubprotocolNotSupported,
 		Op:   op,
 		Err: &SubprotocolNotSupportedError{
@@ -158,9 +158,9 @@ func NewSubprotocolNotSupportedError(op, requested string, supported []string) *
 	}
 }
 
-// NewUpgradeFailedError creates a new DragonError for upgrade failure.
-func NewUpgradeFailedError(op, cause string) *errors.DragonError {
-	return &errors.DragonError{
+// NewUpgradeFailedError creates a new QBError for upgrade failure.
+func NewUpgradeFailedError(op, cause string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeUpgradeFailed,
 		Op:   op,
 		Err: &UpgradeFailedError{
@@ -172,9 +172,9 @@ func NewUpgradeFailedError(op, cause string) *errors.DragonError {
 	}
 }
 
-// NewAuthenticationFailedError creates a new DragonError for auth failure.
-func NewAuthenticationFailedError(op, reason string) *errors.DragonError {
-	return &errors.DragonError{
+// NewAuthenticationFailedError creates a new QBError for auth failure.
+func NewAuthenticationFailedError(op, reason string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeAuthenticationFailed,
 		Op:   op,
 		Err: &AuthenticationFailedError{
@@ -186,9 +186,9 @@ func NewAuthenticationFailedError(op, reason string) *errors.DragonError {
 	}
 }
 
-// NewSessionNotFoundError creates a new DragonError for session not found.
-func NewSessionNotFoundError(op, sessionID string) *errors.DragonError {
-	return &errors.DragonError{
+// NewSessionNotFoundError creates a new QBError for session not found.
+func NewSessionNotFoundError(op, sessionID string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeSessionNotFound,
 		Op:   op,
 		Err: &SessionNotFoundError{
@@ -200,9 +200,9 @@ func NewSessionNotFoundError(op, sessionID string) *errors.DragonError {
 	}
 }
 
-// NewSessionClosedError creates a new DragonError for closed session.
-func NewSessionClosedError(op, sessionID string) *errors.DragonError {
-	return &errors.DragonError{
+// NewSessionClosedError creates a new QBError for closed session.
+func NewSessionClosedError(op, sessionID string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeSessionClosed,
 		Op:   op,
 		Err: &SessionClosedError{
@@ -214,9 +214,9 @@ func NewSessionClosedError(op, sessionID string) *errors.DragonError {
 	}
 }
 
-// NewMessageTooLargeError creates a new DragonError for oversized message.
-func NewMessageTooLargeError(op string, size, maxSize int64) *errors.DragonError {
-	return &errors.DragonError{
+// NewMessageTooLargeError creates a new QBError for oversized message.
+func NewMessageTooLargeError(op string, size, maxSize int64) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeMessageTooLarge,
 		Op:   op,
 		Err: &MessageTooLargeError{
@@ -230,9 +230,9 @@ func NewMessageTooLargeError(op string, size, maxSize int64) *errors.DragonError
 	}
 }
 
-// NewWriteTimeoutError creates a new DragonError for write timeout.
-func NewWriteTimeoutError(op, sessionID string) *errors.DragonError {
-	return &errors.DragonError{
+// NewWriteTimeoutError creates a new QBError for write timeout.
+func NewWriteTimeoutError(op, sessionID string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeWriteTimeout,
 		Op:   op,
 		Err: &WriteTimeoutError{
@@ -244,9 +244,9 @@ func NewWriteTimeoutError(op, sessionID string) *errors.DragonError {
 	}
 }
 
-// NewReadTimeoutError creates a new DragonError for read timeout.
-func NewReadTimeoutError(op, sessionID string) *errors.DragonError {
-	return &errors.DragonError{
+// NewReadTimeoutError creates a new QBError for read timeout.
+func NewReadTimeoutError(op, sessionID string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeReadTimeout,
 		Op:   op,
 		Err: &ReadTimeoutError{
@@ -258,18 +258,18 @@ func NewReadTimeoutError(op, sessionID string) *errors.DragonError {
 	}
 }
 
-// NewServerClosedError creates a new DragonError for server closed.
-func NewServerClosedError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewServerClosedError creates a new QBError for server closed.
+func NewServerClosedError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeServerClosed,
 		Op:   op,
 		Err:  &ServerClosedError{},
 	}
 }
 
-// NewInvalidMessageError creates a new DragonError for invalid message.
-func NewInvalidMessageError(op, reason string) *errors.DragonError {
-	return &errors.DragonError{
+// NewInvalidMessageError creates a new QBError for invalid message.
+func NewInvalidMessageError(op, reason string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeInvalidMessage,
 		Op:   op,
 		Err: &InvalidMessageError{
@@ -290,7 +290,7 @@ func IsSubprotocolNotSupported(err error) bool {
 	if stderrors.As(err, &sns) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeSubprotocolNotSupported
 	}
@@ -306,7 +306,7 @@ func IsUpgradeFailed(err error) bool {
 	if stderrors.As(err, &uf) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeUpgradeFailed
 	}
@@ -322,7 +322,7 @@ func IsAuthenticationFailed(err error) bool {
 	if stderrors.As(err, &af) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeAuthenticationFailed
 	}
@@ -338,7 +338,7 @@ func IsSessionNotFound(err error) bool {
 	if stderrors.As(err, &snf) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeSessionNotFound
 	}
@@ -354,7 +354,7 @@ func IsSessionClosed(err error) bool {
 	if stderrors.As(err, &sc) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeSessionClosed
 	}
@@ -370,7 +370,7 @@ func IsMessageTooLarge(err error) bool {
 	if stderrors.As(err, &mtl) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeMessageTooLarge
 	}
@@ -386,7 +386,7 @@ func IsServerClosed(err error) bool {
 	if stderrors.As(err, &sc) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeServerClosed
 	}

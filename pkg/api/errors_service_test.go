@@ -29,19 +29,19 @@ func TestServiceSimpleErrors(t *testing.T) {
 	tests := []struct {
 		name     string
 		errFn    func() error
-		newFn    func() *dberrors.DragonError
+		newFn    func() *dberrors.QBError
 		wantMsg  string
 		wantCode dberrors.ErrorCode
 	}{
-		{"CrossTenantAccess", func() error { return &CrossTenantAccessError{} }, func() *dberrors.DragonError { return NewCrossTenantAccessError("secrets.get") }, "cross-tenant access denied", dberrors.ErrForbidden},
-		{"ChecksumMismatch", func() error { return &ChecksumMismatchError{} }, func() *dberrors.DragonError { return NewChecksumMismatchError("put") }, "client checksum does not match computed checksum", dberrors.ErrInvalidInput},
-		{"AlreadyArchived", func() error { return &AlreadyArchivedError{} }, func() *dberrors.DragonError { return NewAlreadyArchivedError("archive") }, "object is already archived", dberrors.ErrInvalidInput},
-		{"NotArchived", func() error { return &NotArchivedError{} }, func() *dberrors.DragonError { return NewNotArchivedError("unarchive") }, "object is not archived", dberrors.ErrInvalidInput},
-		{"NilRequest", func() error { return &NilRequestError{} }, func() *dberrors.DragonError { return NewNilRequestError("svc.put") }, "request is nil", dberrors.ErrInvalidInput},
-		{"DestinationExists", func() error { return &DestinationExistsError{} }, func() *dberrors.DragonError { return NewDestinationExistsError("copy") }, "destination key already exists", dberrors.ErrAlreadyExists},
-		{"InvalidEmailFormat", func() error { return &InvalidEmailFormatError{} }, func() *dberrors.DragonError { return NewInvalidEmailFormatError("user.create") }, "invalid email format", dberrors.ErrInvalidInput},
-		{"EntityTypeEmpty", func() error { return &EntityTypeEmptyError{} }, func() *dberrors.DragonError { return NewEntityTypeEmptyError("register") }, "entity type cannot be empty", dberrors.ErrInvalidInput},
-		{"DefaultTTLExceedsMax", func() error { return &DefaultTTLExceedsMaxError{} }, func() *dberrors.DragonError { return NewDefaultTTLExceedsMaxError("validate") }, "default TTL cannot exceed max TTL", dberrors.ErrInvalidInput},
+		{"CrossTenantAccess", func() error { return &CrossTenantAccessError{} }, func() *dberrors.QBError { return NewCrossTenantAccessError("secrets.get") }, "cross-tenant access denied", dberrors.ErrForbidden},
+		{"ChecksumMismatch", func() error { return &ChecksumMismatchError{} }, func() *dberrors.QBError { return NewChecksumMismatchError("put") }, "client checksum does not match computed checksum", dberrors.ErrInvalidInput},
+		{"AlreadyArchived", func() error { return &AlreadyArchivedError{} }, func() *dberrors.QBError { return NewAlreadyArchivedError("archive") }, "object is already archived", dberrors.ErrInvalidInput},
+		{"NotArchived", func() error { return &NotArchivedError{} }, func() *dberrors.QBError { return NewNotArchivedError("unarchive") }, "object is not archived", dberrors.ErrInvalidInput},
+		{"NilRequest", func() error { return &NilRequestError{} }, func() *dberrors.QBError { return NewNilRequestError("svc.put") }, "request is nil", dberrors.ErrInvalidInput},
+		{"DestinationExists", func() error { return &DestinationExistsError{} }, func() *dberrors.QBError { return NewDestinationExistsError("copy") }, "destination key already exists", dberrors.ErrAlreadyExists},
+		{"InvalidEmailFormat", func() error { return &InvalidEmailFormatError{} }, func() *dberrors.QBError { return NewInvalidEmailFormatError("user.create") }, "invalid email format", dberrors.ErrInvalidInput},
+		{"EntityTypeEmpty", func() error { return &EntityTypeEmptyError{} }, func() *dberrors.QBError { return NewEntityTypeEmptyError("register") }, "entity type cannot be empty", dberrors.ErrInvalidInput},
+		{"DefaultTTLExceedsMax", func() error { return &DefaultTTLExceedsMaxError{} }, func() *dberrors.QBError { return NewDefaultTTLExceedsMaxError("validate") }, "default TTL cannot exceed max TTL", dberrors.ErrInvalidInput},
 	}
 
 	for _, tt := range tests {
@@ -62,19 +62,19 @@ func TestServiceFieldErrors(t *testing.T) {
 	tests := []struct {
 		name    string
 		errFn   func() error
-		newFn   func() *dberrors.DragonError
+		newFn   func() *dberrors.QBError
 		wantMsg string
 	}{
-		{"AEADLimitExceeded", func() error { return &AEADLimitExceededError{KeyType: "DEK", ID: "k1"} }, func() *dberrors.DragonError { return NewAEADLimitExceededError("svc", "DEK", "k1") }, "AEAD safety limit exceeded for DEK k1: key rotation required"},
-		{"ObjectNotAvailable", func() error { return &ObjectNotAvailableError{Status: "deleted"} }, func() *dberrors.DragonError { return NewObjectNotAvailableError("svc", "deleted") }, "object not available (status: deleted)"},
-		{"InvalidPath", func() error { return &InvalidPathError{Message: "path contains //"} }, func() *dberrors.DragonError { return NewInvalidPathError("svc", "path contains //") }, "path contains //"},
-		{"WhitespaceField", func() error { return &WhitespaceFieldError{Field: "name"} }, func() *dberrors.DragonError { return NewWhitespaceFieldError("svc", "name") }, "name cannot be empty or whitespace"},
-		{"NotConfigured", func() error { return &NotConfiguredError{Resource: "backup"} }, func() *dberrors.DragonError { return NewNotConfiguredError("svc", "backup") }, "no backup configured"},
-		{"NoTargetSpecified", func() error { return &NoTargetSpecifiedError{Target: "backend"} }, func() *dberrors.DragonError { return NewNoTargetSpecifiedError("svc", "backend") }, "no backend specified"},
-		{"AlreadyClosed", func() error { return &AlreadyClosedError{Component: "registry"} }, func() *dberrors.DragonError { return NewAlreadyClosedError("svc", "registry") }, "registry already closed"},
-		{"MigrationTargetNotFound", func() error { return &MigrationTargetNotFoundError{Target: "s3"} }, func() *dberrors.DragonError { return NewMigrationTargetNotFoundError("migrate", "s3") }, "migration target not found: s3"},
-		{"GCOperationNotFound", func() error { return &GCOperationNotFoundError{OperationID: "gc-1"} }, func() *dberrors.DragonError { return NewGCOperationNotFoundError("gc", "gc-1") }, "GC operation not found: gc-1"},
-		{"SourceLocationNotFound", func() error { return &SourceLocationNotFoundError{Location: "us-east"} }, func() *dberrors.DragonError { return NewSourceLocationNotFoundError("catalog", "us-east") }, "source location not found in catalog: us-east"},
+		{"AEADLimitExceeded", func() error { return &AEADLimitExceededError{KeyType: "DEK", ID: "k1"} }, func() *dberrors.QBError { return NewAEADLimitExceededError("svc", "DEK", "k1") }, "AEAD safety limit exceeded for DEK k1: key rotation required"},
+		{"ObjectNotAvailable", func() error { return &ObjectNotAvailableError{Status: "deleted"} }, func() *dberrors.QBError { return NewObjectNotAvailableError("svc", "deleted") }, "object not available (status: deleted)"},
+		{"InvalidPath", func() error { return &InvalidPathError{Message: "path contains //"} }, func() *dberrors.QBError { return NewInvalidPathError("svc", "path contains //") }, "path contains //"},
+		{"WhitespaceField", func() error { return &WhitespaceFieldError{Field: "name"} }, func() *dberrors.QBError { return NewWhitespaceFieldError("svc", "name") }, "name cannot be empty or whitespace"},
+		{"NotConfigured", func() error { return &NotConfiguredError{Resource: "backup"} }, func() *dberrors.QBError { return NewNotConfiguredError("svc", "backup") }, "no backup configured"},
+		{"NoTargetSpecified", func() error { return &NoTargetSpecifiedError{Target: "backend"} }, func() *dberrors.QBError { return NewNoTargetSpecifiedError("svc", "backend") }, "no backend specified"},
+		{"AlreadyClosed", func() error { return &AlreadyClosedError{Component: "registry"} }, func() *dberrors.QBError { return NewAlreadyClosedError("svc", "registry") }, "registry already closed"},
+		{"MigrationTargetNotFound", func() error { return &MigrationTargetNotFoundError{Target: "s3"} }, func() *dberrors.QBError { return NewMigrationTargetNotFoundError("migrate", "s3") }, "migration target not found: s3"},
+		{"GCOperationNotFound", func() error { return &GCOperationNotFoundError{OperationID: "gc-1"} }, func() *dberrors.QBError { return NewGCOperationNotFoundError("gc", "gc-1") }, "GC operation not found: gc-1"},
+		{"SourceLocationNotFound", func() error { return &SourceLocationNotFoundError{Location: "us-east"} }, func() *dberrors.QBError { return NewSourceLocationNotFoundError("catalog", "us-east") }, "source location not found in catalog: us-east"},
 	}
 
 	for _, tt := range tests {
@@ -263,49 +263,49 @@ func TestServiceCauseErrors(t *testing.T) {
 	tests := []struct {
 		name     string
 		errFn    func() error
-		newFn    func() *dberrors.DragonError
+		newFn    func() *dberrors.QBError
 		wantMsg  string
 		wantCode dberrors.ErrorCode
 	}{
 		{
 			"BackendUnavailable",
 			func() error { return &BackendUnavailableError{Cause: cause} },
-			func() *dberrors.DragonError { return NewBackendUnavailableError("svc", cause) },
+			func() *dberrors.QBError { return NewBackendUnavailableError("svc", cause) },
 			"backend not available: underlying",
 			dberrors.ErrUnavailable,
 		},
 		{
 			"GeneratorConfig",
 			func() error { return &GeneratorConfigError{Cause: cause} },
-			func() *dberrors.DragonError { return NewGeneratorConfigError("svc", cause) },
+			func() *dberrors.QBError { return NewGeneratorConfigError("svc", cause) },
 			"invalid generator config: underlying",
 			dberrors.ErrInvalidInput,
 		},
 		{
 			"NotFoundWithCause",
 			func() error { return &NotFoundWithCauseError{Resource: "secret", Cause: cause} },
-			func() *dberrors.DragonError { return NewNotFoundWithCauseError("svc", "secret", cause) },
+			func() *dberrors.QBError { return NewNotFoundWithCauseError("svc", "secret", cause) },
 			"secret not found: underlying",
 			dberrors.ErrNotFound,
 		},
 		{
 			"NoAvailableBackend",
 			func() error { return &NoAvailableBackendError{Cause: cause} },
-			func() *dberrors.DragonError { return NewNoAvailableBackendError("svc", cause) },
+			func() *dberrors.QBError { return NewNoAvailableBackendError("svc", cause) },
 			"no available backend for object: underlying",
 			dberrors.ErrUnavailable,
 		},
 		{
 			"SourceBackendUnavailable",
 			func() error { return &SourceBackendUnavailableError{Cause: cause} },
-			func() *dberrors.DragonError { return NewSourceBackendUnavailableError("repair", cause) },
+			func() *dberrors.QBError { return NewSourceBackendUnavailableError("repair", cause) },
 			"source backend unavailable: underlying",
 			dberrors.ErrStorage,
 		},
 		{
 			"GeneratorNotFound",
 			func() error { return &GeneratorNotFoundError{Cause: cause} },
-			func() *dberrors.DragonError { return NewGeneratorNotFoundError("cred", cause) },
+			func() *dberrors.QBError { return NewGeneratorNotFoundError("cred", cause) },
 			"generator not found: underlying",
 			dberrors.ErrNotFound,
 		},

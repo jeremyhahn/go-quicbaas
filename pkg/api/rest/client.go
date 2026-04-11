@@ -1476,7 +1476,7 @@ func (c *RESTClient) doRequest(ctx context.Context, method, path string, reqBody
 	return nil
 }
 
-// convertErrorResponse converts REST error to DragonError.
+// convertErrorResponse converts REST error to QBError.
 func (c *RESTClient) convertErrorResponse(errResp *ErrorResponse, statusCode int) error {
 	var code errors.ErrorCode
 

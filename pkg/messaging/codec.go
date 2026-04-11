@@ -97,7 +97,7 @@ func NewCodecResolver(log *logger.Logger, opts ...CodecResolverOption) *CodecRes
 // Returns an error if the codec is nil or has an empty name.
 func (r *CodecResolver) RegisterCodec(c CodecInterface) error {
 	if c == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "CodecResolver.RegisterCodec",
 			Err:  ErrNilCodec,
@@ -106,7 +106,7 @@ func (r *CodecResolver) RegisterCodec(c CodecInterface) error {
 
 	name := c.Name()
 	if name == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "CodecResolver.RegisterCodec",
 			Err:  ErrEmptyCodecName,
@@ -126,7 +126,7 @@ func (r *CodecResolver) RegisterCodec(c CodecInterface) error {
 // Returns an error if the codec is not registered.
 func (r *CodecResolver) GetCodec(name string) (CodecInterface, error) {
 	if name == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "CodecResolver.GetCodec",
 			Err:  ErrEmptyCodecName,
@@ -140,7 +140,7 @@ func (r *CodecResolver) GetCodec(name string) (CodecInterface, error) {
 
 	c, ok := val.(CodecInterface)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CodecResolver.GetCodec",
 			Err:  &CodecTypeAssertionError{Name: name},
@@ -183,7 +183,7 @@ func (r *CodecResolver) ResolveCodec(messageCodec, subscriptionCodec, channelCod
 	// Fall back to system default
 	defaultName, ok := r.defaultCodec.Load().(string)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CodecResolver.ResolveCodec",
 			Err:  &DefaultCodecNotFoundError{Name: "unknown"},
@@ -191,7 +191,7 @@ func (r *CodecResolver) ResolveCodec(messageCodec, subscriptionCodec, channelCod
 	}
 	c, err := r.GetCodec(defaultName)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CodecResolver.ResolveCodec",
 			Err:  &DefaultCodecNotFoundError{Name: defaultName},
@@ -207,7 +207,7 @@ func (r *CodecResolver) ResolveCodec(messageCodec, subscriptionCodec, channelCod
 // Returns an error only for invalid entity types.
 func (r *CodecResolver) DetectCodec(entity interface{}) (string, error) {
 	if entity == nil {
-		return "", &errors.DragonError{
+		return "", &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "CodecResolver.DetectCodec",
 			Err:  ErrNilEntity,
@@ -216,7 +216,7 @@ func (r *CodecResolver) DetectCodec(entity interface{}) (string, error) {
 
 	t := reflect.TypeOf(entity)
 	if t == nil {
-		return "", &errors.DragonError{
+		return "", &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "CodecResolver.DetectCodec",
 			Err:  ErrNilEntity,
@@ -254,7 +254,7 @@ func (r *CodecResolver) DetectCodec(entity interface{}) (string, error) {
 // If codecName is empty, the system default codec is used.
 func (r *CodecResolver) Encode(entity interface{}, codecName string) ([]byte, error) {
 	if entity == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "CodecResolver.Encode",
 			Err:  ErrNilEntity,
@@ -265,7 +265,7 @@ func (r *CodecResolver) Encode(entity interface{}, codecName string) ([]byte, er
 	if name == "" {
 		val, ok := r.defaultCodec.Load().(string)
 		if !ok {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "CodecResolver.Encode",
 				Err:  &DefaultCodecNotFoundError{Name: "unknown"},
@@ -281,7 +281,7 @@ func (r *CodecResolver) Encode(entity interface{}, codecName string) ([]byte, er
 
 	data, err := c.Encode(entity)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CodecResolver.Encode",
 			Err:  &EncodeError{Codec: name, Cause: err},
@@ -295,7 +295,7 @@ func (r *CodecResolver) Encode(entity interface{}, codecName string) ([]byte, er
 // If codecName is empty, the system default codec is used.
 func (r *CodecResolver) Decode(data []byte, entity interface{}, codecName string) error {
 	if len(data) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "CodecResolver.Decode",
 			Err:  ErrEmptyData,
@@ -303,7 +303,7 @@ func (r *CodecResolver) Decode(data []byte, entity interface{}, codecName string
 	}
 
 	if entity == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "CodecResolver.Decode",
 			Err:  ErrNilEntity,
@@ -314,7 +314,7 @@ func (r *CodecResolver) Decode(data []byte, entity interface{}, codecName string
 	if name == "" {
 		val, ok := r.defaultCodec.Load().(string)
 		if !ok {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "CodecResolver.Decode",
 				Err:  ErrNilCodecName,
@@ -329,7 +329,7 @@ func (r *CodecResolver) Decode(data []byte, entity interface{}, codecName string
 	}
 
 	if err := c.Decode(data, entity); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CodecResolver.Decode",
 			Err:  &DecodeError{Codec: name, Cause: err},
@@ -361,7 +361,7 @@ func (r *CodecResolver) DefaultCodecName() string {
 // Returns an error if the codec is not registered.
 func (r *CodecResolver) SetDefaultCodec(name string) error {
 	if name == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "CodecResolver.SetDefaultCodec",
 			Err:  ErrEmptyCodecName,
@@ -402,7 +402,7 @@ func (c *jsonPushCodec) Name() string {
 // Encode serializes an entity to JSON bytes.
 func (c *jsonPushCodec) Encode(entity interface{}) ([]byte, error) {
 	if entity == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "jsonPushCodec.Encode",
 			Err:  ErrNilEntity,
@@ -411,7 +411,7 @@ func (c *jsonPushCodec) Encode(entity interface{}) ([]byte, error) {
 
 	data, err := json.Marshal(entity)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "jsonPushCodec.Encode",
 			Err:  &EncodeError{Codec: CodecJSON, Cause: err},
@@ -424,7 +424,7 @@ func (c *jsonPushCodec) Encode(entity interface{}) ([]byte, error) {
 // Decode deserializes JSON bytes into an entity.
 func (c *jsonPushCodec) Decode(data []byte, entity interface{}) error {
 	if len(data) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "jsonPushCodec.Decode",
 			Err:  ErrEmptyData,
@@ -432,7 +432,7 @@ func (c *jsonPushCodec) Decode(data []byte, entity interface{}) error {
 	}
 
 	if entity == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "jsonPushCodec.Decode",
 			Err:  ErrNilEntity,
@@ -441,7 +441,7 @@ func (c *jsonPushCodec) Decode(data []byte, entity interface{}) error {
 
 	// Verify entity is a pointer
 	if reflect.TypeOf(entity).Kind() != reflect.Ptr {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "jsonPushCodec.Decode",
 			Err:  &NotPointerError{Type: reflect.TypeOf(entity).String()},
@@ -449,7 +449,7 @@ func (c *jsonPushCodec) Decode(data []byte, entity interface{}) error {
 	}
 
 	if err := json.Unmarshal(data, entity); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "jsonPushCodec.Decode",
 			Err:  &DecodeError{Codec: CodecJSON, Cause: err},
@@ -470,7 +470,7 @@ func (c *msgpackPushCodec) Name() string {
 // Encode serializes an entity to MessagePack bytes.
 func (c *msgpackPushCodec) Encode(entity interface{}) ([]byte, error) {
 	if entity == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "msgpackPushCodec.Encode",
 			Err:  ErrNilEntity,
@@ -481,7 +481,7 @@ func (c *msgpackPushCodec) Encode(entity interface{}) ([]byte, error) {
 	enc := codec.NewEncoderBytes(&buf, &codec.MsgpackHandle{})
 
 	if err := enc.Encode(entity); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "msgpackPushCodec.Encode",
 			Err:  &EncodeError{Codec: CodecMsgpack, Cause: err},
@@ -494,7 +494,7 @@ func (c *msgpackPushCodec) Encode(entity interface{}) ([]byte, error) {
 // Decode deserializes MessagePack bytes into an entity.
 func (c *msgpackPushCodec) Decode(data []byte, entity interface{}) error {
 	if len(data) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "msgpackPushCodec.Decode",
 			Err:  ErrEmptyData,
@@ -502,7 +502,7 @@ func (c *msgpackPushCodec) Decode(data []byte, entity interface{}) error {
 	}
 
 	if entity == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "msgpackPushCodec.Decode",
 			Err:  ErrNilEntity,
@@ -511,7 +511,7 @@ func (c *msgpackPushCodec) Decode(data []byte, entity interface{}) error {
 
 	// Verify entity is a pointer
 	if reflect.TypeOf(entity).Kind() != reflect.Ptr {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "msgpackPushCodec.Decode",
 			Err:  &NotPointerError{Type: reflect.TypeOf(entity).String()},
@@ -521,7 +521,7 @@ func (c *msgpackPushCodec) Decode(data []byte, entity interface{}) error {
 	dec := codec.NewDecoderBytes(data, &codec.MsgpackHandle{})
 
 	if err := dec.Decode(entity); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "msgpackPushCodec.Decode",
 			Err:  &DecodeError{Codec: CodecMsgpack, Cause: err},

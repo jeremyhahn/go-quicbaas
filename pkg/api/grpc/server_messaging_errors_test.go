@@ -90,7 +90,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_not_found", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "GetChannel",
 			Err:  stderrors.New("not found"),
@@ -100,7 +100,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_already_exists", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrAlreadyExists,
 			Op:   "CreateChannel",
 			Err:  stderrors.New("exists"),
@@ -110,7 +110,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_invalid_input", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Subscribe",
 			Err:  stderrors.New("invalid"),
@@ -120,7 +120,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_unauthorized", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrUnauthorized,
 			Op:   "Subscribe",
 			Err:  stderrors.New("unauthorized"),
@@ -130,7 +130,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_forbidden", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrForbidden,
 			Op:   "DeleteChannel",
 			Err:  stderrors.New("forbidden"),
@@ -140,7 +140,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_timeout", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Publish",
 			Err:  stderrors.New("timeout"),
@@ -150,7 +150,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_canceled", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrCanceled,
 			Op:   "Subscribe",
 			Err:  stderrors.New("canceled"),
@@ -160,7 +160,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_unavailable", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "Connect",
 			Err:  stderrors.New("unavailable"),
@@ -170,7 +170,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_resource_exhausted", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrResourceExhausted,
 			Op:   "Publish",
 			Err:  stderrors.New("exhausted"),
@@ -180,7 +180,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_internal", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Process",
 			Err:  stderrors.New("internal error"),
@@ -190,7 +190,7 @@ func TestConvertMessagingError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_unknown_code_returns_internal", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrorCode(9999),
 			Op:   "Unknown",
 			Err:  stderrors.New("unknown error code"),

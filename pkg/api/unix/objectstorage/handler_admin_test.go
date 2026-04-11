@@ -138,9 +138,9 @@ func TestHandleAdminCreateBackendNoAdminService(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpAdminCreateBackend, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleAdminUpdateBackend(t *testing.T) {
@@ -174,9 +174,9 @@ func TestHandleAdminUpdateBackendNoAdminService(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpAdminUpdateBackend, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleAdminDeleteBackend(t *testing.T) {
@@ -211,9 +211,9 @@ func TestHandleAdminDeleteBackendNoAdminService(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpAdminDeleteBackend, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleAdminSetBackendStatus(t *testing.T) {
@@ -249,9 +249,9 @@ func TestHandleAdminSetBackendStatusNoAdminService(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpAdminSetBackendStatus, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleAdminGetStorageStats(t *testing.T) {
@@ -284,9 +284,9 @@ func TestHandleAdminGetStorageStatsNoAdminService(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpAdminGetStorageStats, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleAdminRunGC(t *testing.T) {
@@ -319,9 +319,9 @@ func TestHandleAdminRunGCNoAdminService(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpAdminRunGC, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleAdminGetGCProgress(t *testing.T) {
@@ -355,9 +355,9 @@ func TestHandleAdminGetGCProgressNoAdminService(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpAdminGetGCProgress, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleAdminRepairObject(t *testing.T) {
@@ -392,9 +392,9 @@ func TestHandleAdminRepairObjectNoAdminService(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpAdminRepairObject, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleAdminCompactBackend(t *testing.T) {
@@ -429,9 +429,9 @@ func TestHandleAdminCompactBackendNoAdminService(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpAdminCompactBackend, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandlerWithAdminService(t *testing.T) {

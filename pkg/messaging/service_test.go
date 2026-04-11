@@ -278,7 +278,7 @@ func TestPushService_CreateChannel(t *testing.T) {
 		if err == nil {
 			t.Error("expected error for duplicate channel")
 		}
-		// The error can be either a ChannelExistsError or an ErrAlreadyExists DragonError
+		// The error can be either a ChannelExistsError or an ErrAlreadyExists QBError
 		// Both indicate the channel already exists
 		errStr := err.Error()
 		if errStr == "" {
@@ -342,7 +342,7 @@ func TestPushService_DeleteChannel(t *testing.T) {
 		if err == nil {
 			t.Error("expected error for non-existent channel")
 		}
-		// Hub may return DragonError or ChannelNotFoundError depending on implementation
+		// Hub may return QBError or ChannelNotFoundError depending on implementation
 		if !IsChannelNotFound(err) && !strings.Contains(err.Error(), "not found") {
 			t.Errorf("expected error about channel not found, got: %v", err)
 		}

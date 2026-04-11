@@ -332,12 +332,12 @@ var IsDAONotFound = xkmssdk.QRDBIsDAONotFound
 // Database Error Re-exports
 // =============================================================================
 //
-// DatabaseError replaces the legacy DragonError name from go-qrdb, providing
+// DatabaseError replaces the legacy QBError name from go-qrdb, providing
 // a project-neutral error type for database operations.
 
 // DatabaseError is a structured database error with error code, operation
 // context, and optional retry semantics.
-type DatabaseError = xkmssdk.QRDBDragonError
+type DatabaseError = xkmssdk.QRDBError
 
 // DatabaseErrorCode represents a database error classification.
 type DatabaseErrorCode = xkmssdk.QRDBErrorCode

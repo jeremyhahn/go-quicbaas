@@ -160,7 +160,7 @@ func TestTimeSeriesService_WritePoint_StorageError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 	mockStorage.AssertExpectations(t)
@@ -182,7 +182,7 @@ func TestTimeSeriesService_WritePoint_EmptyMetric_WithStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 	// Storage should not be called when validation fails
@@ -200,7 +200,7 @@ func TestTimeSeriesService_WritePoint_NilRequest_WithStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 	mockStorage.AssertNotCalled(t, "WritePoint")
@@ -278,7 +278,7 @@ func TestTimeSeriesService_WriteBatch_StorageError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 	mockStorage.AssertExpectations(t)
@@ -303,7 +303,7 @@ func TestTimeSeriesService_WriteBatch_NilPointInBatch(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 	assert.Contains(t, dErr.Error(), "item 1")
@@ -328,7 +328,7 @@ func TestTimeSeriesService_WriteBatch_EmptyMetricInBatch(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 	assert.Contains(t, dErr.Error(), "item 1")
@@ -346,7 +346,7 @@ func TestTimeSeriesService_WriteBatch_NilRequest_WithStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 	mockStorage.AssertNotCalled(t, "WriteBatch")
@@ -409,7 +409,7 @@ func TestTimeSeriesService_TSQuery_StorageError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 	mockStorage.AssertExpectations(t)
@@ -426,7 +426,7 @@ func TestTimeSeriesService_TSQuery_NilRequest_WithStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 	mockStorage.AssertNotCalled(t, "QueryRich")
@@ -450,7 +450,7 @@ func TestTimeSeriesService_TSQuery_EmptyMetric_WithStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 	mockStorage.AssertNotCalled(t, "QueryRich")
@@ -500,7 +500,7 @@ func TestTimeSeriesService_DeleteSeries_StorageError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 	mockStorage.AssertExpectations(t)

@@ -482,7 +482,7 @@ func TestLocalKMSResolver_Resolve_LargeSecret(t *testing.T) {
 	}
 }
 
-func TestLocalKMSResolver_Resolve_DragonErrorWrapping(t *testing.T) {
+func TestLocalKMSResolver_Resolve_QBErrorWrapping(t *testing.T) {
 	client := newMockSecretsClient() // No secrets, will return not found
 	resolver := NewLocalKMSResolver(client)
 
@@ -494,27 +494,27 @@ func TestLocalKMSResolver_Resolve_DragonErrorWrapping(t *testing.T) {
 		t.Fatal("Expected error, got nil")
 	}
 
-	// Verify the error is wrapped in a DragonError
-	var dragonErr *dberrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Fatalf("Expected DragonError, got %T", err)
+	// Verify the error is wrapped in a QBError
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Fatalf("Expected QBError, got %T", err)
 	}
 
 	// Verify error code
-	if dragonErr.Code != dberrors.ErrNotFound {
-		t.Errorf("Error code = %v, want %v", dragonErr.Code, dberrors.ErrNotFound)
+	if qbErr.Code != dberrors.ErrNotFound {
+		t.Errorf("Error code = %v, want %v", qbErr.Code, dberrors.ErrNotFound)
 	}
 
 	// Verify operation is set
-	if dragonErr.Op == "" {
+	if qbErr.Op == "" {
 		t.Error("Operation is empty")
 	}
 
 	// Verify context contains path
-	if dragonErr.Context == nil {
+	if qbErr.Context == nil {
 		t.Error("Context is nil")
 	}
-	if path, ok := dragonErr.Context["path"]; !ok || path != "missing/secret" {
+	if path, ok := qbErr.Context["path"]; !ok || path != "missing/secret" {
 		t.Errorf("Context path = %v, want 'missing/secret'", path)
 	}
 }
@@ -531,21 +531,21 @@ func TestLocalKMSResolver_Resolve_InvalidURIErrorDetails(t *testing.T) {
 		t.Fatal("Expected error, got nil")
 	}
 
-	// Verify the error is wrapped in a DragonError
-	var dragonErr *dberrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Fatalf("Expected DragonError, got %T", err)
+	// Verify the error is wrapped in a QBError
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Fatalf("Expected QBError, got %T", err)
 	}
 
 	// Verify error code is InvalidInput
-	if dragonErr.Code != dberrors.ErrInvalidInput {
-		t.Errorf("Error code = %v, want %v", dragonErr.Code, dberrors.ErrInvalidInput)
+	if qbErr.Code != dberrors.ErrInvalidInput {
+		t.Errorf("Error code = %v, want %v", qbErr.Code, dberrors.ErrInvalidInput)
 	}
 
 	// Verify the underlying error is InvalidSecretURIError
 	var invalidURI *InvalidSecretURIError
 	if !errors.As(err, &invalidURI) {
-		t.Fatalf("Expected InvalidSecretURIError in chain, got %T", dragonErr.Err)
+		t.Fatalf("Expected InvalidSecretURIError in chain, got %T", qbErr.Err)
 	}
 
 	if invalidURI.URI != raw {
@@ -566,12 +566,12 @@ func TestLocalKMSResolver_UsesCorrectProvider(t *testing.T) {
 	}
 
 	// Verify the provider is set correctly in the error
-	var dragonErr *dberrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Fatalf("Expected DragonError, got %T", err)
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Fatalf("Expected QBError, got %T", err)
 	}
 
-	if provider, ok := dragonErr.Context["provider"]; ok {
+	if provider, ok := qbErr.Context["provider"]; ok {
 		if provider != "local_kms" {
 			t.Errorf("Provider = %v, want 'local_kms'", provider)
 		}

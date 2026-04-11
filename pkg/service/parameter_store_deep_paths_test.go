@@ -41,9 +41,9 @@ func TestSetParameters_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestSetParameters_EmptyParameters(t *testing.T) {
@@ -176,9 +176,9 @@ func TestListParameters_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestListParameters_Success_PathsOnly(t *testing.T) {
@@ -323,9 +323,9 @@ func TestSearchByTags_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestSearchByTags_EmptyTags(t *testing.T) {
@@ -340,9 +340,9 @@ func TestSearchByTags_EmptyTags(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestSearchByTags_Success_PathsOnly(t *testing.T) {

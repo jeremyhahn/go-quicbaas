@@ -2680,9 +2680,9 @@ func TestList_RaftError_WithMetrics(t *testing.T) {
 	stream := make(chan *ListResponse, 1)
 	err := svc.kvService.List(context.Background(), &ListRequest{EntityType: "user"}, stream)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrRaft, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestDelete_RaftError_WithMetrics(t *testing.T) {
@@ -2707,9 +2707,9 @@ func TestDelete_RaftError_WithMetrics(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrRaft, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestListEntityTypes_AuthFailure_WithMetrics(t *testing.T) {
@@ -2769,9 +2769,9 @@ func TestListEntityTypes_RaftError_WithMetrics(t *testing.T) {
 	resp, err := svc.kvService.ListEntityTypes(context.Background(), &ListEntityTypesRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrRaft, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestBatchPut_BuildKeyError_WithMetrics(t *testing.T) {
@@ -2830,9 +2830,9 @@ func TestAggregate_WithMetrics_RaftError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrRaft, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestAggregate_WithMetrics_InvalidInput(t *testing.T) {
@@ -2896,9 +2896,9 @@ func TestTimeSeriesQuery_WithMetrics_RaftError(t *testing.T) {
 		EndTime:    100,
 	}, stream)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrRaft, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestTimeSeriesQuery_WithMetrics_InvalidInput(t *testing.T) {
@@ -2955,9 +2955,9 @@ func TestCreateRole_NilTypedRoleManager(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestDeleteRole_NilTypedRoleManager(t *testing.T) {
@@ -2975,9 +2975,9 @@ func TestDeleteRole_NilTypedRoleManager(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestListRoles_NilTypedRoleManager(t *testing.T) {
@@ -2993,9 +2993,9 @@ func TestListRoles_NilTypedRoleManager(t *testing.T) {
 	resp, err := svc.rbacService.ListRoles(context.Background(), &AuthListRolesRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestDeleteUser_NilTypedUserStore(t *testing.T) {
@@ -3013,9 +3013,9 @@ func TestDeleteUser_NilTypedUserStore(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestUpdateCacheConfig_NonCacheManagerType(t *testing.T) {
@@ -3033,9 +3033,9 @@ func TestUpdateCacheConfig_NonCacheManagerType(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestSetIAMProvider_NoopStub(t *testing.T) {
@@ -3094,9 +3094,9 @@ func TestWatch_NilRequest_WithMetrics(t *testing.T) {
 	stream := make(chan *WatchResponse, 1)
 	_, err := svc.kvService.Watch(context.Background(), nil, stream)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWatch_EmptyKey_WithMetrics(t *testing.T) {
@@ -3113,9 +3113,9 @@ func TestWatch_EmptyKey_WithMetrics(t *testing.T) {
 	stream := make(chan *WatchResponse, 1)
 	_, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: nil}, stream)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWatch_NilStream_WithMetrics(t *testing.T) {
@@ -3131,9 +3131,9 @@ func TestWatch_NilStream_WithMetrics(t *testing.T) {
 
 	_, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: []byte("test")}, nil)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func Test81_NewQuicBaaS_InvalidStorageType(t *testing.T) {
@@ -3270,9 +3270,9 @@ func Test81_AuthService_Login_NilAuthManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 	assert.Contains(t, err.Error(), "authentication service not configured")
 }
 
@@ -3291,9 +3291,9 @@ func Test81_AuthService_Login_AuthenticateError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func Test81_AuthService_Login_InvalidTokenType(t *testing.T) {
@@ -3311,9 +3311,9 @@ func Test81_AuthService_Login_InvalidTokenType(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	assert.Contains(t, err.Error(), "token must be *auth.Token")
 }
 
@@ -3395,9 +3395,9 @@ func Test81_AuthService_RefreshToken_NilAuthManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func Test81_AuthService_RefreshToken_RefreshError(t *testing.T) {
@@ -3414,9 +3414,9 @@ func Test81_AuthService_RefreshToken_RefreshError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func Test81_AuthService_RefreshToken_InvalidTokenType(t *testing.T) {
@@ -3433,9 +3433,9 @@ func Test81_AuthService_RefreshToken_InvalidTokenType(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	assert.Contains(t, err.Error(), "token must be *auth.Token")
 }
 
@@ -3469,9 +3469,9 @@ func Test81_AuthService_ValidateToken_NilAuthManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func Test81_AuthService_ValidateToken_ValidationError(t *testing.T) {
@@ -3488,9 +3488,9 @@ func Test81_AuthService_ValidateToken_ValidationError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func Test81_AuthService_ValidateToken_InvalidResultType(t *testing.T) {
@@ -3507,9 +3507,9 @@ func Test81_AuthService_ValidateToken_InvalidResultType(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	assert.Contains(t, err.Error(), "validation result must be *auth.TokenValidationResult")
 }
 
@@ -3546,9 +3546,9 @@ func Test81_ClusterService_RebalanceCluster_NilRequestPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 }
 
@@ -3566,9 +3566,9 @@ func Test81_BatchService_BatchPut_NilRequestPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 }
 
@@ -3588,9 +3588,9 @@ func Test81_BatchService_BatchPut_EmptyRequests(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "batch cannot be empty")
 }
 
@@ -3608,9 +3608,9 @@ func Test81_BatchService_BatchGet_NilRequestPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 }
 
@@ -3630,9 +3630,9 @@ func Test81_BatchService_BatchGet_EmptyRequests(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "batch cannot be empty")
 }
 
@@ -3650,9 +3650,9 @@ func Test81_BatchService_BatchDelete_NilRequestPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 }
 
@@ -3672,9 +3672,9 @@ func Test81_BatchService_BatchDelete_EmptyRequests(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "batch cannot be empty")
 }
 
@@ -3688,9 +3688,9 @@ func Test81_KVService_Watch_NilRequestPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, int64(0), watchID)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 }
 
@@ -3704,9 +3704,9 @@ func Test81_KVService_Watch_EmptyKeyPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, int64(0), watchID)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "key is required")
 }
 
@@ -3719,9 +3719,9 @@ func Test81_KVService_Watch_NilStreamPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, int64(0), watchID)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	assert.Contains(t, err.Error(), "stream channel is required")
 }
 
@@ -3804,7 +3804,7 @@ func Test82_QuicBaaS_CheckAuth_NoTokenInContext(t *testing.T) {
 
 	err := db.checkAuth(context.Background(), "read")
 	require.Error(t, err)
-	var dErr *errors.DragonError
+	var dErr *errors.QBError
 	require.ErrorAs(t, err, &dErr)
 	assert.Equal(t, errors.ErrUnauthorized, dErr.Code)
 }
@@ -4133,9 +4133,9 @@ func TestWatch_NilRequest(t *testing.T) {
 	stream := make(chan *WatchResponse, 1)
 	_, err := svc.kvService.Watch(context.Background(), nil, stream)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWatch_EmptyKey(t *testing.T) {
@@ -4150,9 +4150,9 @@ func TestWatch_EmptyKey(t *testing.T) {
 	stream := make(chan *WatchResponse, 1)
 	_, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: nil}, stream)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWatch_NilStream(t *testing.T) {
@@ -4166,9 +4166,9 @@ func TestWatch_NilStream(t *testing.T) {
 
 	_, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: []byte("test-key")}, nil)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWatch_SuccessWithEventForwarding(t *testing.T) {
@@ -4556,9 +4556,9 @@ func TestCreateRole_NilAuthManager(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func TestCreateRole_EmptyRoleName(t *testing.T) {
@@ -4573,9 +4573,9 @@ func TestCreateRole_EmptyRoleName(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestCreateRole_InvalidRoleManagerType(t *testing.T) {
@@ -4592,9 +4592,9 @@ func TestCreateRole_InvalidRoleManagerType(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestCreateRole_RoleAlreadyExists(t *testing.T) {
@@ -4613,9 +4613,9 @@ func TestCreateRole_RoleAlreadyExists(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestCreateRole_Success(t *testing.T) {
@@ -4648,9 +4648,9 @@ func TestDeleteRole_NilAuthManager(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func TestDeleteRole_EmptyRoleName(t *testing.T) {
@@ -4665,9 +4665,9 @@ func TestDeleteRole_EmptyRoleName(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestDeleteRole_InvalidRoleManagerType(t *testing.T) {
@@ -4684,9 +4684,9 @@ func TestDeleteRole_InvalidRoleManagerType(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestDeleteRole_RoleNotFound(t *testing.T) {
@@ -4704,9 +4704,9 @@ func TestDeleteRole_RoleNotFound(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 }
 
 func TestDeleteRole_Success(t *testing.T) {
@@ -4743,10 +4743,10 @@ func TestRebalanceCluster_NilQRDBClient(t *testing.T) {
 	resp, err := svc.clusterService.RebalanceCluster(context.Background(), &RebalanceClusterRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
-	assert.Contains(t, dragonErr.Err.Error(), "qrdb client service not configured")
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
+	assert.Contains(t, qbErr.Err.Error(), "qrdb client service not configured")
 }
 
 func TestRebalanceCluster_WithLogger(t *testing.T) {
@@ -4839,9 +4839,9 @@ func TestListUsers_NilAuthManager(t *testing.T) {
 	_, err := rbacSvc.ListUsers(context.Background(), &AuthListUsersRequest{})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func TestListUsers_NilUserStore(t *testing.T) {
@@ -4853,9 +4853,9 @@ func TestListUsers_NilUserStore(t *testing.T) {
 	_, err := rbacSvc.ListUsers(context.Background(), &AuthListUsersRequest{})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestListUsers_Success(t *testing.T) {
@@ -4925,9 +4925,9 @@ func TestListRoles_NilAuthManager(t *testing.T) {
 	_, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func TestListRoles_InvalidRoleManager(t *testing.T) {
@@ -4940,9 +4940,9 @@ func TestListRoles_InvalidRoleManager(t *testing.T) {
 	_, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestListRoles_NilRoleManager(t *testing.T) {
@@ -4955,9 +4955,9 @@ func TestListRoles_NilRoleManager(t *testing.T) {
 	_, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestListRoles_Success(t *testing.T) {
@@ -5009,9 +5009,9 @@ func TestAssignRole_NilAuthManager(t *testing.T) {
 	_, err := rbacSvc.AssignRole(context.Background(), &AuthAssignRoleRequest{Username: "alice", RoleName: "admin"})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func TestAssignRole_EmptyUsername(t *testing.T) {
@@ -5023,9 +5023,9 @@ func TestAssignRole_EmptyUsername(t *testing.T) {
 	_, err := rbacSvc.AssignRole(context.Background(), &AuthAssignRoleRequest{Username: "", RoleName: "admin"})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestAssignRole_EmptyRoleName(t *testing.T) {
@@ -5037,9 +5037,9 @@ func TestAssignRole_EmptyRoleName(t *testing.T) {
 	_, err := rbacSvc.AssignRole(context.Background(), &AuthAssignRoleRequest{Username: "alice", RoleName: ""})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestAssignRole_NilUserStore(t *testing.T) {
@@ -5051,9 +5051,9 @@ func TestAssignRole_NilUserStore(t *testing.T) {
 	_, err := rbacSvc.AssignRole(context.Background(), &AuthAssignRoleRequest{Username: "alice", RoleName: "admin"})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestAssignRole_UserNotFound(t *testing.T) {
@@ -5066,10 +5066,10 @@ func TestAssignRole_UserNotFound(t *testing.T) {
 	_, err := rbacSvc.AssignRole(context.Background(), &AuthAssignRoleRequest{Username: "nonexistent", RoleName: "admin"})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "user not found")
+	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "user not found")
 }
 
 func TestAssignRole_AssignRoleError(t *testing.T) {
@@ -5088,9 +5088,9 @@ func TestAssignRole_AssignRoleError(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, userStore.assignRoleCalled)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestAssignRole_Success(t *testing.T) {
@@ -5121,9 +5121,9 @@ func TestRevokeRole_NilAuthManager(t *testing.T) {
 	_, err := rbacSvc.RevokeRole(context.Background(), &AuthRevokeRoleRequest{Username: "alice", RoleName: "admin"})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func TestRevokeRole_EmptyUsername(t *testing.T) {
@@ -5135,9 +5135,9 @@ func TestRevokeRole_EmptyUsername(t *testing.T) {
 	_, err := rbacSvc.RevokeRole(context.Background(), &AuthRevokeRoleRequest{Username: "", RoleName: "admin"})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestRevokeRole_EmptyRoleName(t *testing.T) {
@@ -5149,9 +5149,9 @@ func TestRevokeRole_EmptyRoleName(t *testing.T) {
 	_, err := rbacSvc.RevokeRole(context.Background(), &AuthRevokeRoleRequest{Username: "alice", RoleName: ""})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestRevokeRole_NilUserStore(t *testing.T) {
@@ -5163,9 +5163,9 @@ func TestRevokeRole_NilUserStore(t *testing.T) {
 	_, err := rbacSvc.RevokeRole(context.Background(), &AuthRevokeRoleRequest{Username: "alice", RoleName: "admin"})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestRevokeRole_UserNotFound(t *testing.T) {
@@ -5178,10 +5178,10 @@ func TestRevokeRole_UserNotFound(t *testing.T) {
 	_, err := rbacSvc.RevokeRole(context.Background(), &AuthRevokeRoleRequest{Username: "nonexistent", RoleName: "admin"})
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "user not found")
+	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "user not found")
 }
 
 func TestRevokeRole_RevokeRoleError(t *testing.T) {
@@ -5200,9 +5200,9 @@ func TestRevokeRole_RevokeRoleError(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, userStore.revokeRoleCalled)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestRevokeRole_Success(t *testing.T) {
@@ -5233,9 +5233,9 @@ func TestAggregate_NilRequest(t *testing.T) {
 	_, err := tsSvc.Aggregate(context.Background(), nil)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestAggregate_EmptyEntityType(t *testing.T) {
@@ -5251,9 +5251,9 @@ func TestAggregate_EmptyEntityType(t *testing.T) {
 	_, err := tsSvc.Aggregate(context.Background(), req)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestAggregate_InvalidStartTime(t *testing.T) {
@@ -5269,9 +5269,9 @@ func TestAggregate_InvalidStartTime(t *testing.T) {
 	_, err := tsSvc.Aggregate(context.Background(), req)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestAggregate_InvalidEndTime(t *testing.T) {
@@ -5287,9 +5287,9 @@ func TestAggregate_InvalidEndTime(t *testing.T) {
 	_, err := tsSvc.Aggregate(context.Background(), req)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestAggregate_EndTimeBeforeStartTime(t *testing.T) {
@@ -5305,9 +5305,9 @@ func TestAggregate_EndTimeBeforeStartTime(t *testing.T) {
 	_, err := tsSvc.Aggregate(context.Background(), req)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestAggregate_NilRaftNode(t *testing.T) {
@@ -5323,9 +5323,9 @@ func TestAggregate_NilRaftNode(t *testing.T) {
 	_, err := tsSvc.Aggregate(context.Background(), req)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestAggregate_RaftReadError(t *testing.T) {
@@ -5342,9 +5342,9 @@ func TestAggregate_RaftReadError(t *testing.T) {
 	_, err := tsSvc.Aggregate(context.Background(), req)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrRaft, dragonErr.Code)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestAggregate_SuccessSum(t *testing.T) {
@@ -5602,9 +5602,9 @@ func TestTimeSeriesQuery_NilRequest(t *testing.T) {
 	err := tsSvc.TimeSeriesQuery(context.Background(), nil, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesQuery_EmptyEntityType(t *testing.T) {
@@ -5621,9 +5621,9 @@ func TestTimeSeriesQuery_EmptyEntityType(t *testing.T) {
 	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesQuery_InvalidStartTime(t *testing.T) {
@@ -5640,9 +5640,9 @@ func TestTimeSeriesQuery_InvalidStartTime(t *testing.T) {
 	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesQuery_InvalidEndTime(t *testing.T) {
@@ -5659,9 +5659,9 @@ func TestTimeSeriesQuery_InvalidEndTime(t *testing.T) {
 	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesQuery_EndTimeBeforeStartTime(t *testing.T) {
@@ -5678,9 +5678,9 @@ func TestTimeSeriesQuery_EndTimeBeforeStartTime(t *testing.T) {
 	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesQuery_NilRaftNode(t *testing.T) {
@@ -5697,9 +5697,9 @@ func TestTimeSeriesQuery_NilRaftNode(t *testing.T) {
 	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestTimeSeriesQuery_RaftReadError(t *testing.T) {
@@ -5717,9 +5717,9 @@ func TestTimeSeriesQuery_RaftReadError(t *testing.T) {
 	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrRaft, dragonErr.Code)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestTimeSeriesQuery_Success(t *testing.T) {
@@ -5944,9 +5944,9 @@ func TestQuicBaaS_GenerateKey_NilService(t *testing.T) {
 	resp, err := db.GenerateKey(context.Background(), &GenerateKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "KMS service not initialized")
 }
 
@@ -5955,9 +5955,9 @@ func TestQuicBaaS_ImportKey_NilService(t *testing.T) {
 	resp, err := db.ImportKey(context.Background(), &ImportKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "KMS service not initialized")
 }
 
@@ -5966,9 +5966,9 @@ func TestQuicBaaS_GetKey_NilService(t *testing.T) {
 	resp, err := db.GetKey(context.Background(), &GetKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "KMS service not initialized")
 }
 
@@ -5977,9 +5977,9 @@ func TestQuicBaaS_ListKeys_NilService(t *testing.T) {
 	resp, err := db.ListKeys(context.Background(), &ListKeysRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "KMS service not initialized")
 }
 
@@ -5988,9 +5988,9 @@ func TestQuicBaaS_RotateKey_NilService(t *testing.T) {
 	resp, err := db.RotateKey(context.Background(), &RotateKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "KMS service not initialized")
 }
 
@@ -5999,9 +5999,9 @@ func TestQuicBaaS_RevokeKey_NilService(t *testing.T) {
 	resp, err := db.RevokeKey(context.Background(), &RevokeKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "KMS service not initialized")
 }
 
@@ -6010,9 +6010,9 @@ func TestQuicBaaS_DeleteKey_NilService(t *testing.T) {
 	resp, err := db.DeleteKey(context.Background(), &DeleteKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "KMS service not initialized")
 }
 
@@ -6021,9 +6021,9 @@ func TestQuicBaaS_GetKeyMetadata_NilService(t *testing.T) {
 	resp, err := db.GetKeyMetadata(context.Background(), &GetKeyMetadataRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "KMS service not initialized")
 }
 
@@ -6032,9 +6032,9 @@ func TestQuicBaaS_Encrypt_NilService(t *testing.T) {
 	resp, err := db.Encrypt(context.Background(), &EncryptRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "Crypto service not initialized")
 }
 
@@ -6043,9 +6043,9 @@ func TestQuicBaaS_Decrypt_NilService(t *testing.T) {
 	resp, err := db.Decrypt(context.Background(), &DecryptRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	assert.Contains(t, err.Error(), "Crypto service not initialized")
 }
 
@@ -6141,9 +6141,9 @@ func TestKVService_Watch_NilRequestWithMetrics(t *testing.T) {
 	_, err := svc.Watch(context.Background(), nil, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestKVService_Watch_EmptyKeyWithMetrics(t *testing.T) {
@@ -6160,9 +6160,9 @@ func TestKVService_Watch_EmptyKeyWithMetrics(t *testing.T) {
 	_, err := svc.Watch(context.Background(), req, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestKVService_Watch_NilStreamWithMetrics(t *testing.T) {
@@ -6178,9 +6178,9 @@ func TestKVService_Watch_NilStreamWithMetrics(t *testing.T) {
 	_, err := svc.Watch(context.Background(), req, nil)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestKVService_Watch_WithMetricsSuccess(t *testing.T) {
@@ -6663,9 +6663,9 @@ func TestKVService_List_NilRequestPath(t *testing.T) {
 	err := svc.List(context.Background(), nil, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestKVService_List_NilRequestWithMetrics(t *testing.T) {
@@ -6719,9 +6719,9 @@ func TestKVService_Delete_NilRequestPath(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestKVService_Delete_NilRequestWithMetrics(t *testing.T) {
@@ -6761,9 +6761,9 @@ func TestKVService_Put_NilRequestPath(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestKVService_Put_NilRequestWithMetrics(t *testing.T) {
@@ -6830,9 +6830,9 @@ func TestKVService_Get_NilRequestPath(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestKVService_Get_NilRequestWithMetrics(t *testing.T) {

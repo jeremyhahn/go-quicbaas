@@ -445,17 +445,17 @@ func TestValidation_ErrorContext(t *testing.T) {
 			t.Fatal("expected error for invalid compare")
 		}
 
-		dragonErr, ok := err.(*errors.DragonError)
+		qbErr, ok := err.(*errors.QBError)
 		if !ok {
-			t.Fatalf("expected DragonError, got %T", err)
+			t.Fatalf("expected QBError, got %T", err)
 		}
 
-		if dragonErr.Context == nil {
+		if qbErr.Context == nil {
 			t.Fatal("expected error context to be set")
 		}
 
-		if dragonErr.Context["compare_index"] != 1 {
-			t.Errorf("expected compare_index=1, got %v", dragonErr.Context["compare_index"])
+		if qbErr.Context["compare_index"] != 1 {
+			t.Errorf("expected compare_index=1, got %v", qbErr.Context["compare_index"])
 		}
 	})
 
@@ -472,16 +472,16 @@ func TestValidation_ErrorContext(t *testing.T) {
 			t.Fatal("expected error for invalid operation")
 		}
 
-		dragonErr, ok := err.(*errors.DragonError)
+		qbErr, ok := err.(*errors.QBError)
 		if !ok {
-			t.Fatalf("expected DragonError, got %T", err)
+			t.Fatalf("expected QBError, got %T", err)
 		}
 
-		if dragonErr.Context["branch"] != "success" {
-			t.Errorf("expected branch='success', got %v", dragonErr.Context["branch"])
+		if qbErr.Context["branch"] != "success" {
+			t.Errorf("expected branch='success', got %v", qbErr.Context["branch"])
 		}
-		if dragonErr.Context["operation_index"] != 1 {
-			t.Errorf("expected operation_index=1, got %v", dragonErr.Context["operation_index"])
+		if qbErr.Context["operation_index"] != 1 {
+			t.Errorf("expected operation_index=1, got %v", qbErr.Context["operation_index"])
 		}
 	})
 
@@ -500,13 +500,13 @@ func TestValidation_ErrorContext(t *testing.T) {
 			t.Fatal("expected error for invalid operation")
 		}
 
-		dragonErr, ok := err.(*errors.DragonError)
+		qbErr, ok := err.(*errors.QBError)
 		if !ok {
-			t.Fatalf("expected DragonError, got %T", err)
+			t.Fatalf("expected QBError, got %T", err)
 		}
 
-		if dragonErr.Context["branch"] != "failure" {
-			t.Errorf("expected branch='failure', got %v", dragonErr.Context["branch"])
+		if qbErr.Context["branch"] != "failure" {
+			t.Errorf("expected branch='failure', got %v", qbErr.Context["branch"])
 		}
 	})
 }

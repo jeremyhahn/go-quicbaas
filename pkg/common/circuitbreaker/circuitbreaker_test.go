@@ -681,7 +681,7 @@ func TestExecute_CircuitOpenError_IsTyped(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	// Verify it's a DragonError with ErrCircuitOpen code
+	// Verify it's a QBError with ErrCircuitOpen code
 	if !errors.Is(execErr, errors.ErrCircuitOpen) {
 		t.Fatalf("expected ErrCircuitOpen code, got: %v", execErr)
 	}
@@ -692,9 +692,9 @@ func TestExecute_CircuitOpenError_IsTyped(t *testing.T) {
 	}
 
 	// Verify HTTP status is 503
-	var de *errors.DragonError
+	var de *errors.QBError
 	if !stderrors.As(execErr, &de) {
-		t.Fatal("expected DragonError type")
+		t.Fatal("expected QBError type")
 	}
 	if de.Code.HTTPStatus() != 503 {
 		t.Fatalf("expected HTTP status 503, got: %d", de.Code.HTTPStatus())
@@ -721,11 +721,11 @@ func TestExecute_CircuitOpenError_ContainsName(t *testing.T) {
 	}
 
 	errMsg := execErr.Error()
-	if !stderrors.Is(execErr, &errors.DragonError{Code: errors.ErrCircuitOpen}) {
-		t.Fatalf("expected DragonError with ErrCircuitOpen, got: %v", execErr)
+	if !stderrors.Is(execErr, &errors.QBError{Code: errors.ErrCircuitOpen}) {
+		t.Fatalf("expected QBError with ErrCircuitOpen, got: %v", execErr)
 	}
 	// The error message should reference the circuit breaker name
-	_ = errMsg // error message format is tested via the DragonError type
+	_ = errMsg // error message format is tested via the QBError type
 }
 
 // --- State String ---

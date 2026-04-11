@@ -37,9 +37,9 @@ func TestNewProvider_NilConfig(t *testing.T) {
 		t.Errorf("expected ErrNilConfig, got: %v", err)
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Error("expected DragonError type")
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Error("expected QBError type")
 	}
 }
 
@@ -142,9 +142,9 @@ func TestNewProvider_InvalidType(t *testing.T) {
 		t.Fatal("expected nil provider")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Error("expected DragonError type")
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Error("expected QBError type")
 	}
 }
 
@@ -325,9 +325,9 @@ func TestParseProviderType_Invalid(t *testing.T) {
 				t.Errorf("expected empty ProviderType, got %v", pt)
 			}
 
-			var dragonErr *dragonerrors.DragonError
-			if !errors.As(err, &dragonErr) {
-				t.Error("expected DragonError type")
+			var qbErr *dragonerrors.QBError
+			if !errors.As(err, &qbErr) {
+				t.Error("expected QBError type")
 			}
 		})
 	}

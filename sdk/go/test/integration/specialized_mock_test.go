@@ -268,9 +268,9 @@ func TestVectorClient_UpsertValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != tc.wantErr {
 				t.Errorf("expected message %q, got %q", tc.wantErr, sdkErr.Message)
@@ -317,9 +317,9 @@ func TestVectorClient_SearchSimilarValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != tc.wantErr {
 				t.Errorf("expected message %q, got %q", tc.wantErr, sdkErr.Message)
@@ -653,9 +653,9 @@ func TestTimeSeriesClient_WriteValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != tc.wantErr {
 				t.Errorf("expected message %q, got %q", tc.wantErr, sdkErr.Message)
@@ -718,9 +718,9 @@ func TestTimeSeriesClient_QueryValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != tc.wantErr {
 				t.Errorf("expected message %q, got %q", tc.wantErr, sdkErr.Message)
@@ -958,9 +958,9 @@ func TestBackupClient_CreateValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != tc.wantErr {
 				t.Errorf("expected message %q, got %q", tc.wantErr, sdkErr.Message)
@@ -997,9 +997,9 @@ func TestBackupClient_RestoreValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != tc.wantErr {
 				t.Errorf("expected message %q, got %q", tc.wantErr, sdkErr.Message)
@@ -1179,9 +1179,9 @@ func TestClusterClient_AddNodeValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != tc.wantErr {
 				t.Errorf("expected message %q, got %q", tc.wantErr, sdkErr.Message)
@@ -1218,9 +1218,9 @@ func TestClusterClient_RemoveNodeValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != tc.wantErr {
 				t.Errorf("expected message %q, got %q", tc.wantErr, sdkErr.Message)
@@ -1414,9 +1414,9 @@ func TestHealthClient_NilContext(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != "context is required" {
 				t.Errorf("expected message %q, got %q", "context is required", sdkErr.Message)
@@ -1778,9 +1778,9 @@ func TestQueryClient_ExecuteValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			sdkErr, ok := err.(*errors.DragonError)
+			sdkErr, ok := err.(*errors.QBError)
 			if !ok {
-				t.Fatalf("expected *errors.DragonError, got %T", err)
+				t.Fatalf("expected *errors.QBError, got %T", err)
 			}
 			if sdkErr.Message != tc.wantErr {
 				t.Errorf("expected message %q, got %q", tc.wantErr, sdkErr.Message)

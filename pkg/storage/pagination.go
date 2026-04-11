@@ -83,7 +83,7 @@ func NewPageIterator(iter Iterator, pageSize int, cursor []byte) *PageIterator {
 		// Decode cursor (it's base64 encoded key)
 		key, err := decodeCursor(cursor)
 		if err != nil {
-			pi.err = &errors.DragonError{
+			pi.err = &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "PageIterator.New",
 				Err:  err,
@@ -165,7 +165,7 @@ func (pi *PageIterator) NextPage() ([]KV, []byte, error) {
 
 	// Check for iteration errors
 	if err := pi.iter.Error(); err != nil {
-		pi.err = &errors.DragonError{
+		pi.err = &errors.QBError{
 			Code: errors.ErrStorage,
 			Op:   "PageIterator.NextPage",
 			Err:  err,

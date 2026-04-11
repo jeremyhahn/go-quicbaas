@@ -41,17 +41,17 @@ func TestNewManager(t *testing.T) {
 	t.Run("NilOptions", func(t *testing.T) {
 		_, err := NewManager(nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("NilBackend", func(t *testing.T) {
 		_, err := NewManager(&ManagerOptions{})
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -79,9 +79,9 @@ func TestManager_Store(t *testing.T) {
 
 		err := manager.Store(ctx, "", data, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("NilData", func(t *testing.T) {
@@ -93,9 +93,9 @@ func TestManager_Store(t *testing.T) {
 
 		err := manager.Store(ctx, "test/path", nil, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("EmptyData", func(t *testing.T) {
@@ -108,9 +108,9 @@ func TestManager_Store(t *testing.T) {
 
 		err := manager.Store(ctx, "test/path", data, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("CanceledContext", func(t *testing.T) {
@@ -125,9 +125,9 @@ func TestManager_Store(t *testing.T) {
 
 		err := manager.Store(ctx, "test/path", data, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("ContextTimeout", func(t *testing.T) {
@@ -143,9 +143,9 @@ func TestManager_Store(t *testing.T) {
 
 		err := manager.Store(ctx, "test/path", data, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("BackendError", func(t *testing.T) {
@@ -159,9 +159,9 @@ func TestManager_Store(t *testing.T) {
 
 		err := manager.Store(ctx, "test/path", data, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -195,9 +195,9 @@ func TestManager_Get(t *testing.T) {
 		ctx := context.Background()
 		_, _, err := manager.Get(ctx, "nonexistent/path")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 
 	t.Run("EmptyPath", func(t *testing.T) {
@@ -208,9 +208,9 @@ func TestManager_Get(t *testing.T) {
 		ctx := context.Background()
 		_, _, err := manager.Get(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("ContextTimeout", func(t *testing.T) {
@@ -224,9 +224,9 @@ func TestManager_Get(t *testing.T) {
 
 		_, _, err := manager.Get(ctx, "test/path")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("SecretDeleted", func(t *testing.T) {
@@ -243,9 +243,9 @@ func TestManager_Get(t *testing.T) {
 
 		_, _, err := manager.Get(ctx, path)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 
 	t.Run("BackendError", func(t *testing.T) {
@@ -257,9 +257,9 @@ func TestManager_Get(t *testing.T) {
 		ctx := context.Background()
 		_, _, err := manager.Get(ctx, "test/path")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -298,9 +298,9 @@ func TestManager_GetVersion(t *testing.T) {
 		// Version 0
 		_, _, err := manager.GetVersion(ctx, path, 0)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 
 		// Negative version
 		_, _, err = manager.GetVersion(ctx, path, -1)
@@ -315,9 +315,9 @@ func TestManager_GetVersion(t *testing.T) {
 		ctx := context.Background()
 		_, _, err := manager.GetVersion(ctx, "nonexistent", 1)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 
 	t.Run("VersionNotFound", func(t *testing.T) {
@@ -332,9 +332,9 @@ func TestManager_GetVersion(t *testing.T) {
 
 		_, _, err := manager.GetVersion(ctx, path, 99)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 
 	t.Run("EmptyPath", func(t *testing.T) {
@@ -345,9 +345,9 @@ func TestManager_GetVersion(t *testing.T) {
 		ctx := context.Background()
 		_, _, err := manager.GetVersion(ctx, "", 1)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("ContextTimeout", func(t *testing.T) {
@@ -361,9 +361,9 @@ func TestManager_GetVersion(t *testing.T) {
 
 		_, _, err := manager.GetVersion(ctx, "test/path", 1)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 }
 
@@ -415,9 +415,9 @@ func TestManager_List(t *testing.T) {
 
 		_, err := manager.List(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("BackendError", func(t *testing.T) {
@@ -429,9 +429,9 @@ func TestManager_List(t *testing.T) {
 		ctx := context.Background()
 		_, err := manager.List(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -463,9 +463,9 @@ func TestManager_Delete(t *testing.T) {
 		ctx := context.Background()
 		err := manager.Delete(ctx, "nonexistent")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 
 	t.Run("EmptyPath", func(t *testing.T) {
@@ -476,9 +476,9 @@ func TestManager_Delete(t *testing.T) {
 		ctx := context.Background()
 		err := manager.Delete(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("ContextTimeout", func(t *testing.T) {
@@ -492,9 +492,9 @@ func TestManager_Delete(t *testing.T) {
 
 		err := manager.Delete(ctx, "test/path")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("BackendError", func(t *testing.T) {
@@ -506,9 +506,9 @@ func TestManager_Delete(t *testing.T) {
 		ctx := context.Background()
 		err := manager.Delete(ctx, "test/path")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -543,9 +543,9 @@ func TestManager_Destroy(t *testing.T) {
 		ctx := context.Background()
 		err := manager.Destroy(ctx, "nonexistent")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 
 	t.Run("EmptyPath", func(t *testing.T) {
@@ -556,9 +556,9 @@ func TestManager_Destroy(t *testing.T) {
 		ctx := context.Background()
 		err := manager.Destroy(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("ContextTimeout", func(t *testing.T) {
@@ -572,9 +572,9 @@ func TestManager_Destroy(t *testing.T) {
 
 		err := manager.Destroy(ctx, "test/path")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("BackendError", func(t *testing.T) {
@@ -586,9 +586,9 @@ func TestManager_Destroy(t *testing.T) {
 		ctx := context.Background()
 		err := manager.Destroy(ctx, "test/path")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -620,9 +620,9 @@ func TestManager_ListVersions(t *testing.T) {
 		ctx := context.Background()
 		_, err := manager.ListVersions(ctx, "nonexistent")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 
 	t.Run("EmptyPath", func(t *testing.T) {
@@ -633,9 +633,9 @@ func TestManager_ListVersions(t *testing.T) {
 		ctx := context.Background()
 		_, err := manager.ListVersions(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("ContextTimeout", func(t *testing.T) {
@@ -649,9 +649,9 @@ func TestManager_ListVersions(t *testing.T) {
 
 		_, err := manager.ListVersions(ctx, "test/path")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("BackendError", func(t *testing.T) {
@@ -663,9 +663,9 @@ func TestManager_ListVersions(t *testing.T) {
 		ctx := context.Background()
 		_, err := manager.ListVersions(ctx, "test/path")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -708,9 +708,9 @@ func TestManager_Rollback(t *testing.T) {
 		// Version 0
 		err := manager.Rollback(ctx, path, 0)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 
 		// Negative version
 		err = manager.Rollback(ctx, path, -1)
@@ -725,9 +725,9 @@ func TestManager_Rollback(t *testing.T) {
 		ctx := context.Background()
 		err := manager.Rollback(ctx, "nonexistent", 1)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 
 	t.Run("VersionNotFound", func(t *testing.T) {
@@ -742,9 +742,9 @@ func TestManager_Rollback(t *testing.T) {
 
 		err := manager.Rollback(ctx, path, 99)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 
 	t.Run("EmptyPath", func(t *testing.T) {
@@ -755,9 +755,9 @@ func TestManager_Rollback(t *testing.T) {
 		ctx := context.Background()
 		err := manager.Rollback(ctx, "", 1)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("ContextTimeout", func(t *testing.T) {
@@ -771,9 +771,9 @@ func TestManager_Rollback(t *testing.T) {
 
 		err := manager.Rollback(ctx, "test/path", 1)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("BackendError", func(t *testing.T) {
@@ -785,9 +785,9 @@ func TestManager_Rollback(t *testing.T) {
 		ctx := context.Background()
 		err := manager.Rollback(ctx, "test/path", 1)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -816,9 +816,9 @@ func TestManager_Close(t *testing.T) {
 
 		err := manager.Close()
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 

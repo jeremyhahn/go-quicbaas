@@ -251,12 +251,12 @@ func TestToServiceError_AllCases(t *testing.T) {
 	})
 
 	t.Run("dragon_error_maps_correctly", func(t *testing.T) {
-		dragonErr := &errors.DragonError{
+		qbErr := &errors.QBError{
 			Code: errors.ErrForbidden,
 			Op:   "test_operation",
 			Err:  stderrors.New("access denied"),
 		}
-		result := toServiceError(dragonErr)
+		result := toServiceError(qbErr)
 		require.Error(t, result)
 		assert.Equal(t, codes.PermissionDenied, status.Code(result))
 	})
@@ -269,34 +269,34 @@ func TestToServiceError_AllCases(t *testing.T) {
 	})
 
 	t.Run("wrapped_dragon_error", func(t *testing.T) {
-		dragonErr := &errors.DragonError{
+		qbErr := &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "get",
 			Err:  stderrors.New("entity not found"),
 		}
-		result := toServiceError(dragonErr)
+		result := toServiceError(qbErr)
 		require.Error(t, result)
 		assert.Equal(t, codes.NotFound, status.Code(result))
 	})
 
 	t.Run("dragon_error_timeout", func(t *testing.T) {
-		dragonErr := &errors.DragonError{
+		qbErr := &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "operation",
 			Err:  stderrors.New("operation timed out"),
 		}
-		result := toServiceError(dragonErr)
+		result := toServiceError(qbErr)
 		require.Error(t, result)
 		assert.Equal(t, codes.DeadlineExceeded, status.Code(result))
 	})
 
 	t.Run("dragon_error_unavailable", func(t *testing.T) {
-		dragonErr := &errors.DragonError{
+		qbErr := &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "connect",
 			Err:  stderrors.New("service unavailable"),
 		}
-		result := toServiceError(dragonErr)
+		result := toServiceError(qbErr)
 		require.Error(t, result)
 		assert.Equal(t, codes.Unavailable, status.Code(result))
 	})

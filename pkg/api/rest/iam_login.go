@@ -93,7 +93,7 @@ func (h *IAMHandler) Login(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.server.service.Login(ctx, serviceReq)
 	if err != nil {
 		// Check for configuration error
-		if dragonErr, ok := err.(*errors.DragonError); ok && dragonErr.Code == errors.ErrConfiguration {
+		if qbErr, ok := err.(*errors.QBError); ok && qbErr.Code == errors.ErrConfiguration {
 			RespondIAMError(w, r, http.StatusServiceUnavailable,
 				NewIAMAPIError(ErrInternalError, "authentication service not configured"))
 			return
@@ -155,7 +155,7 @@ func (h *IAMHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.server.service.RefreshToken(ctx, serviceReq)
 	if err != nil {
 		// Check for configuration error
-		if dragonErr, ok := err.(*errors.DragonError); ok && dragonErr.Code == errors.ErrConfiguration {
+		if qbErr, ok := err.(*errors.QBError); ok && qbErr.Code == errors.ErrConfiguration {
 			RespondIAMError(w, r, http.StatusServiceUnavailable,
 				NewIAMAPIError(ErrInternalError, "authentication service not configured"))
 			return
@@ -214,7 +214,7 @@ func (h *IAMHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	_, err := h.server.service.Logout(ctx, serviceReq)
 	if err != nil {
 		// Check for configuration error
-		if dragonErr, ok := err.(*errors.DragonError); ok && dragonErr.Code == errors.ErrConfiguration {
+		if qbErr, ok := err.(*errors.QBError); ok && qbErr.Code == errors.ErrConfiguration {
 			RespondIAMError(w, r, http.StatusServiceUnavailable,
 				NewIAMAPIError(ErrInternalError, "authentication service not configured"))
 			return

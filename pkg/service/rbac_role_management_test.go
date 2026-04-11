@@ -85,7 +85,7 @@ func TestRBACService_CreateAuthRole_RoleAlreadyExists(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp2)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -106,7 +106,7 @@ func TestRBACService_CreateAuthRole_EmptyRoleName(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -125,7 +125,7 @@ func TestRBACService_CreateAuthRole_NilAuthManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrConfiguration, dErr.Code)
 }
@@ -195,7 +195,7 @@ func TestRBACService_DeleteAuthRole_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotFound, dErr.Code)
 }
@@ -216,7 +216,7 @@ func TestRBACService_DeleteAuthRole_EmptyRoleName(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -234,7 +234,7 @@ func TestRBACService_DeleteAuthRole_NilAuthManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrConfiguration, dErr.Code)
 }

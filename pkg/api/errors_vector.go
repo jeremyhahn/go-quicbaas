@@ -35,9 +35,9 @@ func (e *IndexNotTrainedError) Error() string {
 	return "index type " + e.IndexType + " is not trained"
 }
 
-// NewIndexNotTrainedError creates a DragonError for an untrained index operation.
-func NewIndexNotTrainedError(op, indexType string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIndexNotTrainedError creates a QBError for an untrained index operation.
+func NewIndexNotTrainedError(op, indexType string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrPreconditionFailed,
 		Op:   op,
 		Err:  &IndexNotTrainedError{IndexType: indexType},
@@ -54,9 +54,9 @@ func (e *UnsupportedIndexTypeError) Error() string {
 	return "unsupported index type: " + e.IndexType
 }
 
-// NewUnsupportedIndexTypeError creates a DragonError for an unsupported index type.
-func NewUnsupportedIndexTypeError(op, indexType string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewUnsupportedIndexTypeError creates a QBError for an unsupported index type.
+func NewUnsupportedIndexTypeError(op, indexType string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &UnsupportedIndexTypeError{IndexType: indexType},
@@ -75,9 +75,9 @@ func (e *IndexCapacityExceededError) Error() string {
 		", max " + strconv.FormatInt(e.Max, 10)
 }
 
-// NewIndexCapacityExceededError creates a DragonError for index capacity exceeded.
-func NewIndexCapacityExceededError(op string, current, max int64) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIndexCapacityExceededError creates a QBError for index capacity exceeded.
+func NewIndexCapacityExceededError(op string, current, max int64) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrResourceExhausted,
 		Op:   op,
 		Err:  &IndexCapacityExceededError{Current: current, Max: max},
@@ -96,9 +96,9 @@ func (e *GPUNotCompiledError) Error() string {
 	return "GPU support not compiled (build with -tags gpu)"
 }
 
-// NewGPUNotCompiledError creates a DragonError for missing GPU support.
-func NewGPUNotCompiledError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewGPUNotCompiledError creates a QBError for missing GPU support.
+func NewGPUNotCompiledError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrPreconditionFailed,
 		Op:   op,
 		Err:  &GPUNotCompiledError{},
@@ -115,9 +115,9 @@ func (e *GPUDeviceNotFoundError) Error() string {
 	return "GPU device " + strconv.Itoa(e.DeviceID) + " not found"
 }
 
-// NewGPUDeviceNotFoundError creates a DragonError for a missing GPU device.
-func NewGPUDeviceNotFoundError(op string, deviceID int) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewGPUDeviceNotFoundError creates a QBError for a missing GPU device.
+func NewGPUDeviceNotFoundError(op string, deviceID int) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err:  &GPUDeviceNotFoundError{DeviceID: deviceID},
@@ -141,9 +141,9 @@ func (e *GPUOutOfMemoryError) Error() string {
 		strconv.FormatInt(e.AvailableBytes, 10) + " bytes"
 }
 
-// NewGPUOutOfMemoryError creates a DragonError for GPU memory exhaustion.
-func NewGPUOutOfMemoryError(op string, requested, available int64) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewGPUOutOfMemoryError creates a QBError for GPU memory exhaustion.
+func NewGPUOutOfMemoryError(op string, requested, available int64) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrResourceExhausted,
 		Op:   op,
 		Err: &GPUOutOfMemoryError{
@@ -173,9 +173,9 @@ func (e *GPUKernelFailedError) Unwrap() error {
 	return e.Cause
 }
 
-// NewGPUKernelFailedError creates a DragonError for a GPU kernel failure.
-func NewGPUKernelFailedError(op, kernel string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewGPUKernelFailedError creates a QBError for a GPU kernel failure.
+func NewGPUKernelFailedError(op, kernel string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err: &GPUKernelFailedError{
@@ -202,9 +202,9 @@ func (e *IVFConfigValidationError) Error() string {
 	return e.Message
 }
 
-// NewIVFConfigValidationError creates a DragonError for an IVF config validation failure.
-func NewIVFConfigValidationError(op, message string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFConfigValidationError creates a QBError for an IVF config validation failure.
+func NewIVFConfigValidationError(op, message string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &IVFConfigValidationError{Message: message},
@@ -226,9 +226,9 @@ func (e *IVFInvalidConfigError) Unwrap() error {
 	return e.Cause
 }
 
-// NewIVFInvalidConfigError creates a DragonError for an invalid IVF configuration.
-func NewIVFInvalidConfigError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFInvalidConfigError creates a QBError for an invalid IVF configuration.
+func NewIVFInvalidConfigError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &IVFInvalidConfigError{Cause: cause},
@@ -243,9 +243,9 @@ func (e *IVFEmptyTrainingSetError) Error() string {
 	return "cannot train on empty vector set"
 }
 
-// NewIVFEmptyTrainingSetError creates a DragonError for training on an empty set.
-func NewIVFEmptyTrainingSetError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFEmptyTrainingSetError creates a QBError for training on an empty set.
+func NewIVFEmptyTrainingSetError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &IVFEmptyTrainingSetError{},
@@ -267,9 +267,9 @@ func (e *IVFDimensionMismatchError) Error() string {
 	return fmt.Sprintf("vector has %d dimensions, expected %d", e.Got, e.Expected)
 }
 
-// NewIVFDimensionMismatchError creates a DragonError for a vector dimension mismatch.
-func NewIVFDimensionMismatchError(op string, index, got, expected int) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFDimensionMismatchError creates a QBError for a vector dimension mismatch.
+func NewIVFDimensionMismatchError(op string, index, got, expected int) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &IVFDimensionMismatchError{Index: index, Got: got, Expected: expected},
@@ -291,9 +291,9 @@ func (e *IVFClusteringFailedError) Unwrap() error {
 	return e.Cause
 }
 
-// NewIVFClusteringFailedError creates a DragonError for a clustering failure.
-func NewIVFClusteringFailedError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFClusteringFailedError creates a QBError for a clustering failure.
+func NewIVFClusteringFailedError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &IVFClusteringFailedError{Cause: cause},
@@ -317,9 +317,9 @@ func (e *IVFNotTrainedError) suffix() string {
 	return ""
 }
 
-// NewIVFNotTrainedError creates a DragonError for an untrained index operation.
-func NewIVFNotTrainedError(op, operation string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFNotTrainedError creates a QBError for an untrained index operation.
+func NewIVFNotTrainedError(op, operation string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrPreconditionFailed,
 		Op:   op,
 		Err:  &IVFNotTrainedError{Operation: operation},
@@ -336,9 +336,9 @@ func (e *IVFDuplicateIDError) Error() string {
 	return "vector with ID " + e.ID + " already exists"
 }
 
-// NewIVFDuplicateIDError creates a DragonError for a duplicate vector ID.
-func NewIVFDuplicateIDError(op, id string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFDuplicateIDError creates a QBError for a duplicate vector ID.
+func NewIVFDuplicateIDError(op, id string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   op,
 		Err:  &IVFDuplicateIDError{ID: id},
@@ -355,9 +355,9 @@ func (e *IVFVectorNotFoundError) Error() string {
 	return "vector with ID " + e.ID + " not found"
 }
 
-// NewIVFVectorNotFoundError creates a DragonError for a missing vector.
-func NewIVFVectorNotFoundError(op, id string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFVectorNotFoundError creates a QBError for a missing vector.
+func NewIVFVectorNotFoundError(op, id string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   op,
 		Err:  &IVFVectorNotFoundError{ID: id},
@@ -380,9 +380,9 @@ func (e *IVFSaveError) Unwrap() error {
 	return e.Cause
 }
 
-// NewIVFSaveError creates a DragonError for an IVF index save/load failure.
-func NewIVFSaveError(op, action string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFSaveError creates a QBError for an IVF index save/load failure.
+func NewIVFSaveError(op, action string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrStorage,
 		Op:   op,
 		Err:  &IVFSaveError{Action: action, Cause: cause},
@@ -397,9 +397,9 @@ func (e *IVFUntrainedSaveError) Error() string {
 	return "cannot save untrained index"
 }
 
-// NewIVFUntrainedSaveError creates a DragonError for saving an untrained index.
-func NewIVFUntrainedSaveError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFUntrainedSaveError creates a QBError for saving an untrained index.
+func NewIVFUntrainedSaveError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrPreconditionFailed,
 		Op:   op,
 		Err:  &IVFUntrainedSaveError{},
@@ -417,9 +417,9 @@ func (e *IVFQueryDimensionError) Error() string {
 	return fmt.Sprintf("query has %d dimensions, expected %d", e.Got, e.Expected)
 }
 
-// NewIVFQueryDimensionError creates a DragonError for a query dimension mismatch.
-func NewIVFQueryDimensionError(op string, got, expected int) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewIVFQueryDimensionError creates a QBError for a query dimension mismatch.
+func NewIVFQueryDimensionError(op string, got, expected int) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &IVFQueryDimensionError{Got: got, Expected: expected},
@@ -438,9 +438,9 @@ func (e *KMeansEmptyVectorSetError) Error() string {
 	return "cannot cluster empty vector set"
 }
 
-// NewKMeansEmptyVectorSetError creates a DragonError for clustering an empty set.
-func NewKMeansEmptyVectorSetError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKMeansEmptyVectorSetError creates a QBError for clustering an empty set.
+func NewKMeansEmptyVectorSetError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &KMeansEmptyVectorSetError{},
@@ -458,9 +458,9 @@ func (e *KMeansInsufficientVectorsError) Error() string {
 	return fmt.Sprintf("cannot create %d clusters from %d vectors", e.Clusters, e.Vectors)
 }
 
-// NewKMeansInsufficientVectorsError creates a DragonError for insufficient vectors.
-func NewKMeansInsufficientVectorsError(op string, clusters, vectors int) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKMeansInsufficientVectorsError creates a QBError for insufficient vectors.
+func NewKMeansInsufficientVectorsError(op string, clusters, vectors int) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &KMeansInsufficientVectorsError{Clusters: clusters, Vectors: vectors},
@@ -482,9 +482,9 @@ func (e *KMeansInitError) Unwrap() error {
 	return e.Cause
 }
 
-// NewKMeansInitError creates a DragonError for a centroid initialization failure.
-func NewKMeansInitError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKMeansInitError creates a QBError for a centroid initialization failure.
+func NewKMeansInitError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &KMeansInitError{Cause: cause},
@@ -507,9 +507,9 @@ func (e *KMeansRecomputeError) Unwrap() error {
 	return e.Cause
 }
 
-// NewKMeansRecomputeError creates a DragonError for a centroid recompute failure.
-func NewKMeansRecomputeError(op string, iteration int, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKMeansRecomputeError creates a QBError for a centroid recompute failure.
+func NewKMeansRecomputeError(op string, iteration int, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &KMeansRecomputeError{Iteration: iteration, Cause: cause},
@@ -536,9 +536,9 @@ func (e *HNSWPersistenceError) Unwrap() error {
 	return e.Cause
 }
 
-// NewHNSWPersistenceError creates a DragonError for an HNSW persistence failure.
-func NewHNSWPersistenceError(op, action string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewHNSWPersistenceError creates a QBError for an HNSW persistence failure.
+func NewHNSWPersistenceError(op, action string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrStorage,
 		Op:   op,
 		Err:  &HNSWPersistenceError{Action: action, Cause: cause},
@@ -565,9 +565,9 @@ func (e *RAGSearchError) Unwrap() error {
 	return e.Cause
 }
 
-// NewRAGSearchError creates a DragonError for a RAG search failure.
-func NewRAGSearchError(op, action string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewRAGSearchError creates a QBError for a RAG search failure.
+func NewRAGSearchError(op, action string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &RAGSearchError{Action: action, Cause: cause},
@@ -589,9 +589,9 @@ func (e *ScalarIndexNotFoundError) Error() string {
 	return "scalar index not found for field: " + e.Field
 }
 
-// NewScalarIndexNotFoundError creates a DragonError for a missing scalar index.
-func NewScalarIndexNotFoundError(op, field string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewScalarIndexNotFoundError creates a QBError for a missing scalar index.
+func NewScalarIndexNotFoundError(op, field string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   op,
 		Err:  &ScalarIndexNotFoundError{Field: field},
@@ -612,9 +612,9 @@ func (e *UnsupportedScalarIndexTypeError) Error() string {
 	return "unsupported scalar index type: " + e.IndexType
 }
 
-// NewUnsupportedScalarIndexTypeError creates a DragonError for an unsupported scalar index type.
-func NewUnsupportedScalarIndexTypeError(op, indexType string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewUnsupportedScalarIndexTypeError creates a QBError for an unsupported scalar index type.
+func NewUnsupportedScalarIndexTypeError(op, indexType string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &UnsupportedScalarIndexTypeError{IndexType: indexType},
@@ -640,9 +640,9 @@ func (e *DistributedSearchTimeoutError) Error() string {
 		" after " + e.Timeout.String()
 }
 
-// NewDistributedSearchTimeoutError creates a DragonError for a distributed search timeout.
-func NewDistributedSearchTimeoutError(op, namespace string, timeout time.Duration) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDistributedSearchTimeoutError creates a QBError for a distributed search timeout.
+func NewDistributedSearchTimeoutError(op, namespace string, timeout time.Duration) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrTimeout,
 		Op:   op,
 		Err:  &DistributedSearchTimeoutError{Namespace: namespace, Timeout: timeout},
@@ -659,9 +659,9 @@ func (e *DistributedSearchNoShardsError) Error() string {
 	return "no shards provided for distributed search in namespace: " + e.Namespace
 }
 
-// NewDistributedSearchNoShardsError creates a DragonError when no shards are provided.
-func NewDistributedSearchNoShardsError(op, namespace string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDistributedSearchNoShardsError creates a QBError when no shards are provided.
+func NewDistributedSearchNoShardsError(op, namespace string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &DistributedSearchNoShardsError{Namespace: namespace},
@@ -686,9 +686,9 @@ func (e *ShardUnavailableError) Unwrap() error {
 	return e.Cause
 }
 
-// NewShardUnavailableError creates a DragonError for an unavailable shard.
-func NewShardUnavailableError(op string, shardID uint64, nodeID string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewShardUnavailableError creates a QBError for an unavailable shard.
+func NewShardUnavailableError(op string, shardID uint64, nodeID string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err: &ShardUnavailableError{
@@ -712,9 +712,9 @@ func (e *MergeOverflowError) Error() string {
 		" results exceed max " + strconv.Itoa(e.MaxResults)
 }
 
-// NewMergeOverflowError creates a DragonError for a merge result overflow.
-func NewMergeOverflowError(op string, total, max int) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewMergeOverflowError creates a QBError for a merge result overflow.
+func NewMergeOverflowError(op string, total, max int) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrResourceExhausted,
 		Op:   op,
 		Err:  &MergeOverflowError{TotalResults: total, MaxResults: max},
@@ -736,9 +736,9 @@ func (e *QuantizationFailedError) Error() string {
 	return "quantization failed: " + e.Message
 }
 
-// NewQuantizationFailedError creates a DragonError for a quantization failure.
-func NewQuantizationFailedError(op, message string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewQuantizationFailedError creates a QBError for a quantization failure.
+func NewQuantizationFailedError(op, message string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &QuantizationFailedError{Op: op, Message: message},
@@ -756,9 +756,9 @@ func (e *QuantizationPrecisionMismatchError) Error() string {
 	return "precision mismatch: expected " + e.Expected + ", got " + e.Got
 }
 
-// NewPrecisionMismatchError creates a DragonError for a precision mismatch.
-func NewPrecisionMismatchError(op, expected, got string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewPrecisionMismatchError creates a QBError for a precision mismatch.
+func NewPrecisionMismatchError(op, expected, got string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &QuantizationPrecisionMismatchError{Expected: expected, Got: got},
@@ -773,9 +773,9 @@ func (e *QuantizationCodebookNotTrainedError) Error() string {
 	return "PQ codebooks not trained"
 }
 
-// NewCodebookNotTrainedError creates a DragonError for untrained PQ codebooks.
-func NewCodebookNotTrainedError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewCodebookNotTrainedError creates a QBError for untrained PQ codebooks.
+func NewCodebookNotTrainedError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrPreconditionFailed,
 		Op:   op,
 		Err:  &QuantizationCodebookNotTrainedError{},

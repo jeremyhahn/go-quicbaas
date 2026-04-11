@@ -443,7 +443,7 @@ func (s *stream) Close() error {
 	return nil
 }
 
-// convertGRPCError converts a gRPC error to a DragonError.
+// convertGRPCError converts a gRPC error to a QBError.
 func convertGRPCError(err error, op string) error {
 	if err == nil {
 		return nil

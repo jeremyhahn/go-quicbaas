@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonStorage "github.com/jeremyhahn/go-quicbaas/pkg/storage"
+	qbStorage "github.com/jeremyhahn/go-quicbaas/pkg/storage"
 )
 
 // ---------------------------------------------------------------------------
@@ -117,8 +117,8 @@ type mockSnapshot struct {
 	getKey   []byte
 	getValue []byte
 	getErr   error
-	iterOpts *dragonStorage.IteratorOptions
-	iterVal  dragonStorage.Iterator
+	iterOpts *qbStorage.IteratorOptions
+	iterVal  qbStorage.Iterator
 	closedV  bool
 	closeErr error
 }
@@ -128,7 +128,7 @@ func (s *mockSnapshot) Get(key []byte) ([]byte, error) {
 	return s.getValue, s.getErr
 }
 
-func (s *mockSnapshot) NewIterator(opts *dragonStorage.IteratorOptions) dragonStorage.Iterator {
+func (s *mockSnapshot) NewIterator(opts *qbStorage.IteratorOptions) qbStorage.Iterator {
 	s.iterOpts = opts
 	if s.iterVal != nil {
 		return s.iterVal
@@ -148,8 +148,8 @@ type mockStorage struct {
 	setErr    error
 	deleteErr error
 	batchVal  *mockBatch
-	iterOpts  *dragonStorage.IteratorOptions
-	iterVal   dragonStorage.Iterator
+	iterOpts  *qbStorage.IteratorOptions
+	iterVal   qbStorage.Iterator
 	snapVal   *mockSnapshot
 	snapErr   error
 	closedV   bool
@@ -191,11 +191,11 @@ func (s *mockStorage) Delete(key []byte) error {
 	return nil
 }
 
-func (s *mockStorage) Batch() dragonStorage.Batch {
+func (s *mockStorage) Batch() qbStorage.Batch {
 	return s.batchVal
 }
 
-func (s *mockStorage) NewIterator(opts *dragonStorage.IteratorOptions) dragonStorage.Iterator {
+func (s *mockStorage) NewIterator(opts *qbStorage.IteratorOptions) qbStorage.Iterator {
 	s.iterOpts = opts
 	if s.iterVal != nil {
 		return s.iterVal
@@ -203,7 +203,7 @@ func (s *mockStorage) NewIterator(opts *dragonStorage.IteratorOptions) dragonSto
 	return &mockIterator{}
 }
 
-func (s *mockStorage) Snapshot() (dragonStorage.Snapshot, error) {
+func (s *mockStorage) Snapshot() (qbStorage.Snapshot, error) {
 	if s.snapErr != nil {
 		return nil, s.snapErr
 	}
@@ -390,7 +390,7 @@ func TestStorageAdapter_NewIterator_WithOpts(t *testing.T) {
 	ms := newMockStorage()
 	adapter := NewStorageAdapter(ms)
 
-	opts := &dragonStorage.IteratorOptions{
+	opts := &qbStorage.IteratorOptions{
 		LowerBound: []byte("a"),
 		UpperBound: []byte("z"),
 		Reverse:    true,
@@ -449,7 +449,7 @@ func TestStorageAdapter_Close_Error(t *testing.T) {
 func TestStorageAdapter_ImplementsInterface(t *testing.T) {
 	ms := newMockStorage()
 	adapter := NewStorageAdapter(ms)
-	var _ dragonStorage.Storage = adapter
+	var _ qbStorage.Storage = adapter
 }
 
 func TestStorageAdapter_SetThenGet(t *testing.T) {
@@ -485,5 +485,5 @@ func TestNewStorageAdapter_ReturnsAdapter(t *testing.T) {
 
 func TestNewStorageAdapter_CompileTimeAssertion(t *testing.T) {
 	// Verify compile-time interface satisfaction.
-	var _ dragonStorage.Storage = (*StorageAdapter)(nil)
+	var _ qbStorage.Storage = (*StorageAdapter)(nil)
 }

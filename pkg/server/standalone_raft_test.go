@@ -25,8 +25,8 @@ func TestStandaloneModeError_Format(t *testing.T) {
 	})
 }
 
-func TestNewStandaloneModeError_WrapsDragonError(t *testing.T) {
-	t.Run("creates DragonError with unavailable code", func(t *testing.T) {
+func TestNewStandaloneModeError_WrapsQBError(t *testing.T) {
+	t.Run("creates QBError with unavailable code", func(t *testing.T) {
 		err := newStandaloneModeError("test.op", "cluster mutation")
 		require.NotNil(t, err)
 		assert.Equal(t, dberrors.ErrUnavailable, err.Code)
@@ -105,7 +105,7 @@ func TestStandaloneRaftNode_ConsensusErrors(t *testing.T) {
 	t.Run("SyncPropose returns unavailable error", func(t *testing.T) {
 		_, err := node.SyncPropose(ctx, 1, []byte("data"))
 		require.Error(t, err)
-		var de *dberrors.DragonError
+		var de *dberrors.QBError
 		assert.True(t, errors.As(err, &de))
 		assert.Equal(t, dberrors.ErrUnavailable, de.Code)
 	})
@@ -113,7 +113,7 @@ func TestStandaloneRaftNode_ConsensusErrors(t *testing.T) {
 	t.Run("ProposeWithMode returns unavailable error", func(t *testing.T) {
 		_, err := node.ProposeWithMode(ctx, 1, []byte("data"), interfaces.WriteModeSync)
 		require.Error(t, err)
-		var de *dberrors.DragonError
+		var de *dberrors.QBError
 		assert.True(t, errors.As(err, &de))
 	})
 

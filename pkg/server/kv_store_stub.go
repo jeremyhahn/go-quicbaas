@@ -69,13 +69,13 @@ func (s *sdkKVStore) Put(ctx context.Context, key string, value []byte) error {
 
 // Get retrieves a value by key through the SDK client. The SDK returns
 // KeyNotFoundError when the key does not exist, which is translated to
-// the quicbaas DragonError with ErrNotFound code.
+// the quicbaas QBError with ErrNotFound code.
 func (s *sdkKVStore) Get(ctx context.Context, key string) ([]byte, error) {
 	data, err := s.client.KV().Get(ctx, key)
 	if err != nil {
 		var knf *transport.KeyNotFoundError
 		if errors.As(err, &knf) {
-			return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "kv.get"}
+			return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "kv.get"}
 		}
 		return nil, err
 	}
@@ -153,7 +153,7 @@ func (m *MemoryKVStore) Put(_ context.Context, key string, value []byte) error {
 func (m *MemoryKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	value, ok := m.data.Load(key)
 	if !ok {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "kv.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "kv.get"}
 	}
 	storedValue := value.([]byte) //nolint:errcheck // type assertion guaranteed by map contract
 	valueCopy := make([]byte, len(storedValue))

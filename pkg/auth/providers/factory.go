@@ -37,28 +37,28 @@ const (
 var (
 	// ErrABACNotAvailable is returned when ABAC is requested but the iam
 	// build tag was not set during compilation.
-	ErrABACNotAvailable = &errors.DragonError{
+	ErrABACNotAvailable = &errors.QBError{
 		Code: errors.ErrUnavailable,
 		Op:   "providers.factory",
 		Err:  errABACNotAvailable,
 	}
 
 	// ErrInvalidProviderType is returned when an unknown provider type is requested.
-	ErrInvalidProviderType = &errors.DragonError{
+	ErrInvalidProviderType = &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   "providers.factory",
 		Err:  errInvalidProviderType,
 	}
 
 	// ErrNilConfig is returned when the factory config is nil.
-	ErrNilConfig = &errors.DragonError{
+	ErrNilConfig = &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   "providers.factory",
 		Err:  errNilConfig,
 	}
 
 	// ErrRoleManagerRequired is returned when RoleManager is required but not provided.
-	ErrRoleManagerRequired = &errors.DragonError{
+	ErrRoleManagerRequired = &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   "providers.factory",
 		Err:  errRoleManagerRequired,
@@ -125,7 +125,7 @@ func NewProvider(cfg *FactoryConfig) (interfaces.AuthorizationProvider, error) {
 		return createHybridProvider(cfg)
 
 	default:
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "providers.NewProvider",
 			Err:  &factoryError{msg: "unknown provider type: " + string(cfg.Type)},
@@ -157,7 +157,7 @@ func createHybridProvider(cfg *FactoryConfig) (interfaces.AuthorizationProvider,
 	// Create RBAC provider first
 	rbacProvider, err := NewRBACProvider(cfg.RoleManager, cfg.Logger)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "providers.createHybridProvider",
 			Err:  err,
@@ -169,7 +169,7 @@ func createHybridProvider(cfg *FactoryConfig) (interfaces.AuthorizationProvider,
 	if err != nil {
 		// Close RBAC provider on failure
 		_ = rbacProvider.Close()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "providers.createHybridProvider",
 			Err:  err,
@@ -233,7 +233,7 @@ func (pt ProviderType) IsValid() bool {
 func ParseProviderType(s string) (ProviderType, error) {
 	pt := ProviderType(s)
 	if !pt.IsValid() {
-		return "", &errors.DragonError{
+		return "", &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "providers.ParseProviderType",
 			Err:  &factoryError{msg: "invalid provider type: " + s},

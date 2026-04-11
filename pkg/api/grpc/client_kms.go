@@ -778,7 +778,7 @@ func convertKeyAttributesToProto(attrs *kctypes.KeyAttributes) (pb.KeyAlgorithm,
 			alg = pb.KeyAlgorithm_KEY_ALG_XCHACHA20_POLY1305
 			keySize = 32
 		default:
-			return pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED, 0, nil, false, &errors.DragonError{
+			return pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED, 0, nil, false, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "convertKeyAttributesToProto",
 				Err:  &api.InvalidInputError{Message: "unsupported symmetric algorithm: " + string(attrs.SymmetricAlgorithm)},

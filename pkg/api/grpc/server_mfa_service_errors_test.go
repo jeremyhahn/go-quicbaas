@@ -32,7 +32,7 @@ import (
 func TestMFAServer_CompleteEnrollment_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		completeEnrollmentFn: func(_ context.Context, _, _ string) error {
-			return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"}
+			return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)
@@ -46,7 +46,7 @@ func TestMFAServer_CompleteEnrollment_ServiceError(t *testing.T) {
 func TestMFAServer_CancelEnrollment_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		cancelEnrollmentFn: func(_ context.Context, _ string) error {
-			return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"}
+			return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)
@@ -60,7 +60,7 @@ func TestMFAServer_CancelEnrollment_ServiceError(t *testing.T) {
 func TestMFAServer_BeginChallenge_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		beginChallengeFn: func(_ context.Context, _, _, _ string) (*iam.MFAChallenge, error) {
-			return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"}
+			return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)
@@ -74,7 +74,7 @@ func TestMFAServer_BeginChallenge_ServiceError(t *testing.T) {
 func TestMFAServer_VerifyChallenge_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		verifyChallengeFn: func(_ context.Context, _, _ string) (*iam.MFAVerifyResponse, error) {
-			return nil, &dberrors.DragonError{Code: dberrors.ErrInvalidInput, Op: "test"}
+			return nil, &dberrors.QBError{Code: dberrors.ErrInvalidInput, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)
@@ -88,7 +88,7 @@ func TestMFAServer_VerifyChallenge_ServiceError(t *testing.T) {
 func TestMFAServer_Disable_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		disableMFAFn: func(_ context.Context, _, _ string) error {
-			return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"}
+			return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)
@@ -102,7 +102,7 @@ func TestMFAServer_Disable_ServiceError(t *testing.T) {
 func TestMFAServer_GenerateBackupCodes_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		generateBackupCodesFn: func(_ context.Context, _, _ string) ([]string, error) {
-			return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"}
+			return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)

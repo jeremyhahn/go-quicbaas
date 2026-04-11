@@ -255,8 +255,8 @@ func TestDoRequestServerError(t *testing.T) {
 	client, _ := NewRESTClient(server.URL, log)
 	_, err := client.KMSGetKey(ctx, "key-123")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
 }
 
 // TestDoRequestNotFound tests doRequest with 404 response.
@@ -276,9 +276,9 @@ func TestDoRequestNotFound(t *testing.T) {
 	client, _ := NewRESTClient(server.URL, log)
 	_, err := client.KMSGetKey(ctx, "nonexistent-key")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 }
 
 // TestDoRequestBadRequest tests doRequest with 400 response.
@@ -298,9 +298,9 @@ func TestDoRequestBadRequest(t *testing.T) {
 	client, _ := NewRESTClient(server.URL, log)
 	_, err := client.KMSEncrypt(ctx, &service.EncryptRequest{Plaintext: []byte("data"), KeyID: "key"})
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // TestDoRequestUnauthorized tests doRequest with 401 response.
@@ -320,9 +320,9 @@ func TestDoRequestUnauthorized(t *testing.T) {
 	client, _ := NewRESTClient(server.URL, log)
 	_, err := client.KMSGetKey(ctx, "key-123")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 // TestDoRequestForbidden tests doRequest with 403 response.
@@ -342,9 +342,9 @@ func TestDoRequestForbidden(t *testing.T) {
 	client, _ := NewRESTClient(server.URL, log)
 	_, err := client.KMSGetKey(ctx, "key-123")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrForbidden, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrForbidden, qbErr.Code)
 }
 
 // TestKMSGenerateKeySuccess tests KMSGenerateKey success path.

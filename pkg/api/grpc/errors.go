@@ -61,7 +61,7 @@ func ToGRPCError(err error) error {
 
 	// Extract QuicBaaS error code
 	var errCode errors.ErrorCode
-	var dbErr *errors.DragonError
+	var dbErr *errors.QBError
 	if stderrors.As(err, &dbErr) {
 		errCode = dbErr.Code
 	} else {
@@ -72,7 +72,7 @@ func ToGRPCError(err error) error {
 	return status.Error(grpcCode, err.Error())
 }
 
-// convertError converts a gRPC status error to a DragonError.
+// convertError converts a gRPC status error to a QBError.
 // This is used by the client to convert gRPC errors back to application errors.
 func convertError(err error) error {
 	if err == nil {
@@ -82,7 +82,7 @@ func convertError(err error) error {
 	s, ok := status.FromError(err)
 	if !ok {
 		// Not a gRPC error, wrap it
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "grpc",
 			Err:  err,
@@ -90,7 +90,7 @@ func convertError(err error) error {
 	}
 
 	errCode := grpcCodeToErrorCode(s.Code())
-	return &errors.DragonError{
+	return &errors.QBError{
 		Code: errCode,
 		Op:   "grpc",
 		Err:  stderrors.New(s.Message()),

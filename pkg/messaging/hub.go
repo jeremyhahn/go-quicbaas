@@ -355,14 +355,14 @@ func (h *NotificationHub) UnregisterClient(client *Client) {
 // This is a synchronous operation that waits for the response.
 func (h *NotificationHub) SubscribeToChannel(client *Client, channel string) error {
 	if client == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "push.SubscribeToChannel",
 			Err:  ErrNilClient,
 		}
 	}
 	if channel == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "push.SubscribeToChannel",
 			Err:  ErrEmptyChannelName,
@@ -379,7 +379,7 @@ func (h *NotificationHub) SubscribeToChannel(client *Client, channel string) err
 	case h.subscribe <- req:
 		// Request sent, wait for response
 	default:
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrResourceExhausted,
 			Op:   "push.SubscribeToChannel",
 			Err:  ErrHubOverloaded,
@@ -393,14 +393,14 @@ func (h *NotificationHub) SubscribeToChannel(client *Client, channel string) err
 // This is a synchronous operation that waits for the response.
 func (h *NotificationHub) UnsubscribeFromChannel(client *Client, channel string) error {
 	if client == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "push.UnsubscribeFromChannel",
 			Err:  ErrNilClient,
 		}
 	}
 	if channel == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "push.UnsubscribeFromChannel",
 			Err:  ErrEmptyChannelName,
@@ -417,7 +417,7 @@ func (h *NotificationHub) UnsubscribeFromChannel(client *Client, channel string)
 	case h.unsubscribe <- req:
 		// Request sent, wait for response
 	default:
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrResourceExhausted,
 			Op:   "push.UnsubscribeFromChannel",
 			Err:  ErrHubOverloaded,
@@ -431,7 +431,7 @@ func (h *NotificationHub) UnsubscribeFromChannel(client *Client, channel string)
 // This is a synchronous operation that waits for the response.
 func (h *NotificationHub) CreateChannel(name string, opts ...ChannelOption) (*HubChannel, error) {
 	if name == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "push.CreateChannel",
 			Err:  ErrEmptyChannelName,
@@ -453,7 +453,7 @@ func (h *NotificationHub) CreateChannel(name string, opts ...ChannelOption) (*Hu
 	case h.createChannel <- req:
 		// Request sent, wait for response
 	default:
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrResourceExhausted,
 			Op:   "push.CreateChannel",
 			Err:  ErrHubOverloaded,
@@ -468,7 +468,7 @@ func (h *NotificationHub) CreateChannel(name string, opts ...ChannelOption) (*Hu
 // This is a synchronous operation that waits for the response.
 func (h *NotificationHub) DeleteChannel(name string) error {
 	if name == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "push.DeleteChannel",
 			Err:  ErrEmptyChannelName,
@@ -484,7 +484,7 @@ func (h *NotificationHub) DeleteChannel(name string) error {
 	case h.deleteChannel <- req:
 		// Request sent, wait for response
 	default:
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrResourceExhausted,
 			Op:   "push.DeleteChannel",
 			Err:  ErrHubOverloaded,
@@ -498,7 +498,7 @@ func (h *NotificationHub) DeleteChannel(name string) error {
 // This is a non-blocking operation with backpressure handling.
 func (h *NotificationHub) Broadcast(msg *Message) error {
 	if msg == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "push.Broadcast",
 			Err:  ErrNilMessage,
@@ -515,7 +515,7 @@ func (h *NotificationHub) Broadcast(msg *Message) error {
 		return nil
 	default:
 		h.logger.Warn("broadcast channel full, message dropped")
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrResourceExhausted,
 			Op:   "push.Broadcast",
 			Err:  ErrHubOverloaded,
@@ -615,7 +615,7 @@ func (h *NotificationHub) handleSubscribe(req *SubscribeRequest) {
 
 	// Check if client is registered
 	if _, exists := h.clients[req.Client]; !exists {
-		req.Response <- &errors.DragonError{
+		req.Response <- &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "push.handleSubscribe",
 			Err:  ErrClientNotRegistered,
@@ -639,7 +639,7 @@ func (h *NotificationHub) handleSubscribe(req *SubscribeRequest) {
 	if channelInfo.Options.MaxSubscribers > 0 {
 		currentCount := len(h.channels[req.Channel])
 		if currentCount >= channelInfo.Options.MaxSubscribers {
-			req.Response <- &errors.DragonError{
+			req.Response <- &errors.QBError{
 				Code: errors.ErrResourceExhausted,
 				Op:   "push.handleSubscribe",
 				Err:  ErrMaxSubscribersReached,
@@ -667,7 +667,7 @@ func (h *NotificationHub) handleUnsubscribe(req *UnsubscribeRequest) {
 
 	// Check if client is registered
 	if _, exists := h.clients[req.Client]; !exists {
-		req.Response <- &errors.DragonError{
+		req.Response <- &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "push.handleUnsubscribe",
 			Err:  ErrClientNotRegistered,
@@ -678,7 +678,7 @@ func (h *NotificationHub) handleUnsubscribe(req *UnsubscribeRequest) {
 	// Check if channel exists
 	subscribers, channelExists := h.channels[req.Channel]
 	if !channelExists {
-		req.Response <- &errors.DragonError{
+		req.Response <- &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "push.handleUnsubscribe",
 			Err:  ErrChannelNotFound,
@@ -710,7 +710,7 @@ func (h *NotificationHub) handleCreateChannel(req *CreateChannelRequest) {
 	// Check if channel already exists
 	if _, exists := h.channelInfo[req.Name]; exists {
 		req.Response <- &CreateChannelResponse{
-			Err: &errors.DragonError{
+			Err: &errors.QBError{
 				Code: errors.ErrAlreadyExists,
 				Op:   "push.handleCreateChannel",
 				Err:  ErrChannelExists,
@@ -744,7 +744,7 @@ func (h *NotificationHub) handleDeleteChannel(req *DeleteChannelRequest) {
 	// Check if channel exists
 	subscribers, exists := h.channels[req.Name]
 	if !exists {
-		req.Response <- &errors.DragonError{
+		req.Response <- &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "push.handleDeleteChannel",
 			Err:  ErrChannelNotFound,

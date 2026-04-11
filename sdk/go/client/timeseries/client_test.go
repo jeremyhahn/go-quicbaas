@@ -468,14 +468,14 @@ func TestClient_Query_InvalidResponseType(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for invalid response type")
 	}
-	var dragonErr *errors.DragonError
+	var qbErr *errors.QBError
 	if !errors.IsInvalidInput(err) {
-		dragonErr, ok := err.(*errors.DragonError)
-		if !ok || dragonErr.Code != errors.CodeInternal {
+		qbErr, ok := err.(*errors.QBError)
+		if !ok || qbErr.Code != errors.CodeInternal {
 			t.Errorf("expected Internal error, got %v", err)
 		}
 	}
-	_ = dragonErr // silence unused variable warning in some paths
+	_ = qbErr // silence unused variable warning in some paths
 }
 
 func TestClient_Query_ValidResponse(t *testing.T) {

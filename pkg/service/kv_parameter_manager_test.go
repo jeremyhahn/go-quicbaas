@@ -171,7 +171,7 @@ func TestKVParameterManager_Store_ClosedManager(t *testing.T) {
 	err := pm.Store(context.Background(), "/app/key", []byte("val"), nil, false)
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
 }
@@ -246,7 +246,7 @@ func TestKVParameterManager_StoreWithOptions_PutFails(t *testing.T) {
 	err := pm.StoreWithOptions(context.Background(), "/app/key", []byte("val"), nil, false, nil)
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 }
@@ -277,7 +277,7 @@ func TestKVParameterManager_StoreWithOptions_ClientProviderError(t *testing.T) {
 	err := pm.StoreWithOptions(context.Background(), "/app/key", []byte("val"), nil, false, nil)
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 }
@@ -319,7 +319,7 @@ func TestKVParameterManager_Get_ClosedManager(t *testing.T) {
 	_, _, err := pm.Get(context.Background(), "/app/key", false)
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
 }
@@ -346,7 +346,7 @@ func TestKVParameterManager_Get_ClientProviderError(t *testing.T) {
 	_, _, err := pm.Get(context.Background(), "/app/key", false)
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 }
@@ -362,7 +362,7 @@ func TestKVParameterManager_Get_InvalidJSON(t *testing.T) {
 	_, _, err := pm.Get(context.Background(), "/app/key", false)
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 }
@@ -419,7 +419,7 @@ func TestKVParameterManager_Delete_ClosedManager(t *testing.T) {
 	err := pm.Delete(context.Background(), "/app/key")
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
 }
@@ -450,7 +450,7 @@ func TestKVParameterManager_Delete_DeleteFails(t *testing.T) {
 	err := pm.Delete(context.Background(), "/app/key")
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 }
@@ -480,7 +480,7 @@ func TestKVParameterManager_Delete_ClientProviderError(t *testing.T) {
 	err := pm.Delete(context.Background(), "/app/key")
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 }
@@ -496,7 +496,7 @@ func TestKVParameterManager_List_ClosedManager(t *testing.T) {
 	_, _, err := pm.List(context.Background(), "", true, 100, "")
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
 }
@@ -741,7 +741,7 @@ func TestKVParameterManager_SearchByTags_ClosedManager(t *testing.T) {
 	_, _, err := pm.SearchByTags(context.Background(), map[string]string{"env": "prod"}, "", 100, "")
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
 }

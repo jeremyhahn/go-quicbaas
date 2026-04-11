@@ -545,7 +545,7 @@ func TestCov91_HandleWritePoint_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.WritePointFunc = func(ctx context.Context, req *service.WritePointRequest) (*service.WritePointResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("write error")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("write error")}
 	}
 
 	body := `{"metric":"cpu.usage","value":75.5,"timestamp":"2024-01-01T00:00:00Z","tags":{"host":"server1"}}`
@@ -561,7 +561,7 @@ func TestCov91_HandleWriteBatch_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.WriteBatchFunc = func(ctx context.Context, req *service.WriteBatchRequest) (*service.WriteBatchResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("batch error")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("batch error")}
 	}
 
 	body := `{"points":[{"metric":"cpu.usage","value":75.5,"timestamp":"2024-01-01T00:00:00Z","tags":{"host":"server1"}}]}`
@@ -577,7 +577,7 @@ func TestCov91_HandleTSQuery_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.TSQueryFunc = func(ctx context.Context, req *service.TSQueryRequest) (*service.TSQueryResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("query error")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("query error")}
 	}
 
 	body := `{"metric":"cpu.usage","start_time":"2024-01-01T00:00:00Z","end_time":"2024-01-02T00:00:00Z"}`
@@ -593,7 +593,7 @@ func TestCov91_HandleDeleteSeries_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.DeleteSeriesFunc = func(ctx context.Context, req *service.TSDeleteRequest) (*service.TSDeleteResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("delete error")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("delete error")}
 	}
 
 	body := `{"metric":"cpu.usage"}`
@@ -609,7 +609,7 @@ func TestCov91_HandleGetRetentionPolicy_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.GetRetentionPolicyFunc = func(ctx context.Context, req *service.TSGetRetentionPolicyRequest) (*service.TSGetRetentionPolicyResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("retention error")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("retention error")}
 	}
 
 	rctx := chi.NewRouteContext()
@@ -627,7 +627,7 @@ func TestCov91_HandleSetRetentionPolicy_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.SetRetentionPolicyFunc = func(ctx context.Context, req *service.TSSetRetentionPolicyRequest) (*service.TSSetRetentionPolicyResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("set retention error")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("set retention error")}
 	}
 
 	rctx := chi.NewRouteContext()
@@ -646,7 +646,7 @@ func TestCov91_HandleListMetrics_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.ListMetricsFunc = func(ctx context.Context, req *service.TSListMetricsRequest) (*service.TSListMetricsResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("list metrics error")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("list metrics error")}
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/metrics", nil)
@@ -1170,7 +1170,7 @@ func TestHandleWritePointServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("WritePoint", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("WritePoint", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "WritePoint",
 		Err:  stderrors.New("internal error"),
@@ -1319,7 +1319,7 @@ func TestHandleWriteBatchServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("WriteBatch", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("WriteBatch", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "WriteBatch",
 		Err:  stderrors.New("internal error"),
@@ -1488,7 +1488,7 @@ func TestHandleTSQueryServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("TSQuery", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("TSQuery", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "TSQuery",
 		Err:  stderrors.New("internal error"),
@@ -1567,7 +1567,7 @@ func TestHandleDeleteSeriesServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("DeleteSeries", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("DeleteSeries", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "DeleteSeries",
 		Err:  stderrors.New("internal error"),
@@ -1640,7 +1640,7 @@ func TestHandleGetRetentionPolicyServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("GetRetentionPolicy", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("GetRetentionPolicy", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "GetRetentionPolicy",
 		Err:  stderrors.New("metric not found"),
@@ -1791,7 +1791,7 @@ func TestHandleSetRetentionPolicyServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("SetRetentionPolicy", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("SetRetentionPolicy", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "SetRetentionPolicy",
 		Err:  stderrors.New("internal error"),
@@ -1899,7 +1899,7 @@ func TestHandleListMetricsServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("ListMetrics", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("ListMetrics", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "ListMetrics",
 		Err:  stderrors.New("internal error"),

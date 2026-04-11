@@ -29,7 +29,7 @@ import (
 )
 
 // ErrAlreadyExists is a generic error for duplicate resources.
-var ErrAlreadyExists = &dberrors.DragonError{
+var ErrAlreadyExists = &dberrors.QBError{
 	Code: dberrors.ErrAlreadyExists,
 	Op:   "iam.storage",
 	Err:  &ResourceAlreadyExistsError{},
@@ -286,7 +286,7 @@ func (s *BackendStorage) CreateTenant(ctx context.Context, tenant *Tenant) error
 
 	data, err := json.Marshal(tenant)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.tenant.create", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.tenant.create", Err: err}
 	}
 
 	return s.put(ctx, key, data)
@@ -301,7 +301,7 @@ func (s *BackendStorage) GetTenant(ctx context.Context, id string) (*Tenant, err
 
 	var tenant Tenant
 	if err := json.Unmarshal(data, &tenant); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.tenant.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.tenant.get", Err: err}
 	}
 
 	return &tenant, nil
@@ -319,7 +319,7 @@ func (s *BackendStorage) UpdateTenant(ctx context.Context, tenant *Tenant) error
 
 	data, err := json.Marshal(tenant)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.tenant.update", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.tenant.update", Err: err}
 	}
 
 	return s.put(ctx, key, data)
@@ -342,7 +342,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 	// 1. Delete users and their email indexes
 	userPrefix := tenantPrefix + KeyPrefixUser
 	if err := s.deleteUsersWithIndexes(ctx, userPrefix); err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.tenant.delete.users",
 			Err:  err,
@@ -352,7 +352,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 	// 2. Delete groups
 	groupPrefix := tenantPrefix + KeyPrefixGroup
 	if err := s.deleteByPrefix(ctx, groupPrefix); err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.tenant.delete.groups",
 			Err:  err,
@@ -362,7 +362,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 	// 3. Delete roles
 	rolePrefix := tenantPrefix + KeyPrefixRole
 	if err := s.deleteByPrefix(ctx, rolePrefix); err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.tenant.delete.roles",
 			Err:  err,
@@ -372,7 +372,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 	// 4. Delete policies
 	policyPrefix := tenantPrefix + KeyPrefixPolicy
 	if err := s.deleteByPrefix(ctx, policyPrefix); err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.tenant.delete.policies",
 			Err:  err,
@@ -382,7 +382,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 	// 5. Delete apps and their global indexes
 	appPrefix := tenantPrefix + KeyPrefixApp
 	if err := s.deleteAppsWithIndexes(ctx, appPrefix); err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.tenant.delete.apps",
 			Err:  err,
@@ -392,7 +392,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 	// 6. Delete sessions
 	sessionPrefix := tenantPrefix + KeyPrefixSession
 	if err := s.deleteByPrefix(ctx, sessionPrefix); err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.tenant.delete.sessions",
 			Err:  err,
@@ -508,7 +508,7 @@ func (s *BackendStorage) GetSettings(ctx context.Context, tenantID string) (*Ten
 
 	var settings TenantSettings
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.tenant.settings.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.tenant.settings.get", Err: err}
 	}
 
 	return &settings, nil
@@ -522,12 +522,12 @@ func (s *BackendStorage) UpdateSettings(ctx context.Context, tenantID string, se
 		return err
 	}
 	if !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.tenant.settings.update"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.tenant.settings.update"}
 	}
 
 	data, err := json.Marshal(settings)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.tenant.settings.update", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.tenant.settings.update", Err: err}
 	}
 
 	return s.put(ctx, tenantSettingsKey(tenantID), data)
@@ -549,7 +549,7 @@ func (s *BackendStorage) GetQuota(ctx context.Context, tenantID string) (*Tenant
 
 	var quota TenantQuota
 	if err := json.Unmarshal(data, &quota); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.tenant.quota.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.tenant.quota.get", Err: err}
 	}
 
 	return &quota, nil
@@ -559,7 +559,7 @@ func (s *BackendStorage) GetQuota(ctx context.Context, tenantID string) (*Tenant
 func (s *BackendStorage) UpdateQuota(ctx context.Context, tenantID string, quota *TenantQuota) error {
 	data, err := json.Marshal(quota)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.tenant.quota.update", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.tenant.quota.update", Err: err}
 	}
 
 	return s.put(ctx, tenantQuotaKey(tenantID), data)
@@ -610,7 +610,7 @@ func (s *BackendStorage) CreateUser(ctx context.Context, user *User) error {
 
 	data, err := json.Marshal(user)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.user.create", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.create", Err: err}
 	}
 
 	if err := s.put(ctx, key, data); err != nil {
@@ -621,7 +621,7 @@ func (s *BackendStorage) CreateUser(ctx context.Context, user *User) error {
 	if user.Email != "" {
 		indexData := []byte(user.TenantID + ":" + user.ID)
 		if err := s.put(ctx, emailIndexKey(user.Email), indexData); err != nil {
-			return &dberrors.DragonError{Code: dberrors.ErrStorage, Op: "iam.user.create", Err: err}
+			return &dberrors.QBError{Code: dberrors.ErrStorage, Op: "iam.user.create", Err: err}
 		}
 	}
 
@@ -637,7 +637,7 @@ func (s *BackendStorage) GetUser(ctx context.Context, tenantID, userID string) (
 
 	var user User
 	if err := json.Unmarshal(data, &user); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.user.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.get", Err: err}
 	}
 
 	return &user, nil
@@ -654,7 +654,7 @@ func (s *BackendStorage) GetUserByEmail(ctx context.Context, email string) (*Use
 	// Parse tenant:user from index
 	parts := strings.SplitN(string(indexData), ":", 2)
 	if len(parts) != 2 {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.user.getbyemail", Err: &InvalidIndexEntryError{}}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.getbyemail", Err: &InvalidIndexEntryError{}}
 	}
 
 	return s.GetUser(ctx, parts[0], parts[1])
@@ -672,7 +672,7 @@ func (s *BackendStorage) UpdateUser(ctx context.Context, user *User) error {
 
 	data, err := json.Marshal(user)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.user.update", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.update", Err: err}
 	}
 
 	if err := s.put(ctx, key, data); err != nil {
@@ -759,7 +759,7 @@ func (s *BackendStorage) CreateGroup(ctx context.Context, group *Group) error {
 
 	data, err := json.Marshal(group)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.group.create", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.group.create", Err: err}
 	}
 
 	return s.put(ctx, key, data)
@@ -774,7 +774,7 @@ func (s *BackendStorage) GetGroup(ctx context.Context, tenantID, groupID string)
 
 	var group Group
 	if err := json.Unmarshal(data, &group); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.group.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.group.get", Err: err}
 	}
 
 	return &group, nil
@@ -791,7 +791,7 @@ func (s *BackendStorage) UpdateGroup(ctx context.Context, group *Group) error {
 
 	data, err := json.Marshal(group)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.group.update", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.group.update", Err: err}
 	}
 
 	return s.put(ctx, key, data)
@@ -852,7 +852,7 @@ func (s *BackendStorage) CreateRole(ctx context.Context, role *Role) error {
 
 	data, err := json.Marshal(role)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.role.create", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.role.create", Err: err}
 	}
 
 	return s.put(ctx, key, data)
@@ -867,7 +867,7 @@ func (s *BackendStorage) GetRole(ctx context.Context, tenantID, roleID string) (
 
 	var role Role
 	if err := json.Unmarshal(data, &role); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.role.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.role.get", Err: err}
 	}
 
 	return &role, nil
@@ -884,7 +884,7 @@ func (s *BackendStorage) UpdateRole(ctx context.Context, role *Role) error {
 
 	data, err := json.Marshal(role)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.role.update", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.role.update", Err: err}
 	}
 
 	return s.put(ctx, key, data)
@@ -945,7 +945,7 @@ func (s *BackendStorage) CreateApp(ctx context.Context, app *Application) error 
 
 	data, err := json.Marshal(app)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.app.create", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.app.create", Err: err}
 	}
 
 	if err := s.put(ctx, key, data); err != nil {
@@ -969,7 +969,7 @@ func (s *BackendStorage) GetApp(ctx context.Context, clientID string) (*Applicat
 
 	var app Application
 	if err := json.Unmarshal(data, &app); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.app.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.app.get", Err: err}
 	}
 
 	return &app, nil
@@ -982,7 +982,7 @@ func (s *BackendStorage) GetAppByTenant(ctx context.Context, tenantID, clientID 
 		return nil, err
 	}
 	if app.TenantID != tenantID {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.app.getbytenant"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.app.getbytenant"}
 	}
 	return app, nil
 }
@@ -998,7 +998,7 @@ func (s *BackendStorage) UpdateApp(ctx context.Context, app *Application) error 
 
 	data, err := json.Marshal(app)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.app.update", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.app.update", Err: err}
 	}
 
 	return s.put(ctx, key, data)
@@ -1074,7 +1074,7 @@ func (s *BackendStorage) ValidateClientSecret(ctx context.Context, clientID, cli
 func (s *BackendStorage) StoreAuthCode(ctx context.Context, code *AuthCodeData) error {
 	data, err := json.Marshal(code)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.authcode.store", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.authcode.store", Err: err}
 	}
 
 	return s.put(ctx, authCodeKey(code.Code), data)
@@ -1089,7 +1089,7 @@ func (s *BackendStorage) GetAuthCode(ctx context.Context, code string) (*AuthCod
 
 	var authCode AuthCodeData
 	if err := json.Unmarshal(data, &authCode); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.authcode.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.authcode.get", Err: err}
 	}
 
 	return &authCode, nil
@@ -1104,7 +1104,7 @@ func (s *BackendStorage) DeleteAuthCode(ctx context.Context, code string) error 
 func (s *BackendStorage) StoreToken(ctx context.Context, token *Token) error {
 	data, err := json.Marshal(token)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.token.store", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.token.store", Err: err}
 	}
 
 	if err := s.put(ctx, tokenKey(token.JTI), data); err != nil {
@@ -1128,7 +1128,7 @@ func (s *BackendStorage) GetToken(ctx context.Context, jti string) (*Token, erro
 
 	var token Token
 	if err := json.Unmarshal(data, &token); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.token.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.token.get", Err: err}
 	}
 
 	return &token, nil
@@ -1155,7 +1155,7 @@ func (s *BackendStorage) RevokeToken(ctx context.Context, jti string) error {
 
 	data, err := json.Marshal(token)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.token.revoke", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.token.revoke", Err: err}
 	}
 
 	return s.put(ctx, tokenKey(jti), data)
@@ -1253,7 +1253,7 @@ func (s *BackendStorage) CreatePolicy(ctx context.Context, tenantID string, poli
 
 	data, err := json.Marshal(policy)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.policy.create", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.create", Err: err}
 	}
 
 	return s.put(ctx, key, data)
@@ -1268,7 +1268,7 @@ func (s *BackendStorage) GetPolicy(ctx context.Context, tenantID, name string) (
 
 	var policy Policy
 	if err := json.Unmarshal(data, &policy); err != nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.policy.get", Err: err}
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.get", Err: err}
 	}
 
 	return &policy, nil
@@ -1285,7 +1285,7 @@ func (s *BackendStorage) UpdatePolicy(ctx context.Context, tenantID string, poli
 
 	data, err := json.Marshal(policy)
 	if err != nil {
-		return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "iam.policy.update", Err: err}
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.update", Err: err}
 	}
 
 	return s.put(ctx, key, data)

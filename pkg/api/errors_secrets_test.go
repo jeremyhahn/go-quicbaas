@@ -234,35 +234,35 @@ func TestSecretsCauseErrors(t *testing.T) {
 	tests := []struct {
 		name     string
 		errFn    func() error
-		newFn    func() *dberrors.DragonError
+		newFn    func() *dberrors.QBError
 		wantMsg  string
 		wantCode dberrors.ErrorCode
 	}{
 		{
 			"BackendClose",
 			func() error { return &BackendCloseError{Cause: cause} },
-			func() *dberrors.DragonError { return NewBackendCloseError("secrets.close", cause) },
+			func() *dberrors.QBError { return NewBackendCloseError("secrets.close", cause) },
 			"failed to close backend: underlying",
 			dberrors.ErrInternal,
 		},
 		{
 			"InvalidBlob",
 			func() error { return &InvalidBlobError{Cause: cause} },
-			func() *dberrors.DragonError { return NewInvalidBlobError("secrets.decrypt", cause) },
+			func() *dberrors.QBError { return NewInvalidBlobError("secrets.decrypt", cause) },
 			"invalid blob: underlying",
 			dberrors.ErrInvalidInput,
 		},
 		{
 			"DEKRetrieval",
 			func() error { return &DEKRetrievalError{Cause: cause} },
-			func() *dberrors.DragonError { return NewDEKRetrievalError("secrets.get", cause) },
+			func() *dberrors.QBError { return NewDEKRetrievalError("secrets.get", cause) },
 			"failed to get DEK: underlying",
 			dberrors.ErrInternal,
 		},
 		{
 			"AuthenticationFailed",
 			func() error { return &AuthenticationFailedError{Cause: cause} },
-			func() *dberrors.DragonError { return NewAuthenticationFailedError("secrets.decrypt", cause) },
+			func() *dberrors.QBError { return NewAuthenticationFailedError("secrets.decrypt", cause) },
 			"authentication failed: underlying",
 			dberrors.ErrDecryption,
 		},

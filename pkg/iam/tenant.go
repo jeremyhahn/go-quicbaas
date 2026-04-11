@@ -91,7 +91,7 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 		return nil, dberrors.Wrapf(err, dberrors.ErrStorage, "iam.CreateTenant", "failed to check tenant existence")
 	}
 	if exists {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrAlreadyExists,
 			Op:   "iam.CreateTenant",
 			Err:  &IAMMessageError{Message: "tenant already exists: " + tenantID},

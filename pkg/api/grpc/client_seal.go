@@ -33,7 +33,7 @@ func (c *Client) SealStatus(ctx context.Context) (*service.SealStatusResponse, e
 	}
 
 	if pbResp.Error != "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Client.SealStatus",
 			Err:  stderrors.New(pbResp.Error),
@@ -56,7 +56,7 @@ func (c *Client) SealStatus(ctx context.Context) (*service.SealStatusResponse, e
 // SealInit initializes the seal and generates key shares.
 func (c *Client) SealInit(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SealInit",
 			Err:  ErrRequestNil,
@@ -77,7 +77,7 @@ func (c *Client) SealInit(ctx context.Context, req *service.SealInitRequest) (*s
 	}
 
 	if pbResp.Error != "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Client.SealInit",
 			Err:  stderrors.New(pbResp.Error),
@@ -95,7 +95,7 @@ func (c *Client) SealInit(ctx context.Context, req *service.SealInitRequest) (*s
 // Unseal provides a key share to unseal the database.
 func (c *Client) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.Unseal",
 			Err:  ErrRequestNil,
@@ -114,7 +114,7 @@ func (c *Client) Unseal(ctx context.Context, req *service.UnsealRequest) (*servi
 	}
 
 	if pbResp.Error != "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Client.Unseal",
 			Err:  stderrors.New(pbResp.Error),
@@ -139,7 +139,7 @@ func (c *Client) Seal(ctx context.Context) error {
 	}
 
 	if pbResp.Error != "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Client.Seal",
 			Err:  stderrors.New(pbResp.Error),
@@ -152,7 +152,7 @@ func (c *Client) Seal(ctx context.Context) error {
 // Rekey generates new key shares with a new threshold configuration.
 func (c *Client) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.Rekey",
 			Err:  ErrRequestNil,
@@ -170,7 +170,7 @@ func (c *Client) Rekey(ctx context.Context, req *service.RekeyRequest) (*service
 	}
 
 	if pbResp.Error != "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Client.Rekey",
 			Err:  stderrors.New(pbResp.Error),

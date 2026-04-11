@@ -89,7 +89,7 @@ func NewManager(cfg *ManagerConfig) (*Manager, error) {
 	}
 
 	if cfg.BaseConfig == nil {
-		return nil, &dragonerrors.DragonError{
+		return nil, &dragonerrors.QBError{
 			Code: dragonerrors.ErrInvalidInput,
 			Op:   "devcluster.NewManager",
 			Err:  ErrBaseConfigRequired,
@@ -97,7 +97,7 @@ func NewManager(cfg *ManagerConfig) (*Manager, error) {
 	}
 
 	if cfg.DevCluster.NodeCount <= 0 {
-		return nil, &dragonerrors.DragonError{
+		return nil, &dragonerrors.QBError{
 			Code: dragonerrors.ErrInvalidInput,
 			Op:   "devcluster.NewManager",
 			Err:  &InvalidNodeCountError{Count: cfg.DevCluster.NodeCount},
@@ -109,7 +109,7 @@ func NewManager(cfg *ManagerConfig) (*Manager, error) {
 		var err error
 		log, err = logger.New(logger.Default())
 		if err != nil {
-			return nil, &dragonerrors.DragonError{
+			return nil, &dragonerrors.QBError{
 				Code: dragonerrors.ErrInternal,
 				Op:   "devcluster.NewManager",
 				Err:  &DevClusterCauseError{Message: "failed to create default logger", Cause: err},
@@ -129,7 +129,7 @@ func NewManager(cfg *ManagerConfig) (*Manager, error) {
 // It does not start actual server instances; that is handled by the server package.
 func (m *Manager) Start(ctx context.Context) error {
 	if !m.started.CompareAndSwap(false, true) {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrInternal,
 			Op:   "devcluster.Start",
 			Err:  ErrManagerAlreadyStarted,
@@ -141,7 +141,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	// Check for context cancellation.
 	select {
 	case <-ctx.Done():
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrCanceled,
 			Op:   "devcluster.Start",
 			Err:  ctx.Err(),
@@ -287,7 +287,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 		m.logger.Info("All devcluster nodes stopped")
 	case <-ctx.Done():
 		m.logger.Warn("Devcluster stop timed out waiting for context")
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrTimeout,
 			Op:   "devcluster.Stop",
 			Err:  ctx.Err(),
@@ -326,7 +326,7 @@ func (m *Manager) GetNodeConfig(nodeID uint64) (*config.Config, error) {
 		}
 	}
 
-	return nil, &dragonerrors.DragonError{
+	return nil, &dragonerrors.QBError{
 		Code: dragonerrors.ErrNotFound,
 		Op:   "devcluster.GetNodeConfig",
 		Err:  &NodeNotFoundError{NodeID: nodeID},
@@ -344,7 +344,7 @@ func (m *Manager) GetNode(nodeID uint64) (*NodeInstance, error) {
 		}
 	}
 
-	return nil, &dragonerrors.DragonError{
+	return nil, &dragonerrors.QBError{
 		Code: dragonerrors.ErrNotFound,
 		Op:   "devcluster.GetNode",
 		Err:  &NodeNotFoundError{NodeID: nodeID},

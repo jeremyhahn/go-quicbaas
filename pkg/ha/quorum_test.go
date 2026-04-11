@@ -91,9 +91,9 @@ func TestNewQuorumRecoveryManager(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*dberrors.DragonError)
-				require.True(t, ok, "expected DragonError")
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				qbErr, ok := err.(*dberrors.QBError)
+				require.True(t, ok, "expected QBError")
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 				assert.Nil(t, qrm)
 			} else {
 				require.NoError(t, err)
@@ -190,9 +190,9 @@ func TestQuorumRecoveryManager_RecoverQuorum(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*dberrors.DragonError)
+				qbErr, ok := err.(*dberrors.QBError)
 				require.True(t, ok)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				// May succeed or timeout depending on mock behavior
 				if err != nil {
@@ -473,9 +473,9 @@ func TestQuorumRecoveryManager_RecoverByAddingNodes(t *testing.T) {
 
 	// Should return not implemented
 	require.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
 }
 
 // TestQuorumRecoveryManager_RecoverByReconstructing tests cluster reconstruction.
@@ -520,9 +520,9 @@ func TestQuorumRecoveryManager_RecoverByReconstructing(t *testing.T) {
 			err = qrm.recoverByReconstructing(ctx, 1, assessment)
 
 			require.Error(t, err)
-			dragonErr, ok := err.(*dberrors.DragonError)
+			qbErr, ok := err.(*dberrors.QBError)
 			require.True(t, ok)
-			assert.Equal(t, tt.errorCode, dragonErr.Code)
+			assert.Equal(t, tt.errorCode, qbErr.Code)
 		})
 	}
 }
@@ -577,9 +577,9 @@ func TestQuorumRecoveryManager_WaitForQuorum(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*dberrors.DragonError)
+				qbErr, ok := err.(*dberrors.QBError)
 				require.True(t, ok)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 			}
@@ -684,7 +684,7 @@ func TestQuorumRecoveryManager_ConcurrentRecovery(t *testing.T) {
 			defer mu.Unlock()
 			if err == nil {
 				successCount++
-			} else if dragonErr, ok := err.(*dberrors.DragonError); ok && dragonErr.Code == dberrors.ErrAlreadyExists {
+			} else if qbErr, ok := err.(*dberrors.QBError); ok && qbErr.Code == dberrors.ErrAlreadyExists {
 				alreadyExistsCount++
 			}
 		}(i)

@@ -210,18 +210,18 @@ func TestNewHandlerNilService(t *testing.T) {
 	_, err := NewHandler(nil, &testLogger{})
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewHandlerNilLogger(t *testing.T) {
 	_, err := NewHandler(&mockSchedulerService{}, nil)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewHandlerSuccess(t *testing.T) {
@@ -239,9 +239,9 @@ func TestHandlerUnknownOpcode(t *testing.T) {
 	_, err = handler.Handle(context.Background(), 0xFF, nil)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestHandlerClosed(t *testing.T) {
@@ -259,9 +259,9 @@ func TestHandlerClosed(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerGetJob, nil)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleRequestNil(t *testing.T) {
@@ -640,7 +640,7 @@ func TestHandleGetStatus(t *testing.T) {
 func TestHandleServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		getJobFunc: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -659,9 +659,9 @@ func TestHandleServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerGetJob, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestHandleRequestSuccess(t *testing.T) {
@@ -687,7 +687,7 @@ func TestHandleRequestSuccess(t *testing.T) {
 func TestHandleRequestWithError(t *testing.T) {
 	svc := &mockSchedulerService{
 		getJobFunc: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -721,15 +721,15 @@ func TestHandleInvalidPayload(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerGetJob, []byte("invalid json"))
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }
 
 func TestHandleCreateJobServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		createJobFunc: func(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrInvalidInput,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -749,15 +749,15 @@ func TestHandleCreateJobServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerCreateJob, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestHandleUpdateJobServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		updateJobFunc: func(ctx context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -777,15 +777,15 @@ func TestHandleUpdateJobServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerUpdateJob, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestHandleDeleteJobServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		deleteJobFunc: func(ctx context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -804,15 +804,15 @@ func TestHandleDeleteJobServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerDeleteJob, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestHandleListJobsServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrInternal,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -831,15 +831,15 @@ func TestHandleListJobsServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerListJobs, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }
 
 func TestHandleTriggerJobServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		triggerJobFunc: func(ctx context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -858,15 +858,15 @@ func TestHandleTriggerJobServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerTriggerJob, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestHandlePauseJobServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		pauseJobFunc: func(ctx context.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrInvalidInput,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -885,15 +885,15 @@ func TestHandlePauseJobServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerPauseJob, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestHandleResumeJobServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		resumeJobFunc: func(ctx context.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrInvalidInput,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -912,15 +912,15 @@ func TestHandleResumeJobServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerResumeJob, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestHandleCancelJobServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		cancelJobFunc: func(ctx context.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -939,15 +939,15 @@ func TestHandleCancelJobServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerCancelJob, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestHandleGetJobHistoryServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		getJobHistoryFunc: func(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -966,15 +966,15 @@ func TestHandleGetJobHistoryServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerGetJobHistory, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestHandleGetStatusServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		getStatusFunc: func(ctx context.Context) (*service.GetSchedulerStatusResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrInternal,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -988,7 +988,7 @@ func TestHandleGetStatusServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpSchedulerGetStatus, nil)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }

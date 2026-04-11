@@ -139,7 +139,7 @@ func TestShardRouter_RemoveShard_LastShard(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when getting shards after removing the last one")
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if !errors.As(err, &de) || de.Code != dberrors.ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -174,9 +174,9 @@ func TestShardRouter_NotFound(t *testing.T) {
 		t.Fatal("expected error for unregistered namespace")
 	}
 
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if !errors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 	if de.Code != dberrors.ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", de.Code)

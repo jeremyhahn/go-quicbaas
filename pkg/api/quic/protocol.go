@@ -713,10 +713,10 @@ func ErrorToStatus(err error) byte {
 		return StatusOK
 	}
 
-	// Check if it's a DragonError first
-	var dragonErr *errors.DragonError
-	if errors.As(err, &dragonErr) {
-		switch dragonErr.Code {
+	// Check if it's a QBError first
+	var qbErr *errors.QBError
+	if errors.As(err, &qbErr) {
+		switch qbErr.Code {
 		case errors.ErrNotFound:
 			return StatusNotFound
 		case errors.ErrUnauthorized:

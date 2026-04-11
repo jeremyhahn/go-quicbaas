@@ -21,15 +21,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDragonError_Error(t *testing.T) {
+func TestQBError_Error(t *testing.T) {
 	tests := []struct {
 		name string
-		err  *DragonError
+		err  *QBError
 		want string
 	}{
 		{
 			name: "with operation and underlying error",
-			err: &DragonError{
+			err: &QBError{
 				Code: ErrNotFound,
 				Op:   "storage.Get",
 				Err:  errors.New("key not found"),
@@ -38,7 +38,7 @@ func TestDragonError_Error(t *testing.T) {
 		},
 		{
 			name: "with operation only",
-			err: &DragonError{
+			err: &QBError{
 				Code: ErrTimeout,
 				Op:   "raft.Propose",
 			},
@@ -46,7 +46,7 @@ func TestDragonError_Error(t *testing.T) {
 		},
 		{
 			name: "with underlying error only",
-			err: &DragonError{
+			err: &QBError{
 				Code: ErrInternal,
 				Err:  errors.New("unexpected error"),
 			},
@@ -54,7 +54,7 @@ func TestDragonError_Error(t *testing.T) {
 		},
 		{
 			name: "code only",
-			err: &DragonError{
+			err: &QBError{
 				Code: ErrConflict,
 			},
 			want: "conflict",
@@ -64,15 +64,15 @@ func TestDragonError_Error(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.err.Error(); got != tt.want {
-				t.Errorf("DragonError.Error() = %v, want %v", got, tt.want)
+				t.Errorf("QBError.Error() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestDragonError_Is(t *testing.T) {
+func TestQBError_Is(t *testing.T) {
 	baseErr := errors.New("base error")
-	dragonErr := &DragonError{
+	qbErr := &QBError{
 		Code: ErrNotFound,
 		Op:   "test",
 		Err:  baseErr,
@@ -80,31 +80,31 @@ func TestDragonError_Is(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		err    *DragonError
+		err    *QBError
 		target error
 		want   bool
 	}{
 		{
 			name:   "matches same code",
-			err:    dragonErr,
-			target: &DragonError{Code: ErrNotFound},
+			err:    qbErr,
+			target: &QBError{Code: ErrNotFound},
 			want:   true,
 		},
 		{
 			name:   "does not match different code",
-			err:    dragonErr,
-			target: &DragonError{Code: ErrTimeout},
+			err:    qbErr,
+			target: &QBError{Code: ErrTimeout},
 			want:   false,
 		},
 		{
 			name:   "matches underlying error",
-			err:    dragonErr,
+			err:    qbErr,
 			target: baseErr,
 			want:   true,
 		},
 		{
 			name:   "nil target",
-			err:    dragonErr,
+			err:    qbErr,
 			target: nil,
 			want:   false,
 		},
@@ -113,26 +113,26 @@ func TestDragonError_Is(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.err.Is(tt.target); got != tt.want {
-				t.Errorf("DragonError.Is() = %v, want %v", got, tt.want)
+				t.Errorf("QBError.Is() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestDragonError_Unwrap(t *testing.T) {
+func TestQBError_Unwrap(t *testing.T) {
 	baseErr := errors.New("base error")
-	dragonErr := &DragonError{
+	qbErr := &QBError{
 		Code: ErrInternal,
 		Err:  baseErr,
 	}
 
-	if got := dragonErr.Unwrap(); !errors.Is(got, baseErr) {
-		t.Errorf("DragonError.Unwrap() = %v, want %v", got, baseErr)
+	if got := qbErr.Unwrap(); !errors.Is(got, baseErr) {
+		t.Errorf("QBError.Unwrap() = %v, want %v", got, baseErr)
 	}
 }
 
-func TestDragonError_WithContext(t *testing.T) {
-	err := &DragonError{Code: ErrNotFound}
+func TestQBError_WithContext(t *testing.T) {
+	err := &QBError{Code: ErrNotFound}
 	err = err.WithContext("key", "test-key")
 	err = err.WithContext("table", "users")
 
@@ -149,30 +149,30 @@ func TestDragonError_WithContext(t *testing.T) {
 	}
 }
 
-func TestDragonError_IsRetryable(t *testing.T) {
+func TestQBError_IsRetryable(t *testing.T) {
 	tests := []struct {
 		name string
-		err  *DragonError
+		err  *QBError
 		want bool
 	}{
 		{
 			name: "timeout is retryable",
-			err:  &DragonError{Code: ErrTimeout},
+			err:  &QBError{Code: ErrTimeout},
 			want: true,
 		},
 		{
 			name: "unavailable is retryable",
-			err:  &DragonError{Code: ErrUnavailable},
+			err:  &QBError{Code: ErrUnavailable},
 			want: true,
 		},
 		{
 			name: "not found is not retryable",
-			err:  &DragonError{Code: ErrNotFound},
+			err:  &QBError{Code: ErrNotFound},
 			want: false,
 		},
 		{
 			name: "explicit retry flag",
-			err:  &DragonError{Code: ErrNotFound, Retry: true},
+			err:  &QBError{Code: ErrNotFound, Retry: true},
 			want: true,
 		},
 	}
@@ -180,7 +180,7 @@ func TestDragonError_IsRetryable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.err.IsRetryable(); got != tt.want {
-				t.Errorf("DragonError.IsRetryable() = %v, want %v", got, tt.want)
+				t.Errorf("QBError.IsRetryable() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -240,8 +240,8 @@ func TestWrap(t *testing.T) {
 			wantNil: false,
 		},
 		{
-			name:    "wrap DragonError",
-			err:     &DragonError{Code: ErrNotFound, Op: "inner"},
+			name:    "wrap QBError",
+			err:     &QBError{Code: ErrNotFound, Op: "inner"},
 			code:    ErrStorage,
 			op:      "outer",
 			wantNil: false,
@@ -264,9 +264,9 @@ func TestWrap(t *testing.T) {
 				return
 			}
 
-			var de *DragonError
+			var de *QBError
 			if !errors.As(got, &de) {
-				t.Error("Wrap() did not return DragonError")
+				t.Error("Wrap() did not return QBError")
 				return
 			}
 
@@ -340,7 +340,7 @@ func TestCode(t *testing.T) {
 		want ErrorCode
 	}{
 		{
-			name: "DragonError",
+			name: "QBError",
 			err:  New(ErrNotFound, "test", "not found"),
 			want: ErrNotFound,
 		},
@@ -372,7 +372,7 @@ func TestOperation(t *testing.T) {
 		want string
 	}{
 		{
-			name: "DragonError with op",
+			name: "QBError with op",
 			err:  New(ErrNotFound, "storage.Get", "not found"),
 			want: "storage.Get",
 		},
@@ -693,7 +693,7 @@ func TestIsQuotaExceeded(t *testing.T) {
 		},
 		{
 			name: "different error",
-			err:  &DragonError{Code: ErrNotFound, Op: "test"},
+			err:  &QBError{Code: ErrNotFound, Op: "test"},
 			want: false,
 		},
 		{
@@ -725,12 +725,12 @@ func TestIsResourceExhausted(t *testing.T) {
 		},
 		{
 			name: "resource exhausted error",
-			err:  &DragonError{Code: ErrResourceExhausted},
+			err:  &QBError{Code: ErrResourceExhausted},
 			want: true,
 		},
 		{
 			name: "different error code",
-			err:  &DragonError{Code: ErrNotFound},
+			err:  &QBError{Code: ErrNotFound},
 			want: false,
 		},
 	}
@@ -762,12 +762,12 @@ func TestIsMissingJustification(t *testing.T) {
 		},
 		{
 			name: "dragon error with missing justification code",
-			err:  &DragonError{Code: ErrMissingJustification},
+			err:  &QBError{Code: ErrMissingJustification},
 			want: true,
 		},
 		{
 			name: "different error code",
-			err:  &DragonError{Code: ErrNotFound},
+			err:  &QBError{Code: ErrNotFound},
 			want: false,
 		},
 		{
@@ -804,12 +804,12 @@ func TestIsMissingUserContext(t *testing.T) {
 		},
 		{
 			name: "dragon error with missing user context code",
-			err:  &DragonError{Code: ErrMissingUserContext},
+			err:  &QBError{Code: ErrMissingUserContext},
 			want: true,
 		},
 		{
 			name: "different error code",
-			err:  &DragonError{Code: ErrNotFound},
+			err:  &QBError{Code: ErrNotFound},
 			want: false,
 		},
 		{
@@ -953,12 +953,12 @@ func TestIsSystemKeyspaceViolation(t *testing.T) {
 		},
 		{
 			name: "dragon error with correct code",
-			err:  &DragonError{Code: ErrSystemKeyspaceViolation},
+			err:  &QBError{Code: ErrSystemKeyspaceViolation},
 			want: true,
 		},
 		{
 			name: "different error code",
-			err:  &DragonError{Code: ErrNotFound},
+			err:  &QBError{Code: ErrNotFound},
 			want: false,
 		},
 		{
@@ -993,12 +993,12 @@ func TestIsCrossTenantAccess(t *testing.T) {
 		},
 		{
 			name: "dragon error with correct code",
-			err:  &DragonError{Code: ErrCrossTenantAccess},
+			err:  &QBError{Code: ErrCrossTenantAccess},
 			want: true,
 		},
 		{
 			name: "different error code",
-			err:  &DragonError{Code: ErrNotFound},
+			err:  &QBError{Code: ErrNotFound},
 			want: false,
 		},
 		{
@@ -1033,12 +1033,12 @@ func TestIsMissingTenantContext(t *testing.T) {
 		},
 		{
 			name: "dragon error with correct code",
-			err:  &DragonError{Code: ErrMissingTenantContext},
+			err:  &QBError{Code: ErrMissingTenantContext},
 			want: true,
 		},
 		{
 			name: "different error code",
-			err:  &DragonError{Code: ErrNotFound},
+			err:  &QBError{Code: ErrNotFound},
 			want: false,
 		},
 		{
@@ -1060,7 +1060,7 @@ func TestNotImplementedHelper(t *testing.T) {
 		err := NotImplemented("feature.X", "not yet available")
 		require.Error(t, err)
 
-		var de *DragonError
+		var de *QBError
 		require.ErrorAs(t, err, &de)
 		assert.Equal(t, ErrNotImplemented, de.Code)
 		assert.Equal(t, "feature.X", de.Op)
@@ -1138,7 +1138,7 @@ func TestWrapf(t *testing.T) {
 
 		require.Error(t, err)
 
-		var de *DragonError
+		var de *QBError
 		require.ErrorAs(t, err, &de)
 		assert.Equal(t, ErrStorage, de.Code)
 		assert.Equal(t, "storage.Get", de.Op)
@@ -1160,9 +1160,9 @@ func TestWrapf(t *testing.T) {
 	})
 }
 
-func TestDragonError_WithRetry(t *testing.T) {
+func TestQBError_WithRetry(t *testing.T) {
 	t.Run("set retry to true", func(t *testing.T) {
-		err := &DragonError{Code: ErrNotFound}
+		err := &QBError{Code: ErrNotFound}
 		assert.False(t, err.IsRetryable())
 
 		err = err.WithRetry(true)
@@ -1170,7 +1170,7 @@ func TestDragonError_WithRetry(t *testing.T) {
 	})
 
 	t.Run("set retry to false", func(t *testing.T) {
-		err := &DragonError{Code: ErrTimeout, Retry: true}
+		err := &QBError{Code: ErrTimeout, Retry: true}
 		assert.True(t, err.IsRetryable())
 
 		err = err.WithRetry(false)
@@ -1179,7 +1179,7 @@ func TestDragonError_WithRetry(t *testing.T) {
 	})
 
 	t.Run("explicit retry takes precedence", func(t *testing.T) {
-		err := &DragonError{Code: ErrNotFound, Retry: false}
+		err := &QBError{Code: ErrNotFound, Retry: false}
 		assert.False(t, err.IsRetryable())
 
 		err.Retry = true
@@ -1187,8 +1187,8 @@ func TestDragonError_WithRetry(t *testing.T) {
 	})
 }
 
-func TestDragonError_GetContext_Nil(t *testing.T) {
-	err := &DragonError{Code: ErrNotFound, Context: nil}
+func TestQBError_GetContext_Nil(t *testing.T) {
+	err := &QBError{Code: ErrNotFound, Context: nil}
 	val, ok := err.GetContext("key")
 	assert.Nil(t, val)
 	assert.False(t, ok)
@@ -1197,28 +1197,28 @@ func TestDragonError_GetContext_Nil(t *testing.T) {
 func TestAs(t *testing.T) {
 	t.Run("successful As", func(t *testing.T) {
 		err := New(ErrNotFound, "test", "not found")
-		var de *DragonError
+		var de *QBError
 		ok := As(err, &de)
 		assert.True(t, ok)
 		assert.Equal(t, ErrNotFound, de.Code)
 	})
 
-	t.Run("As with non-DragonError", func(t *testing.T) {
+	t.Run("As with non-QBError", func(t *testing.T) {
 		err := errors.New("standard error")
-		var de *DragonError
+		var de *QBError
 		ok := As(err, &de)
 		assert.False(t, ok)
 	})
 
 	t.Run("As with nil", func(t *testing.T) {
-		var de *DragonError
+		var de *QBError
 		ok := As(nil, &de)
 		assert.False(t, ok)
 	})
 }
 
 func TestGetContext(t *testing.T) {
-	t.Run("get context from DragonError", func(t *testing.T) {
+	t.Run("get context from QBError", func(t *testing.T) {
 		err := New(ErrNotFound, "test", "not found")
 		err.WithContext("key", "value")
 		err.WithContext("number", 42)
@@ -1232,7 +1232,7 @@ func TestGetContext(t *testing.T) {
 		assert.Equal(t, 42, val)
 	})
 
-	t.Run("get context from non-DragonError", func(t *testing.T) {
+	t.Run("get context from non-QBError", func(t *testing.T) {
 		err := errors.New("standard error")
 		val, ok := GetContext(err, "key")
 		assert.False(t, ok)
@@ -1257,7 +1257,7 @@ func TestInternalf(t *testing.T) {
 	err := Internalf("process", "unexpected state: %s", "invalid")
 	require.Error(t, err)
 
-	var de *DragonError
+	var de *QBError
 	require.ErrorAs(t, err, &de)
 	assert.Equal(t, ErrInternal, de.Code)
 	assert.Equal(t, "process", de.Op)
@@ -1268,7 +1268,7 @@ func TestUnavailablef(t *testing.T) {
 	err := Unavailablef("cluster", "no leader available in %d nodes", 3)
 	require.Error(t, err)
 
-	var de *DragonError
+	var de *QBError
 	require.ErrorAs(t, err, &de)
 	assert.Equal(t, ErrUnavailable, de.Code)
 	assert.Equal(t, "cluster", de.Op)
@@ -1368,7 +1368,7 @@ func TestWrap_PreservesContext(t *testing.T) {
 	wrappedErr := Wrap(originalErr, ErrStorage, "outer")
 	require.Error(t, wrappedErr)
 
-	var de *DragonError
+	var de *QBError
 	require.ErrorAs(t, wrappedErr, &de)
 	assert.Equal(t, "outer", de.Op)
 
@@ -1392,12 +1392,12 @@ func TestWrap_PreservesRetry(t *testing.T) {
 	assert.True(t, IsRetryable(wrappedErr))
 }
 
-func TestDragonError_IsWithNilUnderlying(t *testing.T) {
-	err := &DragonError{Code: ErrNotFound, Err: nil}
+func TestQBError_IsWithNilUnderlying(t *testing.T) {
+	err := &QBError{Code: ErrNotFound, Err: nil}
 	standardErr := errors.New("standard")
 
 	assert.False(t, err.Is(standardErr))
-	assert.True(t, err.Is(&DragonError{Code: ErrNotFound}))
+	assert.True(t, err.Is(&QBError{Code: ErrNotFound}))
 }
 
 // =============================================================================

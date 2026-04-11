@@ -29,16 +29,16 @@ func TestGUIUnavailableError_Error(t *testing.T) {
 }
 
 func TestGUIUnavailableError_ErrorsAs(t *testing.T) {
-	dragonErr := NewGUIUnavailableError("test.op")
+	qbErr := NewGUIUnavailableError("test.op")
 	var guiErr *GUIUnavailableError
-	if !errors.As(dragonErr, &guiErr) {
+	if !errors.As(qbErr, &guiErr) {
 		t.Error("expected errors.As to match GUIUnavailableError")
 	}
-	if dragonErr.Code != pkgerrors.ErrUnavailable {
-		t.Errorf("expected ErrUnavailable code, got %v", dragonErr.Code)
+	if qbErr.Code != pkgerrors.ErrUnavailable {
+		t.Errorf("expected ErrUnavailable code, got %v", qbErr.Code)
 	}
-	if dragonErr.Op != "test.op" {
-		t.Errorf("expected op test.op, got %s", dragonErr.Op)
+	if qbErr.Op != "test.op" {
+		t.Errorf("expected op test.op, got %s", qbErr.Op)
 	}
 }
 
@@ -51,13 +51,13 @@ func TestGUINotConnectedError_Error(t *testing.T) {
 }
 
 func TestGUINotConnectedError_ErrorsAs(t *testing.T) {
-	dragonErr := NewGUINotConnectedError("test.op")
+	qbErr := NewGUINotConnectedError("test.op")
 	var guiErr *GUINotConnectedError
-	if !errors.As(dragonErr, &guiErr) {
+	if !errors.As(qbErr, &guiErr) {
 		t.Error("expected errors.As to match GUINotConnectedError")
 	}
-	if dragonErr.Code != pkgerrors.ErrUnavailable {
-		t.Errorf("expected ErrUnavailable code, got %v", dragonErr.Code)
+	if qbErr.Code != pkgerrors.ErrUnavailable {
+		t.Errorf("expected ErrUnavailable code, got %v", qbErr.Code)
 	}
 }
 
@@ -93,14 +93,14 @@ func TestGUITransportError_UnwrapNil(t *testing.T) {
 	}
 }
 
-func TestGUITransportError_DragonError(t *testing.T) {
+func TestGUITransportError_QBError(t *testing.T) {
 	cause := errors.New("broken pipe")
-	dragonErr := NewGUITransportError("test.op", cause)
-	if dragonErr.Code != pkgerrors.ErrUnavailable {
-		t.Errorf("expected ErrUnavailable code, got %v", dragonErr.Code)
+	qbErr := NewGUITransportError("test.op", cause)
+	if qbErr.Code != pkgerrors.ErrUnavailable {
+		t.Errorf("expected ErrUnavailable code, got %v", qbErr.Code)
 	}
 	var transportErr *GUITransportError
-	if !errors.As(dragonErr, &transportErr) {
+	if !errors.As(qbErr, &transportErr) {
 		t.Error("expected errors.As to match GUITransportError")
 	}
 	if transportErr.Cause != cause {
@@ -140,17 +140,17 @@ func TestGUIConnectError_UnwrapNil(t *testing.T) {
 	}
 }
 
-func TestGUIConnectError_DragonError(t *testing.T) {
+func TestGUIConnectError_QBError(t *testing.T) {
 	cause := errors.New("connection refused")
-	dragonErr := NewGUIConnectError("test.op", "localhost:9090", cause)
-	if dragonErr.Code != pkgerrors.ErrUnavailable {
-		t.Errorf("expected ErrUnavailable code, got %v", dragonErr.Code)
+	qbErr := NewGUIConnectError("test.op", "localhost:9090", cause)
+	if qbErr.Code != pkgerrors.ErrUnavailable {
+		t.Errorf("expected ErrUnavailable code, got %v", qbErr.Code)
 	}
-	if dragonErr.Op != "test.op" {
-		t.Errorf("expected op test.op, got %s", dragonErr.Op)
+	if qbErr.Op != "test.op" {
+		t.Errorf("expected op test.op, got %s", qbErr.Op)
 	}
 	var connectErr *GUIConnectError
-	if !errors.As(dragonErr, &connectErr) {
+	if !errors.As(qbErr, &connectErr) {
 		t.Error("expected errors.As to match GUIConnectError")
 	}
 	if connectErr.Address != "localhost:9090" {

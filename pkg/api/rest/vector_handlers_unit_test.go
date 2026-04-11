@@ -134,7 +134,7 @@ func TestHandleUpsertVector(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("UpsertVector", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "upsert", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "upsert", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -264,7 +264,7 @@ func TestHandleGetVector(t *testing.T) {
 			id:        "123",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("GetVector", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "get", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "get", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -355,7 +355,7 @@ func TestHandleDeleteVector(t *testing.T) {
 			id:        "123",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("DeleteVector", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrNotFound, Op: "delete", Err: &errors.MessageError{Message: "not found"}}).Once()
+					&errors.QBError{Code: errors.ErrNotFound, Op: "delete", Err: &errors.MessageError{Message: "not found"}}).Once()
 			},
 			expectedStatus: http.StatusNotFound,
 		},
@@ -439,7 +439,7 @@ func TestHandleListVectors(t *testing.T) {
 			namespace: "test-ns",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("SearchByMetadata", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -551,7 +551,7 @@ func TestHandleSearchSimilar(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("SearchSimilar", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "search", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "search", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},

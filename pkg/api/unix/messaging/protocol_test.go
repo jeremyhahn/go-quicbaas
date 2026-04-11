@@ -68,9 +68,9 @@ func TestWriteRequest_NilRequest(t *testing.T) {
 	err := WriteRequest(&buf, nil)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWriteReadRequest_RoundTrip(t *testing.T) {
@@ -120,9 +120,9 @@ func TestWriteRequest_PayloadTooLarge(t *testing.T) {
 	err := WriteRequest(&buf, req)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWriteRequest_TokenTooLarge(t *testing.T) {
@@ -136,9 +136,9 @@ func TestWriteRequest_TokenTooLarge(t *testing.T) {
 	err := WriteRequest(&buf, req)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWriteRequest_WriteErrors(t *testing.T) {
@@ -193,9 +193,9 @@ func TestReadRequest_ReadErrors(t *testing.T) {
 		_, err := ReadRequest(bytes.NewReader(b.Bytes()))
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("short reader fails on payload length", func(t *testing.T) {
@@ -215,9 +215,9 @@ func TestReadRequest_ReadErrors(t *testing.T) {
 		_, err := ReadRequest(bytes.NewReader(b.Bytes()))
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -230,9 +230,9 @@ func TestWriteResponse_NilResponse(t *testing.T) {
 	err := WriteResponse(&buf, nil)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWriteReadResponse_RoundTrip(t *testing.T) {
@@ -279,9 +279,9 @@ func TestWriteResponse_PayloadTooLarge(t *testing.T) {
 	err := WriteResponse(&buf, resp)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWriteResponse_WriteErrors(t *testing.T) {
@@ -324,9 +324,9 @@ func TestReadResponse_ReadErrors(t *testing.T) {
 		_, err := ReadResponse(bytes.NewReader(b.Bytes()))
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -351,9 +351,9 @@ func TestEncodePayload(t *testing.T) {
 		_, err := EncodePayload(make(chan int))
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -374,9 +374,9 @@ func TestDecodePayload(t *testing.T) {
 		err := DecodePayload([]byte(`{"name":"test"}`), nil)
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("returns error for invalid JSON", func(t *testing.T) {
@@ -384,9 +384,9 @@ func TestDecodePayload(t *testing.T) {
 		err := DecodePayload([]byte("not-json"), &target)
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 	})
 
 	t.Run("decodes valid JSON successfully", func(t *testing.T) {
@@ -409,15 +409,15 @@ func TestErrorToStatus(t *testing.T) {
 		expected byte
 	}{
 		{"nil error returns OK", nil, StatusOK},
-		{"NotFound", &dberrors.DragonError{Code: dberrors.ErrNotFound}, StatusNotFound},
-		{"Unauthorized", &dberrors.DragonError{Code: dberrors.ErrUnauthorized}, StatusUnauthorized},
-		{"InvalidInput", &dberrors.DragonError{Code: dberrors.ErrInvalidInput}, StatusInvalidArgument},
-		{"AlreadyExists", &dberrors.DragonError{Code: dberrors.ErrAlreadyExists}, StatusAlreadyExists},
-		{"Timeout", &dberrors.DragonError{Code: dberrors.ErrTimeout}, StatusTimeout},
-		{"Forbidden", &dberrors.DragonError{Code: dberrors.ErrForbidden}, StatusForbidden},
-		{"ResourceExhausted", &dberrors.DragonError{Code: dberrors.ErrResourceExhausted}, StatusResourceExhausted},
-		{"Unavailable", &dberrors.DragonError{Code: dberrors.ErrUnavailable}, StatusUnavailable},
-		{"Internal", &dberrors.DragonError{Code: dberrors.ErrInternal}, StatusInternalError},
+		{"NotFound", &dberrors.QBError{Code: dberrors.ErrNotFound}, StatusNotFound},
+		{"Unauthorized", &dberrors.QBError{Code: dberrors.ErrUnauthorized}, StatusUnauthorized},
+		{"InvalidInput", &dberrors.QBError{Code: dberrors.ErrInvalidInput}, StatusInvalidArgument},
+		{"AlreadyExists", &dberrors.QBError{Code: dberrors.ErrAlreadyExists}, StatusAlreadyExists},
+		{"Timeout", &dberrors.QBError{Code: dberrors.ErrTimeout}, StatusTimeout},
+		{"Forbidden", &dberrors.QBError{Code: dberrors.ErrForbidden}, StatusForbidden},
+		{"ResourceExhausted", &dberrors.QBError{Code: dberrors.ErrResourceExhausted}, StatusResourceExhausted},
+		{"Unavailable", &dberrors.QBError{Code: dberrors.ErrUnavailable}, StatusUnavailable},
+		{"Internal", &dberrors.QBError{Code: dberrors.ErrInternal}, StatusInternalError},
 		{"non-dragon error returns Internal", errors.New("generic error"), StatusInternalError},
 	}
 
@@ -462,9 +462,9 @@ func TestStatusToError(t *testing.T) {
 			err := StatusToError(tt.status, "test message")
 			require.Error(t, err)
 
-			var dragonErr *dberrors.DragonError
-			require.True(t, errors.As(err, &dragonErr))
-			assert.Equal(t, tt.expectedCode, dragonErr.Code)
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, tt.expectedCode, qbErr.Code)
 		})
 	}
 }

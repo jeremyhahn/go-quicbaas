@@ -42,7 +42,7 @@ type FileKVStore struct {
 // The dataDir must be an existing directory or will be created.
 func NewFileKVStore(dataDir string) (*FileKVStore, error) {
 	if dataDir == "" {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "file_kv_store.new",
 			Err:  ErrDataDirRequired,
@@ -51,7 +51,7 @@ func NewFileKVStore(dataDir string) (*FileKVStore, error) {
 
 	// Create the data directory if it doesn't exist
 	if err := os.MkdirAll(dataDir, 0750); err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "file_kv_store.new",
 			Err:  err,
@@ -88,7 +88,7 @@ func (f *FileKVStore) Put(_ context.Context, key string, value []byte) error {
 	// Write atomically using temp file + rename
 	tmpPath := filePath + ".tmp"
 	if err := os.WriteFile(tmpPath, value, 0600); err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "file_kv_store.put",
 			Err:  err,
@@ -98,7 +98,7 @@ func (f *FileKVStore) Put(_ context.Context, key string, value []byte) error {
 	if err := os.Rename(tmpPath, filePath); err != nil {
 		// Clean up temp file on failure (ignore cleanup errors)
 		_ = os.Remove(tmpPath)
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "file_kv_store.put",
 			Err:  err,
@@ -119,9 +119,9 @@ func (f *FileKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "file_kv_store.get"}
+			return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "file_kv_store.get"}
 		}
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "file_kv_store.get",
 			Err:  err,
@@ -141,7 +141,7 @@ func (f *FileKVStore) Delete(_ context.Context, key string) error {
 
 	err := os.Remove(filePath)
 	if err != nil && !os.IsNotExist(err) {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "file_kv_store.delete",
 			Err:  err,
@@ -158,7 +158,7 @@ func (f *FileKVStore) Scan(_ context.Context, prefix string, fn func(key string,
 
 	entries, err := os.ReadDir(f.dataDir)
 	if err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "file_kv_store.scan",
 			Err:  err,
@@ -210,7 +210,7 @@ func (f *FileKVStore) List(_ context.Context, prefix string) ([]string, error) {
 
 	entries, err := os.ReadDir(f.dataDir)
 	if err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "file_kv_store.list",
 			Err:  err,
@@ -255,7 +255,7 @@ func (f *FileKVStore) Exists(_ context.Context, key string) (bool, error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, &dberrors.DragonError{
+		return false, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "file_kv_store.exists",
 			Err:  err,

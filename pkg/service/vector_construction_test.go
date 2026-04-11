@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qbErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -167,9 +167,9 @@ func TestNewVectorService_LoadNamespacesError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, svc)
 
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrInternal, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
 	assert.Contains(t, err.Error(), "load namespaces failed")
 }
 
@@ -226,8 +226,8 @@ func TestVectorService_CreateNamespace_WithIndexType(t *testing.T) {
 	resp, err := svc.CreateNamespace(context.Background(), req)
 	if err != nil {
 		// Expected: HNSW stub fails without vector build tag
-		var dragonErr *dragonErrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
+		var qbErr *qbErrors.QBError
+		require.True(t, errors.As(err, &qbErr))
 	} else {
 		require.NotNil(t, resp)
 		assert.Equal(t, "test-ns", resp.Namespace)
@@ -251,9 +251,9 @@ func TestVectorService_CreateNamespace_EmptyName(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestVectorService_CreateNamespace_AlreadyExists(t *testing.T) {
@@ -279,9 +279,9 @@ func TestVectorService_CreateNamespace_AlreadyExists(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrAlreadyExists, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrAlreadyExists, qbErr.Code)
 }
 
 func TestVectorService_DeleteNamespace_EmptyNamespace(t *testing.T) {

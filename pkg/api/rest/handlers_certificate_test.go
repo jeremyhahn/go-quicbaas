@@ -257,7 +257,7 @@ func TestHandleIssueCertificate(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCertSvc := &MockCertificateService{}
-				mockCertSvc.On("IssueCertificate", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCertSvc.On("IssueCertificate", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "IssueCertificate",
 					Err:  assert.AnError,
@@ -274,7 +274,7 @@ func TestHandleIssueCertificate(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCertSvc := &MockCertificateService{}
-				mockCertSvc.On("IssueCertificate", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCertSvc.On("IssueCertificate", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInvalidInput,
 					Op:   "IssueCertificate",
 					Err:  assert.AnError,
@@ -414,7 +414,7 @@ func TestHandleSignCSR(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCertSvc := &MockCertificateService{}
-				mockCertSvc.On("SignCSR", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCertSvc.On("SignCSR", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInvalidInput,
 					Op:   "SignCSR",
 					Err:  assert.AnError,
@@ -524,7 +524,7 @@ func TestHandleRevokeCertificate(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCertSvc := &MockCertificateService{}
-				mockCertSvc.On("RevokeCertificate", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCertSvc.On("RevokeCertificate", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "RevokeCertificate",
 					Err:  assert.AnError,
@@ -540,7 +540,7 @@ func TestHandleRevokeCertificate(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCertSvc := &MockCertificateService{}
-				mockCertSvc.On("RevokeCertificate", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCertSvc.On("RevokeCertificate", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "RevokeCertificate",
 					Err:  assert.AnError,
@@ -676,7 +676,7 @@ func TestHandleVerifyCertificate(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCertSvc := &MockCertificateService{}
-				mockCertSvc.On("VerifyCertificate", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCertSvc.On("VerifyCertificate", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "VerifyCertificate",
 					Err:  assert.AnError,
@@ -764,7 +764,7 @@ func TestHandleGetCACertificate(t *testing.T) {
 			name: "service returns error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCertSvc := &MockCertificateService{}
-				mockCertSvc.On("GetCACertificate", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCertSvc.On("GetCACertificate", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GetCACertificate",
 					Err:  assert.AnError,
@@ -777,7 +777,7 @@ func TestHandleGetCACertificate(t *testing.T) {
 			name: "service returns not found error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCertSvc := &MockCertificateService{}
-				mockCertSvc.On("GetCACertificate", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCertSvc.On("GetCACertificate", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "GetCACertificate",
 					Err:  assert.AnError,
@@ -909,7 +909,7 @@ func TestHandleGetTLSConfig(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCertSvc := &MockCertificateService{}
-				mockCertSvc.On("GetTLSConfig", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCertSvc.On("GetTLSConfig", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GetTLSConfig",
 					Err:  assert.AnError,

@@ -277,9 +277,9 @@ func TestUnmarshalWithDecryption_WrongKey(t *testing.T) {
 	err = UnmarshalWithDecryption(data, result, key2)
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrDecryption, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrDecryption, qbErr.Code)
 }
 
 func TestMarshalWithEncryption_NilEntity(t *testing.T) {
@@ -288,9 +288,9 @@ func TestMarshalWithEncryption_NilEntity(t *testing.T) {
 	_, err := MarshalWithEncryption(nil, key)
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestMarshalWithEncryption_NilPointer(t *testing.T) {
@@ -300,9 +300,9 @@ func TestMarshalWithEncryption_NilPointer(t *testing.T) {
 	_, err := MarshalWithEncryption(user, key)
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestUnmarshalWithDecryption_NonPointer(t *testing.T) {
@@ -313,9 +313,9 @@ func TestUnmarshalWithDecryption_NonPointer(t *testing.T) {
 	err := UnmarshalWithDecryption(data, user, key)
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestMarshalWithEncryption_NonStruct(t *testing.T) {
@@ -335,9 +335,9 @@ func TestMarshalWithEncryption_NonStruct(t *testing.T) {
 			_, err := MarshalWithEncryption(tt.entity, key)
 			assert.Error(t, err)
 
-			var dragonErr *errors.DragonError
-			assert.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+			var qbErr *errors.QBError
+			assert.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 		})
 	}
 }

@@ -102,7 +102,7 @@ func (m *mockPolicyStorage) UpdatePolicy(ctx context.Context, tenantID string, p
 	defer m.mu.Unlock()
 
 	if m.policies[tenantID] == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.policy",
 			Err:  ErrPolicyNotFound.Err,

@@ -25,7 +25,7 @@ import (
 // SchedulerCreateJob creates a new scheduled job.
 func (c *Client) SchedulerCreateJob(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SchedulerCreateJob",
 			Err:  ErrRequestNil,
@@ -66,7 +66,7 @@ func (c *Client) SchedulerCreateJob(ctx context.Context, req *service.CreateSche
 // SchedulerGetJob retrieves a job by ID.
 func (c *Client) SchedulerGetJob(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SchedulerGetJob",
 			Err:  ErrRequestNil,
@@ -94,7 +94,7 @@ func (c *Client) SchedulerGetJob(ctx context.Context, req *service.GetSchedulerJ
 // SchedulerUpdateJob updates an existing job.
 func (c *Client) SchedulerUpdateJob(ctx context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SchedulerUpdateJob",
 			Err:  ErrRequestNil,
@@ -132,7 +132,7 @@ func (c *Client) SchedulerUpdateJob(ctx context.Context, req *service.UpdateSche
 // SchedulerDeleteJob removes a scheduled job.
 func (c *Client) SchedulerDeleteJob(ctx context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SchedulerDeleteJob",
 			Err:  ErrRequestNil,
@@ -200,7 +200,7 @@ func (c *Client) SchedulerListJobs(ctx context.Context, req *service.ListSchedul
 // SchedulerTriggerJob immediately executes a job.
 func (c *Client) SchedulerTriggerJob(ctx context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SchedulerTriggerJob",
 			Err:  ErrRequestNil,
@@ -229,7 +229,7 @@ func (c *Client) SchedulerTriggerJob(ctx context.Context, req *service.TriggerSc
 // SchedulerPauseJob pauses a scheduled job.
 func (c *Client) SchedulerPauseJob(ctx context.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SchedulerPauseJob",
 			Err:  ErrRequestNil,
@@ -259,7 +259,7 @@ func (c *Client) SchedulerPauseJob(ctx context.Context, req *service.PauseSchedu
 // SchedulerResumeJob resumes a paused job.
 func (c *Client) SchedulerResumeJob(ctx context.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SchedulerResumeJob",
 			Err:  ErrRequestNil,
@@ -289,7 +289,7 @@ func (c *Client) SchedulerResumeJob(ctx context.Context, req *service.ResumeSche
 // SchedulerCancelJob cancels a scheduled job.
 func (c *Client) SchedulerCancelJob(ctx context.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SchedulerCancelJob",
 			Err:  ErrRequestNil,
@@ -320,7 +320,7 @@ func (c *Client) SchedulerCancelJob(ctx context.Context, req *service.CancelSche
 // SchedulerGetJobHistory returns execution history for a job.
 func (c *Client) SchedulerGetJobHistory(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.SchedulerGetJobHistory",
 			Err:  ErrRequestNil,

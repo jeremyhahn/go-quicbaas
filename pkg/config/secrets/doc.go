@@ -83,7 +83,7 @@
 // # Error Handling
 //
 // All errors in this package use typed error types that wrap the standard
-// DragonError type. Use the Is* helper functions to check error types:
+// QBError type. Use the Is* helper functions to check error types:
 //
 //	value, err := registry.Resolve(ctx, uri)
 //	if secrets.IsSecretNotFound(err) {

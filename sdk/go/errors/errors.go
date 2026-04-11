@@ -19,8 +19,8 @@ import (
 	"fmt"
 )
 
-// DragonError is the base error type for all SDK errors.
-type DragonError struct {
+// QBError is the base error type for all SDK errors.
+type QBError struct {
 	// Code is the error code category.
 	Code ErrorCode
 
@@ -38,7 +38,7 @@ type DragonError struct {
 }
 
 // Error implements the error interface.
-func (e *DragonError) Error() string {
+func (e *QBError) Error() string {
 	if e.Err != nil {
 		return fmt.Sprintf("%s: %s: %s: %v", e.Code, e.Op, e.Message, e.Err)
 	}
@@ -46,13 +46,13 @@ func (e *DragonError) Error() string {
 }
 
 // Unwrap returns the underlying error.
-func (e *DragonError) Unwrap() error {
+func (e *QBError) Unwrap() error {
 	return e.Err
 }
 
 // Is reports whether the error matches the target.
-func (e *DragonError) Is(target error) bool {
-	t, ok := target.(*DragonError)
+func (e *QBError) Is(target error) bool {
+	t, ok := target.(*QBError)
 	if !ok {
 		return false
 	}
@@ -60,12 +60,12 @@ func (e *DragonError) Is(target error) bool {
 }
 
 // IsRetryable returns true if the error can be retried.
-func (e *DragonError) IsRetryable() bool {
+func (e *QBError) IsRetryable() bool {
 	return e.Code.IsRetryable()
 }
 
 // WithContext adds context to the error.
-func (e *DragonError) WithContext(key string, value interface{}) *DragonError {
+func (e *QBError) WithContext(key string, value interface{}) *QBError {
 	if e.Context == nil {
 		e.Context = make(map[string]interface{})
 	}
@@ -73,18 +73,18 @@ func (e *DragonError) WithContext(key string, value interface{}) *DragonError {
 	return e
 }
 
-// New creates a new DragonError.
-func New(code ErrorCode, op, message string) *DragonError {
-	return &DragonError{
+// New creates a new QBError.
+func New(code ErrorCode, op, message string) *QBError {
+	return &QBError{
 		Code:    code,
 		Op:      op,
 		Message: message,
 	}
 }
 
-// Wrap wraps an existing error with a DragonError.
-func Wrap(err error, code ErrorCode, op, message string) *DragonError {
-	return &DragonError{
+// Wrap wraps an existing error with a QBError.
+func Wrap(err error, code ErrorCode, op, message string) *QBError {
+	return &QBError{
 		Code:    code,
 		Op:      op,
 		Message: message,
@@ -93,106 +93,106 @@ func Wrap(err error, code ErrorCode, op, message string) *DragonError {
 }
 
 // NewInvalidInput creates an invalid input error.
-func NewInvalidInput(op, message string) *DragonError {
+func NewInvalidInput(op, message string) *QBError {
 	return New(CodeInvalidInput, op, message)
 }
 
 // NewNotFound creates a not found error.
-func NewNotFound(op, message string) *DragonError {
+func NewNotFound(op, message string) *QBError {
 	return New(CodeNotFound, op, message)
 }
 
 // NewAlreadyExists creates an already exists error.
-func NewAlreadyExists(op, message string) *DragonError {
+func NewAlreadyExists(op, message string) *QBError {
 	return New(CodeAlreadyExists, op, message)
 }
 
 // NewUnauthorized creates an unauthorized error.
-func NewUnauthorized(op, message string) *DragonError {
+func NewUnauthorized(op, message string) *QBError {
 	return New(CodeUnauthorized, op, message)
 }
 
 // NewForbidden creates a forbidden error.
-func NewForbidden(op, message string) *DragonError {
+func NewForbidden(op, message string) *QBError {
 	return New(CodeForbidden, op, message)
 }
 
 // NewConflict creates a conflict error.
-func NewConflict(op, message string) *DragonError {
+func NewConflict(op, message string) *QBError {
 	return New(CodeConflict, op, message)
 }
 
 // NewInternal creates an internal error.
-func NewInternal(op, message string) *DragonError {
+func NewInternal(op, message string) *QBError {
 	return New(CodeInternal, op, message)
 }
 
 // NewUnavailable creates an unavailable error.
-func NewUnavailable(op, message string) *DragonError {
+func NewUnavailable(op, message string) *QBError {
 	return New(CodeUnavailable, op, message)
 }
 
 // NewTimeout creates a timeout error.
-func NewTimeout(op, message string) *DragonError {
+func NewTimeout(op, message string) *QBError {
 	return New(CodeTimeout, op, message)
 }
 
 // NewCanceled creates a canceled error.
-func NewCanceled(op, message string) *DragonError {
+func NewCanceled(op, message string) *QBError {
 	return New(CodeCanceled, op, message)
 }
 
 // NewConnection creates a connection error.
-func NewConnection(op, message string) *DragonError {
+func NewConnection(op, message string) *QBError {
 	return New(CodeConnection, op, message)
 }
 
 // NewSealed creates a sealed error.
-func NewSealed(op, message string) *DragonError {
+func NewSealed(op, message string) *QBError {
 	return New(CodeSealed, op, message)
 }
 
 // NewNotInitialized creates a not initialized error.
-func NewNotInitialized(op, message string) *DragonError {
+func NewNotInitialized(op, message string) *QBError {
 	return New(CodeNotInitialized, op, message)
 }
 
 // NewConfiguration creates a configuration error.
-func NewConfiguration(op, message string) *DragonError {
+func NewConfiguration(op, message string) *QBError {
 	return New(CodeConfiguration, op, message)
 }
 
 // NewResourceExhausted creates a resource exhausted error.
-func NewResourceExhausted(op, message string) *DragonError {
+func NewResourceExhausted(op, message string) *QBError {
 	return New(CodeResourceExhausted, op, message)
 }
 
 // NewUnimplemented creates an unimplemented error.
-func NewUnimplemented(op, message string) *DragonError {
+func NewUnimplemented(op, message string) *QBError {
 	return New(CodeUnimplemented, op, message)
 }
 
 // NewPreconditionFailed creates a precondition failed error.
-func NewPreconditionFailed(op, message string) *DragonError {
+func NewPreconditionFailed(op, message string) *QBError {
 	return New(CodePreconditionFailed, op, message)
 }
 
 // NewRateLimited creates a rate limited error.
-func NewRateLimited(op, message string) *DragonError {
+func NewRateLimited(op, message string) *QBError {
 	return New(CodeRateLimited, op, message)
 }
 
 // NewTransport creates a transport error.
-func NewTransport(op, message string) *DragonError {
+func NewTransport(op, message string) *QBError {
 	return New(CodeTransport, op, message)
 }
 
 // Helper functions for error inspection
 
 // Code returns the error code from an error.
-// Returns CodeUnknown if the error is not a DragonError.
+// Returns CodeUnknown if the error is not a QBError.
 func Code(err error) ErrorCode {
-	var de *DragonError
+	var de *QBError
 	if errors.As(err, &de) {
 		return de.Code
 	}
@@ -256,7 +256,7 @@ func IsUnimplemented(err error) bool {
 
 // IsRetryable returns true if the error can be retried.
 func IsRetryable(err error) bool {
-	var de *DragonError
+	var de *QBError
 	if errors.As(err, &de) {
 		return de.IsRetryable()
 	}
@@ -275,7 +275,7 @@ func IsServerError(err error) bool {
 
 // Op returns the operation from an error.
 func Op(err error) string {
-	var de *DragonError
+	var de *QBError
 	if errors.As(err, &de) {
 		return de.Op
 	}
@@ -284,7 +284,7 @@ func Op(err error) string {
 
 // Message returns the message from an error.
 func Message(err error) string {
-	var de *DragonError
+	var de *QBError
 	if errors.As(err, &de) {
 		return de.Message
 	}

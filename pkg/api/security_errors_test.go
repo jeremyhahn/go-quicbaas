@@ -13,13 +13,13 @@ func TestSecuritySimpleErrors(t *testing.T) {
 	tests := []struct {
 		name     string
 		errFn    func() error
-		newFn    func() *dberrors.DragonError
+		newFn    func() *dberrors.QBError
 		wantMsg  string
 		wantCode dberrors.ErrorCode
 	}{
-		{"SealedError", func() error { return &SealedError{} }, func() *dberrors.DragonError { return NewSealedError("kms.encrypt") }, "database is sealed", dberrors.ErrUnavailable},
-		{"NoActiveKey", func() error { return &NoActiveKeyError{} }, func() *dberrors.DragonError { return NewNoActiveKeyError("kms.encrypt") }, "no active encryption key available", dberrors.ErrUnavailable},
-		{"NoEncrypter", func() error { return &NoEncrypterError{} }, func() *dberrors.DragonError { return NewNoEncrypterError("encrypt") }, "no encrypter available", dberrors.ErrUnavailable},
+		{"SealedError", func() error { return &SealedError{} }, func() *dberrors.QBError { return NewSealedError("kms.encrypt") }, "database is sealed", dberrors.ErrUnavailable},
+		{"NoActiveKey", func() error { return &NoActiveKeyError{} }, func() *dberrors.QBError { return NewNoActiveKeyError("kms.encrypt") }, "no active encryption key available", dberrors.ErrUnavailable},
+		{"NoEncrypter", func() error { return &NoEncrypterError{} }, func() *dberrors.QBError { return NewNoEncrypterError("encrypt") }, "no encrypter available", dberrors.ErrUnavailable},
 	}
 
 	for _, tt := range tests {
@@ -40,17 +40,17 @@ func TestSecurityFieldErrors(t *testing.T) {
 	tests := []struct {
 		name    string
 		errFn   func() error
-		newFn   func() *dberrors.DragonError
+		newFn   func() *dberrors.QBError
 		wantMsg string
 	}{
-		{"ManagerClosed", func() error { return &ManagerClosedError{Manager: "encryption"} }, func() *dberrors.DragonError { return NewManagerClosedError("encrypt", "encryption") }, "encryption is closed"},
-		{"NotInitialized", func() error { return &NotInitializedError{Component: "key manager"} }, func() *dberrors.DragonError { return NewNotInitializedError("km.get", "key manager") }, "key manager not initialized"},
-		{"AlreadyInProgress", func() error { return &AlreadyInProgressError{Operation: "rotation"} }, func() *dberrors.DragonError { return NewAlreadyInProgressError("rotate", "rotation") }, "rotation already in progress"},
-		{"NoActiveOperation", func() error { return &NoActiveOperationError{Operation: "rotation"} }, func() *dberrors.DragonError { return NewNoActiveOperationError("cancel", "rotation") }, "no active rotation to cancel"},
-		{"UnsupportedProvider", func() error { return &UnsupportedProviderError{Provider: "gcp"} }, func() *dberrors.DragonError { return NewUnsupportedProviderError("km.init", "gcp") }, "unsupported key provider: gcp"},
-		{"EnvVarNotFound", func() error { return &EnvVarNotFoundError{Name: "DB_KEY"} }, func() *dberrors.DragonError { return NewEnvVarNotFoundError("env.get", "DB_KEY") }, "environment variable not found: DB_KEY"},
-		{"PEMDecode", func() error { return &PEMDecodeError{Subject: "private key"} }, func() *dberrors.DragonError { return NewPEMDecodeError("tls.load", "private key") }, "failed to decode private key PEM"},
-		{"WrappingKey", func() error { return &WrappingKeyError{Message: "key too short"} }, func() *dberrors.DragonError { return NewWrappingKeyError("wrap", "key too short") }, "key too short"},
+		{"ManagerClosed", func() error { return &ManagerClosedError{Manager: "encryption"} }, func() *dberrors.QBError { return NewManagerClosedError("encrypt", "encryption") }, "encryption is closed"},
+		{"NotInitialized", func() error { return &NotInitializedError{Component: "key manager"} }, func() *dberrors.QBError { return NewNotInitializedError("km.get", "key manager") }, "key manager not initialized"},
+		{"AlreadyInProgress", func() error { return &AlreadyInProgressError{Operation: "rotation"} }, func() *dberrors.QBError { return NewAlreadyInProgressError("rotate", "rotation") }, "rotation already in progress"},
+		{"NoActiveOperation", func() error { return &NoActiveOperationError{Operation: "rotation"} }, func() *dberrors.QBError { return NewNoActiveOperationError("cancel", "rotation") }, "no active rotation to cancel"},
+		{"UnsupportedProvider", func() error { return &UnsupportedProviderError{Provider: "gcp"} }, func() *dberrors.QBError { return NewUnsupportedProviderError("km.init", "gcp") }, "unsupported key provider: gcp"},
+		{"EnvVarNotFound", func() error { return &EnvVarNotFoundError{Name: "DB_KEY"} }, func() *dberrors.QBError { return NewEnvVarNotFoundError("env.get", "DB_KEY") }, "environment variable not found: DB_KEY"},
+		{"PEMDecode", func() error { return &PEMDecodeError{Subject: "private key"} }, func() *dberrors.QBError { return NewPEMDecodeError("tls.load", "private key") }, "failed to decode private key PEM"},
+		{"WrappingKey", func() error { return &WrappingKeyError{Message: "key too short"} }, func() *dberrors.QBError { return NewWrappingKeyError("wrap", "key too short") }, "key too short"},
 	}
 
 	for _, tt := range tests {

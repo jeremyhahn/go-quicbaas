@@ -186,7 +186,7 @@ func (h *Handler) handleStreamFetchObjects(ctx context.Context, reqData []byte) 
 		// Check context for cancellation
 		select {
 		case <-ctx.Done():
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrTimeout,
 				Op:   "unix.objectstorage.handleStreamFetchObjects",
 				Err:  ctx.Err(),

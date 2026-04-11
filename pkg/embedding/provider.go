@@ -19,7 +19,7 @@ import (
 	"context"
 	"time"
 
-	qembed "github.com/jeremyhahn/go-qrdb/pkg/embedding"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // OpenAI model name constants.
@@ -85,17 +85,17 @@ type BatchResult struct {
 }
 
 // Config holds the full configuration for the embedding subsystem.
-// It is identical to qembed.Config, re-exported here so callers within
+// It is identical to qrdbsdk.EmbeddingConfig, re-exported here so callers within
 // go-quicbaas do not need to import go-qrdb directly.
-type Config = qembed.Config
+type Config = qrdbsdk.EmbeddingConfig
 
 // DefaultConfig returns the default Config.
 func DefaultConfig() Config {
-	return qembed.DefaultConfig()
+	return qrdbsdk.DefaultEmbeddingConfig()
 }
 
 // Stats holds statistics about the embedding manager.
-// It mirrors qembed.ManagerStats with the same field names.
+// It mirrors qrdbsdk.EmbeddingManagerStats with the same field names.
 type Stats struct {
 	ProvidersRegistered int
 	ProviderNames       []string
@@ -107,8 +107,8 @@ type Stats struct {
 	CacheHitRate        float64
 }
 
-// statsFromManager converts qembed.ManagerStats to Stats.
-func statsFromManager(s qembed.ManagerStats) Stats {
+// statsFromManager converts qrdbsdk.EmbeddingManagerStats to Stats.
+func statsFromManager(s qrdbsdk.EmbeddingManagerStats) Stats {
 	return Stats{
 		ProvidersRegistered: s.ProvidersRegistered,
 		ProviderNames:       s.ProviderNames,

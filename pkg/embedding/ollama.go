@@ -19,41 +19,43 @@ import (
 	"context"
 	"time"
 
-	qembed "github.com/jeremyhahn/go-qrdb/pkg/embedding"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Default constants re-exported from go-qrdb for backward compatibility.
 const (
-	DefaultOllamaURL        = qembed.DefaultOllamaBaseURL
-	DefaultOllamaTimeout    = qembed.DefaultOllamaTimeout
+	DefaultOllamaURL        = qrdbsdk.DefaultOllamaEmbeddingBaseURL
 	DefaultOllamaMaxRetries = 3
 	DefaultOllamaRetryBackoff = time.Second
 )
 
+// DefaultOllamaTimeout is the per-request HTTP timeout for Ollama requests.
+var DefaultOllamaTimeout = qrdbsdk.DefaultOllamaEmbeddingTimeout
+
 // OllamaConfig holds configuration for the Ollama embedding provider.
-// It is the same shape as qembed.OllamaConfig and is re-exported here for
+// It is the same shape as qrdbsdk.OllamaEmbeddingConfig and is re-exported here for
 // callers that construct providers directly without importing go-qrdb.
-type OllamaConfig = qembed.OllamaConfig
+type OllamaConfig = qrdbsdk.OllamaEmbeddingConfig
 
 // DefaultOllamaConfig returns the default Ollama configuration.
 func DefaultOllamaConfig() OllamaConfig {
-	return qembed.DefaultOllamaConfig()
+	return qrdbsdk.DefaultOllamaEmbeddingConfig()
 }
 
-// OllamaProvider implements Provider by delegating to qembed.OllamaProvider.
+// OllamaProvider implements Provider by delegating to qrdbsdk.OllamaEmbeddingProvider.
 //
 // Compile-time assertion that OllamaProvider satisfies Provider.
 var _ Provider = (*OllamaProvider)(nil)
 
-// OllamaProvider is a thin wrapper around qembed.OllamaProvider that
+// OllamaProvider is a thin wrapper around qrdbsdk.OllamaEmbeddingProvider that
 // exposes the single-text Embed API used in go-quicbaas.
 type OllamaProvider struct {
-	inner *qembed.OllamaProvider
+	inner *qrdbsdk.OllamaEmbeddingProvider
 }
 
 // NewOllamaProvider creates a new OllamaProvider.
 func NewOllamaProvider(config OllamaConfig) (*OllamaProvider, error) {
-	inner, err := qembed.NewOllamaProvider(config)
+	inner, err := qrdbsdk.NewOllamaEmbeddingProvider(config)
 	if err != nil {
 		return nil, err
 	}

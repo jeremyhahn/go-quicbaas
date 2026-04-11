@@ -114,7 +114,7 @@ func TestExecuteIAMGDPRConsentGrant_ServiceUnavailable(t *testing.T) {
 		"tenant_id": "t1", "user_id": "u1", "purpose": "marketing", "version": "1.0",
 	})
 	require.Error(t, err)
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	assert.ErrorAs(t, err, &dErr)
 }
 

@@ -1231,18 +1231,18 @@ func buildEntityKey(entityType string, entityID uint64) []byte {
 
 // handleServiceError handles service errors and responds appropriately.
 func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err error) {
-	var dragonErr *errors.DragonError
-	if errors.As(err, &dragonErr) {
+	var qbErr *errors.QBError
+	if errors.As(err, &qbErr) {
 		// Use the error code's built-in HTTP status mapping
-		httpStatus := dragonErr.Code.HTTPStatus()
+		httpStatus := qbErr.Code.HTTPStatus()
 		var errMsg string
-		if dragonErr.Err != nil {
-			errMsg = dragonErr.Err.Error()
+		if qbErr.Err != nil {
+			errMsg = qbErr.Err.Error()
 		} else {
-			errMsg = dragonErr.Code.String()
+			errMsg = qbErr.Code.String()
 		}
 
-		switch dragonErr.Code {
+		switch qbErr.Code {
 		case errors.ErrNotFound:
 			RespondError(w, r, httpStatus, &NotFoundError{
 				Resource: "entity",

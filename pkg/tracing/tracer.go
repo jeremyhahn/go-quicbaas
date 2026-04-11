@@ -114,7 +114,7 @@ type Tracer struct {
 // NewTracer creates a new tracer with the given configuration.
 func NewTracer(cfg *Config) (*Tracer, error) {
 	if cfg == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "tracing.NewTracer",
 			Err:  ErrConfigNil,
@@ -123,7 +123,7 @@ func NewTracer(cfg *Config) (*Tracer, error) {
 
 	// Validate config
 	if err := validateConfig(cfg); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "tracing.NewTracer",
 			Err:  err,
@@ -153,7 +153,7 @@ func NewTracer(cfg *Config) (*Tracer, error) {
 		),
 	)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "tracing.NewTracer",
 			Err:  &ResourceCreationError{Err: err},
@@ -163,7 +163,7 @@ func NewTracer(cfg *Config) (*Tracer, error) {
 	// Create exporter based on configuration
 	exporter, err := createExporter(cfg)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "tracing.NewTracer",
 			Err:  err,

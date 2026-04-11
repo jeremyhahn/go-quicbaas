@@ -45,30 +45,30 @@ func TestKMSCauseErrors(t *testing.T) {
 	tests := []struct {
 		name    string
 		errFn   func() error
-		newFn   func() *dberrors.DragonError
+		newFn   func() *dberrors.QBError
 		wantMsg string
 	}{
-		{"BackendRouting", func() error { return &BackendRoutingError{Cause: cause} }, func() *dberrors.DragonError { return NewBackendRoutingError("kms", cause) }, "failed to route to backend: underlying"},
-		{"FailoverExhausted", func() error { return &FailoverExhaustedError{Attempts: 3, Cause: cause} }, func() *dberrors.DragonError { return NewFailoverExhaustedError("kms", 3, cause) }, "all failover attempts failed after 3 tries: underlying"},
-		{"BackendRegistration", func() error { return &BackendRegistrationError{Name: "aws", Cause: cause} }, func() *dberrors.DragonError { return NewBackendRegistrationError("kms", "aws", cause) }, "failed to register backend aws: underlying"},
-		{"RegistryClose", func() error { return &RegistryCloseError{Cause: cause} }, func() *dberrors.DragonError { return NewRegistryCloseError("kms", cause) }, "failed to close registry: underlying"},
-		{"SymmetricKeyGeneration", func() error { return &SymmetricKeyGenerationError{Cause: cause} }, func() *dberrors.DragonError { return NewSymmetricKeyGenerationError("kms", cause) }, "failed to generate symmetric key: underlying"},
-		{"AsymmetricKeyGeneration", func() error { return &AsymmetricKeyGenerationError{Cause: cause} }, func() *dberrors.DragonError { return NewAsymmetricKeyGenerationError("kms", cause) }, "failed to generate asymmetric key: underlying"},
-		{"KeyVersionGeneration", func() error { return &KeyVersionGenerationError{Cause: cause} }, func() *dberrors.DragonError { return NewKeyVersionGenerationError("kms", cause) }, "failed to generate new key version: underlying"},
-		{"KeyDeletion", func() error { return &KeyDeletionError{Cause: cause} }, func() *dberrors.DragonError { return NewKeyDeletionError("kms", cause) }, "failed to delete key: underlying"},
-		{"KeyMetadataRetrieval", func() error { return &KeyMetadataRetrievalError{Cause: cause} }, func() *dberrors.DragonError { return NewKeyMetadataRetrievalError("kms", cause) }, "failed to get key metadata: underlying"},
-		{"EncryptionOperation", func() error { return &EncryptionOperationError{Cause: cause} }, func() *dberrors.DragonError { return NewEncryptionOperationError("kms", cause) }, "encryption failed: underlying"},
-		{"DecryptionOperation", func() error { return &DecryptionOperationError{Cause: cause} }, func() *dberrors.DragonError { return NewDecryptionOperationError("kms", cause) }, "decryption failed: underlying"},
-		{"CiphertextDeserialization", func() error { return &CiphertextDeserializationError{Cause: cause} }, func() *dberrors.DragonError { return NewCiphertextDeserializationError("kms", cause) }, "failed to deserialize ciphertext: underlying"},
-		{"SignerRetrieval", func() error { return &SignerRetrievalError{Cause: cause} }, func() *dberrors.DragonError { return NewSignerRetrievalError("kms", cause) }, "failed to get signer: underlying"},
-		{"SigningOperation", func() error { return &SigningOperationError{Cause: cause} }, func() *dberrors.DragonError { return NewSigningOperationError("kms", cause) }, "signing failed: underlying"},
-		{"RandomGeneration", func() error { return &RandomGenerationError{Cause: cause} }, func() *dberrors.DragonError { return NewRandomGenerationError("kms", cause) }, "failed to generate random bytes: underlying"},
-		{"DEKWrapping", func() error { return &DEKWrappingError{Cause: cause} }, func() *dberrors.DragonError { return NewDEKWrappingError("kms", cause) }, "failed to wrap DEK: underlying"},
-		{"PublicKeyMarshal", func() error { return &PublicKeyMarshalError{Cause: cause} }, func() *dberrors.DragonError { return NewPublicKeyMarshalError("kms", cause) }, "failed to marshal public key: underlying"},
-		{"CacheClose", func() error { return &CacheCloseError{Cause: cause} }, func() *dberrors.DragonError { return NewCacheCloseError("kms", cause) }, "failed to close key cache: underlying"},
-		{"DEKDecryption", func() error { return &DEKDecryptionError{Cause: cause} }, func() *dberrors.DragonError { return NewDEKDecryptionError("kms", cause) }, "failed to decrypt DEK: underlying"},
-		{"KeyRotation", func() error { return &KeyRotationError{Cause: cause} }, func() *dberrors.DragonError { return NewKeyRotationError("kms", cause) }, "key rotation failed: underlying"},
-		{"RandomKeyGeneration", func() error { return &RandomKeyGenerationError{Cause: cause} }, func() *dberrors.DragonError { return NewRandomKeyGenerationError("kms", cause) }, "failed to generate random key: underlying"},
+		{"BackendRouting", func() error { return &BackendRoutingError{Cause: cause} }, func() *dberrors.QBError { return NewBackendRoutingError("kms", cause) }, "failed to route to backend: underlying"},
+		{"FailoverExhausted", func() error { return &FailoverExhaustedError{Attempts: 3, Cause: cause} }, func() *dberrors.QBError { return NewFailoverExhaustedError("kms", 3, cause) }, "all failover attempts failed after 3 tries: underlying"},
+		{"BackendRegistration", func() error { return &BackendRegistrationError{Name: "aws", Cause: cause} }, func() *dberrors.QBError { return NewBackendRegistrationError("kms", "aws", cause) }, "failed to register backend aws: underlying"},
+		{"RegistryClose", func() error { return &RegistryCloseError{Cause: cause} }, func() *dberrors.QBError { return NewRegistryCloseError("kms", cause) }, "failed to close registry: underlying"},
+		{"SymmetricKeyGeneration", func() error { return &SymmetricKeyGenerationError{Cause: cause} }, func() *dberrors.QBError { return NewSymmetricKeyGenerationError("kms", cause) }, "failed to generate symmetric key: underlying"},
+		{"AsymmetricKeyGeneration", func() error { return &AsymmetricKeyGenerationError{Cause: cause} }, func() *dberrors.QBError { return NewAsymmetricKeyGenerationError("kms", cause) }, "failed to generate asymmetric key: underlying"},
+		{"KeyVersionGeneration", func() error { return &KeyVersionGenerationError{Cause: cause} }, func() *dberrors.QBError { return NewKeyVersionGenerationError("kms", cause) }, "failed to generate new key version: underlying"},
+		{"KeyDeletion", func() error { return &KeyDeletionError{Cause: cause} }, func() *dberrors.QBError { return NewKeyDeletionError("kms", cause) }, "failed to delete key: underlying"},
+		{"KeyMetadataRetrieval", func() error { return &KeyMetadataRetrievalError{Cause: cause} }, func() *dberrors.QBError { return NewKeyMetadataRetrievalError("kms", cause) }, "failed to get key metadata: underlying"},
+		{"EncryptionOperation", func() error { return &EncryptionOperationError{Cause: cause} }, func() *dberrors.QBError { return NewEncryptionOperationError("kms", cause) }, "encryption failed: underlying"},
+		{"DecryptionOperation", func() error { return &DecryptionOperationError{Cause: cause} }, func() *dberrors.QBError { return NewDecryptionOperationError("kms", cause) }, "decryption failed: underlying"},
+		{"CiphertextDeserialization", func() error { return &CiphertextDeserializationError{Cause: cause} }, func() *dberrors.QBError { return NewCiphertextDeserializationError("kms", cause) }, "failed to deserialize ciphertext: underlying"},
+		{"SignerRetrieval", func() error { return &SignerRetrievalError{Cause: cause} }, func() *dberrors.QBError { return NewSignerRetrievalError("kms", cause) }, "failed to get signer: underlying"},
+		{"SigningOperation", func() error { return &SigningOperationError{Cause: cause} }, func() *dberrors.QBError { return NewSigningOperationError("kms", cause) }, "signing failed: underlying"},
+		{"RandomGeneration", func() error { return &RandomGenerationError{Cause: cause} }, func() *dberrors.QBError { return NewRandomGenerationError("kms", cause) }, "failed to generate random bytes: underlying"},
+		{"DEKWrapping", func() error { return &DEKWrappingError{Cause: cause} }, func() *dberrors.QBError { return NewDEKWrappingError("kms", cause) }, "failed to wrap DEK: underlying"},
+		{"PublicKeyMarshal", func() error { return &PublicKeyMarshalError{Cause: cause} }, func() *dberrors.QBError { return NewPublicKeyMarshalError("kms", cause) }, "failed to marshal public key: underlying"},
+		{"CacheClose", func() error { return &CacheCloseError{Cause: cause} }, func() *dberrors.QBError { return NewCacheCloseError("kms", cause) }, "failed to close key cache: underlying"},
+		{"DEKDecryption", func() error { return &DEKDecryptionError{Cause: cause} }, func() *dberrors.QBError { return NewDEKDecryptionError("kms", cause) }, "failed to decrypt DEK: underlying"},
+		{"KeyRotation", func() error { return &KeyRotationError{Cause: cause} }, func() *dberrors.QBError { return NewKeyRotationError("kms", cause) }, "key rotation failed: underlying"},
+		{"RandomKeyGeneration", func() error { return &RandomKeyGenerationError{Cause: cause} }, func() *dberrors.QBError { return NewRandomKeyGenerationError("kms", cause) }, "failed to generate random key: underlying"},
 	}
 
 	for _, tt := range tests {

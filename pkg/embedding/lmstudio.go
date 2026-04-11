@@ -18,39 +18,41 @@ package embedding
 import (
 	"context"
 
-	qembed "github.com/jeremyhahn/go-qrdb/pkg/embedding"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Default constants for the LMStudio provider.
 const (
-	DefaultLMStudioURL        = qembed.DefaultLMStudioBaseURL
-	DefaultLMStudioTimeout    = qembed.DefaultLMStudioTimeout
-	DefaultLMStudioMaxRetries = 3
+	DefaultLMStudioURL            = qrdbsdk.DefaultLMStudioEmbeddingBaseURL
+	DefaultLMStudioMaxRetries     = 3
 	DefaultLMStudioRetryBackoffMS = 1000
 )
 
+// DefaultLMStudioTimeout is the default per-request HTTP timeout for LMStudio.
+var DefaultLMStudioTimeout = qrdbsdk.DefaultLMStudioEmbeddingTimeout
+
 // LMStudioConfig holds configuration for the LMStudio embedding provider.
-type LMStudioConfig = qembed.LMStudioConfig
+type LMStudioConfig = qrdbsdk.LMStudioEmbeddingConfig
 
 // DefaultLMStudioConfig returns the default LMStudio configuration.
 func DefaultLMStudioConfig() LMStudioConfig {
-	return qembed.DefaultLMStudioConfig()
+	return qrdbsdk.DefaultLMStudioEmbeddingConfig()
 }
 
 // LMStudioProvider implements Provider for LMStudio by delegating to
-// qembed.LMStudioProvider.
+// qrdbsdk.LMStudioEmbeddingProvider.
 //
 // Compile-time assertion that LMStudioProvider satisfies Provider.
 var _ Provider = (*LMStudioProvider)(nil)
 
-// LMStudioProvider wraps qembed.LMStudioProvider with the single-text Embed API.
+// LMStudioProvider wraps qrdbsdk.LMStudioEmbeddingProvider with the single-text Embed API.
 type LMStudioProvider struct {
-	inner *qembed.LMStudioProvider
+	inner *qrdbsdk.LMStudioEmbeddingProvider
 }
 
 // NewLMStudioProvider creates a new LMStudio embedding provider.
 func NewLMStudioProvider(config LMStudioConfig) (*LMStudioProvider, error) {
-	inner, err := qembed.NewLMStudioProvider(config)
+	inner, err := qrdbsdk.NewLMStudioEmbeddingProvider(config)
 	if err != nil {
 		return nil, err
 	}

@@ -260,9 +260,9 @@ func (e *ClientNotRegisteredError) Error() string {
 	return "push client not registered: " + e.ClientID
 }
 
-// NewChannelNotFoundError creates a new DragonError for channel not found.
-func NewChannelNotFoundError(op, channel string) *errors.DragonError {
-	return &errors.DragonError{
+// NewChannelNotFoundError creates a new QBError for channel not found.
+func NewChannelNotFoundError(op, channel string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushChannelNotFound,
 		Op:   op,
 		Err: &ChannelNotFoundError{
@@ -274,9 +274,9 @@ func NewChannelNotFoundError(op, channel string) *errors.DragonError {
 	}
 }
 
-// NewChannelExistsError creates a new DragonError for channel already exists.
-func NewChannelExistsError(op, channel string) *errors.DragonError {
-	return &errors.DragonError{
+// NewChannelExistsError creates a new QBError for channel already exists.
+func NewChannelExistsError(op, channel string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushChannelExists,
 		Op:   op,
 		Err: &ChannelExistsError{
@@ -288,9 +288,9 @@ func NewChannelExistsError(op, channel string) *errors.DragonError {
 	}
 }
 
-// NewHubBufferFullError creates a new DragonError for hub buffer full.
-func NewHubBufferFullError(op, channel string, bufferSize int) *errors.DragonError {
-	return &errors.DragonError{
+// NewHubBufferFullError creates a new QBError for hub buffer full.
+func NewHubBufferFullError(op, channel string, bufferSize int) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushHubBufferFull,
 		Op:   op,
 		Err: &HubBufferFullError{
@@ -305,9 +305,9 @@ func NewHubBufferFullError(op, channel string, bufferSize int) *errors.DragonErr
 	}
 }
 
-// NewClientDisconnectedError creates a new DragonError for client disconnected.
-func NewClientDisconnectedError(op, clientID string) *errors.DragonError {
-	return &errors.DragonError{
+// NewClientDisconnectedError creates a new QBError for client disconnected.
+func NewClientDisconnectedError(op, clientID string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushClientDisconnected,
 		Op:   op,
 		Err: &ClientDisconnectedError{
@@ -319,9 +319,9 @@ func NewClientDisconnectedError(op, clientID string) *errors.DragonError {
 	}
 }
 
-// NewClientSlowError creates a new DragonError for slow client.
-func NewClientSlowError(op, clientID string, droppedCount int64, bufferCapacity int) *errors.DragonError {
-	return &errors.DragonError{
+// NewClientSlowError creates a new QBError for slow client.
+func NewClientSlowError(op, clientID string, droppedCount int64, bufferCapacity int) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushClientSlow,
 		Op:   op,
 		Err: &ClientSlowError{
@@ -337,9 +337,9 @@ func NewClientSlowError(op, clientID string, droppedCount int64, bufferCapacity 
 	}
 }
 
-// NewInvalidCodecError creates a new DragonError for invalid codec.
-func NewInvalidCodecError(op, codec string) *errors.DragonError {
-	return &errors.DragonError{
+// NewInvalidCodecError creates a new QBError for invalid codec.
+func NewInvalidCodecError(op, codec string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushInvalidCodec,
 		Op:   op,
 		Err: &InvalidCodecError{
@@ -351,9 +351,9 @@ func NewInvalidCodecError(op, codec string) *errors.DragonError {
 	}
 }
 
-// NewSubscriptionNotFoundError creates a new DragonError for subscription not found.
-func NewSubscriptionNotFoundError(op, subscriptionID string) *errors.DragonError {
-	return &errors.DragonError{
+// NewSubscriptionNotFoundError creates a new QBError for subscription not found.
+func NewSubscriptionNotFoundError(op, subscriptionID string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushSubscriptionNotFound,
 		Op:   op,
 		Err: &SubscriptionNotFoundError{
@@ -365,9 +365,9 @@ func NewSubscriptionNotFoundError(op, subscriptionID string) *errors.DragonError
 	}
 }
 
-// NewDedupKeyExistsError creates a new DragonError for duplicate message.
-func NewDedupKeyExistsError(op, key, firstSeen string, count int64) *errors.DragonError {
-	return &errors.DragonError{
+// NewDedupKeyExistsError creates a new QBError for duplicate message.
+func NewDedupKeyExistsError(op, key, firstSeen string, count int64) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushDedupKeyExists,
 		Op:   op,
 		Err: &DedupKeyExistsError{
@@ -383,9 +383,9 @@ func NewDedupKeyExistsError(op, key, firstSeen string, count int64) *errors.Drag
 	}
 }
 
-// NewServiceNotRunningError creates a new DragonError for service not running.
-func NewServiceNotRunningError(op, operation string) *errors.DragonError {
-	return &errors.DragonError{
+// NewServiceNotRunningError creates a new QBError for service not running.
+func NewServiceNotRunningError(op, operation string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushServiceNotRunning,
 		Op:   op,
 		Err: &ServiceNotRunningError{
@@ -397,9 +397,9 @@ func NewServiceNotRunningError(op, operation string) *errors.DragonError {
 	}
 }
 
-// NewInvalidChannelNameError creates a new DragonError for invalid channel name.
-func NewInvalidChannelNameError(op, name, reason string) *errors.DragonError {
-	return &errors.DragonError{
+// NewInvalidChannelNameError creates a new QBError for invalid channel name.
+func NewInvalidChannelNameError(op, name, reason string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushInvalidChannelName,
 		Op:   op,
 		Err: &InvalidChannelNameError{
@@ -413,9 +413,9 @@ func NewInvalidChannelNameError(op, name, reason string) *errors.DragonError {
 	}
 }
 
-// NewInvalidMessageIDError creates a new DragonError for invalid message ID.
-func NewInvalidMessageIDError(op, id, reason string) *errors.DragonError {
-	return &errors.DragonError{
+// NewInvalidMessageIDError creates a new QBError for invalid message ID.
+func NewInvalidMessageIDError(op, id, reason string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushInvalidMessageID,
 		Op:   op,
 		Err: &InvalidMessageIDError{
@@ -429,9 +429,9 @@ func NewInvalidMessageIDError(op, id, reason string) *errors.DragonError {
 	}
 }
 
-// NewMaxSubscriptionsReachedError creates a new DragonError for max subscriptions reached.
-func NewMaxSubscriptionsReachedError(op, channel string, max int) *errors.DragonError {
-	return &errors.DragonError{
+// NewMaxSubscriptionsReachedError creates a new QBError for max subscriptions reached.
+func NewMaxSubscriptionsReachedError(op, channel string, max int) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushMaxSubscriptionsReached,
 		Op:   op,
 		Err: &MaxSubscriptionsReachedError{
@@ -445,9 +445,9 @@ func NewMaxSubscriptionsReachedError(op, channel string, max int) *errors.Dragon
 	}
 }
 
-// NewClientNotRegisteredError creates a new DragonError for client not registered.
-func NewClientNotRegisteredError(op, clientID string) *errors.DragonError {
-	return &errors.DragonError{
+// NewClientNotRegisteredError creates a new QBError for client not registered.
+func NewClientNotRegisteredError(op, clientID string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodePushClientNotRegistered,
 		Op:   op,
 		Err: &ClientNotRegisteredError{
@@ -468,7 +468,7 @@ func IsChannelNotFound(err error) bool {
 	if stderrors.As(err, &cnf) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushChannelNotFound
 	}
@@ -484,7 +484,7 @@ func IsChannelExists(err error) bool {
 	if stderrors.As(err, &ce) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushChannelExists
 	}
@@ -500,7 +500,7 @@ func IsHubBufferFull(err error) bool {
 	if stderrors.As(err, &hbf) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushHubBufferFull
 	}
@@ -516,7 +516,7 @@ func IsClientDisconnected(err error) bool {
 	if stderrors.As(err, &cd) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushClientDisconnected
 	}
@@ -532,7 +532,7 @@ func IsClientSlow(err error) bool {
 	if stderrors.As(err, &cs) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushClientSlow
 	}
@@ -548,7 +548,7 @@ func IsInvalidCodec(err error) bool {
 	if stderrors.As(err, &ic) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushInvalidCodec
 	}
@@ -564,7 +564,7 @@ func IsSubscriptionNotFound(err error) bool {
 	if stderrors.As(err, &snf) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushSubscriptionNotFound
 	}
@@ -580,7 +580,7 @@ func IsDedupKeyExists(err error) bool {
 	if stderrors.As(err, &dke) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushDedupKeyExists
 	}
@@ -596,7 +596,7 @@ func IsServiceNotRunning(err error) bool {
 	if stderrors.As(err, &snr) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushServiceNotRunning
 	}
@@ -612,7 +612,7 @@ func IsInvalidChannelName(err error) bool {
 	if stderrors.As(err, &icn) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushInvalidChannelName
 	}
@@ -628,7 +628,7 @@ func IsInvalidMessageID(err error) bool {
 	if stderrors.As(err, &imi) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushInvalidMessageID
 	}
@@ -644,7 +644,7 @@ func IsMaxSubscriptionsReached(err error) bool {
 	if stderrors.As(err, &msr) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushMaxSubscriptionsReached
 	}
@@ -660,7 +660,7 @@ func IsClientNotRegistered(err error) bool {
 	if stderrors.As(err, &cnr) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodePushClientNotRegistered
 	}

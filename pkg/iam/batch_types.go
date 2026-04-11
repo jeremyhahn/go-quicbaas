@@ -26,14 +26,14 @@ import (
 // Batch operation errors.
 var (
 	// ErrBatchOperationNotFound is returned when a batch operation is not found.
-	ErrBatchOperationNotFound = &dberrors.DragonError{
+	ErrBatchOperationNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.batch.operation",
 		Err:  errors.New("batch operation not found"),
 	}
 
 	// ErrBatchOperationCancelled is returned when a batch operation is cancelled.
-	ErrBatchOperationCancelled = &dberrors.DragonError{
+	ErrBatchOperationCancelled = &dberrors.QBError{
 		Code: dberrors.ErrCanceled,
 		Op:   "iam.batch.operation",
 		Err:  errors.New("batch operation cancelled"),

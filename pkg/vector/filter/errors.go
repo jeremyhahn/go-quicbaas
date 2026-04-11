@@ -31,9 +31,9 @@ func (e *FilterParseError) Error() string {
 	return "parse error at position " + strconv.Itoa(e.Position) + ": " + e.Message
 }
 
-// NewFilterParseError creates a DragonError for a filter expression parsing failure.
-func NewFilterParseError(op, expression string, position int, message string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewFilterParseError creates a QBError for a filter expression parsing failure.
+func NewFilterParseError(op, expression string, position int, message string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err: &FilterParseError{
@@ -60,9 +60,9 @@ func (e *FilterEvaluationError) Error() string {
 	return "evaluation error on field " + e.Field + ": " + e.Message
 }
 
-// NewFilterEvaluationError creates a DragonError for a filter evaluation failure.
-func NewFilterEvaluationError(op string, field string, filterOp FilterOp, message string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewFilterEvaluationError creates a QBError for a filter evaluation failure.
+func NewFilterEvaluationError(op string, field string, filterOp FilterOp, message string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err: &FilterEvaluationError{
@@ -87,9 +87,9 @@ func (e *FilterUnsupportedOperatorError) Error() string {
 	return "unsupported filter operator: " + e.Op.String()
 }
 
-// NewFilterUnsupportedOperatorError creates a DragonError for an unsupported filter operator.
-func NewFilterUnsupportedOperatorError(op string, filterOp FilterOp) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewFilterUnsupportedOperatorError creates a QBError for an unsupported filter operator.
+func NewFilterUnsupportedOperatorError(op string, filterOp FilterOp) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &FilterUnsupportedOperatorError{Op: filterOp},
@@ -111,9 +111,9 @@ func (e *FilterTypeMismatchError) Error() string {
 	return "type mismatch on field " + e.Field + ": expected " + e.Expected + ", got " + e.Got
 }
 
-// NewFilterTypeMismatchError creates a DragonError for a type mismatch during filter evaluation.
-func NewFilterTypeMismatchError(op, field, expected, got string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewFilterTypeMismatchError creates a QBError for a type mismatch during filter evaluation.
+func NewFilterTypeMismatchError(op, field, expected, got string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err: &FilterTypeMismatchError{

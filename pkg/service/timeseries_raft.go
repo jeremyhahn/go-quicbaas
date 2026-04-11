@@ -77,14 +77,14 @@ func (t *timeSeriesService) writePointViaRaft(ctx context.Context, point *tsData
 	sdkPoint := localPointToSDK(point)
 	client, err := t.svc.qrdbForShard(shardID)
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "timeSeriesService.writePointViaRaft",
 			Err:  err,
 		}
 	}
 	if err := client.TimeSeries().TSWritePoint(ctx, sdkPoint); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "timeSeriesService.writePointViaRaft",
 			Err:  err,
@@ -107,14 +107,14 @@ func (t *timeSeriesService) writeBatchViaRaft(ctx context.Context, points []*tsD
 	sdkPoints := localPointsToSDK(points)
 	client, err := t.svc.qrdbForShard(shardID)
 	if err != nil {
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "timeSeriesService.writeBatchViaRaft",
 			Err:  err,
 		}
 	}
 	if err := client.TimeSeries().TSWriteBatch(ctx, sdkPoints); err != nil {
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "timeSeriesService.writeBatchViaRaft",
 			Err:  err,
@@ -129,14 +129,14 @@ func (t *timeSeriesService) writeBatchViaRaft(ctx context.Context, points []*tsD
 func (t *timeSeriesService) WritePointRaft(ctx context.Context, req *WritePointRequest) (*WritePointResponse, error) {
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.WritePointRaft",
 			Err:  &TimeSeriesRequestNilError{},
 		}
 	}
 	if req.Metric == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.WritePointRaft",
 			Err:  &TimeSeriesMetricRequiredError{},
@@ -179,7 +179,7 @@ func (t *timeSeriesService) WritePointRaft(ctx context.Context, req *WritePointR
 func (t *timeSeriesService) WriteBatchRaft(ctx context.Context, req *WriteBatchRequest) (*WriteBatchResponse, error) {
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.WriteBatchRaft",
 			Err:  &TimeSeriesRequestNilError{},
@@ -202,14 +202,14 @@ func (t *timeSeriesService) WriteBatchRaft(ctx context.Context, req *WriteBatchR
 	points := make([]*tsDataPoint, len(req.Points))
 	for i, p := range req.Points {
 		if p == nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "timeSeriesService.WriteBatchRaft",
 				Err:  &TimeSeriesPointNilError{Index: i},
 			}
 		}
 		if p.Metric == "" {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "timeSeriesService.WriteBatchRaft",
 				Err:  &TimeSeriesMetricRequiredAtIndexError{Index: i},

@@ -63,8 +63,8 @@ func (e *JSONRPCError) Error() string {
 	return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message)
 }
 
-// ToSDKError converts a JSON-RPC error to an SDK DragonError.
-func (e *JSONRPCError) ToSDKError(op string) *errors.DragonError {
+// ToSDKError converts a JSON-RPC error to an SDK QBError.
+func (e *JSONRPCError) ToSDKError(op string) *errors.QBError {
 	code := e.mapToErrorCode()
 	msg := e.Message
 	if e.Data != nil {
@@ -151,8 +151,8 @@ func (e *ParseError) Unwrap() error {
 	return e.Err
 }
 
-// ToSDKError converts a ParseError to an SDK DragonError.
-func (e *ParseError) ToSDKError() *errors.DragonError {
+// ToSDKError converts a ParseError to an SDK QBError.
+func (e *ParseError) ToSDKError() *errors.QBError {
 	return errors.Wrap(e.Err, errors.CodeInvalidInput, e.Op, e.Message)
 }
 
@@ -167,8 +167,8 @@ func (e *ProtocolError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Op, e.Message)
 }
 
-// ToSDKError converts a ProtocolError to an SDK DragonError.
-func (e *ProtocolError) ToSDKError() *errors.DragonError {
+// ToSDKError converts a ProtocolError to an SDK QBError.
+func (e *ProtocolError) ToSDKError() *errors.QBError {
 	return errors.New(errors.CodeTransport, e.Op, e.Message)
 }
 
@@ -192,8 +192,8 @@ func (e *InitializationError) Unwrap() error {
 	return e.Err
 }
 
-// ToSDKError converts an InitializationError to an SDK DragonError.
-func (e *InitializationError) ToSDKError() *errors.DragonError {
+// ToSDKError converts an InitializationError to an SDK QBError.
+func (e *InitializationError) ToSDKError() *errors.QBError {
 	if e.Err != nil {
 		return errors.Wrap(e.Err, errors.CodeConnection, e.Op, e.Message)
 	}
@@ -212,8 +212,8 @@ func (e *ToolNotFoundError) Error() string {
 	return fmt.Sprintf("tool not found: %s (service=%s, method=%s)", e.ToolName, e.Service, e.Method)
 }
 
-// ToSDKError converts a ToolNotFoundError to an SDK DragonError.
-func (e *ToolNotFoundError) ToSDKError() *errors.DragonError {
+// ToSDKError converts a ToolNotFoundError to an SDK QBError.
+func (e *ToolNotFoundError) ToSDKError() *errors.QBError {
 	return errors.New(errors.CodeNotFound, "mcp.CallTool", e.Error())
 }
 
@@ -229,7 +229,7 @@ func (e *ContentParseError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Op, e.Message)
 }
 
-// ToSDKError converts a ContentParseError to an SDK DragonError.
-func (e *ContentParseError) ToSDKError() *errors.DragonError {
+// ToSDKError converts a ContentParseError to an SDK QBError.
+func (e *ContentParseError) ToSDKError() *errors.QBError {
 	return errors.New(errors.CodeInternal, e.Op, e.Message)
 }

@@ -257,7 +257,7 @@ func (bm *BatchManager) ImportUsers(ctx context.Context, tenantID string, users 
 // importUser imports a single user.
 func (bm *BatchManager) importUser(ctx context.Context, tenantID string, user *UserImport, opts BatchImportOptions) error {
 	if bm.identityStore == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.batch.importUser",
 			Err:  errBatchOperationFailed,
@@ -460,7 +460,7 @@ func (bm *BatchManager) ImportGroups(ctx context.Context, tenantID string, group
 // importGroup imports a single group.
 func (bm *BatchManager) importGroup(ctx context.Context, tenantID string, group *GroupImport, opts BatchImportOptions) error {
 	if bm.identityStore == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.batch.importGroup",
 			Err:  errBatchOperationFailed,
@@ -644,7 +644,7 @@ func (bm *BatchManager) ImportRoles(ctx context.Context, tenantID string, roles 
 // importRole imports a single role.
 func (bm *BatchManager) importRole(ctx context.Context, tenantID string, role *RoleImport, opts BatchImportOptions) error {
 	if bm.identityStore == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.batch.importRole",
 			Err:  errBatchOperationFailed,
@@ -815,7 +815,7 @@ func (bm *BatchManager) ImportPolicies(ctx context.Context, tenantID string, pol
 // importPolicy imports a single policy.
 func (bm *BatchManager) importPolicy(ctx context.Context, tenantID string, policyImport *PolicyImport, opts BatchImportOptions) error {
 	if bm.policyEngine == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.batch.importPolicy",
 			Err:  errBatchOperationFailed,

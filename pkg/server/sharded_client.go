@@ -17,7 +17,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/ceremony"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -96,7 +95,7 @@ func WithCeremonyService(svc BasCeremonyService) ShardedClientOption {
 // WithCeremonyCA sets the ceremony CA for the sharded client. The CA is
 // forwarded to CeremonyInitialize calls. Both a ceremony service and a CA
 // must be set for CeremonyInitialize to succeed.
-func WithCeremonyCA(ca ceremony.CeremonyCA) ShardedClientOption {
+func WithCeremonyCA(ca qrdbsdk.CeremonyCA) ShardedClientOption {
 	return func(sc *ShardedClient) {
 		sc.ceremonyCA = ca
 	}
@@ -145,7 +144,7 @@ type ShardedClient struct {
 	dbService         service.DatabaseService
 	lockService       BaasLockService
 	ceremonySvc       BasCeremonyService
-	ceremonyCA        ceremony.CeremonyCA
+	ceremonyCA        qrdbsdk.CeremonyCA
 	credentialSvc     BaasCredentialService
 	custodianGroupSvc BaasCustodianGroupService
 	shareSvc          BaasShareService

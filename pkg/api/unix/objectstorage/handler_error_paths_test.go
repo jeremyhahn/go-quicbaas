@@ -33,7 +33,7 @@ var invalidPayload = []byte(`{invalid-json!!!`)
 func TestHandlerCRUDServiceErrors(t *testing.T) {
 	t.Parallel()
 
-	serviceErr := &dberrors.DragonError{
+	serviceErr := &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "test.service",
 		Err:  assert.AnError,
@@ -106,9 +106,9 @@ func TestHandlerCRUDServiceErrors(t *testing.T) {
 			_, err = handler.Handle(context.Background(), tt.opcode, payload)
 			require.Error(t, err)
 
-			var dragonErr *dberrors.DragonError
-			require.True(t, dberrors.As(err, &dragonErr))
-			assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+			var qbErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &qbErr))
+			assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 		})
 	}
 }
@@ -135,9 +135,9 @@ func TestHandlerCRUDDecodeErrors(t *testing.T) {
 			_, err = handler.Handle(context.Background(), tt.opcode, invalidPayload)
 			require.Error(t, err)
 
-			var dragonErr *dberrors.DragonError
-			require.True(t, dberrors.As(err, &dragonErr))
-			assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+			var qbErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &qbErr))
+			assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 		})
 	}
 }
@@ -146,7 +146,7 @@ func TestHandlerCRUDDecodeErrors(t *testing.T) {
 func TestHandlerListServiceErrors(t *testing.T) {
 	t.Parallel()
 
-	serviceErr := &dberrors.DragonError{
+	serviceErr := &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "test.service",
 		Err:  assert.AnError,
@@ -207,8 +207,8 @@ func TestHandlerListServiceErrors(t *testing.T) {
 			_, err = handler.Handle(context.Background(), tt.opcode, payload)
 			require.Error(t, err)
 
-			var dragonErr *dberrors.DragonError
-			require.True(t, dberrors.As(err, &dragonErr))
+			var qbErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &qbErr))
 		})
 	}
 }
@@ -241,7 +241,7 @@ func TestHandlerListDecodeErrors(t *testing.T) {
 func TestHandlerOpsServiceErrors(t *testing.T) {
 	t.Parallel()
 
-	serviceErr := &dberrors.DragonError{
+	serviceErr := &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "test.service",
 		Err:  assert.AnError,
@@ -338,8 +338,8 @@ func TestHandlerOpsServiceErrors(t *testing.T) {
 			_, err = handler.Handle(context.Background(), tt.opcode, payload)
 			require.Error(t, err)
 
-			var dragonErr *dberrors.DragonError
-			require.True(t, dberrors.As(err, &dragonErr))
+			var qbErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &qbErr))
 		})
 	}
 }
@@ -375,7 +375,7 @@ func TestHandlerOpsDecodeErrors(t *testing.T) {
 func TestHandlerPolicyServiceErrors(t *testing.T) {
 	t.Parallel()
 
-	serviceErr := &dberrors.DragonError{
+	serviceErr := &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "test.service",
 		Err:  assert.AnError,
@@ -454,7 +454,7 @@ func TestHandlerPolicyDecodeErrors(t *testing.T) {
 func TestHandlerBackendServiceErrors(t *testing.T) {
 	t.Parallel()
 
-	serviceErr := &dberrors.DragonError{
+	serviceErr := &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "test.service",
 		Err:  assert.AnError,
@@ -533,7 +533,7 @@ func TestHandlerBackendDecodeErrors(t *testing.T) {
 func TestHandlerTenantServiceErrors(t *testing.T) {
 	t.Parallel()
 
-	serviceErr := &dberrors.DragonError{
+	serviceErr := &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "test.service",
 		Err:  assert.AnError,
@@ -652,7 +652,7 @@ func TestHandlerBatchPutServiceErrors(t *testing.T) {
 	svc := &mockObjectStorageService{
 		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
 			if req.Key == "fail-key" {
-				return nil, &dberrors.DragonError{
+				return nil, &dberrors.QBError{
 					Code: dberrors.ErrStorage,
 					Op:   "test",
 					Err:  assert.AnError,
@@ -694,7 +694,7 @@ func TestHandlerBatchDeleteServiceErrors(t *testing.T) {
 	svc := &mockObjectStorageService{
 		deleteObjectFunc: func(ctx context.Context, req *service.DeleteObjectRequest) (*service.DeleteObjectResponse, error) {
 			if req.Key == "fail-key" {
-				return nil, &dberrors.DragonError{
+				return nil, &dberrors.QBError{
 					Code: dberrors.ErrNotFound,
 					Op:   "test",
 					Err:  assert.AnError,
@@ -758,7 +758,7 @@ func TestHandlerAdminDecodeErrors(t *testing.T) {
 func TestHandlerAdminServiceErrors(t *testing.T) {
 	t.Parallel()
 
-	serviceErr := &dberrors.DragonError{
+	serviceErr := &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "test.admin",
 		Err:  assert.AnError,
@@ -891,14 +891,14 @@ func TestHandlerAdminServiceErrors(t *testing.T) {
 			_, err = handler.Handle(context.Background(), tt.opcode, payload)
 			require.Error(t, err)
 
-			var dragonErr *dberrors.DragonError
-			require.True(t, dberrors.As(err, &dragonErr))
+			var qbErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &qbErr))
 		})
 	}
 }
 
-// TestErrorToStatusNonDragonError verifies that non-DragonError errors map to internal error.
-func TestErrorToStatusNonDragonError(t *testing.T) {
+// TestErrorToStatusNonQBError verifies that non-QBError errors map to internal error.
+func TestErrorToStatusNonQBError(t *testing.T) {
 	t.Parallel()
 
 	result := ErrorToStatus(assert.AnError)

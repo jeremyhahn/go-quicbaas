@@ -627,7 +627,7 @@ func TestNewEntropyGenerationError(t *testing.T) {
 	}
 }
 
-// TestNewEntropyGenerationFailedError_Constructor tests the DragonError constructor
+// TestNewEntropyGenerationFailedError_Constructor tests the QBError constructor
 func TestNewEntropyGenerationFailedError_Constructor(t *testing.T) {
 	cause := stderrors.New("entropy source unavailable")
 	err := NewEntropyGenerationFailedError("secrets.generateRandom", 64, cause)
@@ -660,7 +660,7 @@ func TestNewEntropyGenerationFailedError_Constructor(t *testing.T) {
 	}
 }
 
-// TestNewUnsupportedSchemeError tests the DragonError constructor
+// TestNewUnsupportedSchemeError tests the QBError constructor
 func TestNewUnsupportedSchemeError(t *testing.T) {
 	supportedSchemes := []string{"kms", "vault", "env"}
 	err := NewUnsupportedSchemeError("secrets.resolve", "custom", "custom://path", supportedSchemes)
@@ -745,15 +745,15 @@ func TestIsEntropyGenerationFailed(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "DragonError with ErrEncryption code",
-			err:      &dberrors.DragonError{Code: dberrors.ErrEncryption, Op: "test"},
+			name:     "QBError with ErrEncryption code",
+			err:      &dberrors.QBError{Code: dberrors.ErrEncryption, Op: "test"},
 			expected: true,
 		},
 		{
-			name: "wrapped DragonError with ErrEncryption",
+			name: "wrapped QBError with ErrEncryption",
 			err: &dberrors.WrappedMessageError{
 				Message: "outer",
-				Cause: &dberrors.DragonError{
+				Cause: &dberrors.QBError{
 					Code: dberrors.ErrEncryption,
 					Op:   "test",
 				},
@@ -761,8 +761,8 @@ func TestIsEntropyGenerationFailed(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "DragonError with different code",
-			err:      &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"},
+			name:     "QBError with different code",
+			err:      &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"},
 			expected: false,
 		},
 		{
@@ -829,8 +829,8 @@ func TestIsUnsupportedScheme(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "DragonError with different error type inside",
-			err: &dberrors.DragonError{
+			name: "QBError with different error type inside",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrInvalidInput,
 				Err:  stderrors.New("not unsupported scheme"),
 			},
@@ -880,15 +880,15 @@ func TestIsRemoteConnectionFailed(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "DragonError with ErrUnavailable code",
-			err:      &dberrors.DragonError{Code: dberrors.ErrUnavailable, Op: "test"},
+			name:     "QBError with ErrUnavailable code",
+			err:      &dberrors.QBError{Code: dberrors.ErrUnavailable, Op: "test"},
 			expected: true,
 		},
 		{
-			name: "wrapped DragonError with ErrUnavailable",
+			name: "wrapped QBError with ErrUnavailable",
 			err: &dberrors.WrappedMessageError{
 				Message: "outer",
-				Cause: &dberrors.DragonError{
+				Cause: &dberrors.QBError{
 					Code: dberrors.ErrUnavailable,
 					Op:   "test",
 				},
@@ -896,8 +896,8 @@ func TestIsRemoteConnectionFailed(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "DragonError with different code",
-			err:      &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"},
+			name:     "QBError with different code",
+			err:      &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"},
 			expected: false,
 		},
 		{
@@ -954,15 +954,15 @@ func TestIsSecretNotFound(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "DragonError with ErrNotFound code",
-			err:      &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"},
+			name:     "QBError with ErrNotFound code",
+			err:      &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"},
 			expected: true,
 		},
 		{
-			name: "wrapped DragonError with ErrNotFound",
+			name: "wrapped QBError with ErrNotFound",
 			err: &dberrors.WrappedMessageError{
 				Message: "outer",
-				Cause: &dberrors.DragonError{
+				Cause: &dberrors.QBError{
 					Code: dberrors.ErrNotFound,
 					Op:   "test",
 				},
@@ -970,8 +970,8 @@ func TestIsSecretNotFound(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "DragonError with different code",
-			err:      &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"},
+			name:     "QBError with different code",
+			err:      &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"},
 			expected: false,
 		},
 		{
@@ -1033,8 +1033,8 @@ func TestIsResolutionFailed(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "DragonError without ResolutionFailedError inside",
-			err:      &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"},
+			name:     "QBError without ResolutionFailedError inside",
+			err:      &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"},
 			expected: false,
 		},
 	}
@@ -1102,7 +1102,7 @@ func TestIsInvalidSecretURI(t *testing.T) {
 	}
 }
 
-// TestNewSecretNotFoundError tests DragonError constructor
+// TestNewSecretNotFoundError tests QBError constructor
 func TestNewSecretNotFoundError(t *testing.T) {
 	err := NewSecretNotFoundError("secrets.get", "/secrets/db/password", "vault")
 
@@ -1137,7 +1137,7 @@ func TestNewSecretNotFoundError(t *testing.T) {
 	}
 }
 
-// TestNewResolutionFailedError tests DragonError constructor
+// TestNewResolutionFailedError tests QBError constructor
 func TestNewResolutionFailedError(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1211,7 +1211,7 @@ func TestNewResolutionFailedError(t *testing.T) {
 	}
 }
 
-// TestNewRemoteConnectionFailedError tests DragonError constructor
+// TestNewRemoteConnectionFailedError tests QBError constructor
 func TestNewRemoteConnectionFailedError(t *testing.T) {
 	cause := stderrors.New("connection refused")
 	err := NewRemoteConnectionFailedError("secrets.connect", "https://vault.example.com:8200", "vault", cause)
@@ -1253,7 +1253,7 @@ func TestNewRemoteConnectionFailedError(t *testing.T) {
 	}
 }
 
-// TestNewInvalidSecretURIError tests DragonError constructor
+// TestNewInvalidSecretURIError tests QBError constructor
 func TestNewInvalidSecretURIError(t *testing.T) {
 	err := NewInvalidSecretURIError("secrets.parse", "bad-uri://test", "missing path")
 
@@ -1312,12 +1312,12 @@ func TestErrorChaining(t *testing.T) {
 		RequestedBytes: 32,
 		Cause:          innerErr,
 	}
-	dragonErr := &dberrors.DragonError{
+	qbErr := &dberrors.QBError{
 		Code: dberrors.ErrEncryption,
 		Op:   "secrets.generate",
 		Err:  entropyErr,
 	}
-	outerErr := &dberrors.WrappedMessageError{Message: "operation failed", Cause: dragonErr}
+	outerErr := &dberrors.WrappedMessageError{Message: "operation failed", Cause: qbErr}
 
 	// Test that errors.Is can find innerErr through the chain
 	if !stderrors.Is(outerErr, innerErr) {
@@ -1333,10 +1333,10 @@ func TestErrorChaining(t *testing.T) {
 		t.Errorf("Expected RequestedBytes 32, got %d", egf.RequestedBytes)
 	}
 
-	// Test errors.As can find DragonError
-	var de *dberrors.DragonError
+	// Test errors.As can find QBError
+	var de *dberrors.QBError
 	if !stderrors.As(outerErr, &de) {
-		t.Error("Expected errors.As to find DragonError")
+		t.Error("Expected errors.As to find QBError")
 	}
 	if de.Code != dberrors.ErrEncryption {
 		t.Errorf("Expected ErrEncryption, got %v", de.Code)
@@ -1356,21 +1356,21 @@ func TestRemoteConnectionFailedError_ErrorChaining(t *testing.T) {
 		Provider: "vault",
 		Cause:    sentinel,
 	}
-	dragonErr := NewRemoteConnectionFailedError("secrets.connect", "https://vault.example.com", "vault", sentinel)
+	qbErr := NewRemoteConnectionFailedError("secrets.connect", "https://vault.example.com", "vault", sentinel)
 
 	// Test direct error unwrap
 	if rcf.Unwrap() != sentinel {
 		t.Error("Expected Unwrap to return sentinel")
 	}
 
-	// Test errors.Is through DragonError
+	// Test errors.Is through QBError
 	var rcfFound *RemoteConnectionFailedError
-	if !stderrors.As(dragonErr, &rcfFound) {
-		t.Error("Expected errors.As to find RemoteConnectionFailedError in DragonError")
+	if !stderrors.As(qbErr, &rcfFound) {
+		t.Error("Expected errors.As to find RemoteConnectionFailedError in QBError")
 	}
 
 	// Test IsRemoteConnectionFailed
-	if !IsRemoteConnectionFailed(dragonErr) {
+	if !IsRemoteConnectionFailed(qbErr) {
 		t.Error("Expected IsRemoteConnectionFailed to return true")
 	}
 }

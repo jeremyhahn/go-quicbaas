@@ -165,9 +165,9 @@ func TestBaseGenerator_ValidateConfig(t *testing.T) {
 
 			if tt.wantErr {
 				require.Error(t, err)
-				var dragonErr *errors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, tt.errCode, dragonErr.Code)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, tt.errCode, qbErr.Code)
 				assert.Contains(t, err.Error(), tt.errMsg)
 			} else {
 				require.NoError(t, err)

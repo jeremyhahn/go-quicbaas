@@ -403,12 +403,12 @@ func TestGetAdminUserID(t *testing.T) {
 		assert.Error(t, err)
 		assert.Empty(t, adminUserID)
 
-		// Should be a DragonError with ErrNotFound code
-		var dragonErr *dberrors.DragonError
-		ok := dberrors.As(err, &dragonErr)
+		// Should be a QBError with ErrNotFound code
+		var qbErr *dberrors.QBError
+		ok := dberrors.As(err, &qbErr)
 		require.True(t, ok)
-		assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
-		assert.Contains(t, dragonErr.Error(), "admin user not found")
+		assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
+		assert.Contains(t, qbErr.Error(), "admin user not found")
 	})
 
 	t.Run("storage error", func(t *testing.T) {

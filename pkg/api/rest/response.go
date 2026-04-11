@@ -67,15 +67,15 @@ func RespondError(w http.ResponseWriter, r *http.Request, statusCode int, err er
 	errResp.RequestID = requestID
 
 	// Handle QuicBaaS errors
-	var dragonErr *errors.DragonError
-	if errors.As(err, &dragonErr) {
-		errResp.Error = dragonErr.Error()
-		errResp.Code = dragonErr.Code.String()
-		errResp.Retryable = dragonErr.IsRetryable()
+	var qbErr *errors.QBError
+	if errors.As(err, &qbErr) {
+		errResp.Error = qbErr.Error()
+		errResp.Code = qbErr.Code.String()
+		errResp.Retryable = qbErr.IsRetryable()
 
 		// Add context as details
-		if len(dragonErr.Context) > 0 {
-			errResp.Details = dragonErr.Context
+		if len(qbErr.Context) > 0 {
+			errResp.Details = qbErr.Context
 		}
 	} else {
 		// Generic error

@@ -203,8 +203,8 @@ func NewEntropyGenerationError(cause error) *EntropyGenerationFailedError {
 }
 
 // NewSecretNotFoundError creates a new error for secret not found.
-func NewSecretNotFoundError(op, path, provider string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+func NewSecretNotFoundError(op, path, provider string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   op,
 		Err: &SecretNotFoundError{
@@ -219,8 +219,8 @@ func NewSecretNotFoundError(op, path, provider string) *dberrors.DragonError {
 }
 
 // NewResolutionFailedError creates a new error for resolution failure.
-func NewResolutionFailedError(op, uri, reason string, cause error) *dberrors.DragonError {
-	err := &dberrors.DragonError{
+func NewResolutionFailedError(op, uri, reason string, cause error) *dberrors.QBError {
+	err := &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err: &ResolutionFailedError{
@@ -239,8 +239,8 @@ func NewResolutionFailedError(op, uri, reason string, cause error) *dberrors.Dra
 }
 
 // NewRemoteConnectionFailedError creates a new error for remote connection failure.
-func NewRemoteConnectionFailedError(op, endpoint, provider string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+func NewRemoteConnectionFailedError(op, endpoint, provider string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err: &RemoteConnectionFailedError{
@@ -257,8 +257,8 @@ func NewRemoteConnectionFailedError(op, endpoint, provider string, cause error) 
 }
 
 // NewInvalidSecretURIError creates a new error for invalid secret URI.
-func NewInvalidSecretURIError(op, uri, reason string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+func NewInvalidSecretURIError(op, uri, reason string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err: &InvalidSecretURIError{
@@ -273,8 +273,8 @@ func NewInvalidSecretURIError(op, uri, reason string) *dberrors.DragonError {
 }
 
 // NewEntropyGenerationFailedError creates a new error for entropy generation failure.
-func NewEntropyGenerationFailedError(op string, requestedBytes int, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+func NewEntropyGenerationFailedError(op string, requestedBytes int, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrEncryption,
 		Op:   op,
 		Err: &EntropyGenerationFailedError{
@@ -288,8 +288,8 @@ func NewEntropyGenerationFailedError(op string, requestedBytes int, cause error)
 }
 
 // NewUnsupportedSchemeError creates a new error for unsupported URI scheme.
-func NewUnsupportedSchemeError(op, scheme, uri string, supportedSchemes []string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+func NewUnsupportedSchemeError(op, scheme, uri string, supportedSchemes []string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err: &UnsupportedSchemeError{
@@ -314,7 +314,7 @@ func IsSecretNotFound(err error) bool {
 	if errors.As(err, &snf) {
 		return true
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if errors.As(err, &de) {
 		return de.Code == dberrors.ErrNotFound
 	}
@@ -339,7 +339,7 @@ func IsRemoteConnectionFailed(err error) bool {
 	if errors.As(err, &rcf) {
 		return true
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if errors.As(err, &de) {
 		return de.Code == dberrors.ErrUnavailable
 	}
@@ -364,7 +364,7 @@ func IsEntropyGenerationFailed(err error) bool {
 	if errors.As(err, &egf) {
 		return true
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if errors.As(err, &de) {
 		return de.Code == dberrors.ErrEncryption
 	}

@@ -612,8 +612,8 @@ func convertGRPCError(err error, operation string) error {
 	}
 
 	// Check if it's already a QuicBaaS error
-	var dragonErr *errors.DragonError
-	if stderrors.As(err, &dragonErr) {
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) {
 		return err
 	}
 

@@ -167,7 +167,7 @@ func TestToProtoError_Detailed(t *testing.T) {
 		},
 		{
 			name: "dragon error not found",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -176,7 +176,7 @@ func TestToProtoError_Detailed(t *testing.T) {
 		},
 		{
 			name: "dragon error invalid input",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "test",
 				Err:  assert.AnError,

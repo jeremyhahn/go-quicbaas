@@ -2111,78 +2111,78 @@ func TestWithBridgeBufferSizeNegative(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// DragonError code matching branch for IsWatchBridge* functions
-// These exercise the middle branch (DragonError with matching code but no typed inner error).
+// QBError code matching branch for IsWatchBridge* functions
+// These exercise the middle branch (QBError with matching code but no typed inner error).
 // -----------------------------------------------------------------------------
 
-// TestIsWatchBridgeNotRunning_DragonErrorCodeMatch tests the DragonError code matching
+// TestIsWatchBridgeNotRunning_QBErrorCodeMatch tests the QBError code matching
 // branch where the error wraps a non-typed inner error.
-func TestIsWatchBridgeNotRunning_DragonErrorCodeMatch(t *testing.T) {
+func TestIsWatchBridgeNotRunning_QBErrorCodeMatch(t *testing.T) {
 	t.Parallel()
 
-	dragonErr := &errors.DragonError{
+	qbErr := &errors.QBError{
 		Code: ErrCodeWatchBridgeNotRunning,
 		Op:   "test",
 		Err:  stderrors.New("generic inner error"),
 	}
-	if !IsWatchBridgeNotRunning(dragonErr) {
-		t.Error("expected true for DragonError with ErrCodeWatchBridgeNotRunning code")
+	if !IsWatchBridgeNotRunning(qbErr) {
+		t.Error("expected true for QBError with ErrCodeWatchBridgeNotRunning code")
 	}
 }
 
-// TestIsWatchBridgeAlreadyRunning_DragonErrorCodeMatch tests the DragonError code matching branch.
-func TestIsWatchBridgeAlreadyRunning_DragonErrorCodeMatch(t *testing.T) {
+// TestIsWatchBridgeAlreadyRunning_QBErrorCodeMatch tests the QBError code matching branch.
+func TestIsWatchBridgeAlreadyRunning_QBErrorCodeMatch(t *testing.T) {
 	t.Parallel()
 
-	dragonErr := &errors.DragonError{
+	qbErr := &errors.QBError{
 		Code: ErrCodeWatchBridgeAlreadyRunning,
 		Op:   "test",
 		Err:  stderrors.New("generic inner error"),
 	}
-	if !IsWatchBridgeAlreadyRunning(dragonErr) {
-		t.Error("expected true for DragonError with ErrCodeWatchBridgeAlreadyRunning code")
+	if !IsWatchBridgeAlreadyRunning(qbErr) {
+		t.Error("expected true for QBError with ErrCodeWatchBridgeAlreadyRunning code")
 	}
 }
 
-// TestIsWatchBridgeNilManager_DragonErrorCodeMatch tests the DragonError code matching branch.
-func TestIsWatchBridgeNilManager_DragonErrorCodeMatch(t *testing.T) {
+// TestIsWatchBridgeNilManager_QBErrorCodeMatch tests the QBError code matching branch.
+func TestIsWatchBridgeNilManager_QBErrorCodeMatch(t *testing.T) {
 	t.Parallel()
 
-	dragonErr := &errors.DragonError{
+	qbErr := &errors.QBError{
 		Code: ErrCodeWatchBridgeNilManager,
 		Op:   "test",
 		Err:  stderrors.New("generic inner error"),
 	}
-	if !IsWatchBridgeNilManager(dragonErr) {
-		t.Error("expected true for DragonError with ErrCodeWatchBridgeNilManager code")
+	if !IsWatchBridgeNilManager(qbErr) {
+		t.Error("expected true for QBError with ErrCodeWatchBridgeNilManager code")
 	}
 }
 
-// TestIsWatchBridgeNilService_DragonErrorCodeMatch tests the DragonError code matching branch.
-func TestIsWatchBridgeNilService_DragonErrorCodeMatch(t *testing.T) {
+// TestIsWatchBridgeNilService_QBErrorCodeMatch tests the QBError code matching branch.
+func TestIsWatchBridgeNilService_QBErrorCodeMatch(t *testing.T) {
 	t.Parallel()
 
-	dragonErr := &errors.DragonError{
+	qbErr := &errors.QBError{
 		Code: ErrCodeWatchBridgeNilService,
 		Op:   "test",
 		Err:  stderrors.New("generic inner error"),
 	}
-	if !IsWatchBridgeNilService(dragonErr) {
-		t.Error("expected true for DragonError with ErrCodeWatchBridgeNilService code")
+	if !IsWatchBridgeNilService(qbErr) {
+		t.Error("expected true for QBError with ErrCodeWatchBridgeNilService code")
 	}
 }
 
-// TestIsWatchBridgeInvalidMapping_DragonErrorCodeMatch tests the DragonError code matching branch.
-func TestIsWatchBridgeInvalidMapping_DragonErrorCodeMatch(t *testing.T) {
+// TestIsWatchBridgeInvalidMapping_QBErrorCodeMatch tests the QBError code matching branch.
+func TestIsWatchBridgeInvalidMapping_QBErrorCodeMatch(t *testing.T) {
 	t.Parallel()
 
-	dragonErr := &errors.DragonError{
+	qbErr := &errors.QBError{
 		Code: ErrCodeWatchBridgeInvalidMapping,
 		Op:   "test",
 		Err:  stderrors.New("generic inner error"),
 	}
-	if !IsWatchBridgeInvalidMapping(dragonErr) {
-		t.Error("expected true for DragonError with ErrCodeWatchBridgeInvalidMapping code")
+	if !IsWatchBridgeInvalidMapping(qbErr) {
+		t.Error("expected true for QBError with ErrCodeWatchBridgeInvalidMapping code")
 	}
 }
 

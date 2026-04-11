@@ -132,7 +132,7 @@ func (e *RegistryNilError) Error() string {
 // fail to resolve.
 func (p *ConfigProcessor) Process(ctx context.Context, cfg interface{}) (*ProcessResult, error) {
 	if ctx == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ConfigProcessor.Process",
 			Err:  ErrNilContext,
@@ -140,7 +140,7 @@ func (p *ConfigProcessor) Process(ctx context.Context, cfg interface{}) (*Proces
 	}
 
 	if p.registry == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ConfigProcessor.Process",
 			Err:  &RegistryNilError{},
@@ -148,7 +148,7 @@ func (p *ConfigProcessor) Process(ctx context.Context, cfg interface{}) (*Proces
 	}
 
 	if cfg == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ConfigProcessor.Process",
 			Err:  &ConfigNilError{},
@@ -157,7 +157,7 @@ func (p *ConfigProcessor) Process(ctx context.Context, cfg interface{}) (*Proces
 
 	rv := reflect.ValueOf(cfg)
 	if rv.Kind() != reflect.Ptr {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ConfigProcessor.Process",
 			Err:  &ConfigNotPointerError{Kind: rv.Kind()},
@@ -165,7 +165,7 @@ func (p *ConfigProcessor) Process(ctx context.Context, cfg interface{}) (*Proces
 	}
 
 	if rv.IsNil() {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ConfigProcessor.Process",
 			Err:  &ConfigNilError{},
@@ -174,7 +174,7 @@ func (p *ConfigProcessor) Process(ctx context.Context, cfg interface{}) (*Proces
 
 	elem := rv.Elem()
 	if elem.Kind() != reflect.Struct {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ConfigProcessor.Process",
 			Err:  &ConfigNotStructError{Kind: elem.Kind()},
@@ -204,7 +204,7 @@ func (p *ConfigProcessor) processValue(ctx context.Context, v reflect.Value, pat
 	// Check context cancellation
 	select {
 	case <-ctx.Done():
-		result.Errors = append(result.Errors, &errors.DragonError{
+		result.Errors = append(result.Errors, &errors.QBError{
 			Code: errors.ErrCanceled,
 			Op:   "ConfigProcessor.processValue",
 			Err:  ctx.Err(),
@@ -310,7 +310,7 @@ func (p *ConfigProcessor) processMapString(ctx context.Context, m reflect.Value,
 
 	resolved, err := p.registry.Resolve(ctx, raw)
 	if err != nil {
-		result.Errors = append(result.Errors, &errors.DragonError{
+		result.Errors = append(result.Errors, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "ConfigProcessor.processMapString",
 			Err:  err,
@@ -386,7 +386,7 @@ func (p *ConfigProcessor) processString(ctx context.Context, v reflect.Value, pa
 
 	resolved, err := p.registry.Resolve(ctx, raw)
 	if err != nil {
-		result.Errors = append(result.Errors, &errors.DragonError{
+		result.Errors = append(result.Errors, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "ConfigProcessor.processString",
 			Err:  err,

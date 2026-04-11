@@ -376,12 +376,12 @@ func TestTransport_Request(t *testing.T) {
 			t.Fatal("expected error from JSON-RPC error response")
 		}
 
-		dragonErr, ok := err.(*errors.DragonError)
+		qbErr, ok := err.(*errors.QBError)
 		if !ok {
-			t.Fatalf("expected DragonError, got %T", err)
+			t.Fatalf("expected QBError, got %T", err)
 		}
-		if dragonErr.Code != errors.CodeInternal {
-			t.Errorf("expected internal error code, got %v", dragonErr.Code)
+		if qbErr.Code != errors.CodeInternal {
+			t.Errorf("expected internal error code, got %v", qbErr.Code)
 		}
 	})
 

@@ -2523,8 +2523,8 @@ func TestEncryptVectorBatch_DEKCreationFailure(t *testing.T) {
 	_, err = svc.EncryptVectorBatch(ctx, "tenant", "ns", map[string][]float32{"v": {1.0}})
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	assert.True(t, errors.As(err, &dragonErr))
+	var qbErr *dberrors.QBError
+	assert.True(t, errors.As(err, &qbErr))
 }
 
 func TestEncryptVectorBatch_EmptyNamespaceError(t *testing.T) {
@@ -2560,8 +2560,8 @@ func TestDecryptVectorBatch_DEKRetrievalFailure(t *testing.T) {
 	_, err = svc.DecryptVectorBatch(ctx, "tenant-dek-fail", "ns", map[string][]byte{"v": encrypted})
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	assert.True(t, errors.As(err, &dragonErr))
+	var qbErr *dberrors.QBError
+	assert.True(t, errors.As(err, &qbErr))
 }
 
 // ---------------------------------------------------------------------------

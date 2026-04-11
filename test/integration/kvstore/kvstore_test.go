@@ -701,8 +701,8 @@ func closeAllStores(stores []kvStoreTestCase) {
 func assertNotFoundError(t *testing.T, err error) {
 	t.Helper()
 
-	if dragonErr, ok := err.(*dberrors.DragonError); ok {
-		assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code, "Error should be ErrNotFound")
+	if qbErr, ok := err.(*dberrors.QBError); ok {
+		assert.Equal(t, dberrors.ErrNotFound, qbErr.Code, "Error should be ErrNotFound")
 	} else {
 		// Also accept error messages containing "not found"
 		errMsg := strings.ToLower(err.Error())

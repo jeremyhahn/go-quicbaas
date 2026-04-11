@@ -118,21 +118,21 @@ type partitionMetrics struct {
 // NewPartitionDetector creates a new partition detector.
 func NewPartitionDetector(raftNode interfaces.RaftNode, config *PartitionConfig, logger interfaces.Logger) (*PartitionDetector, error) {
 	if raftNode == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ha.NewPartitionDetector",
 			Err:  &errors.MessageError{Message: "raft node cannot be nil"},
 		}
 	}
 	if config == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ha.NewPartitionDetector",
 			Err:  &errors.MessageError{Message: "config cannot be nil"},
 		}
 	}
 	if logger == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ha.NewPartitionDetector",
 			Err:  &errors.MessageError{Message: "logger cannot be nil"},

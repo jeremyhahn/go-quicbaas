@@ -657,8 +657,8 @@ func (eb *EncryptedBackend) loadVersions(ctx context.Context, path string) (*sec
 	data, err := eb.store.Get(ctx, secretKey(path))
 	if err != nil {
 		// Check if it's a not found error
-		var dragonErr *dberrors.DragonError
-		if ok := dberrors.As(err, &dragonErr); ok && dragonErr.Code == dberrors.ErrNotFound {
+		var qbErr *dberrors.QBError
+		if ok := dberrors.As(err, &qbErr); ok && qbErr.Code == dberrors.ErrNotFound {
 			return nil, ErrSecretNotFound
 		}
 		return nil, ErrSecretNotFound

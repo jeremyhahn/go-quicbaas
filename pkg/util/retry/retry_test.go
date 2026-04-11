@@ -756,7 +756,7 @@ func TestShouldRetry_WithCustomFunc(t *testing.T) {
 	})
 }
 
-func TestShouldRetry_WithDragonError(t *testing.T) {
+func TestShouldRetry_WithQBError(t *testing.T) {
 	cfg := &Config{
 		RetryableFunc: nil, // Use default QuicBaaS error check
 	}

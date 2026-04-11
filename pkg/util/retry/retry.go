@@ -55,7 +55,7 @@ func DefaultConfig() *Config {
 
 // Do executes the operation with retry logic according to the config.
 // The operation is retried only if:
-// - The error is retryable (according to RetryableFunc or DragonError.IsRetryable())
+// - The error is retryable (according to RetryableFunc or QBError.IsRetryable())
 // - MaxAttempts has not been exceeded
 // - The context has not been canceled.
 func Do(ctx context.Context, cfg *Config, op Operation) error {

@@ -19,7 +19,7 @@ import (
 	"context"
 	"errors"
 
-	qembed "github.com/jeremyhahn/go-qrdb/pkg/embedding"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // EmbeddingManagerInterface defines the interface that Manager implements.
@@ -33,10 +33,10 @@ type EmbeddingManagerInterface interface {
 }
 
 // Manager manages multiple embedding providers with caching.
-// It wraps qembed.Manager and exposes the single-text Embed/EmbedBatch API
+// It wraps qrdbsdk.EmbeddingManager and exposes the single-text Embed/EmbedBatch API
 // used throughout go-quicbaas while delegating all real work to go-qrdb.
 type Manager struct {
-	inner    *qembed.Manager
+	inner    *qrdbsdk.EmbeddingManager
 	provider string // default provider name from Config.Provider
 }
 
@@ -45,7 +45,7 @@ var _ EmbeddingManagerInterface = (*Manager)(nil)
 
 // NewManager creates a new Manager from the given Config.
 func NewManager(config Config) (*Manager, error) {
-	inner, err := qembed.NewManager(config)
+	inner, err := qrdbsdk.NewEmbeddingManager(config)
 	if err != nil {
 		return nil, err
 	}
@@ -153,20 +153,20 @@ func mapQRDBError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var pnf *qembed.ProviderNotFoundError
+	var pnf *qrdbsdk.EmbeddingProviderNotFoundError
 	if errors.As(err, &pnf) {
 		return ErrProviderNotFound
 	}
 	switch err {
-	case qembed.ErrProviderRequired:
+	case qrdbsdk.ErrEmbeddingProviderRequired:
 		return ErrProviderRequired
-	case qembed.ErrProviderInvalid:
+	case qrdbsdk.ErrEmbeddingProviderInvalid:
 		return ErrProviderInvalid
-	case qembed.ErrAPIURLRequired:
+	case qrdbsdk.ErrEmbeddingAPIURLRequired:
 		return ErrAPIURLRequired
-	case qembed.ErrAPIKeyRequired:
+	case qrdbsdk.ErrEmbeddingAPIKeyRequired:
 		return ErrAPIKeyRequired
-	case qembed.ErrModelRequired:
+	case qrdbsdk.ErrEmbeddingModelRequired:
 		return ErrModelRequired
 	}
 	return err

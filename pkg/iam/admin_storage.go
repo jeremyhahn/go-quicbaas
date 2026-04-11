@@ -43,7 +43,7 @@ func (m *MemoryAdminStorage) CreateAssignment(ctx context.Context, assignment *A
 	defer m.mu.Unlock()
 
 	if assignment == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.admin_storage.create_assignment",
 			Err:  ErrAdminAssignmentInvalid,
@@ -51,7 +51,7 @@ func (m *MemoryAdminStorage) CreateAssignment(ctx context.Context, assignment *A
 	}
 
 	if assignment.ID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.admin_storage.create_assignment",
 			Err:  ErrAdminAssignmentInvalid,
@@ -59,7 +59,7 @@ func (m *MemoryAdminStorage) CreateAssignment(ctx context.Context, assignment *A
 	}
 
 	if _, exists := m.assignments[assignment.ID]; exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrAlreadyExists,
 			Op:   "iam.admin_storage.create_assignment",
 		}
@@ -78,7 +78,7 @@ func (m *MemoryAdminStorage) GetAssignment(ctx context.Context, id string) (*Adm
 	defer m.mu.RUnlock()
 
 	if id == "" {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.admin_storage.get_assignment",
 		}
@@ -86,7 +86,7 @@ func (m *MemoryAdminStorage) GetAssignment(ctx context.Context, id string) (*Adm
 
 	assignment, exists := m.assignments[id]
 	if !exists {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.admin_storage.get_assignment",
 		}
@@ -103,7 +103,7 @@ func (m *MemoryAdminStorage) UpdateAssignment(ctx context.Context, assignment *A
 	defer m.mu.Unlock()
 
 	if assignment == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.admin_storage.update_assignment",
 			Err:  ErrAdminAssignmentInvalid,
@@ -111,7 +111,7 @@ func (m *MemoryAdminStorage) UpdateAssignment(ctx context.Context, assignment *A
 	}
 
 	if assignment.ID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.admin_storage.update_assignment",
 			Err:  ErrAdminAssignmentInvalid,
@@ -119,7 +119,7 @@ func (m *MemoryAdminStorage) UpdateAssignment(ctx context.Context, assignment *A
 	}
 
 	if _, exists := m.assignments[assignment.ID]; !exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.admin_storage.update_assignment",
 		}
@@ -138,14 +138,14 @@ func (m *MemoryAdminStorage) DeleteAssignment(ctx context.Context, id string) er
 	defer m.mu.Unlock()
 
 	if id == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.admin_storage.delete_assignment",
 		}
 	}
 
 	if _, exists := m.assignments[id]; !exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.admin_storage.delete_assignment",
 		}
@@ -222,7 +222,7 @@ func (m *MemoryAdminStorage) GetUserAssignments(ctx context.Context, userID stri
 	defer m.mu.RUnlock()
 
 	if userID == "" {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.admin_storage.get_user_assignments",
 		}
@@ -268,21 +268,21 @@ func (m *MemoryImpersonationStorage) CreateImpersonationSession(ctx context.Cont
 	defer m.mu.Unlock()
 
 	if session == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.impersonation_storage.create_session",
 		}
 	}
 
 	if session.ID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.impersonation_storage.create_session",
 		}
 	}
 
 	if _, exists := m.sessions[session.ID]; exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrAlreadyExists,
 			Op:   "iam.impersonation_storage.create_session",
 		}
@@ -301,7 +301,7 @@ func (m *MemoryImpersonationStorage) GetImpersonationSession(ctx context.Context
 	defer m.mu.RUnlock()
 
 	if id == "" {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.impersonation_storage.get_session",
 		}
@@ -309,7 +309,7 @@ func (m *MemoryImpersonationStorage) GetImpersonationSession(ctx context.Context
 
 	session, exists := m.sessions[id]
 	if !exists {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.impersonation_storage.get_session",
 		}
@@ -326,7 +326,7 @@ func (m *MemoryImpersonationStorage) EndImpersonationSession(ctx context.Context
 	defer m.mu.Unlock()
 
 	if id == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.impersonation_storage.end_session",
 		}
@@ -334,7 +334,7 @@ func (m *MemoryImpersonationStorage) EndImpersonationSession(ctx context.Context
 
 	session, exists := m.sessions[id]
 	if !exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.impersonation_storage.end_session",
 		}
@@ -353,7 +353,7 @@ func (m *MemoryImpersonationStorage) IncrementOperationCount(ctx context.Context
 	defer m.mu.Unlock()
 
 	if id == "" {
-		return 0, &dberrors.DragonError{
+		return 0, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.impersonation_storage.increment_operation_count",
 		}
@@ -361,7 +361,7 @@ func (m *MemoryImpersonationStorage) IncrementOperationCount(ctx context.Context
 
 	session, exists := m.sessions[id]
 	if !exists {
-		return 0, &dberrors.DragonError{
+		return 0, &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.impersonation_storage.increment_operation_count",
 		}
@@ -377,7 +377,7 @@ func (m *MemoryImpersonationStorage) ListActiveImpersonations(ctx context.Contex
 	defer m.mu.RUnlock()
 
 	if adminUserID == "" {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.impersonation_storage.list_active",
 		}

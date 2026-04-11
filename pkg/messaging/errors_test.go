@@ -33,7 +33,7 @@ func TestChannelNotFoundError(t *testing.T) {
 		}
 	})
 
-	t.Run("NewChannelNotFoundError creates DragonError", func(t *testing.T) {
+	t.Run("NewChannelNotFoundError creates QBError", func(t *testing.T) {
 		t.Parallel()
 		err := NewChannelNotFoundError("test.op", "my-channel")
 		if err == nil {
@@ -58,11 +58,11 @@ func TestChannelNotFoundError(t *testing.T) {
 		}
 	})
 
-	t.Run("IsChannelNotFound returns true for DragonError with correct code", func(t *testing.T) {
+	t.Run("IsChannelNotFound returns true for QBError with correct code", func(t *testing.T) {
 		t.Parallel()
 		err := NewChannelNotFoundError("test", "channel")
 		if !IsChannelNotFound(err) {
-			t.Error("expected IsChannelNotFound to return true for DragonError")
+			t.Error("expected IsChannelNotFound to return true for QBError")
 		}
 	})
 
@@ -100,7 +100,7 @@ func TestChannelExistsError(t *testing.T) {
 		}
 	})
 
-	t.Run("NewChannelExistsError creates DragonError", func(t *testing.T) {
+	t.Run("NewChannelExistsError creates QBError", func(t *testing.T) {
 		t.Parallel()
 		err := NewChannelExistsError("test.op", "my-channel")
 		if err.Code != ErrCodePushChannelExists {
@@ -136,7 +136,7 @@ func TestHubBufferFullError(t *testing.T) {
 		}
 	})
 
-	t.Run("NewHubBufferFullError creates retryable DragonError", func(t *testing.T) {
+	t.Run("NewHubBufferFullError creates retryable QBError", func(t *testing.T) {
 		t.Parallel()
 		err := NewHubBufferFullError("test.op", "channel", 512)
 		if err.Code != ErrCodePushHubBufferFull {
@@ -501,14 +501,14 @@ func TestSentinelErrors(t *testing.T) {
 func TestErrorWrapping(t *testing.T) {
 	t.Parallel()
 
-	t.Run("DragonError wraps underlying error", func(t *testing.T) {
+	t.Run("QBError wraps underlying error", func(t *testing.T) {
 		t.Parallel()
 		underlying := &ChannelNotFoundError{Channel: "test"}
-		dragonErr := NewChannelNotFoundError("test.op", "test")
+		qbErr := NewChannelNotFoundError("test.op", "test")
 
 		// Verify the underlying error is wrapped
-		if !errors.As(dragonErr, &underlying) {
-			t.Error("expected DragonError to wrap ChannelNotFoundError")
+		if !errors.As(qbErr, &underlying) {
+			t.Error("expected QBError to wrap ChannelNotFoundError")
 		}
 	})
 
@@ -526,7 +526,7 @@ func TestErrorWrapping(t *testing.T) {
 func TestAdditionalErrorConstructors(t *testing.T) {
 	t.Parallel()
 
-	t.Run("NewClientDisconnectedError creates DragonError", func(t *testing.T) {
+	t.Run("NewClientDisconnectedError creates QBError", func(t *testing.T) {
 		t.Parallel()
 		err := NewClientDisconnectedError("test.op", "client-123")
 		if err == nil {
@@ -537,7 +537,7 @@ func TestAdditionalErrorConstructors(t *testing.T) {
 		}
 	})
 
-	t.Run("NewClientSlowError creates DragonError", func(t *testing.T) {
+	t.Run("NewClientSlowError creates QBError", func(t *testing.T) {
 		t.Parallel()
 		err := NewClientSlowError("test.op", "slow-client", 5, 256)
 		if err == nil {
@@ -548,7 +548,7 @@ func TestAdditionalErrorConstructors(t *testing.T) {
 		}
 	})
 
-	t.Run("NewDedupKeyExistsError creates DragonError", func(t *testing.T) {
+	t.Run("NewDedupKeyExistsError creates QBError", func(t *testing.T) {
 		t.Parallel()
 		err := NewDedupKeyExistsError("test.op", "dedup-key-123", "2026-01-01T00:00:00Z", 3)
 		if err == nil {
@@ -559,7 +559,7 @@ func TestAdditionalErrorConstructors(t *testing.T) {
 		}
 	})
 
-	t.Run("NewInvalidMessageIDError creates DragonError", func(t *testing.T) {
+	t.Run("NewInvalidMessageIDError creates QBError", func(t *testing.T) {
 		t.Parallel()
 		err := NewInvalidMessageIDError("test.op", "bad-id", "invalid format")
 		if err == nil {
@@ -570,7 +570,7 @@ func TestAdditionalErrorConstructors(t *testing.T) {
 		}
 	})
 
-	t.Run("NewMaxSubscriptionsReachedError creates DragonError", func(t *testing.T) {
+	t.Run("NewMaxSubscriptionsReachedError creates QBError", func(t *testing.T) {
 		t.Parallel()
 		err := NewMaxSubscriptionsReachedError("test.op", "full-channel", 100)
 		if err == nil {
@@ -581,7 +581,7 @@ func TestAdditionalErrorConstructors(t *testing.T) {
 		}
 	})
 
-	t.Run("NewClientNotRegisteredError creates DragonError", func(t *testing.T) {
+	t.Run("NewClientNotRegisteredError creates QBError", func(t *testing.T) {
 		t.Parallel()
 		err := NewClientNotRegisteredError("test.op", "unregistered-client")
 		if err == nil {
@@ -602,9 +602,9 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 		if !IsChannelExists(&ChannelExistsError{Channel: "test"}) {
 			t.Error("expected true for ChannelExistsError")
 		}
-		// DragonError
+		// QBError
 		if !IsChannelExists(NewChannelExistsError("op", "test")) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		// Sentinel error
 		if !IsChannelExists(ErrChannelExists) {
@@ -626,7 +626,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for HubBufferFullError")
 		}
 		if !IsHubBufferFull(NewHubBufferFullError("op", "test-channel", 256)) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if !IsHubBufferFull(ErrHubOverloaded) {
 			t.Error("expected true for sentinel")
@@ -642,7 +642,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for ClientDisconnectedError")
 		}
 		if !IsClientDisconnected(NewClientDisconnectedError("op", "test")) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if IsClientDisconnected(nil) {
 			t.Error("expected false for nil")
@@ -658,7 +658,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for ClientSlowError")
 		}
 		if !IsClientSlow(NewClientSlowError("op", "test", 5, 256)) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if IsClientSlow(nil) {
 			t.Error("expected false for nil")
@@ -674,7 +674,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for InvalidCodecError")
 		}
 		if !IsInvalidCodec(NewInvalidCodecError("op", "bad")) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if IsInvalidCodec(nil) {
 			t.Error("expected false for nil")
@@ -690,7 +690,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for SubscriptionNotFoundError")
 		}
 		if !IsSubscriptionNotFound(NewSubscriptionNotFoundError("op", "sub-1")) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if IsSubscriptionNotFound(nil) {
 			t.Error("expected false for nil")
@@ -706,7 +706,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for DedupKeyExistsError")
 		}
 		if !IsDedupKeyExists(NewDedupKeyExistsError("op", "key-1", "2026-01-01", 1)) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if IsDedupKeyExists(nil) {
 			t.Error("expected false for nil")
@@ -722,7 +722,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for ServiceNotRunningError")
 		}
 		if !IsServiceNotRunning(NewServiceNotRunningError("op", "publish")) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if !IsServiceNotRunning(ErrServiceNotRunning) {
 			t.Error("expected true for sentinel")
@@ -738,7 +738,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for InvalidChannelNameError")
 		}
 		if !IsInvalidChannelName(NewInvalidChannelNameError("op", "bad", "reason")) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if !IsInvalidChannelName(ErrInvalidChannelName) {
 			t.Error("expected true for sentinel")
@@ -754,7 +754,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for InvalidMessageIDError")
 		}
 		if !IsInvalidMessageID(NewInvalidMessageIDError("op", "bad", "reason")) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if IsInvalidMessageID(nil) {
 			t.Error("expected false for nil")
@@ -770,7 +770,7 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 			t.Error("expected true for MaxSubscriptionsReachedError")
 		}
 		if !IsMaxSubscriptionsReached(NewMaxSubscriptionsReachedError("op", "ch", 10)) {
-			t.Error("expected true for DragonError")
+			t.Error("expected true for QBError")
 		}
 		if !IsMaxSubscriptionsReached(ErrMaxSubscriptionsReached) {
 			t.Error("expected true for sentinel")
@@ -781,12 +781,12 @@ func TestIsErrorHelperFunctions(t *testing.T) {
 	})
 }
 
-// TestIsErrorCheckers_BareDragonErrorCodePath tests each Is* function with a
-// bare DragonError that has the correct code but NO inner typed error.
-// This exercises the DragonError code-check branch (de.Code == ErrCodePush*)
+// TestIsErrorCheckers_BareQBErrorCodePath tests each Is* function with a
+// bare QBError that has the correct code but NO inner typed error.
+// This exercises the QBError code-check branch (de.Code == ErrCodePush*)
 // which is not reached when using New*Error constructors because errors.As
 // finds the inner typed error first.
-func TestIsErrorCheckers_BareDragonErrorCodePath(t *testing.T) {
+func TestIsErrorCheckers_BareQBErrorCodePath(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -812,15 +812,15 @@ func TestIsErrorCheckers_BareDragonErrorCodePath(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			// Create a DragonError with the correct code but no inner typed error.
+			// Create a QBError with the correct code but no inner typed error.
 			// This forces the code-check branch to execute since errors.As won't
 			// match the specific typed error first.
-			bareErr := &dberrors.DragonError{
+			bareErr := &dberrors.QBError{
 				Code: tc.code,
 				Op:   "test",
 			}
 			if !tc.checker(bareErr) {
-				t.Errorf("expected %s to return true for bare DragonError with code %d", tc.name, tc.code)
+				t.Errorf("expected %s to return true for bare QBError with code %d", tc.name, tc.code)
 			}
 		})
 	}

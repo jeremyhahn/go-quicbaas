@@ -11,362 +11,507 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+// Package errors provides structured error handling for QuicBaaS.
+// It is a facade over the go-qrdb error framework, re-exporting all symbols
+// so that QuicBaaS-internal packages need only import this package.
 package errors
 
 import (
-	"errors"
+	stderrors "errors"
 	"fmt"
+	"time"
 
+	dberrors "github.com/jeremyhahn/go-qrdb/pkg/errors"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
-// DragonError represents a structured error in QuicBaaS with context and metadata.
-type DragonError struct {
-	// Code is the error code identifying the type of error
-	Code ErrorCode
+// ---------------------------------------------------------------------------
+// Core type aliases — identical to dberrors, zero overhead
+// ---------------------------------------------------------------------------
 
-	// Op is the operation that failed (e.g., "storage.Get", "raft.Propose")
-	Op string
+// ErrorCode classifies errors into categories.
+type ErrorCode = dberrors.ErrorCode
 
-	// Err is the underlying error
-	Err error
+// QBError is the structured QuicBaaS error type with code, operation, and context.
+type QBError = dberrors.QRDBError
 
-	// Context contains additional key-value context about the error
-	Context map[string]interface{}
+// QuotaExceededError is returned when a resource quota is exceeded.
+type QuotaExceededError = dberrors.QuotaExceededError
 
-	// Retry indicates whether the operation can be retried
-	Retry bool
-}
+// MessageError is a simple typed error wrapping a message string.
+type MessageError = dberrors.MessageError
 
-// Error implements the error interface.
-func (e *DragonError) Error() string {
-	if e.Err != nil {
-		if e.Op != "" {
-			return fmt.Sprintf("%s: %s: %v", e.Op, e.Code.String(), e.Err)
-		}
-		return fmt.Sprintf("%s: %v", e.Code.String(), e.Err)
-	}
+// WrappedMessageError is a message error that wraps an underlying error.
+type WrappedMessageError = dberrors.WrappedMessageError
 
-	if e.Op != "" {
-		return fmt.Sprintf("%s: %s", e.Op, e.Code.String())
-	}
-	return e.Code.String()
-}
+// ParameterNotFoundError indicates a required parameter was not found.
+type ParameterNotFoundError = dberrors.ParameterNotFoundError
 
-// Unwrap returns the underlying error for errors.Is and errors.As support.
-func (e *DragonError) Unwrap() error {
-	return e.Err
-}
+// ---------------------------------------------------------------------------
+// Error code constants
+// ---------------------------------------------------------------------------
 
-// Is implements error comparison for errors.Is.
-func (e *DragonError) Is(target error) bool {
-	if target == nil {
-		return false
-	}
+const (
+	// ErrUnknown represents an unknown or unspecified error.
+	ErrUnknown = dberrors.ErrUnknown
 
-	// Check if target is a DragonError with the same code
-	var de *DragonError
-	if errors.As(target, &de) {
-		return e.Code == de.Code
-	}
+	// ErrNotFound indicates that the requested resource was not found.
+	ErrNotFound = dberrors.ErrNotFound
 
-	// Check underlying error
-	if e.Err != nil {
-		return errors.Is(e.Err, target)
-	}
+	// ErrConflict indicates a conflict with existing state (e.g., duplicate key).
+	ErrConflict = dberrors.ErrConflict
 
-	return false
-}
+	// ErrTimeout indicates that an operation timed out.
+	ErrTimeout = dberrors.ErrTimeout
 
-// WithContext adds context key-value pairs to the error.
-func (e *DragonError) WithContext(key string, value interface{}) *DragonError {
-	if e.Context == nil {
-		e.Context = make(map[string]interface{})
-	}
-	e.Context[key] = value
-	return e
-}
+	// ErrInternal represents an internal server error.
+	ErrInternal = dberrors.ErrInternal
 
-// WithRetry sets the retry flag on the error.
-func (e *DragonError) WithRetry(retry bool) *DragonError {
-	e.Retry = retry
-	return e
-}
+	// ErrInvalidInput indicates invalid input parameters.
+	ErrInvalidInput = dberrors.ErrInvalidInput
 
-// IsRetryable returns true if the error can be retried.
-func (e *DragonError) IsRetryable() bool {
-	if e.Retry {
-		return true
-	}
-	return e.Code.IsRetryable()
-}
+	// ErrUnauthorized indicates authentication is required.
+	ErrUnauthorized = dberrors.ErrUnauthorized
 
-// GetContext retrieves a context value by key.
-func (e *DragonError) GetContext(key string) (interface{}, bool) {
-	if e.Context == nil {
-		return nil, false
-	}
-	val, ok := e.Context[key]
-	return val, ok
-}
+	// ErrForbidden indicates the operation is not permitted.
+	ErrForbidden = dberrors.ErrForbidden
+
+	// ErrUnavailable indicates the service is unavailable.
+	ErrUnavailable = dberrors.ErrUnavailable
+
+	// ErrStorage indicates a storage layer error.
+	ErrStorage = dberrors.ErrStorage
+
+	// ErrRaft indicates a Raft consensus error.
+	ErrRaft = dberrors.ErrRaft
+
+	// ErrEncryption indicates an encryption/decryption error.
+	ErrEncryption = dberrors.ErrEncryption
+
+	// ErrDecryption indicates a decryption error.
+	ErrDecryption = dberrors.ErrDecryption
+
+	// ErrValidation indicates a validation error.
+	ErrValidation = dberrors.ErrValidation
+
+	// ErrConfiguration indicates a configuration error.
+	ErrConfiguration = dberrors.ErrConfiguration
+
+	// ErrCanceled indicates the operation was canceled.
+	ErrCanceled = dberrors.ErrCanceled
+
+	// ErrDeadlineExceeded indicates the deadline was exceeded.
+	ErrDeadlineExceeded = dberrors.ErrDeadlineExceeded
+
+	// ErrAlreadyExists indicates the resource already exists.
+	ErrAlreadyExists = dberrors.ErrAlreadyExists
+
+	// ErrResourceExhausted indicates resources are exhausted.
+	ErrResourceExhausted = dberrors.ErrResourceExhausted
+
+	// ErrPreconditionFailed indicates a precondition check failed.
+	ErrPreconditionFailed = dberrors.ErrPreconditionFailed
+
+	// ErrAborted indicates the operation was aborted.
+	ErrAborted = dberrors.ErrAborted
+
+	// ErrOutOfRange indicates a value is out of range.
+	ErrOutOfRange = dberrors.ErrOutOfRange
+
+	// ErrUnimplemented indicates the operation is not implemented.
+	ErrUnimplemented = dberrors.ErrUnimplemented
+
+	// ErrDataLoss indicates unrecoverable data loss or corruption.
+	ErrDataLoss = dberrors.ErrDataLoss
+
+	// ErrSnapshot indicates a snapshot operation error.
+	ErrSnapshot = dberrors.ErrSnapshot
+
+	// ErrReplication indicates a replication error.
+	ErrReplication = dberrors.ErrReplication
+
+	// ErrLeaderNotAvailable indicates no Raft leader is available.
+	ErrLeaderNotAvailable = dberrors.ErrLeaderNotAvailable
+
+	// ErrClusterNotReady indicates the cluster is not ready.
+	ErrClusterNotReady = dberrors.ErrClusterNotReady
+
+	// ErrQuorumLost indicates the cluster has lost quorum.
+	ErrQuorumLost = dberrors.ErrQuorumLost
+
+	// ErrSplitBrain indicates a split-brain scenario has been detected.
+	ErrSplitBrain = dberrors.ErrSplitBrain
+
+	// ErrRateLimited indicates the operation was rate limited.
+	ErrRateLimited = dberrors.ErrRateLimited
+
+	// ErrNotImplemented indicates functionality is not yet implemented.
+	ErrNotImplemented = dberrors.ErrNotImplemented
+
+	// ErrNotAllowed indicates the operation is not allowed.
+	ErrNotAllowed = dberrors.ErrNotAllowed
+
+	// ErrSystemKeyspaceViolation indicates an attempt to access the reserved system keyspace.
+	ErrSystemKeyspaceViolation = dberrors.ErrSystemKeyspaceViolation
+
+	// ErrCrossTenantAccess indicates an attempt to access another tenant's data.
+	ErrCrossTenantAccess = dberrors.ErrCrossTenantAccess
+
+	// ErrMissingTenantContext indicates tenant context is required but not present.
+	ErrMissingTenantContext = dberrors.ErrMissingTenantContext
+
+	// ErrMissingJustification indicates a justification is required but not provided.
+	ErrMissingJustification = dberrors.ErrMissingJustification
+
+	// ErrMissingUserContext indicates user context is required but not present.
+	ErrMissingUserContext = dberrors.ErrMissingUserContext
+
+	// ErrCircuitOpen indicates the circuit breaker is open and rejecting requests.
+	ErrCircuitOpen = dberrors.ErrCircuitOpen
+)
+
+// ---------------------------------------------------------------------------
+// Constructors
+// ---------------------------------------------------------------------------
+
+// New creates a new QBError with the specified code, operation, and message.
+var New = dberrors.New
+
+// Newf creates a new QBError with formatted message.
+var Newf = dberrors.Newf
+
+// Wrap wraps an existing error with QuicBaaS error context.
+var Wrap = dberrors.Wrap
+
+// Wrapf wraps an error with additional formatted context.
+var Wrapf = dberrors.Wrapf
+
+// ---------------------------------------------------------------------------
+// Error inspection helpers
+// ---------------------------------------------------------------------------
+
+// Is checks if an error matches a specific error code.
+var Is = dberrors.Is
+
+// As is a helper for errors.As with QBError.
+var As = dberrors.As
+
+// Code extracts the error code from an error, or returns ErrUnknown.
+var Code = dberrors.Code
+
+// Operation extracts the operation from an error, or returns empty string.
+var Operation = dberrors.Operation
+
+// IsRetryable checks if an error is retryable.
+var IsRetryable = dberrors.IsRetryable
+
+// GetContext retrieves context from a QBError.
+var GetContext = dberrors.GetContext
+
+// ---------------------------------------------------------------------------
+// Common error constructors
+// ---------------------------------------------------------------------------
+
+// NotFound creates a not found error.
+var NotFound = dberrors.NotFound
+
+// AlreadyExists creates an already exists error.
+var AlreadyExists = dberrors.AlreadyExists
+
+// InvalidInput creates an invalid input error.
+var InvalidInput = dberrors.InvalidInput
+
+// InvalidInputf creates an invalid input error with formatting.
+var InvalidInputf = dberrors.InvalidInputf
+
+// Timeout creates a timeout error.
+var Timeout = dberrors.Timeout
+
+// Internal creates an internal error.
+var Internal = dberrors.Internal
+
+// Internalf creates an internal error with formatting.
+var Internalf = dberrors.Internalf
+
+// Unavailable creates an unavailable error.
+var Unavailable = dberrors.Unavailable
+
+// Unavailablef creates an unavailable error with formatting.
+var Unavailablef = dberrors.Unavailablef
+
+// NotImplemented creates a not implemented error.
+var NotImplemented = dberrors.NotImplemented
+
+// CircuitOpen creates a circuit open error indicating the circuit breaker is rejecting requests.
+var CircuitOpen = dberrors.CircuitOpen
+
+// ---------------------------------------------------------------------------
+// Category predicate helpers
+// ---------------------------------------------------------------------------
+
+// IsCircuitOpen returns true if the error is a circuit open error.
+var IsCircuitOpen = dberrors.IsCircuitOpen
+
+// IsCanceled returns true if the error is a Canceled error.
+var IsCanceled = dberrors.IsCanceled
+
+// IsInvalidInput returns true if the error is an InvalidInput error.
+var IsInvalidInput = dberrors.IsInvalidInput
+
+// IsResourceExhausted returns true if the error is a ResourceExhausted error.
+var IsResourceExhausted = dberrors.IsResourceExhausted
+
+// IsSystemKeyspaceViolation returns true if the error is a system keyspace violation.
+var IsSystemKeyspaceViolation = dberrors.IsSystemKeyspaceViolation
+
+// IsCrossTenantAccess returns true if the error is a cross-tenant access violation.
+var IsCrossTenantAccess = dberrors.IsCrossTenantAccess
+
+// IsMissingTenantContext returns true if the error is a missing tenant context error.
+var IsMissingTenantContext = dberrors.IsMissingTenantContext
+
+// IsQuotaExceeded returns true if the error is a quota exceeded error.
+var IsQuotaExceeded = dberrors.IsQuotaExceeded
+
+// IsMissingJustification returns true if the error is a missing justification error.
+var IsMissingJustification = dberrors.IsMissingJustification
+
+// IsMissingUserContext returns true if the error is a missing user context error.
+var IsMissingUserContext = dberrors.IsMissingUserContext
 
 // IsNotFound returns true if the error is a NotFound error.
-// It recognizes both quicbaas's DragonError{ErrNotFound} and the qrdb
+// It recognizes both QuicBaaS's QBError{ErrNotFound} and the qrdb
 // SDK's transport.KeyNotFoundError, which is returned when KV lookups
 // traverse the qrdb service layer via the embedded transport.
 func IsNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrNotFound
+	var qe *QBError
+	if stderrors.As(err, &qe) {
+		return qe.Code == ErrNotFound
 	}
 	var knf *transport.KeyNotFoundError
-	return errors.As(err, &knf)
+	return stderrors.As(err, &knf)
 }
 
-// IsCanceled returns true if the error is a Canceled error.
-func IsCanceled(err error) bool {
-	if err == nil {
-		return false
-	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrCanceled
-	}
-	return false
-}
+// ---------------------------------------------------------------------------
+// Structured error constructors
+// ---------------------------------------------------------------------------
 
-// IsInvalidInput returns true if the error is an InvalidInput error.
-func IsInvalidInput(err error) bool {
-	if err == nil {
-		return false
-	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrInvalidInput
-	}
-	return false
-}
-
-// IsResourceExhausted returns true if the error is a ResourceExhausted error.
-func IsResourceExhausted(err error) bool {
-	if err == nil {
-		return false
-	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrResourceExhausted
-	}
-	return false
-}
-
-// QuotaExceededError represents a quota limit violation.
-type QuotaExceededError struct {
-	// Resource is the type of resource that exceeded quota (e.g., "vectors", "storage", "batch_size")
-	Resource string
-
-	// Namespace is the affected namespace
-	Namespace string
-
-	// TenantID is the affected tenant
-	TenantID string
-
-	// Limit is the configured limit
-	Limit int64
-
-	// Current is the current usage
-	Current int64
-
-	// Requested is the requested amount
-	Requested int64
-}
-
-// Error implements the error interface.
-func (e *QuotaExceededError) Error() string {
-	if e.TenantID != "" {
-		return fmt.Sprintf("quota exceeded for tenant %s namespace %s: %s limit %d, current %d, requested %d",
-			e.TenantID, e.Namespace, e.Resource, e.Limit, e.Current, e.Requested)
-	}
-	return fmt.Sprintf("quota exceeded for namespace %s: %s limit %d, current %d, requested %d",
-		e.Namespace, e.Resource, e.Limit, e.Current, e.Requested)
-}
-
-// NewQuotaExceededError creates a new QuotaExceededError.
-func NewQuotaExceededError(resource, namespace, tenantID string, limit, current, requested int64) *DragonError {
-	return &DragonError{
-		Code: ErrResourceExhausted,
-		Op:   "quota.check",
-		Err: &QuotaExceededError{
-			Resource:  resource,
-			Namespace: namespace,
-			TenantID:  tenantID,
-			Limit:     limit,
-			Current:   current,
-			Requested: requested,
-		},
-		Context: map[string]interface{}{
-			"resource":  resource,
-			"namespace": namespace,
-			"tenant_id": tenantID,
-			"limit":     limit,
-			"current":   current,
-			"requested": requested,
-		},
-	}
-}
-
-// IsQuotaExceeded returns true if the error is a quota exceeded error.
-func IsQuotaExceeded(err error) bool {
-	if err == nil {
-		return false
-	}
-	var qe *QuotaExceededError
-	if errors.As(err, &qe) {
-		return true
-	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrResourceExhausted
-	}
-	return false
-}
-
-// IsSystemKeyspaceViolation returns true if the error is a system keyspace violation.
-func IsSystemKeyspaceViolation(err error) bool {
-	if err == nil {
-		return false
-	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrSystemKeyspaceViolation
-	}
-	return false
-}
-
-// IsCrossTenantAccess returns true if the error is a cross-tenant access violation.
-func IsCrossTenantAccess(err error) bool {
-	if err == nil {
-		return false
-	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrCrossTenantAccess
-	}
-	return false
-}
-
-// IsMissingTenantContext returns true if the error is a missing tenant context error.
-func IsMissingTenantContext(err error) bool {
-	if err == nil {
-		return false
-	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrMissingTenantContext
-	}
-	return false
-}
+// NewQuotaExceededError creates a quota-exceeded error.
+var NewQuotaExceededError = dberrors.NewQuotaExceededError
 
 // NewSystemKeyspaceViolationError creates an error for system keyspace access attempts.
-func NewSystemKeyspaceViolationError(op, key string) *DragonError {
-	return &DragonError{
-		Code: ErrSystemKeyspaceViolation,
-		Op:   op,
-		Err:  &MessageError{Message: "access to system keyspace is not permitted: " + key},
-		Context: map[string]interface{}{
-			"key": key,
-		},
-	}
-}
+var NewSystemKeyspaceViolationError = dberrors.NewSystemKeyspaceViolationError
 
 // NewCrossTenantAccessError creates an error for cross-tenant access attempts.
-func NewCrossTenantAccessError(op, requestingTenant, targetTenant string) *DragonError {
-	return &DragonError{
-		Code: ErrCrossTenantAccess,
-		Op:   op,
-		Err:  &MessageError{Message: "cross-tenant access denied: tenant " + requestingTenant + " cannot access tenant " + targetTenant + " data"},
-		Context: map[string]interface{}{
-			"requesting_tenant": requestingTenant,
-			"target_tenant":     targetTenant,
-		},
-	}
-}
+var NewCrossTenantAccessError = dberrors.NewCrossTenantAccessError
 
 // NewMissingTenantContextError creates an error for missing tenant context.
-func NewMissingTenantContextError(op string) *DragonError {
-	return &DragonError{
-		Code: ErrMissingTenantContext,
-		Op:   op,
-		Err:  errors.New("tenant context is required but not present"),
-	}
-}
-
-// IsMissingJustification returns true if the error is a missing justification error.
-func IsMissingJustification(err error) bool {
-	if err == nil {
-		return false
-	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrMissingJustification
-	}
-	return false
-}
-
-// IsMissingUserContext returns true if the error is a missing user context error.
-func IsMissingUserContext(err error) bool {
-	if err == nil {
-		return false
-	}
-	var de *DragonError
-	if errors.As(err, &de) {
-		return de.Code == ErrMissingUserContext
-	}
-	return false
-}
+var NewMissingTenantContextError = dberrors.NewMissingTenantContextError
 
 // NewMissingJustificationError creates an error for missing justification.
-func NewMissingJustificationError(op string) *DragonError {
-	return &DragonError{
-		Code: ErrMissingJustification,
-		Op:   op,
-		Err:  errors.New("justification is required for cross-tenant operations"),
-	}
-}
+var NewMissingJustificationError = dberrors.NewMissingJustificationError
 
 // NewMissingUserContextError creates an error for missing user context.
-func NewMissingUserContextError(op string) *DragonError {
-	return &DragonError{
-		Code: ErrMissingUserContext,
-		Op:   op,
-		Err:  errors.New("user context is required but not present"),
+var NewMissingUserContextError = dberrors.NewMissingUserContextError
+
+// ---------------------------------------------------------------------------
+// Parameter error types — QuicBaaS-specific, not in go-qrdb SDK
+// ---------------------------------------------------------------------------
+
+// ParameterExistsError indicates the parameter already exists.
+type ParameterExistsError struct {
+	Path string
+}
+
+// Error implements error interface.
+func (e *ParameterExistsError) Error() string {
+	return fmt.Sprintf("parameter already exists: %s", e.Path)
+}
+
+// InvalidPathError indicates an invalid parameter path.
+type InvalidPathError struct {
+	Path   string
+	Reason string
+}
+
+// Error implements error interface.
+func (e *InvalidPathError) Error() string {
+	return fmt.Sprintf("invalid parameter path '%s': %s", e.Path, e.Reason)
+}
+
+// ParameterExpiredError indicates the parameter has expired.
+type ParameterExpiredError struct {
+	Path      string
+	ExpiredAt time.Time
+}
+
+// Error implements error interface.
+func (e *ParameterExpiredError) Error() string {
+	return fmt.Sprintf("parameter '%s' expired at %s", e.Path, e.ExpiredAt.Format(time.RFC3339))
+}
+
+// ParameterEncryptionError indicates encryption/decryption failed.
+type ParameterEncryptionError struct {
+	Op  string
+	Err error
+}
+
+// Error implements error interface.
+func (e *ParameterEncryptionError) Error() string {
+	return fmt.Sprintf("%s: encryption failed: %v", e.Op, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ParameterEncryptionError) Unwrap() error {
+	return e.Err
+}
+
+// ParameterValueTooLargeError indicates the parameter value exceeds size limits.
+type ParameterValueTooLargeError struct {
+	Path    string
+	Size    int
+	MaxSize int
+}
+
+// Error implements error interface.
+func (e *ParameterValueTooLargeError) Error() string {
+	return fmt.Sprintf("parameter '%s' value size %d exceeds maximum %d", e.Path, e.Size, e.MaxSize)
+}
+
+// ParameterPathTooLongError indicates the parameter path exceeds length limits.
+type ParameterPathTooLongError struct {
+	Path      string
+	Length    int
+	MaxLength int
+}
+
+// Error implements error interface.
+func (e *ParameterPathTooLongError) Error() string {
+	return fmt.Sprintf("parameter path length %d exceeds maximum %d", e.Length, e.MaxLength)
+}
+
+// ParameterTagLimitError indicates too many tags on a parameter.
+type ParameterTagLimitError struct {
+	Path     string
+	Count    int
+	MaxCount int
+}
+
+// Error implements error interface.
+func (e *ParameterTagLimitError) Error() string {
+	return fmt.Sprintf("parameter '%s' has %d tags, exceeds maximum %d", e.Path, e.Count, e.MaxCount)
+}
+
+// NewParameterNotFoundError creates a new ParameterNotFoundError wrapped in QBError.
+func NewParameterNotFoundError(path string) *QBError {
+	return &QBError{
+		Code: ErrNotFound,
+		Op:   "parameterstore",
+		Err:  &ParameterNotFoundError{Path: path},
 	}
 }
 
-// MessageError provides a typed wrapper for simple error messages.
-type MessageError struct {
-	Message string
+// NewParameterExistsError creates a new ParameterExistsError wrapped in QBError.
+func NewParameterExistsError(path string) *QBError {
+	return &QBError{
+		Code: ErrAlreadyExists,
+		Op:   "parameterstore",
+		Err:  &ParameterExistsError{Path: path},
+	}
 }
 
-// Error implements the error interface.
-func (e *MessageError) Error() string {
-	return e.Message
+// NewInvalidPathError creates a new InvalidPathError wrapped in QBError.
+func NewInvalidPathError(path, reason string) *QBError {
+	return &QBError{
+		Code: ErrInvalidInput,
+		Op:   "parameterstore",
+		Err:  &InvalidPathError{Path: path, Reason: reason},
+	}
 }
 
-// WrappedMessageError provides a typed wrapper for error messages that wrap an underlying error.
-type WrappedMessageError struct {
-	Message string
-	Cause   error
+// NewParameterExpiredError creates a new ParameterExpiredError wrapped in QBError.
+func NewParameterExpiredError(path string, expiredAt time.Time) *QBError {
+	return &QBError{
+		Code: ErrNotFound,
+		Op:   "parameterstore",
+		Err:  &ParameterExpiredError{Path: path, ExpiredAt: expiredAt},
+	}
 }
 
-// Error implements the error interface.
-func (e *WrappedMessageError) Error() string {
-	return e.Message + ": " + e.Cause.Error()
+// NewParameterEncryptionError creates a new ParameterEncryptionError wrapped in QBError.
+func NewParameterEncryptionError(op string, err error) *QBError {
+	return &QBError{
+		Code: ErrEncryption,
+		Op:   op,
+		Err:  &ParameterEncryptionError{Op: op, Err: err},
+	}
 }
 
-// Unwrap returns the underlying cause for errors.Is and errors.As support.
-func (e *WrappedMessageError) Unwrap() error {
-	return e.Cause
+// NewParameterDecryptionError creates a new decryption error wrapped in QBError.
+func NewParameterDecryptionError(op string, err error) *QBError {
+	return &QBError{
+		Code: ErrDecryption,
+		Op:   op,
+		Err:  &ParameterEncryptionError{Op: op, Err: err},
+	}
+}
+
+// NewParameterValueTooLargeError creates a new ParameterValueTooLargeError wrapped in QBError.
+func NewParameterValueTooLargeError(path string, size, maxSize int) *QBError {
+	return &QBError{
+		Code: ErrInvalidInput,
+		Op:   "parameterstore",
+		Err:  &ParameterValueTooLargeError{Path: path, Size: size, MaxSize: maxSize},
+	}
+}
+
+// NewParameterPathTooLongError creates a new ParameterPathTooLongError wrapped in QBError.
+func NewParameterPathTooLongError(path string, length, maxLength int) *QBError {
+	return &QBError{
+		Code: ErrInvalidInput,
+		Op:   "parameterstore",
+		Err:  &ParameterPathTooLongError{Path: path, Length: length, MaxLength: maxLength},
+	}
+}
+
+// NewParameterTagLimitError creates a new ParameterTagLimitError wrapped in QBError.
+func NewParameterTagLimitError(path string, count, maxCount int) *QBError {
+	return &QBError{
+		Code: ErrInvalidInput,
+		Op:   "parameterstore",
+		Err:  &ParameterTagLimitError{Path: path, Count: count, MaxCount: maxCount},
+	}
+}
+
+// IsParameterNotFound returns true if the error is a ParameterNotFoundError.
+func IsParameterNotFound(err error) bool {
+	var pnf *ParameterNotFoundError
+	return stderrors.As(err, &pnf)
+}
+
+// IsParameterExists returns true if the error is a ParameterExistsError.
+func IsParameterExists(err error) bool {
+	var pe *ParameterExistsError
+	return stderrors.As(err, &pe)
+}
+
+// IsParameterExpired returns true if the error is a ParameterExpiredError.
+func IsParameterExpired(err error) bool {
+	var pe *ParameterExpiredError
+	return stderrors.As(err, &pe)
+}
+
+// IsInvalidPath returns true if the error is an InvalidPathError.
+func IsInvalidPath(err error) bool {
+	var ip *InvalidPathError
+	return stderrors.As(err, &ip)
+}
+
+// IsParameterEncryptionError returns true if the error is a ParameterEncryptionError.
+func IsParameterEncryptionError(err error) bool {
+	var pe *ParameterEncryptionError
+	return stderrors.As(err, &pe)
 }

@@ -47,9 +47,9 @@ func TestFileKVStore_NewFileKVStore(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, store)
 
-		var dragonErr *dberrors.DragonError
-		assert.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		assert.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -89,9 +89,9 @@ func TestFileKVStore_PutGet(t *testing.T) {
 		_, err := store.Get(ctx, "non-existent-key")
 		assert.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		assert.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		assert.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 	})
 }
 

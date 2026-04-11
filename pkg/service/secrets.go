@@ -244,7 +244,7 @@ func (s *secretsService) StoreSecret(ctx context.Context, req *StoreSecretReques
 				"error":     err.Error(),
 			}).Error("Failed to store secret")
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.StoreSecret",
 			Err:  &api.OperationFailedError{Operation: "store secret", Cause: err},
@@ -333,7 +333,7 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 				"error":     err.Error(),
 			}).Warn("Secret not found")
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "secrets.GetSecret",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
@@ -350,7 +350,7 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 				"secret_id": req.SecretID,
 			}).Warn("Secret is disabled")
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrForbidden,
 			Op:   "secrets.GetSecret",
 			Err:  &api.InvalidInputError{Message: "secret is disabled"},
@@ -363,7 +363,7 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("get", "invalid_data").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.GetSecret",
 			Err:  &api.NotFoundError{Resource: "secret data field", ID: req.SecretID},
@@ -458,7 +458,7 @@ func (s *secretsService) ListSecrets(ctx context.Context, req *ListSecretsReques
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("list", "list_failed").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.ListSecrets",
 			Err:  &api.OperationFailedError{Operation: "list secrets", Cause: err},
@@ -578,7 +578,7 @@ func (s *secretsService) DeleteSecret(ctx context.Context, req *DeleteSecretRequ
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("delete", "delete_failed").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.DeleteSecret",
 			Err:  &api.OperationFailedError{Operation: "delete secret", Cause: err},
@@ -651,7 +651,7 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("get_version", "not_found").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "secrets.GetSecretVersion",
 			Err:  &api.OperationFailedError{Operation: "find secret version", Cause: err},
@@ -661,7 +661,7 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 	// Extract secret data
 	secretData, ok := data["data"]
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.GetSecretVersion",
 			Err:  &api.NotFoundError{Resource: "secret data field", ID: req.SecretID},
@@ -728,7 +728,7 @@ func (s *secretsService) ListSecretVersions(ctx context.Context, req *ListSecret
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("list_versions", "list_failed").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.ListSecretVersions",
 			Err:  &api.OperationFailedError{Operation: "list secret versions", Cause: err},
@@ -800,7 +800,7 @@ func (s *secretsService) RollbackSecret(ctx context.Context, req *RollbackSecret
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("rollback", "rollback_failed").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.RollbackSecret",
 			Err:  &api.OperationFailedError{Operation: "rollback secret", Cause: err},
@@ -867,7 +867,7 @@ func (s *secretsService) RotateSecret(ctx context.Context, req *RotateSecretRequ
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("rotate", "not_found").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "secrets.RotateSecret",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
@@ -903,7 +903,7 @@ func (s *secretsService) RotateSecret(ctx context.Context, req *RotateSecretRequ
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("rotate", "store_failed").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.RotateSecret",
 			Err:  &api.OperationFailedError{Operation: "rotate secret", Cause: err},
@@ -979,7 +979,7 @@ func (s *secretsService) SetRotationPolicy(ctx context.Context, req *SetRotation
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("set_rotation_policy", "not_found").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "secrets.SetRotationPolicy",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
@@ -998,7 +998,7 @@ func (s *secretsService) SetRotationPolicy(ctx context.Context, req *SetRotation
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("set_rotation_policy", "retrieve_failed").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.SetRotationPolicy",
 			Err:  &api.OperationFailedError{Operation: "retrieve secret data", Cause: err},
@@ -1008,7 +1008,7 @@ func (s *secretsService) SetRotationPolicy(ctx context.Context, req *SetRotation
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("set_rotation_policy", "update_failed").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.SetRotationPolicy",
 			Err:  &api.OperationFailedError{Operation: "set rotation policy", Cause: err},
@@ -1068,7 +1068,7 @@ func (s *secretsService) GetRotationPolicy(ctx context.Context, req *GetRotation
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("get_rotation_policy", "not_found").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "secrets.GetRotationPolicy",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
@@ -1148,7 +1148,7 @@ func (s *secretsService) UpdateSecretStatus(ctx context.Context, req *UpdateSecr
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("update_status", "not_found").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "secrets.UpdateSecretStatus",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
@@ -1170,7 +1170,7 @@ func (s *secretsService) UpdateSecretStatus(ctx context.Context, req *UpdateSecr
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("update_status", "update_failed").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.UpdateSecretStatus",
 			Err:  &api.OperationFailedError{Operation: "update secret status", Cause: err},
@@ -1202,7 +1202,7 @@ func (s *secretsService) UpdateSecretStatus(ctx context.Context, req *UpdateSecr
 // validateStoreSecretRequest validates the StoreSecretRequest.
 func (s *secretsService) validateStoreSecretRequest(req *StoreSecretRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateStoreSecretRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1210,7 +1210,7 @@ func (s *secretsService) validateStoreSecretRequest(req *StoreSecretRequest) err
 	}
 
 	if req.Name == "" && req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateStoreSecretRequest",
 			Err:  &api.InvalidInputError{Message: "either name or secret_id must be provided"},
@@ -1218,7 +1218,7 @@ func (s *secretsService) validateStoreSecretRequest(req *StoreSecretRequest) err
 	}
 
 	if len(req.Data) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateStoreSecretRequest",
 			Err:  &api.RequiredFieldError{Field: "secret data"},
@@ -1231,7 +1231,7 @@ func (s *secretsService) validateStoreSecretRequest(req *StoreSecretRequest) err
 // validateGetSecretRequest validates the GetSecretRequest.
 func (s *secretsService) validateGetSecretRequest(req *GetSecretRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateGetSecretRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1239,7 +1239,7 @@ func (s *secretsService) validateGetSecretRequest(req *GetSecretRequest) error {
 	}
 
 	if req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateGetSecretRequest",
 			Err:  &api.RequiredFieldError{Field: "secret_id"},
@@ -1252,7 +1252,7 @@ func (s *secretsService) validateGetSecretRequest(req *GetSecretRequest) error {
 // validateDeleteSecretRequest validates the DeleteSecretRequest.
 func (s *secretsService) validateDeleteSecretRequest(req *DeleteSecretRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateDeleteSecretRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1260,7 +1260,7 @@ func (s *secretsService) validateDeleteSecretRequest(req *DeleteSecretRequest) e
 	}
 
 	if req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateDeleteSecretRequest",
 			Err:  &api.RequiredFieldError{Field: "secret_id"},
@@ -1273,7 +1273,7 @@ func (s *secretsService) validateDeleteSecretRequest(req *DeleteSecretRequest) e
 // validateGetSecretVersionRequest validates the GetSecretVersionRequest.
 func (s *secretsService) validateGetSecretVersionRequest(req *GetSecretVersionRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateGetSecretVersionRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1281,7 +1281,7 @@ func (s *secretsService) validateGetSecretVersionRequest(req *GetSecretVersionRe
 	}
 
 	if req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateGetSecretVersionRequest",
 			Err:  &api.RequiredFieldError{Field: "secret_id"},
@@ -1289,7 +1289,7 @@ func (s *secretsService) validateGetSecretVersionRequest(req *GetSecretVersionRe
 	}
 
 	if req.Version == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateGetSecretVersionRequest",
 			Err:  &api.InvalidInputError{Message: "version must be greater than 0"},
@@ -1302,7 +1302,7 @@ func (s *secretsService) validateGetSecretVersionRequest(req *GetSecretVersionRe
 // validateListSecretVersionsRequest validates the ListSecretVersionsRequest.
 func (s *secretsService) validateListSecretVersionsRequest(req *ListSecretVersionsRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateListSecretVersionsRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1310,7 +1310,7 @@ func (s *secretsService) validateListSecretVersionsRequest(req *ListSecretVersio
 	}
 
 	if req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateListSecretVersionsRequest",
 			Err:  &api.RequiredFieldError{Field: "secret_id"},
@@ -1323,7 +1323,7 @@ func (s *secretsService) validateListSecretVersionsRequest(req *ListSecretVersio
 // validateRollbackSecretRequest validates the RollbackSecretRequest.
 func (s *secretsService) validateRollbackSecretRequest(req *RollbackSecretRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateRollbackSecretRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1331,7 +1331,7 @@ func (s *secretsService) validateRollbackSecretRequest(req *RollbackSecretReques
 	}
 
 	if req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateRollbackSecretRequest",
 			Err:  &api.RequiredFieldError{Field: "secret_id"},
@@ -1339,7 +1339,7 @@ func (s *secretsService) validateRollbackSecretRequest(req *RollbackSecretReques
 	}
 
 	if req.TargetVersion == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateRollbackSecretRequest",
 			Err:  &api.InvalidInputError{Message: "target_version must be greater than 0"},
@@ -1352,7 +1352,7 @@ func (s *secretsService) validateRollbackSecretRequest(req *RollbackSecretReques
 // validateRotateSecretRequest validates the RotateSecretRequest.
 func (s *secretsService) validateRotateSecretRequest(req *RotateSecretRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateRotateSecretRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1360,7 +1360,7 @@ func (s *secretsService) validateRotateSecretRequest(req *RotateSecretRequest) e
 	}
 
 	if req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateRotateSecretRequest",
 			Err:  &api.RequiredFieldError{Field: "secret_id"},
@@ -1368,7 +1368,7 @@ func (s *secretsService) validateRotateSecretRequest(req *RotateSecretRequest) e
 	}
 
 	if len(req.NewData) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateRotateSecretRequest",
 			Err:  &api.RequiredFieldError{Field: "new_data"},
@@ -1381,7 +1381,7 @@ func (s *secretsService) validateRotateSecretRequest(req *RotateSecretRequest) e
 // validateSetRotationPolicyRequest validates the SetRotationPolicyRequest.
 func (s *secretsService) validateSetRotationPolicyRequest(req *SetRotationPolicyRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateSetRotationPolicyRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1389,7 +1389,7 @@ func (s *secretsService) validateSetRotationPolicyRequest(req *SetRotationPolicy
 	}
 
 	if req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateSetRotationPolicyRequest",
 			Err:  &api.RequiredFieldError{Field: "secret_id"},
@@ -1397,7 +1397,7 @@ func (s *secretsService) validateSetRotationPolicyRequest(req *SetRotationPolicy
 	}
 
 	if req.Policy == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateSetRotationPolicyRequest",
 			Err:  &api.RequiredFieldError{Field: "policy"},
@@ -1405,7 +1405,7 @@ func (s *secretsService) validateSetRotationPolicyRequest(req *SetRotationPolicy
 	}
 
 	if req.Policy.Enabled && req.Policy.Interval <= 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateSetRotationPolicyRequest",
 			Err:  &api.InvalidInputError{Message: "interval must be positive when rotation is enabled"},
@@ -1418,7 +1418,7 @@ func (s *secretsService) validateSetRotationPolicyRequest(req *SetRotationPolicy
 // validateGetRotationPolicyRequest validates the GetRotationPolicyRequest.
 func (s *secretsService) validateGetRotationPolicyRequest(req *GetRotationPolicyRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateGetRotationPolicyRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1426,7 +1426,7 @@ func (s *secretsService) validateGetRotationPolicyRequest(req *GetRotationPolicy
 	}
 
 	if req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateGetRotationPolicyRequest",
 			Err:  &api.RequiredFieldError{Field: "secret_id"},
@@ -1439,7 +1439,7 @@ func (s *secretsService) validateGetRotationPolicyRequest(req *GetRotationPolicy
 // validateUpdateSecretStatusRequest validates the UpdateSecretStatusRequest.
 func (s *secretsService) validateUpdateSecretStatusRequest(req *UpdateSecretStatusRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateUpdateSecretStatusRequest",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1447,7 +1447,7 @@ func (s *secretsService) validateUpdateSecretStatusRequest(req *UpdateSecretStat
 	}
 
 	if req.SecretID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateUpdateSecretStatusRequest",
 			Err:  &api.RequiredFieldError{Field: "secret_id"},
@@ -1459,7 +1459,7 @@ func (s *secretsService) validateUpdateSecretStatusRequest(req *UpdateSecretStat
 	case SecretStatusEnabled, SecretStatusDisabled:
 		// Valid status values
 	default:
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.validateUpdateSecretStatusRequest",
 			Err:  &api.InvalidInputError{Message: "invalid status: must be 'enabled' or 'disabled'"},
@@ -1484,7 +1484,7 @@ func (s *secretsService) GetSecretsByPrefix(ctx context.Context, req *GetSecrets
 
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.GetSecretsByPrefix",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1492,7 +1492,7 @@ func (s *secretsService) GetSecretsByPrefix(ctx context.Context, req *GetSecrets
 	}
 
 	if req.Prefix == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.GetSecretsByPrefix",
 			Err:  &api.RequiredFieldError{Field: "prefix"},
@@ -1524,7 +1524,7 @@ func (s *secretsService) GetSecretsByPrefix(ctx context.Context, req *GetSecrets
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("get_by_prefix", "list_failed").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.GetSecretsByPrefix",
 			Err:  &api.OperationFailedError{Operation: "list secrets", Cause: err},
@@ -1598,7 +1598,7 @@ func (s *secretsService) GetSecretsByPrefix(ctx context.Context, req *GetSecrets
 func (s *secretsService) WatchSecretsByPrefix(ctx context.Context, req *WatchSecretsRequest) (<-chan *SecretChange, error) {
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.WatchSecretsByPrefix",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1606,7 +1606,7 @@ func (s *secretsService) WatchSecretsByPrefix(ctx context.Context, req *WatchSec
 	}
 
 	if req.Prefix == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.WatchSecretsByPrefix",
 			Err:  &api.RequiredFieldError{Field: "prefix"},
@@ -1773,7 +1773,7 @@ func (s *secretsService) EnsureSecret(ctx context.Context, req *EnsureSecretRequ
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("ensure", "invalid_input").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.EnsureSecret",
 			Err:  stderrors.New("secret_id (path) is required"),
@@ -1785,7 +1785,7 @@ func (s *secretsService) EnsureSecret(ctx context.Context, req *EnsureSecretRequ
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("ensure", "invalid_input").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.EnsureSecret",
 			Err:  err,
@@ -1800,7 +1800,7 @@ func (s *secretsService) EnsureSecret(ctx context.Context, req *EnsureSecretRequ
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("ensure", "unsupported_backend").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "secrets.EnsureSecret",
 			Err:  ErrEnsureSecretUnsupported,

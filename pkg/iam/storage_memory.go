@@ -404,7 +404,7 @@ func (m *MemoryStorage) CreateUser(ctx context.Context, user *User) error {
 
 	key := makeKey(user.TenantID, user.ID)
 	if _, exists := m.users[key]; exists {
-		return &dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "iam.user.create"}
+		return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.user.create"}
 	}
 
 	if _, exists := m.usersByEmail[user.Email]; exists {
@@ -426,7 +426,7 @@ func (m *MemoryStorage) GetUser(ctx context.Context, tenantID, userID string) (*
 	key := makeKey(tenantID, userID)
 	user, exists := m.users[key]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.user.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.get"}
 	}
 
 	// Return a copy
@@ -440,7 +440,7 @@ func (m *MemoryStorage) GetUserByEmail(ctx context.Context, email string) (*User
 
 	user, exists := m.usersByEmail[email]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.user.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.get"}
 	}
 
 	// Return a copy
@@ -455,7 +455,7 @@ func (m *MemoryStorage) UpdateUser(ctx context.Context, user *User) error {
 	key := makeKey(user.TenantID, user.ID)
 	oldUser, exists := m.users[key]
 	if !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.user.update"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.update"}
 	}
 
 	// Check if email changed and new email is already taken
@@ -482,7 +482,7 @@ func (m *MemoryStorage) DeleteUser(ctx context.Context, tenantID, userID string)
 	key := makeKey(tenantID, userID)
 	user, exists := m.users[key]
 	if !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.user.delete"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.delete"}
 	}
 
 	delete(m.users, key)
@@ -525,7 +525,7 @@ func (m *MemoryStorage) CreateGroup(ctx context.Context, group *Group) error {
 
 	key := makeKey(group.TenantID, group.ID)
 	if _, exists := m.groups[key]; exists {
-		return &dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "iam.group.create"}
+		return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.group.create"}
 	}
 
 	// Create a copy
@@ -542,7 +542,7 @@ func (m *MemoryStorage) GetGroup(ctx context.Context, tenantID, groupID string) 
 	key := makeKey(tenantID, groupID)
 	group, exists := m.groups[key]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.group.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.get"}
 	}
 
 	// Return a copy
@@ -556,7 +556,7 @@ func (m *MemoryStorage) UpdateGroup(ctx context.Context, group *Group) error {
 
 	key := makeKey(group.TenantID, group.ID)
 	if _, exists := m.groups[key]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.group.update"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.update"}
 	}
 
 	// Create a copy
@@ -573,7 +573,7 @@ func (m *MemoryStorage) DeleteGroup(ctx context.Context, tenantID, groupID strin
 
 	key := makeKey(tenantID, groupID)
 	if _, exists := m.groups[key]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.group.delete"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.delete"}
 	}
 
 	delete(m.groups, key)
@@ -614,7 +614,7 @@ func (m *MemoryStorage) CreateRole(ctx context.Context, role *Role) error {
 
 	key := makeKey(role.TenantID, role.ID)
 	if _, exists := m.roles[key]; exists {
-		return &dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "iam.role.create"}
+		return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.role.create"}
 	}
 
 	// Create a copy
@@ -631,7 +631,7 @@ func (m *MemoryStorage) GetRole(ctx context.Context, tenantID, roleID string) (*
 	key := makeKey(tenantID, roleID)
 	role, exists := m.roles[key]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.role.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.role.get"}
 	}
 
 	// Return a copy
@@ -645,7 +645,7 @@ func (m *MemoryStorage) UpdateRole(ctx context.Context, role *Role) error {
 
 	key := makeKey(role.TenantID, role.ID)
 	if _, exists := m.roles[key]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.role.update"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.role.update"}
 	}
 
 	// Create a copy
@@ -662,7 +662,7 @@ func (m *MemoryStorage) DeleteRole(ctx context.Context, tenantID, roleID string)
 
 	key := makeKey(tenantID, roleID)
 	if _, exists := m.roles[key]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.role.delete"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.role.delete"}
 	}
 
 	delete(m.roles, key)
@@ -703,7 +703,7 @@ func (m *MemoryStorage) CreatePolicy(ctx context.Context, tenantID string, polic
 
 	key := makeKey(tenantID, policy.Metadata.Name)
 	if _, exists := m.policies[key]; exists {
-		return &dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "iam.policy.create"}
+		return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.policy.create"}
 	}
 
 	// Create a copy
@@ -722,7 +722,7 @@ func (m *MemoryStorage) GetPolicy(ctx context.Context, tenantID, name string) (*
 	key := makeKey(tenantID, name)
 	policy, exists := m.policies[key]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.policy.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.policy.get"}
 	}
 
 	// Return a copy
@@ -736,7 +736,7 @@ func (m *MemoryStorage) UpdatePolicy(ctx context.Context, tenantID string, polic
 
 	key := makeKey(tenantID, policy.Metadata.Name)
 	if _, exists := m.policies[key]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.policy.update"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.policy.update"}
 	}
 
 	// Create a copy
@@ -753,7 +753,7 @@ func (m *MemoryStorage) DeletePolicy(ctx context.Context, tenantID, name string)
 
 	key := makeKey(tenantID, name)
 	if _, exists := m.policies[key]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.policy.delete"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.policy.delete"}
 	}
 
 	delete(m.policies, key)
@@ -793,7 +793,7 @@ func (m *MemoryStorage) CreateApp(ctx context.Context, app *Application) error {
 	defer m.mu.Unlock()
 
 	if _, exists := m.apps[app.ClientID]; exists {
-		return &dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "iam.app.create"}
+		return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.app.create"}
 	}
 
 	// Create a copy
@@ -809,7 +809,7 @@ func (m *MemoryStorage) GetApp(ctx context.Context, clientID string) (*Applicati
 
 	app, exists := m.apps[clientID]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.app.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.app.get"}
 	}
 
 	// Return a copy
@@ -824,7 +824,7 @@ func (m *MemoryStorage) GetAppByTenant(ctx context.Context, tenantID, clientID s
 	}
 
 	if app.TenantID != tenantID {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.app.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.app.get"}
 	}
 
 	return app, nil
@@ -835,7 +835,7 @@ func (m *MemoryStorage) UpdateApp(ctx context.Context, app *Application) error {
 	defer m.mu.Unlock()
 
 	if _, exists := m.apps[app.ClientID]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.app.update"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.app.update"}
 	}
 
 	// Create a copy
@@ -851,7 +851,7 @@ func (m *MemoryStorage) DeleteApp(ctx context.Context, clientID string) error {
 	defer m.mu.Unlock()
 
 	if _, exists := m.apps[clientID]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.app.delete"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.app.delete"}
 	}
 
 	delete(m.apps, clientID)
@@ -889,7 +889,7 @@ func (m *MemoryStorage) ValidateClientSecret(ctx context.Context, clientID, clie
 	m.mu.RUnlock()
 
 	if !exists {
-		return false, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.app.validate"}
+		return false, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.app.validate"}
 	}
 
 	// Compare plaintext secret against bcrypt hash
@@ -916,7 +916,7 @@ func (m *MemoryStorage) GetAuthCode(ctx context.Context, code string) (*AuthCode
 
 	authCode, exists := m.authCodes[code]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.authcode.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.authcode.get"}
 	}
 
 	// Return a copy
@@ -954,7 +954,7 @@ func (m *MemoryStorage) GetToken(ctx context.Context, jti string) (*Token, error
 
 	token, exists := m.tokens[jti]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.token.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.token.get"}
 	}
 
 	// Return a copy
@@ -968,7 +968,7 @@ func (m *MemoryStorage) GetTokenByValue(ctx context.Context, tokenValue string) 
 
 	token, exists := m.tokenValues[tokenValue]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.token.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.token.get"}
 	}
 
 	// Return a copy

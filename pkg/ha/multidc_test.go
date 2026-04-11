@@ -93,9 +93,9 @@ func TestNewMultiDCManager(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
-				require.True(t, ok, "expected DragonError")
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				qbErr, ok := err.(*errors.QBError)
+				require.True(t, ok, "expected QBError")
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 				assert.Nil(t, mdm)
 			} else {
 				require.NoError(t, err)
@@ -346,9 +346,9 @@ func TestMultiDCManager_ReplicateToRemoteDC(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				require.True(t, ok)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 			}
@@ -490,9 +490,9 @@ func TestMultiDCManager_GetDatacenterInfo(t *testing.T) {
 	t.Run("non-existent datacenter", func(t *testing.T) {
 		_, err := mdm.GetDatacenterInfo("dc999")
 		require.Error(t, err)
-		dragonErr, ok := err.(*errors.DragonError)
+		qbErr, ok := err.(*errors.QBError)
 		require.True(t, ok)
-		assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+		assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 	})
 }
 

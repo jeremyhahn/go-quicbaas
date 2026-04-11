@@ -1267,15 +1267,15 @@ func TestValidationErrorContext(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		dragonErr, ok := err.(*errors.DragonError)
+		qbErr, ok := err.(*errors.QBError)
 		if !ok {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
-		if dragonErr.Context == nil {
+		if qbErr.Context == nil {
 			t.Fatal("expected error context")
 		}
-		if dragonErr.Context["usage"] != "invalid" {
-			t.Errorf("expected usage='invalid' in context, got %v", dragonErr.Context["usage"])
+		if qbErr.Context["usage"] != "invalid" {
+			t.Errorf("expected usage='invalid' in context, got %v", qbErr.Context["usage"])
 		}
 	})
 
@@ -1287,15 +1287,15 @@ func TestValidationErrorContext(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		dragonErr, ok := err.(*errors.DragonError)
+		qbErr, ok := err.(*errors.QBError)
 		if !ok {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
-		if dragonErr.Context == nil {
+		if qbErr.Context == nil {
 			t.Fatal("expected error context")
 		}
-		if dragonErr.Context["key_algorithm"] != "invalid" {
-			t.Errorf("expected key_algorithm='invalid' in context, got %v", dragonErr.Context["key_algorithm"])
+		if qbErr.Context["key_algorithm"] != "invalid" {
+			t.Errorf("expected key_algorithm='invalid' in context, got %v", qbErr.Context["key_algorithm"])
 		}
 	})
 
@@ -1306,15 +1306,15 @@ func TestValidationErrorContext(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		dragonErr, ok := err.(*errors.DragonError)
+		qbErr, ok := err.(*errors.QBError)
 		if !ok {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
-		if dragonErr.Context == nil {
+		if qbErr.Context == nil {
 			t.Fatal("expected error context")
 		}
-		if dragonErr.Context["min_version"] != "1.0" {
-			t.Errorf("expected min_version='1.0' in context, got %v", dragonErr.Context["min_version"])
+		if qbErr.Context["min_version"] != "1.0" {
+			t.Errorf("expected min_version='1.0' in context, got %v", qbErr.Context["min_version"])
 		}
 	})
 }

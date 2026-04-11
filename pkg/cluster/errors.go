@@ -19,7 +19,7 @@ import (
 	dragonerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
-// Inner sentinel errors for DragonError Err fields.
+// Inner sentinel errors for QBError Err fields.
 var (
 	errNoLeader        = errors.New("no leader available")
 	errNoHealthyNodes  = errors.New("no healthy nodes available")
@@ -31,35 +31,35 @@ var (
 // Cluster-specific error types.
 var (
 	// ErrNoLeader is returned when no leader is currently available.
-	ErrNoLeader = &dragonerrors.DragonError{
+	ErrNoLeader = &dragonerrors.QBError{
 		Code: dragonerrors.ErrLeaderNotAvailable,
 		Op:   "cluster.Leader",
 		Err:  errNoLeader,
 	}
 
 	// ErrNoHealthyNodes is returned when no healthy nodes are available.
-	ErrNoHealthyNodes = &dragonerrors.DragonError{
+	ErrNoHealthyNodes = &dragonerrors.QBError{
 		Code: dragonerrors.ErrUnavailable,
 		Op:   "cluster.NonLeaderNodes",
 		Err:  errNoHealthyNodes,
 	}
 
 	// ErrClusterNotInitialized is returned when the cluster info is not yet initialized.
-	ErrClusterNotInitialized = &dragonerrors.DragonError{
+	ErrClusterNotInitialized = &dragonerrors.QBError{
 		Code: dragonerrors.ErrClusterNotReady,
 		Op:   "cluster.Info",
 		Err:  errClusterNotInit,
 	}
 
 	// ErrNodeNotFound is returned when a requested node is not found.
-	ErrNodeNotFound = &dragonerrors.DragonError{
+	ErrNodeNotFound = &dragonerrors.QBError{
 		Code: dragonerrors.ErrNotFound,
 		Op:   "cluster.Node",
 		Err:  errNodeNotFound,
 	}
 
 	// ErrContextCanceled is returned when the context is canceled.
-	ErrContextCanceled = &dragonerrors.DragonError{
+	ErrContextCanceled = &dragonerrors.QBError{
 		Code: dragonerrors.ErrCanceled,
 		Op:   "cluster.Info",
 		Err:  errContextCanceled,
@@ -67,8 +67,8 @@ var (
 )
 
 // NewNoLeaderError creates a new no leader error with additional context.
-func NewNoLeaderError(op string) *dragonerrors.DragonError {
-	return &dragonerrors.DragonError{
+func NewNoLeaderError(op string) *dragonerrors.QBError {
+	return &dragonerrors.QBError{
 		Code:  dragonerrors.ErrLeaderNotAvailable,
 		Op:    op,
 		Err:   errNoLeader,
@@ -77,8 +77,8 @@ func NewNoLeaderError(op string) *dragonerrors.DragonError {
 }
 
 // NewNoHealthyNodesError creates a new no healthy nodes error with additional context.
-func NewNoHealthyNodesError(op string, totalNodes int) *dragonerrors.DragonError {
-	return &dragonerrors.DragonError{
+func NewNoHealthyNodesError(op string, totalNodes int) *dragonerrors.QBError {
+	return &dragonerrors.QBError{
 		Code: dragonerrors.ErrUnavailable,
 		Op:   op,
 		Err:  errNoHealthyNodes,
@@ -90,8 +90,8 @@ func NewNoHealthyNodesError(op string, totalNodes int) *dragonerrors.DragonError
 }
 
 // NewNodeNotFoundError creates a new node not found error.
-func NewNodeNotFoundError(op string, nodeID uint64) *dragonerrors.DragonError {
-	return &dragonerrors.DragonError{
+func NewNodeNotFoundError(op string, nodeID uint64) *dragonerrors.QBError {
+	return &dragonerrors.QBError{
 		Code: dragonerrors.ErrNotFound,
 		Op:   op,
 		Err:  errNodeNotFound,
@@ -102,8 +102,8 @@ func NewNodeNotFoundError(op string, nodeID uint64) *dragonerrors.DragonError {
 }
 
 // NewClusterNotInitializedError creates a new cluster not initialized error.
-func NewClusterNotInitializedError(op string) *dragonerrors.DragonError {
-	return &dragonerrors.DragonError{
+func NewClusterNotInitializedError(op string) *dragonerrors.QBError {
+	return &dragonerrors.QBError{
 		Code:  dragonerrors.ErrClusterNotReady,
 		Op:    op,
 		Err:   errClusterNotInit,
@@ -116,7 +116,7 @@ func IsNoLeader(err error) bool {
 	if err == nil {
 		return false
 	}
-	var de *dragonerrors.DragonError
+	var de *dragonerrors.QBError
 	if errors.As(err, &de) {
 		return de.Code == dragonerrors.ErrLeaderNotAvailable
 	}
@@ -128,7 +128,7 @@ func IsNoHealthyNodes(err error) bool {
 	if err == nil {
 		return false
 	}
-	var de *dragonerrors.DragonError
+	var de *dragonerrors.QBError
 	if errors.As(err, &de) {
 		return de.Code == dragonerrors.ErrUnavailable
 	}
@@ -140,7 +140,7 @@ func IsClusterNotInitialized(err error) bool {
 	if err == nil {
 		return false
 	}
-	var de *dragonerrors.DragonError
+	var de *dragonerrors.QBError
 	if errors.As(err, &de) {
 		return de.Code == dragonerrors.ErrClusterNotReady
 	}

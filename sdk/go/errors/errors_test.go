@@ -37,10 +37,10 @@ func TestWrap(t *testing.T) {
 	}
 }
 
-func TestDragonError_Error(t *testing.T) {
+func TestQBError_Error(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      *DragonError
+		err      *QBError
 		expected string
 	}{
 		{
@@ -64,7 +64,7 @@ func TestDragonError_Error(t *testing.T) {
 	}
 }
 
-func TestDragonError_Unwrap(t *testing.T) {
+func TestQBError_Unwrap(t *testing.T) {
 	underlying := errors.New("underlying")
 	err := Wrap(underlying, CodeInternal, "Op", "message")
 
@@ -73,7 +73,7 @@ func TestDragonError_Unwrap(t *testing.T) {
 	}
 }
 
-func TestDragonError_Is(t *testing.T) {
+func TestQBError_Is(t *testing.T) {
 	err1 := New(CodeNotFound, "Op1", "message1")
 	err2 := New(CodeNotFound, "Op2", "message2")
 	err3 := New(CodeInternal, "Op3", "message3")
@@ -86,7 +86,7 @@ func TestDragonError_Is(t *testing.T) {
 	}
 }
 
-func TestDragonError_IsRetryable(t *testing.T) {
+func TestQBError_IsRetryable(t *testing.T) {
 	tests := []struct {
 		code      ErrorCode
 		retryable bool
@@ -109,7 +109,7 @@ func TestDragonError_IsRetryable(t *testing.T) {
 	}
 }
 
-func TestDragonError_WithContext(t *testing.T) {
+func TestQBError_WithContext(t *testing.T) {
 	err := New(CodeNotFound, "Op", "message")
 	err.WithContext("key", "value")
 	err.WithContext("count", 42)
@@ -125,7 +125,7 @@ func TestDragonError_WithContext(t *testing.T) {
 func TestHelperConstructors(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      *DragonError
+		err      *QBError
 		expected ErrorCode
 	}{
 		{"NewInvalidInput", NewInvalidInput("Op", "msg"), CodeInvalidInput},
@@ -193,7 +193,7 @@ func TestCode(t *testing.T) {
 		t.Error("expected Code to return NotFound")
 	}
 	if Code(errors.New("regular error")) != CodeUnknown {
-		t.Error("expected Code to return Unknown for non-DragonError")
+		t.Error("expected Code to return Unknown for non-QBError")
 	}
 }
 
@@ -202,7 +202,7 @@ func TestOp(t *testing.T) {
 		t.Error("expected Op to return operation name")
 	}
 	if Op(errors.New("regular error")) != "" {
-		t.Error("expected Op to return empty for non-DragonError")
+		t.Error("expected Op to return empty for non-QBError")
 	}
 }
 
@@ -211,6 +211,6 @@ func TestMessage(t *testing.T) {
 		t.Error("expected Message to return message")
 	}
 	if Message(errors.New("regular error")) != "regular error" {
-		t.Error("expected Message to return error string for non-DragonError")
+		t.Error("expected Message to return error string for non-QBError")
 	}
 }

@@ -236,7 +236,7 @@ func TestCreateBackend_gRPC_ServiceUnavailable(t *testing.T) {
 func TestCreateBackend_gRPC_ServiceError(t *testing.T) {
 	mockSvc := &mockObjectStorageAdminService{
 		createBackendFunc: func(ctx context.Context, req *service.CreateBackendRequest) (*service.CreateBackendResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrAlreadyExists,
 				Op:   "test",
 				Err:  nil,
@@ -318,7 +318,7 @@ func TestUpdateBackend_gRPC_ServiceUnavailable(t *testing.T) {
 func TestUpdateBackend_gRPC_NotFound(t *testing.T) {
 	mockSvc := &mockObjectStorageAdminService{
 		updateBackendFunc: func(ctx context.Context, req *service.UpdateBackendRequest) (*service.UpdateBackendResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  nil,
@@ -705,7 +705,7 @@ func TestGetGarbageCollectionProgress_gRPC_ServiceUnavailable(t *testing.T) {
 func TestGetGarbageCollectionProgress_gRPC_NotFound(t *testing.T) {
 	mockSvc := &mockObjectStorageAdminService{
 		getGarbageCollectionProgressFunc: func(ctx context.Context, req *service.GetGarbageCollectionProgressRequest) (*service.GetGarbageCollectionProgressResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  nil,
@@ -808,7 +808,7 @@ func TestRepairObject_gRPC_ServiceUnavailable(t *testing.T) {
 func TestRepairObject_gRPC_ObjectNotFound(t *testing.T) {
 	mockSvc := &mockObjectStorageAdminService{
 		repairObjectFunc: func(ctx context.Context, req *service.RepairObjectRequest) (*service.RepairObjectResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  nil,
@@ -901,7 +901,7 @@ func TestCompactBackend_gRPC_ServiceUnavailable(t *testing.T) {
 func TestCompactBackend_gRPC_BackendNotFound(t *testing.T) {
 	mockSvc := &mockObjectStorageAdminService{
 		compactBackendFunc: func(ctx context.Context, req *service.CompactBackendRequest) (*service.CompactBackendResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  nil,

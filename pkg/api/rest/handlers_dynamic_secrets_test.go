@@ -270,7 +270,7 @@ func TestHandleCreateDynamicSecretRole(t *testing.T) {
 				"max_ttl":        "24h",
 			},
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("CreateRole", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("CreateRole", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "CreateRole",
 					Err:  assert.AnError,
@@ -287,7 +287,7 @@ func TestHandleCreateDynamicSecretRole(t *testing.T) {
 				"max_ttl":        "24h",
 			},
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("CreateRole", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("CreateRole", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrAlreadyExists,
 					Op:   "CreateRole",
 					Err:  assert.AnError,
@@ -389,7 +389,7 @@ func TestHandleGetDynamicSecretRole(t *testing.T) {
 			name:     "role not found returns not found",
 			roleName: "nonexistent",
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("GetRole", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetRole", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "GetRole",
 					Err:  assert.AnError,
@@ -401,7 +401,7 @@ func TestHandleGetDynamicSecretRole(t *testing.T) {
 			name:     "service error returns internal server error",
 			roleName: "test-role",
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("GetRole", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetRole", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GetRole",
 					Err:  assert.AnError,
@@ -524,7 +524,7 @@ func TestHandleListDynamicSecretRoles(t *testing.T) {
 		{
 			name: "service error returns internal server error",
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("ListRoles", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ListRoles", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "ListRoles",
 					Err:  assert.AnError,
@@ -610,7 +610,7 @@ func TestHandleDeleteDynamicSecretRole(t *testing.T) {
 			name:     "role not found returns not found",
 			roleName: "nonexistent",
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("DeleteRole", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DeleteRole", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "DeleteRole",
 					Err:  assert.AnError,
@@ -622,7 +622,7 @@ func TestHandleDeleteDynamicSecretRole(t *testing.T) {
 			name:     "service error returns internal server error",
 			roleName: "test-role",
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("DeleteRole", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DeleteRole", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "DeleteRole",
 					Err:  assert.AnError,
@@ -786,7 +786,7 @@ func TestHandleGenerateDynamicCredential(t *testing.T) {
 			roleName: "nonexistent",
 			body:     map[string]interface{}{},
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("GenerateCredential", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GenerateCredential", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "GenerateCredential",
 					Err:  assert.AnError,
@@ -799,7 +799,7 @@ func TestHandleGenerateDynamicCredential(t *testing.T) {
 			roleName: "test-role",
 			body:     map[string]interface{}{},
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("GenerateCredential", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GenerateCredential", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GenerateCredential",
 					Err:  assert.AnError,
@@ -946,7 +946,7 @@ func TestHandleRenewDynamicSecretLease(t *testing.T) {
 			leaseID: "nonexistent",
 			body:    map[string]interface{}{},
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("RenewLease", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RenewLease", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "RenewLease",
 					Err:  assert.AnError,
@@ -959,7 +959,7 @@ func TestHandleRenewDynamicSecretLease(t *testing.T) {
 			leaseID: "lease-12345",
 			body:    map[string]interface{}{},
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("RenewLease", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RenewLease", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "RenewLease",
 					Err:  assert.AnError,
@@ -1055,7 +1055,7 @@ func TestHandleRevokeDynamicSecretLease(t *testing.T) {
 			name:    "lease not found returns not found",
 			leaseID: "nonexistent",
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("RevokeLease", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RevokeLease", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "RevokeLease",
 					Err:  assert.AnError,
@@ -1067,7 +1067,7 @@ func TestHandleRevokeDynamicSecretLease(t *testing.T) {
 			name:    "service error returns internal server error",
 			leaseID: "lease-12345",
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("RevokeLease", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RevokeLease", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "RevokeLease",
 					Err:  assert.AnError,
@@ -1219,7 +1219,7 @@ func TestHandleListDynamicSecretLeases(t *testing.T) {
 		{
 			name: "service error returns internal server error",
 			setupMock: func(m *MockDynamicSecretsService) {
-				m.On("ListLeases", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ListLeases", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "ListLeases",
 					Err:  assert.AnError,

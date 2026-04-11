@@ -1974,7 +1974,7 @@ func TestFederationManagerWithErrorStorage(t *testing.T) {
 	})
 
 	t.Run("get provider storage error", func(t *testing.T) {
-		storageErr := &dberrors.DragonError{
+		storageErr := &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Err:  errors.New("storage error"),
 		}

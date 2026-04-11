@@ -74,7 +74,7 @@ func TestHandleVectorHealth(t *testing.T) {
 			name: "service error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("Health", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "health", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "health", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -239,7 +239,7 @@ func TestHandleUpdateNamespace(t *testing.T) {
 			body:      UpdateNamespaceRequest{},
 			setupMock: func(m *MockVectorService) {
 				m.On("GetNamespaceInfo", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrNotFound, Op: "get", Err: &errors.MessageError{Message: "not found"}}).Once()
+					&errors.QBError{Code: errors.ErrNotFound, Op: "get", Err: &errors.MessageError{Message: "not found"}}).Once()
 			},
 			expectedStatus: http.StatusNotFound,
 		},
@@ -316,7 +316,7 @@ func TestHandleDeleteNamespace(t *testing.T) {
 			namespace: "missing-ns",
 			setupMock: func(m *MockVectorService) {
 				m.On("DeleteNamespace", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrNotFound, Op: "delete", Err: &errors.MessageError{Message: "not found"}}).Once()
+					&errors.QBError{Code: errors.ErrNotFound, Op: "delete", Err: &errors.MessageError{Message: "not found"}}).Once()
 			},
 			expectedStatus: http.StatusNotFound,
 		},
@@ -458,7 +458,7 @@ func TestHandleGetNamespaceInfo(t *testing.T) {
 			namespace: "missing-ns",
 			setupMock: func(m *MockVectorService) {
 				m.On("GetNamespaceInfo", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrNotFound, Op: "get", Err: &errors.MessageError{Message: "not found"}}).Once()
+					&errors.QBError{Code: errors.ErrNotFound, Op: "get", Err: &errors.MessageError{Message: "not found"}}).Once()
 			},
 			expectedStatus: http.StatusNotFound,
 		},
@@ -521,7 +521,7 @@ func TestHandleGetNamespaceStats(t *testing.T) {
 			namespace: "missing-ns",
 			setupMock: func(m *MockVectorService) {
 				m.On("GetIndexStats", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrNotFound, Op: "stats", Err: &errors.MessageError{Message: "not found"}}).Once()
+					&errors.QBError{Code: errors.ErrNotFound, Op: "stats", Err: &errors.MessageError{Message: "not found"}}).Once()
 			},
 			expectedStatus: http.StatusNotFound,
 		},
@@ -632,7 +632,7 @@ func TestHandleBatchUpsertVectors(t *testing.T) {
 			},
 			setupMock: func(m *MockVectorService) {
 				m.On("BatchUpsert", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "batch_upsert", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "batch_upsert", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -743,7 +743,7 @@ func TestHandleBatchDeleteVectors(t *testing.T) {
 					Timestamp: time.Now().UnixNano(),
 				}, nil).Once()
 				m.On("DeleteVector", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrNotFound, Op: "delete", Err: &errors.MessageError{Message: "not found"}}).Once()
+					&errors.QBError{Code: errors.ErrNotFound, Op: "delete", Err: &errors.MessageError{Message: "not found"}}).Once()
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -904,7 +904,7 @@ func TestHandleUpdateMetadata(t *testing.T) {
 			},
 			setupMock: func(m *MockVectorService) {
 				m.On("GetVector", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "get", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "get", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -922,7 +922,7 @@ func TestHandleUpdateMetadata(t *testing.T) {
 					Vector: []float32{0.1, 0.2},
 				}, nil).Once()
 				m.On("UpsertVector", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "upsert", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "upsert", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -1100,7 +1100,7 @@ func TestHandleSearchByID(t *testing.T) {
 			},
 			setupMock: func(m *MockVectorService) {
 				m.On("GetVector", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "get", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "get", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -1118,7 +1118,7 @@ func TestHandleSearchByID(t *testing.T) {
 					Vector: []float32{0.1, 0.2},
 				}, nil).Once()
 				m.On("SearchSimilar", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "search", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "search", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -1311,7 +1311,7 @@ func TestHandleHybridSearch(t *testing.T) {
 			},
 			setupMock: func(m *MockVectorService) {
 				m.On("HybridSearch", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "hybrid_search", Err: &errors.MessageError{Message: "database error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "hybrid_search", Err: &errors.MessageError{Message: "database error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -1324,7 +1324,7 @@ func TestHandleHybridSearch(t *testing.T) {
 			},
 			setupMock: func(m *MockVectorService) {
 				m.On("HybridSearch", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrNotFound, Op: "hybrid_search", Err: &errors.MessageError{Message: "namespace not found"}}).Once()
+					&errors.QBError{Code: errors.ErrNotFound, Op: "hybrid_search", Err: &errors.MessageError{Message: "namespace not found"}}).Once()
 			},
 			expectedStatus: http.StatusNotFound,
 		},
@@ -1561,7 +1561,7 @@ func TestHandleSearchByMetadata(t *testing.T) {
 			},
 			setupMock: func(m *MockVectorService) {
 				m.On("SearchByMetadata", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "search_metadata", Err: &errors.MessageError{Message: "database error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "search_metadata", Err: &errors.MessageError{Message: "database error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -1573,7 +1573,7 @@ func TestHandleSearchByMetadata(t *testing.T) {
 			},
 			setupMock: func(m *MockVectorService) {
 				m.On("SearchByMetadata", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrNotFound, Op: "search_metadata", Err: &errors.MessageError{Message: "namespace not found"}}).Once()
+					&errors.QBError{Code: errors.ErrNotFound, Op: "search_metadata", Err: &errors.MessageError{Message: "namespace not found"}}).Once()
 			},
 			expectedStatus: http.StatusNotFound,
 		},
@@ -1708,7 +1708,7 @@ func TestHandleGetGlobalStatsClusterEndpoint(t *testing.T) {
 				m.On("GetIndexStats", mock.Anything, mock.MatchedBy(func(req *service.GetIndexStatsRequest) bool {
 					return req.Namespace == "ns2"
 				})).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "stats", Err: &errors.MessageError{Message: "error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "stats", Err: &errors.MessageError{Message: "error"}}).Once()
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -1723,7 +1723,7 @@ func TestHandleGetGlobalStatsClusterEndpoint(t *testing.T) {
 			name: "list namespaces error",
 			setupMock: func(m *MockVectorService) {
 				m.On("ListNamespaces", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -1831,7 +1831,7 @@ func TestHandleRebuildIndex(t *testing.T) {
 			body:      RebuildIndexRequest{},
 			setupMock: func(m *MockVectorService) {
 				m.On("RebuildIndex", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "rebuild", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "rebuild", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -1968,7 +1968,7 @@ func TestHandleGetGlobalStats(t *testing.T) {
 			name: "list namespaces error",
 			setupMock: func(m *MockVectorService) {
 				m.On("ListNamespaces", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -1988,7 +1988,7 @@ func TestHandleGetGlobalStats(t *testing.T) {
 					IndexSizeBytes: 1024,
 				}, nil).Once()
 				m.On("GetIndexStats", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "stats", Err: &errors.MessageError{Message: "error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "stats", Err: &errors.MessageError{Message: "error"}}).Once()
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -2344,7 +2344,7 @@ func TestHandleImportVectors(t *testing.T) {
 			body:      `{"id":"1","vector":[0.1,0.2]}`,
 			setupMock: func(m *MockVectorService) {
 				m.On("BatchUpsert", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "batch_upsert", Err: &errors.MessageError{Message: "error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "batch_upsert", Err: &errors.MessageError{Message: "error"}}).Once()
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -2573,7 +2573,7 @@ func TestHandleListNamespacesErrors(t *testing.T) {
 			name: "service error",
 			setupMock: func(m *MockVectorService) {
 				m.On("ListNamespaces", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -2612,7 +2612,7 @@ func TestHandleListVectorsErrors(t *testing.T) {
 			name: "service error",
 			setupMock: func(m *MockVectorService) {
 				m.On("SearchByMetadata", mock.Anything, mock.Anything).Return(nil,
-					&errors.DragonError{Code: errors.ErrInternal, Op: "search", Err: &errors.MessageError{Message: "internal error"}}).Once()
+					&errors.QBError{Code: errors.ErrInternal, Op: "search", Err: &errors.MessageError{Message: "internal error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},

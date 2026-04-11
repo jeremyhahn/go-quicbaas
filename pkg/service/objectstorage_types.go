@@ -62,21 +62,21 @@ type PutObjectRequest struct {
 // Validate validates the PutObjectRequest.
 func (r *PutObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.PutObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.PutObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
 		}
 	}
 	if len(r.Value) == 0 {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.PutObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "value"},
@@ -124,14 +124,14 @@ type GetObjectRequest struct {
 // Validate validates the GetObjectRequest.
 func (r *GetObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
@@ -188,14 +188,14 @@ type DeleteObjectRequest struct {
 // Validate validates the DeleteObjectRequest.
 func (r *DeleteObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.DeleteObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.DeleteObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
@@ -231,14 +231,14 @@ type HeadObjectRequest struct {
 // Validate validates the HeadObjectRequest.
 func (r *HeadObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.HeadObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.HeadObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
@@ -317,7 +317,7 @@ type ListObjectsRequest struct {
 // Validate validates the ListObjectsRequest.
 func (r *ListObjectsRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ListObjectsRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
@@ -392,14 +392,14 @@ type ListByTagRequest struct {
 // Validate validates the ListByTagRequest.
 func (r *ListByTagRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ListByTagRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.TagName == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ListByTagRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "tag name"},
@@ -444,14 +444,14 @@ type ListByTenantRequest struct {
 // Validate validates the ListByTenantRequest.
 func (r *ListByTenantRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ListByTenantRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.TenantID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ListByTenantRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "tenant ID"},
@@ -503,21 +503,21 @@ type CopyObjectRequest struct {
 // Validate validates the CopyObjectRequest.
 func (r *CopyObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.CopyObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.SourceKey == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.CopyObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "source key"},
 		}
 	}
 	if r.DestinationKey == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.CopyObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "destination key"},
@@ -575,21 +575,21 @@ type ReplicateObjectRequest struct {
 // Validate validates the ReplicateObjectRequest.
 func (r *ReplicateObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ReplicateObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ReplicateObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
 		}
 	}
 	if len(r.Targets) == 0 {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ReplicateObjectRequest.Validate",
 			Err:  &api.EmptyCollectionError{Field: "targets"},
@@ -646,21 +646,21 @@ type MigrateObjectRequest struct {
 // Validate validates the MigrateObjectRequest.
 func (r *MigrateObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.MigrateObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.MigrateObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
 		}
 	}
 	if r.TargetBackend == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.MigrateObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "target backend"},
@@ -712,14 +712,14 @@ type ArchiveObjectRequest struct {
 // Validate validates the ArchiveObjectRequest.
 func (r *ArchiveObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ArchiveObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ArchiveObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
@@ -761,14 +761,14 @@ type RestoreObjectRequest struct {
 // Validate validates the RestoreObjectRequest.
 func (r *RestoreObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.RestoreObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.RestoreObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
@@ -814,14 +814,14 @@ type VerifyObjectRequest struct {
 // Validate validates the VerifyObjectRequest.
 func (r *VerifyObjectRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.VerifyObjectRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.VerifyObjectRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
@@ -891,14 +891,14 @@ type SetObjectPolicyRequest struct {
 // Validate validates the SetObjectPolicyRequest.
 func (r *SetObjectPolicyRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.SetObjectPolicyRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.SetObjectPolicyRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
@@ -934,14 +934,14 @@ type GetObjectPolicyRequest struct {
 // Validate validates the GetObjectPolicyRequest.
 func (r *GetObjectPolicyRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetObjectPolicyRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Key == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetObjectPolicyRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "key"},
@@ -984,7 +984,7 @@ type ListBackendsRequest struct {
 // Validate validates the ListBackendsRequest.
 func (r *ListBackendsRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.ListBackendsRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1056,14 +1056,14 @@ type GetBackendHealthRequest struct {
 // Validate validates the GetBackendHealthRequest.
 func (r *GetBackendHealthRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetBackendHealthRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.Name == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetBackendHealthRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "backend name"},
@@ -1106,14 +1106,14 @@ type GetTenantUsageRequest struct {
 // Validate validates the GetTenantUsageRequest.
 func (r *GetTenantUsageRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetTenantUsageRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.TenantID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetTenantUsageRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "tenant ID"},
@@ -1152,14 +1152,14 @@ type GetTenantQuotasRequest struct {
 // Validate validates the GetTenantQuotasRequest.
 func (r *GetTenantQuotasRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetTenantQuotasRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.TenantID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.GetTenantQuotasRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "tenant ID"},
@@ -1210,14 +1210,14 @@ type SetTenantQuotasRequest struct {
 // Validate validates the SetTenantQuotasRequest.
 func (r *SetTenantQuotasRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.SetTenantQuotasRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if r.TenantID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.SetTenantQuotasRequest.Validate",
 			Err:  &api.RequiredFieldError{Field: "tenant ID"},
@@ -1225,7 +1225,7 @@ func (r *SetTenantQuotasRequest) Validate() error {
 	}
 	// Negative values are invalid
 	if r.MaxStorageBytes < 0 || r.MaxObjectSize < 0 || r.MaxObjectCount < 0 {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.SetTenantQuotasRequest.Validate",
 			Err:  &api.InvalidInputError{Message: "quota values cannot be negative"},
@@ -1262,14 +1262,14 @@ type BatchPutObjectsRequest struct {
 // Validate validates the BatchPutObjectsRequest.
 func (r *BatchPutObjectsRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.BatchPutObjectsRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if len(r.Objects) == 0 {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.BatchPutObjectsRequest.Validate",
 			Err:  &api.EmptyCollectionError{Field: "objects"},
@@ -1326,14 +1326,14 @@ type BatchGetObjectsRequest struct {
 // Validate validates the BatchGetObjectsRequest.
 func (r *BatchGetObjectsRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.BatchGetObjectsRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if len(r.Keys) == 0 {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.BatchGetObjectsRequest.Validate",
 			Err:  &api.EmptyCollectionError{Field: "keys"},
@@ -1402,14 +1402,14 @@ type BatchDeleteObjectsRequest struct {
 // Validate validates the BatchDeleteObjectsRequest.
 func (r *BatchDeleteObjectsRequest) Validate() error {
 	if r == nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.BatchDeleteObjectsRequest.Validate",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if len(r.Keys) == 0 {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "objectstorage.BatchDeleteObjectsRequest.Validate",
 			Err:  &api.EmptyCollectionError{Field: "keys"},

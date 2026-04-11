@@ -623,9 +623,9 @@ func TestConfigProcessor_Process_NilConfig(t *testing.T) {
 		t.Fatal("expected error for nil config")
 	}
 
-	var de *errors.DragonError
+	var de *errors.QBError
 	if !stderrors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 
 	if de.Code != errors.ErrInvalidInput {
@@ -659,9 +659,9 @@ func TestConfigProcessor_Process_NonPointer(t *testing.T) {
 		t.Fatal("expected error for non-pointer config")
 	}
 
-	var de *errors.DragonError
+	var de *errors.QBError
 	if !stderrors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 
 	if de.Code != errors.ErrInvalidInput {
@@ -690,9 +690,9 @@ func TestConfigProcessor_Process_PointerToNonStruct(t *testing.T) {
 		t.Fatal("expected error for pointer to non-struct")
 	}
 
-	var de *errors.DragonError
+	var de *errors.QBError
 	if !stderrors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 
 	if de.Code != errors.ErrInvalidInput {
@@ -726,9 +726,9 @@ func TestConfigProcessor_Process_NilPointer(t *testing.T) {
 		t.Fatal("expected error for nil pointer")
 	}
 
-	var de *errors.DragonError
+	var de *errors.QBError
 	if !stderrors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 
 	if de.Code != errors.ErrInvalidInput {
@@ -797,9 +797,9 @@ func TestConfigProcessor_Process_NilContext(t *testing.T) {
 		t.Fatal("expected error for nil context")
 	}
 
-	var de *errors.DragonError
+	var de *errors.QBError
 	if !stderrors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 
 	if de.Code != errors.ErrInvalidInput {
@@ -827,9 +827,9 @@ func TestConfigProcessor_Process_NilRegistry(t *testing.T) {
 		t.Fatal("expected error for nil registry")
 	}
 
-	var de *errors.DragonError
+	var de *errors.QBError
 	if !stderrors.As(err, &de) {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 
 	if de.Code != errors.ErrInvalidInput {

@@ -169,7 +169,7 @@ func TestHandleBatchGetServiceErrorBoost(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("BatchGet", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("BatchGet", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "BatchGet",
 		Err:  stderrors.New("internal error"),
@@ -317,7 +317,7 @@ func TestHandleClusterStatusServiceErrorBoost(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "ClusterStatus",
 		Err:  stderrors.New("internal error"),
@@ -392,7 +392,7 @@ func TestHandleGetLeaderServiceErrorBoost(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("GetLeader", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("GetLeader", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "GetLeader",
 		Err:  stderrors.New("shard not found"),
@@ -414,7 +414,7 @@ func TestHandlePutServiceErrorBoost(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("Put", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("Put", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrLeaderNotAvailable,
 		Op:   "Put",
 		Err:  stderrors.New("leader not available"),
@@ -446,7 +446,7 @@ func TestHandleDeleteServiceErrorBoost(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("Delete", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("Delete", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrTimeout,
 		Op:   "Delete",
 		Err:  stderrors.New("operation timed out"),
@@ -525,7 +525,7 @@ func TestHandleQueryServiceErrorBoost(t *testing.T) {
 		Run(func(args mock.Arguments) {
 			stream := args.Get(2).(chan<- *service.QueryResponse)
 			close(stream)
-		}).Return(&errors.DragonError{
+		}).Return(&errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "Query",
 		Err:  stderrors.New("internal error"),
@@ -577,7 +577,7 @@ func TestHandleRangeQueryServiceErrorBoost(t *testing.T) {
 		Run(func(args mock.Arguments) {
 			stream := args.Get(2).(chan<- *service.ScanResponse)
 			close(stream)
-		}).Return(&errors.DragonError{
+		}).Return(&errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "ScanIndex",
 		Err:  stderrors.New("internal error"),
@@ -656,7 +656,7 @@ func TestHandleServiceErrorInvalidInputBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   "test",
 		Err:  stderrors.New("invalid input"),
@@ -673,7 +673,7 @@ func TestHandleServiceErrorValidationBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrValidation,
 		Op:   "test",
 		Err:  stderrors.New("validation failed"),
@@ -690,7 +690,7 @@ func TestHandleServiceErrorForbiddenBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrForbidden,
 		Op:   "test",
 		Err:  stderrors.New("access denied"),
@@ -707,7 +707,7 @@ func TestHandleServiceErrorNotAllowedBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrNotAllowed,
 		Op:   "test",
 		Err:  stderrors.New("operation not allowed"),
@@ -724,7 +724,7 @@ func TestHandleServiceErrorUnauthorizedBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrUnauthorized,
 		Op:   "test",
 		Err:  stderrors.New("unauthorized"),
@@ -741,7 +741,7 @@ func TestHandleServiceErrorConflictBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrConflict,
 		Op:   "test",
 		Err:  stderrors.New("conflict"),
@@ -758,7 +758,7 @@ func TestHandleServiceErrorAlreadyExistsBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrAlreadyExists,
 		Op:   "test",
 		Err:  stderrors.New("already exists"),
@@ -775,7 +775,7 @@ func TestHandleServiceErrorUnavailableBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrUnavailable,
 		Op:   "test",
 		Err:  stderrors.New("service unavailable"),
@@ -792,7 +792,7 @@ func TestHandleServiceErrorStorageBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrStorage,
 		Op:   "test",
 		Err:  stderrors.New("storage error"),
@@ -809,7 +809,7 @@ func TestHandleServiceErrorUnknownBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrUnknown,
 		Op:   "test",
 		Err:  stderrors.New("unknown error"),
@@ -826,7 +826,7 @@ func TestHandleServiceErrorDeadlineExceededBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrDeadlineExceeded,
 		Op:   "test",
 		Err:  stderrors.New("deadline exceeded"),
@@ -843,7 +843,7 @@ func TestHandleServiceErrorNilErrFieldBoost(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
 	w := httptest.NewRecorder()
 
-	server.handleServiceError(w, req, &errors.DragonError{
+	server.handleServiceError(w, req, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "test",
 		Err:  nil, // Test nil Err field
@@ -980,7 +980,7 @@ func TestHandleListKeysServiceErrorBoost(t *testing.T) {
 	defer cleanup()
 
 	mockKMSMgr := &MockKMSManager{}
-	mockKMSMgr.On("ListKeys", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockKMSMgr.On("ListKeys", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "ListKeys",
 		Err:  stderrors.New("internal error"),
@@ -1038,7 +1038,7 @@ func TestHandleDeleteKeyDisableErrorBoost(t *testing.T) {
 	defer cleanup()
 
 	mockKMSMgr := &MockKMSManager{}
-	mockKMSMgr.On("DisableKey", mock.Anything, "test-key").Return(&errors.DragonError{
+	mockKMSMgr.On("DisableKey", mock.Anything, "test-key").Return(&errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "DisableKey",
 		Err:  stderrors.New("key not found"),
@@ -1063,7 +1063,7 @@ func TestHandleUpdateKeyStatusEnableErrorBoost(t *testing.T) {
 	defer cleanup()
 
 	mockKMSMgr := &MockKMSManager{}
-	mockKMSMgr.On("EnableKey", mock.Anything, "test-key").Return(&errors.DragonError{
+	mockKMSMgr.On("EnableKey", mock.Anything, "test-key").Return(&errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "EnableKey",
 		Err:  stderrors.New("key not found"),
@@ -1089,7 +1089,7 @@ func TestHandleUpdateKeyStatusDisableErrorBoost(t *testing.T) {
 	defer cleanup()
 
 	mockKMSMgr := &MockKMSManager{}
-	mockKMSMgr.On("DisableKey", mock.Anything, "test-key").Return(&errors.DragonError{
+	mockKMSMgr.On("DisableKey", mock.Anything, "test-key").Return(&errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "DisableKey",
 		Err:  stderrors.New("internal error"),
@@ -1115,7 +1115,7 @@ func TestHandleKMSEncryptServiceErrorBoost(t *testing.T) {
 	defer cleanup()
 
 	// Mock Encrypt to return an error
-	mockService.On("Encrypt", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("Encrypt", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "Encrypt",
 		Err:  stderrors.New("key not found"),
@@ -1140,7 +1140,7 @@ func TestHandleKMSDecryptServiceErrorBoost(t *testing.T) {
 	defer cleanup()
 
 	// Mock Decrypt to return an error
-	mockService.On("Decrypt", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("Decrypt", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   "Decrypt",
 		Err:  stderrors.New("invalid ciphertext"),

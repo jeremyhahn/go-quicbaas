@@ -25,77 +25,77 @@ import (
 // Ownership-specific error types.
 var (
 	// ErrOwnershipNotFound is returned when ownership is not found.
-	ErrOwnershipNotFound = &dberrors.DragonError{
+	ErrOwnershipNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.ownership",
 		Err:  &IAMMessageError{Message: "ownership not found"},
 	}
 
 	// ErrOwnershipAlreadyExists is returned when ownership already exists.
-	ErrOwnershipAlreadyExists = &dberrors.DragonError{
+	ErrOwnershipAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.ownership",
 		Err:  &IAMMessageError{Message: "ownership already exists"},
 	}
 
 	// ErrOwnershipInvalid is returned when ownership validation fails.
-	ErrOwnershipInvalid = &dberrors.DragonError{
+	ErrOwnershipInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.ownership",
 		Err:  &IAMMessageError{Message: "invalid ownership"},
 	}
 
 	// ErrShareNotFound is returned when a share is not found.
-	ErrShareNotFound = &dberrors.DragonError{
+	ErrShareNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.share",
 		Err:  &IAMMessageError{Message: "share not found"},
 	}
 
 	// ErrShareAlreadyExists is returned when a share already exists.
-	ErrShareAlreadyExists = &dberrors.DragonError{
+	ErrShareAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.share",
 		Err:  &IAMMessageError{Message: "share already exists"},
 	}
 
 	// ErrShareInvalid is returned when share validation fails.
-	ErrShareInvalid = &dberrors.DragonError{
+	ErrShareInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.share",
 		Err:  &IAMMessageError{Message: "invalid share"},
 	}
 
 	// ErrShareExpired is returned when a share has expired.
-	ErrShareExpired = &dberrors.DragonError{
+	ErrShareExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.share",
 		Err:  &IAMMessageError{Message: "share expired"},
 	}
 
 	// ErrPermissionDenied is returned when permission check fails.
-	ErrPermissionDenied = &dberrors.DragonError{
+	ErrPermissionDenied = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.ownership.permission",
 		Err:  &IAMMessageError{Message: "permission denied"},
 	}
 
 	// ErrInvalidGranteeType is returned when grantee type is invalid.
-	ErrInvalidGranteeType = &dberrors.DragonError{
+	ErrInvalidGranteeType = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.share",
 		Err:  &IAMMessageError{Message: "invalid grantee type"},
 	}
 
 	// ErrInvalidPermission is returned when permission is invalid.
-	ErrInvalidPermission = &dberrors.DragonError{
+	ErrInvalidPermission = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.share",
 		Err:  &IAMMessageError{Message: "invalid permission"},
 	}
 
 	// ErrCannotShareWithSelf is returned when attempting to share with owner.
-	ErrCannotShareWithSelf = &dberrors.DragonError{
+	ErrCannotShareWithSelf = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.share",
 		Err:  &IAMMessageError{Message: "cannot share resource with owner"},

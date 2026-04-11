@@ -79,7 +79,7 @@ func isErrorCode(err error, code dberrors.ErrorCode) bool {
 	if err == nil {
 		return false
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if dberrors.As(err, &de) {
 		return de.Code == code
 	}

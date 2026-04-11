@@ -56,7 +56,7 @@ func (m *costTestKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	defer m.mu.RUnlock()
 	v, ok := m.data[key]
 	if !ok {
-		return nil, &qerrors.DragonError{
+		return nil, &qerrors.QBError{
 			Code: qerrors.ErrNotFound,
 			Op:   "costTestKVStore.Get",
 			Err:  &qerrors.MessageError{Message: "key not found: " + key},

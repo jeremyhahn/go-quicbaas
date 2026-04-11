@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qbErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -253,9 +253,9 @@ func TestVecGetNamespaceInfo_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrNotFound, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
 }
 
 func TestVecGetNamespaceInfo_ServiceClosed(t *testing.T) {
@@ -316,9 +316,9 @@ func TestVecUpsert_NamespaceNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrNotFound, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
 }
 
 func TestVecUpsert_DimensionMismatch(t *testing.T) {
@@ -332,9 +332,9 @@ func TestVecUpsert_DimensionMismatch(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrInvalidInput, qbErr.Code)
 }
 func TestVecUpsert_ServiceClosed(t *testing.T) {
 	svc, _ := newVecSvcWithNamespace(t, "vectors", 3)
@@ -370,9 +370,9 @@ func TestVecUpsert_TenantForbidden(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrNotFound, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
 }
 
 // =============================================================================
@@ -839,9 +839,9 @@ func TestVecListVectors_TenantForbidden(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrNotFound, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
 }
 func TestVecUpdateMetadata_ZeroID(t *testing.T) {
 	svc, _ := newBasicVecSvc(t)
@@ -921,9 +921,9 @@ func TestVecSearchByID_TenantForbidden(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrNotFound, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
 }
 
 // =============================================================================

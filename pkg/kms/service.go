@@ -131,7 +131,7 @@ type KMSServiceOptions struct {
 // Returns an error if Registry is nil or empty.
 func NewKMSService(opts *KMSServiceOptions) (*KMSService, error) {
 	if opts == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "kms.NewKMSService",
 			Err:  ErrOptionsNil,
@@ -140,7 +140,7 @@ func NewKMSService(opts *KMSServiceOptions) (*KMSService, error) {
 
 	// Validate: Registry is required
 	if opts.Registry == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "kms.NewKMSService",
 			Err:  ErrRegistryRequired,
@@ -149,7 +149,7 @@ func NewKMSService(opts *KMSServiceOptions) (*KMSService, error) {
 
 	// Validate: Registry must have at least one backend
 	if len(opts.Registry.List()) == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "kms.NewKMSService",
 			Err:  ErrRegistryEmpty,
@@ -235,7 +235,7 @@ func NewKMSService(opts *KMSServiceOptions) (*KMSService, error) {
 //  3. Default backend or highest priority healthy backend
 func (s *KMSService) GenerateKey(ctx context.Context, attrs *kctypes.KeyAttributes) (interface{}, error) {
 	if attrs == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GenerateKey",
 			Err:  ErrKeyAttributesNil,
@@ -243,7 +243,7 @@ func (s *KMSService) GenerateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	}
 
 	if attrs.CN == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GenerateKey",
 			Err:  ErrKeyCNEmpty,
@@ -252,7 +252,7 @@ func (s *KMSService) GenerateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.GenerateKey",
 			Err:  ctx.Err(),
@@ -274,7 +274,7 @@ func (s *KMSService) GenerateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 
 	// Validate key attributes
 	if err := attrs.Validate(); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GenerateKey",
 			Err:  err,
@@ -284,7 +284,7 @@ func (s *KMSService) GenerateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	// Create key via backend
 	metadata, err := backend.CreateKey(ctx, attrs)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.GenerateKey",
 			Err:  err,
@@ -326,7 +326,7 @@ func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byt
 
 	// Validate algorithm
 	if err := s.validateAlgorithm(algorithm); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.ImportKey",
 			Err:  err,
@@ -334,7 +334,7 @@ func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byt
 	}
 
 	if keyID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.ImportKey",
 			Err:  ErrKeyIDEmpty,
@@ -342,7 +342,7 @@ func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byt
 	}
 
 	if len(material) == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.ImportKey",
 			Err:  ErrKeyMaterialEmpty,
@@ -351,7 +351,7 @@ func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byt
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.ImportKey",
 			Err:  ctx.Err(),
@@ -367,7 +367,7 @@ func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byt
 	// Import key via backend
 	metadata, err := backend.ImportKey(ctx, keyID, material, algorithm, nil)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.ImportKey",
 			Err:  err,
@@ -400,7 +400,7 @@ func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byt
 // In multi-backend mode, the backend is selected based on key ID structure.
 func (s *KMSService) GetKey(ctx context.Context, keyID string) (interface{}, error) {
 	if keyID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GetKey",
 			Err:  ErrKeyIDEmpty,
@@ -409,7 +409,7 @@ func (s *KMSService) GetKey(ctx context.Context, keyID string) (interface{}, err
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.GetKey",
 			Err:  ctx.Err(),
@@ -432,13 +432,13 @@ func (s *KMSService) GetKey(ctx context.Context, keyID string) (interface{}, err
 	metadata, err := backend.GetKeyMetadata(ctx, keyID)
 	if err != nil {
 		if stderrors.Is(err, ErrKeyNotFound) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "KMSService.GetKey",
 				Err:  err,
 			}
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.GetKey",
 			Err:  err,
@@ -463,7 +463,7 @@ func (s *KMSService) GetKey(ctx context.Context, keyID string) (interface{}, err
 // Returns an error if the key is symmetric (has no public component).
 func (s *KMSService) GetPublicKey(ctx context.Context, keyID string) ([]byte, error) {
 	if keyID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GetPublicKey",
 			Err:  ErrKeyIDEmpty,
@@ -472,7 +472,7 @@ func (s *KMSService) GetPublicKey(ctx context.Context, keyID string) ([]byte, er
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.GetPublicKey",
 			Err:  ctx.Err(),
@@ -489,13 +489,13 @@ func (s *KMSService) GetPublicKey(ctx context.Context, keyID string) ([]byte, er
 	publicKey, err := backend.ExportPublicKey(ctx, keyID)
 	if err != nil {
 		if stderrors.Is(err, ErrKeyNotFound) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "KMSService.GetPublicKey",
 				Err:  err,
 			}
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.GetPublicKey",
 			Err:  err,
@@ -511,7 +511,7 @@ func (s *KMSService) GetPublicKey(ctx context.Context, keyID string) ([]byte, er
 func (s *KMSService) UpdateStoredMetadata(metadata interface{}) error {
 	serviceMeta, ok := metadata.(*KeyMetadata)
 	if !ok {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.UpdateStoredMetadata",
 			Err:  ErrMetadataTypeMismatch,
@@ -519,7 +519,7 @@ func (s *KMSService) UpdateStoredMetadata(metadata interface{}) error {
 	}
 
 	if serviceMeta.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.UpdateStoredMetadata",
 			Err:  ErrKeyIDRequired,
@@ -534,7 +534,7 @@ func (s *KMSService) UpdateStoredMetadata(metadata interface{}) error {
 				"error":  err.Error(),
 			}).Warn("Failed to update stored key metadata")
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.UpdateStoredMetadata",
 			Err:  err,
@@ -557,7 +557,7 @@ func (s *KMSService) UpdateStoredMetadata(metadata interface{}) error {
 func (s *KMSService) ListKeys(ctx context.Context, prefix string) ([]interface{}, error) {
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.ListKeys",
 			Err:  ctx.Err(),
@@ -609,7 +609,7 @@ func (s *KMSService) ListKeys(ctx context.Context, prefix string) ([]interface{}
 // In multi-backend mode, routes to the backend that owns the key.
 func (s *KMSService) RotateKey(ctx context.Context, keyID string) (interface{}, error) {
 	if keyID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.RotateKey",
 			Err:  ErrKeyIDEmpty,
@@ -618,7 +618,7 @@ func (s *KMSService) RotateKey(ctx context.Context, keyID string) (interface{}, 
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.RotateKey",
 			Err:  ctx.Err(),
@@ -627,7 +627,7 @@ func (s *KMSService) RotateKey(ctx context.Context, keyID string) (interface{}, 
 
 	// Validate key exists and is not disabled
 	if err := s.validateKeyForOperation(keyID, "rotate"); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.RotateKey",
 			Err:  err,
@@ -644,13 +644,13 @@ func (s *KMSService) RotateKey(ctx context.Context, keyID string) (interface{}, 
 	metadata, err := backend.RotateKey(ctx, keyID)
 	if err != nil {
 		if stderrors.Is(err, ErrKeyNotFound) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "KMSService.RotateKey",
 				Err:  err,
 			}
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.RotateKey",
 			Err:  err,
@@ -688,7 +688,7 @@ func (s *KMSService) RotateKey(ctx context.Context, keyID string) (interface{}, 
 // In multi-backend mode, routes to the backend that owns the key.
 func (s *KMSService) RevokeKey(ctx context.Context, keyID string) error {
 	if keyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.RevokeKey",
 			Err:  ErrKeyIDEmpty,
@@ -697,7 +697,7 @@ func (s *KMSService) RevokeKey(ctx context.Context, keyID string) error {
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.RevokeKey",
 			Err:  ctx.Err(),
@@ -713,13 +713,13 @@ func (s *KMSService) RevokeKey(ctx context.Context, keyID string) error {
 	// Disable key via backend
 	if err := backend.DisableKey(ctx, keyID); err != nil {
 		if stderrors.Is(err, ErrKeyNotFound) {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "KMSService.RevokeKey",
 				Err:  err,
 			}
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.RevokeKey",
 			Err:  err,
@@ -753,7 +753,7 @@ func (s *KMSService) RevokeKey(ctx context.Context, keyID string) error {
 // In multi-backend mode, routes to the backend that owns the key.
 func (s *KMSService) EnableKey(ctx context.Context, keyID string) error {
 	if keyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.EnableKey",
 			Err:  ErrKeyIDEmpty,
@@ -762,7 +762,7 @@ func (s *KMSService) EnableKey(ctx context.Context, keyID string) error {
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.EnableKey",
 			Err:  ctx.Err(),
@@ -778,13 +778,13 @@ func (s *KMSService) EnableKey(ctx context.Context, keyID string) error {
 	// Enable key via backend
 	if err := backend.EnableKey(ctx, keyID); err != nil {
 		if stderrors.Is(err, ErrKeyNotFound) {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "KMSService.EnableKey",
 				Err:  err,
 			}
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.EnableKey",
 			Err:  err,
@@ -813,7 +813,7 @@ func (s *KMSService) EnableKey(ctx context.Context, keyID string) error {
 // In multi-backend mode, routes to the backend that owns the key.
 func (s *KMSService) DisableKey(ctx context.Context, keyID string) error {
 	if keyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.DisableKey",
 			Err:  ErrKeyIDEmpty,
@@ -822,7 +822,7 @@ func (s *KMSService) DisableKey(ctx context.Context, keyID string) error {
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.DisableKey",
 			Err:  ctx.Err(),
@@ -838,13 +838,13 @@ func (s *KMSService) DisableKey(ctx context.Context, keyID string) error {
 	// Disable key via backend
 	if err := backend.DisableKey(ctx, keyID); err != nil {
 		if stderrors.Is(err, ErrKeyNotFound) {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "KMSService.DisableKey",
 				Err:  err,
 			}
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.DisableKey",
 			Err:  err,
@@ -879,7 +879,7 @@ func (s *KMSService) DisableKey(ctx context.Context, keyID string) error {
 // In multi-backend mode, routes to the backend that owns the key.
 func (s *KMSService) DeleteKey(ctx context.Context, keyID string) error {
 	if keyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.DeleteKey",
 			Err:  ErrKeyIDEmpty,
@@ -888,7 +888,7 @@ func (s *KMSService) DeleteKey(ctx context.Context, keyID string) error {
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.DeleteKey",
 			Err:  ctx.Err(),
@@ -904,13 +904,13 @@ func (s *KMSService) DeleteKey(ctx context.Context, keyID string) error {
 	// Delete key via backend
 	if err := backend.DeleteKey(ctx, keyID); err != nil {
 		if stderrors.Is(err, ErrKeyNotFound) {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "KMSService.DeleteKey",
 				Err:  err,
 			}
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.DeleteKey",
 			Err:  err,
@@ -945,7 +945,7 @@ func (s *KMSService) DeleteKey(ctx context.Context, keyID string) error {
 // In multi-backend mode, routes to the backend that owns the key.
 func (s *KMSService) Encrypt(ctx context.Context, keyID string, plaintext, aad []byte) ([]byte, error) {
 	if keyID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Encrypt",
 			Err:  ErrKeyIDEmpty,
@@ -953,7 +953,7 @@ func (s *KMSService) Encrypt(ctx context.Context, keyID string, plaintext, aad [
 	}
 
 	if len(plaintext) == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Encrypt",
 			Err:  ErrPlaintextEmpty,
@@ -962,7 +962,7 @@ func (s *KMSService) Encrypt(ctx context.Context, keyID string, plaintext, aad [
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.Encrypt",
 			Err:  ctx.Err(),
@@ -971,7 +971,7 @@ func (s *KMSService) Encrypt(ctx context.Context, keyID string, plaintext, aad [
 
 	// Validate key can be used for encryption
 	if err := s.validateKeyForOperation(keyID, OpEncrypt); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Encrypt",
 			Err:  err,
@@ -987,7 +987,7 @@ func (s *KMSService) Encrypt(ctx context.Context, keyID string, plaintext, aad [
 	// Encrypt via backend
 	ciphertext, err := backend.Encrypt(ctx, keyID, plaintext, aad)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "KMSService.Encrypt",
 			Err:  err,
@@ -1013,7 +1013,7 @@ func (s *KMSService) Encrypt(ctx context.Context, keyID string, plaintext, aad [
 // In multi-backend mode, routes to the backend that owns the key.
 func (s *KMSService) Decrypt(ctx context.Context, keyID string, ciphertext, aad []byte) ([]byte, error) {
 	if keyID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Decrypt",
 			Err:  ErrKeyIDEmpty,
@@ -1021,7 +1021,7 @@ func (s *KMSService) Decrypt(ctx context.Context, keyID string, ciphertext, aad 
 	}
 
 	if len(ciphertext) == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Decrypt",
 			Err:  ErrCiphertextEmpty,
@@ -1030,7 +1030,7 @@ func (s *KMSService) Decrypt(ctx context.Context, keyID string, ciphertext, aad 
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.Decrypt",
 			Err:  ctx.Err(),
@@ -1039,7 +1039,7 @@ func (s *KMSService) Decrypt(ctx context.Context, keyID string, ciphertext, aad 
 
 	// Validate key can be used for decryption
 	if err := s.validateKeyForOperation(keyID, OpDecrypt); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Decrypt",
 			Err:  err,
@@ -1055,7 +1055,7 @@ func (s *KMSService) Decrypt(ctx context.Context, keyID string, ciphertext, aad 
 	// Decrypt via backend
 	plaintext, err := backend.Decrypt(ctx, keyID, ciphertext, aad)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrDecryption,
 			Op:   "KMSService.Decrypt",
 			Err:  err,
@@ -1081,7 +1081,7 @@ func (s *KMSService) Decrypt(ctx context.Context, keyID string, ciphertext, aad 
 // In multi-backend mode, routes to the backend that owns the key.
 func (s *KMSService) Sign(ctx context.Context, keyID string, digest []byte, algorithm string) ([]byte, error) {
 	if keyID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Sign",
 			Err:  ErrKeyIDEmpty,
@@ -1089,7 +1089,7 @@ func (s *KMSService) Sign(ctx context.Context, keyID string, digest []byte, algo
 	}
 
 	if len(digest) == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Sign",
 			Err:  ErrDigestEmpty,
@@ -1098,7 +1098,7 @@ func (s *KMSService) Sign(ctx context.Context, keyID string, digest []byte, algo
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.Sign",
 			Err:  ctx.Err(),
@@ -1107,7 +1107,7 @@ func (s *KMSService) Sign(ctx context.Context, keyID string, digest []byte, algo
 
 	// Validate key can be used for signing
 	if err := s.validateKeyForOperation(keyID, OpSign); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Sign",
 			Err:  err,
@@ -1123,7 +1123,7 @@ func (s *KMSService) Sign(ctx context.Context, keyID string, digest []byte, algo
 	// Sign via backend
 	signature, err := backend.Sign(ctx, keyID, digest, algorithm)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.Sign",
 			Err:  err,
@@ -1148,7 +1148,7 @@ func (s *KMSService) Sign(ctx context.Context, keyID string, digest []byte, algo
 // In multi-backend mode, routes to the backend that owns the key.
 func (s *KMSService) Verify(ctx context.Context, keyID string, digest, signature []byte, algorithm string) (bool, error) {
 	if keyID == "" {
-		return false, &errors.DragonError{
+		return false, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Verify",
 			Err:  ErrKeyIDEmpty,
@@ -1156,7 +1156,7 @@ func (s *KMSService) Verify(ctx context.Context, keyID string, digest, signature
 	}
 
 	if len(digest) == 0 {
-		return false, &errors.DragonError{
+		return false, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Verify",
 			Err:  ErrDigestEmpty,
@@ -1164,7 +1164,7 @@ func (s *KMSService) Verify(ctx context.Context, keyID string, digest, signature
 	}
 
 	if len(signature) == 0 {
-		return false, &errors.DragonError{
+		return false, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Verify",
 			Err:  ErrSignatureEmpty,
@@ -1173,7 +1173,7 @@ func (s *KMSService) Verify(ctx context.Context, keyID string, digest, signature
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return false, &errors.DragonError{
+		return false, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.Verify",
 			Err:  ctx.Err(),
@@ -1182,7 +1182,7 @@ func (s *KMSService) Verify(ctx context.Context, keyID string, digest, signature
 
 	// Validate key can be used for verification
 	if err := s.validateKeyForOperation(keyID, OpVerify); err != nil {
-		return false, &errors.DragonError{
+		return false, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.Verify",
 			Err:  err,
@@ -1198,7 +1198,7 @@ func (s *KMSService) Verify(ctx context.Context, keyID string, digest, signature
 	// Verify via backend
 	valid, err := backend.Verify(ctx, keyID, digest, signature, algorithm)
 	if err != nil {
-		return false, &errors.DragonError{
+		return false, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.Verify",
 			Err:  err,
@@ -1227,7 +1227,7 @@ func (s *KMSService) Verify(ctx context.Context, keyID string, digest, signature
 // In multi-backend mode, routes to the backend that owns the KEK.
 func (s *KMSService) GenerateDataKey(ctx context.Context, attrs *kctypes.KeyAttributes, keyBytes int) (plaintext, wrapped []byte, err error) {
 	if attrs == nil {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GenerateDataKey",
 			Err:  ErrKeyAttributesNil,
@@ -1237,7 +1237,7 @@ func (s *KMSService) GenerateDataKey(ctx context.Context, attrs *kctypes.KeyAttr
 	// CN specifies the KEK to use for wrapping
 	keyID := attrs.CN
 	if keyID == "" {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GenerateDataKey",
 			Err:  ErrKeyCNEmpty,
@@ -1245,7 +1245,7 @@ func (s *KMSService) GenerateDataKey(ctx context.Context, attrs *kctypes.KeyAttr
 	}
 
 	if keyBytes <= 0 {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GenerateDataKey",
 			Err:  ErrKeyBytesPositive,
@@ -1254,7 +1254,7 @@ func (s *KMSService) GenerateDataKey(ctx context.Context, attrs *kctypes.KeyAttr
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "KMSService.GenerateDataKey",
 			Err:  ctx.Err(),
@@ -1263,7 +1263,7 @@ func (s *KMSService) GenerateDataKey(ctx context.Context, attrs *kctypes.KeyAttr
 
 	// Validate key can be used for wrapping
 	if err := s.validateKeyForOperation(keyID, OpWrap); err != nil {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KMSService.GenerateDataKey",
 			Err:  err,
@@ -1280,7 +1280,7 @@ func (s *KMSService) GenerateDataKey(ctx context.Context, attrs *kctypes.KeyAttr
 	// The backend uses keyID (from attrs.CN) as the KEK for wrapping
 	plaintext, wrapped, err = backend.GenerateDataKey(ctx, keyID, keyBytes)
 	if err != nil {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "KMSService.GenerateDataKey",
 			Err:  err,

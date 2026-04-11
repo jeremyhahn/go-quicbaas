@@ -17,7 +17,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/lock"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -27,22 +27,22 @@ import (
 type BaasLockService interface {
 	// Lock acquires a distributed lock, blocking until acquired or the
 	// context is cancelled.
-	Lock(ctx context.Context, key, holderID string, ttl time.Duration, reentrant bool) (*lock.Lock, error)
+	Lock(ctx context.Context, key, holderID string, ttl time.Duration, reentrant bool) (*qrdbsdk.Lock, error)
 
 	// TryLock attempts to acquire a lock immediately without blocking.
-	TryLock(ctx context.Context, key, holderID string, ttl time.Duration, reentrant bool) (*lock.Lock, error)
+	TryLock(ctx context.Context, key, holderID string, ttl time.Duration, reentrant bool) (*qrdbsdk.Lock, error)
 
 	// Unlock releases a held lock validated by fencing token.
 	Unlock(ctx context.Context, key string, fencingToken int64) error
 
 	// Extend refreshes the TTL on a held lock without releasing it.
-	Extend(ctx context.Context, key string, fencingToken int64) (*lock.Lock, error)
+	Extend(ctx context.Context, key string, fencingToken int64) (*qrdbsdk.Lock, error)
 
 	// Status returns the current lock state for a key.
-	Status(ctx context.Context, key string) (*lock.Lock, error)
+	Status(ctx context.Context, key string) (*qrdbsdk.Lock, error)
 
 	// List returns all active locks, optionally filtered by key prefix.
-	List(ctx context.Context, prefix string) ([]*lock.Lock, error)
+	List(ctx context.Context, prefix string) ([]*qrdbsdk.Lock, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -128,8 +128,8 @@ func (t *baasTransport) LockList(ctx context.Context, prefix string) (*transport
 	return &transport.LockListResponse{Locks: infos}, nil
 }
 
-// mapLockToTransport converts a lock.Lock to a transport.LockInfo.
-func mapLockToTransport(l *lock.Lock) *transport.LockInfo {
+// mapLockToTransport converts a qrdbsdk.Lock to a transport.LockInfo.
+func mapLockToTransport(l *qrdbsdk.Lock) *transport.LockInfo {
 	return &transport.LockInfo{
 		Key:          l.Key,
 		FencingToken: l.FencingToken,

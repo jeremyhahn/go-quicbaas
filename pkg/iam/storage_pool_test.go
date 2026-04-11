@@ -68,7 +68,7 @@ func (m *poolMockKVStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if v, ok := m.data[key]; ok {
 		return v, nil
 	}
-	return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "mock.get"}
+	return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "mock.get"}
 }
 
 func (m *poolMockKVStore) Delete(ctx context.Context, key string) error {

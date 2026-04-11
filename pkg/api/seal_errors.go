@@ -33,9 +33,9 @@ func (e *AlreadyInitializedError) Error() string {
 	return e.Component + " already initialized"
 }
 
-// NewAlreadyInitializedError creates a DragonError for a component that is already initialized.
-func NewAlreadyInitializedError(op, component string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewAlreadyInitializedError creates a QBError for a component that is already initialized.
+func NewAlreadyInitializedError(op, component string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &AlreadyInitializedError{Component: component},
@@ -52,9 +52,9 @@ func (e *UnsealRequiredError) Error() string {
 	return "database must be unsealed to " + e.Operation
 }
 
-// NewUnsealRequiredError creates a DragonError indicating unsealing is required.
-func NewUnsealRequiredError(op, operation string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewUnsealRequiredError creates a QBError indicating unsealing is required.
+func NewUnsealRequiredError(op, operation string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnauthorized,
 		Op:   op,
 		Err:  &UnsealRequiredError{Operation: operation},
@@ -71,9 +71,9 @@ func (e *FeatureNotEnabledError) Error() string {
 	return e.Feature + " not enabled"
 }
 
-// NewFeatureNotEnabledError creates a DragonError for a disabled feature.
-func NewFeatureNotEnabledError(op, feature string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewFeatureNotEnabledError creates a QBError for a disabled feature.
+func NewFeatureNotEnabledError(op, feature string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &FeatureNotEnabledError{Feature: feature},
@@ -91,9 +91,9 @@ func (e *InsufficientSharesError) Error() string {
 	return fmt.Sprintf("need at least %d shares, got %d", e.Required, e.Provided)
 }
 
-// NewInsufficientSharesError creates a DragonError for insufficient shares.
-func NewInsufficientSharesError(op string, required, provided int) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewInsufficientSharesError creates a QBError for insufficient shares.
+func NewInsufficientSharesError(op string, required, provided int) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InsufficientSharesError{Required: required, Provided: provided},
@@ -108,9 +108,9 @@ func (e *TPMUnavailableError) Error() string {
 	return "TPM hardware not available"
 }
 
-// NewTPMUnavailableError creates a DragonError for unavailable TPM hardware.
-func NewTPMUnavailableError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMUnavailableError creates a QBError for unavailable TPM hardware.
+func NewTPMUnavailableError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err:  &TPMUnavailableError{},
@@ -125,9 +125,9 @@ func (e *PCRMismatchError) Error() string {
 	return "PCR values do not match sealed policy"
 }
 
-// NewPCRMismatchError creates a DragonError for a PCR policy mismatch.
-func NewPCRMismatchError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewPCRMismatchError creates a QBError for a PCR policy mismatch.
+func NewPCRMismatchError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrPreconditionFailed,
 		Op:   op,
 		Err:  &PCRMismatchError{},
@@ -142,9 +142,9 @@ func (e *TPMSealModeRequiredError) Error() string {
 	return "data was sealed with TPM but TPM is not available"
 }
 
-// NewTPMSealModeRequiredError creates a DragonError when TPM-sealed data cannot be unsealed.
-func NewTPMSealModeRequiredError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMSealModeRequiredError creates a QBError when TPM-sealed data cannot be unsealed.
+func NewTPMSealModeRequiredError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err:  &TPMSealModeRequiredError{},
@@ -161,9 +161,9 @@ func (e *ChannelFullError) Error() string {
 	return e.Channel + " channel full"
 }
 
-// NewChannelFullError creates a DragonError for a full channel.
-func NewChannelFullError(op, channel string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewChannelFullError creates a QBError for a full channel.
+func NewChannelFullError(op, channel string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &ChannelFullError{Channel: channel},
@@ -181,9 +181,9 @@ func (e *ShareTimeoutError) Error() string {
 	return fmt.Sprintf("timeout waiting for shares: have %d, need %d", e.Have, e.Need)
 }
 
-// NewShareTimeoutError creates a DragonError for a share collection timeout.
-func NewShareTimeoutError(op string, have, need int) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewShareTimeoutError creates a QBError for a share collection timeout.
+func NewShareTimeoutError(op string, have, need int) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrTimeout,
 		Op:   op,
 		Err:  &ShareTimeoutError{Have: have, Need: need},
@@ -200,9 +200,9 @@ func (e *InvalidShareError) Error() string {
 	return e.Reason
 }
 
-// NewInvalidShareError creates a DragonError for an invalid share.
-func NewInvalidShareError(op, reason string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewInvalidShareError creates a QBError for an invalid share.
+func NewInvalidShareError(op, reason string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InvalidShareError{Reason: reason},
@@ -219,9 +219,9 @@ func (e *InconsistentShareLengthError) Error() string {
 	return fmt.Sprintf("share %d has inconsistent length", e.Index)
 }
 
-// NewInconsistentShareLengthError creates a DragonError for inconsistent share lengths.
-func NewInconsistentShareLengthError(op string, index int) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewInconsistentShareLengthError creates a QBError for inconsistent share lengths.
+func NewInconsistentShareLengthError(op string, index int) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InconsistentShareLengthError{Index: index},
@@ -236,9 +236,9 @@ func (e *DuplicateShareIndexError) Error() string {
 	return "duplicate share index detected"
 }
 
-// NewDuplicateShareIndexError creates a DragonError for a duplicate share index.
-func NewDuplicateShareIndexError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDuplicateShareIndexError creates a QBError for a duplicate share index.
+func NewDuplicateShareIndexError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &DuplicateShareIndexError{},
@@ -255,9 +255,9 @@ func (e *ConfigValidationError) Error() string {
 	return e.Message
 }
 
-// NewConfigValidationError creates a DragonError for a configuration validation failure.
-func NewConfigValidationError(op, message string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewConfigValidationError creates a QBError for a configuration validation failure.
+func NewConfigValidationError(op, message string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrConfiguration,
 		Op:   op,
 		Err:  &ConfigValidationError{Message: message},
@@ -272,9 +272,9 @@ func (e *MasterKeyUnavailableError) Error() string {
 	return "master key not available"
 }
 
-// NewMasterKeyUnavailableError creates a DragonError for an unavailable master key.
-func NewMasterKeyUnavailableError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewMasterKeyUnavailableError creates a QBError for an unavailable master key.
+func NewMasterKeyUnavailableError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &MasterKeyUnavailableError{},
@@ -289,9 +289,9 @@ func (e *KeyMismatchError) Error() string {
 	return "provided shares do not reconstruct the correct master key"
 }
 
-// NewKeyMismatchError creates a DragonError for a key reconstruction mismatch.
-func NewKeyMismatchError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKeyMismatchError creates a QBError for a key reconstruction mismatch.
+func NewKeyMismatchError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnauthorized,
 		Op:   op,
 		Err:  &KeyMismatchError{},
@@ -308,9 +308,9 @@ func (e *InvalidSealModeError) Error() string {
 	return "invalid seal mode: " + e.Mode
 }
 
-// NewInvalidSealModeError creates a DragonError for an invalid seal mode.
-func NewInvalidSealModeError(op, mode string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewInvalidSealModeError creates a QBError for an invalid seal mode.
+func NewInvalidSealModeError(op, mode string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrConfiguration,
 		Op:   op,
 		Err:  &InvalidSealModeError{Mode: mode},
@@ -327,9 +327,9 @@ func (e *SealModeOnlyError) Error() string {
 	return "operation only available in " + e.RequiredMode + " mode"
 }
 
-// NewSealModeOnlyError creates a DragonError for an operation restricted to a specific mode.
-func NewSealModeOnlyError(op, requiredMode string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewSealModeOnlyError creates a QBError for an operation restricted to a specific mode.
+func NewSealModeOnlyError(op, requiredMode string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &SealModeOnlyError{RequiredMode: requiredMode},
@@ -344,9 +344,9 @@ func (e *BootstrapRequiredError) Error() string {
 	return "seal manager not initialized - bootstrap required"
 }
 
-// NewBootstrapRequiredError creates a DragonError when bootstrap is needed.
-func NewBootstrapRequiredError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewBootstrapRequiredError creates a QBError when bootstrap is needed.
+func NewBootstrapRequiredError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &BootstrapRequiredError{},
@@ -361,9 +361,9 @@ func (e *NoLocalShareError) Error() string {
 	return "no local share available"
 }
 
-// NewNoLocalShareError creates a DragonError for a missing local share.
-func NewNoLocalShareError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewNoLocalShareError creates a QBError for a missing local share.
+func NewNoLocalShareError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &NoLocalShareError{},
@@ -378,9 +378,9 @@ func (e *CoordinatorAlreadyStartedError) Error() string {
 	return "coordinator already started"
 }
 
-// NewCoordinatorAlreadyStartedError creates a DragonError for a coordinator that is already running.
-func NewCoordinatorAlreadyStartedError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewCoordinatorAlreadyStartedError creates a QBError for a coordinator that is already running.
+func NewCoordinatorAlreadyStartedError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &CoordinatorAlreadyStartedError{},
@@ -395,9 +395,9 @@ func (e *EmptySecretError) Error() string {
 	return "secret cannot be empty"
 }
 
-// NewEmptySecretError creates a DragonError for an empty secret.
-func NewEmptySecretError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewEmptySecretError creates a QBError for an empty secret.
+func NewEmptySecretError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &EmptySecretError{},
@@ -412,9 +412,9 @@ func (e *NoSharesProvidedError) Error() string {
 	return "no shares provided"
 }
 
-// NewNoSharesProvidedError creates a DragonError when no shares are given.
-func NewNoSharesProvidedError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewNoSharesProvidedError creates a QBError when no shares are given.
+func NewNoSharesProvidedError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &NoSharesProvidedError{},
@@ -429,9 +429,9 @@ func (e *SharesEmptyError) Error() string {
 	return "shares cannot be empty"
 }
 
-// NewSharesEmptyError creates a DragonError when shares are empty.
-func NewSharesEmptyError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewSharesEmptyError creates a QBError when shares are empty.
+func NewSharesEmptyError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &SharesEmptyError{},
@@ -450,9 +450,9 @@ func (e *InvalidStrategyError) Error() string {
 	return fmt.Sprintf("invalid %s: %s (allowed: %v)", e.Name, e.Strategy, e.Allowed)
 }
 
-// NewInvalidStrategyError creates a DragonError for an invalid strategy.
-func NewInvalidStrategyError(op, name, strategy string, allowed []string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewInvalidStrategyError creates a QBError for an invalid strategy.
+func NewInvalidStrategyError(op, name, strategy string, allowed []string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InvalidStrategyError{Name: name, Strategy: strategy, Allowed: allowed},
@@ -471,9 +471,9 @@ func (e *NoSealedKeyDataError) Error() string {
 	return "no sealed key data"
 }
 
-// NewNoSealedKeyDataError creates a DragonError for missing sealed key data.
-func NewNoSealedKeyDataError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewNoSealedKeyDataError creates a QBError for missing sealed key data.
+func NewNoSealedKeyDataError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &NoSealedKeyDataError{},
@@ -488,9 +488,9 @@ func (e *AutoUnsealRequirementsError) Error() string {
 	return "TPM and share stores are required for auto unseal"
 }
 
-// NewAutoUnsealRequirementsError creates a DragonError for missing auto unseal requirements.
-func NewAutoUnsealRequirementsError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewAutoUnsealRequirementsError creates a QBError for missing auto unseal requirements.
+func NewAutoUnsealRequirementsError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrPreconditionFailed,
 		Op:   op,
 		Err:  &AutoUnsealRequirementsError{},
@@ -507,9 +507,9 @@ func (e *TPMNotCompiledError) Error() string {
 	return "TPM support not compiled: build with -tags tpm to enable real TPM device at " + e.DevicePath
 }
 
-// NewTPMNotCompiledError creates a DragonError for a binary built without TPM support.
-func NewTPMNotCompiledError(op, devicePath string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMNotCompiledError creates a QBError for a binary built without TPM support.
+func NewTPMNotCompiledError(op, devicePath string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrConfiguration,
 		Op:   op,
 		Err:  &TPMNotCompiledError{DevicePath: devicePath},
@@ -528,9 +528,9 @@ func (e *TPMDeviceClosedError) Error() string {
 	return "TPM device is closed"
 }
 
-// NewTPMDeviceClosedError creates a DragonError when a TPM device is closed.
-func NewTPMDeviceClosedError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMDeviceClosedError creates a QBError when a TPM device is closed.
+func NewTPMDeviceClosedError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err:  &TPMDeviceClosedError{},
@@ -547,9 +547,9 @@ func (e *TPMCommandFailedError) Error() string {
 	return e.Command + " failed"
 }
 
-// NewTPMCommandFailedError creates a DragonError when a TPM command fails.
-func NewTPMCommandFailedError(op, command string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMCommandFailedError creates a QBError when a TPM command fails.
+func NewTPMCommandFailedError(op, command string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &TPMCommandFailedError{Command: command},
@@ -566,9 +566,9 @@ func (e *TPMHandleNotFoundError) Error() string {
 	return fmt.Sprintf("object not found at handle 0x%x", e.Handle)
 }
 
-// NewTPMHandleNotFoundError creates a DragonError when a TPM handle is not found.
-func NewTPMHandleNotFoundError(op string, handle uint32) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMHandleNotFoundError creates a QBError when a TPM handle is not found.
+func NewTPMHandleNotFoundError(op string, handle uint32) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   op,
 		Err:  &TPMHandleNotFoundError{Handle: handle},
@@ -585,9 +585,9 @@ func (e *TPMSessionNotFoundError) Error() string {
 	return fmt.Sprintf("session not found at handle 0x%x", e.Handle)
 }
 
-// NewTPMSessionNotFoundError creates a DragonError when a TPM session is not found.
-func NewTPMSessionNotFoundError(op string, handle uint32) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMSessionNotFoundError creates a QBError when a TPM session is not found.
+func NewTPMSessionNotFoundError(op string, handle uint32) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   op,
 		Err:  &TPMSessionNotFoundError{Handle: handle},
@@ -610,9 +610,9 @@ func (e *TPMCryptoError) Unwrap() error {
 	return e.Cause
 }
 
-// NewTPMCryptoError creates a DragonError for a TPM crypto operation failure.
-func NewTPMCryptoError(op, operation string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMCryptoError creates a QBError for a TPM crypto operation failure.
+func NewTPMCryptoError(op, operation string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrEncryption,
 		Op:   op,
 		Err:  &TPMCryptoError{Operation: operation, Cause: cause},
@@ -629,9 +629,9 @@ func (e *TPMEmptyDataError) Error() string {
 	return e.Field + " cannot be empty"
 }
 
-// NewTPMEmptyDataError creates a DragonError when TPM data is empty.
-func NewTPMEmptyDataError(op, field string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMEmptyDataError creates a QBError when TPM data is empty.
+func NewTPMEmptyDataError(op, field string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &TPMEmptyDataError{Field: field},
@@ -653,9 +653,9 @@ func (e *TPMInvalidSealedDataError) Unwrap() error {
 	return e.Cause
 }
 
-// NewTPMInvalidSealedDataError creates a DragonError for invalid sealed data.
-func NewTPMInvalidSealedDataError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMInvalidSealedDataError creates a QBError for invalid sealed data.
+func NewTPMInvalidSealedDataError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &TPMInvalidSealedDataError{Cause: cause},
@@ -677,9 +677,9 @@ func (e *TPMDecryptionError) Unwrap() error {
 	return e.Cause
 }
 
-// NewTPMDecryptionError creates a DragonError for a TPM decryption failure.
-func NewTPMDecryptionError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewTPMDecryptionError creates a QBError for a TPM decryption failure.
+func NewTPMDecryptionError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrDecryption,
 		Op:   op,
 		Err:  &TPMDecryptionError{Cause: cause},
@@ -694,9 +694,9 @@ func (e *SimulatedWriteError) Error() string {
 	return "simulated write error"
 }
 
-// NewSimulatedWriteError creates a DragonError for a simulated write failure.
-func NewSimulatedWriteError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewSimulatedWriteError creates a QBError for a simulated write failure.
+func NewSimulatedWriteError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &SimulatedWriteError{},
@@ -711,9 +711,9 @@ func (e *SimulatedReadError) Error() string {
 	return "simulated read error"
 }
 
-// NewSimulatedReadError creates a DragonError for a simulated read failure.
-func NewSimulatedReadError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewSimulatedReadError creates a QBError for a simulated read failure.
+func NewSimulatedReadError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &SimulatedReadError{},
@@ -728,9 +728,9 @@ func (e *CacheMissError) Error() string {
 	return "cache miss"
 }
 
-// NewCacheMissError creates a DragonError for a cache miss.
-func NewCacheMissError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewCacheMissError creates a QBError for a cache miss.
+func NewCacheMissError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   op,
 		Err:  &CacheMissError{},

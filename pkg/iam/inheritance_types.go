@@ -24,35 +24,35 @@ import (
 // Inheritance-specific error types.
 var (
 	// ErrHierarchyNotFound is returned when a hierarchy relationship is not found.
-	ErrHierarchyNotFound = &dberrors.DragonError{
+	ErrHierarchyNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.inheritance.hierarchy",
 		Err:  &IAMMessageError{Message: "hierarchy relationship not found"},
 	}
 
 	// ErrHierarchyAlreadyExists is returned when attempting to create a duplicate hierarchy.
-	ErrHierarchyAlreadyExists = &dberrors.DragonError{
+	ErrHierarchyAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.inheritance.hierarchy",
 		Err:  &IAMMessageError{Message: "hierarchy relationship already exists"},
 	}
 
 	// ErrHierarchyCycle is returned when a hierarchy operation would create a cycle.
-	ErrHierarchyCycle = &dberrors.DragonError{
+	ErrHierarchyCycle = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.inheritance.hierarchy",
 		Err:  &IAMMessageError{Message: "hierarchy cycle detected"},
 	}
 
 	// ErrHierarchyInvalid is returned when hierarchy validation fails.
-	ErrHierarchyInvalid = &dberrors.DragonError{
+	ErrHierarchyInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.inheritance.hierarchy",
 		Err:  &IAMMessageError{Message: "invalid hierarchy relationship"},
 	}
 
 	// ErrEffectivePermissionsNotFound is returned when cached permissions are not found.
-	ErrEffectivePermissionsNotFound = &dberrors.DragonError{
+	ErrEffectivePermissionsNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.inheritance.permissions",
 		Err:  &IAMMessageError{Message: "effective permissions not found"},

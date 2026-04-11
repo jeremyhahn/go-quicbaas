@@ -163,7 +163,7 @@ func (m *mockDynamicSecretsService) ListLeases(ctx context.Context, req *service
 type errorDynamicSecretsService struct{}
 
 func (e *errorDynamicSecretsService) CreateRole(ctx context.Context, req *service.CreateRoleRequest) (*service.CreateRoleResponse, error) {
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "DynamicSecretsService.CreateRole",
 		Err:  errServiceError,
@@ -171,7 +171,7 @@ func (e *errorDynamicSecretsService) CreateRole(ctx context.Context, req *servic
 }
 
 func (e *errorDynamicSecretsService) GetRole(ctx context.Context, req *service.GetRoleRequest) (*service.GetRoleResponse, error) {
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "DynamicSecretsService.GetRole",
 		Err:  errServiceError,
@@ -179,7 +179,7 @@ func (e *errorDynamicSecretsService) GetRole(ctx context.Context, req *service.G
 }
 
 func (e *errorDynamicSecretsService) ListRoles(ctx context.Context, req *service.ListRolesRequest) (*service.ListRolesResponse, error) {
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "DynamicSecretsService.ListRoles",
 		Err:  errServiceError,
@@ -187,7 +187,7 @@ func (e *errorDynamicSecretsService) ListRoles(ctx context.Context, req *service
 }
 
 func (e *errorDynamicSecretsService) DeleteRole(ctx context.Context, req *service.DeleteRoleRequest) (*service.DeleteRoleResponse, error) {
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "DynamicSecretsService.DeleteRole",
 		Err:  errServiceError,
@@ -195,7 +195,7 @@ func (e *errorDynamicSecretsService) DeleteRole(ctx context.Context, req *servic
 }
 
 func (e *errorDynamicSecretsService) GenerateCredential(ctx context.Context, req *service.GenerateCredentialRequest) (*service.GenerateCredentialResponse, error) {
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "DynamicSecretsService.GenerateCredential",
 		Err:  errServiceError,
@@ -203,7 +203,7 @@ func (e *errorDynamicSecretsService) GenerateCredential(ctx context.Context, req
 }
 
 func (e *errorDynamicSecretsService) RenewLease(ctx context.Context, req *service.RenewLeaseRequest) (*service.RenewLeaseResponse, error) {
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "DynamicSecretsService.RenewLease",
 		Err:  errServiceError,
@@ -211,7 +211,7 @@ func (e *errorDynamicSecretsService) RenewLease(ctx context.Context, req *servic
 }
 
 func (e *errorDynamicSecretsService) RevokeLease(ctx context.Context, req *service.RevokeLeaseRequest) (*service.RevokeLeaseResponse, error) {
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "DynamicSecretsService.RevokeLease",
 		Err:  errServiceError,
@@ -219,7 +219,7 @@ func (e *errorDynamicSecretsService) RevokeLease(ctx context.Context, req *servi
 }
 
 func (e *errorDynamicSecretsService) ListLeases(ctx context.Context, req *service.ListLeasesRequest) (*service.ListLeasesResponse, error) {
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "DynamicSecretsService.ListLeases",
 		Err:  errServiceError,
@@ -230,7 +230,7 @@ func (e *errorDynamicSecretsService) ListLeases(ctx context.Context, req *servic
 // Helper Functions
 // =============================================================================
 
-var errServiceError = &errors.DragonError{
+var errServiceError = &errors.QBError{
 	Code: errors.ErrInternal,
 	Op:   "test",
 	Err:  nil,

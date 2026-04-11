@@ -36,7 +36,7 @@ func (s *Server) initVectorStorage() error {
 
 	// Validate vector configuration
 	if err := s.config.Vector.Validate(); err != nil {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrConfiguration,
 			Op:   "server.initVectorStorage",
 			Err:  &ServerCauseError{Message: "invalid vector configuration", Cause: err},
@@ -52,7 +52,7 @@ func (s *Server) initVectorStorage() error {
 	// Open PebbleDB vector storage
 	pebbleStorage, err := xkmssdk.QRDBNewPebbleVectorStorage(storageConfig, qrdbLogger)
 	if err != nil {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrInternal,
 			Op:   "server.initVectorStorage",
 			Err:  &ServerCauseError{Message: "failed to open vector storage", Cause: err},
@@ -99,7 +99,7 @@ func (s *Server) startVector() error {
 	// Create the vector service with storage and options
 	vectorSvc, err := service.NewVectorService(s.vectorStorage, logAdapter, opts...)
 	if err != nil {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrInternal,
 			Op:   "server.startVector",
 			Err:  &ServerCauseError{Message: "failed to create vector service", Cause: err},

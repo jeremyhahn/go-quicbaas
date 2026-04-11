@@ -95,7 +95,7 @@ func (p *PebbleKVStore) Put(_ context.Context, key string, value []byte) error {
 }
 
 // Get retrieves a value by key from PebbleDB.
-// Returns DragonError with ErrNotFound when the key does not exist.
+// Returns QBError with ErrNotFound when the key does not exist.
 func (p *PebbleKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	if p.closed.Load() {
 		return nil, &PebbleKVStoreError{Op: "get", Err: ErrServerNotRunning}
@@ -105,7 +105,7 @@ func (p *PebbleKVStore) Get(_ context.Context, key string) ([]byte, error) {
 		return nil, &PebbleKVStoreError{Op: "get", Err: err}
 	}
 	if data == nil {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "kv.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "kv.get"}
 	}
 	return data, nil
 }

@@ -117,12 +117,12 @@ func TestResolverRegistry_Resolve_NilContext(t *testing.T) {
 		t.Fatal("Expected error for nil context")
 	}
 
-	var dragonErr *errors.DragonError
-	if !stderrors.As(err, &dragonErr) {
-		t.Fatalf("Expected DragonError, got %T", err)
+	var qbErr *errors.QBError
+	if !stderrors.As(err, &qbErr) {
+		t.Fatalf("Expected QBError, got %T", err)
 	}
-	if dragonErr.Code != errors.ErrInvalidInput {
-		t.Errorf("Expected ErrInvalidInput, got %v", dragonErr.Code)
+	if qbErr.Code != errors.ErrInvalidInput {
+		t.Errorf("Expected ErrInvalidInput, got %v", qbErr.Code)
 	}
 }
 
@@ -197,15 +197,15 @@ func TestResolverRegistry_Resolve_ResolverError(t *testing.T) {
 		t.Fatal("Expected error")
 	}
 
-	var dragonErr *errors.DragonError
-	if !stderrors.As(err, &dragonErr) {
-		t.Fatalf("Expected DragonError, got %T", err)
+	var qbErr *errors.QBError
+	if !stderrors.As(err, &qbErr) {
+		t.Fatalf("Expected QBError, got %T", err)
 	}
-	if dragonErr.Code != errors.ErrConfiguration {
-		t.Errorf("Expected ErrConfiguration, got %v", dragonErr.Code)
+	if qbErr.Code != errors.ErrConfiguration {
+		t.Errorf("Expected ErrConfiguration, got %v", qbErr.Code)
 	}
-	if dragonErr.Context["scheme"] != "test" {
-		t.Errorf("Expected scheme 'test' in context, got %v", dragonErr.Context["scheme"])
+	if qbErr.Context["scheme"] != "test" {
+		t.Errorf("Expected scheme 'test' in context, got %v", qbErr.Context["scheme"])
 	}
 }
 

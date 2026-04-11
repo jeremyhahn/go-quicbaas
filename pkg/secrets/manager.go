@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/lock"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -48,7 +48,7 @@ type Manager struct {
 	// process embedded test deployments. Cluster setups MUST pass a
 	// non-nil locker via ManagerOptions.Locker or EnsureSecret calls
 	// will race between replicas.
-	locker lock.Locker
+	locker qrdbsdk.Locker
 
 	// ensureMu protects the process-local fallback path inside
 	// EnsureSecret. Keyed by secret path. Only used when locker == nil.
@@ -68,13 +68,13 @@ type ManagerOptions struct {
 	// and cluster nodes. Strongly recommended in production. May be nil
 	// in single-process embedded deployments (e.g. unit tests); see the
 	// Manager.locker field docs for the consequences.
-	Locker lock.Locker
+	Locker qrdbsdk.Locker
 }
 
 // NewManager creates a new secrets Manager with the specified options.
 func NewManager(opts *ManagerOptions) (*Manager, error) {
 	if opts == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.NewManager",
 			Err:  stderrors.New("options cannot be nil"),
@@ -82,7 +82,7 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 	}
 
 	if opts.Backend == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "secrets.NewManager",
 			Err:  stderrors.New("backend cannot be nil"),
@@ -111,7 +111,7 @@ const ensureLockTTL = 10 * time.Second
 // Store saves a secret at the specified path.
 func (m *Manager) Store(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) error {
 	if path == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.Store",
 			Err:  ErrInvalidPath,
@@ -119,7 +119,7 @@ func (m *Manager) Store(ctx context.Context, path string, data map[string][]byte
 	}
 
 	if len(data) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.Store",
 			Err:  ErrEmptyData,
@@ -127,7 +127,7 @@ func (m *Manager) Store(ctx context.Context, path string, data map[string][]byte
 	}
 
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.Store",
 			Err:  ctx.Err(),
@@ -135,7 +135,7 @@ func (m *Manager) Store(ctx context.Context, path string, data map[string][]byte
 	}
 
 	if err := m.backend.Store(ctx, path, data, metadata); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.Store",
 			Err:  err,
@@ -158,7 +158,7 @@ type BackendWithOptions interface {
 // If opts.TenantID is empty, it will be auto-populated from the context.
 func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *interfaces.StoreOptions) error {
 	if path == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.StoreWithOptions",
 			Err:  ErrInvalidPath,
@@ -166,7 +166,7 @@ func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[st
 	}
 
 	if len(data) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.StoreWithOptions",
 			Err:  ErrEmptyData,
@@ -174,7 +174,7 @@ func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[st
 	}
 
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.StoreWithOptions",
 			Err:  ctx.Err(),
@@ -188,7 +188,7 @@ func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[st
 	if backendWithOpts, ok := m.backend.(BackendWithOptions); ok {
 		// Backend supports options, use it
 		if err := backendWithOpts.StoreWithOptions(ctx, path, data, metadata, opts); err != nil {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "Manager.StoreWithOptions",
 				Err:  err,
@@ -223,7 +223,7 @@ func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[st
 	}
 
 	if err := m.backend.Store(ctx, path, data, metadata); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.StoreWithOptions",
 			Err:  err,
@@ -240,7 +240,7 @@ func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[st
 // Get retrieves a secret from the specified path.
 func (m *Manager) Get(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
 	if path == "" {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.Get",
 			Err:  ErrInvalidPath,
@@ -248,7 +248,7 @@ func (m *Manager) Get(ctx context.Context, path string) (map[string][]byte, map[
 	}
 
 	if ctx.Err() != nil {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.Get",
 			Err:  ctx.Err(),
@@ -258,20 +258,20 @@ func (m *Manager) Get(ctx context.Context, path string) (map[string][]byte, map[
 	data, metadata, err := m.backend.Get(ctx, path)
 	if err != nil {
 		if stderrors.Is(err, ErrSecretNotFound) {
-			return nil, nil, &errors.DragonError{
+			return nil, nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "Manager.Get",
 				Err:  err,
 			}
 		}
 		if stderrors.Is(err, ErrSecretDeleted) {
-			return nil, nil, &errors.DragonError{
+			return nil, nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "Manager.Get",
 				Err:  err,
 			}
 		}
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.Get",
 			Err:  err,
@@ -284,7 +284,7 @@ func (m *Manager) Get(ctx context.Context, path string) (map[string][]byte, map[
 // GetVersion retrieves a specific version of a secret.
 func (m *Manager) GetVersion(ctx context.Context, path string, version int) (map[string][]byte, map[string]string, error) {
 	if path == "" {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.GetVersion",
 			Err:  ErrInvalidPath,
@@ -292,7 +292,7 @@ func (m *Manager) GetVersion(ctx context.Context, path string, version int) (map
 	}
 
 	if version < 1 {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.GetVersion",
 			Err:  ErrVersionMustBePositive,
@@ -300,7 +300,7 @@ func (m *Manager) GetVersion(ctx context.Context, path string, version int) (map
 	}
 
 	if ctx.Err() != nil {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.GetVersion",
 			Err:  ctx.Err(),
@@ -310,13 +310,13 @@ func (m *Manager) GetVersion(ctx context.Context, path string, version int) (map
 	data, metadata, err := m.backend.GetVersion(ctx, path, version)
 	if err != nil {
 		if stderrors.Is(err, ErrSecretNotFound) || stderrors.Is(err, ErrVersionNotFound) {
-			return nil, nil, &errors.DragonError{
+			return nil, nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "Manager.GetVersion",
 				Err:  err,
 			}
 		}
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.GetVersion",
 			Err:  err,
@@ -329,7 +329,7 @@ func (m *Manager) GetVersion(ctx context.Context, path string, version int) (map
 // List returns all secret paths matching the prefix.
 func (m *Manager) List(ctx context.Context, prefix string) ([]string, error) {
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.List",
 			Err:  ctx.Err(),
@@ -338,7 +338,7 @@ func (m *Manager) List(ctx context.Context, prefix string) ([]string, error) {
 
 	paths, err := m.backend.List(ctx, prefix)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.List",
 			Err:  err,
@@ -351,7 +351,7 @@ func (m *Manager) List(ctx context.Context, prefix string) ([]string, error) {
 // Delete removes a secret (soft delete, keeps versions).
 func (m *Manager) Delete(ctx context.Context, path string) error {
 	if path == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.Delete",
 			Err:  ErrInvalidPath,
@@ -359,7 +359,7 @@ func (m *Manager) Delete(ctx context.Context, path string) error {
 	}
 
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.Delete",
 			Err:  ctx.Err(),
@@ -368,13 +368,13 @@ func (m *Manager) Delete(ctx context.Context, path string) error {
 
 	if err := m.backend.Delete(ctx, path); err != nil {
 		if stderrors.Is(err, ErrSecretNotFound) {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "Manager.Delete",
 				Err:  err,
 			}
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.Delete",
 			Err:  err,
@@ -391,7 +391,7 @@ func (m *Manager) Delete(ctx context.Context, path string) error {
 // Destroy permanently removes all versions of a secret.
 func (m *Manager) Destroy(ctx context.Context, path string) error {
 	if path == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.Destroy",
 			Err:  ErrInvalidPath,
@@ -399,7 +399,7 @@ func (m *Manager) Destroy(ctx context.Context, path string) error {
 	}
 
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.Destroy",
 			Err:  ctx.Err(),
@@ -408,13 +408,13 @@ func (m *Manager) Destroy(ctx context.Context, path string) error {
 
 	if err := m.backend.Destroy(ctx, path); err != nil {
 		if stderrors.Is(err, ErrSecretNotFound) {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "Manager.Destroy",
 				Err:  err,
 			}
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.Destroy",
 			Err:  err,
@@ -431,7 +431,7 @@ func (m *Manager) Destroy(ctx context.Context, path string) error {
 // ListVersions returns metadata for all versions of a secret.
 func (m *Manager) ListVersions(ctx context.Context, path string) ([]*interfaces.SecretVersionMetadata, error) {
 	if path == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.ListVersions",
 			Err:  ErrInvalidPath,
@@ -439,7 +439,7 @@ func (m *Manager) ListVersions(ctx context.Context, path string) ([]*interfaces.
 	}
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.ListVersions",
 			Err:  ctx.Err(),
@@ -449,13 +449,13 @@ func (m *Manager) ListVersions(ctx context.Context, path string) ([]*interfaces.
 	versions, err := m.backend.ListVersions(ctx, path)
 	if err != nil {
 		if stderrors.Is(err, ErrSecretNotFound) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "Manager.ListVersions",
 				Err:  err,
 			}
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.ListVersions",
 			Err:  err,
@@ -479,7 +479,7 @@ func (m *Manager) ListVersions(ctx context.Context, path string) ([]*interfaces.
 // Rollback restores a previous version as the current version.
 func (m *Manager) Rollback(ctx context.Context, path string, version int) error {
 	if path == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.Rollback",
 			Err:  ErrInvalidPath,
@@ -487,7 +487,7 @@ func (m *Manager) Rollback(ctx context.Context, path string, version int) error 
 	}
 
 	if version < 1 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.Rollback",
 			Err:  ErrVersionMustBePositive,
@@ -495,7 +495,7 @@ func (m *Manager) Rollback(ctx context.Context, path string, version int) error 
 	}
 
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.Rollback",
 			Err:  ctx.Err(),
@@ -504,13 +504,13 @@ func (m *Manager) Rollback(ctx context.Context, path string, version int) error 
 
 	if err := m.backend.Rollback(ctx, path, version); err != nil {
 		if stderrors.Is(err, ErrSecretNotFound) || stderrors.Is(err, ErrVersionNotFound) {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "Manager.Rollback",
 				Err:  err,
 			}
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.Rollback",
 			Err:  err,
@@ -539,7 +539,7 @@ func (m *Manager) Close() error {
 	}
 
 	if err := m.backend.Close(); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.Close",
 			Err:  &SecretsSentinelCauseError{Sentinel: ErrCloseBackendFailed, Cause: err},
@@ -641,21 +641,21 @@ func (m *Manager) TenantIDFromContext(ctx context.Context) string {
 // raw encoding these are binary bytes).
 func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpec) (data []byte, generated bool, err error) {
 	if path == "" {
-		return nil, false, &errors.DragonError{
+		return nil, false, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.EnsureSecret",
 			Err:  ErrInvalidPath,
 		}
 	}
 	if specErr := spec.Validate(); specErr != nil {
-		return nil, false, &errors.DragonError{
+		return nil, false, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Manager.EnsureSecret",
 			Err:  specErr,
 		}
 	}
 	if ctx.Err() != nil {
-		return nil, false, &errors.DragonError{
+		return nil, false, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.EnsureSecret",
 			Err:  ctx.Err(),
@@ -666,7 +666,7 @@ func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpe
 	// local mutex is a last-resort fallback for embedded callers.
 	release, lockErr := m.acquireEnsureLock(ctx, path)
 	if lockErr != nil {
-		return nil, false, &errors.DragonError{
+		return nil, false, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.EnsureSecret",
 			Err:  lockErr,
@@ -683,14 +683,14 @@ func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpe
 	if getErr == nil {
 		storedSpec, metaErr := specFromMetadata(metadata)
 		if metaErr != nil {
-			return nil, false, &errors.DragonError{
+			return nil, false, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "Manager.EnsureSecret",
 				Err:  metaErr,
 			}
 		}
 		if storedSpec == nil {
-			return nil, false, &errors.DragonError{
+			return nil, false, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "Manager.EnsureSecret",
 				Err: stderrors.New(
@@ -700,7 +700,7 @@ func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpe
 			}
 		}
 		if !storedSpec.Equal(spec) {
-			return nil, false, &errors.DragonError{
+			return nil, false, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "Manager.EnsureSecret",
 				Err: stderrors.Join(
@@ -711,7 +711,7 @@ func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpe
 		}
 		value, ok := storedData[EnsureSecretDataKey]
 		if !ok {
-			return nil, false, &errors.DragonError{
+			return nil, false, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "Manager.EnsureSecret",
 				Err: stderrors.New(
@@ -727,7 +727,7 @@ func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpe
 
 	// Any error other than NotFound / Deleted is fatal.
 	if !stderrors.Is(getErr, ErrSecretNotFound) && !stderrors.Is(getErr, ErrSecretDeleted) {
-		return nil, false, &errors.DragonError{
+		return nil, false, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.EnsureSecret",
 			Err:  getErr,
@@ -737,7 +737,7 @@ func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpe
 	// Generate a fresh value per spec and persist.
 	freshBytes, genErr := spec.Generate()
 	if genErr != nil {
-		return nil, false, &errors.DragonError{
+		return nil, false, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.EnsureSecret",
 			Err:  genErr,
@@ -754,7 +754,7 @@ func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpe
 		for i := range freshBytes {
 			freshBytes[i] = 0
 		}
-		return nil, false, &errors.DragonError{
+		return nil, false, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Manager.EnsureSecret",
 			Err:  storeErr,
@@ -780,7 +780,7 @@ func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpe
 func (m *Manager) acquireEnsureLock(ctx context.Context, path string) (func(), error) {
 	if m.locker != nil {
 		lockKey := "secrets/ensure/" + path
-		acquired, err := m.locker.Lock(ctx, lock.LockOptions{
+		acquired, err := m.locker.Lock(ctx, qrdbsdk.LockOptions{
 			Key: lockKey,
 			TTL: ensureLockTTL,
 		})

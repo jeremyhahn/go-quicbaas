@@ -40,7 +40,7 @@ func (s *Server) initTimeSeriesStorage() error {
 	// Create PebbleDB-backed time series storage
 	storage, err := xkmssdk.QRDBNewTimeSeriesStorageWithDir(dataDir)
 	if err != nil {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrInternal,
 			Op:   "server.initTimeSeriesStorage",
 			Err:  &ServerCauseError{Message: "failed to open time series storage", Cause: err},
@@ -79,7 +79,7 @@ func (s *Server) stopTimeSeries() error {
 	if ok {
 		if err := adapter.storage.Close(); err != nil {
 			s.timeSeriesStorage = nil
-			return &dragonerrors.DragonError{
+			return &dragonerrors.QBError{
 				Code: dragonerrors.ErrInternal,
 				Op:   "server.stopTimeSeries",
 				Err:  &ServerCauseError{Message: "failed to close time series storage", Cause: err},

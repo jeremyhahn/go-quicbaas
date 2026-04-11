@@ -171,13 +171,13 @@ type IsRevokedResponse struct {
 
 // Typed sentinel errors for certificate service operations.
 var (
-	ErrCertNilRequest        = &errors.DragonError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertNilRequest}
-	ErrCertMissingCommonName = &errors.DragonError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertMissingCommonName}
-	ErrCertMissingCSR        = &errors.DragonError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertMissingCSR}
-	ErrCertMissingSerial     = &errors.DragonError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertMissingSerial}
-	ErrCertMissingPEM        = &errors.DragonError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertMissingPEM}
-	ErrCertInvalidPEM        = &errors.DragonError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertInvalidPEM}
-	ErrCertParseFailed       = &errors.DragonError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertParseFailed}
+	ErrCertNilRequest        = &errors.QBError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertNilRequest}
+	ErrCertMissingCommonName = &errors.QBError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertMissingCommonName}
+	ErrCertMissingCSR        = &errors.QBError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertMissingCSR}
+	ErrCertMissingSerial     = &errors.QBError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertMissingSerial}
+	ErrCertMissingPEM        = &errors.QBError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertMissingPEM}
+	ErrCertInvalidPEM        = &errors.QBError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertInvalidPEM}
+	ErrCertParseFailed       = &errors.QBError{Code: errors.ErrInvalidInput, Op: "CertificateService", Err: errCertParseFailed}
 )
 
 var (
@@ -228,7 +228,7 @@ func (s *certificateService) IssueCertificate(ctx context.Context, req *IssueCer
 
 	resp, err := s.caService.IssueCertificate(ctx, xkmsReq)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.IssueCertificate",
 			Err:  err,
@@ -262,7 +262,7 @@ func (s *certificateService) SignCSR(ctx context.Context, req *SignCSRRequest) (
 
 	resp, err := s.caService.SignCSR(ctx, xkmsReq)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.SignCSR",
 			Err:  err,
@@ -292,7 +292,7 @@ func (s *certificateService) RevokeCertificate(ctx context.Context, req *RevokeC
 
 	resp, err := s.caService.RevokeCertificate(ctx, xkmsReq)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.RevokeCertificate",
 			Err:  err,
@@ -385,7 +385,7 @@ func (s *certificateService) GetCACertificate(ctx context.Context, req *GetCACer
 
 	caResp, err := s.caService.GetCACertificate(ctx, &xkmstransport.GetCACertificateRequest{})
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.GetCACertificate",
 			Err:  err,
@@ -394,7 +394,7 @@ func (s *certificateService) GetCACertificate(ctx context.Context, req *GetCACer
 
 	bundleResp, err := s.caService.GetCABundle(ctx, &xkmstransport.GetCABundleRequest{})
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.GetCACertificate",
 			Err:  err,
@@ -419,7 +419,7 @@ func (s *certificateService) GetTLSConfig(ctx context.Context, req *GetTLSConfig
 
 	caResp, err := s.caService.GetCACertificate(ctx, &xkmstransport.GetCACertificateRequest{})
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.GetTLSConfig",
 			Err:  err,
@@ -428,7 +428,7 @@ func (s *certificateService) GetTLSConfig(ctx context.Context, req *GetTLSConfig
 
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(caResp.CertificatePEM) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.GetTLSConfig",
 			Err:  errCertInvalidPEM,
@@ -480,7 +480,7 @@ func (s *certificateService) GetCABundle(ctx context.Context, req *GetCABundleRe
 
 	resp, err := s.caService.GetCABundle(ctx, xkmsReq)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.GetCABundle",
 			Err:  err,
@@ -499,7 +499,7 @@ func (s *certificateService) GenerateCRL(ctx context.Context, req *GenerateCRLRe
 
 	resp, err := s.caService.GenerateCRL(ctx, &xkmstransport.GenerateCRLRequest{})
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.GenerateCRL",
 			Err:  err,
@@ -524,7 +524,7 @@ func (s *certificateService) IsRevoked(ctx context.Context, req *IsRevokedReques
 		SerialNumber: req.SerialNumber,
 	})
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CertificateService.IsRevoked",
 			Err:  err,

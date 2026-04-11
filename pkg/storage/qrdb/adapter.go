@@ -15,23 +15,23 @@ package qrdb
 
 import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	dragonStorage "github.com/jeremyhahn/go-quicbaas/pkg/storage"
+	qbStorage "github.com/jeremyhahn/go-quicbaas/pkg/storage"
 )
 
 // StorageAdapter wraps a quicbaas storage.Storage and translates
 // not-found errors to (nil, nil) per the qrdb SDK storage contract.
 type StorageAdapter struct {
-	inner dragonStorage.Storage
+	inner qbStorage.Storage
 }
 
 // NewStorageAdapter creates a StorageAdapter that delegates all
 // operations to the provided quicbaas Storage.
-func NewStorageAdapter(s dragonStorage.Storage) *StorageAdapter {
+func NewStorageAdapter(s qbStorage.Storage) *StorageAdapter {
 	return &StorageAdapter{inner: s}
 }
 
 // Get retrieves a value by key. quicbaas's PebbleDB returns a typed
-// DragonError with ErrNotFound for missing keys, but the SDK storage
+// QBError with ErrNotFound for missing keys, but the SDK storage
 // contract expects (nil, nil). The adapter translates accordingly.
 func (a *StorageAdapter) Get(key []byte) ([]byte, error) {
 	val, err := a.inner.Get(key)
@@ -62,17 +62,17 @@ func (a *StorageAdapter) List(prefix []byte) ([][]byte, error) {
 }
 
 // Batch creates a new batch operation.
-func (a *StorageAdapter) Batch() dragonStorage.Batch {
+func (a *StorageAdapter) Batch() qbStorage.Batch {
 	return a.inner.Batch()
 }
 
 // NewIterator creates a new iterator with the given options.
-func (a *StorageAdapter) NewIterator(opts *dragonStorage.IteratorOptions) dragonStorage.Iterator {
+func (a *StorageAdapter) NewIterator(opts *qbStorage.IteratorOptions) qbStorage.Iterator {
 	return a.inner.NewIterator(opts)
 }
 
 // Snapshot creates a read-only snapshot of the storage.
-func (a *StorageAdapter) Snapshot() (dragonStorage.Snapshot, error) {
+func (a *StorageAdapter) Snapshot() (qbStorage.Snapshot, error) {
 	return a.inner.Snapshot()
 }
 
@@ -82,4 +82,4 @@ func (a *StorageAdapter) Close() error {
 }
 
 // Compile-time assertion.
-var _ dragonStorage.Storage = (*StorageAdapter)(nil)
+var _ qbStorage.Storage = (*StorageAdapter)(nil)

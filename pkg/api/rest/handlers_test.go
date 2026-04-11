@@ -910,7 +910,7 @@ func TestHandleServiceError(t *testing.T) {
 	}{
 		{
 			name: "not found error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "test",
 				Err:  &errors.MessageError{Message: "entity not found"},
@@ -925,7 +925,7 @@ func TestHandleServiceError(t *testing.T) {
 		},
 		{
 			name: "leader not available error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrLeaderNotAvailable,
 				Op:   "test",
 				Err:  &errors.MessageError{Message: "leader not available"},
@@ -940,7 +940,7 @@ func TestHandleServiceError(t *testing.T) {
 		},
 		{
 			name: "timeout error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrTimeout,
 				Op:   "test",
 				Err:  &errors.MessageError{Message: "operation timed out"},
@@ -949,7 +949,7 @@ func TestHandleServiceError(t *testing.T) {
 		},
 		{
 			name: "generic dragon error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "test",
 				Err:  &errors.MessageError{Message: "internal error"},
@@ -1178,7 +1178,7 @@ func TestHandleBatchPut(t *testing.T) {
 
 		mockService.ExpectedCalls = nil
 		mockService.On("BatchPut", mock.Anything, mock.Anything).Return(nil,
-			&errors.DragonError{Code: errors.ErrRaft, Op: "test", Err: &errors.MessageError{Message: "raft error"}}).Once()
+			&errors.QBError{Code: errors.ErrRaft, Op: "test", Err: &errors.MessageError{Message: "raft error"}}).Once()
 
 		batchReq := BatchPutRequest{
 			Operations: []BatchPutOperation{
@@ -1348,7 +1348,7 @@ func TestHandleBatchDelete(t *testing.T) {
 
 		mockService.ExpectedCalls = nil
 		mockService.On("BatchDelete", mock.Anything, mock.Anything).Return(nil,
-			&errors.DragonError{Code: errors.ErrRaft, Op: "test", Err: &errors.MessageError{Message: "raft error"}}).Once()
+			&errors.QBError{Code: errors.ErrRaft, Op: "test", Err: &errors.MessageError{Message: "raft error"}}).Once()
 
 		batchReq := BatchDeleteRequest{
 			Operations: []BatchDeleteOperation{
@@ -1528,7 +1528,7 @@ func TestHandleListEntityTypes(t *testing.T) {
 
 	t.Run("service error", func(t *testing.T) {
 		mockService.ExpectedCalls = nil
-		mockService.On("ListEntityTypes", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+		mockService.On("ListEntityTypes", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "test",
 			Err:  &errors.MessageError{Message: "internal error"},
@@ -1578,7 +1578,7 @@ func TestCov91_HandleSetKeySafety_ServiceError(t *testing.T) {
 
 	mockService.MockKMSService = &mocks.MockKMSService{
 		SetKeySafetyFunc: func(ctx context.Context, req *service.SetKeySafetyRequest) (*service.SetKeySafetyResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("safety error")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("safety error")}
 		},
 	}
 
@@ -1622,7 +1622,7 @@ func TestCov91_HandleClearKeySafety_ServiceError(t *testing.T) {
 
 	mockService.MockKMSService = &mocks.MockKMSService{
 		ClearKeySafetyFunc: func(ctx context.Context, req *service.ClearKeySafetyRequest) (*service.ClearKeySafetyResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("clear error")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("clear error")}
 		},
 	}
 
@@ -1667,7 +1667,7 @@ func TestCov91_HandleSafetyCheck_ServiceError(t *testing.T) {
 
 	mockService.MockKMSService = &mocks.MockKMSService{
 		SafetyCheckFunc: func(ctx context.Context, req *service.SafetyCheckRequest) (*service.SafetyCheckResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("check error")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("check error")}
 		},
 	}
 
@@ -1715,7 +1715,7 @@ func TestCov91_HandleSafetyReport_ServiceError(t *testing.T) {
 
 	mockService.MockKMSService = &mocks.MockKMSService{
 		SafetyReportFunc: func(ctx context.Context, req *service.SafetyReportRequest) (*service.SafetyReportResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("report error")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("report error")}
 		},
 	}
 
@@ -1757,7 +1757,7 @@ func TestCov91_HandleSetKeyPolicy_ServiceError(t *testing.T) {
 
 	mockService.MockKMSService = &mocks.MockKMSService{
 		SetKeyPolicyFunc: func(ctx context.Context, req *service.SetKeyPolicyRequest) (*service.SetKeyPolicyResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("policy error")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("policy error")}
 		},
 	}
 
@@ -1878,7 +1878,7 @@ func TestCov91_HandleKVPut_ServiceError_Conflict(t *testing.T) {
 	defer cleanup()
 
 	mockService.PutFunc = func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrConflict, Op: "Put", Err: stderrors.New("version conflict")}
+		return nil, &errors.QBError{Code: errors.ErrConflict, Op: "Put", Err: stderrors.New("version conflict")}
 	}
 
 	body := `{"value": "test"}`
@@ -1898,7 +1898,7 @@ func TestCov91_HandleKVDelete_ServiceError_Internal(t *testing.T) {
 	defer cleanup()
 
 	mockService.DeleteFunc = func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "Delete", Err: stderrors.New("internal")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "Delete", Err: stderrors.New("internal")}
 	}
 
 	rctx := chi.NewRouteContext()
@@ -1917,7 +1917,7 @@ func TestCov91_HandleRangeQuery_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.ScanIndexFunc = func(ctx context.Context, req *service.ScanRequest, stream chan<- *service.ScanResponse) error {
-		return &errors.DragonError{Code: errors.ErrInternal, Op: "ScanIndex", Err: stderrors.New("range error")}
+		return &errors.QBError{Code: errors.ErrInternal, Op: "ScanIndex", Err: stderrors.New("range error")}
 	}
 
 	body := `{"entity_type":"users","start":"a","end":"z"}`
@@ -2081,7 +2081,7 @@ func TestCov91_HandleReplaceNode_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.ClusterStatusFunc = func(ctx context.Context, req *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "ClusterStatus", Err: stderrors.New("cluster error")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "ClusterStatus", Err: stderrors.New("cluster error")}
 	}
 
 	rctx := chi.NewRouteContext()
@@ -3165,7 +3165,7 @@ func TestHandleGetParametersBatch_ServiceErrors(t *testing.T) {
 		defer cleanup()
 
 		mockParamService.On("GetParameters", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.DragonError{
+			nil, &dragonerrors.QBError{
 				Code: dragonerrors.ErrInternal,
 				Op:   "GetParameters",
 				Err:  stderrors.New("database connection failed"),
@@ -3205,7 +3205,7 @@ func TestHandleSetParametersBatch_ServiceErrors(t *testing.T) {
 		defer cleanup()
 
 		mockParamService.On("SetParameters", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.DragonError{
+			nil, &dragonerrors.QBError{
 				Code: dragonerrors.ErrInternal,
 				Op:   "SetParameters",
 				Err:  stderrors.New("storage full"),
@@ -3244,7 +3244,7 @@ func TestHandleDeleteParametersBatch_ServiceErrors(t *testing.T) {
 		defer cleanup()
 
 		mockParamService.On("DeleteParameters", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.DragonError{
+			nil, &dragonerrors.QBError{
 				Code: dragonerrors.ErrInternal,
 				Op:   "DeleteParameters",
 				Err:  stderrors.New("write error"),
@@ -3283,7 +3283,7 @@ func TestHandleSearchParametersByTags_ServiceErrors(t *testing.T) {
 		defer cleanup()
 
 		mockParamService.On("SearchByTags", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.DragonError{
+			nil, &dragonerrors.QBError{
 				Code: dragonerrors.ErrInternal,
 				Op:   "SearchByTags",
 				Err:  stderrors.New("index error"),

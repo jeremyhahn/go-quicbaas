@@ -80,9 +80,9 @@ func TestGet_NotFound(t *testing.T) {
 	_, err := s.Get(key)
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 }
 
 func TestGet_EmptyKey(t *testing.T) {

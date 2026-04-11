@@ -576,7 +576,7 @@ func TestIsTimeSeriesError(t *testing.T) {
 		},
 		{
 			name: "non-time series dragon error",
-			err:  &DragonError{Code: ErrNotFound, Op: "test"},
+			err:  &QBError{Code: ErrNotFound, Op: "test"},
 			want: false,
 		},
 		{
@@ -618,7 +618,7 @@ func TestIsTimeSeriesNotFound(t *testing.T) {
 		},
 		{
 			name: "different dragon error",
-			err:  &DragonError{Code: ErrNotFound, Op: "test"},
+			err:  &QBError{Code: ErrNotFound, Op: "test"},
 			want: false,
 		},
 		{
@@ -904,9 +904,9 @@ func TestTimeSeriesErrorUnwrap(t *testing.T) {
 		t.Error("errors.As should find TimeSeriesNotFoundError")
 	}
 
-	var de *DragonError
+	var de *QBError
 	if !errors.As(notFoundErr, &de) {
-		t.Error("errors.As should find DragonError")
+		t.Error("errors.As should find QBError")
 	}
 }
 
@@ -935,7 +935,7 @@ func TestTimeSeriesErrorCodes(t *testing.T) {
 func TestTimeSeriesErrorRetryable(t *testing.T) {
 	tests := []struct {
 		name string
-		err  *DragonError
+		err  *QBError
 		want bool
 	}{
 		{
@@ -989,7 +989,7 @@ func TestTimeSeriesErrorWithContext(t *testing.T) {
 func TestTimeSeriesErrorMessage(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      *DragonError
+		err      *QBError
 		contains []string
 	}{
 		{

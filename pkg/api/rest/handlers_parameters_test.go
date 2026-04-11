@@ -177,7 +177,7 @@ func TestHandleGetParameter(t *testing.T) {
 			name: "parameter not found",
 			path: "nonexistent/path",
 			setupMock: func(m *MockParameterStoreService) {
-				m.On("GetParameter", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetParameter", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "GetParameter",
 					Err:  assert.AnError,
@@ -189,7 +189,7 @@ func TestHandleGetParameter(t *testing.T) {
 			name: "service error",
 			path: "app/error",
 			setupMock: func(m *MockParameterStoreService) {
-				m.On("GetParameter", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetParameter", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GetParameter",
 					Err:  assert.AnError,
@@ -339,7 +339,7 @@ func TestHandleSetParameter(t *testing.T) {
 				"value": []byte("test"),
 			},
 			setupMock: func(m *MockParameterStoreService) {
-				m.On("SetParameter", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("SetParameter", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "SetParameter",
 					Err:  assert.AnError,
@@ -422,7 +422,7 @@ func TestHandleDeleteParameter(t *testing.T) {
 			name: "parameter not found",
 			path: "nonexistent/path",
 			setupMock: func(m *MockParameterStoreService) {
-				m.On("DeleteParameter", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DeleteParameter", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "DeleteParameter",
 					Err:  assert.AnError,
@@ -534,7 +534,7 @@ func TestHandleListParameters(t *testing.T) {
 			name:        "service error",
 			queryParams: "",
 			setupMock: func(m *MockParameterStoreService) {
-				m.On("ListParameters", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ListParameters", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "ListParameters",
 					Err:  assert.AnError,

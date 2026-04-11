@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dragonErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qbErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -39,10 +39,10 @@ func TestVectorService_ValidateCreateNamespaceRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -50,10 +50,10 @@ func TestVectorService_ValidateCreateNamespaceRequest(t *testing.T) {
 			req:     &CreateNamespaceRequest{Namespace: "", Dimension: 128},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -61,10 +61,10 @@ func TestVectorService_ValidateCreateNamespaceRequest(t *testing.T) {
 			req:     &CreateNamespaceRequest{Namespace: "test-ns", Dimension: 0},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "dimension must be greater than 0")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "dimension must be greater than 0")
 			},
 		},
 		{
@@ -103,10 +103,10 @@ func TestVectorService_ValidateDeleteNamespaceRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -114,10 +114,10 @@ func TestVectorService_ValidateDeleteNamespaceRequest(t *testing.T) {
 			req:     &DeleteNamespaceRequest{Namespace: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -156,10 +156,10 @@ func TestVectorService_ValidateGetNamespaceInfoRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -167,10 +167,10 @@ func TestVectorService_ValidateGetNamespaceInfoRequest(t *testing.T) {
 			req:     &GetNamespaceInfoRequest{Namespace: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -209,10 +209,10 @@ func TestVectorService_ValidateUpsertVectorRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -220,10 +220,10 @@ func TestVectorService_ValidateUpsertVectorRequest(t *testing.T) {
 			req:     &UpsertVectorRequest{Namespace: "", ID: 1, Vector: []float32{0.1}},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -231,10 +231,10 @@ func TestVectorService_ValidateUpsertVectorRequest(t *testing.T) {
 			req:     &UpsertVectorRequest{Namespace: "test-ns", ID: 0, Vector: []float32{0.1}},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "ID must be greater than 0")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "ID must be greater than 0")
 			},
 		},
 		{
@@ -242,10 +242,10 @@ func TestVectorService_ValidateUpsertVectorRequest(t *testing.T) {
 			req:     &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: []float32{}},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "vector is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "vector is required")
 			},
 		},
 		{
@@ -253,10 +253,10 @@ func TestVectorService_ValidateUpsertVectorRequest(t *testing.T) {
 			req:     &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: nil},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "vector is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "vector is required")
 			},
 		},
 		{
@@ -295,10 +295,10 @@ func TestVectorService_ValidateGetVectorRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -306,10 +306,10 @@ func TestVectorService_ValidateGetVectorRequest(t *testing.T) {
 			req:     &GetVectorRequest{Namespace: "", ID: 1},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -317,10 +317,10 @@ func TestVectorService_ValidateGetVectorRequest(t *testing.T) {
 			req:     &GetVectorRequest{Namespace: "test-ns", ID: 0},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "ID must be greater than 0")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "ID must be greater than 0")
 			},
 		},
 		{
@@ -359,10 +359,10 @@ func TestVectorService_ValidateDeleteVectorRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -370,10 +370,10 @@ func TestVectorService_ValidateDeleteVectorRequest(t *testing.T) {
 			req:     &DeleteVectorRequest{Namespace: "", ID: 1},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -381,10 +381,10 @@ func TestVectorService_ValidateDeleteVectorRequest(t *testing.T) {
 			req:     &DeleteVectorRequest{Namespace: "test-ns", ID: 0},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "ID must be greater than 0")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "ID must be greater than 0")
 			},
 		},
 		{
@@ -423,10 +423,10 @@ func TestVectorService_ValidateBatchUpsertRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -434,10 +434,10 @@ func TestVectorService_ValidateBatchUpsertRequest(t *testing.T) {
 			req:     &BatchUpsertRequest{Namespace: "", Vectors: []*VectorData{{ID: 1}}},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -445,10 +445,10 @@ func TestVectorService_ValidateBatchUpsertRequest(t *testing.T) {
 			req:     &BatchUpsertRequest{Namespace: "test-ns", Vectors: []*VectorData{}},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "vectors is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "vectors is required")
 			},
 		},
 		{
@@ -456,10 +456,10 @@ func TestVectorService_ValidateBatchUpsertRequest(t *testing.T) {
 			req:     &BatchUpsertRequest{Namespace: "test-ns", Vectors: nil},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "vectors is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "vectors is required")
 			},
 		},
 		{
@@ -498,10 +498,10 @@ func TestVectorService_ValidateSearchSimilarRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -509,10 +509,10 @@ func TestVectorService_ValidateSearchSimilarRequest(t *testing.T) {
 			req:     &SearchSimilarRequest{Namespace: "", QueryVector: []float32{0.1}, K: 10},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -520,10 +520,10 @@ func TestVectorService_ValidateSearchSimilarRequest(t *testing.T) {
 			req:     &SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{}, K: 10},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "query vector is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "query vector is required")
 			},
 		},
 		{
@@ -531,10 +531,10 @@ func TestVectorService_ValidateSearchSimilarRequest(t *testing.T) {
 			req:     &SearchSimilarRequest{Namespace: "test-ns", QueryVector: nil, K: 10},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "query vector is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "query vector is required")
 			},
 		},
 		{
@@ -542,10 +542,10 @@ func TestVectorService_ValidateSearchSimilarRequest(t *testing.T) {
 			req:     &SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{0.1}, K: 0},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "k must be greater than 0")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "k must be greater than 0")
 			},
 		},
 		{
@@ -553,10 +553,10 @@ func TestVectorService_ValidateSearchSimilarRequest(t *testing.T) {
 			req:     &SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{0.1}, K: -5},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "k must be greater than 0")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "k must be greater than 0")
 			},
 		},
 		{
@@ -595,10 +595,10 @@ func TestVectorService_ValidateSearchByMetadataRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -606,10 +606,10 @@ func TestVectorService_ValidateSearchByMetadataRequest(t *testing.T) {
 			req:     &SearchByMetadataRequest{Namespace: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -656,10 +656,10 @@ func TestVectorService_ValidateRebuildIndexRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -667,10 +667,10 @@ func TestVectorService_ValidateRebuildIndexRequest(t *testing.T) {
 			req:     &RebuildIndexRequest{Namespace: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -709,10 +709,10 @@ func TestVectorService_ValidateGetRebuildProgressRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -720,10 +720,10 @@ func TestVectorService_ValidateGetRebuildProgressRequest(t *testing.T) {
 			req:     &GetRebuildProgressRequest{JobID: "", Namespace: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "job_id or namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "job_id or namespace is required")
 			},
 		},
 		{
@@ -772,10 +772,10 @@ func TestVectorService_ValidateGetIndexStatsRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -783,10 +783,10 @@ func TestVectorService_ValidateGetIndexStatsRequest(t *testing.T) {
 			req:     &GetIndexStatsRequest{Namespace: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -825,10 +825,10 @@ func TestVectorService_ValidateCompactNamespaceRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -836,10 +836,10 @@ func TestVectorService_ValidateCompactNamespaceRequest(t *testing.T) {
 			req:     &CompactNamespaceRequest{Namespace: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "namespace is required")
 			},
 		},
 		{
@@ -878,10 +878,10 @@ func TestVectorService_ValidateGetCompactionProgressRequest(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -889,10 +889,10 @@ func TestVectorService_ValidateGetCompactionProgressRequest(t *testing.T) {
 			req:     &GetCompactionProgressRequest{OperationID: "", Namespace: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *quicbaasErrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "either operation_id or namespace is required")
+				var qbErr *quicbaasErrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "either operation_id or namespace is required")
 			},
 		},
 		{
@@ -1179,9 +1179,9 @@ func TestVectorClient_NoSDKProvider(t *testing.T) {
 	svc.sdkProvider = nil
 	_, err := svc.vectorClient()
 	require.Error(t, err)
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrInternal, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
 }
 
 func TestVectorClient_Success(t *testing.T) {
@@ -1216,9 +1216,9 @@ func TestEnsureHNSWIndex_NoFactory(t *testing.T) {
 	svc.indexMu.Unlock()
 	_, err := svc.ensureIndex(context.Background(), "test-ns")
 	require.Error(t, err)
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrInternal, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
 }
 
 func TestEnsureHNSWIndex_NamespaceNotFound(t *testing.T) {
@@ -1440,18 +1440,18 @@ func TestCreateNamespace_SDKError(t *testing.T) {
 		Namespace: "new-ns", Dimension: 128,
 	})
 	require.Error(t, err)
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrRaft, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
 }
 
 func TestCreateNamespace_AlreadyExists(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
 	_, err := svc.CreateNamespace(context.Background(), &CreateNamespaceRequest{Namespace: "test-ns", Dimension: 128})
 	require.Error(t, err)
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrAlreadyExists, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrAlreadyExists, qbErr.Code)
 }
 
 func TestCreateNamespace_NoSDKProvider(t *testing.T) {
@@ -1478,9 +1478,9 @@ func TestDeleteNamespace_SDKError(t *testing.T) {
 	}
 	_, err := svc.DeleteNamespace(context.Background(), &DeleteNamespaceRequest{Namespace: "test-ns"})
 	require.Error(t, err)
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrRaft, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
 }
 
 func TestDeleteNamespace_NoSDKProvider(t *testing.T) {
@@ -1508,9 +1508,9 @@ func TestUpsertVector_SDKError(t *testing.T) {
 		Namespace: "test-ns", ID: 1, Vector: []float32{1, 2, 3},
 	})
 	require.Error(t, err)
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrRaft, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
 }
 
 func TestUpsertVector_NoSDKProvider(t *testing.T) {
@@ -1748,9 +1748,9 @@ func TestSearchSimilar_SearchError_NonEmptyIndex(t *testing.T) {
 		Namespace: "test-ns", QueryVector: []float32{1, 2, 3}, K: 5,
 	})
 	require.Error(t, err)
-	var dragonErr *dragonErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dragonErrors.ErrInternal, dragonErr.Code)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
 }
 
 func TestSearchSimilar_NoIndex_ReturnsEmpty(t *testing.T) {

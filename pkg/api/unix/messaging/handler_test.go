@@ -239,9 +239,9 @@ func TestNewHandler(t *testing.T) {
 		_, err := NewHandler(nil, logger)
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("returns error when logger is nil", func(t *testing.T) {
@@ -250,9 +250,9 @@ func TestNewHandler(t *testing.T) {
 		_, err := NewHandler(svc, nil)
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -268,9 +268,9 @@ func TestHandler_Handle(t *testing.T) {
 		_, err := h.Handle(context.Background(), 0xFF, nil)
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("returns error when handler is closed", func(t *testing.T) {
@@ -280,9 +280,9 @@ func TestHandler_Handle(t *testing.T) {
 		_, err := h.Handle(context.Background(), OpPushGetStats, nil)
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 	})
 }
 
@@ -767,9 +767,9 @@ func TestHandler_DedupStats(t *testing.T) {
 		_, err = h.Handle(context.Background(), OpPushDedupStats, reqPayload)
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 	})
 
 	t.Run("returns error for invalid payload", func(t *testing.T) {

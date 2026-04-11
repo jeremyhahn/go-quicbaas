@@ -58,7 +58,7 @@ func NewKeyStore() *KeyStore {
 // The metadata is deep-copied to prevent external mutation.
 func (s *KeyStore) Put(metadata *KeyMetadata) error {
 	if metadata == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.Put",
 			Err:  ErrMetadataNil,
@@ -66,7 +66,7 @@ func (s *KeyStore) Put(metadata *KeyMetadata) error {
 	}
 
 	if metadata.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.Put",
 			Err:  ErrKeyIDEmpty,
@@ -104,7 +104,7 @@ func (s *KeyStore) Put(metadata *KeyMetadata) error {
 // Returns a deep copy to prevent external mutation.
 func (s *KeyStore) Get(keyID string) (*KeyMetadata, error) {
 	if keyID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.Get",
 			Err:  ErrKeyIDEmpty,
@@ -116,7 +116,7 @@ func (s *KeyStore) Get(keyID string) (*KeyMetadata, error) {
 
 	entry, exists := s.keys[keyID]
 	if !exists {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "KeyStore.Get",
 			Err:  ErrKeyNotFound,
@@ -130,7 +130,7 @@ func (s *KeyStore) Get(keyID string) (*KeyMetadata, error) {
 // Delete removes a key from the store.
 func (s *KeyStore) Delete(keyID string) error {
 	if keyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.Delete",
 			Err:  ErrKeyIDEmpty,
@@ -141,7 +141,7 @@ func (s *KeyStore) Delete(keyID string) error {
 	defer s.mu.Unlock()
 
 	if _, exists := s.keys[keyID]; !exists {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "KeyStore.Delete",
 			Err:  ErrKeyNotFound,
@@ -241,7 +241,7 @@ func (s *KeyStore) GetPendingDeletion() []*KeyMetadata {
 // Returns the new version number.
 func (s *KeyStore) IncrementVersion(keyID string) (int, error) {
 	if keyID == "" {
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.IncrementVersion",
 			Err:  ErrKeyIDEmpty,
@@ -252,7 +252,7 @@ func (s *KeyStore) IncrementVersion(keyID string) (int, error) {
 	defer s.mu.Unlock()
 
 	if _, exists := s.keys[keyID]; !exists {
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "KeyStore.IncrementVersion",
 			Err:  ErrKeyNotFound,
@@ -277,7 +277,7 @@ func (s *KeyStore) IncrementVersion(keyID string) (int, error) {
 // GetVersion returns the current version number for a key.
 func (s *KeyStore) GetVersion(keyID string) (int, error) {
 	if keyID == "" {
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.GetVersion",
 			Err:  ErrKeyIDEmpty,
@@ -289,7 +289,7 @@ func (s *KeyStore) GetVersion(keyID string) (int, error) {
 
 	entry, exists := s.keys[keyID]
 	if !exists {
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "KeyStore.GetVersion",
 			Err:  ErrKeyNotFound,
@@ -302,7 +302,7 @@ func (s *KeyStore) GetVersion(keyID string) (int, error) {
 // IncrementUsage atomically increments the usage counter for a key.
 func (s *KeyStore) IncrementUsage(keyID string) error {
 	if keyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.IncrementUsage",
 			Err:  ErrKeyIDEmpty,
@@ -315,7 +315,7 @@ func (s *KeyStore) IncrementUsage(keyID string) error {
 	s.mu.RUnlock()
 
 	if !keyExists {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "KeyStore.IncrementUsage",
 			Err:  ErrKeyNotFound,
@@ -337,7 +337,7 @@ func (s *KeyStore) IncrementUsage(keyID string) error {
 // GetUsage returns the current usage count for a key.
 func (s *KeyStore) GetUsage(keyID string) (uint64, error) {
 	if keyID == "" {
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.GetUsage",
 			Err:  ErrKeyIDEmpty,
@@ -348,7 +348,7 @@ func (s *KeyStore) GetUsage(keyID string) (uint64, error) {
 	defer s.mu.RUnlock()
 
 	if _, exists := s.keys[keyID]; !exists {
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "KeyStore.GetUsage",
 			Err:  ErrKeyNotFound,
@@ -366,7 +366,7 @@ func (s *KeyStore) GetUsage(keyID string) (uint64, error) {
 // SetState updates the state of a key.
 func (s *KeyStore) SetState(keyID string, state KeyState) error {
 	if keyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.SetState",
 			Err:  ErrKeyIDEmpty,
@@ -378,7 +378,7 @@ func (s *KeyStore) SetState(keyID string, state KeyState) error {
 
 	entry, exists := s.keys[keyID]
 	if !exists {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "KeyStore.SetState",
 			Err:  ErrKeyNotFound,
@@ -394,7 +394,7 @@ func (s *KeyStore) SetState(keyID string, state KeyState) error {
 // GetState returns the current state of a key.
 func (s *KeyStore) GetState(keyID string) (KeyState, error) {
 	if keyID == "" {
-		return "", &errors.DragonError{
+		return "", &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "KeyStore.GetState",
 			Err:  ErrKeyIDEmpty,
@@ -406,7 +406,7 @@ func (s *KeyStore) GetState(keyID string) (KeyState, error) {
 
 	entry, exists := s.keys[keyID]
 	if !exists {
-		return "", &errors.DragonError{
+		return "", &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "KeyStore.GetState",
 			Err:  ErrKeyNotFound,

@@ -387,7 +387,7 @@ func TestSecretsService_StoreSecret_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}
@@ -491,7 +491,7 @@ func TestSecretsService_GetSecret_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -542,8 +542,8 @@ func TestSecretsService_GetSecret_DisabledSecret(t *testing.T) {
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "secret is disabled")
 	// Check that it returns ErrForbidden
-	dErr, ok := err.(*quicbaasErrors.DragonError)
-	require.True(t, ok, "error should be DragonError")
+	dErr, ok := err.(*quicbaasErrors.QBError)
+	require.True(t, ok, "error should be QBError")
 	assert.Equal(t, quicbaasErrors.ErrForbidden, dErr.Code)
 }
 
@@ -861,7 +861,7 @@ func TestSecretsService_GetSecretVersion_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -1147,7 +1147,7 @@ func TestSecretsService_RotateSecret_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -1300,7 +1300,7 @@ func TestSecretsService_SetRotationPolicy_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -1400,7 +1400,7 @@ func TestSecretsService_GetRotationPolicy_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -2032,7 +2032,7 @@ func TestSecretsService_GetSecret_WithVersionNotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -2445,7 +2445,7 @@ func TestSecretsService_RotateSecret_ManagerGetFails(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}

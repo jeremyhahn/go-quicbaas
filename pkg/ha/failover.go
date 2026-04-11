@@ -105,21 +105,21 @@ type failoverMetrics struct {
 // NewFailoverManager creates a new failover manager.
 func NewFailoverManager(raftNode interfaces.RaftNode, config *FailoverConfig, logger interfaces.Logger) (*FailoverManager, error) {
 	if raftNode == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ha.NewFailoverManager",
 			Err:  &errors.MessageError{Message: "raft node cannot be nil"},
 		}
 	}
 	if config == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ha.NewFailoverManager",
 			Err:  &errors.MessageError{Message: "config cannot be nil"},
 		}
 	}
 	if logger == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "ha.NewFailoverManager",
 			Err:  &errors.MessageError{Message: "logger cannot be nil"},
@@ -296,7 +296,7 @@ func (fm *FailoverManager) checkShardHealth(ctx context.Context, shardID uint64)
 	// Check if shard has a leader
 	leaderID, _, err := fm.raftNode.GetLeaderID(shardID)
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrLeaderNotAvailable,
 			Op:   "ha.checkShardHealth",
 			Err: &errors.WrappedMessageError{
@@ -307,7 +307,7 @@ func (fm *FailoverManager) checkShardHealth(ctx context.Context, shardID uint64)
 	}
 
 	if leaderID == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrLeaderNotAvailable,
 			Op:   "ha.checkShardHealth",
 			Err:  &errors.MessageError{Message: "no leader available for shard " + strconv.FormatUint(shardID, 10)},
@@ -332,7 +332,7 @@ func (fm *FailoverManager) triggerFailover(ctx context.Context, shardID uint64, 
 	// Check if we've exceeded failover rate limit
 	if fm.exceedsFailoverLimit() {
 		fm.logger.Warn("Failover rate limit exceeded, skipping")
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrRateLimited,
 			Op:   "ha.triggerFailover",
 			Err:  &errors.MessageError{Message: "failover rate limit exceeded"},
@@ -406,7 +406,7 @@ func (fm *FailoverManager) waitForNewLeader(ctx context.Context, shardID, oldLea
 
 		case <-ticker.C:
 			if time.Now().After(deadline) {
-				return 0, &errors.DragonError{
+				return 0, &errors.QBError{
 					Code: errors.ErrTimeout,
 					Op:   "ha.waitForNewLeader",
 					Err:  &errors.MessageError{Message: "timeout waiting for new leader for shard " + strconv.FormatUint(shardID, 10)},

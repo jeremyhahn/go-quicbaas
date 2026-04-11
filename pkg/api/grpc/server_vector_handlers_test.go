@@ -386,7 +386,7 @@ func TestCreateNamespace_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("CreateNamespace", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrAlreadyExists, Op: "CreateNamespace"})
+		Return(nil, &errors.QBError{Code: errors.ErrAlreadyExists, Op: "CreateNamespace"})
 
 	resp, err := srv.CreateNamespace(context.Background(), &pb.CreateNamespaceRequest{
 		Config: &pb.NamespaceConfig{
@@ -473,7 +473,7 @@ func TestUpdateNamespace_GetNamespaceInfoError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"})
+		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"})
 
 	resp, err := srv.UpdateNamespace(context.Background(), &pb.UpdateNamespaceRequest{
 		Namespace: "nonexistent-ns",
@@ -494,7 +494,7 @@ func TestUpdateNamespace_DeleteNamespaceError(t *testing.T) {
 		}, nil)
 
 	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "DeleteNamespace"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "DeleteNamespace"})
 
 	resp, err := srv.UpdateNamespace(context.Background(), &pb.UpdateNamespaceRequest{
 		Namespace: "test-ns",
@@ -518,7 +518,7 @@ func TestUpdateNamespace_CreateNamespaceError(t *testing.T) {
 		Return(&service.DeleteNamespaceResponse{Success: true, Timestamp: 1234567890}, nil)
 
 	mockSvc.On("CreateNamespace", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "CreateNamespace"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "CreateNamespace"})
 
 	resp, err := srv.UpdateNamespace(context.Background(), &pb.UpdateNamespaceRequest{
 		Namespace: "test-ns",
@@ -1686,7 +1686,7 @@ func TestHybridSearch_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("HybridSearch", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "HybridSearch"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "HybridSearch"})
 
 	stream := NewMockHybridSearchStream(context.Background())
 	err := srv.HybridSearch(&pb.HybridSearchRequest{
@@ -1825,7 +1825,7 @@ func TestSearchByMetadata_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("SearchByMetadata", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "SearchByMetadata"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "SearchByMetadata"})
 
 	stream := NewMockSearchByMetadataStream(context.Background())
 	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
@@ -1905,7 +1905,7 @@ func TestListVectors_NamespaceNotFound(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"})
+		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"})
 
 	stream := NewMockListVectorsStream(context.Background())
 	err := srv.ListVectors(&pb.ListVectorsRequest{
@@ -2282,7 +2282,7 @@ func TestGetClusterStats_ClusterStatusError(t *testing.T) {
 
 	// Mock ClusterStatus to return error - should continue with defaults
 	mockSvc.On("ClusterStatus", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "ClusterStatus"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "ClusterStatus"})
 
 	// Mock ListNamespaces
 	mockSvc.On("ListNamespaces", mock.Anything, mock.Anything).
@@ -2354,7 +2354,7 @@ func TestCompactNamespace_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("CompactNamespace", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "CompactNamespace"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "CompactNamespace"})
 
 	resp, err := srv.CompactNamespace(context.Background(), &pb.CompactNamespaceRequest{
 		Namespace: "test-ns",
@@ -2867,7 +2867,7 @@ func TestSearchByID_GetVectorError(t *testing.T) {
 
 	// Mock GetVector to return an error
 	mockSvc.On("GetVector", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "GetVector"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "GetVector"})
 
 	stream := NewMockSearchByIDStream(context.Background())
 	err := srv.SearchByID(&pb.SearchByIDRequest{
@@ -2893,7 +2893,7 @@ func TestSearchByID_SearchSimilarError(t *testing.T) {
 
 	// Mock SearchSimilar to return an error
 	mockSvc.On("SearchSimilar", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "SearchSimilar"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "SearchSimilar"})
 
 	stream := NewMockSearchByIDStream(context.Background())
 	err := srv.SearchByID(&pb.SearchByIDRequest{
@@ -2997,7 +2997,7 @@ func TestImportVectors_BatchUpsertError(t *testing.T) {
 
 	// Mock BatchUpsert to return an error
 	mockSvc.On("BatchUpsert", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "BatchUpsert"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "BatchUpsert"})
 
 	stream := NewMockImportVectorsStream(context.Background())
 
@@ -3138,7 +3138,7 @@ func TestImportVectors_SkipExistingVectorNotFound(t *testing.T) {
 
 	// Mock GetVector to return not found error (vector doesn't exist)
 	mockSvc.On("GetVector", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "GetVector"})
+		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "GetVector"})
 
 	// Mock BatchUpsert to insert the vector
 	mockSvc.On("BatchUpsert", mock.Anything, mock.Anything).
@@ -3205,7 +3205,7 @@ func TestDeleteNamespace_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "DeleteNamespace"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "DeleteNamespace"})
 
 	resp, err := srv.DeleteNamespace(context.Background(), &pb.DeleteNamespaceRequest{
 		Namespace: "test-ns",
@@ -3220,7 +3220,7 @@ func TestListNamespaces_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("ListNamespaces", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "ListNamespaces"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "ListNamespaces"})
 
 	resp, err := srv.ListNamespaces(context.Background(), &pb.ListNamespacesRequest{})
 
@@ -3233,7 +3233,7 @@ func TestGetVector_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("GetVector", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "GetVector"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "GetVector"})
 
 	resp, err := srv.GetVector(context.Background(), &pb.GetVectorRequest{
 		Namespace: "test-ns",
@@ -3249,7 +3249,7 @@ func TestDeleteVector_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("DeleteVector", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "DeleteVector"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "DeleteVector"})
 
 	resp, err := srv.DeleteVector(context.Background(), &pb.DeleteVectorRequest{
 		Namespace: "test-ns",
@@ -3265,7 +3265,7 @@ func TestGetVectorStats_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("GetIndexStats", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "GetStats"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "GetStats"})
 
 	resp, err := srv.GetVectorStats(context.Background(), &pb.GetVectorStatsRequest{
 		Namespace: "test-ns",
@@ -3280,7 +3280,7 @@ func TestRebuildIndex_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("RebuildIndex", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "RebuildIndex"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "RebuildIndex"})
 
 	resp, err := srv.RebuildIndex(context.Background(), &pb.RebuildIndexRequest{
 		Namespace: "test-ns",
@@ -3295,7 +3295,7 @@ func TestGetIndexProgress_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("GetRebuildProgress", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "GetIndexProgress"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "GetIndexProgress"})
 
 	resp, err := srv.GetIndexProgress(context.Background(), &pb.GetIndexProgressRequest{
 		Namespace:   "test-ns",
@@ -3311,7 +3311,7 @@ func TestExportVectors_ServiceError(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
 	mockSvc.On("SearchByMetadata", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "SearchByMetadata"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "SearchByMetadata"})
 
 	stream := NewMockExportVectorsStream(context.Background())
 	err := srv.ExportVectors(&pb.ExportVectorsRequest{
@@ -3336,7 +3336,7 @@ func TestUpdateMetadata_ServiceError(t *testing.T) {
 
 	// Mock UpsertVector to return an error
 	mockSvc.On("UpsertVector", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "UpsertVector"})
+		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "UpsertVector"})
 
 	resp, err := srv.UpdateMetadata(context.Background(), &pb.UpdateMetadataRequest{
 		Namespace: "test-ns",

@@ -32,7 +32,7 @@ import (
 
 func TestFederationServer_GetProvider_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("GetProvider", mock.Anything, "t-1", "p-1").Return(nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"})
+	mgr.On("GetProvider", mock.Anything, "t-1", "p-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.GetProvider(context.Background(), &iampb.GetProviderRequest{TenantId: "t-1", ProviderId: "p-1"})
 	require.Error(t, err)
@@ -43,7 +43,7 @@ func TestFederationServer_UpdateProvider_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
 	mgr.On("GetProvider", mock.Anything, "t-1", "p-1").
 		Return(&iam.ExternalProvider{ID: "p-1", TenantID: "t-1", Name: "Original", Type: iam.ProviderTypeOIDC, ClientID: "c1", IssuerURL: "https://issuer.example.com"}, nil)
-	mgr.On("UpdateProvider", mock.Anything, mock.Anything).Return(&dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"})
+	mgr.On("UpdateProvider", mock.Anything, mock.Anything).Return(&dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.UpdateProvider(context.Background(), &iampb.UpdateProviderRequest{
 		TenantId: "t-1", ProviderId: "p-1", Name: "Google",
@@ -54,7 +54,7 @@ func TestFederationServer_UpdateProvider_ServiceError(t *testing.T) {
 
 func TestFederationServer_DeleteProvider_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("DeleteProvider", mock.Anything, "t-1", "p-1").Return(&dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"})
+	mgr.On("DeleteProvider", mock.Anything, "t-1", "p-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.DeleteProvider(context.Background(), &iampb.DeleteProviderRequest{TenantId: "t-1", ProviderId: "p-1"})
 	require.Error(t, err)
@@ -63,7 +63,7 @@ func TestFederationServer_DeleteProvider_ServiceError(t *testing.T) {
 
 func TestFederationServer_ListProviders_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("ListProviders", mock.Anything, "t-1", mock.Anything).Return(nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"})
+	mgr.On("ListProviders", mock.Anything, "t-1", mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.ListProviders(context.Background(), &iampb.ListProvidersRequest{TenantId: "t-1"})
 	require.Error(t, err)
@@ -72,7 +72,7 @@ func TestFederationServer_ListProviders_ServiceError(t *testing.T) {
 
 func TestFederationServer_BeginFederatedLogin_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("BeginLogin", mock.Anything, "t-1", "google", "http://cb").Return(nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"})
+	mgr.On("BeginLogin", mock.Anything, "t-1", "google", "http://cb").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.BeginFederatedLogin(context.Background(), &iampb.BeginFederatedLoginRequest{
 		TenantId: "t-1", ProviderName: "google", RedirectUri: "http://cb",
@@ -83,7 +83,7 @@ func TestFederationServer_BeginFederatedLogin_ServiceError(t *testing.T) {
 
 func TestFederationServer_HandleFederatedCallback_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("HandleCallback", mock.Anything, "state-1", "code-1").Return(nil, &dberrors.DragonError{Code: dberrors.ErrForbidden, Op: "test"})
+	mgr.On("HandleCallback", mock.Anything, "state-1", "code-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"})
 
 	_, err := srv.HandleFederatedCallback(context.Background(), &iampb.HandleFederatedCallbackRequest{
 		State: "state-1", Code: "code-1",
@@ -94,7 +94,7 @@ func TestFederationServer_HandleFederatedCallback_ServiceError(t *testing.T) {
 
 func TestFederationServer_LinkAccount_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("LinkAccount", mock.Anything, "u-1", "t-1", "p-1", "token").Return(&dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "test"})
+	mgr.On("LinkAccount", mock.Anything, "u-1", "t-1", "p-1", "token").Return(&dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test"})
 
 	_, err := srv.LinkAccount(context.Background(), &iampb.LinkAccountRequest{
 		UserId: "u-1", TenantId: "t-1", ProviderId: "p-1", ExternalToken: "token",
@@ -105,7 +105,7 @@ func TestFederationServer_LinkAccount_ServiceError(t *testing.T) {
 
 func TestFederationServer_UnlinkAccount_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("UnlinkAccount", mock.Anything, "u-1", "t-1", "p-1").Return(&dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"})
+	mgr.On("UnlinkAccount", mock.Anything, "u-1", "t-1", "p-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.UnlinkAccount(context.Background(), &iampb.UnlinkAccountRequest{
 		UserId: "u-1", TenantId: "t-1", ProviderId: "p-1",
@@ -116,7 +116,7 @@ func TestFederationServer_UnlinkAccount_ServiceError(t *testing.T) {
 
 func TestFederationServer_GetUserLinks_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("GetUserLinks", mock.Anything, "u-1", "t-1").Return(nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"})
+	mgr.On("GetUserLinks", mock.Anything, "u-1", "t-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{
 		UserId: "u-1", TenantId: "t-1",

@@ -1825,7 +1825,7 @@ func (s *Server) handleKMSError(w http.ResponseWriter, r *http.Request, err erro
 		return
 	}
 
-	var dErr *errors.DragonError
+	var dErr *errors.QBError
 	if !stderrors.As(err, &dErr) {
 		RespondError(w, r, http.StatusInternalServerError, err)
 		return

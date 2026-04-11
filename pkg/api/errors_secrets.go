@@ -40,9 +40,9 @@ func (e *SentinelWrapError) Unwrap() []error {
 	return []error{e.Sentinel, e.Cause}
 }
 
-// NewSentinelWrapError creates a DragonError that wraps a sentinel with a cause.
-func NewSentinelWrapError(op string, code dberrors.ErrorCode, sentinel, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewSentinelWrapError creates a QBError that wraps a sentinel with a cause.
+func NewSentinelWrapError(op string, code dberrors.ErrorCode, sentinel, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: code,
 		Op:   op,
 		Err:  &SentinelWrapError{Sentinel: sentinel, Cause: cause},
@@ -65,9 +65,9 @@ func (e *CryptoOperationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewCryptoOperationError creates a DragonError for a crypto operation failure.
-func NewCryptoOperationError(op, operation string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewCryptoOperationError creates a QBError for a crypto operation failure.
+func NewCryptoOperationError(op, operation string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrEncryption,
 		Op:   op,
 		Err:  &CryptoOperationError{Operation: operation, Cause: cause},
@@ -86,9 +86,9 @@ func (e *DEKSizeMismatchError) Error() string {
 		e.Expected, e.Algorithm)
 }
 
-// NewDEKSizeMismatchError creates a DragonError for a DEK size mismatch.
-func NewDEKSizeMismatchError(op string, expected int, algorithm string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDEKSizeMismatchError creates a QBError for a DEK size mismatch.
+func NewDEKSizeMismatchError(op string, expected int, algorithm string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrEncryption,
 		Op:   op,
 		Err:  &DEKSizeMismatchError{Expected: expected, Algorithm: algorithm},
@@ -105,9 +105,9 @@ func (e *DEKNotFoundError) Error() string {
 	return "DEK not found: " + e.DEKID
 }
 
-// NewDEKNotFoundError creates a DragonError for a missing DEK.
-func NewDEKNotFoundError(op, dekid string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDEKNotFoundError creates a QBError for a missing DEK.
+func NewDEKNotFoundError(op, dekid string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   op,
 		Err:  &DEKNotFoundError{DEKID: dekid},
@@ -125,9 +125,9 @@ func (e *DEKVersionNotFoundError) Error() string {
 	return fmt.Sprintf("DEK version not found: %s version %d", e.DEKID, e.Version)
 }
 
-// NewDEKVersionNotFoundError creates a DragonError for a missing DEK version.
-func NewDEKVersionNotFoundError(op, dekid string, version uint64) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDEKVersionNotFoundError creates a QBError for a missing DEK version.
+func NewDEKVersionNotFoundError(op, dekid string, version uint64) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   op,
 		Err:  &DEKVersionNotFoundError{DEKID: dekid, Version: version},
@@ -150,9 +150,9 @@ func (e *DEKOperationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewDEKOperationError creates a DragonError for a DEK operation failure.
-func NewDEKOperationError(op, operation string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDEKOperationError creates a QBError for a DEK operation failure.
+func NewDEKOperationError(op, operation string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &DEKOperationError{Operation: operation, Cause: cause},
@@ -167,9 +167,9 @@ func (e *NilDEKError) Error() string {
 	return "DEK cannot be nil"
 }
 
-// NewNilDEKError creates a DragonError for a nil DEK.
-func NewNilDEKError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewNilDEKError creates a QBError for a nil DEK.
+func NewNilDEKError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &NilDEKError{},
@@ -192,9 +192,9 @@ func (e *SecretStoreOperationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewSecretStoreOperationError creates a DragonError for a secret store operation failure.
-func NewSecretStoreOperationError(op, operation string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewSecretStoreOperationError creates a QBError for a secret store operation failure.
+func NewSecretStoreOperationError(op, operation string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &SecretStoreOperationError{Operation: operation, Cause: cause},
@@ -217,9 +217,9 @@ func (e *PathTraversalError) Unwrap() error {
 	return e.Sentinel
 }
 
-// NewPathTraversalError creates a DragonError for a path traversal attempt.
-func NewPathTraversalError(op string, sentinel error, detail string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewPathTraversalError creates a QBError for a path traversal attempt.
+func NewPathTraversalError(op string, sentinel error, detail string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &PathTraversalError{Sentinel: sentinel, Detail: detail},
@@ -234,9 +234,9 @@ func (e *VersionPositiveError) Error() string {
 	return "version must be positive"
 }
 
-// NewVersionPositiveError creates a DragonError for a non-positive version.
-func NewVersionPositiveError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewVersionPositiveError creates a QBError for a non-positive version.
+func NewVersionPositiveError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &VersionPositiveError{},
@@ -258,9 +258,9 @@ func (e *BackendCloseError) Unwrap() error {
 	return e.Cause
 }
 
-// NewBackendCloseError creates a DragonError for a backend close failure.
-func NewBackendCloseError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewBackendCloseError creates a QBError for a backend close failure.
+func NewBackendCloseError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &BackendCloseError{Cause: cause},
@@ -282,9 +282,9 @@ func (e *InvalidBlobError) Unwrap() error {
 	return e.Cause
 }
 
-// NewInvalidBlobError creates a DragonError for an invalid encrypted blob.
-func NewInvalidBlobError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewInvalidBlobError creates a QBError for an invalid encrypted blob.
+func NewInvalidBlobError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InvalidBlobError{Cause: cause},
@@ -306,9 +306,9 @@ func (e *DEKRetrievalError) Unwrap() error {
 	return e.Cause
 }
 
-// NewDEKRetrievalError creates a DragonError for a DEK retrieval failure.
-func NewDEKRetrievalError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewDEKRetrievalError creates a QBError for a DEK retrieval failure.
+func NewDEKRetrievalError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &DEKRetrievalError{Cause: cause},
@@ -330,9 +330,9 @@ func (e *AuthenticationFailedError) Unwrap() error {
 	return e.Cause
 }
 
-// NewAuthenticationFailedError creates a DragonError for an AEAD auth failure.
-func NewAuthenticationFailedError(op string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewAuthenticationFailedError creates a QBError for an AEAD auth failure.
+func NewAuthenticationFailedError(op string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrDecryption,
 		Op:   op,
 		Err:  &AuthenticationFailedError{Cause: cause},

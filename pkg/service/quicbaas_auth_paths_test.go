@@ -66,9 +66,9 @@ func TestPut_AuthEnabled_NoToken(t *testing.T) {
 	resp, err := svc.kvService.Put(noTokenContext(), &PutRequest{EntityType: "users", ID: 1, Data: []byte(`{}`)})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func TestPut_AuthEnabled_AuthorizationFailure(t *testing.T) {
@@ -82,9 +82,9 @@ func TestPut_AuthEnabled_AuthorizationFailure(t *testing.T) {
 	resp, err := svc.kvService.Put(ctx, &PutRequest{EntityType: "users", ID: 1, Data: []byte(`{}`)})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 // =============================================================================
@@ -96,9 +96,9 @@ func TestGet_AuthEnabled_NoToken(t *testing.T) {
 	resp, err := svc.kvService.Get(noTokenContext(), &GetRequest{EntityType: "users", ID: 1})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func TestGet_AuthEnabled_AuthorizationFailure(t *testing.T) {
@@ -112,9 +112,9 @@ func TestGet_AuthEnabled_AuthorizationFailure(t *testing.T) {
 	resp, err := svc.kvService.Get(ctx, &GetRequest{EntityType: "users", ID: 1})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 // =============================================================================
@@ -126,9 +126,9 @@ func TestDelete_AuthEnabled_NoToken(t *testing.T) {
 	resp, err := svc.kvService.Delete(noTokenContext(), &DeleteRequest{EntityType: "users", ID: 1})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func TestDelete_AuthEnabled_AuthorizationFailure(t *testing.T) {
@@ -153,9 +153,9 @@ func TestList_AuthEnabled_NoToken(t *testing.T) {
 	ch := make(chan *ListResponse, 1)
 	err := svc.kvService.List(noTokenContext(), &ListRequest{EntityType: "users"}, ch)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 // =============================================================================
@@ -167,9 +167,9 @@ func TestListEntityTypes_AuthEnabled_NoToken(t *testing.T) {
 	resp, err := svc.kvService.ListEntityTypes(noTokenContext(), &ListEntityTypesRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 // =============================================================================
@@ -183,9 +183,9 @@ func TestBatchPut_AuthEnabled_NoToken(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func TestBatchPut_AuthEnabled_AuthorizationFailure(t *testing.T) {
@@ -201,9 +201,9 @@ func TestBatchPut_AuthEnabled_AuthorizationFailure(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 // =============================================================================
@@ -217,9 +217,9 @@ func TestBatchDelete_AuthEnabled_NoToken(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func TestBatchDelete_AuthEnabled_AuthorizationFailure(t *testing.T) {
@@ -248,9 +248,9 @@ func TestBatchGet_AuthEnabled_NoToken(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 // =============================================================================
@@ -266,9 +266,9 @@ func TestTransaction_AuthEnabled_NoToken(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func TestTransaction_AuthEnabled_AuthorizationFailure(t *testing.T) {
@@ -286,9 +286,9 @@ func TestTransaction_AuthEnabled_AuthorizationFailure(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 // =============================================================================
@@ -300,7 +300,7 @@ func TestQuery_AuthEnabled_NoToken(t *testing.T) {
 	ch := make(chan *QueryResponse, 1) // bidirectional for defer close(stream)
 	err := svc.queryService.Query(noTokenContext(), &QueryRequest{EntityType: "users"}, ch)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }

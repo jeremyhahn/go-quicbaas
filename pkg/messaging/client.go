@@ -384,7 +384,7 @@ func (c *WebSocketClient) hubBridge() {
 func (c *WebSocketClient) handleMessage(data []byte) error {
 	msg, err := c.decodeMessage(data)
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "client.handleMessage",
 			Err:  err,
@@ -394,7 +394,7 @@ func (c *WebSocketClient) handleMessage(data []byte) error {
 	// Dispatch based on message type using map-based dispatch
 	handler, ok := wsClientMessageHandlers[msg.Type]
 	if !ok {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "client.handleMessage",
 			Err:  &UnknownMessageTypeError{Type: string(msg.Type)},
@@ -418,7 +418,7 @@ var wsClientMessageHandlers = map[ClientMessageType]wsMessageHandler{
 // handleWSSubscribeMessage handles a subscribe request from the client.
 func handleWSSubscribeMessage(c *WebSocketClient, msg *ClientMessage) error {
 	if msg.Channel == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "client.handleSubscribe",
 			Err:  &MissingChannelError{},
@@ -430,7 +430,7 @@ func handleWSSubscribeMessage(c *WebSocketClient, msg *ClientMessage) error {
 // handleWSUnsubscribeMessage handles an unsubscribe request from the client.
 func handleWSUnsubscribeMessage(c *WebSocketClient, msg *ClientMessage) error {
 	if msg.Channel == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "client.handleUnsubscribe",
 			Err:  &MissingChannelError{},
@@ -442,7 +442,7 @@ func handleWSUnsubscribeMessage(c *WebSocketClient, msg *ClientMessage) error {
 // handleWSPublishMessage handles a publish request from the client.
 func handleWSPublishMessage(c *WebSocketClient, msg *ClientMessage) error {
 	if c.hub == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "client.handlePublish",
 			Err:  &NoHubError{},
@@ -474,7 +474,7 @@ func handleWSPingMessage(c *WebSocketClient, _ *ClientMessage) error {
 // Subscribe adds the client to a channel.
 func (c *WebSocketClient) Subscribe(channel string) error {
 	if channel == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "client.Subscribe",
 			Err:  &MissingChannelError{},
@@ -500,7 +500,7 @@ func (c *WebSocketClient) Subscribe(channel string) error {
 // Unsubscribe removes the client from a channel.
 func (c *WebSocketClient) Unsubscribe(channel string) error {
 	if channel == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "client.Unsubscribe",
 			Err:  &MissingChannelError{},
@@ -528,7 +528,7 @@ func (c *WebSocketClient) Unsubscribe(channel string) error {
 // messagesDropped counter is incremented.
 func (c *WebSocketClient) Send(msg *ClientMessage) error {
 	if c.closed.Load() {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "client.Send",
 			Err:  &ClientClosedError{ClientID: c.ID},
@@ -542,7 +542,7 @@ func (c *WebSocketClient) Send(msg *ClientMessage) error {
 		// Buffer full - apply backpressure by dropping
 		c.messagesDropped.Add(1)
 		c.logger.Debug("message dropped due to backpressure")
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrResourceExhausted,
 			Op:   "client.Send",
 			Err:  &BackpressureError{ClientID: c.ID},

@@ -91,9 +91,9 @@ func TestNewSplitBrainPreventer(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*dberrors.DragonError)
-				require.True(t, ok, "expected DragonError")
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				qbErr, ok := err.(*dberrors.QBError)
+				require.True(t, ok, "expected QBError")
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 				assert.Nil(t, sbp)
 			} else {
 				require.NoError(t, err)
@@ -207,9 +207,9 @@ func TestSplitBrainPreventer_CheckQuorum(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*dberrors.DragonError)
+				qbErr, ok := err.(*dberrors.QBError)
 				require.True(t, ok)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 				assert.Equal(t, tt.expectQuorum, status.HasQuorum)
@@ -285,9 +285,9 @@ func TestSplitBrainPreventer_EnforceQuorum(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*dberrors.DragonError)
+				qbErr, ok := err.(*dberrors.QBError)
 				require.True(t, ok)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 			}
@@ -339,9 +339,9 @@ func TestSplitBrainPreventer_FenceNode(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*dberrors.DragonError)
+				qbErr, ok := err.(*dberrors.QBError)
 				require.True(t, ok)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 				assert.True(t, sbp.IsNodeFenced(tt.nodeID))
@@ -376,9 +376,9 @@ func TestSplitBrainPreventer_UnfenceNode(t *testing.T) {
 	t.Run("unfence non-fenced node", func(t *testing.T) {
 		err := sbp.UnfenceNode(999)
 		require.Error(t, err)
-		dragonErr, ok := err.(*dberrors.DragonError)
+		qbErr, ok := err.(*dberrors.QBError)
 		require.True(t, ok)
-		assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+		assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 	})
 }
 
@@ -635,9 +635,9 @@ func TestSplitBrainPreventer_PreventWrite(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*dberrors.DragonError)
+				qbErr, ok := err.(*dberrors.QBError)
 				require.True(t, ok)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 			}
@@ -779,9 +779,9 @@ func TestSplitBrainPreventer_EnforceQuorum_MetricsUpdated(t *testing.T) {
 	err = sbp.EnforceQuorum(ctx, 1)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrQuorumLost, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrQuorumLost, qbErr.Code)
 }
 
 // TestSplitBrainPreventer_DetectSplitBrain_LeaderWithoutQuorum tests the suspicious case.
@@ -858,9 +858,9 @@ func TestSplitBrainPreventer_PreventWrite_SplitBrainDetected(t *testing.T) {
 
 	err = sbp.PreventWrite(ctx, 1)
 	require.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }
 
 // TestSplitBrainPreventer_CheckQuorum_RequiredQuorumCalculation tests quorum calculation edge cases.
@@ -1107,9 +1107,9 @@ func TestSplitBrainPreventer_PreventWrite_ActualSplitBrainBlocked(t *testing.T) 
 	// PreventWrite should block due to split-brain detection
 	err = sbp.PreventWrite(ctx, 1)
 	require.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrSplitBrain, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrSplitBrain, qbErr.Code)
 }
 
 // mockRaftNodeWithSplitBrainForPreventWrite simulates a split-brain scenario for PreventWrite.

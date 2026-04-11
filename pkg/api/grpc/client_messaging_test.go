@@ -35,10 +35,10 @@ func TestClient_MessagingCreateChannel_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingDeleteChannel nil request validation
@@ -51,10 +51,10 @@ func TestClient_MessagingDeleteChannel_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingGetChannel nil request validation
@@ -67,10 +67,10 @@ func TestClient_MessagingGetChannel_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Note: MessagingListChannels accepts nil request and creates a default.
@@ -86,10 +86,10 @@ func TestClient_MessagingSubscribe_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingUnsubscribe nil request validation
@@ -102,10 +102,10 @@ func TestClient_MessagingUnsubscribe_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingPublish nil request validation
@@ -118,10 +118,10 @@ func TestClient_MessagingPublish_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingPublishDelta nil request validation
@@ -134,10 +134,10 @@ func TestClient_MessagingPublishDelta_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingStreamNotifications nil request validation
@@ -151,10 +151,10 @@ func TestClient_MessagingStreamNotifications_NilRequest(t *testing.T) {
 	assert.Nil(t, errChan)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingStreamNotificationsRaw nil request validation
@@ -167,10 +167,10 @@ func TestClient_MessagingStreamNotificationsRaw_NilRequest(t *testing.T) {
 	assert.Nil(t, stream)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingWatchChannel nil request validation
@@ -183,10 +183,10 @@ func TestClient_MessagingWatchChannel_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingGetDedupStats nil request validation
@@ -199,10 +199,10 @@ func TestClient_MessagingGetDedupStats_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test MessagingGetChannelStats nil request validation
@@ -215,10 +215,10 @@ func TestClient_MessagingGetChannelStats_NilRequest(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be a DragonError")
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be a QBError")
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 // Test convertProtoChannel with nil input

@@ -304,5 +304,5 @@ var _ error = (*DEKProvisionError)(nil)
 // Compile-time check that mockDEKProvisioner implements TenantDEKProvisioner.
 var _ TenantDEKProvisioner = (*mockDEKProvisioner)(nil)
 
-// Compile-time check that DragonError is used correctly in the flow.
-var _ error = (*dberrors.DragonError)(nil)
+// Compile-time check that QBError is used correctly in the flow.
+var _ error = (*dberrors.QBError)(nil)

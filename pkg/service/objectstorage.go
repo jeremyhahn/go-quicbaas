@@ -245,7 +245,7 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 			if s.metrics != nil && s.metrics.operationErrors != nil {
 				s.metrics.operationErrors.WithLabelValues("put_object", "quota_exceeded").Inc()
 			}
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrResourceExhausted,
 				Op:   "objectstorage.PutObject",
 				Err:  err,

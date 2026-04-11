@@ -100,9 +100,9 @@ func TestNewRESTClient(t *testing.T) {
 
 			if tt.wantError {
 				require.Error(t, err)
-				var dragonErr *errors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 				require.NotNil(t, client)
@@ -697,9 +697,9 @@ func TestRESTClient_ErrorHandling(t *testing.T) {
 			_, err = client.KMSGetKey(ctx, "test-key")
 
 			require.Error(t, err)
-			var dragonErr *errors.DragonError
-			require.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, tt.errorCode, dragonErr.Code)
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, tt.errorCode, qbErr.Code)
 		})
 	}
 }
@@ -734,9 +734,9 @@ func TestRESTClient_NilRequests(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.fn()
 			require.Error(t, err)
-			var dragonErr *errors.DragonError
-			require.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 		})
 	}
 }
@@ -776,9 +776,9 @@ func TestRESTClient_EmptyKeyID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.fn()
 			require.Error(t, err)
-			var dragonErr *errors.DragonError
-			require.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 		})
 	}
 }

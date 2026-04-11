@@ -576,7 +576,7 @@ func (s *embeddingService) validateGenerateEmbeddingRequest(req *GenerateEmbeddi
 	}
 
 	if req.Text == "" {
-		return &quicbaasErrors.DragonError{
+		return &quicbaasErrors.QBError{
 			Code: quicbaasErrors.ErrInvalidInput,
 			Op:   "embeddings.validateGenerateEmbeddingRequest",
 			Err:  &api.RequiredFieldError{Field: "text"},
@@ -593,7 +593,7 @@ func (s *embeddingService) validateBatchGenerateEmbeddingsRequest(req *BatchGene
 	}
 
 	if len(req.Items) == 0 {
-		return &quicbaasErrors.DragonError{
+		return &quicbaasErrors.QBError{
 			Code: quicbaasErrors.ErrInvalidInput,
 			Op:   "embeddings.validateBatchGenerateEmbeddingsRequest",
 			Err:  &api.RequiredFieldError{Field: "items"},
@@ -602,14 +602,14 @@ func (s *embeddingService) validateBatchGenerateEmbeddingsRequest(req *BatchGene
 
 	for i, item := range req.Items {
 		if item.Text == "" {
-			return &quicbaasErrors.DragonError{
+			return &quicbaasErrors.QBError{
 				Code: quicbaasErrors.ErrInvalidInput,
 				Op:   "embeddings.validateBatchGenerateEmbeddingsRequest",
 				Err:  &api.BatchItemValidationError{Index: i, Message: "text is required"},
 			}
 		}
 		if item.ID == "" {
-			return &quicbaasErrors.DragonError{
+			return &quicbaasErrors.QBError{
 				Code: quicbaasErrors.ErrInvalidInput,
 				Op:   "embeddings.validateBatchGenerateEmbeddingsRequest",
 				Err:  &api.BatchItemValidationError{Index: i, Message: "id is required"},
@@ -627,7 +627,7 @@ func (s *embeddingService) validateGetProviderInfoRequest(req *GetProviderInfoRe
 	}
 
 	if req.Provider == "" {
-		return &quicbaasErrors.DragonError{
+		return &quicbaasErrors.QBError{
 			Code: quicbaasErrors.ErrInvalidInput,
 			Op:   "embeddings.validateGetProviderInfoRequest",
 			Err:  &api.RequiredFieldError{Field: "provider"},
@@ -644,7 +644,7 @@ func (s *embeddingService) validateSetDefaultProviderRequest(req *SetDefaultProv
 	}
 
 	if req.Provider == "" {
-		return &quicbaasErrors.DragonError{
+		return &quicbaasErrors.QBError{
 			Code: quicbaasErrors.ErrInvalidInput,
 			Op:   "embeddings.validateSetDefaultProviderRequest",
 			Err:  &api.RequiredFieldError{Field: "provider"},
@@ -658,7 +658,7 @@ func (s *embeddingService) validateSetDefaultProviderRequest(req *SetDefaultProv
 // Helper Methods
 // =============================================================================
 
-// handleEmbeddingError converts embedding package errors to DragonErrors.
+// handleEmbeddingError converts embedding package errors to QBErrors.
 func (s *embeddingService) handleEmbeddingError(err error, operation, provider string) error {
 	if s.metrics != nil {
 		s.metrics.operationErrors.With(operation, "embedding_error").Inc()
@@ -673,7 +673,7 @@ func (s *embeddingService) handleEmbeddingError(err error, operation, provider s
 		}).Error("Embedding operation failed")
 	}
 
-	// Map embedding errors to DragonErrors using errors.Is()
+	// Map embedding errors to QBErrors using errors.Is()
 	var code quicbaasErrors.ErrorCode
 	switch {
 	case errors.Is(err, embedding.ErrProviderNotFound):
@@ -690,7 +690,7 @@ func (s *embeddingService) handleEmbeddingError(err error, operation, provider s
 		code = quicbaasErrors.ErrInternal
 	}
 
-	return &quicbaasErrors.DragonError{
+	return &quicbaasErrors.QBError{
 		Code: code,
 		Op:   "embeddings." + operation,
 		Err:  err,

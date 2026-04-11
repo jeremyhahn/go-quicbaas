@@ -209,7 +209,7 @@ type serviceMetrics struct {
 // The QRDBClientProvider must be injected via WithQRDBClient().
 func (d *quicBaaS) qrdbForShard(shardID uint64) (*qrdbsdk.Client, error) {
 	if d.qrdbClient == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.qrdbForShard",
 			Err:  &api.OperationFailedError{Operation: "qrdb client lookup", Cause: &QRDBClientNotSetError{}},
@@ -245,7 +245,7 @@ func newTenantIsolationManager(cfg config.TenantIsolationConfig) security.Tenant
 func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// Validate required dependencies
 	if b.raftNode == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.newQuicBaaS",
 			Err:  &api.RequiredFieldError{Field: "raft node"},
@@ -253,7 +253,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	}
 
 	if b.config == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.newQuicBaaS",
 			Err:  &api.RequiredFieldError{Field: "config"},
@@ -263,7 +263,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// Type assert interfaces to concrete types
 	raftNode, ok := b.raftNode.(interfaces.RaftNode)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.newQuicBaaS",
 			Err:  &api.InvalidTypeError{Field: "raft node", Expected: "interfaces.RaftNode"},
@@ -274,7 +274,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	if b.storage != nil {
 		storage, ok = b.storage.(interfaces.Storage)
 		if !ok {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "service.newQuicBaaS",
 				Err:  &api.InvalidTypeError{Field: "storage", Expected: "interfaces.Storage"},
@@ -287,7 +287,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		var ok bool
 		cacheManager, ok = b.cacheManager.(interfaces.CacheManager)
 		if !ok {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "service.newQuicBaaS",
 				Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "interfaces.CacheManager"},
@@ -300,7 +300,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		var ok bool
 		authManager, ok = b.authManager.(interfaces.AuthManager)
 		if !ok {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "service.newQuicBaaS",
 				Err:  &api.InvalidTypeError{Field: "auth manager", Expected: "interfaces.AuthManager"},
@@ -313,7 +313,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		var ok bool
 		backupMgr, ok = b.backupManager.(interfaces.BackupManager)
 		if !ok {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "service.newQuicBaaS",
 				Err:  &api.InvalidTypeError{Field: "backup manager", Expected: "interfaces.BackupManager"},
@@ -325,7 +325,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	if b.logger != nil {
 		logger, ok = b.logger.(interfaces.Logger)
 		if !ok {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "service.newQuicBaaS",
 				Err:  &api.InvalidTypeError{Field: "logger", Expected: "interfaces.Logger"},
@@ -339,7 +339,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		var ok bool
 		kmsManager, ok = b.kmsManager.(interfaces.KMSManager)
 		if !ok {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "service.newQuicBaaS",
 				Err:  &api.InvalidTypeError{Field: "KMS manager", Expected: "interfaces.KMSManager"},
@@ -404,7 +404,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		var ok bool
 		tsStorage, ok = b.tsStorage.(interfaces.TimeSeriesStorage)
 		if !ok {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "service.newQuicBaaS",
 				Err:  &api.InvalidTypeError{Field: "timeseries storage", Expected: "interfaces.TimeSeriesStorage"},
@@ -726,7 +726,7 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.Put",
 			Err:  err,
@@ -737,7 +737,7 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.Put",
 			Err:  err,
@@ -855,7 +855,7 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 			k.svc.metrics.requestsTotal.With("Get", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.Get",
 			Err:  err,
@@ -867,7 +867,7 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 			k.svc.metrics.requestsTotal.With("Get", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.Get",
 			Err:  err,
@@ -896,7 +896,7 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Get", "not_found").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "service.Get",
 			Err:  &api.NotFoundError{Resource: req.EntityType, ID: fmt.Sprintf("%d", req.ID)},
@@ -959,7 +959,7 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.Delete",
 			Err:  err,
@@ -970,7 +970,7 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.Delete",
 			Err:  err,
@@ -1046,7 +1046,7 @@ func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *L
 			k.svc.metrics.requestsTotal.With("List", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.List",
 			Err:  err,
@@ -1058,7 +1058,7 @@ func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *L
 			k.svc.metrics.requestsTotal.With("List", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.List",
 			Err:  err,
@@ -1144,7 +1144,7 @@ func (k *kvService) Watch(ctx context.Context, req *WatchRequest, stream chan<- 
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Watch", "invalid").Inc()
 		}
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Watch",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1155,7 +1155,7 @@ func (k *kvService) Watch(ctx context.Context, req *WatchRequest, stream chan<- 
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Watch", "invalid").Inc()
 		}
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Watch",
 			Err:  &api.RequiredFieldError{Field: "key"},
@@ -1166,7 +1166,7 @@ func (k *kvService) Watch(ctx context.Context, req *WatchRequest, stream chan<- 
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Watch", "invalid").Inc()
 		}
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Watch",
 			Err:  &api.RequiredFieldError{Field: "stream channel"},
@@ -1185,7 +1185,7 @@ func (k *kvService) Watch(ctx context.Context, req *WatchRequest, stream chan<- 
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Watch", "error").Inc()
 		}
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.Watch",
 			Err:  &api.OperationFailedError{Operation: "create watch", Cause: err},
@@ -1328,7 +1328,7 @@ func (k *kvService) ListEntityTypes(ctx context.Context, req *ListEntityTypesReq
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("ListEntityTypes", "error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.ListEntityTypes",
 			Err:  err,
@@ -1342,7 +1342,7 @@ func (k *kvService) ListEntityTypes(ctx context.Context, req *ListEntityTypesReq
 			k.svc.metrics.requestsTotal.With("ListEntityTypes", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.ListEntityTypes",
 			Err:  err,
@@ -1354,7 +1354,7 @@ func (k *kvService) ListEntityTypes(ctx context.Context, req *ListEntityTypesReq
 			k.svc.metrics.requestsTotal.With("ListEntityTypes", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.ListEntityTypes",
 			Err:  err,
@@ -1440,7 +1440,7 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 		if b.svc.metrics != nil {
 			b.svc.metrics.requestsTotal.With("BatchPut", "invalid").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.BatchPut",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1451,7 +1451,7 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 		if b.svc.metrics != nil {
 			b.svc.metrics.requestsTotal.With("BatchPut", "invalid").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.BatchPut",
 			Err:  &api.EmptyCollectionError{Field: "batch"},
@@ -1478,7 +1478,7 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 			if b.svc.metrics != nil {
 				b.svc.metrics.requestsTotal.With("BatchPut", "invalid").Inc()
 			}
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "service.BatchPut",
 				Err:  &api.OperationFailedError{Operation: "validate entity type " + putReq.EntityType, Cause: err},
@@ -1494,7 +1494,7 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 				b.svc.metrics.requestsTotal.With("BatchPut", "error").Inc()
 				b.svc.metrics.errorsByType.With("raft_error").Inc()
 			}
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrRaft,
 				Op:   "service.BatchPut",
 				Err:  err,
@@ -1505,7 +1505,7 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 				b.svc.metrics.requestsTotal.With("BatchPut", "error").Inc()
 				b.svc.metrics.errorsByType.With("raft_error").Inc()
 			}
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrRaft,
 				Op:   "service.BatchPut",
 				Err:  err,
@@ -1545,7 +1545,7 @@ func (b *batchService) BatchGet(ctx context.Context, req *BatchGetRequest) (*Bat
 		if b.svc.metrics != nil {
 			b.svc.metrics.requestsTotal.With("BatchGet", "invalid").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.BatchGet",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1556,7 +1556,7 @@ func (b *batchService) BatchGet(ctx context.Context, req *BatchGetRequest) (*Bat
 		if b.svc.metrics != nil {
 			b.svc.metrics.requestsTotal.With("BatchGet", "invalid").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.BatchGet",
 			Err:  &api.EmptyCollectionError{Field: "batch"},
@@ -1614,7 +1614,7 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 		if b.svc.metrics != nil {
 			b.svc.metrics.requestsTotal.With("BatchDelete", "invalid").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.BatchDelete",
 			Err:  &api.NilInputError{Name: "request"},
@@ -1625,7 +1625,7 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 		if b.svc.metrics != nil {
 			b.svc.metrics.requestsTotal.With("BatchDelete", "invalid").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.BatchDelete",
 			Err:  &api.EmptyCollectionError{Field: "batch"},
@@ -1652,7 +1652,7 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 			if b.svc.metrics != nil {
 				b.svc.metrics.requestsTotal.With("BatchDelete", "invalid").Inc()
 			}
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "service.BatchDelete",
 				Err:  &api.OperationFailedError{Operation: "validate entity type " + delReq.EntityType, Cause: err},
@@ -1668,7 +1668,7 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 				b.svc.metrics.requestsTotal.With("BatchDelete", "error").Inc()
 				b.svc.metrics.errorsByType.With("raft_error").Inc()
 			}
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrRaft,
 				Op:   "service.BatchDelete",
 				Err:  err,
@@ -1679,7 +1679,7 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 				b.svc.metrics.requestsTotal.With("BatchDelete", "error").Inc()
 				b.svc.metrics.errorsByType.With("raft_error").Inc()
 			}
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrRaft,
 				Op:   "service.BatchDelete",
 				Err:  err,
@@ -1974,7 +1974,7 @@ func (t *transactionService) executeGetOp(ctx context.Context, shardID uint64, o
 
 func (t *transactionService) validateTransactionRequest(req *TransactionRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Transaction",
 			Err:  &api.NilInputError{Name: "request"},
@@ -2006,7 +2006,7 @@ func (q *queryService) Query(ctx context.Context, req *QueryRequest, stream chan
 		if q.svc.metrics != nil {
 			q.svc.metrics.requestsTotal.With("Query", "invalid").Inc()
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Query",
 			Err:  &api.RequiredFieldError{Field: "entity_type"},
@@ -2037,7 +2037,7 @@ func (q *queryService) Query(ctx context.Context, req *QueryRequest, stream chan
 			q.svc.metrics.requestsTotal.With("Query", "error").Inc()
 			q.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.Query",
 			Err:  err,
@@ -2049,7 +2049,7 @@ func (q *queryService) Query(ctx context.Context, req *QueryRequest, stream chan
 			q.svc.metrics.requestsTotal.With("Query", "error").Inc()
 			q.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.Query",
 			Err:  err,
@@ -2125,7 +2125,7 @@ func matchesIndexValue(data []byte, indexName string, value []byte) bool {
 func (q *queryService) ScanIndex(ctx context.Context, req *ScanRequest, stream chan<- *ScanResponse) error {
 	defer close(stream)
 	// ScanIndex is not yet implemented - returns NotImplemented error
-	return &errors.DragonError{
+	return &errors.QBError{
 		Code: errors.ErrNotImplemented,
 		Op:   "service.ScanIndex",
 		Err:  &api.NotImplementedError{Feature: "scan index"},
@@ -2147,7 +2147,7 @@ func (c *clusterService) ClusterStatus(ctx context.Context, req *ClusterStatusRe
 	// Use SDK client to get topology
 	client, err := c.svc.qrdbForShard(1) // Use shard 1 for admin ops
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.ClusterStatus",
 			Err:  err,
@@ -2155,7 +2155,7 @@ func (c *clusterService) ClusterStatus(ctx context.Context, req *ClusterStatusRe
 	}
 	topology, err := client.Admin().GetTopology(ctx)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.ClusterStatus",
 			Err:  err,
@@ -2215,7 +2215,7 @@ func (c *clusterService) ClusterStatus(ctx context.Context, req *ClusterStatusRe
 func (c *clusterService) GetLeader(ctx context.Context, req *GetLeaderRequest) (*GetLeaderResponse, error) {
 	client, err := c.svc.qrdbForShard(req.ShardID)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.GetLeader",
 			Err:  err,
@@ -2223,7 +2223,7 @@ func (c *clusterService) GetLeader(ctx context.Context, req *GetLeaderRequest) (
 	}
 	state, err := client.Admin().GetShardState(ctx, req.ShardID)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.GetLeader",
 			Err:  err,
@@ -2238,28 +2238,28 @@ func (c *clusterService) GetLeader(ctx context.Context, req *GetLeaderRequest) (
 func (c *clusterService) AddNode(ctx context.Context, req *AddNodeRequest) (*AddNodeResponse, error) {
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.AddNode",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.ShardID == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.AddNode",
 			Err:  &api.InvalidInputError{Message: "shard_id must be greater than 0"},
 		}
 	}
 	if req.NodeID == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.AddNode",
 			Err:  &api.InvalidInputError{Message: "node_id must be greater than 0"},
 		}
 	}
 	if req.Address == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.AddNode",
 			Err:  &api.EmptyCollectionError{Field: "address"},
@@ -2269,14 +2269,14 @@ func (c *clusterService) AddNode(ctx context.Context, req *AddNodeRequest) (*Add
 	// Use SDK to add member
 	client, err := c.svc.qrdbForShard(req.ShardID)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.AddNode",
 			Err:  err,
 		}
 	}
 	if err := client.Admin().AddMember(ctx, req.ShardID, req.NodeID, req.Address); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.AddNode",
 			Err:  &api.OperationFailedError{Operation: "add node to shard", Cause: err},
@@ -2292,21 +2292,21 @@ func (c *clusterService) AddNode(ctx context.Context, req *AddNodeRequest) (*Add
 func (c *clusterService) RemoveNode(ctx context.Context, req *RemoveNodeRequest) (*RemoveNodeResponse, error) {
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.RemoveNode",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.ShardID == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.RemoveNode",
 			Err:  &api.InvalidInputError{Message: "shard_id must be greater than 0"},
 		}
 	}
 	if req.NodeID == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.RemoveNode",
 			Err:  &api.InvalidInputError{Message: "node_id must be greater than 0"},
@@ -2316,14 +2316,14 @@ func (c *clusterService) RemoveNode(ctx context.Context, req *RemoveNodeRequest)
 	// Use SDK to remove member
 	client, err := c.svc.qrdbForShard(req.ShardID)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.RemoveNode",
 			Err:  err,
 		}
 	}
 	if err := client.Admin().RemoveMember(ctx, req.ShardID, req.NodeID); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.RemoveNode",
 			Err:  &api.OperationFailedError{Operation: "remove node from shard", Cause: err},
@@ -2339,21 +2339,21 @@ func (c *clusterService) RemoveNode(ctx context.Context, req *RemoveNodeRequest)
 func (c *clusterService) CreateShard(ctx context.Context, req *CreateShardRequest) (*CreateShardResponse, error) {
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.CreateShard",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.ShardID == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.CreateShard",
 			Err:  &api.InvalidInputError{Message: "shard_id must be greater than 0"},
 		}
 	}
 	if len(req.InitialMembers) == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.CreateShard",
 			Err:  &api.EmptyCollectionError{Field: "initial_members"},
@@ -2362,7 +2362,7 @@ func (c *clusterService) CreateShard(ctx context.Context, req *CreateShardReques
 
 	// Check if SDK client is available
 	if c.svc.qrdbClient == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.CreateShard",
 			Err:  &api.ServiceNotConfiguredError{Service: "qrdb client"},
@@ -2377,7 +2377,7 @@ func (c *clusterService) CreateShard(ctx context.Context, req *CreateShardReques
 	//
 	// For now, return an error indicating this needs to be implemented
 	// with the proper state machine setup
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrNotImplemented,
 		Op:   "service.CreateShard",
 		Err:  &api.NotImplementedError{Feature: "CreateShard (requires state machine factory setup)"},
@@ -2387,7 +2387,7 @@ func (c *clusterService) CreateShard(ctx context.Context, req *CreateShardReques
 func (c *clusterService) RebalanceCluster(ctx context.Context, req *RebalanceClusterRequest) (*RebalanceClusterResponse, error) {
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.RebalanceCluster",
 			Err:  &api.NilInputError{Name: "request"},
@@ -2396,7 +2396,7 @@ func (c *clusterService) RebalanceCluster(ctx context.Context, req *RebalanceClu
 
 	// Check if SDK client is available
 	if c.svc.qrdbClient == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.RebalanceCluster",
 			Err:  &api.ServiceNotConfiguredError{Service: "qrdb client"},
@@ -2425,21 +2425,21 @@ func (c *clusterService) RebalanceCluster(ctx context.Context, req *RebalanceClu
 func (c *clusterService) GetRebalanceProgress(ctx context.Context, req *GetRebalanceProgressRequest) (*GetRebalanceProgressResponse, error) {
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.GetRebalanceProgress",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.OperationID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.GetRebalanceProgress",
 			Err:  &api.RequiredFieldError{Field: "operation_id"},
 		}
 	}
 
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "service.GetRebalanceProgress",
 		Err:  &api.NotFoundError{Resource: "operation", ID: req.OperationID},
@@ -2451,7 +2451,7 @@ type backupService struct{ svc *quicBaaS }
 func (b *backupService) CreateBackup(ctx context.Context, req *CreateBackupRequest) (*CreateBackupResponse, error) {
 	// Check if backup manager is available
 	if b.svc.backupMgr == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "service.CreateBackup",
 			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
@@ -2472,7 +2472,7 @@ func (b *backupService) CreateBackup(ctx context.Context, req *CreateBackupReque
 	// Create backup using backup manager
 	backupResultRaw, err := b.svc.backupMgr.CreateBackup(ctx, backupType)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.CreateBackup",
 			Err:  &api.OperationFailedError{Operation: "create backup", Cause: err},
@@ -2481,7 +2481,7 @@ func (b *backupService) CreateBackup(ctx context.Context, req *CreateBackupReque
 
 	backupResult, ok := backupResultRaw.(*backup.Backup)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.CreateBackup",
 			Err:  &api.InvalidTypeError{Field: "backup result", Expected: "*backup.Backup"},
@@ -2502,7 +2502,7 @@ func (b *backupService) CreateBackup(ctx context.Context, req *CreateBackupReque
 func (b *backupService) ListBackups(ctx context.Context, req *ListBackupsRequest) (*ListBackupsResponse, error) {
 	// Check if backup manager is available
 	if b.svc.backupMgr == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "service.ListBackups",
 			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
@@ -2518,7 +2518,7 @@ func (b *backupService) ListBackups(ctx context.Context, req *ListBackupsRequest
 	// List backups using backup manager
 	backupListRaw, err := b.svc.backupMgr.ListBackups(ctx, limit)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.ListBackups",
 			Err:  &api.OperationFailedError{Operation: "list backups", Cause: err},
@@ -2526,7 +2526,7 @@ func (b *backupService) ListBackups(ctx context.Context, req *ListBackupsRequest
 	}
 	backupList, ok := backupListRaw.(*backup.BackupList)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.ListBackups",
 			Err:  &api.InvalidTypeError{Field: "backup list", Expected: "*backup.BackupList"},
@@ -2564,7 +2564,7 @@ func (b *backupService) ListBackups(ctx context.Context, req *ListBackupsRequest
 func (b *backupService) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) (*RestoreBackupResponse, error) {
 	// Check if backup manager is available
 	if b.svc.backupMgr == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "service.RestoreBackup",
 			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
@@ -2581,7 +2581,7 @@ func (b *backupService) RestoreBackup(ctx context.Context, req *RestoreBackupReq
 	// Restore backup using backup manager
 	err := b.svc.backupMgr.RestoreBackup(ctx, req.BackupID, opts)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.RestoreBackup",
 			Err:  &api.OperationFailedError{Operation: "restore backup", Cause: err},
@@ -2601,7 +2601,7 @@ func (b *backupService) RestoreBackup(ctx context.Context, req *RestoreBackupReq
 func (b *backupService) DeleteBackup(ctx context.Context, req *DeleteBackupRequest) (*DeleteBackupResponse, error) {
 	// Check if backup manager is available
 	if b.svc.backupMgr == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "service.DeleteBackup",
 			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
@@ -2611,7 +2611,7 @@ func (b *backupService) DeleteBackup(ctx context.Context, req *DeleteBackupReque
 	// Delete backup using backup manager
 	err := b.svc.backupMgr.DeleteBackup(ctx, req.BackupID)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.DeleteBackup",
 			Err:  &api.OperationFailedError{Operation: "delete backup", Cause: err},
@@ -2630,7 +2630,7 @@ func (b *backupService) DeleteBackup(ctx context.Context, req *DeleteBackupReque
 func (b *backupService) VerifyBackup(ctx context.Context, req *VerifyBackupRequest) (*VerifyBackupResponse, error) {
 	// Check if backup manager is available
 	if b.svc.backupMgr == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "service.VerifyBackup",
 			Err:  &api.ServiceNotConfiguredError{Service: "backup manager"},
@@ -2640,7 +2640,7 @@ func (b *backupService) VerifyBackup(ctx context.Context, req *VerifyBackupReque
 	// Verify backup using backup manager
 	resultRaw, err := b.svc.backupMgr.VerifyBackup(ctx, req.BackupID)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.VerifyBackup",
 			Err:  &api.OperationFailedError{Operation: "verify backup", Cause: err},
@@ -2648,7 +2648,7 @@ func (b *backupService) VerifyBackup(ctx context.Context, req *VerifyBackupReque
 	}
 	result, ok := resultRaw.(*backup.VerificationResult)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.VerifyBackup",
 			Err:  &api.InvalidTypeError{Field: "verification result", Expected: "*backup.VerificationResult"},
@@ -2670,7 +2670,7 @@ type authService struct{ svc *quicBaaS }
 func (a *authService) Login(ctx context.Context, req *LoginRequest) (*LoginResponse, error) {
 	// Check if auth manager is available
 	if a.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.Login",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
@@ -2680,7 +2680,7 @@ func (a *authService) Login(ctx context.Context, req *LoginRequest) (*LoginRespo
 	// Authenticate with auth manager
 	tokenRaw, err := a.svc.authManager.Authenticate(ctx, req.Username, req.Password)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrUnauthorized,
 			Op:   "service.Login",
 			Err:  err,
@@ -2688,7 +2688,7 @@ func (a *authService) Login(ctx context.Context, req *LoginRequest) (*LoginRespo
 	}
 	token, ok := tokenRaw.(*auth.Token)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.Authenticate",
 			Err:  &api.InvalidTypeError{Field: "token", Expected: "*auth.Token"},
@@ -2707,7 +2707,7 @@ func (a *authService) Login(ctx context.Context, req *LoginRequest) (*LoginRespo
 func (a *authService) Logout(ctx context.Context, req *LogoutRequest) (*LogoutResponse, error) {
 	// Check if auth manager is available
 	if a.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.Logout",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
@@ -2732,7 +2732,7 @@ func (a *authService) Logout(ctx context.Context, req *LogoutRequest) (*LogoutRe
 func (a *authService) RefreshToken(ctx context.Context, req *RefreshTokenRequest) (*RefreshTokenResponse, error) {
 	// Check if auth manager is available
 	if a.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.RefreshToken",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
@@ -2742,7 +2742,7 @@ func (a *authService) RefreshToken(ctx context.Context, req *RefreshTokenRequest
 	// Refresh token
 	tokenRaw, err := a.svc.authManager.RefreshToken(ctx, req.RefreshToken)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrUnauthorized,
 			Op:   "service.RefreshToken",
 			Err:  err,
@@ -2750,7 +2750,7 @@ func (a *authService) RefreshToken(ctx context.Context, req *RefreshTokenRequest
 	}
 	token, ok := tokenRaw.(*auth.Token)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.RefreshToken",
 			Err:  &api.InvalidTypeError{Field: "token", Expected: "*auth.Token"},
@@ -2767,7 +2767,7 @@ func (a *authService) RefreshToken(ctx context.Context, req *RefreshTokenRequest
 func (a *authService) ValidateToken(ctx context.Context, req *ValidateTokenRequest) (*ValidateTokenResponse, error) {
 	// Check if auth manager is available
 	if a.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.ValidateToken",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
@@ -2777,7 +2777,7 @@ func (a *authService) ValidateToken(ctx context.Context, req *ValidateTokenReque
 	// Validate token
 	resultRaw, err := a.svc.authManager.ValidateToken(ctx, req.AccessToken)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrUnauthorized,
 			Op:   "service.ValidateToken",
 			Err:  err,
@@ -2785,7 +2785,7 @@ func (a *authService) ValidateToken(ctx context.Context, req *ValidateTokenReque
 	}
 	result, ok := resultRaw.(*auth.TokenValidationResult)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.ValidateToken",
 			Err:  &api.InvalidTypeError{Field: "validation result", Expected: "*auth.TokenValidationResult"},
@@ -2807,7 +2807,7 @@ type rbacService struct{ svc *quicBaaS }
 func (r *rbacService) CreateUser(ctx context.Context, req *AuthCreateUserRequest) (*AuthCreateUserResponse, error) {
 	// Check if authManager is available
 	if r.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.CreateUser",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
@@ -2816,7 +2816,7 @@ func (r *rbacService) CreateUser(ctx context.Context, req *AuthCreateUserRequest
 
 	// Validate request
 	if req.Username == "" || req.Password == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.CreateUser",
 			Err:  &api.InvalidInputError{Message: "username and password are required"},
@@ -2826,7 +2826,7 @@ func (r *rbacService) CreateUser(ctx context.Context, req *AuthCreateUserRequest
 	// Create user through AuthManager
 	userRaw, err := r.svc.authManager.CreateUser(req.Username, req.Password, req.Roles)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.CreateUser",
 			Err:  err,
@@ -2835,7 +2835,7 @@ func (r *rbacService) CreateUser(ctx context.Context, req *AuthCreateUserRequest
 
 	user, ok := userRaw.(*auth.User)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.CreateUser",
 			Err:  &api.InvalidTypeError{Field: "user", Expected: "*auth.User"},
@@ -2851,7 +2851,7 @@ func (r *rbacService) CreateUser(ctx context.Context, req *AuthCreateUserRequest
 func (r *rbacService) DeleteUser(ctx context.Context, req *AuthDeleteUserRequest) (*AuthDeleteUserResponse, error) {
 	// Check if authManager is available
 	if r.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.DeleteUser",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
@@ -2860,7 +2860,7 @@ func (r *rbacService) DeleteUser(ctx context.Context, req *AuthDeleteUserRequest
 
 	// Validate request
 	if req.Username == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.DeleteUser",
 			Err:  &api.RequiredFieldError{Field: "username"},
@@ -2871,14 +2871,14 @@ func (r *rbacService) DeleteUser(ctx context.Context, req *AuthDeleteUserRequest
 	userStoreRaw := r.svc.authManager.GetUserStore()
 	userStore, ok := userStoreRaw.(*auth.UserStore)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.RBAC",
 			Err:  &api.InvalidTypeError{Field: "user store", Expected: "*auth.UserStore"},
 		}
 	}
 	if userStore == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.DeleteUser",
 			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
@@ -2888,7 +2888,7 @@ func (r *rbacService) DeleteUser(ctx context.Context, req *AuthDeleteUserRequest
 	// Find user by username
 	user := userStore.GetByUsername(req.Username)
 	if user == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "service.DeleteUser",
 			Err:  &api.NotFoundError{Resource: "user", ID: req.Username},
@@ -2907,7 +2907,7 @@ func (r *rbacService) DeleteUser(ctx context.Context, req *AuthDeleteUserRequest
 func (r *rbacService) ListUsers(ctx context.Context, req *AuthListUsersRequest) (*AuthListUsersResponse, error) {
 	// Check if authManager is available
 	if r.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.ListUsers",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
@@ -2917,7 +2917,7 @@ func (r *rbacService) ListUsers(ctx context.Context, req *AuthListUsersRequest) 
 	// Get user store (returns interfaces.UserStore)
 	userStore := r.svc.authManager.GetUserStore()
 	if userStore == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.ListUsers",
 			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
@@ -2962,7 +2962,7 @@ func (r *rbacService) ListUsers(ctx context.Context, req *AuthListUsersRequest) 
 func (r *rbacService) CreateRole(ctx context.Context, req *AuthCreateRoleRequest) (*AuthCreateRoleResponse, error) {
 	// Check if authManager is available
 	if r.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.CreateRole",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
@@ -2971,7 +2971,7 @@ func (r *rbacService) CreateRole(ctx context.Context, req *AuthCreateRoleRequest
 
 	// Validate request
 	if req.RoleName == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.CreateRole",
 			Err:  &api.RequiredFieldError{Field: "role name"},
@@ -2982,14 +2982,14 @@ func (r *rbacService) CreateRole(ctx context.Context, req *AuthCreateRoleRequest
 	roleManagerRaw := r.svc.authManager.GetRoleManager()
 	roleManager, ok := roleManagerRaw.(*auth.RoleManager)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.RBAC",
 			Err:  &api.InvalidTypeError{Field: "role manager", Expected: "*auth.RoleManager"},
 		}
 	}
 	if roleManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.CreateRole",
 			Err:  &api.ServiceNotConfiguredError{Service: "role manager"},
@@ -2998,7 +2998,7 @@ func (r *rbacService) CreateRole(ctx context.Context, req *AuthCreateRoleRequest
 
 	// Check if role already exists
 	if existing := roleManager.GetRole(req.RoleName); existing != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.CreateRole",
 			Err:  &api.InvalidInputError{Message: "role already exists: " + req.RoleName},
@@ -3024,7 +3024,7 @@ func (r *rbacService) CreateRole(ctx context.Context, req *AuthCreateRoleRequest
 
 	// Add role
 	if err := roleManager.AddRole(role); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.CreateRole",
 			Err:  err,
@@ -3040,7 +3040,7 @@ func (r *rbacService) CreateRole(ctx context.Context, req *AuthCreateRoleRequest
 func (r *rbacService) DeleteRole(ctx context.Context, req *AuthDeleteRoleRequest) (*AuthDeleteRoleResponse, error) {
 	// Check if authManager is available
 	if r.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.DeleteRole",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
@@ -3049,7 +3049,7 @@ func (r *rbacService) DeleteRole(ctx context.Context, req *AuthDeleteRoleRequest
 
 	// Validate request
 	if req.RoleName == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.DeleteRole",
 			Err:  &api.RequiredFieldError{Field: "role name"},
@@ -3060,14 +3060,14 @@ func (r *rbacService) DeleteRole(ctx context.Context, req *AuthDeleteRoleRequest
 	roleManagerRaw := r.svc.authManager.GetRoleManager()
 	roleManager, ok := roleManagerRaw.(*auth.RoleManager)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.RBAC",
 			Err:  &api.InvalidTypeError{Field: "role manager", Expected: "*auth.RoleManager"},
 		}
 	}
 	if roleManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.DeleteRole",
 			Err:  &api.ServiceNotConfiguredError{Service: "role manager"},
@@ -3076,7 +3076,7 @@ func (r *rbacService) DeleteRole(ctx context.Context, req *AuthDeleteRoleRequest
 
 	// Check if role exists
 	if existing := roleManager.GetRole(req.RoleName); existing == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "service.DeleteRole",
 			Err:  &api.NotFoundError{Resource: "role", ID: req.RoleName},
@@ -3085,7 +3085,7 @@ func (r *rbacService) DeleteRole(ctx context.Context, req *AuthDeleteRoleRequest
 
 	// Delete role
 	if err := roleManager.DeleteRole(req.RoleName); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.DeleteRole",
 			Err:  err,
@@ -3101,7 +3101,7 @@ func (r *rbacService) DeleteRole(ctx context.Context, req *AuthDeleteRoleRequest
 func (r *rbacService) ListRoles(ctx context.Context, req *AuthListRolesRequest) (*AuthListRolesResponse, error) {
 	// Check if authManager is available
 	if r.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.ListRoles",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
@@ -3112,14 +3112,14 @@ func (r *rbacService) ListRoles(ctx context.Context, req *AuthListRolesRequest) 
 	roleManagerRaw := r.svc.authManager.GetRoleManager()
 	roleManager, ok := roleManagerRaw.(*auth.RoleManager)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.RBAC",
 			Err:  &api.InvalidTypeError{Field: "role manager", Expected: "*auth.RoleManager"},
 		}
 	}
 	if roleManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.ListRoles",
 			Err:  &api.ServiceNotConfiguredError{Service: "role manager"},
@@ -3171,7 +3171,7 @@ func (r *rbacService) ListRoles(ctx context.Context, req *AuthListRolesRequest) 
 func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest) (*AuthAssignRoleResponse, error) {
 	// Check if authManager is available
 	if r.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.AssignRole",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
@@ -3180,7 +3180,7 @@ func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest
 
 	// Validate request
 	if req.Username == "" || req.RoleName == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.AssignRole",
 			Err:  &api.InvalidInputError{Message: "username and role name are required"},
@@ -3190,7 +3190,7 @@ func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest
 	// Get user store
 	userStore := r.svc.authManager.GetUserStore()
 	if userStore == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.AssignRole",
 			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
@@ -3200,7 +3200,7 @@ func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest
 	// Find user by username
 	user := userStore.GetByUsername(req.Username)
 	if user == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "service.AssignRole",
 			Err:  &api.NotFoundError{Resource: "user", ID: req.Username},
@@ -3209,7 +3209,7 @@ func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest
 
 	// Assign role
 	if err := userStore.AssignRole(user.GetID(), req.RoleName); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.AssignRole",
 			Err:  err,
@@ -3225,7 +3225,7 @@ func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest
 func (r *rbacService) RevokeRole(ctx context.Context, req *AuthRevokeRoleRequest) (*AuthRevokeRoleResponse, error) {
 	// Check if authManager is available
 	if r.svc.authManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "service.RevokeRole",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
@@ -3234,7 +3234,7 @@ func (r *rbacService) RevokeRole(ctx context.Context, req *AuthRevokeRoleRequest
 
 	// Validate request
 	if req.Username == "" || req.RoleName == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.RevokeRole",
 			Err:  &api.InvalidInputError{Message: "username and role name are required"},
@@ -3244,7 +3244,7 @@ func (r *rbacService) RevokeRole(ctx context.Context, req *AuthRevokeRoleRequest
 	// Get user store
 	userStore := r.svc.authManager.GetUserStore()
 	if userStore == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.RevokeRole",
 			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
@@ -3254,7 +3254,7 @@ func (r *rbacService) RevokeRole(ctx context.Context, req *AuthRevokeRoleRequest
 	// Find user by username
 	user := userStore.GetByUsername(req.Username)
 	if user == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "service.RevokeRole",
 			Err:  &api.NotFoundError{Resource: "user", ID: req.Username},
@@ -3263,7 +3263,7 @@ func (r *rbacService) RevokeRole(ctx context.Context, req *AuthRevokeRoleRequest
 
 	// Revoke role
 	if err := userStore.RevokeRole(user.GetID(), req.RoleName); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.RevokeRole",
 			Err:  err,
@@ -3281,7 +3281,7 @@ type cacheService struct{ svc *quicBaaS }
 func (c *cacheService) GetCacheStats(ctx context.Context, req *GetCacheStatsRequest) (*GetCacheStatsResponse, error) {
 	// Check if cache manager is available
 	if c.svc.cacheManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "service.GetCacheStats",
 			Err:  &api.ServiceNotConfiguredError{Service: "cache manager"},
@@ -3291,7 +3291,7 @@ func (c *cacheService) GetCacheStats(ctx context.Context, req *GetCacheStatsRequ
 	// Get stats from cache manager (type assert to concrete type)
 	cacheMgr, ok := c.svc.cacheManager.(*cache.CacheManager)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.Cache",
 			Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "*cache.CacheManager"},
@@ -3315,7 +3315,7 @@ func (c *cacheService) GetCacheStats(ctx context.Context, req *GetCacheStatsRequ
 func (c *cacheService) ClearCache(ctx context.Context, req *ClearCacheRequest) (*ClearCacheResponse, error) {
 	// Check if cache manager is available
 	if c.svc.cacheManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "service.ClearCache",
 			Err:  &api.ServiceNotConfiguredError{Service: "cache manager"},
@@ -3325,7 +3325,7 @@ func (c *cacheService) ClearCache(ctx context.Context, req *ClearCacheRequest) (
 	// Get current size before clearing (type assert to concrete type)
 	cacheMgr, ok := c.svc.cacheManager.(*cache.CacheManager)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.ClearCache",
 			Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "*cache.CacheManager"},
@@ -3347,7 +3347,7 @@ func (c *cacheService) ClearCache(ctx context.Context, req *ClearCacheRequest) (
 func (c *cacheService) GetCacheConfig(ctx context.Context, req *GetCacheConfigRequest) (*GetCacheConfigResponse, error) {
 	// Check if cache manager is available
 	if c.svc.cacheManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "service.GetCacheConfig",
 			Err:  &api.ServiceNotConfiguredError{Service: "cache manager"},
@@ -3357,7 +3357,7 @@ func (c *cacheService) GetCacheConfig(ctx context.Context, req *GetCacheConfigRe
 	// Get config from cache manager (type assert to concrete type)
 	cacheMgr, ok := c.svc.cacheManager.(*cache.CacheManager)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.GetCacheConfig",
 			Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "*cache.CacheManager"},
@@ -3378,7 +3378,7 @@ func (c *cacheService) GetCacheConfig(ctx context.Context, req *GetCacheConfigRe
 func (c *cacheService) UpdateCacheConfig(ctx context.Context, req *UpdateCacheConfigRequest) (*UpdateCacheConfigResponse, error) {
 	// Check if cache manager is available
 	if c.svc.cacheManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "service.UpdateCacheConfig",
 			Err:  &api.ServiceNotConfiguredError{Service: "cache manager"},
@@ -3388,7 +3388,7 @@ func (c *cacheService) UpdateCacheConfig(ctx context.Context, req *UpdateCacheCo
 	// Type assert to concrete type for methods not in interface
 	cacheMgr, ok := c.svc.cacheManager.(*cache.CacheManager)
 	if !ok {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.UpdateCacheConfig",
 			Err:  &api.InvalidTypeError{Field: "cache manager", Expected: "*cache.CacheManager"},
@@ -3418,7 +3418,7 @@ func (c *cacheService) UpdateCacheConfig(ctx context.Context, req *UpdateCacheCo
 
 	// Update cache manager config
 	if err := cacheMgr.UpdateConfig(newConfig); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.UpdateCacheConfig",
 			Err:  err,
@@ -3562,7 +3562,7 @@ func (t *timeSeriesService) Aggregate(ctx context.Context, req *AggregateRequest
 	// Query entities through qrdb SDK
 	client, err := t.svc.qrdbForShard(shardID)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.Aggregate",
 			Err:  err,
@@ -3575,7 +3575,7 @@ func (t *timeSeriesService) Aggregate(ctx context.Context, req *AggregateRequest
 			t.svc.metrics.requestsTotal.With("Aggregate", "error").Inc()
 			t.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.Aggregate",
 			Err:  err,
@@ -3667,7 +3667,7 @@ func (t *timeSeriesService) Aggregate(ctx context.Context, req *AggregateRequest
 	case AggregateFunctionCount:
 		aggregateResult = float64(count)
 	default:
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Aggregate",
 			Err:  &api.InvalidInputError{Message: fmt.Sprintf("unsupported aggregation function: %v", req.Function)},
@@ -3724,7 +3724,7 @@ func (t *timeSeriesService) TimeSeriesQuery(ctx context.Context, req *TimeSeries
 	// Query entities through qrdb SDK
 	client, err := t.svc.qrdbForShard(shardID)
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "service.TimeSeriesQuery",
 			Err:  err,
@@ -3737,7 +3737,7 @@ func (t *timeSeriesService) TimeSeriesQuery(ctx context.Context, req *TimeSeries
 			t.svc.metrics.requestsTotal.With("TimeSeriesQuery", "error").Inc()
 			t.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.TimeSeriesQuery",
 			Err:  err,
@@ -3871,7 +3871,7 @@ func (t *timeSeriesService) TimeSeriesQuery(ctx context.Context, req *TimeSeries
 
 func (t *timeSeriesService) WritePoint(ctx context.Context, req *WritePointRequest) (*WritePointResponse, error) {
 	if t.tsStorage == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "timeSeriesService.WritePoint",
 			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
@@ -3880,14 +3880,14 @@ func (t *timeSeriesService) WritePoint(ctx context.Context, req *WritePointReque
 
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.WritePoint",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Metric == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.WritePoint",
 			Err:  &api.RequiredFieldError{Field: "metric"},
@@ -3902,7 +3902,7 @@ func (t *timeSeriesService) WritePoint(ctx context.Context, req *WritePointReque
 		// Tenant-scope the metric name for the Raft path so writes match reads
 		tenantID, err := prepareTimeSeriesTenantContext(ctx)
 		if err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "timeSeriesService.WritePoint",
 				Err:  err,
@@ -3913,14 +3913,14 @@ func (t *timeSeriesService) WritePoint(ctx context.Context, req *WritePointReque
 
 		client, err := t.svc.qrdbForShard(t.shardID)
 		if err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrRaft,
 				Op:   "timeSeriesService.WritePoint",
 				Err:  err,
 			}
 		}
 		if err := client.TimeSeries().TSWritePoint(ctx, sdkPoint); err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrRaft,
 				Op:   "timeSeriesService.WritePoint",
 				Err:  err,
@@ -3929,7 +3929,7 @@ func (t *timeSeriesService) WritePoint(ctx context.Context, req *WritePointReque
 	} else {
 		// Fallback to direct storage write when Raft not available
 		if err := t.tsStorage.WritePoint(ctx, point); err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "timeSeriesService.WritePoint",
 				Err:  err,
@@ -3945,7 +3945,7 @@ func (t *timeSeriesService) WritePoint(ctx context.Context, req *WritePointReque
 
 func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchRequest) (*WriteBatchResponse, error) {
 	if t.tsStorage == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "timeSeriesService.WriteBatch",
 			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
@@ -3954,7 +3954,7 @@ func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchReque
 
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.WriteBatch",
 			Err:  &api.NilInputError{Name: "request"},
@@ -3972,14 +3972,14 @@ func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchReque
 	points := make([]*tsDataPoint, len(req.Points))
 	for i, p := range req.Points {
 		if p == nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "timeSeriesService.WriteBatch",
 				Err:  &api.BatchItemError{Index: i, Message: "point is nil"},
 			}
 		}
 		if p.Metric == "" {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "timeSeriesService.WriteBatch",
 				Err:  &api.BatchItemError{Index: i, Field: "metric", Message: "metric is required"},
@@ -4003,14 +4003,14 @@ func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchReque
 		sdkPoints := localPointsToSDK(points)
 		client, err := t.svc.qrdbForShard(t.shardID)
 		if err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrRaft,
 				Op:   "timeSeriesService.WriteBatch",
 				Err:  err,
 			}
 		}
 		if err := client.TimeSeries().TSWriteBatch(ctx, sdkPoints); err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrRaft,
 				Op:   "timeSeriesService.WriteBatch",
 				Err:  err,
@@ -4020,7 +4020,7 @@ func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchReque
 		// Fallback to direct storage write when Raft not available
 		valuePoints := localPointsToStorageBatch(points)
 		if err := t.tsStorage.WriteBatch(valuePoints); err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "timeSeriesService.WriteBatch",
 				Err:  err,
@@ -4059,7 +4059,7 @@ func mapToSDKTags(m map[string]string) []qrdbtransport.TSTag {
 
 func (t *timeSeriesService) TSQuery(ctx context.Context, req *TSQueryRequest) (*TSQueryResponse, error) {
 	if t.tsStorage == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "timeSeriesService.TSQuery",
 			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
@@ -4068,28 +4068,28 @@ func (t *timeSeriesService) TSQuery(ctx context.Context, req *TSQueryRequest) (*
 
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.TSQuery",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Metric == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.TSQuery",
 			Err:  &api.RequiredFieldError{Field: "metric"},
 		}
 	}
 	if req.StartTime.IsZero() {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.TSQuery",
 			Err:  &api.RequiredFieldError{Field: "start_time"},
 		}
 	}
 	if req.EndTime.IsZero() {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.TSQuery",
 			Err:  &api.RequiredFieldError{Field: "end_time"},
@@ -4109,7 +4109,7 @@ func (t *timeSeriesService) TSQuery(ctx context.Context, req *TSQueryRequest) (*
 	// Execute query
 	result, err := t.tsStorage.QueryRich(ctx, storageReq)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "timeSeriesService.TSQuery",
 			Err:  err,
@@ -4164,7 +4164,7 @@ func (t *timeSeriesService) TSQuery(ctx context.Context, req *TSQueryRequest) (*
 
 func (t *timeSeriesService) DeleteSeries(ctx context.Context, req *TSDeleteRequest) (*TSDeleteResponse, error) {
 	if t.tsStorage == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "timeSeriesService.DeleteSeries",
 			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
@@ -4173,14 +4173,14 @@ func (t *timeSeriesService) DeleteSeries(ctx context.Context, req *TSDeleteReque
 
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.DeleteSeries",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Metric == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.DeleteSeries",
 			Err:  &api.RequiredFieldError{Field: "metric"},
@@ -4192,7 +4192,7 @@ func (t *timeSeriesService) DeleteSeries(ctx context.Context, req *TSDeleteReque
 
 	// Execute delete
 	if err := t.tsStorage.DeleteSeries(ctx, storageReq); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "timeSeriesService.DeleteSeries",
 			Err:  err,
@@ -4209,7 +4209,7 @@ func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRe
 	_ = ctx // Context not needed for this operation
 
 	if t.tsStorage == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "timeSeriesService.GetRetentionPolicy",
 			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
@@ -4218,14 +4218,14 @@ func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRe
 
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.GetRetentionPolicy",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Metric == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.GetRetentionPolicy",
 			Err:  &api.RequiredFieldError{Field: "metric"},
@@ -4235,7 +4235,7 @@ func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRe
 	// Get retention policy from storage
 	policy, err := t.tsStorage.GetRetentionPolicy(req.Metric)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "timeSeriesService.GetRetentionPolicy",
 			Err:  err,
@@ -4263,7 +4263,7 @@ func (t *timeSeriesService) SetRetentionPolicy(ctx context.Context, req *TSSetRe
 	_ = ctx // Context not needed for this operation
 
 	if t.tsStorage == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "timeSeriesService.SetRetentionPolicy",
 			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
@@ -4272,21 +4272,21 @@ func (t *timeSeriesService) SetRetentionPolicy(ctx context.Context, req *TSSetRe
 
 	// Validate request
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.SetRetentionPolicy",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Metric == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.SetRetentionPolicy",
 			Err:  &api.RequiredFieldError{Field: "metric"},
 		}
 	}
 	if req.Policy == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeSeriesService.SetRetentionPolicy",
 			Err:  &api.RequiredFieldError{Field: "policy"},
@@ -4298,7 +4298,7 @@ func (t *timeSeriesService) SetRetentionPolicy(ctx context.Context, req *TSSetRe
 
 	// Set retention policy in storage
 	if err := t.tsStorage.SetRetentionPolicy(req.Metric, storagePolicy); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "timeSeriesService.SetRetentionPolicy",
 			Err:  err,
@@ -4313,7 +4313,7 @@ func (t *timeSeriesService) SetRetentionPolicy(ctx context.Context, req *TSSetRe
 
 func (t *timeSeriesService) ListMetrics(ctx context.Context, req *TSListMetricsRequest) (*TSListMetricsResponse, error) {
 	if t.tsStorage == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
 			Op:   "timeSeriesService.ListMetrics",
 			Err:  &api.ServiceNotConfiguredError{Service: "timeseries storage"},
@@ -4345,7 +4345,7 @@ func (t *timeSeriesService) ListMetrics(ctx context.Context, req *TSListMetricsR
 	// Get metrics from storage
 	metrics, err := t.tsStorage.ListMetrics(scopedPrefix, limit)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "timeSeriesService.ListMetrics",
 			Err:  err,
@@ -4365,35 +4365,35 @@ func (t *timeSeriesService) ListMetrics(ctx context.Context, req *TSListMetricsR
 // Validation methods.
 func (t *timeSeriesService) validateAggregateRequest(req *AggregateRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateAggregateRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.EntityType == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateAggregateRequest",
 			Err:  &api.RequiredFieldError{Field: "entity_type"},
 		}
 	}
 	if req.StartTime <= 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateAggregateRequest",
 			Err:  &api.InvalidInputError{Message: "start_time must be greater than 0"},
 		}
 	}
 	if req.EndTime <= 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateAggregateRequest",
 			Err:  &api.InvalidInputError{Message: "end_time must be greater than 0"},
 		}
 	}
 	if req.EndTime < req.StartTime {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateAggregateRequest",
 			Err:  &api.InvalidInputError{Message: "end_time must be greater than or equal to start_time"},
@@ -4404,35 +4404,35 @@ func (t *timeSeriesService) validateAggregateRequest(req *AggregateRequest) erro
 
 func (t *timeSeriesService) validateTimeSeriesQueryRequest(req *TimeSeriesQueryRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateTimeSeriesQueryRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.EntityType == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateTimeSeriesQueryRequest",
 			Err:  &api.RequiredFieldError{Field: "entity_type"},
 		}
 	}
 	if req.StartTime <= 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateTimeSeriesQueryRequest",
 			Err:  &api.InvalidInputError{Message: "start_time must be greater than 0"},
 		}
 	}
 	if req.EndTime <= 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateTimeSeriesQueryRequest",
 			Err:  &api.InvalidInputError{Message: "end_time must be greater than 0"},
 		}
 	}
 	if req.EndTime < req.StartTime {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.validateTimeSeriesQueryRequest",
 			Err:  &api.InvalidInputError{Message: "end_time must be greater than or equal to start_time"},
@@ -4480,7 +4480,7 @@ func newOperationsService(svc *quicBaaS) *operationsService {
 
 func (o *operationsService) MigrateData(ctx context.Context, req *MigrateDataRequest) (*MigrateDataResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.MigrateData",
 			Err:  &api.NilInputError{Name: "request"},
@@ -4528,7 +4528,7 @@ func (o *operationsService) MigrateData(ctx context.Context, req *MigrateDataReq
 
 func (o *operationsService) GetMigrationProgress(ctx context.Context, req *GetMigrationProgressRequest) (*GetMigrationProgressResponse, error) {
 	if req == nil || req.MigrationID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.GetMigrationProgress",
 			Err:  &api.RequiredFieldError{Field: "migration ID"},
@@ -4540,7 +4540,7 @@ func (o *operationsService) GetMigrationProgress(ctx context.Context, req *GetMi
 	o.jobsMu.RUnlock()
 
 	if !exists {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "service.GetMigrationProgress",
 			Err:  &api.NotFoundError{Resource: "migration", ID: req.MigrationID},
@@ -4548,7 +4548,7 @@ func (o *operationsService) GetMigrationProgress(ctx context.Context, req *GetMi
 	}
 
 	if job.Type != "migration" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.GetMigrationProgress",
 			Err:  &api.InvalidInputError{Message: "job " + req.MigrationID + " is not a migration"},
@@ -4575,7 +4575,7 @@ func (o *operationsService) GetMigrationProgress(ctx context.Context, req *GetMi
 
 func (o *operationsService) ReplaceNode(ctx context.Context, req *ReplaceNodeRequest) (*ReplaceNodeResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.ReplaceNode",
 			Err:  &api.NilInputError{Name: "request"},
@@ -4624,7 +4624,7 @@ func (o *operationsService) ReplaceNode(ctx context.Context, req *ReplaceNodeReq
 
 func (o *operationsService) UpgradeNode(ctx context.Context, req *UpgradeNodeRequest) (*UpgradeNodeResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.UpgradeNode",
 			Err:  &api.NilInputError{Name: "request"},
@@ -4675,7 +4675,7 @@ func (o *operationsService) UpgradeNode(ctx context.Context, req *UpgradeNodeReq
 
 func (o *operationsService) GetUpgradeStatus(ctx context.Context, req *GetUpgradeStatusRequest) (*GetUpgradeStatusResponse, error) {
 	if req == nil || req.JobID == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.GetUpgradeStatus",
 			Err:  &api.RequiredFieldError{Field: "job ID"},
@@ -4687,7 +4687,7 @@ func (o *operationsService) GetUpgradeStatus(ctx context.Context, req *GetUpgrad
 	o.jobsMu.RUnlock()
 
 	if !exists {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "service.GetUpgradeStatus",
 			Err:  &api.NotFoundError{Resource: "job", ID: req.JobID},
@@ -4695,7 +4695,7 @@ func (o *operationsService) GetUpgradeStatus(ctx context.Context, req *GetUpgrad
 	}
 
 	if job.Type != "upgrade" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.GetUpgradeStatus",
 			Err:  &api.InvalidInputError{Message: "job " + req.JobID + " is not an upgrade"},
@@ -5282,7 +5282,7 @@ func (s *quicBaaS) checkAuth(ctx context.Context, permission string) error {
 	// Extract token from context metadata
 	token, err := auth.ExtractTokenFromContext(ctx)
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrUnauthorized,
 			Op:   "service.checkAuth",
 			Err:  &api.OperationFailedError{Operation: "extract token", Cause: err},
@@ -5291,7 +5291,7 @@ func (s *quicBaaS) checkAuth(ctx context.Context, permission string) error {
 
 	// If no token found and auth is required, return unauthorized
 	if token == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrUnauthorized,
 			Op:   "service.checkAuth",
 			Err:  &api.InvalidInputError{Message: "authentication required"},
@@ -5301,7 +5301,7 @@ func (s *quicBaaS) checkAuth(ctx context.Context, permission string) error {
 	// Validate token and check permission using auth manager
 	if s.authManager != nil {
 		if err := s.authManager.Authorize(ctx, token, "keys", permission); err != nil {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrUnauthorized,
 				Op:   "service.checkAuth",
 				Err:  &api.OperationFailedError{Operation: "authorization", Cause: err},
@@ -5344,14 +5344,14 @@ func (k *kvService) convertWriteMode(mode WriteMode) qrdbtransport.WriteMode {
 
 func (k *kvService) validatePutRequest(req *PutRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Put",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.EntityType == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Put",
 			Err:  &api.RequiredFieldError{Field: "entity type"},
@@ -5364,14 +5364,14 @@ func (k *kvService) validatePutRequest(req *PutRequest) error {
 
 func (k *kvService) validateGetRequest(req *GetRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Get",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.EntityType == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Get",
 			Err:  &api.RequiredFieldError{Field: "entity type"},
@@ -5382,14 +5382,14 @@ func (k *kvService) validateGetRequest(req *GetRequest) error {
 
 func (k *kvService) validateDeleteRequest(req *DeleteRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Delete",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.EntityType == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Delete",
 			Err:  &api.RequiredFieldError{Field: "entity type"},
@@ -5400,14 +5400,14 @@ func (k *kvService) validateDeleteRequest(req *DeleteRequest) error {
 
 func (k *kvService) validateListRequest(req *ListRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.List",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.EntityType == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.List",
 			Err:  &api.RequiredFieldError{Field: "entity type"},

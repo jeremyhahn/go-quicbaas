@@ -313,7 +313,7 @@ type MessagingGetChannelStatsResponse struct {
 // MessagingCreateChannel creates a new notification channel.
 func (c *Client) MessagingCreateChannel(ctx context.Context, req *MessagingCreateChannelRequest) (*MessagingCreateChannelResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingCreateChannel",
 			Err:  ErrRequestNil,
@@ -346,7 +346,7 @@ func (c *Client) MessagingCreateChannel(ctx context.Context, req *MessagingCreat
 // MessagingDeleteChannel deletes a notification channel.
 func (c *Client) MessagingDeleteChannel(ctx context.Context, req *MessagingDeleteChannelRequest) (*MessagingDeleteChannelResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingDeleteChannel",
 			Err:  ErrRequestNil,
@@ -374,7 +374,7 @@ func (c *Client) MessagingDeleteChannel(ctx context.Context, req *MessagingDelet
 // MessagingGetChannel retrieves channel information.
 func (c *Client) MessagingGetChannel(ctx context.Context, req *MessagingGetChannelRequest) (*MessagingGetChannelResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingGetChannel",
 			Err:  ErrRequestNil,
@@ -434,7 +434,7 @@ func (c *Client) MessagingListChannels(ctx context.Context, req *MessagingListCh
 // MessagingSubscribe subscribes to a notification channel.
 func (c *Client) MessagingSubscribe(ctx context.Context, req *MessagingSubscribeRequest) (*MessagingSubscribeResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingSubscribe",
 			Err:  ErrRequestNil,
@@ -468,7 +468,7 @@ func (c *Client) MessagingSubscribe(ctx context.Context, req *MessagingSubscribe
 // MessagingUnsubscribe removes a subscription.
 func (c *Client) MessagingUnsubscribe(ctx context.Context, req *MessagingUnsubscribeRequest) (*MessagingUnsubscribeResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingUnsubscribe",
 			Err:  ErrRequestNil,
@@ -496,7 +496,7 @@ func (c *Client) MessagingUnsubscribe(ctx context.Context, req *MessagingUnsubsc
 // MessagingPublish publishes a message to a channel.
 func (c *Client) MessagingPublish(ctx context.Context, req *MessagingPublishRequest) (*MessagingPublishResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingPublish",
 			Err:  ErrRequestNil,
@@ -530,7 +530,7 @@ func (c *Client) MessagingPublish(ctx context.Context, req *MessagingPublishRequ
 // MessagingPublishDelta publishes a delta message to a channel.
 func (c *Client) MessagingPublishDelta(ctx context.Context, req *MessagingPublishDeltaRequest) (*MessagingPublishDeltaResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingPublishDelta",
 			Err:  ErrRequestNil,
@@ -568,7 +568,7 @@ func (c *Client) MessagingPublishDelta(ctx context.Context, req *MessagingPublis
 // Use the context to cancel the stream.
 func (c *Client) MessagingStreamNotifications(ctx context.Context, req *MessagingStreamNotificationsRequest) (<-chan *MessagingNotification, <-chan error, error) {
 	if req == nil {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingStreamNotifications",
 			Err:  ErrRequestNil,
@@ -626,7 +626,7 @@ func (c *Client) MessagingStreamNotifications(ctx context.Context, req *Messagin
 // MessagingStreamNotificationsRaw returns the raw gRPC stream for advanced use cases.
 func (c *Client) MessagingStreamNotificationsRaw(ctx context.Context, req *MessagingStreamNotificationsRequest) (grpc.ServerStreamingClient[pb.MessagingNotification], error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingStreamNotificationsRaw",
 			Err:  ErrRequestNil,
@@ -653,7 +653,7 @@ func (c *Client) MessagingStreamNotificationsRaw(ctx context.Context, req *Messa
 // MessagingWatchChannel creates a subscription that watches for key changes.
 func (c *Client) MessagingWatchChannel(ctx context.Context, req *MessagingWatchChannelRequest) (*MessagingWatchChannelResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingWatchChannel",
 			Err:  ErrRequestNil,
@@ -700,7 +700,7 @@ func (c *Client) MessagingGetStats(ctx context.Context) (*MessagingGetStatsRespo
 // MessagingGetDedupStats retrieves deduplication statistics for a channel.
 func (c *Client) MessagingGetDedupStats(ctx context.Context, req *MessagingGetDedupStatsRequest) (*MessagingGetDedupStatsResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingGetDedupStats",
 			Err:  ErrRequestNil,
@@ -727,7 +727,7 @@ func (c *Client) MessagingGetDedupStats(ctx context.Context, req *MessagingGetDe
 // MessagingGetChannelStats retrieves statistics for a specific channel.
 func (c *Client) MessagingGetChannelStats(ctx context.Context, req *MessagingGetChannelStatsRequest) (*MessagingGetChannelStatsResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.MessagingGetChannelStats",
 			Err:  ErrRequestNil,

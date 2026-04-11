@@ -74,7 +74,7 @@ func (m *MemoryConsentStorage) CreateConsent(ctx context.Context, opts CreateCon
 	purposeKey := makeKey(opts.TenantID, opts.UserID, string(opts.Purpose))
 	if existingID, exists := m.consentsByPurpose[purposeKey]; exists {
 		return nil, NewIAMError(
-			&dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "iam.consent.create"},
+			&dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.consent.create"},
 			"iam.consent.create",
 			(&ConsentExistsError{Purpose: string(opts.Purpose), ConsentID: existingID}).Error(),
 			nil,
@@ -143,12 +143,12 @@ func (m *MemoryConsentStorage) GetConsent(ctx context.Context, tenantID, userID 
 	purposeKey := makeKey(tenantID, userID, string(purpose))
 	consentID, exists := m.consentsByPurpose[purposeKey]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.consent.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.consent.get"}
 	}
 
 	consent, exists := m.consents[consentID]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.consent.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.consent.get"}
 	}
 
 	return copyConsent(consent), nil
@@ -161,7 +161,7 @@ func (m *MemoryConsentStorage) UpdateConsent(ctx context.Context, id string, opt
 
 	consent, exists := m.consents[id]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.consent.update"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.consent.update"}
 	}
 
 	// Update status
@@ -209,7 +209,7 @@ func (m *MemoryConsentStorage) DeleteConsent(ctx context.Context, id string) err
 
 	consent, exists := m.consents[id]
 	if !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.consent.delete"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.consent.delete"}
 	}
 
 	// Remove from purpose index
@@ -390,7 +390,7 @@ func (m *MemoryDataExportStorage) GetExportRequest(ctx context.Context, id strin
 
 	request, exists := m.exports[id]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.export.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.export.get"}
 	}
 
 	return copyDataExportRequest(request), nil
@@ -402,7 +402,7 @@ func (m *MemoryDataExportStorage) UpdateExportRequest(ctx context.Context, req *
 	defer m.mu.Unlock()
 
 	if _, exists := m.exports[req.ID]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.export.update"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.export.update"}
 	}
 
 	// Store updated copy
@@ -545,7 +545,7 @@ func (m *MemoryDeletionStorage) GetDeletionRequest(ctx context.Context, id strin
 
 	request, exists := m.deletions[id]
 	if !exists {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.deletion.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.deletion.get"}
 	}
 
 	return copyDataDeletionRequest(request), nil
@@ -557,7 +557,7 @@ func (m *MemoryDeletionStorage) UpdateDeletionRequest(ctx context.Context, req *
 	defer m.mu.Unlock()
 
 	if _, exists := m.deletions[req.ID]; !exists {
-		return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "iam.deletion.update"}
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.deletion.update"}
 	}
 
 	// Store updated copy

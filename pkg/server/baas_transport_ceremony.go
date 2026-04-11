@@ -18,8 +18,7 @@ import (
 	"encoding/base64"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/ceremony"
-	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -312,21 +311,21 @@ func (t *baasTransport) GetShareCollectionStatus(ctx context.Context, groupID st
 
 // ---------------------------------------------------------------------------
 // Type aliases for injection into baasTransport and baasTransportStore.
-// These reuse the go-qrdb service interfaces directly.
+// These reuse the go-qrdb service interfaces via the SDK layer.
 // ---------------------------------------------------------------------------
 
 // BasCeremonyService is the ceremony lifecycle service interface required by
 // the BaaS embedded transport. It is satisfied by qrdb's service.CeremonyServicer.
-type BasCeremonyService = qrdbservice.CeremonyServicer
+type BasCeremonyService = qrdbsdk.ServiceCeremonyServicer
 
 // BaasCredentialService is the credential management service interface required
 // by the BaaS embedded transport. It is satisfied by qrdb's service.CredentialServicer.
-type BaasCredentialService = qrdbservice.CredentialServicer
+type BaasCredentialService = qrdbsdk.ServiceCredentialServicer
 
 // BaasCustodianGroupService is the custodian group service interface required
 // by the BaaS embedded transport. It is satisfied by qrdb's ceremony.CustodianGroupServicer.
-type BaasCustodianGroupService = ceremony.CustodianGroupServicer
+type BaasCustodianGroupService = qrdbsdk.CustodianGroupServicer
 
 // BaasShareService is the Shamir share service interface required by the BaaS
 // embedded transport. It is satisfied by qrdb's ceremony.ShareServicer.
-type BaasShareService = ceremony.ShareServicer
+type BaasShareService = qrdbsdk.ShareServicer

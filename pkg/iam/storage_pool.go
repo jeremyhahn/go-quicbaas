@@ -167,35 +167,35 @@ type PoolStats struct {
 // Pool-specific error types.
 var (
 	// ErrPoolClosed is returned when attempting to use a closed pool.
-	ErrPoolClosed = &dberrors.DragonError{
+	ErrPoolClosed = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.storage.pool",
 		Err:  &PoolClosedError{},
 	}
 
 	// ErrPoolExhausted is returned when no connections are available within the timeout.
-	ErrPoolExhausted = &dberrors.DragonError{
+	ErrPoolExhausted = &dberrors.QBError{
 		Code: dberrors.ErrResourceExhausted,
 		Op:   "iam.storage.pool",
 		Err:  &PoolExhaustedError{},
 	}
 
 	// ErrPoolConfigInvalid is returned when pool configuration is invalid.
-	ErrPoolConfigInvalid = &dberrors.DragonError{
+	ErrPoolConfigInvalid = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.storage.pool.config",
 		Err:  &PoolConfigInvalidError{},
 	}
 
 	// ErrConnectionUnhealthy is returned when a connection fails health check.
-	ErrConnectionUnhealthy = &dberrors.DragonError{
+	ErrConnectionUnhealthy = &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   "iam.storage.pool.health",
 		Err:  &ConnectionUnhealthyError{},
 	}
 
 	// ErrConnectionClosed is returned when attempting to use a closed connection.
-	ErrConnectionClosed = &dberrors.DragonError{
+	ErrConnectionClosed = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.storage.connection",
 		Err:  &ConnectionClosedError{},

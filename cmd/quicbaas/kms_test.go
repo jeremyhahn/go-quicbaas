@@ -3491,11 +3491,11 @@ func TestErrorWrappingExtended(t *testing.T) {
 	assert.NotNil(t, wrappedErr)
 	assert.Contains(t, wrappedErr.Error(), "wrapping message")
 
-	// Check that it can be cast to DragonError
-	var dragonErr *errors.DragonError
-	if errors.As(wrappedErr, &dragonErr) {
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
-		assert.Equal(t, "wrapper", dragonErr.Op)
+	// Check that it can be cast to QBError
+	var qbErr *errors.QBError
+	if errors.As(wrappedErr, &qbErr) {
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
+		assert.Equal(t, "wrapper", qbErr.Op)
 	}
 }
 
@@ -4688,7 +4688,7 @@ func TestRunKMSDEKGenerateCommand(t *testing.T) {
 func TestRunKMSDEKGenerateCommand_ClientError(t *testing.T) {
 	origFactory := dekClientFactory
 	dekClientFactory = func() (DEKClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { dekClientFactory = origFactory }()
 
@@ -4729,7 +4729,7 @@ func TestRunKMSDEKGetCommand(t *testing.T) {
 func TestRunKMSDEKGetCommand_ClientError(t *testing.T) {
 	origFactory := dekClientFactory
 	dekClientFactory = func() (DEKClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { dekClientFactory = origFactory }()
 
@@ -4767,7 +4767,7 @@ func TestRunKMSDEKListCommand(t *testing.T) {
 func TestRunKMSDEKListCommand_ClientError(t *testing.T) {
 	origFactory := dekClientFactory
 	dekClientFactory = func() (DEKClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { dekClientFactory = origFactory }()
 
@@ -4805,7 +4805,7 @@ func TestRunKMSDEKRotateCommand(t *testing.T) {
 func TestRunKMSDEKRotateCommand_ClientError(t *testing.T) {
 	origFactory := dekClientFactory
 	dekClientFactory = func() (DEKClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { dekClientFactory = origFactory }()
 
@@ -4842,7 +4842,7 @@ func TestRunKMSDEKDeleteCommand(t *testing.T) {
 func TestRunKMSDEKDeleteCommand_ClientError(t *testing.T) {
 	origFactory := dekClientFactory
 	dekClientFactory = func() (DEKClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { dekClientFactory = origFactory }()
 
@@ -4883,7 +4883,7 @@ func TestRunKMSDEKStatusCommand(t *testing.T) {
 func TestRunKMSDEKStatusCommand_ClientError(t *testing.T) {
 	origFactory := dekClientFactory
 	dekClientFactory = func() (DEKClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { dekClientFactory = origFactory }()
 
@@ -4920,7 +4920,7 @@ func TestRunKMSDEKSetDefaultCommand(t *testing.T) {
 func TestRunKMSDEKSetDefaultCommand_ClientError(t *testing.T) {
 	origFactory := dekClientFactory
 	dekClientFactory = func() (DEKClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { dekClientFactory = origFactory }()
 
@@ -4960,7 +4960,7 @@ func TestRunKMSDEKSetSafetyCommand(t *testing.T) {
 func TestRunKMSDEKSetSafetyCommand_ClientError(t *testing.T) {
 	origFactory := dekClientFactory
 	dekClientFactory = func() (DEKClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { dekClientFactory = origFactory }()
 
@@ -5001,7 +5001,7 @@ func TestRunKMSBackendStatusCommand(t *testing.T) {
 func TestRunKMSBackendStatusCommand_ClientError(t *testing.T) {
 	origFactory := backendClientFactory
 	backendClientFactory = func() (BackendClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { backendClientFactory = origFactory }()
 
@@ -5038,7 +5038,7 @@ func TestRunKMSBackendTestCommand(t *testing.T) {
 func TestRunKMSBackendTestCommand_ClientError(t *testing.T) {
 	origFactory := backendClientFactory
 	backendClientFactory = func() (BackendClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { backendClientFactory = origFactory }()
 
@@ -5077,7 +5077,7 @@ func TestRunKMSSafetyCheckCommand(t *testing.T) {
 func TestRunKMSSafetyCheckCommand_ClientError(t *testing.T) {
 	origFactory := safetyClientFactory
 	safetyClientFactory = func() (SafetyClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { safetyClientFactory = origFactory }()
 
@@ -5116,7 +5116,7 @@ func TestRunKMSSafetyReportCommand(t *testing.T) {
 func TestRunKMSSafetyReportCommand_ClientError(t *testing.T) {
 	origFactory := safetyClientFactory
 	safetyClientFactory = func() (SafetyClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { safetyClientFactory = origFactory }()
 
@@ -5157,7 +5157,7 @@ func TestRunKMSKeyExportCommand(t *testing.T) {
 func TestRunKMSKeyExportCommand_ClientError(t *testing.T) {
 	origFactory := kmsClientFactory
 	kmsClientFactory = func() (KMSClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { kmsClientFactory = origFactory }()
 
@@ -5209,7 +5209,7 @@ func TestRunKMSKeyUnwrapCommand_InvalidBase64(t *testing.T) {
 func TestRunKMSKeyUnwrapCommand_ClientError(t *testing.T) {
 	origFactory := kmsClientFactory
 	kmsClientFactory = func() (KMSClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { kmsClientFactory = origFactory }()
 
@@ -5249,7 +5249,7 @@ func TestRunKMSKeySetSafetyCommand(t *testing.T) {
 func TestRunKMSKeySetSafetyCommand_ClientError(t *testing.T) {
 	origFactory := kmsClientFactory
 	kmsClientFactory = func() (KMSClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { kmsClientFactory = origFactory }()
 
@@ -5291,7 +5291,7 @@ func TestRunKMSKeyEnableCommand(t *testing.T) {
 func TestRunKMSKeyEnableCommand_ClientError(t *testing.T) {
 	origFactory := kmsClientFactory
 	kmsClientFactory = func() (KMSClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { kmsClientFactory = origFactory }()
 
@@ -5329,7 +5329,7 @@ func TestRunKMSKeyDisableCommand(t *testing.T) {
 func TestRunKMSKeyDisableCommand_ClientError(t *testing.T) {
 	origFactory := kmsClientFactory
 	kmsClientFactory = func() (KMSClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { kmsClientFactory = origFactory }()
 
@@ -5369,7 +5369,7 @@ func TestRunKMSKeyVersionsCommand(t *testing.T) {
 func TestRunKMSKeyVersionsCommand_ClientError(t *testing.T) {
 	origFactory := kmsClientFactory
 	kmsClientFactory = func() (KMSClient, error) {
-		return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: errors.New(errors.ErrInternal, "test", "connection failed")}
 	}
 	defer func() { kmsClientFactory = origFactory }()
 
@@ -5386,7 +5386,7 @@ func TestRunKMSKeyVersionsCommand_ClientError(t *testing.T) {
 func TestRunKMSDEKGenerateCommand_ServiceError(t *testing.T) {
 	mockDEK := &MockDEKClient{
 		KMSCreateDEKFunc: func(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrAlreadyExists, Op: "dek.create", Err: errors.New(errors.ErrAlreadyExists, "dek.create", "DEK already exists")}
+			return nil, &errors.QBError{Code: errors.ErrAlreadyExists, Op: "dek.create", Err: errors.New(errors.ErrAlreadyExists, "dek.create", "DEK already exists")}
 		},
 	}
 
@@ -5403,7 +5403,7 @@ func TestRunKMSDEKGenerateCommand_ServiceError(t *testing.T) {
 func TestRunKMSDEKGetCommand_ServiceError(t *testing.T) {
 	mockDEK := &MockDEKClient{
 		KMSGetDEKFunc: func(ctx context.Context, req *service.GetDEKRequest) (*service.GetDEKResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "dek.get", Err: errors.New(errors.ErrNotFound, "dek.get", "DEK not found")}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "dek.get", Err: errors.New(errors.ErrNotFound, "dek.get", "DEK not found")}
 		},
 	}
 
@@ -5420,7 +5420,7 @@ func TestRunKMSDEKGetCommand_ServiceError(t *testing.T) {
 func TestRunKMSDEKListCommand_ServiceError(t *testing.T) {
 	mockDEK := &MockDEKClient{
 		KMSListDEKsFunc: func(ctx context.Context, req *service.ListDEKsRequest) (*service.ListDEKsResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "dek.list", Err: errors.New(errors.ErrInternal, "dek.list", "internal error")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "dek.list", Err: errors.New(errors.ErrInternal, "dek.list", "internal error")}
 		},
 	}
 
@@ -5441,7 +5441,7 @@ func TestRunKMSDEKListCommand_ServiceError(t *testing.T) {
 func TestRunKMSBackendStatusCommand_ServiceError(t *testing.T) {
 	mockBackend := &MockBackendClient{
 		KMSBackendStatusFunc: func(ctx context.Context) (*service.BackendStatusResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "backend.status", Err: errors.New(errors.ErrInternal, "backend.status", "unavailable")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "backend.status", Err: errors.New(errors.ErrInternal, "backend.status", "unavailable")}
 		},
 	}
 
@@ -5458,7 +5458,7 @@ func TestRunKMSBackendStatusCommand_ServiceError(t *testing.T) {
 func TestRunKMSBackendTestCommand_ServiceError(t *testing.T) {
 	mockBackend := &MockBackendClient{
 		KMSBackendTestFunc: func(ctx context.Context) (*service.BackendTestResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "backend.test", Err: errors.New(errors.ErrInternal, "backend.test", "test failed")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "backend.test", Err: errors.New(errors.ErrInternal, "backend.test", "test failed")}
 		},
 	}
 
@@ -5475,7 +5475,7 @@ func TestRunKMSBackendTestCommand_ServiceError(t *testing.T) {
 func TestRunKMSSafetyCheckCommand_ServiceError(t *testing.T) {
 	mockSafety := &MockSafetyClient{
 		KMSSafetyCheckFunc: func(ctx context.Context, req *service.SafetyCheckRequest) (*service.SafetyCheckResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "safety.check", Err: errors.New(errors.ErrInternal, "safety.check", "check failed")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "safety.check", Err: errors.New(errors.ErrInternal, "safety.check", "check failed")}
 		},
 	}
 
@@ -5492,7 +5492,7 @@ func TestRunKMSSafetyCheckCommand_ServiceError(t *testing.T) {
 func TestRunKMSSafetyReportCommand_ServiceError(t *testing.T) {
 	mockSafety := &MockSafetyClient{
 		KMSSafetyReportFunc: func(ctx context.Context, req *service.SafetyReportRequest) (*service.SafetyReportResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "safety.report", Err: errors.New(errors.ErrInternal, "safety.report", "report failed")}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "safety.report", Err: errors.New(errors.ErrInternal, "safety.report", "report failed")}
 		},
 	}
 
@@ -5849,7 +5849,7 @@ func TestCreateKeyAttributes_CaseInsensitive(t *testing.T) {
 func TestRunKMSKeyExportCommand_ServiceError(t *testing.T) {
 	mockKMS := &MockKMSClient{
 		KMSExportKeyFunc: func(ctx context.Context, req *service.ExportKeyRequest) (*service.ExportKeyResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "key.export", Err: errors.New(errors.ErrNotFound, "key.export", "key not found")}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "key.export", Err: errors.New(errors.ErrNotFound, "key.export", "key not found")}
 		},
 	}
 
@@ -5866,7 +5866,7 @@ func TestRunKMSKeyExportCommand_ServiceError(t *testing.T) {
 func TestRunKMSKeyUnwrapCommand_ServiceError(t *testing.T) {
 	mockKMS := &MockKMSClient{
 		KMSUnwrapKeyFunc: func(ctx context.Context, req *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInvalidInput, Op: "key.unwrap", Err: errors.New(errors.ErrInvalidInput, "key.unwrap", "invalid wrapped key")}
+			return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "key.unwrap", Err: errors.New(errors.ErrInvalidInput, "key.unwrap", "invalid wrapped key")}
 		},
 	}
 
@@ -5883,7 +5883,7 @@ func TestRunKMSKeyUnwrapCommand_ServiceError(t *testing.T) {
 func TestRunKMSKeySetSafetyCommand_ServiceError(t *testing.T) {
 	mockKMS := &MockKMSClient{
 		KMSSetKeySafetyFunc: func(ctx context.Context, req *service.SetKeySafetyRequest) (*service.SetKeySafetyResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "key.safety", Err: errors.New(errors.ErrNotFound, "key.safety", "key not found")}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "key.safety", Err: errors.New(errors.ErrNotFound, "key.safety", "key not found")}
 		},
 	}
 
@@ -5900,7 +5900,7 @@ func TestRunKMSKeySetSafetyCommand_ServiceError(t *testing.T) {
 func TestRunKMSKeyEnableCommand_ServiceError(t *testing.T) {
 	mockKMS := &MockKMSClient{
 		KMSUpdateKeyStatusFunc: func(ctx context.Context, req *service.UpdateKeyStatusRequest) (*service.UpdateKeyStatusResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "key.enable", Err: errors.New(errors.ErrNotFound, "key.enable", "key not found")}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "key.enable", Err: errors.New(errors.ErrNotFound, "key.enable", "key not found")}
 		},
 	}
 
@@ -5917,7 +5917,7 @@ func TestRunKMSKeyEnableCommand_ServiceError(t *testing.T) {
 func TestRunKMSKeyDisableCommand_ServiceError(t *testing.T) {
 	mockKMS := &MockKMSClient{
 		KMSUpdateKeyStatusFunc: func(ctx context.Context, req *service.UpdateKeyStatusRequest) (*service.UpdateKeyStatusResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "key.disable", Err: errors.New(errors.ErrNotFound, "key.disable", "key not found")}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "key.disable", Err: errors.New(errors.ErrNotFound, "key.disable", "key not found")}
 		},
 	}
 
@@ -5934,7 +5934,7 @@ func TestRunKMSKeyDisableCommand_ServiceError(t *testing.T) {
 func TestRunKMSKeyVersionsCommand_ServiceError(t *testing.T) {
 	mockKMS := &MockKMSClient{
 		KMSListKeyVersionsFunc: func(ctx context.Context, req *service.ListKeyVersionsRequest) (*service.ListKeyVersionsResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "key.versions", Err: errors.New(errors.ErrNotFound, "key.versions", "key not found")}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "key.versions", Err: errors.New(errors.ErrNotFound, "key.versions", "key not found")}
 		},
 	}
 

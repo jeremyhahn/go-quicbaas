@@ -87,7 +87,7 @@ func TestRespondError(t *testing.T) {
 	}{
 		{
 			name: "dragon error with context",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "test.operation",
 				Err:  &errors.MessageError{Message: "resource not found"},
@@ -106,7 +106,7 @@ func TestRespondError(t *testing.T) {
 		},
 		{
 			name: "dragon error without context",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "test.operation",
 				Err:  &errors.MessageError{Message: "internal error"},
@@ -337,7 +337,7 @@ func BenchmarkRespondJSON(b *testing.B) {
 }
 
 func BenchmarkRespondError(b *testing.B) {
-	err := &errors.DragonError{
+	err := &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "test",
 		Err:  &errors.MessageError{Message: "not found"},

@@ -109,7 +109,7 @@ func validateEmbeddingTenantID(tenantID string) error {
 		return nil
 	}
 	if len(tenantID) > 128 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "embedding.validateTenantID",
 			Err: &EmbeddingTenantValidationError{
@@ -120,7 +120,7 @@ func validateEmbeddingTenantID(tenantID string) error {
 	}
 	for _, ch := range tenantID {
 		if !isValidTenantChar(ch) {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "embedding.validateTenantID",
 				Err: &EmbeddingTenantValidationError{
@@ -141,7 +141,7 @@ func enforceEmbeddingTenantAccess(tenantID, cacheKey, operation string) error {
 		return nil // Single-tenant mode, no access control
 	}
 	if !embeddingCacheKeyBelongsToTenant(tenantID, cacheKey) {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrCrossTenantAccess,
 			Op:   "embedding." + operation,
 			Err: &EmbeddingCrossTenantAccessError{

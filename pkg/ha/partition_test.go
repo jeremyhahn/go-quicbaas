@@ -95,9 +95,9 @@ func TestNewPartitionDetector(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
-				require.True(t, ok, "expected DragonError")
-				assert.Equal(t, tt.errorCode, dragonErr.Code)
+				qbErr, ok := err.(*errors.QBError)
+				require.True(t, ok, "expected QBError")
+				assert.Equal(t, tt.errorCode, qbErr.Code)
 				assert.Nil(t, pd)
 			} else {
 				require.NoError(t, err)

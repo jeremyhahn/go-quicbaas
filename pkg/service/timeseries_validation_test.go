@@ -46,7 +46,7 @@ func TestTimeSeriesService_WritePoint_NoStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -78,7 +78,7 @@ func TestTimeSeriesService_WriteBatch_NoStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -109,7 +109,7 @@ func TestTimeSeriesService_TSQuery_NoStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -138,7 +138,7 @@ func TestTimeSeriesService_DeleteSeries_NoStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -167,7 +167,7 @@ func TestTimeSeriesService_GetRetentionPolicy_NoStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -199,7 +199,7 @@ func TestTimeSeriesService_SetRetentionPolicy_NoStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -226,7 +226,7 @@ func TestTimeSeriesService_ListMetrics_NoStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -439,7 +439,7 @@ func TestTimeSeriesService_TSQuery_MissingStartTime(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 	mockTS.AssertNotCalled(t, "QueryRich")
@@ -460,7 +460,7 @@ func TestTimeSeriesService_TSQuery_MissingEndTime(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 	mockTS.AssertNotCalled(t, "QueryRich")
@@ -617,7 +617,7 @@ func TestTimeSeriesService_TSQuery_NilStorage(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -664,7 +664,7 @@ func TestTimeSeriesService_DeleteSeries_StorageNotConfigured(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -679,7 +679,7 @@ func TestTimeSeriesService_DeleteSeries_NilReq(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -698,7 +698,7 @@ func TestTimeSeriesService_DeleteSeries_EmptyMetricName(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -801,7 +801,7 @@ func TestTimeSeriesService_WritePoint_StorageNotConfigured(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -821,7 +821,7 @@ func TestTimeSeriesService_WriteBatch_StorageNotConfigured(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -840,7 +840,7 @@ func TestTimeSeriesService_SetRetentionPolicy_StorageNotConfigured(t *testing.T)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -855,7 +855,7 @@ func TestTimeSeriesService_SetRetentionPolicy_NilReq(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -875,7 +875,7 @@ func TestTimeSeriesService_SetRetentionPolicy_EmptyMetricName(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -895,7 +895,7 @@ func TestTimeSeriesService_SetRetentionPolicy_NilPolicyField(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -911,7 +911,7 @@ func TestTimeSeriesService_GetRetentionPolicy_StorageNotConfigured(t *testing.T)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
 }
@@ -926,7 +926,7 @@ func TestTimeSeriesService_GetRetentionPolicy_NilReq(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -943,7 +943,7 @@ func TestTimeSeriesService_GetRetentionPolicy_EmptyMetricName(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -1002,10 +1002,10 @@ func TestTimeSeriesServiceImpl_TSQuery_NilRequest(t *testing.T) {
 
 	_, err := svc.TSQuery(context.Background(), nil)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "request cannot be nil")
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "request cannot be nil")
 }
 
 func TestTimeSeriesServiceImpl_TSQuery_EmptyMetric(t *testing.T) {
@@ -1019,10 +1019,10 @@ func TestTimeSeriesServiceImpl_TSQuery_EmptyMetric(t *testing.T) {
 
 	_, err := svc.TSQuery(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "metric is required")
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "metric is required")
 }
 
 func TestTimeSeriesServiceImpl_TSQuery_ZeroStartTime(t *testing.T) {
@@ -1037,10 +1037,10 @@ func TestTimeSeriesServiceImpl_TSQuery_ZeroStartTime(t *testing.T) {
 
 	_, err := svc.TSQuery(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "start_time is required")
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "start_time is required")
 }
 
 func TestTimeSeriesServiceImpl_TSQuery_ZeroEndTime(t *testing.T) {
@@ -1056,10 +1056,10 @@ func TestTimeSeriesServiceImpl_TSQuery_ZeroEndTime(t *testing.T) {
 
 	_, err := svc.TSQuery(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "end_time is required")
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "end_time is required")
 }
 
 func TestTimeSeriesServiceImpl_WritePoint_NilRequest(t *testing.T) {
@@ -1069,9 +1069,9 @@ func TestTimeSeriesServiceImpl_WritePoint_NilRequest(t *testing.T) {
 
 	_, err := svc.WritePoint(context.Background(), nil)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesServiceImpl_WritePoint_EmptyMetric(t *testing.T) {
@@ -1086,9 +1086,9 @@ func TestTimeSeriesServiceImpl_WritePoint_EmptyMetric(t *testing.T) {
 
 	_, err := svc.WritePoint(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesServiceImpl_WriteBatch_NilRequest(t *testing.T) {
@@ -1098,9 +1098,9 @@ func TestTimeSeriesServiceImpl_WriteBatch_NilRequest(t *testing.T) {
 
 	_, err := svc.WriteBatch(context.Background(), nil)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesServiceImpl_GetRetentionPolicy_NilRequest(t *testing.T) {
@@ -1110,9 +1110,9 @@ func TestTimeSeriesServiceImpl_GetRetentionPolicy_NilRequest(t *testing.T) {
 
 	_, err := svc.GetRetentionPolicy(context.Background(), nil)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesServiceImpl_GetRetentionPolicy_EmptyMetric(t *testing.T) {
@@ -1126,9 +1126,9 @@ func TestTimeSeriesServiceImpl_GetRetentionPolicy_EmptyMetric(t *testing.T) {
 
 	_, err := svc.GetRetentionPolicy(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesServiceImpl_SetRetentionPolicy_NilRequest(t *testing.T) {
@@ -1138,9 +1138,9 @@ func TestTimeSeriesServiceImpl_SetRetentionPolicy_NilRequest(t *testing.T) {
 
 	_, err := svc.SetRetentionPolicy(context.Background(), nil)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesServiceImpl_SetRetentionPolicy_EmptyMetric(t *testing.T) {
@@ -1157,9 +1157,9 @@ func TestTimeSeriesServiceImpl_SetRetentionPolicy_EmptyMetric(t *testing.T) {
 
 	_, err := svc.SetRetentionPolicy(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesServiceImpl_SetRetentionPolicy_NilPolicy(t *testing.T) {
@@ -1174,9 +1174,9 @@ func TestTimeSeriesServiceImpl_SetRetentionPolicy_NilPolicy(t *testing.T) {
 
 	_, err := svc.SetRetentionPolicy(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesServiceImpl_DeleteSeries_NilRequest(t *testing.T) {
@@ -1186,9 +1186,9 @@ func TestTimeSeriesServiceImpl_DeleteSeries_NilRequest(t *testing.T) {
 
 	_, err := svc.DeleteSeries(context.Background(), nil)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestTimeSeriesServiceImpl_DeleteSeries_EmptyMetric(t *testing.T) {
@@ -1202,7 +1202,7 @@ func TestTimeSeriesServiceImpl_DeleteSeries_EmptyMetric(t *testing.T) {
 
 	_, err := svc.DeleteSeries(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }

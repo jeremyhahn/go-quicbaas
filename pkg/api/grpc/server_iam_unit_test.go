@@ -53,7 +53,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "not found error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "test",
 				Err:  stderrors.New("not found"),
@@ -62,7 +62,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "already exists error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrAlreadyExists,
 				Op:   "test",
 				Err:  stderrors.New("already exists"),
@@ -71,7 +71,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "invalid input error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "test",
 				Err:  stderrors.New("invalid input"),
@@ -80,7 +80,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "validation error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrValidation,
 				Op:   "test",
 				Err:  stderrors.New("validation failed"),
@@ -89,7 +89,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "unauthorized error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnauthorized,
 				Op:   "test",
 				Err:  stderrors.New("unauthorized"),
@@ -98,7 +98,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "forbidden error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrForbidden,
 				Op:   "test",
 				Err:  stderrors.New("forbidden"),
@@ -107,7 +107,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "timeout error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrTimeout,
 				Op:   "test",
 				Err:  stderrors.New("timeout"),
@@ -116,7 +116,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "deadline exceeded error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrDeadlineExceeded,
 				Op:   "test",
 				Err:  stderrors.New("deadline exceeded"),
@@ -125,7 +125,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "resource exhausted error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrResourceExhausted,
 				Op:   "test",
 				Err:  stderrors.New("resource exhausted"),
@@ -134,7 +134,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "unavailable error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnavailable,
 				Op:   "test",
 				Err:  stderrors.New("unavailable"),
@@ -143,7 +143,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "conflict error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrConflict,
 				Op:   "test",
 				Err:  stderrors.New("conflict"),
@@ -152,7 +152,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "unimplemented error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnimplemented,
 				Op:   "test",
 				Err:  stderrors.New("unimplemented"),
@@ -161,7 +161,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "not implemented error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrNotImplemented,
 				Op:   "test",
 				Err:  stderrors.New("not implemented"),
@@ -170,7 +170,7 @@ func TestConvertIAMError(t *testing.T) {
 		},
 		{
 			name: "internal error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "test",
 				Err:  stderrors.New("internal"),
@@ -178,13 +178,13 @@ func TestConvertIAMError(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name:         "non-DragonError returns internal",
+			name:         "non-QBError returns internal",
 			err:          stderrors.New("random error"),
 			expectedCode: codes.Internal,
 		},
 		{
 			name: "unknown error code defaults to internal",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrorCode(9999),
 				Op:   "test",
 				Err:  stderrors.New("unknown"),
@@ -248,7 +248,7 @@ func TestIAMServer_CreatePolicy_InvalidYAML(t *testing.T) {
 func TestIAMServer_CreateAdminAssignment_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 	svc.On("CreateAdminAssignment", mock.Anything, mock.Anything).
-		Return(nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"})
+		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.CreateAdminAssignment(context.Background(), &iampb.CreateAdminAssignmentRequest{
 		UserId:    "u-1",
@@ -266,7 +266,7 @@ func TestIAMServer_CreateAdminAssignment_ServiceError(t *testing.T) {
 func TestIAMServer_UpdateAdminAssignment_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 	svc.On("UpdateAdminAssignment", mock.Anything, "a-1", mock.Anything).
-		Return(nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"})
+		Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.UpdateAdminAssignment(context.Background(), &iampb.UpdateAdminAssignmentRequest{
 		Id:     "a-1",
@@ -283,7 +283,7 @@ func TestIAMServer_UpdateAdminAssignment_ServiceError(t *testing.T) {
 func TestIAMServer_StartImpersonation_WithDuration_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 	svc.On("StartImpersonation", mock.Anything, mock.Anything).
-		Return(nil, &dberrors.DragonError{Code: dberrors.ErrForbidden, Op: "test"})
+		Return(nil, &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"})
 
 	_, err := srv.StartImpersonation(context.Background(), &iampb.StartImpersonationRequest{
 		AdminUserId:  "admin-1",
@@ -304,7 +304,7 @@ func TestIAMServer_GrantConsent_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 	svc.On("GrantConsent", mock.Anything, "t-1", "u-1", mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"})
+		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.GrantConsent(context.Background(), &iampb.GrantConsentRequest{
 		TenantId: "t-1",
@@ -324,7 +324,7 @@ func TestIAMServer_RequestExport_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 	svc.On("RequestExport", mock.Anything, "t-1", "u-1", "admin-1",
 		mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"})
+		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.RequestExport(context.Background(), &iampb.RequestExportRequest{
 		TenantId:    "t-1",
@@ -343,7 +343,7 @@ func TestIAMServer_RequestDeletion_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 	svc.On("RequestDeletion", mock.Anything, "t-1", "u-1", "admin-1",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"})
+		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.RequestDeletion(context.Background(), &iampb.RequestDeletionRequest{
 		TenantId:    "t-1",
@@ -362,7 +362,7 @@ func TestIAMServer_RequestDeletion_ServiceError(t *testing.T) {
 func TestMFAServer_VerifyCode_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		verifyCodeFn: func(_ context.Context, _, _, _ string) error {
-			return &dberrors.DragonError{Code: dberrors.ErrInvalidInput, Op: "test"}
+			return &dberrors.QBError{Code: dberrors.ErrInvalidInput, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)
@@ -380,7 +380,7 @@ func TestMFAServer_VerifyCode_ServiceError(t *testing.T) {
 func TestMFAServer_GetStatus_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		getMFAStatusFn: func(_ context.Context, _, _ string) (*iam.MFAStatus, error) {
-			return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"}
+			return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)
@@ -398,7 +398,7 @@ func TestMFAServer_GetStatus_ServiceError(t *testing.T) {
 func TestMFAServer_VerifyBackupCode_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		verifyBackupCodeFn: func(_ context.Context, _, _, _ string) error {
-			return &dberrors.DragonError{Code: dberrors.ErrInvalidInput, Op: "test"}
+			return &dberrors.QBError{Code: dberrors.ErrInvalidInput, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)
@@ -416,7 +416,7 @@ func TestMFAServer_VerifyBackupCode_ServiceError(t *testing.T) {
 func TestMFAServer_GetBackupCodeStatus_ServiceError(t *testing.T) {
 	svc := &mockMFAService{
 		getBackupCodeStatusFn: func(_ context.Context, _, _ string) (*iam.BackupCodeStatus, error) {
-			return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"}
+			return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"}
 		},
 	}
 	srv := newTestMFAServer(svc)

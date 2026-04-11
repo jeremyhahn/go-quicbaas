@@ -317,7 +317,7 @@ type failingDSCredStorage struct {
 
 func (f *failingDSCredStorage) Set(key, value []byte) error {
 	if f.failOnCred && strings.HasPrefix(string(key), CredentialPrefix) {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "failingDSCredStorage.Set",
 			Err:  stderrors.New("credential storage write failure"),
@@ -333,9 +333,9 @@ func TestOperationsService_MigrateData_NilRequest(t *testing.T) {
 	resp, err := svc.MigrateData(context.Background(), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestOperationsService_ReplaceNode_NilRequest(t *testing.T) {
@@ -345,9 +345,9 @@ func TestOperationsService_ReplaceNode_NilRequest(t *testing.T) {
 	resp, err := svc.ReplaceNode(context.Background(), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestOperationsService_UpgradeNode_NilRequest(t *testing.T) {
@@ -357,9 +357,9 @@ func TestOperationsService_UpgradeNode_NilRequest(t *testing.T) {
 	resp, err := svc.UpgradeNode(context.Background(), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestOperationsService_GetUpgradeStatus_WrongJobType(t *testing.T) {
@@ -393,9 +393,9 @@ func TestOperationsService_GetUpgradeStatus_WrongJobType(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 type covMockCAService struct {
@@ -1053,9 +1053,9 @@ func TestClusterService_RebalanceCluster_NilRaftNode(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	assert.True(t, ok)
-	assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 	assert.Contains(t, err.Error(), "qrdb client service not configured")
 }
 
@@ -1895,7 +1895,7 @@ func TestQueryService_Query_RaftError(t *testing.T) {
 	err = svc.Query(context.Background(), req, stream)
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrRaft, dErr.Code)
 }
@@ -2907,9 +2907,9 @@ func TestServiceImpl_DeleteSeries_Delegation(t *testing.T) {
 
 	_, err := svc.DeleteSeries(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestServiceImpl_SetRetentionPolicy_Delegation(t *testing.T) {
@@ -2928,9 +2928,9 @@ func TestServiceImpl_SetRetentionPolicy_Delegation(t *testing.T) {
 
 	_, err := svc.SetRetentionPolicy(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestServiceImpl_ListMetrics_Delegation(t *testing.T) {
@@ -2944,9 +2944,9 @@ func TestServiceImpl_ListMetrics_Delegation(t *testing.T) {
 
 	_, err := svc.ListMetrics(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestServiceImpl_WritePoint_Delegation(t *testing.T) {
@@ -2963,9 +2963,9 @@ func TestServiceImpl_WritePoint_Delegation(t *testing.T) {
 
 	_, err := svc.WritePoint(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestServiceImpl_WriteBatch_Delegation(t *testing.T) {
@@ -2983,9 +2983,9 @@ func TestServiceImpl_WriteBatch_Delegation(t *testing.T) {
 
 	_, err := svc.WriteBatch(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestServiceImpl_TSQuery_Delegation(t *testing.T) {
@@ -3001,9 +3001,9 @@ func TestServiceImpl_TSQuery_Delegation(t *testing.T) {
 
 	_, err := svc.TSQuery(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestServiceImpl_GetRetentionPolicy_Delegation(t *testing.T) {
@@ -3019,9 +3019,9 @@ func TestServiceImpl_GetRetentionPolicy_Delegation(t *testing.T) {
 
 	_, err := svc.GetRetentionPolicy(context.Background(), req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestQueryService_Query_EmptyEntityType(t *testing.T) {
@@ -3039,9 +3039,9 @@ func TestQueryService_Query_EmptyEntityType(t *testing.T) {
 	err := svc.queryService.Query(context.Background(), req, stream)
 
 	assert.Error(t, err)
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestServiceImpl_Query_Delegation(t *testing.T) {
@@ -3258,7 +3258,7 @@ func TestScanIndex_Coverage(t *testing.T) {
 	err := querySvc.ScanIndex(context.Background(), &ScanRequest{EntityType: "test"}, stream)
 
 	require.Error(t, err)
-	_, ok := err.(*dberrors.DragonError)
+	_, ok := err.(*dberrors.QBError)
 	assert.True(t, ok)
 }
 

@@ -112,7 +112,7 @@ func TestServiceBuilder_Build_MissingDependencies(t *testing.T) {
 			require.Error(t, err)
 			assert.Nil(t, svc)
 
-			var dErr *dberrors.DragonError
+			var dErr *dberrors.QBError
 			require.True(t, dberrors.As(err, &dErr))
 			assert.Equal(t, tt.wantErrCode, dErr.Code)
 			assert.Contains(t, err.Error(), tt.wantErrMsg)

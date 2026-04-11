@@ -96,7 +96,7 @@ func (bm *BatchManager) ExportUsers(ctx context.Context, tenantID string, filter
 	}
 
 	if bm.identityStore == nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.batch.exportUsers",
 			Err:  errBatchOperationFailed,
@@ -151,7 +151,7 @@ func (bm *BatchManager) ExportGroups(ctx context.Context, tenantID string, filte
 	}
 
 	if bm.identityStore == nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.batch.exportGroups",
 			Err:  errBatchOperationFailed,
@@ -206,7 +206,7 @@ func (bm *BatchManager) ExportRoles(ctx context.Context, tenantID string, filter
 	}
 
 	if bm.identityStore == nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.batch.exportRoles",
 			Err:  errBatchOperationFailed,
@@ -261,7 +261,7 @@ func (bm *BatchManager) ExportPolicies(ctx context.Context, tenantID string, fil
 	}
 
 	if bm.policyEngine == nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.batch.exportPolicies",
 			Err:  errBatchOperationFailed,

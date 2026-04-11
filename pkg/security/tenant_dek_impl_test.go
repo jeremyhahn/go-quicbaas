@@ -188,7 +188,7 @@ func (s *mockKVStore) Delete(_ context.Context, key string) error {
 	defer s.mu.Unlock()
 	if _, ok := s.data[key]; !ok {
 		if s.deleteNotFound {
-			return &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "mockKVStore.Delete"}
+			return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "mockKVStore.Delete"}
 		}
 		return nil
 	}

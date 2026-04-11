@@ -26,9 +26,9 @@ func (e *GUIUnavailableError) Error() string {
 	return "GUI unavailable: binary built without desktop tag or no display detected"
 }
 
-// NewGUIUnavailableError creates a DragonError for a GUI unavailable condition.
-func NewGUIUnavailableError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewGUIUnavailableError creates a QBError for a GUI unavailable condition.
+func NewGUIUnavailableError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrUnavailable,
 		Op:   op,
 		Err:  &GUIUnavailableError{},
@@ -43,9 +43,9 @@ func (e *GUINotConnectedError) Error() string {
 	return "GUI not connected: no SDK client connected to server"
 }
 
-// NewGUINotConnectedError creates a DragonError for a missing SDK client connection.
-func NewGUINotConnectedError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewGUINotConnectedError creates a QBError for a missing SDK client connection.
+func NewGUINotConnectedError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrUnavailable,
 		Op:   op,
 		Err:  &GUINotConnectedError{},
@@ -70,9 +70,9 @@ func (e *GUITransportError) Unwrap() error {
 	return e.Cause
 }
 
-// NewGUITransportError creates a DragonError for a GUI transport failure.
-func NewGUITransportError(op string, cause error) *errors.DragonError {
-	return &errors.DragonError{
+// NewGUITransportError creates a QBError for a GUI transport failure.
+func NewGUITransportError(op string, cause error) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrUnavailable,
 		Op:   op,
 		Err:  &GUITransportError{Cause: cause},
@@ -99,9 +99,9 @@ func (e *GUIConnectError) Unwrap() error {
 	return e.Cause
 }
 
-// NewGUIConnectError creates a DragonError for a GUI connection failure.
-func NewGUIConnectError(op, address string, cause error) *errors.DragonError {
-	return &errors.DragonError{
+// NewGUIConnectError creates a QBError for a GUI connection failure.
+func NewGUIConnectError(op, address string, cause error) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrUnavailable,
 		Op:   op,
 		Err:  &GUIConnectError{Address: address, Cause: cause},

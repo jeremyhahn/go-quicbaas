@@ -136,9 +136,9 @@ func TestSchedulerCreateJob(t *testing.T) {
 
 		_, err = client.SchedulerCreateJob(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("server error", func(t *testing.T) {
@@ -240,9 +240,9 @@ func TestSchedulerGetJob(t *testing.T) {
 
 		_, err = client.SchedulerGetJob(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -334,9 +334,9 @@ func TestSchedulerUpdateJob(t *testing.T) {
 
 		_, err = client.SchedulerUpdateJob(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -413,9 +413,9 @@ func TestSchedulerDeleteJob(t *testing.T) {
 
 		_, err = client.SchedulerDeleteJob(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -562,9 +562,9 @@ func TestSchedulerTriggerJob(t *testing.T) {
 
 		_, err = client.SchedulerTriggerJob(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -613,9 +613,9 @@ func TestSchedulerPauseJob(t *testing.T) {
 
 		_, err = client.SchedulerPauseJob(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -664,9 +664,9 @@ func TestSchedulerResumeJob(t *testing.T) {
 
 		_, err = client.SchedulerResumeJob(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -744,9 +744,9 @@ func TestSchedulerCancelJob(t *testing.T) {
 
 		_, err = client.SchedulerCancelJob(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -836,9 +836,9 @@ func TestSchedulerGetJobHistory(t *testing.T) {
 
 		_, err = client.SchedulerGetJobHistory(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 

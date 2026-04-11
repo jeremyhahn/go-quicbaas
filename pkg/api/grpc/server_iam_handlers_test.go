@@ -496,7 +496,7 @@ func TestIAMServer_CreateTenant_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("CreateTenant", mock.Anything, mock.Anything).
-		Return(nil, &errors.DragonError{Code: errors.ErrAlreadyExists, Op: "CreateTenant", Err: stderrors.New("exists")})
+		Return(nil, &errors.QBError{Code: errors.ErrAlreadyExists, Op: "CreateTenant", Err: stderrors.New("exists")})
 
 	_, err := srv.CreateTenant(context.Background(), &iampb.CreateTenantRequest{Id: "t1", Name: "Test"})
 
@@ -600,7 +600,7 @@ func TestIAMServer_ListTenants_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("ListTenants", mock.Anything, 10, 5).
-		Return(nil, 0, &errors.DragonError{Code: errors.ErrInternal, Op: "ListTenants", Err: stderrors.New("failed")})
+		Return(nil, 0, &errors.QBError{Code: errors.ErrInternal, Op: "ListTenants", Err: stderrors.New("failed")})
 
 	_, err := srv.ListTenants(context.Background(), &iampb.ListTenantsRequest{Limit: 10, Offset: 5})
 

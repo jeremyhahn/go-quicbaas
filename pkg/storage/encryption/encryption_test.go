@@ -70,9 +70,9 @@ func TestEncryptDecryptField_AES128(t *testing.T) {
 			if len(tt.plaintext) == 0 {
 				_, err := EncryptField(tt.plaintext, key, AlgorithmAES128)
 				assert.Error(t, err)
-				var dragonErr *errors.DragonError
-				assert.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+				var qbErr *errors.QBError
+				assert.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 				return
 			}
 
@@ -191,9 +191,9 @@ func TestEncryptField_InvalidKey(t *testing.T) {
 			_, err := EncryptField(plaintext, key, tt.algorithm)
 			if tt.wantErr {
 				assert.Error(t, err)
-				var dragonErr *errors.DragonError
-				if assert.ErrorAs(t, err, &dragonErr) {
-					assert.Equal(t, errors.ErrEncryption, dragonErr.Code)
+				var qbErr *errors.QBError
+				if assert.ErrorAs(t, err, &qbErr) {
+					assert.Equal(t, errors.ErrEncryption, qbErr.Code)
 				}
 			} else {
 				assert.NoError(t, err)
@@ -209,9 +209,9 @@ func TestEncryptField_InvalidAlgorithm(t *testing.T) {
 	_, err := EncryptField(plaintext, key, "invalid-algorithm")
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrEncryption, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrEncryption, qbErr.Code)
 }
 
 func TestDecryptField_TamperedCiphertext(t *testing.T) {
@@ -232,9 +232,9 @@ func TestDecryptField_TamperedCiphertext(t *testing.T) {
 	_, err = DecryptField(tamperedCiphertext, key, AlgorithmAES256)
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrDecryption, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrDecryption, qbErr.Code)
 }
 
 func TestDecryptField_WrongKey(t *testing.T) {
@@ -253,9 +253,9 @@ func TestDecryptField_WrongKey(t *testing.T) {
 	_, err = DecryptField(ciphertext, key2, AlgorithmAES256)
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrDecryption, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrDecryption, qbErr.Code)
 }
 
 func TestDecryptField_TruncatedCiphertext(t *testing.T) {
@@ -269,9 +269,9 @@ func TestDecryptField_TruncatedCiphertext(t *testing.T) {
 	_, err = DecryptField(shortCiphertext, key, AlgorithmAES128)
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrDecryption, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrDecryption, qbErr.Code)
 }
 
 func TestEncryptField_NoncesAreUnique(t *testing.T) {
@@ -504,9 +504,9 @@ func TestDeriveKeyFromPassword_EmptyPassword(t *testing.T) {
 	_, err := DeriveKeyFromPassword("", AlgorithmAES256)
 	require.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // Test deriveKey function through error conditions.
@@ -593,9 +593,9 @@ func TestDecryptField_InvalidAlgorithm(t *testing.T) {
 	_, err = DecryptField(ciphertext, key, "invalid-algorithm")
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrDecryption, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrDecryption, qbErr.Code)
 }
 
 // Test DecryptField with empty ciphertext.
@@ -607,9 +607,9 @@ func TestDecryptField_EmptyCiphertext(t *testing.T) {
 	_, err = DecryptField([]byte{}, key, AlgorithmAES128)
 	assert.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	assert.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrDecryption, dragonErr.Code)
+	var qbErr *errors.QBError
+	assert.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrDecryption, qbErr.Code)
 }
 
 func BenchmarkEncryptField_AES128(b *testing.B) {

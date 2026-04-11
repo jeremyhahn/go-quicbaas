@@ -357,98 +357,98 @@ func TestConvertPEPError(t *testing.T) {
 		assert.Nil(t, result)
 	})
 
-	t.Run("non-DragonError converts to Internal", func(t *testing.T) {
+	t.Run("non-QBError converts to Internal", func(t *testing.T) {
 		err := errors.New("some error")
 		result := convertPEPError(err)
 		assert.Equal(t, codes.Internal, status.Code(result))
 	})
 
-	t.Run("DragonError NotFound", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test"}
+	t.Run("QBError NotFound", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.NotFound, status.Code(result))
 	})
 
-	t.Run("DragonError AlreadyExists", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "test"}
+	t.Run("QBError AlreadyExists", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.AlreadyExists, status.Code(result))
 	})
 
-	t.Run("DragonError InvalidInput", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrInvalidInput, Op: "test"}
+	t.Run("QBError InvalidInput", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrInvalidInput, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.InvalidArgument, status.Code(result))
 	})
 
-	t.Run("DragonError Validation", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrValidation, Op: "test"}
+	t.Run("QBError Validation", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrValidation, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.InvalidArgument, status.Code(result))
 	})
 
-	t.Run("DragonError Unauthorized", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrUnauthorized, Op: "test"}
+	t.Run("QBError Unauthorized", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrUnauthorized, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.Unauthenticated, status.Code(result))
 	})
 
-	t.Run("DragonError Forbidden", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrForbidden, Op: "test"}
+	t.Run("QBError Forbidden", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.PermissionDenied, status.Code(result))
 	})
 
-	t.Run("DragonError Timeout", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrTimeout, Op: "test"}
+	t.Run("QBError Timeout", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrTimeout, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.DeadlineExceeded, status.Code(result))
 	})
 
-	t.Run("DragonError DeadlineExceeded", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrDeadlineExceeded, Op: "test"}
+	t.Run("QBError DeadlineExceeded", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrDeadlineExceeded, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.DeadlineExceeded, status.Code(result))
 	})
 
-	t.Run("DragonError ResourceExhausted", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrResourceExhausted, Op: "test"}
+	t.Run("QBError ResourceExhausted", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrResourceExhausted, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.ResourceExhausted, status.Code(result))
 	})
 
-	t.Run("DragonError Unavailable", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrUnavailable, Op: "test"}
+	t.Run("QBError Unavailable", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrUnavailable, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.Unavailable, status.Code(result))
 	})
 
-	t.Run("DragonError Conflict", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrConflict, Op: "test"}
+	t.Run("QBError Conflict", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrConflict, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.FailedPrecondition, status.Code(result))
 	})
 
-	t.Run("DragonError Unimplemented", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrUnimplemented, Op: "test"}
+	t.Run("QBError Unimplemented", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrUnimplemented, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.Unimplemented, status.Code(result))
 	})
 
-	t.Run("DragonError NotImplemented", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrNotImplemented, Op: "test"}
+	t.Run("QBError NotImplemented", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrNotImplemented, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.Unimplemented, status.Code(result))
 	})
 
-	t.Run("DragonError Canceled", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: dberrors.ErrCanceled, Op: "test"}
+	t.Run("QBError Canceled", func(t *testing.T) {
+		err := &dberrors.QBError{Code: dberrors.ErrCanceled, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.Canceled, status.Code(result))
 	})
 
-	t.Run("DragonError unknown code defaults to Internal", func(t *testing.T) {
-		err := &dberrors.DragonError{Code: 9999, Op: "test"}
+	t.Run("QBError unknown code defaults to Internal", func(t *testing.T) {
+		err := &dberrors.QBError{Code: 9999, Op: "test"}
 		result := convertPEPError(err)
 		assert.Equal(t, codes.Internal, status.Code(result))
 	})
@@ -594,7 +594,7 @@ func TestPEPServerCoverage_Check_MissingResource(t *testing.T) {
 func TestPEPServerCoverage_Check_ServiceError(t *testing.T) {
 	svc := &mockPEPServiceCoverage{
 		checkFunc: func(_ context.Context, _ *iam.CheckRequest) (*iam.CheckResponse, error) {
-			return nil, &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "test"}
+			return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"}
 		},
 	}
 	srv := newTestPEPServer(t, svc)
@@ -665,7 +665,7 @@ func TestPEPServerCoverage_CheckBatch_EmptyResources(t *testing.T) {
 func TestPEPServerCoverage_CheckBatch_ServiceError(t *testing.T) {
 	svc := &mockPEPServiceCoverage{
 		checkBatchFunc: func(_ context.Context, _ *iam.Subject, _ string, _ []string, _ map[string]interface{}) ([]bool, int64, error) {
-			return nil, 0, &dberrors.DragonError{Code: dberrors.ErrForbidden, Op: "test"}
+			return nil, 0, &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"}
 		},
 	}
 	srv := newTestPEPServer(t, svc)
@@ -702,21 +702,21 @@ func TestPEPServerCoverage_ConvertPEPError(t *testing.T) {
 	assert.Nil(t, convertPEPError(nil))
 
 	assert.Equal(t, codes.Internal, status.Code(convertPEPError(errors.New("plain error"))))
-	assert.Equal(t, codes.NotFound, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "t"})))
-	assert.Equal(t, codes.AlreadyExists, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "t"})))
-	assert.Equal(t, codes.InvalidArgument, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrInvalidInput, Op: "t"})))
-	assert.Equal(t, codes.InvalidArgument, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrValidation, Op: "t"})))
-	assert.Equal(t, codes.Unauthenticated, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrUnauthorized, Op: "t"})))
-	assert.Equal(t, codes.PermissionDenied, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrForbidden, Op: "t"})))
-	assert.Equal(t, codes.DeadlineExceeded, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrTimeout, Op: "t"})))
-	assert.Equal(t, codes.DeadlineExceeded, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrDeadlineExceeded, Op: "t"})))
-	assert.Equal(t, codes.ResourceExhausted, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrResourceExhausted, Op: "t"})))
-	assert.Equal(t, codes.Unavailable, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrUnavailable, Op: "t"})))
-	assert.Equal(t, codes.FailedPrecondition, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrConflict, Op: "t"})))
-	assert.Equal(t, codes.Unimplemented, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrUnimplemented, Op: "t"})))
-	assert.Equal(t, codes.Unimplemented, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrNotImplemented, Op: "t"})))
-	assert.Equal(t, codes.Canceled, status.Code(convertPEPError(&dberrors.DragonError{Code: dberrors.ErrCanceled, Op: "t"})))
-	assert.Equal(t, codes.Internal, status.Code(convertPEPError(&dberrors.DragonError{Code: 9999, Op: "t"})))
+	assert.Equal(t, codes.NotFound, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "t"})))
+	assert.Equal(t, codes.AlreadyExists, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "t"})))
+	assert.Equal(t, codes.InvalidArgument, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrInvalidInput, Op: "t"})))
+	assert.Equal(t, codes.InvalidArgument, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrValidation, Op: "t"})))
+	assert.Equal(t, codes.Unauthenticated, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrUnauthorized, Op: "t"})))
+	assert.Equal(t, codes.PermissionDenied, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrForbidden, Op: "t"})))
+	assert.Equal(t, codes.DeadlineExceeded, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrTimeout, Op: "t"})))
+	assert.Equal(t, codes.DeadlineExceeded, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrDeadlineExceeded, Op: "t"})))
+	assert.Equal(t, codes.ResourceExhausted, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrResourceExhausted, Op: "t"})))
+	assert.Equal(t, codes.Unavailable, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrUnavailable, Op: "t"})))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrConflict, Op: "t"})))
+	assert.Equal(t, codes.Unimplemented, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrUnimplemented, Op: "t"})))
+	assert.Equal(t, codes.Unimplemented, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrNotImplemented, Op: "t"})))
+	assert.Equal(t, codes.Canceled, status.Code(convertPEPError(&dberrors.QBError{Code: dberrors.ErrCanceled, Op: "t"})))
+	assert.Equal(t, codes.Internal, status.Code(convertPEPError(&dberrors.QBError{Code: 9999, Op: "t"})))
 }
 
 func TestPEPServerCoverage_NewPEPServiceAdapter(t *testing.T) {

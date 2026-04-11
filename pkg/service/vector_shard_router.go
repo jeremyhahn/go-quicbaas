@@ -71,9 +71,9 @@ func (e *NamespaceNotRoutedError) Error() string {
 	return "no shards registered for namespace: " + e.Namespace
 }
 
-// NewNamespaceNotRoutedError creates a DragonError for an unrouted namespace.
-func NewNamespaceNotRoutedError(op, namespace string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewNamespaceNotRoutedError creates a QBError for an unrouted namespace.
+func NewNamespaceNotRoutedError(op, namespace string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   op,
 		Err:  &NamespaceNotRoutedError{Namespace: namespace},

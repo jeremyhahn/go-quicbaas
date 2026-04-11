@@ -169,7 +169,7 @@
 //
 // # Error Handling
 //
-// All errors are wrapped in DragonError with appropriate error codes:
+// All errors are wrapped in QBError with appropriate error codes:
 //   - ErrEncryption - Encryption operation failed
 //   - ErrDecryption - Decryption or authentication failed
 //   - ErrInvalidInput - Invalid input parameters
@@ -179,9 +179,9 @@
 //
 //	data, err := MarshalWithEncryption(entity, key)
 //	if err != nil {
-//	    var dragonErr *errors.DragonError
-//	    if errors.As(err, &dragonErr) {
-//	        switch dragonErr.Code {
+//	    var qbErr *errors.QBError
+//	    if errors.As(err, &qbErr) {
+//	        switch qbErr.Code {
 //	        case errors.ErrEncryption:
 //	            // Handle encryption error
 //	        case errors.ErrInvalidInput:

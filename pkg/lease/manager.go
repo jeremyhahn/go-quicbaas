@@ -221,7 +221,7 @@ func (m *Manager) CreateLease(ctx context.Context, path string, ttl time.Duratio
 
 	if ctx.Err() != nil {
 		m.metrics.leasesCreated.With("error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.CreateLease",
 			Err:  ctx.Err(),
@@ -291,7 +291,7 @@ func (m *Manager) RenewLease(ctx context.Context, leaseID string, increment time
 
 	if ctx.Err() != nil {
 		m.metrics.leasesRenewed.With("error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.RenewLease",
 			Err:  ctx.Err(),
@@ -358,7 +358,7 @@ func (m *Manager) GetLease(ctx context.Context, leaseID string) (*Lease, error) 
 	}
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.GetLease",
 			Err:  ctx.Err(),
@@ -392,7 +392,7 @@ func (m *Manager) RevokeLease(ctx context.Context, leaseID string) error {
 	}
 
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.RevokeLease",
 			Err:  ctx.Err(),
@@ -428,7 +428,7 @@ func (m *Manager) RevokePrefix(ctx context.Context, prefix string) (int, error) 
 	m.mu.RUnlock()
 
 	if ctx.Err() != nil {
-		return 0, &errors.DragonError{
+		return 0, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.RevokePrefix",
 			Err:  ctx.Err(),
@@ -475,7 +475,7 @@ func (m *Manager) ListLeases(ctx context.Context, prefix string) ([]*Lease, erro
 	m.mu.RUnlock()
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Manager.ListLeases",
 			Err:  ctx.Err(),

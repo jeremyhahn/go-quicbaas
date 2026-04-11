@@ -829,9 +829,9 @@ func TestNewObjectStorageService_NilCatalogManager(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, svc)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewObjectStorageService_NilBackendManager(t *testing.T) {
@@ -843,9 +843,9 @@ func TestNewObjectStorageService_NilBackendManager(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, svc)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewObjectStorageService_NilConfigResolver(t *testing.T) {
@@ -857,9 +857,9 @@ func TestNewObjectStorageService_NilConfigResolver(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, svc)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewObjectStorageService_NilLogger(t *testing.T) {
@@ -871,9 +871,9 @@ func TestNewObjectStorageService_NilLogger(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, svc)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 // =============================================================================
@@ -935,9 +935,9 @@ func TestPutObject_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestPutObject_EmptyKey(t *testing.T) {
@@ -953,9 +953,9 @@ func TestPutObject_EmptyKey(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestPutObject_EmptyValue(t *testing.T) {
@@ -971,9 +971,9 @@ func TestPutObject_EmptyValue(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestPutObject_ChecksumMismatch(t *testing.T) {
@@ -990,9 +990,9 @@ func TestPutObject_ChecksumMismatch(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestPutObject_QuotaExceeded(t *testing.T) {
@@ -1032,9 +1032,9 @@ func TestPutObject_QuotaExceeded(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrResourceExhausted, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrResourceExhausted, qbErr.Code)
 }
 
 func TestPutObject_BackendUnavailable(t *testing.T) {
@@ -1061,9 +1061,9 @@ func TestPutObject_BackendUnavailable(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestPutObject_WithValidChecksum(t *testing.T) {
@@ -1162,9 +1162,9 @@ func TestGetObject_NotFound(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestGetObject_NilRequest(t *testing.T) {
@@ -1175,9 +1175,9 @@ func TestGetObject_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestGetObject_EmptyKey(t *testing.T) {
@@ -1189,9 +1189,9 @@ func TestGetObject_EmptyKey(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestGetObject_CrossTenantDenied(t *testing.T) {
@@ -1224,9 +1224,9 @@ func TestGetObject_CrossTenantDenied(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrForbidden, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrForbidden, qbErr.Code)
 }
 
 func TestGetObject_BackendReadError(t *testing.T) {
@@ -1309,9 +1309,9 @@ func TestDeleteObject_NotFound(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestDeleteObject_NilRequest(t *testing.T) {
@@ -1351,9 +1351,9 @@ func TestDeleteObject_CrossTenantDenied(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrForbidden, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrForbidden, qbErr.Code)
 }
 
 // =============================================================================
@@ -1674,9 +1674,9 @@ func TestCopyObject_DestinationExists(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrAlreadyExists, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrAlreadyExists, qbErr.Code)
 }
 
 func TestCopyObject_InvalidRequest(t *testing.T) {
@@ -1818,9 +1818,9 @@ func TestReplicateObject_CrossTenantDenied(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrForbidden, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrForbidden, qbErr.Code)
 }
 
 func TestReplicateObject_TargetBackendNotFound(t *testing.T) {
@@ -2066,9 +2066,9 @@ func TestArchiveObject_AlreadyArchived(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestArchiveObject_CrossTenantDenied(t *testing.T) {
@@ -2247,9 +2247,9 @@ func TestRestoreObject_NotArchived(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestRestoreObject_CrossTenantDenied(t *testing.T) {
@@ -3953,9 +3953,9 @@ func TestSetTenantQuotas_EmptyTenantID(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestSetTenantQuotas_NilRequest(t *testing.T) {
@@ -3966,9 +3966,9 @@ func TestSetTenantQuotas_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestSetTenantQuotas_NegativeValues(t *testing.T) {
@@ -4008,9 +4008,9 @@ func TestSetTenantQuotas_NegativeValues(t *testing.T) {
 			require.Error(t, err)
 			require.Nil(t, resp)
 
-			var dragonErr *dberrors.DragonError
-			require.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+			var qbErr *dberrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 		})
 	}
 }
@@ -4072,9 +4072,9 @@ func TestSetTenantQuotas_ResolverError(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrStorage, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrStorage, qbErr.Code)
 }
 
 func TestSetTenantQuotas_UpdateExisting(t *testing.T) {
@@ -4213,9 +4213,9 @@ func TestGetObject_ServiceClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestListObjects_ServiceClosed(t *testing.T) {
@@ -4230,9 +4230,9 @@ func TestListObjects_ServiceClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestListByTag_ServiceClosed(t *testing.T) {
@@ -4250,9 +4250,9 @@ func TestListByTag_ServiceClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestRestoreObject_ServiceClosed(t *testing.T) {
@@ -4267,9 +4267,9 @@ func TestRestoreObject_ServiceClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestListByTenant_ServiceClosed(t *testing.T) {
@@ -4284,9 +4284,9 @@ func TestListByTenant_ServiceClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestPutObject_ServiceClosed(t *testing.T) {
@@ -4351,10 +4351,10 @@ func TestGetObject_DeletedObjectNotAvailable(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "not available")
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "not available")
 }
 
 func TestGetObject_PendingObjectNotAvailable(t *testing.T) {
@@ -4376,9 +4376,9 @@ func TestGetObject_PendingObjectNotAvailable(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestGetObject_IncludeMetadata(t *testing.T) {
@@ -4669,10 +4669,10 @@ func TestSetObjectPolicyRequest_Validate(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *dberrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *dberrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -4680,10 +4680,10 @@ func TestSetObjectPolicyRequest_Validate(t *testing.T) {
 			req:     &SetObjectPolicyRequest{Key: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *dberrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "key is required")
+				var qbErr *dberrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "key is required")
 			},
 		},
 		{
@@ -4730,10 +4730,10 @@ func TestGetObjectPolicyRequest_Validate(t *testing.T) {
 			req:     nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *dberrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "request cannot be nil")
+				var qbErr *dberrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "request cannot be nil")
 			},
 		},
 		{
@@ -4741,10 +4741,10 @@ func TestGetObjectPolicyRequest_Validate(t *testing.T) {
 			req:     &GetObjectPolicyRequest{Key: ""},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
-				var dragonErr *dberrors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
-				assert.Contains(t, dragonErr.Err.Error(), "key is required")
+				var qbErr *dberrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, qbErr.Err.Error(), "key is required")
 			},
 		},
 		{

@@ -233,7 +233,7 @@ func (s *PEPServer) Subscribe(req *iampb.SubscribeRequest, stream iampb.PEPServi
 			// Send update to client
 			if err := stream.Send(protoUpdate); err != nil {
 				s.logger.WithError(err).Error("Failed to send policy update to client")
-				return convertPEPError(&dberrors.DragonError{
+				return convertPEPError(&dberrors.QBError{
 					Code: dberrors.ErrInternal,
 					Op:   "pep.Subscribe",
 					Err:  err,
@@ -315,7 +315,7 @@ func convertPEPError(err error) error {
 		return nil
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if !stderrors.As(err, &dErr) {
 		return status.Error(codes.Internal, err.Error())
 	}
@@ -422,7 +422,7 @@ func (a *PEPServiceAdapter) Subscribe(ctx context.Context, serviceID string, res
 	// Send initial snapshot of all matching policies
 	knownPolicies, err := a.sendSnapshot(ctx, tenantID, resourcePatterns, updates)
 	if err != nil {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "pep.Subscribe.snapshot",
 			Err:  err,
@@ -440,7 +440,7 @@ func (a *PEPServiceAdapter) Subscribe(ctx context.Context, serviceID string, res
 		case <-ticker.C:
 			knownPolicies, err = a.pollChanges(ctx, tenantID, resourcePatterns, knownPolicies, updates)
 			if err != nil {
-				return &dberrors.DragonError{
+				return &dberrors.QBError{
 					Code: dberrors.ErrInternal,
 					Op:   "pep.Subscribe.poll",
 					Err:  err,

@@ -65,7 +65,7 @@ func TestPEPSubscribe_EmptyServiceID(t *testing.T) {
 func TestPEPSubscribe_ServiceError(t *testing.T) {
 	svc := &mockPEPServiceCoverage{
 		subscribeFunc: func(ctx context.Context, _ string, _ []string, _ chan<- *PolicyUpdate) error {
-			return &dberrors.DragonError{Code: dberrors.ErrInternal, Op: "subscribe", Err: errors.New("subscribe failed")}
+			return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "subscribe", Err: errors.New("subscribe failed")}
 		},
 	}
 	srv := newTestPEPServer(t, svc)

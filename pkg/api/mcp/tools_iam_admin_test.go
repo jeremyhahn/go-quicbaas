@@ -69,7 +69,7 @@ func TestExecuteIAMAdminAssignmentCreate_ServiceUnavailable(t *testing.T) {
 		"user_id": "user-1", "admin_role": "super_admin", "granted_by": "admin",
 	})
 	require.Error(t, err)
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	assert.ErrorAs(t, err, &dErr)
 }
 
@@ -81,7 +81,7 @@ func TestExecuteIAMAdminAssignmentCreate_NilManager(t *testing.T) {
 		"user_id": "user-1", "admin_role": "super_admin", "granted_by": "admin",
 	})
 	require.Error(t, err)
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	assert.ErrorAs(t, err, &dErr)
 }
 

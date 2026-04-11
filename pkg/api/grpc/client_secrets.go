@@ -25,7 +25,7 @@ import (
 // StoreSecret stores a new secret.
 func (c *Client) StoreSecret(ctx context.Context, req *service.StoreSecretRequest) (*service.StoreSecretResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.StoreSecret",
 			Err:  ErrRequestNil,
@@ -64,7 +64,7 @@ func (c *Client) StoreSecret(ctx context.Context, req *service.StoreSecretReques
 // GetSecret retrieves a secret by ID.
 func (c *Client) GetSecret(ctx context.Context, req *service.GetSecretRequest) (*service.GetSecretResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.GetSecret",
 			Err:  ErrRequestNil,
@@ -96,7 +96,7 @@ func (c *Client) GetSecret(ctx context.Context, req *service.GetSecretRequest) (
 // ListSecrets returns all accessible secrets.
 func (c *Client) ListSecrets(ctx context.Context, req *service.ListSecretsRequest) (*service.ListSecretsResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.ListSecrets",
 			Err:  ErrRequestNil,
@@ -133,7 +133,7 @@ func (c *Client) ListSecrets(ctx context.Context, req *service.ListSecretsReques
 // DeleteSecret deletes a secret.
 func (c *Client) DeleteSecret(ctx context.Context, req *service.DeleteSecretRequest) (*service.DeleteSecretResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.DeleteSecret",
 			Err:  ErrRequestNil,
@@ -162,7 +162,7 @@ func (c *Client) DeleteSecret(ctx context.Context, req *service.DeleteSecretRequ
 // ListSecretVersions returns all versions of a secret.
 func (c *Client) ListSecretVersions(ctx context.Context, req *service.ListSecretVersionsRequest) (*service.ListSecretVersionsResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.ListSecretVersions",
 			Err:  ErrRequestNil,
@@ -198,7 +198,7 @@ func (c *Client) ListSecretVersions(ctx context.Context, req *service.ListSecret
 // RollbackSecret rolls back to a previous version.
 func (c *Client) RollbackSecret(ctx context.Context, req *service.RollbackSecretRequest) (*service.RollbackSecretResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.RollbackSecret",
 			Err:  ErrRequestNil,
@@ -227,7 +227,7 @@ func (c *Client) RollbackSecret(ctx context.Context, req *service.RollbackSecret
 // RotateSecret rotates a secret to a new value.
 func (c *Client) RotateSecret(ctx context.Context, req *service.RotateSecretRequest) (*service.RotateSecretResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.RotateSecret",
 			Err:  ErrRequestNil,
@@ -258,7 +258,7 @@ func (c *Client) RotateSecret(ctx context.Context, req *service.RotateSecretRequ
 // UpdateSecretStatus updates the status of a secret (enable/disable).
 func (c *Client) UpdateSecretStatus(ctx context.Context, req *service.UpdateSecretStatusRequest) (*service.UpdateSecretStatusResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.UpdateSecretStatus",
 			Err:  ErrRequestNil,
@@ -288,7 +288,7 @@ func (c *Client) UpdateSecretStatus(ctx context.Context, req *service.UpdateSecr
 // GetSecretsByPrefix retrieves all secrets matching a path prefix.
 func (c *Client) GetSecretsByPrefix(ctx context.Context, req *service.GetSecretsByPrefixRequest) (*service.GetSecretsByPrefixResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.GetSecretsByPrefix",
 			Err:  ErrRequestNil,
@@ -334,7 +334,7 @@ func (c *Client) GetSecretsByPrefix(ctx context.Context, req *service.GetSecrets
 // WatchSecretsByPrefix streams secret changes for a prefix.
 func (c *Client) WatchSecretsByPrefix(ctx context.Context, req *service.WatchSecretsRequest) (<-chan *service.SecretChange, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.WatchSecretsByPrefix",
 			Err:  ErrRequestNil,

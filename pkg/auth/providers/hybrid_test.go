@@ -165,10 +165,10 @@ func TestNewHybridProvider(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, provider)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-		assert.ErrorIs(t, dragonErr.Err, ErrNilRBACProvider)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+		assert.ErrorIs(t, qbErr.Err, ErrNilRBACProvider)
 	})
 
 	t.Run("error with both providers nil", func(t *testing.T) {
@@ -179,9 +179,9 @@ func TestNewHybridProvider(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, provider)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -382,9 +382,9 @@ func TestHybridProviderAuthorizeErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decision)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("canceled context returns error", func(t *testing.T) {
@@ -412,9 +412,9 @@ func TestHybridProviderAuthorizeErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decision)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrCanceled, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrCanceled, qbErr.Code)
 	})
 
 	t.Run("closed provider returns error", func(t *testing.T) {
@@ -442,9 +442,9 @@ func TestHybridProviderAuthorizeErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decision)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	})
 
 	t.Run("RBAC error is propagated when ABAC not available", func(t *testing.T) {
@@ -472,9 +472,9 @@ func TestHybridProviderAuthorizeErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decision)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 
 	t.Run("RBAC error after ABAC fallback is propagated", func(t *testing.T) {
@@ -507,9 +507,9 @@ func TestHybridProviderAuthorizeErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decision)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -661,9 +661,9 @@ func TestHybridProviderBatchAuthorize(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decisions)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrCanceled, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrCanceled, qbErr.Code)
 	})
 
 	t.Run("closed provider returns error", func(t *testing.T) {
@@ -692,9 +692,9 @@ func TestHybridProviderBatchAuthorize(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, decisions)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	})
 
 	t.Run("context cancellation mid-batch returns error", func(t *testing.T) {
@@ -742,8 +742,8 @@ func TestHybridProviderBatchAuthorize(t *testing.T) {
 
 		// Either error or decisions may be returned depending on timing
 		if err != nil {
-			var dragonErr *errors.DragonError
-			if errors.IsCanceled(err) || stderrors.As(err, &dragonErr) {
+			var qbErr *errors.QBError
+			if errors.IsCanceled(err) || stderrors.As(err, &qbErr) {
 				// Expected - context was canceled
 				return
 			}

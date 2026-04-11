@@ -362,9 +362,9 @@ func TestNewObjectStorageAdminService_NilCatalogManager(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, svc)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewObjectStorageAdminService_NilBackendManager(t *testing.T) {
@@ -375,9 +375,9 @@ func TestNewObjectStorageAdminService_NilBackendManager(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, svc)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewObjectStorageAdminService_NilLogger(t *testing.T) {
@@ -388,9 +388,9 @@ func TestNewObjectStorageAdminService_NilLogger(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, svc)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 // =============================================================================
@@ -424,9 +424,9 @@ func TestCreateBackend_ValidationError_NilRequest(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestCreateBackend_ValidationError_EmptyName(t *testing.T) {
@@ -442,9 +442,9 @@ func TestCreateBackend_ValidationError_EmptyName(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestCreateBackend_ValidationError_MissingType(t *testing.T) {
@@ -493,9 +493,9 @@ func TestCreateBackend_AlreadyExists(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrAlreadyExists, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrAlreadyExists, qbErr.Code)
 }
 
 func TestCreateBackend_ServiceClosed(t *testing.T) {
@@ -580,9 +580,9 @@ func TestUpdateBackend_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestUpdateBackend_ServiceClosed(t *testing.T) {
@@ -659,9 +659,9 @@ func TestDeleteBackend_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestDeleteBackend_ObjectsExistNoForce(t *testing.T) {
@@ -685,9 +685,9 @@ func TestDeleteBackend_ObjectsExistNoForce(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestDeleteBackend_WithMigration(t *testing.T) {
@@ -740,9 +740,9 @@ func TestDeleteBackend_MigrationTargetNotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestDeleteBackend_ServiceClosed(t *testing.T) {
@@ -823,9 +823,9 @@ func TestSetBackendStatus_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestSetBackendStatus_ServiceClosed(t *testing.T) {
@@ -1054,9 +1054,9 @@ func TestGetGarbageCollectionProgress_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestGetGarbageCollectionProgress_ServiceClosed(t *testing.T) {
@@ -1179,9 +1179,9 @@ func TestRepairObject_ObjectNotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestRepairObject_SourceLocationNotFound(t *testing.T) {
@@ -1302,9 +1302,9 @@ func TestCompactBackend_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestCompactBackend_ServiceClosed(t *testing.T) {

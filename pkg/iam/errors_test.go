@@ -150,9 +150,9 @@ func TestNewPolicyNotFoundError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected non-nil error")
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if !errors.As(err, &de) {
-		t.Fatal("expected DragonError")
+		t.Fatal("expected QBError")
 	}
 	if de.Code != dberrors.ErrNotFound {
 		t.Errorf("expected ErrNotFound code, got %v", de.Code)
@@ -192,9 +192,9 @@ func TestNewPolicyCompilationError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected non-nil error")
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if !errors.As(err, &de) {
-		t.Fatal("expected DragonError")
+		t.Fatal("expected QBError")
 	}
 	if !strings.Contains(de.Error(), "broken-policy") {
 		t.Errorf("expected error to contain policy name, got %q", de.Error())

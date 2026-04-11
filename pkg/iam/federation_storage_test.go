@@ -1640,20 +1640,20 @@ func TestNewLinkNotFoundError(t *testing.T) {
 		t.Fatal("NewLinkNotFoundError() returned nil")
 	}
 
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	if !ok {
 		t.Fatalf("NewLinkNotFoundError() returned wrong type: %T", err)
 	}
 
-	if dragonErr.Code != dberrors.ErrNotFound {
-		t.Errorf("NewLinkNotFoundError() Code = %v, want %v", dragonErr.Code, dberrors.ErrNotFound)
+	if qbErr.Code != dberrors.ErrNotFound {
+		t.Errorf("NewLinkNotFoundError() Code = %v, want %v", qbErr.Code, dberrors.ErrNotFound)
 	}
 
 	if !strings.Contains(err.Error(), "link-123") {
 		t.Errorf("NewLinkNotFoundError() error should contain linkID, got: %v", err.Error())
 	}
 
-	if dragonErr.Context == nil || dragonErr.Context["link_id"] != "link-123" {
+	if qbErr.Context == nil || qbErr.Context["link_id"] != "link-123" {
 		t.Error("NewLinkNotFoundError() should have link_id in context")
 	}
 }
@@ -1664,20 +1664,20 @@ func TestNewStateExpiredError(t *testing.T) {
 		t.Fatal("NewStateExpiredError() returned nil")
 	}
 
-	dragonErr, ok := err.(*dberrors.DragonError)
+	qbErr, ok := err.(*dberrors.QBError)
 	if !ok {
 		t.Fatalf("NewStateExpiredError() returned wrong type: %T", err)
 	}
 
-	if dragonErr.Code != dberrors.ErrForbidden {
-		t.Errorf("NewStateExpiredError() Code = %v, want %v", dragonErr.Code, dberrors.ErrForbidden)
+	if qbErr.Code != dberrors.ErrForbidden {
+		t.Errorf("NewStateExpiredError() Code = %v, want %v", qbErr.Code, dberrors.ErrForbidden)
 	}
 
 	if !strings.Contains(err.Error(), "token-abc") {
 		t.Errorf("NewStateExpiredError() error should contain token, got: %v", err.Error())
 	}
 
-	if dragonErr.Context == nil || dragonErr.Context["token"] != "token-abc" {
+	if qbErr.Context == nil || qbErr.Context["token"] != "token-abc" {
 		t.Error("NewStateExpiredError() should have token in context")
 	}
 }

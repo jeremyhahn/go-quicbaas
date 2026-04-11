@@ -61,17 +61,17 @@ func TestWatchSecretsByPrefixValidation(t *testing.T) {
 	t.Run("nil request returns error", func(t *testing.T) {
 		_, err := client.WatchSecretsByPrefix(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("empty prefix returns error", func(t *testing.T) {
 		_, err := client.WatchSecretsByPrefix(ctx, &service.WatchSecretsRequest{Prefix: ""})
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -91,9 +91,9 @@ func TestWatchSecretsByPrefixServerError(t *testing.T) {
 
 	_, err = client.WatchSecretsByPrefix(ctx, &service.WatchSecretsRequest{Prefix: "test"})
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 // TestWatchSecretsByPrefixSuccess tests successful SSE connection.
@@ -234,9 +234,9 @@ func TestKMSDeleteDEKClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSDeleteDEK(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("success", func(t *testing.T) {
@@ -300,9 +300,9 @@ func TestGetSecretsByPrefixClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.GetSecretsByPrefix(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -339,9 +339,9 @@ func TestPingClientMethod(t *testing.T) {
 		client, _ := NewRESTClient(server.URL, log)
 		err := client.Ping(ctx)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 	})
 }
 
@@ -353,9 +353,9 @@ func TestKMSDecryptClientNil(t *testing.T) {
 	client, _ := NewRESTClient("http://localhost:8080", log)
 	_, err := client.KMSDecrypt(ctx, nil)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // TestKMSEncryptClientNil tests KMSEncrypt nil request.
@@ -366,9 +366,9 @@ func TestKMSEncryptClientNil(t *testing.T) {
 	client, _ := NewRESTClient("http://localhost:8080", log)
 	_, err := client.KMSEncrypt(ctx, nil)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // TestKMSDeleteKeyClient tests KMSDeleteKey client method.
@@ -380,9 +380,9 @@ func TestKMSDeleteKeyClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSDeleteKey(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -395,9 +395,9 @@ func TestKMSRotateKeyClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSRotateKey(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -410,9 +410,9 @@ func TestKMSGetKeyClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSGetKey(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -425,9 +425,9 @@ func TestKMSGetDEKClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSGetDEK(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -440,9 +440,9 @@ func TestKMSCreateDEKClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSCreateDEK(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -455,63 +455,63 @@ func TestSecretClientMethods(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.StoreSecret(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("GetSecret nil request returns error", func(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.GetSecret(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("DeleteSecret nil request returns error", func(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.DeleteSecret(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("RotateSecret nil request returns error", func(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.RotateSecret(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("RollbackSecret nil request returns error", func(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.RollbackSecret(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("UpdateSecretStatus nil request returns error", func(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.UpdateSecretStatus(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("ListSecretVersions nil request returns error", func(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.ListSecretVersions(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -524,9 +524,9 @@ func TestUnsealClientMethods(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.Unseal(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("Unseal success", func(t *testing.T) {
@@ -580,9 +580,9 @@ func TestKMSImportKeyClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSImportKey(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -595,9 +595,9 @@ func TestKMSGenerateKeyClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSGenerateKey(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -610,9 +610,9 @@ func TestKMSGenerateDataKeyClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSGenerateDataKey(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -625,18 +625,18 @@ func TestKMSGenerateDataKeyWithKEKClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSGenerateDataKeyWithKEK(ctx, "", &DataKeyRESTRequest{})
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("nil request returns error", func(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSGenerateDataKeyWithKEK(ctx, "test-kek", nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -649,9 +649,9 @@ func TestKMSListKeyVersionsClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSListKeyVersions(ctx, "")
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -664,18 +664,18 @@ func TestKMSUpdateKeyStatusClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSUpdateKeyStatus(ctx, "", &UpdateKeyStatusRESTRequest{Status: "enabled"})
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("nil request returns error", func(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSUpdateKeyStatus(ctx, "test-key", nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -706,9 +706,9 @@ func TestKMSRotateDEKClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSRotateDEK(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -721,9 +721,9 @@ func TestKMSGetDEKStatusClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSGetDEKStatus(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -736,9 +736,9 @@ func TestKMSSetDefaultDEKClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSSetDefaultDEK(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -751,9 +751,9 @@ func TestKMSSetDEKSafetyClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSSetDEKSafety(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -766,9 +766,9 @@ func TestKMSClearDEKSafetyClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSClearDEKSafety(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -781,9 +781,9 @@ func TestSealInitClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.SealInit(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -796,9 +796,9 @@ func TestRekeyClient(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.Rekey(ctx, nil)
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 

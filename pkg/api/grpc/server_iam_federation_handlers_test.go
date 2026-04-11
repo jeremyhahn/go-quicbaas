@@ -176,7 +176,7 @@ func TestFederationServer_CreateProvider_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
 
 	mgr.On("RegisterProvider", mock.Anything, mock.Anything).
-		Return(&errors.DragonError{Code: errors.ErrAlreadyExists, Op: "RegisterProvider", Err: stderrors.New("exists")})
+		Return(&errors.QBError{Code: errors.ErrAlreadyExists, Op: "RegisterProvider", Err: stderrors.New("exists")})
 
 	_, err := srv.CreateProvider(context.Background(), &iampb.CreateProviderRequest{
 		TenantId: "t1", Name: "google", ClientId: "c1",

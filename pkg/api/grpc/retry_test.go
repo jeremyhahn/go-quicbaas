@@ -74,12 +74,12 @@ func TestIsRetryableError(t *testing.T) {
 		},
 		{
 			name:      "retryable dragon error",
-			err:       &dberrors.DragonError{Code: dberrors.ErrUnavailable},
+			err:       &dberrors.QBError{Code: dberrors.ErrUnavailable},
 			retryable: true,
 		},
 		{
 			name:      "non-retryable dragon error",
-			err:       &dberrors.DragonError{Code: dberrors.ErrNotFound},
+			err:       &dberrors.QBError{Code: dberrors.ErrNotFound},
 			retryable: false,
 		},
 		{

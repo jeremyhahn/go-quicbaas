@@ -424,7 +424,7 @@ func TestKMSService_GenerateKey_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}
@@ -620,7 +620,7 @@ func TestKMSService_GetKey_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -2184,9 +2184,9 @@ func TestKMSService_SetKeySafety_KeyNotFound(t *testing.T) {
 	require.Nil(t, resp)
 
 	// Verify it's a not found error
-	var dragonErr *quicbaasErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrNotFound, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrNotFound, qbErr.Code)
 }
 
 func TestKMSService_SetKeySafety_EmptyKeyID(t *testing.T) {
@@ -2249,9 +2249,9 @@ func TestKMSService_ClearKeySafety_KeyNotFound(t *testing.T) {
 	require.Nil(t, resp)
 
 	// Verify it's a not found error
-	var dragonErr *quicbaasErrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrNotFound, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrNotFound, qbErr.Code)
 }
 
 func TestKMSService_ClearKeySafety_EmptyKeyID(t *testing.T) {
@@ -3145,9 +3145,9 @@ func TestKMSService_ClearKeySafety_NilRequest(t *testing.T) {
 	resp, err := svc.ClearKeySafety(context.Background(), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *quicbaasErrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestGetCompletedGracePeriodVersions_Success(t *testing.T) {
@@ -4967,9 +4967,9 @@ func TestKMSValidationErrorTypes(t *testing.T) {
 		err := k.validateGenerateKeyRequest(nil)
 		require.Error(t, err)
 
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("duplicate key returns ErrAlreadyExists", func(t *testing.T) {
@@ -4983,8 +4983,8 @@ func TestKMSValidationErrorTypes(t *testing.T) {
 		})
 		require.Error(t, err)
 
-		var dragonErr *quicbaasErrors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, quicbaasErrors.ErrAlreadyExists, dragonErr.Code)
+		var qbErr *quicbaasErrors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, quicbaasErrors.ErrAlreadyExists, qbErr.Code)
 	})
 }

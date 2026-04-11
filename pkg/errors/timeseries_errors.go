@@ -16,7 +16,7 @@
 package errors
 
 import (
-	"errors"
+	stderrors "errors"
 	"fmt"
 )
 
@@ -134,9 +134,9 @@ func (e *TimeSeriesShardUnavailableError) Error() string {
 	return fmt.Sprintf("shard %d unavailable: %s", e.ShardID, e.Reason)
 }
 
-// NewTimeSeriesNotFoundError creates a new TimeSeriesNotFoundError wrapped in DragonError.
-func NewTimeSeriesNotFoundError(metric string) *DragonError {
-	return &DragonError{
+// NewTimeSeriesNotFoundError creates a new TimeSeriesNotFoundError wrapped in QBError.
+func NewTimeSeriesNotFoundError(metric string) *QBError {
+	return &QBError{
 		Code: ErrTimeSeriesNotFound,
 		Op:   "timeseries",
 		Err:  &TimeSeriesNotFoundError{Metric: metric},
@@ -146,9 +146,9 @@ func NewTimeSeriesNotFoundError(metric string) *DragonError {
 	}
 }
 
-// NewTimeSeriesInvalidTimestampError creates a new TimeSeriesInvalidTimestampError wrapped in DragonError.
-func NewTimeSeriesInvalidTimestampError(timestamp int64, reason string) *DragonError {
-	return &DragonError{
+// NewTimeSeriesInvalidTimestampError creates a new TimeSeriesInvalidTimestampError wrapped in QBError.
+func NewTimeSeriesInvalidTimestampError(timestamp int64, reason string) *QBError {
+	return &QBError{
 		Code: ErrTimeSeriesInvalidTimestamp,
 		Op:   "timeseries",
 		Err:  &TimeSeriesInvalidTimestampError{Timestamp: timestamp, Reason: reason},
@@ -159,9 +159,9 @@ func NewTimeSeriesInvalidTimestampError(timestamp int64, reason string) *DragonE
 	}
 }
 
-// NewTimeSeriesRetentionViolationError creates a new TimeSeriesRetentionViolationError wrapped in DragonError.
-func NewTimeSeriesRetentionViolationError(metric string, retentionDays int) *DragonError {
-	return &DragonError{
+// NewTimeSeriesRetentionViolationError creates a new TimeSeriesRetentionViolationError wrapped in QBError.
+func NewTimeSeriesRetentionViolationError(metric string, retentionDays int) *QBError {
+	return &QBError{
 		Code: ErrTimeSeriesRetentionViolation,
 		Op:   "timeseries",
 		Err:  &TimeSeriesRetentionViolationError{Metric: metric, RetentionDays: retentionDays},
@@ -172,9 +172,9 @@ func NewTimeSeriesRetentionViolationError(metric string, retentionDays int) *Dra
 	}
 }
 
-// NewTimeSeriesQueryTimeoutError creates a new TimeSeriesQueryTimeoutError wrapped in DragonError.
-func NewTimeSeriesQueryTimeoutError(query, timeout string) *DragonError {
-	return &DragonError{
+// NewTimeSeriesQueryTimeoutError creates a new TimeSeriesQueryTimeoutError wrapped in QBError.
+func NewTimeSeriesQueryTimeoutError(query, timeout string) *QBError {
+	return &QBError{
 		Code:  ErrTimeSeriesQueryTimeout,
 		Op:    "timeseries.query",
 		Err:   &TimeSeriesQueryTimeoutError{Query: query, Timeout: timeout},
@@ -186,9 +186,9 @@ func NewTimeSeriesQueryTimeoutError(query, timeout string) *DragonError {
 	}
 }
 
-// NewTimeSeriesBatchTooLargeError creates a new TimeSeriesBatchTooLargeError wrapped in DragonError.
-func NewTimeSeriesBatchTooLargeError(batchSize, maxSize int) *DragonError {
-	return &DragonError{
+// NewTimeSeriesBatchTooLargeError creates a new TimeSeriesBatchTooLargeError wrapped in QBError.
+func NewTimeSeriesBatchTooLargeError(batchSize, maxSize int) *QBError {
+	return &QBError{
 		Code: ErrTimeSeriesBatchTooLarge,
 		Op:   "timeseries.batch",
 		Err:  &TimeSeriesBatchTooLargeError{BatchSize: batchSize, MaxSize: maxSize},
@@ -199,9 +199,9 @@ func NewTimeSeriesBatchTooLargeError(batchSize, maxSize int) *DragonError {
 	}
 }
 
-// NewTimeSeriesInvalidMetricError creates a new TimeSeriesInvalidMetricError wrapped in DragonError.
-func NewTimeSeriesInvalidMetricError(metric, reason string) *DragonError {
-	return &DragonError{
+// NewTimeSeriesInvalidMetricError creates a new TimeSeriesInvalidMetricError wrapped in QBError.
+func NewTimeSeriesInvalidMetricError(metric, reason string) *QBError {
+	return &QBError{
 		Code: ErrTimeSeriesInvalidMetric,
 		Op:   "timeseries",
 		Err:  &TimeSeriesInvalidMetricError{Metric: metric, Reason: reason},
@@ -212,9 +212,9 @@ func NewTimeSeriesInvalidMetricError(metric, reason string) *DragonError {
 	}
 }
 
-// NewTimeSeriesInvalidTagsError creates a new TimeSeriesInvalidTagsError wrapped in DragonError.
-func NewTimeSeriesInvalidTagsError(tags map[string]string, reason string) *DragonError {
-	return &DragonError{
+// NewTimeSeriesInvalidTagsError creates a new TimeSeriesInvalidTagsError wrapped in QBError.
+func NewTimeSeriesInvalidTagsError(tags map[string]string, reason string) *QBError {
+	return &QBError{
 		Code: ErrTimeSeriesInvalidTags,
 		Op:   "timeseries",
 		Err:  &TimeSeriesInvalidTagsError{Tags: tags, Reason: reason},
@@ -225,9 +225,9 @@ func NewTimeSeriesInvalidTagsError(tags map[string]string, reason string) *Drago
 	}
 }
 
-// NewTimeSeriesShardUnavailableError creates a new TimeSeriesShardUnavailableError wrapped in DragonError.
-func NewTimeSeriesShardUnavailableError(shardID uint64, reason string) *DragonError {
-	return &DragonError{
+// NewTimeSeriesShardUnavailableError creates a new TimeSeriesShardUnavailableError wrapped in QBError.
+func NewTimeSeriesShardUnavailableError(shardID uint64, reason string) *QBError {
+	return &QBError{
 		Code:  ErrTimeSeriesShardUnavailable,
 		Op:    "timeseries.shard",
 		Err:   &TimeSeriesShardUnavailableError{ShardID: shardID, Reason: reason},
@@ -245,49 +245,49 @@ func IsTimeSeriesError(err error) bool {
 		return false
 	}
 
-	var de *DragonError
-	if errors.As(err, &de) {
+	var de *QBError
+	if stderrors.As(err, &de) {
 		return de.Code >= ErrTimeSeriesNotFound && de.Code <= ErrTimeSeriesShardUnavailable
 	}
 
 	// Check for specific time series error types
 	var tsNotFound *TimeSeriesNotFoundError
-	if errors.As(err, &tsNotFound) {
+	if stderrors.As(err, &tsNotFound) {
 		return true
 	}
 
 	var tsInvalidTimestamp *TimeSeriesInvalidTimestampError
-	if errors.As(err, &tsInvalidTimestamp) {
+	if stderrors.As(err, &tsInvalidTimestamp) {
 		return true
 	}
 
 	var tsRetention *TimeSeriesRetentionViolationError
-	if errors.As(err, &tsRetention) {
+	if stderrors.As(err, &tsRetention) {
 		return true
 	}
 
 	var tsQueryTimeout *TimeSeriesQueryTimeoutError
-	if errors.As(err, &tsQueryTimeout) {
+	if stderrors.As(err, &tsQueryTimeout) {
 		return true
 	}
 
 	var tsBatchTooLarge *TimeSeriesBatchTooLargeError
-	if errors.As(err, &tsBatchTooLarge) {
+	if stderrors.As(err, &tsBatchTooLarge) {
 		return true
 	}
 
 	var tsInvalidMetric *TimeSeriesInvalidMetricError
-	if errors.As(err, &tsInvalidMetric) {
+	if stderrors.As(err, &tsInvalidMetric) {
 		return true
 	}
 
 	var tsInvalidTags *TimeSeriesInvalidTagsError
-	if errors.As(err, &tsInvalidTags) {
+	if stderrors.As(err, &tsInvalidTags) {
 		return true
 	}
 
 	var tsShardUnavailable *TimeSeriesShardUnavailableError
-	if errors.As(err, &tsShardUnavailable) {
+	if stderrors.As(err, &tsShardUnavailable) {
 		return true
 	}
 
@@ -300,15 +300,15 @@ func IsTimeSeriesNotFound(err error) bool {
 		return false
 	}
 
-	var de *DragonError
-	if errors.As(err, &de) {
+	var de *QBError
+	if stderrors.As(err, &de) {
 		if de.Code == ErrTimeSeriesNotFound {
 			return true
 		}
 	}
 
 	var tsNotFound *TimeSeriesNotFoundError
-	return errors.As(err, &tsNotFound)
+	return stderrors.As(err, &tsNotFound)
 }
 
 // IsTimeSeriesInvalidTimestamp returns true if the error is a TimeSeriesInvalidTimestampError.
@@ -317,15 +317,15 @@ func IsTimeSeriesInvalidTimestamp(err error) bool {
 		return false
 	}
 
-	var de *DragonError
-	if errors.As(err, &de) {
+	var de *QBError
+	if stderrors.As(err, &de) {
 		if de.Code == ErrTimeSeriesInvalidTimestamp {
 			return true
 		}
 	}
 
 	var tsInvalidTimestamp *TimeSeriesInvalidTimestampError
-	return errors.As(err, &tsInvalidTimestamp)
+	return stderrors.As(err, &tsInvalidTimestamp)
 }
 
 // IsTimeSeriesRetentionViolation returns true if the error is a TimeSeriesRetentionViolationError.
@@ -334,15 +334,15 @@ func IsTimeSeriesRetentionViolation(err error) bool {
 		return false
 	}
 
-	var de *DragonError
-	if errors.As(err, &de) {
+	var de *QBError
+	if stderrors.As(err, &de) {
 		if de.Code == ErrTimeSeriesRetentionViolation {
 			return true
 		}
 	}
 
 	var tsRetention *TimeSeriesRetentionViolationError
-	return errors.As(err, &tsRetention)
+	return stderrors.As(err, &tsRetention)
 }
 
 // IsTimeSeriesQueryTimeout returns true if the error is a TimeSeriesQueryTimeoutError.
@@ -351,15 +351,15 @@ func IsTimeSeriesQueryTimeout(err error) bool {
 		return false
 	}
 
-	var de *DragonError
-	if errors.As(err, &de) {
+	var de *QBError
+	if stderrors.As(err, &de) {
 		if de.Code == ErrTimeSeriesQueryTimeout {
 			return true
 		}
 	}
 
 	var tsQueryTimeout *TimeSeriesQueryTimeoutError
-	return errors.As(err, &tsQueryTimeout)
+	return stderrors.As(err, &tsQueryTimeout)
 }
 
 // IsTimeSeriesBatchTooLarge returns true if the error is a TimeSeriesBatchTooLargeError.
@@ -368,15 +368,15 @@ func IsTimeSeriesBatchTooLarge(err error) bool {
 		return false
 	}
 
-	var de *DragonError
-	if errors.As(err, &de) {
+	var de *QBError
+	if stderrors.As(err, &de) {
 		if de.Code == ErrTimeSeriesBatchTooLarge {
 			return true
 		}
 	}
 
 	var tsBatchTooLarge *TimeSeriesBatchTooLargeError
-	return errors.As(err, &tsBatchTooLarge)
+	return stderrors.As(err, &tsBatchTooLarge)
 }
 
 // IsTimeSeriesInvalidMetric returns true if the error is a TimeSeriesInvalidMetricError.
@@ -385,15 +385,15 @@ func IsTimeSeriesInvalidMetric(err error) bool {
 		return false
 	}
 
-	var de *DragonError
-	if errors.As(err, &de) {
+	var de *QBError
+	if stderrors.As(err, &de) {
 		if de.Code == ErrTimeSeriesInvalidMetric {
 			return true
 		}
 	}
 
 	var tsInvalidMetric *TimeSeriesInvalidMetricError
-	return errors.As(err, &tsInvalidMetric)
+	return stderrors.As(err, &tsInvalidMetric)
 }
 
 // IsTimeSeriesInvalidTags returns true if the error is a TimeSeriesInvalidTagsError.
@@ -402,15 +402,15 @@ func IsTimeSeriesInvalidTags(err error) bool {
 		return false
 	}
 
-	var de *DragonError
-	if errors.As(err, &de) {
+	var de *QBError
+	if stderrors.As(err, &de) {
 		if de.Code == ErrTimeSeriesInvalidTags {
 			return true
 		}
 	}
 
 	var tsInvalidTags *TimeSeriesInvalidTagsError
-	return errors.As(err, &tsInvalidTags)
+	return stderrors.As(err, &tsInvalidTags)
 }
 
 // IsTimeSeriesShardUnavailable returns true if the error is a TimeSeriesShardUnavailableError.
@@ -419,13 +419,13 @@ func IsTimeSeriesShardUnavailable(err error) bool {
 		return false
 	}
 
-	var de *DragonError
-	if errors.As(err, &de) {
+	var de *QBError
+	if stderrors.As(err, &de) {
 		if de.Code == ErrTimeSeriesShardUnavailable {
 			return true
 		}
 	}
 
 	var tsShardUnavailable *TimeSeriesShardUnavailableError
-	return errors.As(err, &tsShardUnavailable)
+	return stderrors.As(err, &tsShardUnavailable)
 }

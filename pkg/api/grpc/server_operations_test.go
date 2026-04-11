@@ -296,7 +296,7 @@ func TestGetRebalanceProgress(t *testing.T) {
 		srv, mockSvc := createTestServerForOperations(t)
 
 		mockSvc.On("GetRebalanceProgress", mock.Anything, mock.Anything).Return(
-			nil, &dragonerrors.DragonError{Code: dragonerrors.ErrNotFound, Op: "test", Err: &dragonerrors.MessageError{Message: "operation not found"}},
+			nil, &dragonerrors.QBError{Code: dragonerrors.ErrNotFound, Op: "test", Err: &dragonerrors.MessageError{Message: "operation not found"}},
 		).Once()
 
 		req := &pb.GetRebalanceProgressRequest{

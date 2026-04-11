@@ -45,9 +45,9 @@ func TestWriteBatch_NilPointInBatch_Validation(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWriteBatch_EmptyMetricInBatch_Validation(t *testing.T) {
@@ -66,9 +66,9 @@ func TestWriteBatch_EmptyMetricInBatch_Validation(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // =============================================================================
@@ -96,9 +96,9 @@ func TestAggregate_UnsupportedFunction(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestAggregate_DefaultValueField(t *testing.T) {
@@ -376,9 +376,9 @@ func TestCreateUser_NilAuthManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func TestCreateUser_EmptyUsername(t *testing.T) {
@@ -393,9 +393,9 @@ func TestCreateUser_EmptyUsername(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestCreateUser_EmptyPassword(t *testing.T) {
@@ -410,9 +410,9 @@ func TestCreateUser_EmptyPassword(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestCreateUser_AuthManagerError(t *testing.T) {
@@ -431,9 +431,9 @@ func TestCreateUser_AuthManagerError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestCreateUser_TypeAssertionFailure(t *testing.T) {
@@ -449,9 +449,9 @@ func TestCreateUser_TypeAssertionFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestCreateUser_Success(t *testing.T) {
@@ -492,9 +492,9 @@ func TestDeleteUser_NilAuthManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 func TestDeleteUser_EmptyUsername(t *testing.T) {
@@ -508,9 +508,9 @@ func TestDeleteUser_EmptyUsername(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestDeleteUser_InvalidUserStoreType(t *testing.T) {
@@ -527,9 +527,9 @@ func TestDeleteUser_InvalidUserStoreType(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestDeleteUser_UserNotFound(t *testing.T) {
@@ -546,9 +546,9 @@ func TestDeleteUser_UserNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 }
 
 // =============================================================================
@@ -564,9 +564,9 @@ func TestGetMigrationProgress_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestGetMigrationProgress_EmptyMigrationID(t *testing.T) {
@@ -580,9 +580,9 @@ func TestGetMigrationProgress_EmptyMigrationID(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestGetMigrationProgress_NotFound(t *testing.T) {
@@ -596,9 +596,9 @@ func TestGetMigrationProgress_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 }
 
 func TestGetMigrationProgress_NonMigrationType(t *testing.T) {
@@ -621,9 +621,9 @@ func TestGetMigrationProgress_NonMigrationType(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestGetMigrationProgress_ETACalculation(t *testing.T) {
@@ -693,9 +693,9 @@ func TestDelete_RaftError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrRaft, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestDelete_CustomShardID(t *testing.T) {
@@ -728,9 +728,9 @@ func TestList_RaftError(t *testing.T) {
 	}, stream)
 	require.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrRaft, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestList_NilResult(t *testing.T) {
@@ -817,9 +817,9 @@ func TestListMetrics_StorageError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	mockTS.AssertExpectations(t)
 }
 
@@ -867,9 +867,9 @@ func TestListMetrics_StorageNotConfigured(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotImplemented, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
 }
 
 // =============================================================================
@@ -885,9 +885,9 @@ func TestCreateBackup_NilBackupManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotImplemented, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestCreateBackup_ManagerError(t *testing.T) {
@@ -903,9 +903,9 @@ func TestCreateBackup_ManagerError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestCreateBackup_TypeAssertionFailure(t *testing.T) {
@@ -921,9 +921,9 @@ func TestCreateBackup_TypeAssertionFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestRestoreBackup_NilBackupManager(t *testing.T) {
@@ -937,9 +937,9 @@ func TestRestoreBackup_NilBackupManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotImplemented, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestRestoreBackup_ManagerError(t *testing.T) {
@@ -957,9 +957,9 @@ func TestRestoreBackup_ManagerError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestDeleteBackup_NilBackupManager(t *testing.T) {
@@ -973,9 +973,9 @@ func TestDeleteBackup_NilBackupManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotImplemented, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestDeleteBackup_ManagerError(t *testing.T) {
@@ -993,9 +993,9 @@ func TestDeleteBackup_ManagerError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 // =============================================================================
@@ -1022,9 +1022,9 @@ func TestGetCacheStats_NilCacheManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotImplemented, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestGetCacheStats_TypeAssertionFailure(t *testing.T) {
@@ -1036,9 +1036,9 @@ func TestGetCacheStats_TypeAssertionFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestClearCache_NilCacheManager(t *testing.T) {
@@ -1050,9 +1050,9 @@ func TestClearCache_NilCacheManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotImplemented, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestClearCache_TypeAssertionFailure(t *testing.T) {
@@ -1064,9 +1064,9 @@ func TestClearCache_TypeAssertionFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestGetCacheConfig_NilCacheManager(t *testing.T) {
@@ -1078,9 +1078,9 @@ func TestGetCacheConfig_NilCacheManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotImplemented, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestGetCacheConfig_TypeAssertionFailure(t *testing.T) {
@@ -1092,9 +1092,9 @@ func TestGetCacheConfig_TypeAssertionFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }
 
 func TestUpdateCacheConfig_NilCacheManager(t *testing.T) {
@@ -1106,9 +1106,9 @@ func TestUpdateCacheConfig_NilCacheManager(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrNotImplemented, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestUpdateCacheConfig_TypeAssertionFailure(t *testing.T) {
@@ -1120,7 +1120,7 @@ func TestUpdateCacheConfig_TypeAssertionFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
 }

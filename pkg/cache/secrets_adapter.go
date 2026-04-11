@@ -88,7 +88,7 @@ func (f *InternalSecretsFetcher) GetSecret(ctx context.Context, path string) ([]
 	// Retrieve the secret from the internal store
 	secret, err := f.store.Get(ctx, path)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "InternalSecretsFetcher.GetSecret",
 			Err:  err,
@@ -118,7 +118,7 @@ func (f *InternalSecretsFetcher) Store(ctx context.Context, path string, value [
 	}
 
 	if err := f.store.Store(ctx, path, value); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "InternalSecretsFetcher.Store",
 			Err:  err,
@@ -140,7 +140,7 @@ func (f *InternalSecretsFetcher) Exists(ctx context.Context, path string) (bool,
 
 	exists, err := f.store.Exists(ctx, path)
 	if err != nil {
-		return false, &errors.DragonError{
+		return false, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "InternalSecretsFetcher.Exists",
 			Err:  err,

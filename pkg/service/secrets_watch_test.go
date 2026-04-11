@@ -198,7 +198,7 @@ func TestSecretsService_WatchSecretsByPrefix_NilRequest_NilLogger(t *testing.T) 
 	assert.Nil(t, ch)
 	require.Error(t, err)
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }

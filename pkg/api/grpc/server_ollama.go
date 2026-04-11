@@ -214,7 +214,7 @@ func convertOllamaError(err error) error {
 		return nil
 	}
 
-	// Use the standard ToGRPCError for DragonError types
+	// Use the standard ToGRPCError for QBError types
 	return ToGRPCError(err)
 }
 

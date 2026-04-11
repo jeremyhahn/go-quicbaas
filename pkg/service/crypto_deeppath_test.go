@@ -83,9 +83,9 @@ func TestCryptoService_Encrypt_WithSafetyTracker_LimitExceeded(t *testing.T) {
 	resp, err := svc.Encrypt(context.Background(), req2)
 	// The error depends on the tracker's enforcement behavior
 	if err != nil {
-		var dragonErr *quicbaasErrors.DragonError
-		if errors.As(err, &dragonErr) {
-			assert.Equal(t, quicbaasErrors.ErrEncryption, dragonErr.Code)
+		var qbErr *quicbaasErrors.QBError
+		if errors.As(err, &qbErr) {
+			assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 		}
 		assert.Nil(t, resp)
 	}
@@ -110,9 +110,9 @@ func TestCryptoService_Encrypt_CryptoManagerFailure(t *testing.T) {
 	resp, err := svc.Encrypt(context.Background(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
-	var dragonErr *quicbaasErrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, quicbaasErrors.ErrEncryption, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 	assert.Contains(t, err.Error(), "encrypt data failed")
 }
 
@@ -184,9 +184,9 @@ func TestCryptoService_Decrypt_CryptoManagerFailure(t *testing.T) {
 	resp, err := svc.Decrypt(context.Background(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
-	var dragonErr *quicbaasErrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, quicbaasErrors.ErrDecryption, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, quicbaasErrors.ErrDecryption, qbErr.Code)
 }
 
 func TestCryptoService_Decrypt_WithExplicitKeyVersion(t *testing.T) {
@@ -251,9 +251,9 @@ func TestCryptoService_Rewrap_CryptoManagerFailure(t *testing.T) {
 	resp, err := svc.Rewrap(context.Background(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
-	var dragonErr *quicbaasErrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, quicbaasErrors.ErrEncryption, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 	assert.Contains(t, err.Error(), "rewrap data failed")
 }
 
@@ -306,9 +306,9 @@ func TestCryptoService_EncryptBatch_CryptoManagerFailure(t *testing.T) {
 	resp, err := svc.EncryptBatch(context.Background(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
-	var dragonErr *quicbaasErrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, quicbaasErrors.ErrEncryption, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 	assert.Contains(t, err.Error(), "encrypt batch failed")
 }
 
@@ -360,9 +360,9 @@ func TestCryptoService_DecryptBatch_CryptoManagerFailure(t *testing.T) {
 	resp, err := svc.DecryptBatch(context.Background(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
-	var dragonErr *quicbaasErrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, quicbaasErrors.ErrDecryption, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, quicbaasErrors.ErrDecryption, qbErr.Code)
 	assert.Contains(t, err.Error(), "decrypt batch failed")
 }
 
@@ -408,9 +408,9 @@ func TestCryptoService_GenerateDataKey_KMSFailure(t *testing.T) {
 	resp, err := svc.GenerateDataKey(context.Background(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
-	var dragonErr *quicbaasErrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, quicbaasErrors.ErrEncryption, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 	assert.Contains(t, err.Error(), "generate data key failed")
 }
 
@@ -455,8 +455,8 @@ func TestCryptoService_GenerateWrappedDataKey_KMSFailure(t *testing.T) {
 	resp, err := svc.GenerateWrappedDataKey(context.Background(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
-	var dragonErr *quicbaasErrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, quicbaasErrors.ErrEncryption, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 	assert.Contains(t, err.Error(), "generate wrapped data key failed")
 }

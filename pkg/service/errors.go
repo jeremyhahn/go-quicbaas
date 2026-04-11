@@ -34,11 +34,11 @@ import (
 // =============================================================================
 
 // These are sentinel errors that can be used with errors.Is for error checking.
-// They wrap the underlying DragonError with contextual information.
+// They wrap the underlying QBError with contextual information.
 var (
 	// ErrNotFound indicates that the requested entity was not found.
 	// Used when a Get/Query operation finds no matching entity.
-	ErrNotFound = &dberrors.DragonError{
+	ErrNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "entity not found"},
@@ -46,7 +46,7 @@ var (
 
 	// ErrAlreadyExists indicates that an entity already exists.
 	// Used when attempting to create an entity with a duplicate key.
-	ErrAlreadyExists = &dberrors.DragonError{
+	ErrAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "entity already exists"},
@@ -54,7 +54,7 @@ var (
 
 	// ErrInvalidInput indicates invalid request parameters.
 	// Used when request validation fails due to missing or malformed data.
-	ErrInvalidInput = &dberrors.DragonError{
+	ErrInvalidInput = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "invalid input parameters"},
@@ -62,7 +62,7 @@ var (
 
 	// ErrUnauthorized indicates authentication failed.
 	// Used when the request lacks valid authentication credentials.
-	ErrUnauthorized = &dberrors.DragonError{
+	ErrUnauthorized = &dberrors.QBError{
 		Code: dberrors.ErrUnauthorized,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "authentication required"},
@@ -70,7 +70,7 @@ var (
 
 	// ErrForbidden indicates authorization failed.
 	// Used when the authenticated user lacks permission for the operation.
-	ErrForbidden = &dberrors.DragonError{
+	ErrForbidden = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "operation not permitted"},
@@ -78,7 +78,7 @@ var (
 
 	// ErrTimeout indicates an operation timed out.
 	// Used when an operation exceeds its deadline or timeout threshold.
-	ErrTimeout = &dberrors.DragonError{
+	ErrTimeout = &dberrors.QBError{
 		Code: dberrors.ErrTimeout,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "operation timed out"},
@@ -86,7 +86,7 @@ var (
 
 	// ErrRaft indicates a Raft consensus error.
 	// Used when Raft operations fail (proposal, leader election, etc.).
-	ErrRaft = &dberrors.DragonError{
+	ErrRaft = &dberrors.QBError{
 		Code: dberrors.ErrRaft,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "raft consensus error"},
@@ -94,7 +94,7 @@ var (
 
 	// ErrStorage indicates a storage layer error.
 	// Used when the underlying storage engine encounters an error.
-	ErrStorage = &dberrors.DragonError{
+	ErrStorage = &dberrors.QBError{
 		Code: dberrors.ErrStorage,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "storage layer error"},
@@ -102,7 +102,7 @@ var (
 
 	// ErrInternal indicates an internal server error.
 	// Used for unexpected errors that should not normally occur.
-	ErrInternal = &dberrors.DragonError{
+	ErrInternal = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "internal server error"},
@@ -110,7 +110,7 @@ var (
 
 	// ErrUnavailable indicates the service is unavailable.
 	// Used when the service cannot handle requests (e.g., during shutdown).
-	ErrUnavailable = &dberrors.DragonError{
+	ErrUnavailable = &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "service unavailable"},
@@ -118,7 +118,7 @@ var (
 
 	// ErrLeaderNotAvailable indicates no leader is available for a shard.
 	// Used when a write operation cannot proceed due to no elected leader.
-	ErrLeaderNotAvailable = &dberrors.DragonError{
+	ErrLeaderNotAvailable = &dberrors.QBError{
 		Code: dberrors.ErrLeaderNotAvailable,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "no leader available for shard"},
@@ -126,7 +126,7 @@ var (
 
 	// ErrConflict indicates a conflict with existing state.
 	// Used for optimistic locking failures and version conflicts.
-	ErrConflict = &dberrors.DragonError{
+	ErrConflict = &dberrors.QBError{
 		Code: dberrors.ErrConflict,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "conflict with existing state"},
@@ -134,7 +134,7 @@ var (
 
 	// ErrPreconditionFailed indicates a precondition check failed.
 	// Used in transactions when compare conditions fail.
-	ErrPreconditionFailed = &dberrors.DragonError{
+	ErrPreconditionFailed = &dberrors.QBError{
 		Code: dberrors.ErrPreconditionFailed,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "precondition check failed"},
@@ -142,7 +142,7 @@ var (
 
 	// ErrResourceExhausted indicates resources are exhausted.
 	// Used when rate limits are exceeded or system resources are full.
-	ErrResourceExhausted = &dberrors.DragonError{
+	ErrResourceExhausted = &dberrors.QBError{
 		Code: dberrors.ErrResourceExhausted,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "resource exhausted"},
@@ -150,7 +150,7 @@ var (
 
 	// ErrCanceled indicates the operation was canceled.
 	// Used when a context is canceled before the operation completes.
-	ErrCanceled = &dberrors.DragonError{
+	ErrCanceled = &dberrors.QBError{
 		Code: dberrors.ErrCanceled,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "operation canceled"},
@@ -158,7 +158,7 @@ var (
 
 	// ErrClusterNotReady indicates the cluster is not ready.
 	// Used when cluster initialization is incomplete.
-	ErrClusterNotReady = &dberrors.DragonError{
+	ErrClusterNotReady = &dberrors.QBError{
 		Code: dberrors.ErrClusterNotReady,
 		Op:   "service",
 		Err:  &api.SentinelError{Message: "cluster not ready"},
@@ -232,7 +232,7 @@ var grpcCodeToErrorCodeMap = map[codes.Code]dberrors.ErrorCode{
 // Error Wrapping Utilities
 // =============================================================================
 
-// WrapError wraps an error with a DragonError, adding operation context and error code.
+// WrapError wraps an error with a QBError, adding operation context and error code.
 // This function is the primary way to add service-layer context to errors.
 //
 // Parameters:
@@ -242,7 +242,7 @@ var grpcCodeToErrorCodeMap = map[codes.Code]dberrors.ErrorCode{
 //   - message: Additional context message
 //
 // Returns:
-//   - A new DragonError with the specified context
+//   - A new QBError with the specified context
 //
 // Example:
 //
@@ -255,10 +255,10 @@ func WrapError(err error, code dberrors.ErrorCode, op string, message string) er
 		return nil
 	}
 
-	// If it's already a DragonError, preserve the original error chain
-	var dErr *dberrors.DragonError
+	// If it's already a QBError, preserve the original error chain
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: code,
 			Op:   op,
 			Err:  err,
@@ -271,7 +271,7 @@ func WrapError(err error, code dberrors.ErrorCode, op string, message string) er
 		wrappedErr = &api.WrappedMessageError{Message: message, Cause: err}
 	}
 
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: code,
 		Op:   op,
 		Err:  wrappedErr,
@@ -294,7 +294,7 @@ func WrapErrorf(err error, code dberrors.ErrorCode, op string, format string, ar
 	return WrapError(err, code, op, message)
 }
 
-// NewError creates a new DragonError with the specified code, operation, and message.
+// NewError creates a new QBError with the specified code, operation, and message.
 // Use this when creating errors without an underlying cause.
 //
 // Example:
@@ -302,14 +302,14 @@ func WrapErrorf(err error, code dberrors.ErrorCode, op string, format string, ar
 //	return NewError(dberrors.ErrInvalidInput, "service.ValidatePutRequest",
 //	    "entity type cannot be empty")
 func NewError(code dberrors.ErrorCode, op string, message string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: code,
 		Op:   op,
 		Err:  &api.MessageError{Message: message},
 	}
 }
 
-// NewErrorf creates a new DragonError with formatted message.
+// NewErrorf creates a new QBError with formatted message.
 // This is a convenience wrapper around NewError for formatted messages.
 //
 // Example:
@@ -341,7 +341,7 @@ func IsTimeout(err error) bool {
 		return false
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.Code == dberrors.ErrTimeout || dErr.Code == dberrors.ErrDeadlineExceeded
 	}
@@ -357,7 +357,7 @@ func IsUnavailable(err error) bool {
 		return false
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.Code == dberrors.ErrUnavailable ||
 			dErr.Code == dberrors.ErrLeaderNotAvailable ||
@@ -373,7 +373,7 @@ func IsUnauthorized(err error) bool {
 		return false
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.Code == dberrors.ErrUnauthorized
 	}
@@ -387,7 +387,7 @@ func IsForbidden(err error) bool {
 		return false
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.Code == dberrors.ErrForbidden
 	}
@@ -402,7 +402,7 @@ func IsConflict(err error) bool {
 		return false
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.Code == dberrors.ErrConflict || dErr.Code == dberrors.ErrAlreadyExists
 	}
@@ -441,7 +441,7 @@ func IsRetryable(err error) bool {
 		return false
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.IsRetryable()
 	}
@@ -455,7 +455,7 @@ func IsRaftError(err error) bool {
 		return false
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.Code == dberrors.ErrRaft
 	}
@@ -469,7 +469,7 @@ func IsStorageError(err error) bool {
 		return false
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.Code == dberrors.ErrStorage
 	}
@@ -509,7 +509,7 @@ func ToGRPCError(err error) error {
 
 	// Extract error code
 	var errCode dberrors.ErrorCode
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		errCode = dErr.Code
 	} else {
@@ -540,7 +540,7 @@ func ToHTTPStatus(err error) int {
 		return http.StatusOK
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.Code.HTTPStatus()
 	}
@@ -574,7 +574,7 @@ func FromGRPCError(err error) error {
 	// Map gRPC code to QuicBaaS error code
 	code := grpcCodeToErrorCode(st.Code())
 
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: code,
 		Op:   "service",
 		Err:  &api.GRPCMessageError{Message: st.Message()},
@@ -601,7 +601,7 @@ func WithEntityContext(err error, entityType string, id uint64, operation string
 		return nil
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.
 			WithContext("entity_type", entityType).
@@ -609,8 +609,8 @@ func WithEntityContext(err error, entityType string, id uint64, operation string
 			WithContext("operation", operation)
 	}
 
-	// Not a DragonError, create one
-	return &dberrors.DragonError{
+	// Not a QBError, create one
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   operation,
 		Err:  err,
@@ -628,15 +628,15 @@ func WithShardContext(err error, shardID uint64, nodeID uint64) error {
 		return nil
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.
 			WithContext("shard_id", shardID).
 			WithContext("node_id", nodeID)
 	}
 
-	// Not a DragonError, create one
-	return &dberrors.DragonError{
+	// Not a QBError, create one
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "service",
 		Err:  err,
@@ -654,15 +654,15 @@ func WithTimeoutContext(err error, timeoutMs uint32, elapsedMs int64) error {
 		return nil
 	}
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		return dErr.
 			WithContext("timeout_ms", timeoutMs).
 			WithContext("elapsed_ms", elapsedMs)
 	}
 
-	// Not a DragonError, create one
-	return &dberrors.DragonError{
+	// Not a QBError, create one
+	return &dberrors.QBError{
 		Code: dberrors.ErrTimeout,
 		Op:   "service",
 		Err:  err,

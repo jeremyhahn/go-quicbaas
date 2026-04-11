@@ -340,16 +340,16 @@ func TestValidateBatchOperation_ErrorContext(t *testing.T) {
 		t.Fatal("expected error for invalid operation")
 	}
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	if !ok {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 
-	if dragonErr.Context == nil {
+	if qbErr.Context == nil {
 		t.Fatal("expected error context to be set")
 	}
 
-	if dragonErr.Context["operation_index"] != 1 {
-		t.Errorf("expected operation_index=1, got %v", dragonErr.Context["operation_index"])
+	if qbErr.Context["operation_index"] != 1 {
+		t.Errorf("expected operation_index=1, got %v", qbErr.Context["operation_index"])
 	}
 }

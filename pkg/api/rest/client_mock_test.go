@@ -139,9 +139,9 @@ func TestRESTClientMock_KMSEncrypt_NilRequest(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestRESTClientMock_KMSEncrypt_ServerError(t *testing.T) {
@@ -1273,9 +1273,9 @@ func TestRESTClientMock_ErrorResponse_StatusCodeMapping(t *testing.T) {
 			require.Error(t, err)
 			assert.Nil(t, resp)
 
-			var dragonErr *errors.DragonError
-			require.ErrorAs(t, err, &dragonErr)
-			assert.Equal(t, tc.expectedCode, dragonErr.Code)
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, tc.expectedCode, qbErr.Code)
 		})
 	}
 }
@@ -1294,9 +1294,9 @@ func TestRESTClientMock_KMSExportKey_Validation(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, resp)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("empty key ID", func(t *testing.T) {
@@ -1308,9 +1308,9 @@ func TestRESTClientMock_KMSExportKey_Validation(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, resp)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -1324,9 +1324,9 @@ func TestRESTClientMock_KMSUnwrapKey_Validation(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, resp)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -1340,9 +1340,9 @@ func TestRESTClientMock_KMSSetKeySafety_Validation(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, resp)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("empty key ID", func(t *testing.T) {
@@ -1354,9 +1354,9 @@ func TestRESTClientMock_KMSSetKeySafety_Validation(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, resp)
 
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -1371,9 +1371,9 @@ func TestClientOption_WithTLSConfig_NilConfig_MockTest(t *testing.T) {
 	_, err = NewRESTClient("https://test-server:8443", log, WithTLSConfig(nil))
 
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
 
 // =============================================================================

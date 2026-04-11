@@ -1149,7 +1149,7 @@ func TestGRPCRemaining91_ObjectStorageServer_ValidationErrors(t *testing.T) {
 }
 
 func TestGRPCRemaining91_ObjectStorageServer_ServiceErrors(t *testing.T) {
-	svcErr := &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test", Err: dberrors.New(dberrors.ErrNotFound, "ObjectStorage", "not found")}
+	svcErr := &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test", Err: dberrors.New(dberrors.ErrNotFound, "ObjectStorage", "not found")}
 
 	mockSvc := &mockObjectStorageService{
 		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
@@ -2189,11 +2189,11 @@ func TestGRPCRemaining91_ConvertGRPCError(t *testing.T) {
 		assert.Nil(t, err)
 	})
 
-	t.Run("DragonError passthrough", func(t *testing.T) {
-		dragonErr := &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test", Err: dberrors.New(dberrors.ErrNotFound, "test", "gone")}
-		err := convertGRPCError(dragonErr, "TestOp")
+	t.Run("QBError passthrough", func(t *testing.T) {
+		qbErr := &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test", Err: dberrors.New(dberrors.ErrNotFound, "test", "gone")}
+		err := convertGRPCError(qbErr, "TestOp")
 		assert.Error(t, err)
-		assert.Equal(t, dragonErr, err)
+		assert.Equal(t, qbErr, err)
 	})
 
 	t.Run("gRPC NotFound error", func(t *testing.T) {
@@ -2219,16 +2219,16 @@ func TestGRPCRemaining91_ToProtoError(t *testing.T) {
 		assert.Nil(t, err)
 	})
 
-	t.Run("DragonError NotFound", func(t *testing.T) {
-		dragonErr := &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test", Err: dberrors.New(dberrors.ErrNotFound, "test", "not found")}
-		err := toProtoError(dragonErr)
+	t.Run("QBError NotFound", func(t *testing.T) {
+		qbErr := &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test", Err: dberrors.New(dberrors.ErrNotFound, "test", "not found")}
+		err := toProtoError(qbErr)
 		assert.Error(t, err)
 		assert.Equal(t, codes.NotFound, status.Code(err))
 	})
 
-	t.Run("DragonError AlreadyExists", func(t *testing.T) {
-		dragonErr := &dberrors.DragonError{Code: dberrors.ErrAlreadyExists, Op: "test", Err: dberrors.New(dberrors.ErrAlreadyExists, "test", "exists")}
-		err := toProtoError(dragonErr)
+	t.Run("QBError AlreadyExists", func(t *testing.T) {
+		qbErr := &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test", Err: dberrors.New(dberrors.ErrAlreadyExists, "test", "exists")}
+		err := toProtoError(qbErr)
 		assert.Error(t, err)
 		assert.Equal(t, codes.AlreadyExists, status.Code(err))
 	})

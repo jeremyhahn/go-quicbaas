@@ -751,7 +751,7 @@ func TestDeltaErrorTypes_ErrorMessages(t *testing.T) {
 	})
 }
 
-// TestDeltaErrorConstructors verifies the factory functions that create DragonError
+// TestDeltaErrorConstructors verifies the factory functions that create QBError
 // wrappers for unsupported type and diff failure (both at 0% coverage).
 func TestDeltaErrorConstructors(t *testing.T) {
 	t.Parallel()
@@ -775,29 +775,29 @@ func TestDeltaErrorConstructors(t *testing.T) {
 	})
 }
 
-// TestDeltaErrorCheckers_DragonErrorWrapping tests the DragonError code path
+// TestDeltaErrorCheckers_QBErrorWrapping tests the QBError code path
 // in each IsDelta* error checker function.
-func TestDeltaErrorCheckers_DragonErrorWrapping(t *testing.T) {
+func TestDeltaErrorCheckers_QBErrorWrapping(t *testing.T) {
 	tests := []struct {
 		name    string
 		checker func(error) bool
 		code    errors.ErrorCode
 	}{
-		{"IsDeltaNilInput via DragonError", IsDeltaNilInput, ErrCodeDeltaNilInput},
-		{"IsDeltaTypeMismatch via DragonError", IsDeltaTypeMismatch, ErrCodeDeltaTypeMismatch},
-		{"IsDeltaMaxDepthExceeded via DragonError", IsDeltaMaxDepthExceeded, ErrCodeDeltaMaxDepthExceeded},
-		{"IsDeltaUnsupportedType via DragonError", IsDeltaUnsupportedType, ErrCodeDeltaUnsupportedType},
-		{"IsDeltaDeserializationFailed via DragonError", IsDeltaDeserializationFailed, ErrCodeDeltaDeserializationFailed},
-		{"IsDeltaDiffFailed via DragonError", IsDeltaDiffFailed, ErrCodeDeltaDiffFailed},
+		{"IsDeltaNilInput via QBError", IsDeltaNilInput, ErrCodeDeltaNilInput},
+		{"IsDeltaTypeMismatch via QBError", IsDeltaTypeMismatch, ErrCodeDeltaTypeMismatch},
+		{"IsDeltaMaxDepthExceeded via QBError", IsDeltaMaxDepthExceeded, ErrCodeDeltaMaxDepthExceeded},
+		{"IsDeltaUnsupportedType via QBError", IsDeltaUnsupportedType, ErrCodeDeltaUnsupportedType},
+		{"IsDeltaDeserializationFailed via QBError", IsDeltaDeserializationFailed, ErrCodeDeltaDeserializationFailed},
+		{"IsDeltaDiffFailed via QBError", IsDeltaDiffFailed, ErrCodeDeltaDiffFailed},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dragonErr := &errors.DragonError{
+			qbErr := &errors.QBError{
 				Code: tc.code,
 				Op:   "test",
 			}
-			assert.True(t, tc.checker(dragonErr), "expected checker to return true for DragonError with matching code")
+			assert.True(t, tc.checker(qbErr), "expected checker to return true for QBError with matching code")
 		})
 	}
 }
@@ -805,7 +805,7 @@ func TestDeltaErrorCheckers_DragonErrorWrapping(t *testing.T) {
 // TestDeltaErrorCheckers_NonMatchingError tests that error checkers return false
 // for errors that don't match their expected type or code.
 func TestDeltaErrorCheckers_NonMatchingError(t *testing.T) {
-	nonMatchingErr := &errors.DragonError{
+	nonMatchingErr := &errors.QBError{
 		Code: errors.ErrorCode(9999),
 		Op:   "test",
 	}

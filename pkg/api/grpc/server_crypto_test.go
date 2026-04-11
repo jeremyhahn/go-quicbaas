@@ -216,7 +216,7 @@ func TestEncrypt(t *testing.T) {
 				Plaintext: []byte("hello world"),
 			},
 			mockFunc: func(ctx context.Context, req *service.EncryptRequest) (*service.EncryptResponse, error) {
-				return nil, &errors.DragonError{
+				return nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "crypto.Encrypt",
 					Err:  assert.AnError,
@@ -1370,7 +1370,7 @@ func TestCryptoServer_GenerateRandom_ServiceError(t *testing.T) {
 
 	mockSvc := &mockCryptoService{
 		generateRandomFunc: func(ctx context.Context, req *service.GenerateRandomRequest) (*service.GenerateRandomResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "generateRandom",
 				Err:  assert.AnError,
@@ -1399,7 +1399,7 @@ func TestCryptoServer_Hash_ServiceError(t *testing.T) {
 
 	mockSvc := &mockCryptoService{
 		hashFunc: func(ctx context.Context, req *service.HashRequest) (*service.HashResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "hash",
 				Err:  assert.AnError,

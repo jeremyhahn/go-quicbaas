@@ -365,7 +365,7 @@ func isNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if errors.As(err, &de) {
 		return de.Code == dberrors.ErrNotFound
 	}

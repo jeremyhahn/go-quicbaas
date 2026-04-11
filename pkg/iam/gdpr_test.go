@@ -262,9 +262,9 @@ func TestGDPRManager_GrantConsent_InvalidPurpose(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, consent)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrValidation, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrValidation, qbErr.Code)
 }
 
 func TestGDPRManager_GrantConsent_AllPurposes(t *testing.T) {
@@ -355,9 +355,9 @@ func TestGDPRManager_GetConsent_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, consent)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestGDPRManager_ListUserConsents(t *testing.T) {
@@ -1089,9 +1089,9 @@ func TestMemoryConsentStorage_CreateConsent_DuplicatePurpose(t *testing.T) {
 	_, err = storage.CreateConsent(ctx, opts)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, dberrors.ErrAlreadyExists, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrAlreadyExists, qbErr.Code)
 }
 
 func TestMemoryConsentStorage_CreateConsent_ValidationErrors(t *testing.T) {

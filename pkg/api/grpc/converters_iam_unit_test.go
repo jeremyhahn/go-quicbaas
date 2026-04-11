@@ -1909,12 +1909,12 @@ func TestConvertPEPError_Nil(t *testing.T) {
 	assert.Nil(t, convertPEPError(nil))
 }
 
-func TestConvertPEPError_NonDragonError(t *testing.T) {
+func TestConvertPEPError_NonQBError(t *testing.T) {
 	err := convertPEPError(assert.AnError)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
-func TestConvertPEPError_DragonError_AllCodes(t *testing.T) {
+func TestConvertPEPError_QBError_AllCodes(t *testing.T) {
 	tests := []struct {
 		code     dberrors.ErrorCode
 		expected codes.Code
@@ -1936,11 +1936,11 @@ func TestConvertPEPError_DragonError_AllCodes(t *testing.T) {
 		{dberrors.ErrInternal, codes.Internal},
 	}
 	for _, tc := range tests {
-		dragonErr := &dberrors.DragonError{
+		qbErr := &dberrors.QBError{
 			Code: tc.code,
 			Op:   "test",
 		}
-		err := convertPEPError(dragonErr)
+		err := convertPEPError(qbErr)
 		assert.Equal(t, tc.expected, status.Code(err), "code %v should map to %v", tc.code, tc.expected)
 	}
 }

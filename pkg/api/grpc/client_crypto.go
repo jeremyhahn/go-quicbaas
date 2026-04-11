@@ -25,7 +25,7 @@ import (
 // KMSSign creates a digital signature of data using a named signing key.
 func (c *Client) KMSSign(ctx context.Context, req *service.SignRequest) (*service.SignResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.KMSSign",
 			Err:  ErrRequestNil,
@@ -61,7 +61,7 @@ func (c *Client) KMSSign(ctx context.Context, req *service.SignRequest) (*servic
 // KMSVerify verifies a digital signature against data using a named key.
 func (c *Client) KMSVerify(ctx context.Context, req *service.VerifyRequest) (*service.VerifyResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.KMSVerify",
 			Err:  ErrRequestNil,
@@ -98,7 +98,7 @@ func (c *Client) KMSVerify(ctx context.Context, req *service.VerifyRequest) (*se
 // KMSHash computes a cryptographic hash of data.
 func (c *Client) KMSHash(ctx context.Context, req *service.HashRequest) (*service.HashResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.KMSHash",
 			Err:  ErrRequestNil,
@@ -131,7 +131,7 @@ func (c *Client) KMSHash(ctx context.Context, req *service.HashRequest) (*servic
 // KMSGenerateHMAC generates an HMAC of data using a named key.
 func (c *Client) KMSGenerateHMAC(ctx context.Context, req *service.HMACRequest) (*service.HMACResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.KMSGenerateHMAC",
 			Err:  ErrRequestNil,
@@ -167,7 +167,7 @@ func (c *Client) KMSGenerateHMAC(ctx context.Context, req *service.HMACRequest) 
 // KMSVerifyHMAC verifies an HMAC against data using a named key.
 func (c *Client) KMSVerifyHMAC(ctx context.Context, req *service.VerifyHMACRequest) (*service.VerifyHMACResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.KMSVerifyHMAC",
 			Err:  ErrRequestNil,
@@ -204,7 +204,7 @@ func (c *Client) KMSVerifyHMAC(ctx context.Context, req *service.VerifyHMACReque
 // KMSRewrap re-encrypts ciphertext with the latest version of the key.
 func (c *Client) KMSRewrap(ctx context.Context, req *service.RewrapRequest) (*service.RewrapResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.KMSRewrap",
 			Err:  ErrRequestNil,
@@ -242,7 +242,7 @@ func (c *Client) KMSRewrap(ctx context.Context, req *service.RewrapRequest) (*se
 // KMSGenerateRandom generates high-quality random bytes.
 func (c *Client) KMSGenerateRandom(ctx context.Context, req *service.GenerateRandomRequest) (*service.GenerateRandomResponse, error) {
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Client.KMSGenerateRandom",
 			Err:  ErrRequestNil,

@@ -126,7 +126,7 @@ func TestHandleAddNode(t *testing.T) {
 				Address: "192.168.1.2:5001",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("AddNode", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("AddNode", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "failed to add node"},
@@ -371,7 +371,7 @@ func TestHandleListNodes(t *testing.T) {
 		{
 			name: "service error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "cluster status unavailable"},
@@ -538,7 +538,7 @@ func TestHandleListNonLeaderNodes(t *testing.T) {
 		{
 			name: "service error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "cluster status unavailable"},
@@ -658,7 +658,7 @@ func TestHandleGetClusterLeader(t *testing.T) {
 		{
 			name: "service error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "cluster status unavailable"},
@@ -1458,7 +1458,7 @@ func TestHandleReplaceNode_FullCoverage(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
-				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "cluster error"},
@@ -1561,7 +1561,7 @@ func TestHandleStartRebalance_FullCoverage(t *testing.T) {
 			body: RebalanceRequest{Strategy: "auto"},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
-				m.On("RebalanceCluster", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RebalanceCluster", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "rebalance failed"},
@@ -1626,7 +1626,7 @@ func TestHandleGetRebalancePlan_FullCoverage(t *testing.T) {
 			path: "/api/v1/cluster/rebalance/plan",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
-				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "cluster unavailable"},
@@ -1719,7 +1719,7 @@ func TestHandleAddNode_FullCoverage(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
-				m.On("AddNode", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("AddNode", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "add failed"},
@@ -1797,7 +1797,7 @@ func TestHandleRemoveNode_FullCoverage(t *testing.T) {
 			path: "/api/v1/cluster/nodes/5?shard_id=1",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
-				m.On("RemoveNode", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RemoveNode", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "remove failed"},
@@ -1853,7 +1853,7 @@ func TestHandleClusterStatus_FullCoverage(t *testing.T) {
 			path: "/api/v1/cluster/status",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
-				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "test",
 					Err:  &errors.MessageError{Message: "cluster error"},

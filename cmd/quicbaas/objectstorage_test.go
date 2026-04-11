@@ -1682,7 +1682,7 @@ func TestRunObjectPutCommand_FactoryError(t *testing.T) {
 	origFactory := objectStorageClientFactory
 	defer func() { objectStorageClientFactory = origFactory }()
 
-	testErr := &errors.DragonError{
+	testErr := &errors.QBError{
 		Code: errors.ErrUnavailable,
 		Op:   "test",
 		Err:  errors.New(errors.ErrUnavailable, "test", "connection refused"),
@@ -1741,7 +1741,7 @@ func TestRunObjectGetCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectGetCommand()
@@ -1754,7 +1754,7 @@ func TestRunObjectDeleteCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectDeleteCommand()
@@ -1767,7 +1767,7 @@ func TestRunObjectHeadCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectHeadCommand()
@@ -1780,7 +1780,7 @@ func TestRunObjectListCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectListCommand()
@@ -1793,7 +1793,7 @@ func TestRunObjectListByTagCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectListByTagCommand()
@@ -1806,7 +1806,7 @@ func TestRunObjectListByTenantCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectListByTenantCommand()
@@ -1819,7 +1819,7 @@ func TestRunObjectCopyCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectCopyCommand()
@@ -1832,7 +1832,7 @@ func TestRunObjectArchiveCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectArchiveCommand()
@@ -1845,7 +1845,7 @@ func TestRunObjectRestoreCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectRestoreCommand()
@@ -1858,7 +1858,7 @@ func TestRunObjectVerifyCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectVerifyCommand()
@@ -1871,7 +1871,7 @@ func TestRunObjectReplicateCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectReplicateCommand()
@@ -1884,7 +1884,7 @@ func TestRunObjectMigrateCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectMigrateCommand()
@@ -1897,7 +1897,7 @@ func TestRunObjectMetadataGetCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectMetadataGetCommand()
@@ -1910,7 +1910,7 @@ func TestRunObjectMetadataUpdateCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectMetadataUpdateCommand()
@@ -1923,7 +1923,7 @@ func TestRunObjectStatsCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectStatsCommand()
@@ -1936,7 +1936,7 @@ func TestRunObjectLifecycleSetCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectLifecycleSetCommand()
@@ -1949,7 +1949,7 @@ func TestRunObjectLifecycleGetCommand_FactoryError(t *testing.T) {
 	defer func() { objectStorageClientFactory = origFactory }()
 
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.DragonError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
 	}
 
 	cmd := newObjectLifecycleGetCommand()

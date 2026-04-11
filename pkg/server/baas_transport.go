@@ -22,7 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/ceremony"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -95,7 +95,7 @@ type baasTransport struct {
 	dbService         service.DatabaseService
 	lockService       BaasLockService
 	ceremonySvc       BasCeremonyService
-	ceremonyCA        ceremony.CeremonyCA
+	ceremonyCA        qrdbsdk.CeremonyCA
 	credentialSvc     BaasCredentialService
 	custodianGroupSvc BaasCustodianGroupService
 	shareSvc          BaasShareService
@@ -671,7 +671,7 @@ type baasTransportStore struct {
 	dbService         service.DatabaseService
 	lockService       BaasLockService
 	ceremonySvc       BasCeremonyService
-	ceremonyCA        ceremony.CeremonyCA
+	ceremonyCA        qrdbsdk.CeremonyCA
 	credentialSvc     BaasCredentialService
 	custodianGroupSvc BaasCustodianGroupService
 	shareSvc          BaasShareService

@@ -252,7 +252,7 @@ func (r *BackendRouter) Route(ctx context.Context, keyID string, algorithm strin
 		return r.defaultBackend, nil
 	}
 
-	return nil, &errors.DragonError{
+	return nil, &errors.QBError{
 		Code: errors.ErrUnavailable,
 		Op:   "kms.BackendRouter.Route",
 		Err:  ErrNoBackendAvailable,
@@ -286,7 +286,7 @@ func (r *BackendRouter) RouteWithFailover(ctx context.Context, keyID, algorithm 
 	// Get all eligible backends for failover
 	backends := r.getFailoverCandidates(ctx, algorithm)
 	if len(backends) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "kms.BackendRouter.RouteWithFailover",
 			Err:  ErrNoFailoverBackends,
@@ -321,7 +321,7 @@ func (r *BackendRouter) RouteWithFailover(ctx context.Context, keyID, algorithm 
 		}
 	}
 
-	return &errors.DragonError{
+	return &errors.QBError{
 		Code: errors.ErrUnavailable,
 		Op:   "kms.BackendRouter.RouteWithFailover",
 		Err:  &FailoverExhaustedError{Attempts: attempts, LastErr: lastErr},

@@ -237,7 +237,7 @@ func TestHandleInitializeClusterDEK(t *testing.T) {
 				KeySize:   256,
 			},
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("InitializeClusterDEK", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("InitializeClusterDEK", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "InitializeClusterDEK",
 					Err:  assert.AnError,
@@ -252,7 +252,7 @@ func TestHandleInitializeClusterDEK(t *testing.T) {
 				KeySize:   256,
 			},
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("InitializeClusterDEK", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("InitializeClusterDEK", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrAlreadyExists,
 					Op:   "InitializeClusterDEK",
 					Err:  assert.AnError,
@@ -411,7 +411,7 @@ func TestHandleGetClusterDEKStatus(t *testing.T) {
 		{
 			name: "service error",
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("GetClusterDEKStatus", mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetClusterDEKStatus", mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GetClusterDEKStatus",
 					Err:  assert.AnError,
@@ -542,7 +542,7 @@ func TestHandleRotateClusterDEK(t *testing.T) {
 				Reason: "emergency rotation",
 			},
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("RotateClusterDEK", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RotateClusterDEK", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrConflict,
 					Op:   "RotateClusterDEK",
 					Err:  assert.AnError,
@@ -705,7 +705,7 @@ func TestHandleSyncNodeDEK(t *testing.T) {
 			nodeID: "999",
 			body:   SyncNodeDEKRESTRequest{},
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("SyncNodeDEK", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("SyncNodeDEK", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "SyncNodeDEK",
 					Err:  assert.AnError,
@@ -850,7 +850,7 @@ func TestHandleGetNodeDEKStatus(t *testing.T) {
 			name:   "node not found error",
 			nodeID: "999",
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("GetNodeDEKStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetNodeDEKStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "GetNodeDEKStatus",
 					Err:  assert.AnError,
@@ -984,7 +984,7 @@ func TestHandleStartClusterReencryption(t *testing.T) {
 				ToVersion:   2,
 			},
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("StartReencryption", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("StartReencryption", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrConflict,
 					Op:   "StartReencryption",
 					Err:  assert.AnError,
@@ -1123,7 +1123,7 @@ func TestHandleGetClusterReencryptionStatus(t *testing.T) {
 		{
 			name: "service error",
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("GetReencryptionStatus", mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetReencryptionStatus", mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GetReencryptionStatus",
 					Err:  assert.AnError,
@@ -1193,7 +1193,7 @@ func TestHandleCancelClusterReencryption(t *testing.T) {
 		{
 			name: "cancel when no reencryption running",
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("CancelReencryption", mock.Anything).Return(&errors.DragonError{
+				m.On("CancelReencryption", mock.Anything).Return(&errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "CancelReencryption",
 					Err:  assert.AnError,
@@ -1204,7 +1204,7 @@ func TestHandleCancelClusterReencryption(t *testing.T) {
 		{
 			name: "service error",
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("CancelReencryption", mock.Anything).Return(&errors.DragonError{
+				m.On("CancelReencryption", mock.Anything).Return(&errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "CancelReencryption",
 					Err:  assert.AnError,
@@ -1418,7 +1418,7 @@ func TestHandleRecoverDEK(t *testing.T) {
 				Reason:         "test",
 			},
 			setupMock: func(m *MockClusterDEKService) {
-				m.On("RecoverDEK", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RecoverDEK", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrUnauthorized,
 					Op:   "RecoverDEK",
 					Err:  assert.AnError,

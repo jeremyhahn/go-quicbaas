@@ -835,13 +835,13 @@ func TestIsServerClosed(t *testing.T) {
 	}
 }
 
-func TestDragonErrorUnwrap(t *testing.T) {
-	// Test that errors.As works through DragonError
+func TestQBErrorUnwrap(t *testing.T) {
+	// Test that errors.As works through QBError
 	underlyingErr := &SessionNotFoundError{SessionID: "test-session"}
-	dragonErr := NewSessionNotFoundError("op", "test-session")
+	qbErr := NewSessionNotFoundError("op", "test-session")
 
 	var snf *SessionNotFoundError
-	if !stderrors.As(dragonErr, &snf) {
+	if !stderrors.As(qbErr, &snf) {
 		t.Error("errors.As should find SessionNotFoundError")
 	}
 
@@ -850,10 +850,10 @@ func TestDragonErrorUnwrap(t *testing.T) {
 	}
 }
 
-func TestDragonErrorMessage(t *testing.T) {
+func TestQBErrorMessage(t *testing.T) {
 	tests := []struct {
 		name    string
-		err     *errors.DragonError
+		err     *errors.QBError
 		wantSub string
 	}{
 		{

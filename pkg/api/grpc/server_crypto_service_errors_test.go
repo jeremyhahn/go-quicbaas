@@ -30,7 +30,7 @@ import (
 
 func newTestCryptoServerWithError(errCode dberrors.ErrorCode) *CryptoServer {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	svcErr := &dberrors.DragonError{Code: errCode, Op: "test"}
+	svcErr := &dberrors.QBError{Code: errCode, Op: "test"}
 	return NewCryptoServer(&mockCryptoService{
 		encryptFunc: func(_ context.Context, _ *service.EncryptRequest) (*service.EncryptResponse, error) {
 			return nil, svcErr

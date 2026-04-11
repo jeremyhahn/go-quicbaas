@@ -357,7 +357,7 @@ func (s *Server) initializeCA() error {
 
 	// Export key from keystore's file storage for TLS transports.
 	if !xkmsBackend.KeyProvider().Capabilities().Export {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrConfiguration,
 			Op:   "server.initializeCA",
 			Err:  &api.ConfigurationError{Action: "TLS requires an exportable key backend (software/PKCS#8)"},

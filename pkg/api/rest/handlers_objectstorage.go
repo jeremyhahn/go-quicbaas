@@ -1360,29 +1360,29 @@ func (s *Server) handleObjectStorageError(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var dragonErr *errors.DragonError
-	if !errors.As(err, &dragonErr) {
+	var qbErr *errors.QBError
+	if !errors.As(err, &qbErr) {
 		RespondInternalError(w, r, err)
 		return
 	}
 
-	switch dragonErr.Code {
+	switch qbErr.Code {
 	case errors.ErrNotFound:
 		RespondNotFound(w, r, "object")
 	case errors.ErrAlreadyExists:
-		RespondConflict(w, r, dragonErr.Error())
+		RespondConflict(w, r, qbErr.Error())
 	case errors.ErrInvalidInput:
-		RespondBadRequest(w, r, dragonErr.Error())
+		RespondBadRequest(w, r, qbErr.Error())
 	case errors.ErrForbidden:
-		RespondError(w, r, http.StatusForbidden, dragonErr)
+		RespondError(w, r, http.StatusForbidden, qbErr)
 	case errors.ErrResourceExhausted:
-		RespondError(w, r, http.StatusTooManyRequests, dragonErr)
+		RespondError(w, r, http.StatusTooManyRequests, qbErr)
 	case errors.ErrTimeout:
-		RespondError(w, r, http.StatusGatewayTimeout, dragonErr)
+		RespondError(w, r, http.StatusGatewayTimeout, qbErr)
 	case errors.ErrStorage:
-		RespondInternalError(w, r, dragonErr)
+		RespondInternalError(w, r, qbErr)
 	default:
-		RespondInternalError(w, r, dragonErr)
+		RespondInternalError(w, r, qbErr)
 	}
 }
 

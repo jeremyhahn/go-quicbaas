@@ -39,10 +39,10 @@ func TestKMSService_GetPublicKey_EmptyKeyID(t *testing.T) {
 	_, err = manager.GetPublicKey(context.Background(), "")
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
-	assert.Contains(t, dragonErr.Error(), "keyID cannot be empty")
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, qbErr.Error(), "keyID cannot be empty")
 }
 
 func TestKMSService_GetPublicKey_CancelledContext(t *testing.T) {
@@ -59,9 +59,9 @@ func TestKMSService_GetPublicKey_CancelledContext(t *testing.T) {
 	_, err = manager.GetPublicKey(ctx, "test-key")
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrTimeout, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrTimeout, qbErr.Code)
 }
 
 func TestKMSService_GetPublicKey_AsymmetricKey(t *testing.T) {
@@ -96,9 +96,9 @@ func TestKMSService_GetPublicKey_KeyNotFound(t *testing.T) {
 	_, err = manager.GetPublicKey(context.Background(), "nonexistent-key")
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestKMSService_GetPublicKey_SymmetricKeyError(t *testing.T) {
@@ -119,9 +119,9 @@ func TestKMSService_GetPublicKey_SymmetricKeyError(t *testing.T) {
 	_, err = manager.GetPublicKey(ctx, "aes-key-1")
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }
 
 func TestKMSService_GetPublicKey_BackendError(t *testing.T) {
@@ -143,9 +143,9 @@ func TestKMSService_GetPublicKey_BackendError(t *testing.T) {
 	_, err = manager.GetPublicKey(ctx, "error-key")
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInternal, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }
 
 func TestKMSService_GetPublicKey_BackendUnavailable(t *testing.T) {
@@ -167,9 +167,9 @@ func TestKMSService_GetPublicKey_BackendUnavailable(t *testing.T) {
 	_, err = manager.GetPublicKey(context.Background(), "some-key")
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, errors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestKMSService_GetPublicKey_ECDSAKey(t *testing.T) {

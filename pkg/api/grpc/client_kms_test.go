@@ -2342,9 +2342,9 @@ func TestClientAddMetadata_WithPrebuiltMD_Coverage(t *testing.T) {
 	assert.NotEqual(t, ctx, result2)
 }
 
-// TestConvertGRPCError_DragonErrorPassthrough_Coverage tests that DragonErrors pass through for coverage.
-func TestConvertGRPCError_DragonErrorPassthrough_Coverage(t *testing.T) {
-	originalErr := &errors.DragonError{
+// TestConvertGRPCError_QBErrorPassthrough_Coverage tests that QBErrors pass through for coverage.
+func TestConvertGRPCError_QBErrorPassthrough_Coverage(t *testing.T) {
+	originalErr := &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "test.operation",
 	}

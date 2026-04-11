@@ -177,10 +177,10 @@ func TestValidateTransactionRequest(t *testing.T) {
 				if tt.errorMsg != "" {
 					assert.Contains(t, err.Error(), tt.errorMsg)
 				}
-				// Check it's a DragonError with correct code
-				var dragonErr *errors.DragonError
-				assert.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+				// Check it's a QBError with correct code
+				var qbErr *errors.QBError
+				assert.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 			} else {
 				assert.NoError(t, err)
 			}

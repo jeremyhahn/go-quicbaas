@@ -294,7 +294,7 @@ func TestHandleCreateObjectBackend_ServiceUnavailable(t *testing.T) {
 func TestHandleCreateObjectBackend_AlreadyExists(t *testing.T) {
 	mockAdminSvc := &mockObjectStorageAdminService{
 		createBackendFunc: func(ctx context.Context, req *service.CreateBackendRequest) (*service.CreateBackendResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrAlreadyExists, Err: nil}
+			return nil, &errors.QBError{Code: errors.ErrAlreadyExists, Err: nil}
 		},
 	}
 	s := newTestObjectStorageAdminServer(mockAdminSvc)
@@ -375,7 +375,7 @@ func TestHandleUpdateObjectBackend_MissingName(t *testing.T) {
 func TestHandleUpdateObjectBackend_NotFound(t *testing.T) {
 	mockAdminSvc := &mockObjectStorageAdminService{
 		updateBackendFunc: func(ctx context.Context, req *service.UpdateBackendRequest) (*service.UpdateBackendResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: nil}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
 		},
 	}
 	s := newTestObjectStorageAdminServer(mockAdminSvc)
@@ -484,7 +484,7 @@ func TestHandleDeleteObjectBackend_WithQueryParams(t *testing.T) {
 func TestHandleDeleteObjectBackend_NotFound(t *testing.T) {
 	mockAdminSvc := &mockObjectStorageAdminService{
 		deleteBackendFunc: func(ctx context.Context, req *service.DeleteBackendRequest) (*service.DeleteBackendResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: nil}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
 		},
 	}
 	s := newTestObjectStorageAdminServer(mockAdminSvc)
@@ -582,7 +582,7 @@ func TestHandleSetObjectBackendStatus_InvalidJSON(t *testing.T) {
 func TestHandleSetObjectBackendStatus_NotFound(t *testing.T) {
 	mockAdminSvc := &mockObjectStorageAdminService{
 		setBackendStatusFunc: func(ctx context.Context, req *service.SetBackendStatusRequest) (*service.SetBackendStatusResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: nil}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
 		},
 	}
 	s := newTestObjectStorageAdminServer(mockAdminSvc)
@@ -816,7 +816,7 @@ func TestHandleGetGarbageCollectionProgress_MissingOperationID(t *testing.T) {
 func TestHandleGetGarbageCollectionProgress_NotFound(t *testing.T) {
 	mockAdminSvc := &mockObjectStorageAdminService{
 		getGarbageCollectionProgressFunc: func(ctx context.Context, req *service.GetGarbageCollectionProgressRequest) (*service.GetGarbageCollectionProgressResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: nil}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
 		},
 	}
 	s := newTestObjectStorageAdminServer(mockAdminSvc)
@@ -909,7 +909,7 @@ func TestHandleRepairObject_MissingKey(t *testing.T) {
 func TestHandleRepairObject_NotFound(t *testing.T) {
 	mockAdminSvc := &mockObjectStorageAdminService{
 		repairObjectFunc: func(ctx context.Context, req *service.RepairObjectRequest) (*service.RepairObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: nil}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
 		},
 	}
 	s := newTestObjectStorageAdminServer(mockAdminSvc)
@@ -1005,7 +1005,7 @@ func TestHandleCompactObjectBackend_EmptyBody(t *testing.T) {
 func TestHandleCompactObjectBackend_NotFound(t *testing.T) {
 	mockAdminSvc := &mockObjectStorageAdminService{
 		compactBackendFunc: func(ctx context.Context, req *service.CompactBackendRequest) (*service.CompactBackendResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: nil}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
 		},
 	}
 	s := newTestObjectStorageAdminServer(mockAdminSvc)

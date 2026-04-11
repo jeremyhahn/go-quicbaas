@@ -622,8 +622,8 @@ func (s *Server) mapErrorToJSONRPCError(err error) (int, string) {
 		return InternalError, "Unknown error"
 	}
 
-	// Check for DragonError and map based on error code
-	var dErr *dberrors.DragonError
+	// Check for QBError and map based on error code
+	var dErr *dberrors.QBError
 	if dberrors.As(err, &dErr) {
 		switch dErr.Code {
 		case dberrors.ErrNotFound:
@@ -655,7 +655,7 @@ func (s *Server) mapErrorToJSONRPCError(err error) (int, string) {
 		}
 	}
 
-	// Check error message for common patterns (fallback for non-DragonError)
+	// Check error message for common patterns (fallback for non-QBError)
 	errMsg := strings.ToLower(err.Error())
 	if strings.Contains(errMsg, "not found") {
 		return ResourceNotFound, "Resource not found"

@@ -46,7 +46,7 @@ func createABACProvider(cfg *FactoryConfig) (interfaces.AuthorizationProvider, e
 			Component: "abac-provider-factory",
 		})
 		if err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "providers.createABACProvider",
 				Err:  err,

@@ -290,7 +290,7 @@ func TestSchedulerCreateJob_DecodeError(t *testing.T) {
 func TestSchedulerCreateJob_ServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		createJobFn: func(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInvalidInput, Op: "test", Err: &errors.MessageError{Message: "bad input"}}
+			return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "test", Err: &errors.MessageError{Message: "bad input"}}
 		},
 	}
 	h := createHandlerWithScheduler(svc)
@@ -338,7 +338,7 @@ func TestSchedulerGetJob_DecodeError(t *testing.T) {
 func TestSchedulerGetJob_ServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		getJobFn: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
 		},
 	}
 	h := createHandlerWithScheduler(svc)
@@ -376,7 +376,7 @@ func TestSchedulerUpdateJob_ServiceUnavailable(t *testing.T) {
 func TestSchedulerUpdateJob_ServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		updateJobFn: func(ctx context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
 		},
 	}
 	h := createHandlerWithScheduler(svc)
@@ -414,7 +414,7 @@ func TestSchedulerDeleteJob_ServiceUnavailable(t *testing.T) {
 func TestSchedulerDeleteJob_ServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		deleteJobFn: func(ctx context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
 		},
 	}
 	h := createHandlerWithScheduler(svc)
@@ -452,7 +452,7 @@ func TestSchedulerListJobs_ServiceUnavailable(t *testing.T) {
 func TestSchedulerListJobs_ServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		listJobsFn: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "internal"}}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "internal"}}
 		},
 	}
 	h := createHandlerWithScheduler(svc)
@@ -494,7 +494,7 @@ func TestSchedulerTriggerJob_ServiceUnavailable(t *testing.T) {
 func TestSchedulerTriggerJob_ServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		triggerJobFn: func(ctx context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
 		},
 	}
 	h := createHandlerWithScheduler(svc)
@@ -598,7 +598,7 @@ func TestSchedulerGetJobHistory_ServiceUnavailable(t *testing.T) {
 func TestSchedulerGetJobHistory_ServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		getJobHistoryFn: func(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "not found"}}
 		},
 	}
 	h := createHandlerWithScheduler(svc)
@@ -634,7 +634,7 @@ func TestSchedulerGetStatus_ServiceUnavailable(t *testing.T) {
 func TestSchedulerGetStatus_ServiceError(t *testing.T) {
 	svc := &mockSchedulerService{
 		getStatusFn: func(ctx context.Context) (*service.GetSchedulerStatusResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "internal"}}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "internal"}}
 		},
 	}
 	h := createHandlerWithScheduler(svc)

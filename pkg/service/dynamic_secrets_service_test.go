@@ -50,7 +50,7 @@ func (m *mockDSStorage) Get(key []byte) ([]byte, error) {
 	if val, ok := m.data[string(key)]; ok {
 		return val, nil
 	}
-	return nil, &quicbaasErrors.DragonError{
+	return nil, &quicbaasErrors.QBError{
 		Code: quicbaasErrors.ErrNotFound,
 		Op:   "mockDSStorage.Get",
 		Err:  stderrors.New("key not found"),
@@ -226,7 +226,7 @@ func (m *mockDSLeaseManager) RenewLease(ctx context.Context, leaseID string, inc
 	}
 	l, exists := m.leases[leaseID]
 	if !exists {
-		return nil, &quicbaasErrors.DragonError{
+		return nil, &quicbaasErrors.QBError{
 			Code: quicbaasErrors.ErrNotFound, Op: "mockDSLeaseManager.RenewLease",
 			Err: stderrors.New("lease not found: " + leaseID),
 		}
@@ -242,7 +242,7 @@ func (m *mockDSLeaseManager) RenewLease(ctx context.Context, leaseID string, inc
 func (m *mockDSLeaseManager) GetLease(ctx context.Context, leaseID string) (*lease.Lease, error) {
 	l, exists := m.leases[leaseID]
 	if !exists {
-		return nil, &quicbaasErrors.DragonError{Code: quicbaasErrors.ErrNotFound, Op: "mockDSLeaseManager.GetLease", Err: stderrors.New("lease not found: " + leaseID)}
+		return nil, &quicbaasErrors.QBError{Code: quicbaasErrors.ErrNotFound, Op: "mockDSLeaseManager.GetLease", Err: stderrors.New("lease not found: " + leaseID)}
 	}
 	return l, nil
 }
@@ -253,7 +253,7 @@ func (m *mockDSLeaseManager) RevokeLease(ctx context.Context, leaseID string) er
 	}
 	l, exists := m.leases[leaseID]
 	if !exists {
-		return &quicbaasErrors.DragonError{Code: quicbaasErrors.ErrNotFound, Op: "mockDSLeaseManager.RevokeLease", Err: stderrors.New("lease not found: " + leaseID)}
+		return &quicbaasErrors.QBError{Code: quicbaasErrors.ErrNotFound, Op: "mockDSLeaseManager.RevokeLease", Err: stderrors.New("lease not found: " + leaseID)}
 	}
 	now := time.Now()
 	l.RevokedAt = &now
@@ -364,9 +364,9 @@ func TestNewDynamicSecretsHandler_NilConfig(t *testing.T) {
 	assert.Nil(t, svc)
 	assert.Contains(t, err.Error(), "config cannot be nil")
 
-	var dragonErr *quicbaasErrors.DragonError
-	assert.True(t, stderrors.As(err, &dragonErr))
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *quicbaasErrors.QBError
+	assert.True(t, stderrors.As(err, &qbErr))
+	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewDynamicSecretsHandler_NilStore(t *testing.T) {
@@ -767,9 +767,9 @@ func TestDynamicSecretsService_CreateRole_ContextCanceled(t *testing.T) {
 
 	_, err = svc.CreateRole(ctx, req)
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
 }
 
 func TestDynamicSecretsService_GetRole_ContextCanceled(t *testing.T) {
@@ -801,9 +801,9 @@ func TestDynamicSecretsService_GetRole_ContextCanceled(t *testing.T) {
 
 	_, err = svc.GetRole(ctx, &GetRoleRequest{Name: "test-role"})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
 }
 
 func TestDynamicSecretsService_ListRoles_ContextCanceled(t *testing.T) {
@@ -825,9 +825,9 @@ func TestDynamicSecretsService_ListRoles_ContextCanceled(t *testing.T) {
 
 	_, err = svc.ListRoles(ctx, &ListRolesRequest{})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
 }
 
 func TestDynamicSecretsService_DeleteRole_ContextCanceled(t *testing.T) {
@@ -849,9 +849,9 @@ func TestDynamicSecretsService_DeleteRole_ContextCanceled(t *testing.T) {
 
 	_, err = svc.DeleteRole(ctx, &DeleteRoleRequest{Name: "test-role"})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
 }
 
 func TestDynamicSecretsService_GenerateCredential_TTLExceedsMax(t *testing.T) {
@@ -884,9 +884,9 @@ func TestDynamicSecretsService_GenerateCredential_TTLExceedsMax(t *testing.T) {
 		TTL:      3 * time.Hour,
 	})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestDynamicSecretsService_GenerateCredential_GeneratorFailure(t *testing.T) {
@@ -924,9 +924,9 @@ func TestDynamicSecretsService_GenerateCredential_GeneratorFailure(t *testing.T)
 		RoleName: "test-role",
 	})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrInternal, qbErr.Code)
 }
 
 func TestDynamicSecretsService_GenerateCredential_LeaseFailure(t *testing.T) {
@@ -961,9 +961,9 @@ func TestDynamicSecretsService_GenerateCredential_LeaseFailure(t *testing.T) {
 		RoleName: "test-role",
 	})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrInternal, qbErr.Code)
 }
 
 func TestDynamicSecretsService_RenewLease_Failure(t *testing.T) {
@@ -1034,9 +1034,9 @@ func TestDynamicSecretsService_ListLeases_ContextCanceled(t *testing.T) {
 
 	_, err = svc.ListLeases(ctx, &ListLeasesRequest{})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
 }
 
 func TestDynamicSecretsService_ListLeases_Failure(t *testing.T) {
@@ -1134,9 +1134,9 @@ func TestDynamicSecretsService_CreateRole_GeneratorNotFound(t *testing.T) {
 		MaxTTL:        2 * time.Hour,
 	})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrNotFound, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrNotFound, qbErr.Code)
 }
 
 // TestNewDynamicSecretsHandler_InitMetricsSuccess tests metrics initialization during service creation.
@@ -1183,9 +1183,9 @@ func TestDynamicSecretsService_CreateRole_EmptyGeneratorType(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
 }
 
 // TestDynamicSecretsService_CreateRole_TTLBoundaries tests TTL validation boundaries.
@@ -1408,9 +1408,9 @@ func TestDynamicSecretsService_DeleteRole_NotFound(t *testing.T) {
 		Name: "nonexistent-role",
 	})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrNotFound, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrNotFound, qbErr.Code)
 }
 
 // TestDynamicSecretsService_GetRole_EmptyName tests empty role name.
@@ -1560,9 +1560,9 @@ func TestDynamicSecretsService_GenerateCredential_GetGeneratorError(t *testing.T
 		RoleName: "test-role",
 	})
 	assert.Error(t, err)
-	dragonErr, ok := err.(*quicbaasErrors.DragonError)
+	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrInternal, dragonErr.Code)
+	assert.Equal(t, quicbaasErrors.ErrInternal, qbErr.Code)
 }
 
 func TestDynamicSecretsService_ListRoles_WithPrefix(t *testing.T) {

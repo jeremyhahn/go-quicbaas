@@ -94,9 +94,9 @@ func TestCheckAuth_AuthEnabled_NoToken(t *testing.T) {
 	require.Error(t, err)
 
 	// Verify the error is an authorization error
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
 func TestCheckAuth_AuthEnabled_WithToken_NoManager(t *testing.T) {

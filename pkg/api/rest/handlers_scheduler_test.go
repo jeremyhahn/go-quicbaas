@@ -417,7 +417,7 @@ func TestHandleCreateSchedulerJob_ServiceError(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("CreateJob", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("CreateJob", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "CreateJob",
 		Err:  assert.AnError,
@@ -536,7 +536,7 @@ func TestHandleListSchedulerJobs_ServiceError(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("ListJobs", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("ListJobs", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "ListJobs",
 		Err:  assert.AnError,
@@ -623,7 +623,7 @@ func TestHandleGetSchedulerJob_NotFound(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("GetJob", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("GetJob", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "GetJob",
 		Err:  assert.AnError,
@@ -749,7 +749,7 @@ func TestHandleUpdateSchedulerJob_NotFound(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("UpdateJob", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("UpdateJob", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "UpdateJob",
 		Err:  assert.AnError,
@@ -850,7 +850,7 @@ func TestHandleDeleteSchedulerJob_NotFound(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("DeleteJob", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("DeleteJob", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "DeleteJob",
 		Err:  assert.AnError,
@@ -922,7 +922,7 @@ func TestHandleTriggerSchedulerJob_NotFound(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("TriggerJob", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("TriggerJob", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "TriggerJob",
 		Err:  assert.AnError,
@@ -996,7 +996,7 @@ func TestHandlePauseSchedulerJob_ServiceError(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("PauseJob", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("PauseJob", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   "PauseJob",
 		Err:  assert.AnError,
@@ -1070,7 +1070,7 @@ func TestHandleResumeSchedulerJob_NotFound(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("ResumeJob", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("ResumeJob", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "ResumeJob",
 		Err:  assert.AnError,
@@ -1296,7 +1296,7 @@ func TestHandleGetSchedulerJobHistory_NotFound(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("GetJobHistory", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("GetJobHistory", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "GetJobHistory",
 		Err:  assert.AnError,
@@ -1387,7 +1387,7 @@ func TestHandleGetSchedulerStatus_ServiceError(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("GetStatus", mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("GetStatus", mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "GetStatus",
 		Err:  assert.AnError,
@@ -1951,7 +1951,7 @@ func TestHandleCreateSchedulerJob_Unauthorized(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("CreateJob", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("CreateJob", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrUnauthorized,
 		Op:   "CreateJob",
 		Err:  assert.AnError,
@@ -1978,7 +1978,7 @@ func TestHandleGetSchedulerJob_Forbidden(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	mockSvc.schedulerService.On("GetJob", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockSvc.schedulerService.On("GetJob", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrForbidden,
 		Op:   "GetJob",
 		Err:  assert.AnError,

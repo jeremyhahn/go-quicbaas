@@ -480,7 +480,7 @@ func isNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var de *dragonerrors.DragonError
+	var de *dragonerrors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == dragonerrors.ErrNotFound
 	}

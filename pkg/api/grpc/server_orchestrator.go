@@ -1148,8 +1148,8 @@ func convertOrchestratorError(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	}
 
-	// Fall back to DragonError handling
-	var dErr *errors.DragonError
+	// Fall back to QBError handling
+	var dErr *errors.QBError
 	if !stderrors.As(err, &dErr) {
 		return status.Error(codes.Internal, err.Error())
 	}

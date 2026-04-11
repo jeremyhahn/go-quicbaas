@@ -292,7 +292,7 @@ func TestParameterStoreService_GetParameter(t *testing.T) {
 		require.NoError(t, err)
 
 		pm.On("Get", mock.Anything, "/app/missing", true).
-			Return(nil, nil, &dberrors.DragonError{
+			Return(nil, nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  nil,
@@ -438,7 +438,7 @@ func TestParameterStoreService_SetParameter(t *testing.T) {
 		pm.On("Get", mock.Anything, "/app/config", false).
 			Return(nil, nil, stderrors.New("not found"))
 		pm.On("Store", mock.Anything, "/app/config", []byte("value"), mock.AnythingOfType("*interfaces.ParameterMetadata"), false).
-			Return(&dberrors.DragonError{
+			Return(&dberrors.QBError{
 				Code: dberrors.ErrAlreadyExists,
 				Op:   "test",
 			})
@@ -529,7 +529,7 @@ func TestParameterStoreService_DeleteParameter(t *testing.T) {
 		require.NoError(t, err)
 
 		pm.On("Delete", mock.Anything, "/app/missing").
-			Return(&dberrors.DragonError{
+			Return(&dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 			})
@@ -635,7 +635,7 @@ func TestParameterStoreService_GetParameters(t *testing.T) {
 			},
 		}
 		errs := map[string]error{
-			"/app/config2": &dberrors.DragonError{Code: dberrors.ErrNotFound},
+			"/app/config2": &dberrors.QBError{Code: dberrors.ErrNotFound},
 		}
 
 		pm.On("GetBatch", mock.Anything, []string{"/app/config1", "/app/config2"}, true).
@@ -831,7 +831,7 @@ func TestParameterStoreService_DeleteParameters(t *testing.T) {
 			"/app/config2": false,
 		}
 		errs := map[string]error{
-			"/app/config2": &dberrors.DragonError{Code: dberrors.ErrNotFound},
+			"/app/config2": &dberrors.QBError{Code: dberrors.ErrNotFound},
 		}
 
 		pm.On("DeleteBatch", mock.Anything, []string{"/app/config1", "/app/config2"}).

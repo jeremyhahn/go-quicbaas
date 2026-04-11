@@ -679,8 +679,8 @@ func convertMessagingError(err error) error {
 		return status.Error(codes.ResourceExhausted, err.Error())
 	}
 
-	// Check for generic DragonError
-	var dErr *errors.DragonError
+	// Check for generic QBError
+	var dErr *errors.QBError
 	if !stderrors.As(err, &dErr) {
 		return status.Error(codes.Internal, err.Error())
 	}

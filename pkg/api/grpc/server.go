@@ -486,7 +486,7 @@ func (s *Server) List(req *pb.ListRequest, stream pb.QuicBaaS_ListServer) error 
 
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("List", "error").Inc()
-			return toServiceError(&errors.DragonError{
+			return toServiceError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.List",
 				Err:  err,
@@ -624,7 +624,7 @@ func (s *Server) Watch(req *pb.WatchRequest, stream pb.QuicBaaS_WatchServer) err
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("Watch", "error").Inc()
 			s.logger.WithError(err).Error("Failed to send watch response")
-			return toServiceError(&errors.DragonError{
+			return toServiceError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.Watch",
 				Err:  err,
@@ -699,7 +699,7 @@ func (s *Server) Query(req *pb.QueryRequest, stream pb.QuicBaaS_QueryServer) err
 
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("Query", "error").Inc()
-			return toServiceError(&errors.DragonError{
+			return toServiceError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.Query",
 				Err:  err,
@@ -775,7 +775,7 @@ func (s *Server) ScanIndex(req *pb.ScanRequest, stream pb.QuicBaaS_ScanIndexServ
 
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("ScanIndex", "error").Inc()
-			return toServiceError(&errors.DragonError{
+			return toServiceError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.ScanIndex",
 				Err:  err,
@@ -989,7 +989,7 @@ func (s *Server) TimeSeriesQuery(req *pb.TimeSeriesQueryRequest, stream pb.QuicB
 
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("TimeSeriesQuery", "error").Inc()
-			return toServiceError(&errors.DragonError{
+			return toServiceError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.TimeSeriesQuery",
 				Err:  err,

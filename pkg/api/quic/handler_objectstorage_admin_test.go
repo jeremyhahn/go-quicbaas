@@ -321,7 +321,7 @@ func TestOSAdminDeleteBackend_DecodeError(t *testing.T) {
 func TestOSAdminCreateBackend_ServiceError(t *testing.T) {
 	svc := &mockOSAdminService{
 		createBackendFn: func(ctx context.Context, req *service.CreateBackendRequest) (*service.CreateBackendResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrAlreadyExists, Op: "test", Err: &errors.MessageError{Message: "exists"}}
+			return nil, &errors.QBError{Code: errors.ErrAlreadyExists, Op: "test", Err: &errors.MessageError{Message: "exists"}}
 		},
 	}
 	h := createHandlerWithOSAdmin(svc)
@@ -337,7 +337,7 @@ func TestOSAdminCreateBackend_ServiceError(t *testing.T) {
 func TestOSAdminRunGC_ServiceError(t *testing.T) {
 	svc := &mockOSAdminService{
 		runGCFn: func(ctx context.Context, req *service.RunGarbageCollectionRequest) (*service.RunGarbageCollectionResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "gc failed"}}
+			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "gc failed"}}
 		},
 	}
 	h := createHandlerWithOSAdmin(svc)

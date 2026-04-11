@@ -85,7 +85,7 @@ type DynamicSecretsConfig struct {
 // NewDynamicSecretsHandler creates a new dynamic secrets service implementation.
 func NewDynamicSecretsHandler(config *DynamicSecretsConfig) (*dynamicSecretsHandler, error) {
 	if config == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "NewDynamicSecretsHandler",
 			Err:  stderrors.New("config cannot be nil"),
@@ -93,7 +93,7 @@ func NewDynamicSecretsHandler(config *DynamicSecretsConfig) (*dynamicSecretsHand
 	}
 
 	if config.Store == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "NewDynamicSecretsHandler",
 			Err:  stderrors.New("store cannot be nil"),
@@ -101,7 +101,7 @@ func NewDynamicSecretsHandler(config *DynamicSecretsConfig) (*dynamicSecretsHand
 	}
 
 	if config.LeaseManager == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "NewDynamicSecretsHandler",
 			Err:  stderrors.New("lease manager cannot be nil"),
@@ -109,7 +109,7 @@ func NewDynamicSecretsHandler(config *DynamicSecretsConfig) (*dynamicSecretsHand
 	}
 
 	if config.GeneratorRegistry == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "NewDynamicSecretsHandler",
 			Err:  stderrors.New("generator registry cannot be nil"),
@@ -117,7 +117,7 @@ func NewDynamicSecretsHandler(config *DynamicSecretsConfig) (*dynamicSecretsHand
 	}
 
 	if config.Logger == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "NewDynamicSecretsHandler",
 			Err:  stderrors.New("logger cannot be nil"),
@@ -224,7 +224,7 @@ func (s *dynamicSecretsHandler) CreateRole(ctx context.Context, req *CreateCrede
 	}()
 
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "dynamicSecretsHandler.CreateRole",
 			Err:  stderrors.New("request cannot be nil"),
@@ -233,7 +233,7 @@ func (s *dynamicSecretsHandler) CreateRole(ctx context.Context, req *CreateCrede
 
 	if req.Name == "" {
 		s.metrics.rolesCreated.With(req.GeneratorType, "error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "dynamicSecretsHandler.CreateRole",
 			Err:  stderrors.New("role name cannot be empty"),
@@ -242,7 +242,7 @@ func (s *dynamicSecretsHandler) CreateRole(ctx context.Context, req *CreateCrede
 
 	if req.GeneratorType == "" {
 		s.metrics.rolesCreated.With(req.GeneratorType, "error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "dynamicSecretsHandler.CreateRole",
 			Err:  stderrors.New("generator type cannot be empty"),
@@ -268,7 +268,7 @@ func (s *dynamicSecretsHandler) CreateRole(ctx context.Context, req *CreateCrede
 
 	if ctx.Err() != nil {
 		s.metrics.rolesCreated.With(req.GeneratorType, "error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "dynamicSecretsHandler.CreateRole",
 			Err:  ctx.Err(),
@@ -341,7 +341,7 @@ func (s *dynamicSecretsHandler) GetRole(ctx context.Context, req *GetCredentialR
 	}()
 
 	if req == nil || req.Name == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "dynamicSecretsHandler.GetRole",
 			Err:  stderrors.New("role name cannot be empty"),
@@ -349,7 +349,7 @@ func (s *dynamicSecretsHandler) GetRole(ctx context.Context, req *GetCredentialR
 	}
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "dynamicSecretsHandler.GetRole",
 			Err:  ctx.Err(),
@@ -379,7 +379,7 @@ func (s *dynamicSecretsHandler) ListRoles(ctx context.Context, req *ListCredenti
 	}
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "dynamicSecretsHandler.ListRoles",
 			Err:  ctx.Err(),
@@ -412,7 +412,7 @@ func (s *dynamicSecretsHandler) DeleteRole(ctx context.Context, req *DeleteCrede
 	}()
 
 	if req == nil || req.Name == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "dynamicSecretsHandler.DeleteRole",
 			Err:  stderrors.New("role name cannot be empty"),
@@ -420,7 +420,7 @@ func (s *dynamicSecretsHandler) DeleteRole(ctx context.Context, req *DeleteCrede
 	}
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "dynamicSecretsHandler.DeleteRole",
 			Err:  ctx.Err(),
@@ -460,7 +460,7 @@ func (s *dynamicSecretsHandler) GenerateCredential(ctx context.Context, req *Gen
 	}()
 
 	if req == nil || req.RoleName == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "dynamicSecretsHandler.GenerateCredential",
 			Err:  stderrors.New("role name cannot be empty"),
@@ -468,7 +468,7 @@ func (s *dynamicSecretsHandler) GenerateCredential(ctx context.Context, req *Gen
 	}
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "dynamicSecretsHandler.GenerateCredential",
 			Err:  ctx.Err(),
@@ -562,7 +562,7 @@ func (s *dynamicSecretsHandler) RenewLease(ctx context.Context, req *RenewLeaseR
 
 	if req == nil || req.LeaseID == "" {
 		s.metrics.leasesRenewed.With("error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "dynamicSecretsHandler.RenewLease",
 			Err:  stderrors.New("lease ID cannot be empty"),
@@ -571,7 +571,7 @@ func (s *dynamicSecretsHandler) RenewLease(ctx context.Context, req *RenewLeaseR
 
 	if ctx.Err() != nil {
 		s.metrics.leasesRenewed.With("error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "dynamicSecretsHandler.RenewLease",
 			Err:  ctx.Err(),
@@ -606,7 +606,7 @@ func (s *dynamicSecretsHandler) RevokeLease(ctx context.Context, req *RevokeLeas
 
 	if req == nil || req.LeaseID == "" {
 		s.metrics.leasesRevoked.With("error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "dynamicSecretsHandler.RevokeLease",
 			Err:  stderrors.New("lease ID cannot be empty"),
@@ -615,7 +615,7 @@ func (s *dynamicSecretsHandler) RevokeLease(ctx context.Context, req *RevokeLeas
 
 	if ctx.Err() != nil {
 		s.metrics.leasesRevoked.With("error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "dynamicSecretsHandler.RevokeLease",
 			Err:  ctx.Err(),
@@ -648,7 +648,7 @@ func (s *dynamicSecretsHandler) ListLeases(ctx context.Context, req *ListLeasesR
 	}
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "dynamicSecretsHandler.ListLeases",
 			Err:  ctx.Err(),

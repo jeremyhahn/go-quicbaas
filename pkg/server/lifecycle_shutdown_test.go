@@ -82,9 +82,9 @@ func TestInitializeLifecycle_AlreadyStartedGuard(t *testing.T) {
 
 	err := srv.initialize()
 	require.Error(t, err)
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Contains(t, dragonErr.Error(), "already started")
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Contains(t, qbErr.Error(), "already started")
 }
 
 func TestInitializeLifecycle_AlreadyClosedGuard(t *testing.T) {
@@ -97,9 +97,9 @@ func TestInitializeLifecycle_AlreadyClosedGuard(t *testing.T) {
 
 	err := srv.initialize()
 	require.Error(t, err)
-	var dragonErr *dberrors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Contains(t, dragonErr.Error(), "closed")
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Contains(t, qbErr.Error(), "closed")
 }
 
 func TestInitializeLifecycle_InvalidServerMode(t *testing.T) {

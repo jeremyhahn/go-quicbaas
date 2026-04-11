@@ -46,7 +46,7 @@ func isRetryableError(err error) bool {
 	}
 
 	// Check if it's a QuicBaaS error code.
-	var dbErr *errors.DragonError
+	var dbErr *errors.QBError
 	if stderrors.As(err, &dbErr) {
 		return dbErr.Code.IsRetryable()
 	}

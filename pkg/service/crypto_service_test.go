@@ -289,7 +289,7 @@ func TestCryptoService_Encrypt_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrEncryption, dErr.Code)
 	}
@@ -387,7 +387,7 @@ func TestCryptoService_Decrypt_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrDecryption, dErr.Code)
 	}
@@ -484,7 +484,7 @@ func TestCryptoService_Rewrap_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrEncryption, dErr.Code)
 	}
@@ -1746,9 +1746,9 @@ func TestCryptoService_Decrypt_SafetyTracker_LimitExceeded(t *testing.T) {
 	}
 	resp, err := svc.Decrypt(context.Background(), req2)
 	if err != nil {
-		var dragonErr *quicbaasErrors.DragonError
-		if errors.As(err, &dragonErr) {
-			assert.Equal(t, quicbaasErrors.ErrDecryption, dragonErr.Code)
+		var qbErr *quicbaasErrors.QBError
+		if errors.As(err, &qbErr) {
+			assert.Equal(t, quicbaasErrors.ErrDecryption, qbErr.Code)
 		}
 		assert.Nil(t, resp)
 	}
@@ -1785,9 +1785,9 @@ func TestCryptoService_Rewrap_SafetyTracker_LimitExceeded(t *testing.T) {
 	}
 	resp, err := svc.Rewrap(context.Background(), req2)
 	if err != nil {
-		var dragonErr *quicbaasErrors.DragonError
-		if errors.As(err, &dragonErr) {
-			assert.Equal(t, quicbaasErrors.ErrEncryption, dragonErr.Code)
+		var qbErr *quicbaasErrors.QBError
+		if errors.As(err, &qbErr) {
+			assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 		}
 		assert.Nil(t, resp)
 	}
@@ -1822,9 +1822,9 @@ func TestCryptoService_GenerateDataKey_SafetyTracker_LimitExceeded(t *testing.T)
 	}
 	resp, err := svc.GenerateDataKey(context.Background(), req2)
 	if err != nil {
-		var dragonErr *quicbaasErrors.DragonError
-		if errors.As(err, &dragonErr) {
-			assert.Equal(t, quicbaasErrors.ErrEncryption, dragonErr.Code)
+		var qbErr *quicbaasErrors.QBError
+		if errors.As(err, &qbErr) {
+			assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 		}
 		assert.Nil(t, resp)
 	}
@@ -1859,9 +1859,9 @@ func TestCryptoService_GenerateWrappedDataKey_SafetyTracker_LimitExceeded(t *tes
 	}
 	resp, err := svc.GenerateWrappedDataKey(context.Background(), req2)
 	if err != nil {
-		var dragonErr *quicbaasErrors.DragonError
-		if errors.As(err, &dragonErr) {
-			assert.Equal(t, quicbaasErrors.ErrEncryption, dragonErr.Code)
+		var qbErr *quicbaasErrors.QBError
+		if errors.As(err, &qbErr) {
+			assert.Equal(t, quicbaasErrors.ErrEncryption, qbErr.Code)
 		}
 		assert.Nil(t, resp)
 	}

@@ -209,7 +209,7 @@ func (e *ServerNotRunningError) Error() string {
 // Returns an error if the server is already running or fails to start.
 func (s *Server) Start() error {
 	if s.running.Load() {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "quic.Start",
 			Err:  &ServerAlreadyRunningError{},
@@ -270,7 +270,7 @@ func (s *Server) Start() error {
 // It waits for all active connections and streams to complete.
 func (s *Server) Stop() error {
 	if !s.running.Load() {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "quic.Stop",
 			Err:  &ServerNotRunningError{},

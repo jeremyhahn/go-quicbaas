@@ -30,9 +30,9 @@ func (e *UnsupportedAlgorithmError) Error() string {
 	return "unsupported algorithm: " + e.Algorithm
 }
 
-// NewUnsupportedAlgorithmError creates a DragonError for an unsupported algorithm.
-func NewUnsupportedAlgorithmError(op, algorithm string) *errors.DragonError {
-	return &errors.DragonError{
+// NewUnsupportedAlgorithmError creates a QBError for an unsupported algorithm.
+func NewUnsupportedAlgorithmError(op, algorithm string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &UnsupportedAlgorithmError{Algorithm: algorithm},
@@ -49,9 +49,9 @@ func (e *InvalidDayFormatError) Error() string {
 	return "invalid day format: " + e.Value
 }
 
-// NewInvalidDayFormatError creates a DragonError for an invalid day format.
-func NewInvalidDayFormatError(op, value string) *errors.DragonError {
-	return &errors.DragonError{
+// NewInvalidDayFormatError creates a QBError for an invalid day format.
+func NewInvalidDayFormatError(op, value string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InvalidDayFormatError{Value: value},
@@ -68,9 +68,9 @@ func (e *NegativeDurationError) Error() string {
 	return "grace period cannot be negative: " + e.Value
 }
 
-// NewNegativeDurationError creates a DragonError for a negative duration value.
-func NewNegativeDurationError(op, value string) *errors.DragonError {
-	return &errors.DragonError{
+// NewNegativeDurationError creates a QBError for a negative duration value.
+func NewNegativeDurationError(op, value string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &NegativeDurationError{Value: value},
@@ -87,9 +87,9 @@ func (e *InvalidDurationFormatError) Error() string {
 	return "invalid duration format: " + e.Value
 }
 
-// NewInvalidDurationFormatError creates a DragonError for an invalid duration format.
-func NewInvalidDurationFormatError(op, value string) *errors.DragonError {
-	return &errors.DragonError{
+// NewInvalidDurationFormatError creates a QBError for an invalid duration format.
+func NewInvalidDurationFormatError(op, value string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InvalidDurationFormatError{Value: value},
@@ -106,9 +106,9 @@ func (e *UnsupportedOutputFormatError) Error() string {
 	return "unsupported output format: " + e.Format
 }
 
-// NewUnsupportedOutputFormatError creates a DragonError for an unsupported output format.
-func NewUnsupportedOutputFormatError(op, format string) *errors.DragonError {
-	return &errors.DragonError{
+// NewUnsupportedOutputFormatError creates a QBError for an unsupported output format.
+func NewUnsupportedOutputFormatError(op, format string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &UnsupportedOutputFormatError{Format: format},
@@ -123,9 +123,9 @@ func (e *NoActiveMigrationError) Error() string {
 	return "no active migration found"
 }
 
-// NewNoActiveMigrationError creates a DragonError for a missing active migration.
-func NewNoActiveMigrationError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewNoActiveMigrationError creates a QBError for a missing active migration.
+func NewNoActiveMigrationError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   op,
 		Err:  &NoActiveMigrationError{},
@@ -142,9 +142,9 @@ func (e *InvalidStorageURLError) Error() string {
 	return fmt.Sprintf("invalid storage URL format: %s (expected scheme://path)", e.URL)
 }
 
-// NewInvalidStorageURLError creates a DragonError for an invalid storage URL.
-func NewInvalidStorageURLError(op, url string) *errors.DragonError {
-	return &errors.DragonError{
+// NewInvalidStorageURLError creates a QBError for an invalid storage URL.
+func NewInvalidStorageURLError(op, url string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InvalidStorageURLError{URL: url},
@@ -161,9 +161,9 @@ func (e *UnsupportedStorageSchemeError) Error() string {
 	return fmt.Sprintf("unsupported storage scheme: %s (supported: pebble, memory, file)", e.Scheme)
 }
 
-// NewUnsupportedStorageSchemeError creates a DragonError for an unsupported storage scheme.
-func NewUnsupportedStorageSchemeError(op, scheme string) *errors.DragonError {
-	return &errors.DragonError{
+// NewUnsupportedStorageSchemeError creates a QBError for an unsupported storage scheme.
+func NewUnsupportedStorageSchemeError(op, scheme string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &UnsupportedStorageSchemeError{Scheme: scheme},
@@ -180,9 +180,9 @@ func (e *MigrationPartialFailureError) Error() string {
 	return fmt.Sprintf("migration completed with %d failed keys", e.FailedKeys)
 }
 
-// NewMigrationPartialFailureError creates a DragonError for a partial migration failure.
-func NewMigrationPartialFailureError(op string, failedKeys int64) *errors.DragonError {
-	return &errors.DragonError{
+// NewMigrationPartialFailureError creates a QBError for a partial migration failure.
+func NewMigrationPartialFailureError(op string, failedKeys int64) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   op,
 		Err:  &MigrationPartialFailureError{FailedKeys: failedKeys},
@@ -197,9 +197,9 @@ func (e *KeyNotFoundError) Error() string {
 	return "key not found"
 }
 
-// NewKeyNotFoundError creates a DragonError for a missing key.
-func NewKeyNotFoundError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewKeyNotFoundError creates a QBError for a missing key.
+func NewKeyNotFoundError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   op,
 		Err:  &KeyNotFoundError{},
@@ -216,9 +216,9 @@ func (e *InvalidFilterFormatError) Error() string {
 	return fmt.Sprintf("invalid filter format: %s (expected key=value)", e.Filter)
 }
 
-// NewInvalidFilterFormatError creates a DragonError for an invalid filter format.
-func NewInvalidFilterFormatError(op, filter string) *errors.DragonError {
-	return &errors.DragonError{
+// NewInvalidFilterFormatError creates a QBError for an invalid filter format.
+func NewInvalidFilterFormatError(op, filter string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InvalidFilterFormatError{Filter: filter},
@@ -233,9 +233,9 @@ func (e *NoMetadataProvidedError) Error() string {
 	return "no metadata provided; use --metadata or --metadata-json"
 }
 
-// NewNoMetadataProvidedError creates a DragonError for missing metadata.
-func NewNoMetadataProvidedError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewNoMetadataProvidedError creates a QBError for missing metadata.
+func NewNoMetadataProvidedError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &NoMetadataProvidedError{},
@@ -250,9 +250,9 @@ func (e *FilterRequiredError) Error() string {
 	return "at least one --filter is required"
 }
 
-// NewFilterRequiredError creates a DragonError for a missing required filter.
-func NewFilterRequiredError(op string) *errors.DragonError {
-	return &errors.DragonError{
+// NewFilterRequiredError creates a QBError for a missing required filter.
+func NewFilterRequiredError(op string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &FilterRequiredError{},
@@ -269,9 +269,9 @@ func (e *NodeAlreadyExistsError) Error() string {
 	return fmt.Sprintf("node '%s' already exists", e.NodeID)
 }
 
-// NewNodeAlreadyExistsError creates a DragonError for a duplicate node.
-func NewNodeAlreadyExistsError(op, nodeID string) *errors.DragonError {
-	return &errors.DragonError{
+// NewNodeAlreadyExistsError creates a QBError for a duplicate node.
+func NewNodeAlreadyExistsError(op, nodeID string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrAlreadyExists,
 		Op:   op,
 		Err:  &NodeAlreadyExistsError{NodeID: nodeID},
@@ -293,9 +293,9 @@ func (e *InvalidMetadataJSONError) Unwrap() error {
 	return e.Cause
 }
 
-// NewInvalidMetadataJSONError creates a DragonError for invalid metadata JSON.
-func NewInvalidMetadataJSONError(op string, cause error) *errors.DragonError {
-	return &errors.DragonError{
+// NewInvalidMetadataJSONError creates a QBError for invalid metadata JSON.
+func NewInvalidMetadataJSONError(op string, cause error) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
 		Err:  &InvalidMetadataJSONError{Cause: cause},
@@ -316,9 +316,9 @@ func (e *JobFailedError) Error() string {
 	return "job " + e.JobID + " failed"
 }
 
-// NewJobFailedError creates a DragonError for a failed orchestration job.
-func NewJobFailedError(op, jobID, message string) *errors.DragonError {
-	return &errors.DragonError{
+// NewJobFailedError creates a QBError for a failed orchestration job.
+func NewJobFailedError(op, jobID, message string) *errors.QBError {
+	return &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   op,
 		Err:  &JobFailedError{JobID: jobID, Message: message},

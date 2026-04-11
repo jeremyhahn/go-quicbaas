@@ -594,8 +594,8 @@ func convertSchedulerError(err error) error {
 		return status.Error(codes.Internal, storageErr.Error())
 	}
 
-	// Fall back to DragonError handling
-	var dErr *errors.DragonError
+	// Fall back to QBError handling
+	var dErr *errors.QBError
 	if !stderrors.As(err, &dErr) {
 		return status.Error(codes.Internal, err.Error())
 	}

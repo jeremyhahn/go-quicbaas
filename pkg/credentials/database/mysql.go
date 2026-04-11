@@ -73,7 +73,7 @@ func (g *MySQLGenerator) ValidateConfig(config map[string]string) error {
 // Generate creates a new MySQL user with the specified role configuration.
 func (g *MySQLGenerator) Generate(ctx context.Context, role *credentials.Role) (*credentials.Credential, error) {
 	if role == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "MySQLGenerator.Generate",
 			Err:  stderrors.New("role cannot be nil"),
@@ -81,7 +81,7 @@ func (g *MySQLGenerator) Generate(ctx context.Context, role *credentials.Role) (
 	}
 
 	if err := g.ValidateConfig(role.Config); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "MySQLGenerator.Generate",
 			Err:  &api.WrappedMessageError{Message: "invalid role config", Cause: err},
@@ -89,7 +89,7 @@ func (g *MySQLGenerator) Generate(ctx context.Context, role *credentials.Role) (
 	}
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "MySQLGenerator.Generate",
 			Err:  ctx.Err(),
@@ -133,7 +133,7 @@ func (g *MySQLGenerator) Generate(ctx context.Context, role *credentials.Role) (
 	connectionURL := role.Config["connection_url"]
 	db, err := g.connector(connectionURL)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "MySQLGenerator.Generate",
 			Err:  &api.WrappedMessageError{Message: "failed to connect to database", Cause: err},
@@ -144,7 +144,7 @@ func (g *MySQLGenerator) Generate(ctx context.Context, role *credentials.Role) (
 	// Execute creation statements
 	for _, stmt := range stmts {
 		if err := db.ExecContext(ctx, stmt); err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "MySQLGenerator.Generate",
 				Err:  &api.WrappedMessageError{Message: "failed to execute creation statement", Cause: err},
@@ -182,7 +182,7 @@ func (g *MySQLGenerator) Generate(ctx context.Context, role *credentials.Role) (
 // Revoke removes a MySQL user from the database.
 func (g *MySQLGenerator) Revoke(ctx context.Context, credential *credentials.Credential) error {
 	if credential == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "MySQLGenerator.Revoke",
 			Err:  stderrors.New("credential cannot be nil"),
@@ -190,7 +190,7 @@ func (g *MySQLGenerator) Revoke(ctx context.Context, credential *credentials.Cre
 	}
 
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "MySQLGenerator.Revoke",
 			Err:  ctx.Err(),
@@ -199,14 +199,14 @@ func (g *MySQLGenerator) Revoke(ctx context.Context, credential *credentials.Cre
 
 	username := credential.Data["username"]
 	if username == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "MySQLGenerator.Revoke",
 			Err:  stderrors.New("username not found in credential data"),
 		}
 	}
 
-	return &errors.DragonError{
+	return &errors.QBError{
 		Code: errors.ErrNotImplemented,
 		Op:   "MySQLGenerator.Revoke",
 		Err:  stderrors.New("revocation requires role configuration - use service layer"),
@@ -216,7 +216,7 @@ func (g *MySQLGenerator) Revoke(ctx context.Context, credential *credentials.Cre
 // revokeWithRole revokes a credential using the role configuration.
 func (g *MySQLGenerator) revokeWithRole(ctx context.Context, credential *credentials.Credential, role *credentials.Role) error {
 	if credential == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "MySQLGenerator.revokeWithRole",
 			Err:  stderrors.New("credential cannot be nil"),
@@ -224,7 +224,7 @@ func (g *MySQLGenerator) revokeWithRole(ctx context.Context, credential *credent
 	}
 
 	if role == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "MySQLGenerator.revokeWithRole",
 			Err:  stderrors.New("role cannot be nil"),
@@ -233,7 +233,7 @@ func (g *MySQLGenerator) revokeWithRole(ctx context.Context, credential *credent
 
 	username := credential.Data["username"]
 	if username == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "MySQLGenerator.revokeWithRole",
 			Err:  stderrors.New("username not found in credential data"),
@@ -256,7 +256,7 @@ func (g *MySQLGenerator) revokeWithRole(ctx context.Context, credential *credent
 	connectionURL := role.Config["connection_url"]
 	db, err := g.connector(connectionURL)
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "MySQLGenerator.revokeWithRole",
 			Err:  &api.WrappedMessageError{Message: "failed to connect to database", Cause: err},
@@ -285,7 +285,7 @@ func (g *MySQLGenerator) revokeWithRole(ctx context.Context, credential *credent
 // Rotate creates a new credential and revokes the old one.
 func (g *MySQLGenerator) Rotate(ctx context.Context, old *credentials.Credential, role *credentials.Role) (*credentials.Credential, error) {
 	if old == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "MySQLGenerator.Rotate",
 			Err:  stderrors.New("old credential cannot be nil"),
@@ -293,7 +293,7 @@ func (g *MySQLGenerator) Rotate(ctx context.Context, old *credentials.Credential
 	}
 
 	if role == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "MySQLGenerator.Rotate",
 			Err:  stderrors.New("role cannot be nil"),

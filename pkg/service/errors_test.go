@@ -110,9 +110,9 @@ func TestSentinelErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var dErr *dberrors.DragonError
+			var dErr *dberrors.QBError
 			if !dberrors.As(tt.err, &dErr) {
-				t.Fatalf("expected DragonError, got %T", tt.err)
+				t.Fatalf("expected QBError, got %T", tt.err)
 			}
 
 			if dErr.Code != tt.expectedCode {
@@ -139,9 +139,9 @@ func TestWrapError(t *testing.T) {
 		baseErr := stderrors.New("base error")
 		wrapped := WrapError(baseErr, dberrors.ErrStorage, "service.Put", "storage write failed")
 
-		var dErr *dberrors.DragonError
+		var dErr *dberrors.QBError
 		if !dberrors.As(wrapped, &dErr) {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
 
 		if dErr.Code != dberrors.ErrStorage {
@@ -164,8 +164,8 @@ func TestWrapError(t *testing.T) {
 		}
 	})
 
-	t.Run("wrap existing DragonError", func(t *testing.T) {
-		baseErr := &dberrors.DragonError{
+	t.Run("wrap existing QBError", func(t *testing.T) {
+		baseErr := &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "storage.Get",
 			Err:  stderrors.New("entity not found"),
@@ -173,9 +173,9 @@ func TestWrapError(t *testing.T) {
 
 		wrapped := WrapError(baseErr, dberrors.ErrStorage, "service.Get", "failed to retrieve")
 
-		var dErr *dberrors.DragonError
+		var dErr *dberrors.QBError
 		if !dberrors.As(wrapped, &dErr) {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
 
 		if dErr.Code != dberrors.ErrStorage {
@@ -204,9 +204,9 @@ func TestWrapErrorf(t *testing.T) {
 		wrapped := WrapErrorf(baseErr, dberrors.ErrNotFound, "service.Get",
 			"entity %s/%d not found", "user", uint64(123))
 
-		var dErr *dberrors.DragonError
+		var dErr *dberrors.QBError
 		if !dberrors.As(wrapped, &dErr) {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
 
 		if dErr.Code != dberrors.ErrNotFound {
@@ -235,9 +235,9 @@ func TestNewError(t *testing.T) {
 	t.Run("create new error", func(t *testing.T) {
 		err := NewError(dberrors.ErrInvalidInput, "service.Validate", "entity type cannot be empty")
 
-		var dErr *dberrors.DragonError
+		var dErr *dberrors.QBError
 		if !dberrors.As(err, &dErr) {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
 
 		if dErr.Code != dberrors.ErrInvalidInput {
@@ -260,9 +260,9 @@ func TestNewErrorf(t *testing.T) {
 		err := NewErrorf(dberrors.ErrInvalidInput, "service.Validate",
 			"invalid entity type: %s", "invalid_type")
 
-		var dErr *dberrors.DragonError
+		var dErr *dberrors.QBError
 		if !dberrors.As(err, &dErr) {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
 
 		if dErr.Code != dberrors.ErrInvalidInput {
@@ -293,7 +293,7 @@ func TestIsNotFound(t *testing.T) {
 		},
 		{
 			name: "wrapped not found",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  stderrors.New("not found"),
@@ -302,7 +302,7 @@ func TestIsNotFound(t *testing.T) {
 		},
 		{
 			name: "different error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrInternal,
 				Op:   "test",
 				Err:  stderrors.New("internal error"),
@@ -344,7 +344,7 @@ func TestIsTimeout(t *testing.T) {
 		},
 		{
 			name: "deadline exceeded",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrDeadlineExceeded,
 				Op:   "test",
 				Err:  stderrors.New("deadline exceeded"),
@@ -879,9 +879,9 @@ func TestFromGRPCError(t *testing.T) {
 				return
 			}
 
-			var dErr *dberrors.DragonError
+			var dErr *dberrors.QBError
 			if !dberrors.As(err, &dErr) {
-				t.Fatal("expected DragonError")
+				t.Fatal("expected QBError")
 			}
 
 			if dErr.Code != tt.expectedCode {
@@ -1007,8 +1007,8 @@ func TestToHTTPStatus(t *testing.T) {
 // =============================================================================
 
 func TestWithEntityContext(t *testing.T) {
-	t.Run("add context to DragonError", func(t *testing.T) {
-		baseErr := &dberrors.DragonError{
+	t.Run("add context to QBError", func(t *testing.T) {
+		baseErr := &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "storage.Get",
 			Err:  stderrors.New("not found"),
@@ -1016,9 +1016,9 @@ func TestWithEntityContext(t *testing.T) {
 
 		err := WithEntityContext(baseErr, "user", 123, "service.Get")
 
-		var dErr *dberrors.DragonError
+		var dErr *dberrors.QBError
 		if !dberrors.As(err, &dErr) {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
 
 		entityType, ok := dErr.GetContext("entity_type")
@@ -1041,9 +1041,9 @@ func TestWithEntityContext(t *testing.T) {
 		baseErr := stderrors.New("plain error")
 		err := WithEntityContext(baseErr, "user", 123, "service.Get")
 
-		var dErr *dberrors.DragonError
+		var dErr *dberrors.QBError
 		if !dberrors.As(err, &dErr) {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
 
 		entityType, ok := dErr.GetContext("entity_type")
@@ -1062,7 +1062,7 @@ func TestWithEntityContext(t *testing.T) {
 
 func TestWithShardContext(t *testing.T) {
 	t.Run("add shard context", func(t *testing.T) {
-		baseErr := &dberrors.DragonError{
+		baseErr := &dberrors.QBError{
 			Code: dberrors.ErrRaft,
 			Op:   "raft.Propose",
 			Err:  stderrors.New("proposal failed"),
@@ -1070,9 +1070,9 @@ func TestWithShardContext(t *testing.T) {
 
 		err := WithShardContext(baseErr, 1, 100)
 
-		var dErr *dberrors.DragonError
+		var dErr *dberrors.QBError
 		if !dberrors.As(err, &dErr) {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
 
 		shardID, ok := dErr.GetContext("shard_id")
@@ -1096,7 +1096,7 @@ func TestWithShardContext(t *testing.T) {
 
 func TestWithTimeoutContext(t *testing.T) {
 	t.Run("add timeout context", func(t *testing.T) {
-		baseErr := &dberrors.DragonError{
+		baseErr := &dberrors.QBError{
 			Code: dberrors.ErrTimeout,
 			Op:   "service.Get",
 			Err:  stderrors.New("operation timed out"),
@@ -1104,9 +1104,9 @@ func TestWithTimeoutContext(t *testing.T) {
 
 		err := WithTimeoutContext(baseErr, 5000, 5100)
 
-		var dErr *dberrors.DragonError
+		var dErr *dberrors.QBError
 		if !dberrors.As(err, &dErr) {
-			t.Fatal("expected DragonError")
+			t.Fatal("expected QBError")
 		}
 
 		timeoutMs, ok := dErr.GetContext("timeout_ms")
@@ -1299,7 +1299,7 @@ func TestErrorHelpers_IsUnavailable(t *testing.T) {
 	}{
 		{
 			name: "unavailable error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrUnavailable,
 			},
 			expected: true,
@@ -1324,7 +1324,7 @@ func TestErrorHelpers_IsUnavailable(t *testing.T) {
 	}
 }
 
-func TestErrorHelpers_IsUnauthorized_NonDragonError(t *testing.T) {
+func TestErrorHelpers_IsUnauthorized_NonQBError(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
@@ -1332,7 +1332,7 @@ func TestErrorHelpers_IsUnauthorized_NonDragonError(t *testing.T) {
 	}{
 		{
 			name: "unauthorized error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrUnauthorized,
 			},
 			expected: true,
@@ -1343,7 +1343,7 @@ func TestErrorHelpers_IsUnauthorized_NonDragonError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "non-DragonError type",
+			name:     "non-QBError type",
 			err:      stderrors.New("some other error"),
 			expected: false,
 		},
@@ -1357,7 +1357,7 @@ func TestErrorHelpers_IsUnauthorized_NonDragonError(t *testing.T) {
 	}
 }
 
-func TestErrorHelpers_IsForbidden_NonDragonError(t *testing.T) {
+func TestErrorHelpers_IsForbidden_NonQBError(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
@@ -1365,7 +1365,7 @@ func TestErrorHelpers_IsForbidden_NonDragonError(t *testing.T) {
 	}{
 		{
 			name: "forbidden error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrForbidden,
 			},
 			expected: true,
@@ -1376,7 +1376,7 @@ func TestErrorHelpers_IsForbidden_NonDragonError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "non-DragonError type",
+			name:     "non-QBError type",
 			err:      stderrors.New("some other error"),
 			expected: false,
 		},
@@ -1390,7 +1390,7 @@ func TestErrorHelpers_IsForbidden_NonDragonError(t *testing.T) {
 	}
 }
 
-func TestErrorHelpers_IsConflict_NonDragonError(t *testing.T) {
+func TestErrorHelpers_IsConflict_NonQBError(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
@@ -1398,7 +1398,7 @@ func TestErrorHelpers_IsConflict_NonDragonError(t *testing.T) {
 	}{
 		{
 			name: "conflict error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrConflict,
 			},
 			expected: true,
@@ -1409,7 +1409,7 @@ func TestErrorHelpers_IsConflict_NonDragonError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "non-DragonError type",
+			name:     "non-QBError type",
 			err:      stderrors.New("some other error"),
 			expected: false,
 		},
@@ -1423,7 +1423,7 @@ func TestErrorHelpers_IsConflict_NonDragonError(t *testing.T) {
 	}
 }
 
-func TestErrorHelpers_IsRetryable_NonDragonError(t *testing.T) {
+func TestErrorHelpers_IsRetryable_NonQBError(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
@@ -1431,7 +1431,7 @@ func TestErrorHelpers_IsRetryable_NonDragonError(t *testing.T) {
 	}{
 		{
 			name: "retryable error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code:  dberrors.ErrTimeout,
 				Retry: true,
 			},
@@ -1443,7 +1443,7 @@ func TestErrorHelpers_IsRetryable_NonDragonError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "non-DragonError type",
+			name:     "non-QBError type",
 			err:      stderrors.New("some other error"),
 			expected: false,
 		},
@@ -1457,7 +1457,7 @@ func TestErrorHelpers_IsRetryable_NonDragonError(t *testing.T) {
 	}
 }
 
-func TestErrorHelpers_IsRaftError_NonDragonError(t *testing.T) {
+func TestErrorHelpers_IsRaftError_NonQBError(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
@@ -1465,7 +1465,7 @@ func TestErrorHelpers_IsRaftError_NonDragonError(t *testing.T) {
 	}{
 		{
 			name: "raft error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrRaft,
 			},
 			expected: true,
@@ -1476,7 +1476,7 @@ func TestErrorHelpers_IsRaftError_NonDragonError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "non-DragonError type",
+			name:     "non-QBError type",
 			err:      stderrors.New("some other error"),
 			expected: false,
 		},
@@ -1498,7 +1498,7 @@ func TestErrorHelpers_IsStorageError(t *testing.T) {
 	}{
 		{
 			name: "storage error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrStorage,
 			},
 			expected: true,
@@ -1518,7 +1518,7 @@ func TestErrorHelpers_IsStorageError(t *testing.T) {
 	}
 }
 
-func TestIsStorageError_NonDragonError(t *testing.T) {
+func TestIsStorageError_NonQBError(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
@@ -1526,7 +1526,7 @@ func TestIsStorageError_NonDragonError(t *testing.T) {
 	}{
 		{
 			name: "storage error",
-			err: &quicbaasErrors.DragonError{
+			err: &quicbaasErrors.QBError{
 				Code: quicbaasErrors.ErrStorage,
 			},
 			expected: true,
@@ -1537,7 +1537,7 @@ func TestIsStorageError_NonDragonError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "non-DragonError type",
+			name:     "non-QBError type",
 			err:      stderrors.New("some other error"),
 			expected: false,
 		},
@@ -1565,8 +1565,8 @@ func TestToGRPCError_AlreadyGRPCError(t *testing.T) {
 	assert.Equal(t, codes.NotFound, st.Code())
 }
 
-func TestToGRPCError_NonDragonError(t *testing.T) {
-	// Create a non-DragonError
+func TestToGRPCError_NonQBError(t *testing.T) {
+	// Create a non-QBError
 	err := stderrors.New("some generic error")
 
 	// ToGRPCError should convert it
@@ -1587,8 +1587,8 @@ func TestFromGRPCError_NonGRPCError(t *testing.T) {
 	result := FromGRPCError(err)
 	require.NotNil(t, result)
 
-	// Should be a DragonError
-	var dErr *quicbaasErrors.DragonError
+	// Should be a QBError
+	var dErr *quicbaasErrors.QBError
 	require.True(t, quicbaasErrors.As(result, &dErr))
 	assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 }
@@ -1601,8 +1601,8 @@ func TestFromGRPCError_ValidGRPCError(t *testing.T) {
 	result := FromGRPCError(grpcErr)
 	require.NotNil(t, result)
 
-	// Should be a DragonError
-	var dErr *quicbaasErrors.DragonError
+	// Should be a QBError
+	var dErr *quicbaasErrors.QBError
 	require.True(t, quicbaasErrors.As(result, &dErr))
 	assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 }

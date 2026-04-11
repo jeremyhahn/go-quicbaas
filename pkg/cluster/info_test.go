@@ -752,7 +752,7 @@ func TestNewNodeNotFoundError(t *testing.T) {
 	err := NewNodeNotFoundError("test.op", 42)
 	require.NotNil(t, err)
 
-	var de *dragonerrors.DragonError
+	var de *dragonerrors.QBError
 	require.True(t, errors.As(err, &de))
 	assert.Equal(t, dragonerrors.ErrNotFound, de.Code)
 	assert.Equal(t, "test.op", de.Op)

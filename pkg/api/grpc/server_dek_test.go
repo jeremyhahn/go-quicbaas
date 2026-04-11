@@ -1027,7 +1027,7 @@ func TestDEKServer_GetDEKStatus_ServiceError(t *testing.T) {
 
 	mockSvc := &mockKMSService{
 		getDEKStatusFunc: func(ctx context.Context, req *service.GetDEKStatusRequest) (*service.GetDEKStatusResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "GetDEKStatus",
 				Err:  assert.AnError,
@@ -1056,7 +1056,7 @@ func TestDEKServer_SetDEKSafety_ServiceError(t *testing.T) {
 
 	mockSvc := &mockKMSService{
 		setDEKSafetyFunc: func(ctx context.Context, req *service.SetDEKSafetyRequest) (*service.SetDEKSafetyResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "SetDEKSafety",
 				Err:  assert.AnError,
@@ -1088,7 +1088,7 @@ func TestDEKServer_ClearDEKSafety_ServiceError(t *testing.T) {
 
 	mockSvc := &mockKMSService{
 		clearDEKSafetyFunc: func(ctx context.Context, req *service.ClearDEKSafetyRequest) (*service.ClearDEKSafetyResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrUnavailable,
 				Op:   "ClearDEKSafety",
 				Err:  assert.AnError,
@@ -1117,7 +1117,7 @@ func TestDEKServer_ListDEKs_ServiceError(t *testing.T) {
 
 	mockSvc := &mockKMSService{
 		listDEKsFunc: func(ctx context.Context, req *service.ListDEKsRequest) (*service.ListDEKsResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "ListDEKs",
 				Err:  assert.AnError,

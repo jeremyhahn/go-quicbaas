@@ -43,7 +43,7 @@ func TestToProtoError_Coverage(t *testing.T) {
 	})
 
 	t.Run("dragon_error", func(t *testing.T) {
-		err := &errors.DragonError{
+		err := &errors.QBError{
 			Code: errors.ErrForbidden,
 			Op:   "test",
 			Err:  stderrors.New("permission denied"),

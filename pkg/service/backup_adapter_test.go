@@ -256,7 +256,7 @@ func TestBackupManagerAdapter_Close_NilManager(t *testing.T) {
 }
 
 // TestBackupManagerAdapter_CreateBackup_ErrorCodeIsInvalidInput verifies that
-// the error returned for invalid backup type has the correct DragonError code.
+// the error returned for invalid backup type has the correct QBError code.
 func TestBackupManagerAdapter_CreateBackup_ErrorCodeIsInvalidInput(t *testing.T) {
 	adapter := NewBackupManagerAdapter(nil)
 	ctx := context.Background()
@@ -264,14 +264,14 @@ func TestBackupManagerAdapter_CreateBackup_ErrorCodeIsInvalidInput(t *testing.T)
 	_, err := adapter.CreateBackup(ctx, "not-a-backup-type")
 	require.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Equal(t, "BackupManagerAdapter.CreateBackup", dragonErr.Op)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Equal(t, "BackupManagerAdapter.CreateBackup", qbErr.Op)
 }
 
 // TestBackupManagerAdapter_RestoreBackup_ErrorCodeIsInvalidInput verifies that
-// the error returned for invalid restore options has the correct DragonError code.
+// the error returned for invalid restore options has the correct QBError code.
 func TestBackupManagerAdapter_RestoreBackup_ErrorCodeIsInvalidInput(t *testing.T) {
 	adapter := NewBackupManagerAdapter(nil)
 	ctx := context.Background()
@@ -279,8 +279,8 @@ func TestBackupManagerAdapter_RestoreBackup_ErrorCodeIsInvalidInput(t *testing.T
 	err := adapter.RestoreBackup(ctx, "backup-456", "not-restore-options")
 	require.Error(t, err)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
-	assert.Equal(t, "BackupManagerAdapter.RestoreBackup", dragonErr.Op)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Equal(t, "BackupManagerAdapter.RestoreBackup", qbErr.Op)
 }

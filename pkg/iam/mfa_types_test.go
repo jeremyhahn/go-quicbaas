@@ -235,7 +235,7 @@ func TestMFASecretValidate(t *testing.T) {
 					t.Errorf("MFASecret.Validate() expected error, got nil")
 					return
 				}
-				iamErr, ok := err.(*dberrors.DragonError)
+				iamErr, ok := err.(*dberrors.QBError)
 				if !ok {
 					t.Errorf("MFASecret.Validate() error is not IAMError type: %T", err)
 					return
@@ -346,7 +346,7 @@ func TestMFAEnrollmentValidate(t *testing.T) {
 					t.Errorf("MFAEnrollment.Validate() expected error, got nil")
 					return
 				}
-				iamErr, ok := err.(*dberrors.DragonError)
+				iamErr, ok := err.(*dberrors.QBError)
 				if !ok {
 					t.Errorf("MFAEnrollment.Validate() error is not IAMError type: %T", err)
 					return
@@ -505,7 +505,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 					t.Errorf("MFAChallenge.Validate() expected error, got nil")
 					return
 				}
-				iamErr, ok := err.(*dberrors.DragonError)
+				iamErr, ok := err.(*dberrors.QBError)
 				if !ok {
 					t.Errorf("MFAChallenge.Validate() error is not IAMError type: %T", err)
 					return
@@ -663,7 +663,7 @@ func TestMFAPolicyValidate(t *testing.T) {
 					t.Errorf("MFAPolicy.Validate() expected error, got nil")
 					return
 				}
-				iamErr, ok := err.(*dberrors.DragonError)
+				iamErr, ok := err.(*dberrors.QBError)
 				if !ok {
 					t.Errorf("MFAPolicy.Validate() error is not IAMError type: %T", err)
 					return
@@ -1053,7 +1053,7 @@ func TestMFAConfigValidate(t *testing.T) {
 					t.Errorf("MFAConfig.Validate() expected error, got nil")
 					return
 				}
-				iamErr, ok := err.(*dberrors.DragonError)
+				iamErr, ok := err.(*dberrors.QBError)
 				if !ok {
 					t.Errorf("MFAConfig.Validate() error is not IAMError type: %T", err)
 					return

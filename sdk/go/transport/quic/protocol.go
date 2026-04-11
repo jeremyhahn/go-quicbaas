@@ -582,7 +582,7 @@ func DecodePayload(data []byte, entity interface{}) error {
 	return nil
 }
 
-// StatusToError converts a status code to a DragonError.
+// StatusToError converts a status code to a QBError.
 func StatusToError(status byte, message string) error {
 	if status == StatusOK {
 		return nil
@@ -613,7 +613,7 @@ func StatusToError(status byte, message string) error {
 	return errors.New(code, "quic.protocol", message)
 }
 
-// ErrorToStatus converts a DragonError to a status code.
+// ErrorToStatus converts a QBError to a status code.
 func ErrorToStatus(err error) byte {
 	if err == nil {
 		return StatusOK

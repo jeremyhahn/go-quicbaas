@@ -85,7 +85,7 @@ func (m *kvParameterManager) StoreWithOptions(ctx context.Context, path string, 
 
 	client, err := m.getClient()
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "kvParameterManager.StoreWithOptions",
 			Err:  &api.OperationFailedError{Operation: "get client", Cause: err},
@@ -132,7 +132,7 @@ func (m *kvParameterManager) StoreWithOptions(ctx context.Context, path string, 
 	}
 	data, err := json.Marshal(stored)
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "kvParameterManager.StoreWithOptions",
 			Err:  &api.OperationFailedError{Operation: "serialize parameter", Cause: err},
@@ -141,7 +141,7 @@ func (m *kvParameterManager) StoreWithOptions(ctx context.Context, path string, 
 
 	// Store via SDK client
 	if err := client.KV().Put(ctx, key, data); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "kvParameterManager.StoreWithOptions",
 			Err:  &api.OperationFailedError{Operation: "store parameter", Cause: err},
@@ -165,7 +165,7 @@ func (m *kvParameterManager) Get(ctx context.Context, path string, withDecryptio
 
 	client, err := m.getClient()
 	if err != nil {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "kvParameterManager.Get",
 			Err:  &api.OperationFailedError{Operation: "get client", Cause: err},
@@ -181,7 +181,7 @@ func (m *kvParameterManager) Get(ctx context.Context, path string, withDecryptio
 	// Deserialize
 	var stored storedParameter
 	if err := json.Unmarshal(data, &stored); err != nil {
-		return nil, nil, &errors.DragonError{
+		return nil, nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "kvParameterManager.Get",
 			Err:  &api.OperationFailedError{Operation: "deserialize parameter", Cause: err},
@@ -206,7 +206,7 @@ func (m *kvParameterManager) Delete(ctx context.Context, path string) error {
 
 	client, err := m.getClient()
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "kvParameterManager.Delete",
 			Err:  &api.OperationFailedError{Operation: "get client", Cause: err},
@@ -221,7 +221,7 @@ func (m *kvParameterManager) Delete(ctx context.Context, path string) error {
 
 	// Delete via SDK client
 	if err := client.KV().Delete(ctx, key); err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "kvParameterManager.Delete",
 			Err:  &api.OperationFailedError{Operation: "delete parameter", Cause: err},

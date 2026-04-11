@@ -101,7 +101,7 @@ func NewStoragePool(ctx context.Context, opts ...PoolOption) (StoragePool, error
 			pool.closed.Store(true)
 			close(pool.closedChan)
 			pool.drainAndCloseConnections()
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrInternal,
 				Op:   "iam.storage.pool.new",
 				Err:  &ConnectionCreationError{Index: i + 1, Total: config.MinConns, Cause: err},
@@ -144,7 +144,7 @@ func NewStoragePoolWithConfig(ctx context.Context, config PoolConfig) (StoragePo
 			pool.closed.Store(true)
 			close(pool.closedChan)
 			pool.drainAndCloseConnections()
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrInternal,
 				Op:   "iam.storage.pool.new",
 				Err:  &ConnectionCreationError{Index: i + 1, Total: config.MinConns, Cause: err},
@@ -230,7 +230,7 @@ func (p *storagePool) Get(ctx context.Context) (StorageConnection, error) {
 
 		case <-ctx.Done():
 			// Context cancelled
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrCanceled,
 				Op:   "iam.storage.pool.get",
 				Err:  ctx.Err(),
@@ -265,7 +265,7 @@ func (p *storagePool) Get(ctx context.Context) (StorageConnection, error) {
 			select {
 			case <-time.After(10 * time.Millisecond):
 			case <-ctx.Done():
-				return nil, &dberrors.DragonError{
+				return nil, &dberrors.QBError{
 					Code: dberrors.ErrCanceled,
 					Op:   "iam.storage.pool.get",
 					Err:  ctx.Err(),
@@ -286,7 +286,7 @@ func (p *storagePool) Put(conn StorageConnection) error {
 
 	impl, ok := conn.(*storageConnection)
 	if !ok {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.storage.pool.put",
 			Err:  &InvalidConnectionTypeError{},
@@ -380,7 +380,7 @@ func (p *storagePool) Stats() PoolStats {
 func (p *storagePool) createConnection(ctx context.Context) (*storageConnection, error) {
 	store, err := p.config.Factory(ctx)
 	if err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.storage.pool.create",
 			Err:  &FactoryFailedError{Cause: err},

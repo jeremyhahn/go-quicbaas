@@ -61,7 +61,7 @@ func NewBaseGenerator(logger interfaces.Logger) *BaseGenerator {
 // ValidateConfig validates common database configuration fields.
 func (g *BaseGenerator) ValidateConfig(config map[string]string) error {
 	if config == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "BaseGenerator.ValidateConfig",
 			Err:  stderrors.New("config cannot be nil"),
@@ -69,7 +69,7 @@ func (g *BaseGenerator) ValidateConfig(config map[string]string) error {
 	}
 
 	if config["connection_url"] == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "BaseGenerator.ValidateConfig",
 			Err:  ErrMissingConnectionURL,
@@ -77,7 +77,7 @@ func (g *BaseGenerator) ValidateConfig(config map[string]string) error {
 	}
 
 	if config["creation_statements"] == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "BaseGenerator.ValidateConfig",
 			Err:  ErrMissingCreationStatements,
@@ -96,7 +96,7 @@ func (g *BaseGenerator) GenerateUsername(prefix string) (string, error) {
 	// Generate random suffix
 	bytes := make([]byte, 8)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", &errors.DragonError{
+		return "", &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "BaseGenerator.GenerateUsername",
 			Err:  &api.WrappedMessageError{Message: "failed to generate random bytes", Cause: err},
@@ -119,7 +119,7 @@ func (g *BaseGenerator) GeneratePassword(length int) (string, error) {
 	// Generate random bytes
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", &errors.DragonError{
+		return "", &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "BaseGenerator.GeneratePassword",
 			Err:  &api.WrappedMessageError{Message: "failed to generate random password", Cause: err},
@@ -141,7 +141,7 @@ func (g *BaseGenerator) GeneratePassword(length int) (string, error) {
 func (g *BaseGenerator) GenerateCredentialID() (string, error) {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", &errors.DragonError{
+		return "", &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "BaseGenerator.GenerateCredentialID",
 			Err:  &api.WrappedMessageError{Message: "failed to generate credential ID", Cause: err},

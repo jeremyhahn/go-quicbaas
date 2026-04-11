@@ -165,7 +165,7 @@ func TestToGRPCError(t *testing.T) {
 		},
 		{
 			name: "dragon not found error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  errors.New("not found"),
@@ -174,7 +174,7 @@ func TestToGRPCError(t *testing.T) {
 		},
 		{
 			name: "dragon conflict error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrConflict,
 				Op:   "test",
 				Err:  errors.New("conflict"),
@@ -183,7 +183,7 @@ func TestToGRPCError(t *testing.T) {
 		},
 		{
 			name: "dragon timeout error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrTimeout,
 				Op:   "test",
 				Err:  errors.New("timeout"),
@@ -192,7 +192,7 @@ func TestToGRPCError(t *testing.T) {
 		},
 		{
 			name: "dragon invalid input error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrInvalidInput,
 				Op:   "test",
 				Err:  errors.New("invalid"),
@@ -201,7 +201,7 @@ func TestToGRPCError(t *testing.T) {
 		},
 		{
 			name: "dragon unauthorized error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrUnauthorized,
 				Op:   "test",
 				Err:  errors.New("unauthorized"),
@@ -210,7 +210,7 @@ func TestToGRPCError(t *testing.T) {
 		},
 		{
 			name: "dragon forbidden error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrForbidden,
 				Op:   "test",
 				Err:  errors.New("forbidden"),
@@ -219,7 +219,7 @@ func TestToGRPCError(t *testing.T) {
 		},
 		{
 			name: "dragon unavailable error",
-			err: &dberrors.DragonError{
+			err: &dberrors.QBError{
 				Code: dberrors.ErrUnavailable,
 				Op:   "test",
 				Err:  errors.New("unavailable"),
@@ -544,7 +544,7 @@ func BenchmarkFromGRPCError(b *testing.B) {
 }
 
 func BenchmarkToGRPCError(b *testing.B) {
-	err := &dberrors.DragonError{
+	err := &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "test",
 		Err:  errors.New("not found"),
@@ -928,8 +928,8 @@ func TestFromGRPCError_NonStatusErrorsAndNil(t *testing.T) {
 			expectedOK:   false,
 		},
 		{
-			name:         "DragonError without gRPC status returns ErrUnknown and false",
-			err:          &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "test", Err: errors.New("not found")},
+			name:         "QBError without gRPC status returns ErrUnknown and false",
+			err:          &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test", Err: errors.New("not found")},
 			expectedCode: dberrors.ErrUnknown,
 			expectedOK:   false,
 		},
@@ -973,8 +973,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			message:      "resource not found",
 		},
 		{
-			name: "DragonError with ErrNotFound",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrNotFound",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "storage.Get",
 				Err:  errors.New("key not found"),
@@ -984,8 +984,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			message:      "storage.Get: not_found: key not found",
 		},
 		{
-			name: "DragonError with ErrInternal",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrInternal",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrInternal,
 				Op:   "storage.Write",
 				Err:  errors.New("disk full"),
@@ -993,8 +993,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name: "DragonError with ErrUnavailable",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrUnavailable",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrUnavailable,
 				Op:   "raft.Propose",
 				Err:  errors.New("no leader"),
@@ -1002,8 +1002,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.Unavailable,
 		},
 		{
-			name: "DragonError with ErrStorage",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrStorage",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrStorage,
 				Op:   "pebble.Write",
 				Err:  errors.New("write failed"),
@@ -1011,8 +1011,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name: "DragonError with ErrRaft",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrRaft",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrRaft,
 				Op:   "raft.Apply",
 				Err:  errors.New("consensus failed"),
@@ -1020,8 +1020,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name: "DragonError with ErrEncryption",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrEncryption",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrEncryption,
 				Op:   "crypto.Encrypt",
 				Err:  errors.New("encryption failed"),
@@ -1029,8 +1029,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name: "DragonError with ErrDecryption",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrDecryption",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrDecryption,
 				Op:   "crypto.Decrypt",
 				Err:  errors.New("decryption failed"),
@@ -1038,8 +1038,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name: "DragonError with ErrValidation",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrValidation",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrValidation,
 				Op:   "api.Validate",
 				Err:  errors.New("invalid field"),
@@ -1047,8 +1047,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.InvalidArgument,
 		},
 		{
-			name: "DragonError with ErrConfiguration",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrConfiguration",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrConfiguration,
 				Op:   "config.Load",
 				Err:  errors.New("missing required field"),
@@ -1056,8 +1056,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.FailedPrecondition,
 		},
 		{
-			name: "DragonError with ErrSnapshot",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrSnapshot",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrSnapshot,
 				Op:   "snapshot.Create",
 				Err:  errors.New("snapshot failed"),
@@ -1065,8 +1065,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name: "DragonError with ErrReplication",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrReplication",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrReplication,
 				Op:   "replication.Sync",
 				Err:  errors.New("replication lag"),
@@ -1074,8 +1074,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name: "DragonError with ErrLeaderNotAvailable",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrLeaderNotAvailable",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrLeaderNotAvailable,
 				Op:   "raft.GetLeader",
 				Err:  errors.New("no leader elected"),
@@ -1083,8 +1083,8 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 			expectedCode: codes.Unavailable,
 		},
 		{
-			name: "DragonError with ErrClusterNotReady",
-			err: &dberrors.DragonError{
+			name: "QBError with ErrClusterNotReady",
+			err: &dberrors.QBError{
 				Code: dberrors.ErrClusterNotReady,
 				Op:   "cluster.Join",
 				Err:  errors.New("cluster initializing"),
@@ -1264,8 +1264,8 @@ func TestConvertError_VariousErrorTypes(t *testing.T) {
 			result := convertError(tt.err)
 			require.NotNil(t, result)
 
-			var de *dberrors.DragonError
-			require.True(t, errors.As(result, &de), "result should be a DragonError")
+			var de *dberrors.QBError
+			require.True(t, errors.As(result, &de), "result should be a QBError")
 			assert.Equal(t, tt.expectedCode, de.Code)
 			assert.Equal(t, tt.expectedOp, de.Op)
 
@@ -1284,7 +1284,7 @@ func TestConvertError_PreservesGRPCMessage(t *testing.T) {
 	result := convertError(grpcErr)
 	require.NotNil(t, result)
 
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	require.True(t, errors.As(result, &de))
 	assert.Equal(t, originalMessage, de.Err.Error())
 }

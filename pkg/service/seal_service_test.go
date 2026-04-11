@@ -147,7 +147,7 @@ func (m *mockSealManager) GenerateRecoveryKeys(ctx context.Context, threshold, t
 	}
 	// Default behavior
 	if m.isSealed {
-		return nil, &quicbaasErrors.DragonError{
+		return nil, &quicbaasErrors.QBError{
 			Code: quicbaasErrors.ErrUnauthorized,
 			Op:   "seal.GenerateRecoveryKeys",
 			Err:  stderrors.New("database must be unsealed"),
@@ -162,14 +162,14 @@ func (m *mockSealManager) DeleteRecoveryKeys(ctx context.Context) error {
 	}
 	// Default behavior
 	if m.isSealed {
-		return &quicbaasErrors.DragonError{
+		return &quicbaasErrors.QBError{
 			Code: quicbaasErrors.ErrUnauthorized,
 			Op:   "seal.DeleteRecoveryKeys",
 			Err:  stderrors.New("database must be unsealed"),
 		}
 	}
 	if !m.recoveryKeysEnabled {
-		return &quicbaasErrors.DragonError{
+		return &quicbaasErrors.QBError{
 			Code: quicbaasErrors.ErrInvalidInput,
 			Op:   "seal.DeleteRecoveryKeys",
 			Err:  stderrors.New("recovery keys are not enabled"),
@@ -224,7 +224,7 @@ func TestSealService_Status_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}
@@ -438,7 +438,7 @@ func TestSealService_Initialize_AlreadyInitialized(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrAlreadyExists, dErr.Code)
 	}
@@ -461,7 +461,7 @@ func TestSealService_Initialize_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}
@@ -580,7 +580,7 @@ func TestSealService_Unseal_NotInitialized(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -603,7 +603,7 @@ func TestSealService_Unseal_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}
@@ -656,7 +656,7 @@ func TestSealService_Seal_ManagerError(t *testing.T) {
 	err := svc.Seal(context.Background())
 
 	require.Error(t, err)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}
@@ -763,7 +763,7 @@ func TestSealService_Rekey_NotInitialized(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -787,7 +787,7 @@ func TestSealService_Rekey_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}
@@ -915,7 +915,7 @@ func TestSealService_GenerateRecoveryKey_NotInitialized(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -939,7 +939,7 @@ func TestSealService_GenerateRecoveryKey_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}
@@ -1010,7 +1010,7 @@ func TestSealService_DeleteRecoveryKey_NotInitialized(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -1033,7 +1033,7 @@ func TestSealService_DeleteRecoveryKey_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}
@@ -1157,7 +1157,7 @@ func TestSealService_GenerateRootToken_NotInitialized(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 	}
@@ -1181,7 +1181,7 @@ func TestSealService_GenerateRootToken_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.DragonError
+	var dErr *quicbaasErrors.QBError
 	if errors.As(err, &dErr) {
 		assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
 	}

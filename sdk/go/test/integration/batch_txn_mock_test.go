@@ -769,11 +769,11 @@ func TestBatchExecute_TransportError(t *testing.T) {
 	}
 	if !errors.IsRetryable(err) && errors.Code(err) != errors.CodeConnection {
 		// Connection errors should be identifiable
-		dragonErr, ok := err.(*errors.DragonError)
+		qbErr, ok := err.(*errors.QBError)
 		if !ok {
-			t.Errorf("expected DragonError, got %T", err)
-		} else if dragonErr.Code != errors.CodeConnection {
-			t.Errorf("expected connection error code, got %v", dragonErr.Code)
+			t.Errorf("expected QBError, got %T", err)
+		} else if qbErr.Code != errors.CodeConnection {
+			t.Errorf("expected connection error code, got %v", qbErr.Code)
 		}
 	}
 }

@@ -439,7 +439,7 @@ func (h *Handler) handleStreamFetchObjects(ctx context.Context, req *Request) *R
 		// Check context for cancellation
 		select {
 		case <-ctx.Done():
-			return h.errorResponse(&errors.DragonError{
+			return h.errorResponse(&errors.QBError{
 				Code: errors.ErrTimeout,
 				Op:   "quic.handleStreamFetchObjects",
 				Err:  ctx.Err(),

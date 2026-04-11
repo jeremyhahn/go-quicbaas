@@ -442,7 +442,7 @@ func TestHandleVectorCreateNamespace_DecodeError(t *testing.T) {
 func TestHandleVectorCreateNamespace_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		createNamespaceFn: func(ctx context.Context, req *service.CreateNamespaceRequest) (*service.CreateNamespaceResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrAlreadyExists,
 				Op:   "vector.CreateNamespace",
 				Err:  &qerrors.MessageError{Message: "namespace already exists"},
@@ -531,7 +531,7 @@ func TestHandleVectorDeleteNamespace_DecodeError(t *testing.T) {
 func TestHandleVectorDeleteNamespace_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		deleteNamespaceFn: func(ctx context.Context, req *service.DeleteNamespaceRequest) (*service.DeleteNamespaceResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.DeleteNamespace",
 				Err:  &qerrors.MessageError{Message: "namespace not found"},
@@ -620,7 +620,7 @@ func TestHandleVectorListNamespaces_DecodeError(t *testing.T) {
 func TestHandleVectorListNamespaces_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		listNamespacesFn: func(ctx context.Context, req *service.ListNamespacesRequest) (*service.ListNamespacesResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrInternal,
 				Op:   "vector.ListNamespaces",
 				Err:  &qerrors.MessageError{Message: "internal error"},
@@ -710,7 +710,7 @@ func TestHandleVectorGetNamespaceInfo_DecodeError(t *testing.T) {
 func TestHandleVectorGetNamespaceInfo_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		getNamespaceInfoFn: func(ctx context.Context, req *service.GetNamespaceInfoRequest) (*service.GetNamespaceInfoResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.GetNamespaceInfo",
 				Err:  &qerrors.MessageError{Message: "namespace not found"},
@@ -804,7 +804,7 @@ func TestHandleVectorUpsert_DecodeError(t *testing.T) {
 func TestHandleVectorUpsert_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		upsertVectorFn: func(ctx context.Context, req *service.UpsertVectorRequest) (*service.UpsertVectorResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrInvalidInput,
 				Op:   "vector.UpsertVector",
 				Err:  &qerrors.MessageError{Message: "dimension mismatch"},
@@ -901,7 +901,7 @@ func TestHandleVectorGet_DecodeError(t *testing.T) {
 func TestHandleVectorGet_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		getVectorFn: func(ctx context.Context, req *service.GetVectorRequest) (*service.GetVectorResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.GetVector",
 				Err:  &qerrors.MessageError{Message: "vector not found"},
@@ -991,7 +991,7 @@ func TestHandleVectorDelete_DecodeError(t *testing.T) {
 func TestHandleVectorDelete_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		deleteVectorFn: func(ctx context.Context, req *service.DeleteVectorRequest) (*service.DeleteVectorResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.DeleteVector",
 				Err:  &qerrors.MessageError{Message: "vector not found"},
@@ -1088,7 +1088,7 @@ func TestHandleVectorBatchUpsert_DecodeError(t *testing.T) {
 func TestHandleVectorBatchUpsert_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		batchUpsertFn: func(ctx context.Context, req *service.BatchUpsertRequest) (*service.BatchUpsertResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrInvalidInput,
 				Op:   "vector.BatchUpsert",
 				Err:  &qerrors.MessageError{Message: "batch contains invalid vectors"},
@@ -1188,7 +1188,7 @@ func TestHandleVectorSearchSimilar_DecodeError(t *testing.T) {
 func TestHandleVectorSearchSimilar_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		searchSimilarFn: func(ctx context.Context, req *service.SearchSimilarRequest) (*service.SearchSimilarResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.SearchSimilar",
 				Err:  &qerrors.MessageError{Message: "namespace not found"},
@@ -1286,7 +1286,7 @@ func TestHandleVectorSearchByMetadata_DecodeError(t *testing.T) {
 func TestHandleVectorSearchByMetadata_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		searchByMetadataFn: func(ctx context.Context, req *service.SearchByMetadataRequest) (*service.SearchByMetadataResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrInvalidInput,
 				Op:   "vector.SearchByMetadata",
 				Err:  &qerrors.MessageError{Message: "invalid filter expression"},
@@ -1388,7 +1388,7 @@ func TestHandleVectorHybridSearch_DecodeError(t *testing.T) {
 func TestHandleVectorHybridSearch_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		hybridSearchFn: func(ctx context.Context, req *service.HybridSearchRequest) (*service.HybridSearchResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.HybridSearch",
 				Err:  &qerrors.MessageError{Message: "namespace not found"},
@@ -1484,7 +1484,7 @@ func TestHandleVectorRebuildIndex_DecodeError(t *testing.T) {
 func TestHandleVectorRebuildIndex_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		rebuildIndexFn: func(ctx context.Context, req *service.RebuildIndexRequest) (*service.RebuildIndexResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.RebuildIndex",
 				Err:  &qerrors.MessageError{Message: "namespace not found"},
@@ -1579,7 +1579,7 @@ func TestHandleVectorGetRebuildProgress_DecodeError(t *testing.T) {
 func TestHandleVectorGetRebuildProgress_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		getRebuildProgressFn: func(ctx context.Context, req *service.GetRebuildProgressRequest) (*service.GetRebuildProgressResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.GetRebuildProgress",
 				Err:  &qerrors.MessageError{Message: "no rebuild job found"},
@@ -1680,7 +1680,7 @@ func TestHandleVectorGetIndexStats_DecodeError(t *testing.T) {
 func TestHandleVectorGetIndexStats_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		getIndexStatsFn: func(ctx context.Context, req *service.GetIndexStatsRequest) (*service.GetIndexStatsResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.GetIndexStats",
 				Err:  &qerrors.MessageError{Message: "namespace not found"},
@@ -1773,7 +1773,7 @@ func TestHandleVectorCompact_DecodeError(t *testing.T) {
 func TestHandleVectorCompact_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		compactNamespaceFn: func(ctx context.Context, req *service.CompactNamespaceRequest) (*service.CompactNamespaceResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.CompactNamespace",
 				Err:  &qerrors.MessageError{Message: "namespace not found"},
@@ -1866,7 +1866,7 @@ func TestHandleVectorGetCompactionProgress_DecodeError(t *testing.T) {
 func TestHandleVectorGetCompactionProgress_ServiceError(t *testing.T) {
 	vectorSvc := &mockVectorService{
 		getCompactionProgressFn: func(ctx context.Context, req *service.GetCompactionProgressRequest) (*service.GetCompactionProgressResponse, error) {
-			return nil, &qerrors.DragonError{
+			return nil, &qerrors.QBError{
 				Code: qerrors.ErrNotFound,
 				Op:   "vector.GetCompactionProgress",
 				Err:  &qerrors.MessageError{Message: "no compaction in progress"},

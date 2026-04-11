@@ -45,7 +45,7 @@ func (m *mockTenantStorage) CreateTenant(ctx context.Context, tenant *Tenant) er
 	defer m.mu.Unlock()
 
 	if _, exists := m.tenants[tenant.ID]; exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrAlreadyExists,
 			Op:   "iam.tenant",
 			Err:  ErrTenantAlreadyExists.Err,
@@ -79,7 +79,7 @@ func (m *mockTenantStorage) GetTenant(ctx context.Context, id string) (*Tenant, 
 
 	tenant, exists := m.tenants[id]
 	if !exists {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.tenant",
 			Err:  ErrTenantNotFound.Err,
@@ -96,7 +96,7 @@ func (m *mockTenantStorage) UpdateTenant(ctx context.Context, tenant *Tenant) er
 	defer m.mu.Unlock()
 
 	if _, exists := m.tenants[tenant.ID]; !exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.tenant",
 			Err:  ErrTenantNotFound.Err,
@@ -129,7 +129,7 @@ func (m *mockTenantStorage) DeleteTenant(ctx context.Context, id string) error {
 	defer m.mu.Unlock()
 
 	if _, exists := m.tenants[id]; !exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.tenant",
 			Err:  ErrTenantNotFound.Err,
@@ -187,7 +187,7 @@ func (m *mockTenantStorage) GetSettings(ctx context.Context, tenantID string) (*
 
 	settings, exists := m.settings[tenantID]
 	if !exists {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.tenant",
 			Err:  ErrTenantNotFound.Err,
@@ -203,7 +203,7 @@ func (m *mockTenantStorage) UpdateSettings(ctx context.Context, tenantID string,
 	defer m.mu.Unlock()
 
 	if _, exists := m.tenants[tenantID]; !exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.tenant",
 			Err:  ErrTenantNotFound.Err,
@@ -221,7 +221,7 @@ func (m *mockTenantStorage) GetQuota(ctx context.Context, tenantID string) (*Ten
 
 	quota, exists := m.quotas[tenantID]
 	if !exists {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.tenant",
 			Err:  ErrTenantNotFound.Err,
@@ -237,7 +237,7 @@ func (m *mockTenantStorage) UpdateQuota(ctx context.Context, tenantID string, qu
 	defer m.mu.Unlock()
 
 	if _, exists := m.tenants[tenantID]; !exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.tenant",
 			Err:  ErrTenantNotFound.Err,
@@ -255,7 +255,7 @@ func (m *mockTenantStorage) IncrementQuotaUsage(ctx context.Context, tenantID st
 
 	quota, exists := m.quotas[tenantID]
 	if !exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "iam.tenant",
 			Err:  ErrTenantNotFound.Err,
@@ -365,9 +365,9 @@ func TestCreateTenant_InvalidName(t *testing.T) {
 				t.Fatal("Expected error for invalid tenant name")
 			}
 
-			var dbErr *dberrors.DragonError
+			var dbErr *dberrors.QBError
 			if !dberrors.As(err, &dbErr) {
-				t.Fatalf("Expected DragonError, got %T", err)
+				t.Fatalf("Expected QBError, got %T", err)
 			}
 			if dbErr.Code != tt.wantCode {
 				t.Errorf("Expected error code %v, got %v", tt.wantCode, dbErr.Code)
@@ -438,9 +438,9 @@ func TestCreateTenant_DuplicateID(t *testing.T) {
 		t.Fatal("Expected error for duplicate tenant ID")
 	}
 
-	var dbErr *dberrors.DragonError
+	var dbErr *dberrors.QBError
 	if !dberrors.As(err, &dbErr) {
-		t.Fatalf("Expected DragonError, got %T", err)
+		t.Fatalf("Expected QBError, got %T", err)
 	}
 	if dbErr.Code != dberrors.ErrAlreadyExists {
 		t.Errorf("Expected ErrAlreadyExists, got %v", dbErr.Code)
@@ -649,9 +649,9 @@ func TestUpdateTenant_EmptyName(t *testing.T) {
 		t.Fatal("Expected error for empty tenant name")
 	}
 
-	var dbErr *dberrors.DragonError
+	var dbErr *dberrors.QBError
 	if !dberrors.As(err, &dbErr) {
-		t.Fatalf("Expected DragonError, got %T", err)
+		t.Fatalf("Expected QBError, got %T", err)
 	}
 	if dbErr.Code != dberrors.ErrInvalidInput {
 		t.Errorf("Expected ErrInvalidInput, got %v", dbErr.Code)
@@ -956,9 +956,9 @@ func TestCheckQuota_Exceeded(t *testing.T) {
 		t.Fatal("Expected quota exceeded error")
 	}
 
-	var dbErr *dberrors.DragonError
+	var dbErr *dberrors.QBError
 	if !dberrors.As(err, &dbErr) {
-		t.Fatalf("Expected DragonError, got %T", err)
+		t.Fatalf("Expected QBError, got %T", err)
 	}
 	if dbErr.Code != dberrors.ErrResourceExhausted {
 		t.Errorf("Expected ErrResourceExhausted, got %v", dbErr.Code)
@@ -984,9 +984,9 @@ func TestCheckQuota_UnknownResource(t *testing.T) {
 		t.Fatal("Expected error for unknown resource")
 	}
 
-	var dbErr *dberrors.DragonError
+	var dbErr *dberrors.QBError
 	if !dberrors.As(err, &dbErr) {
-		t.Fatalf("Expected DragonError, got %T", err)
+		t.Fatalf("Expected QBError, got %T", err)
 	}
 	if dbErr.Code != dberrors.ErrInvalidInput {
 		t.Errorf("Expected ErrInvalidInput, got %v", dbErr.Code)

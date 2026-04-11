@@ -148,9 +148,9 @@ func TestParamEnforceTenantAccess_MatchingTenant(t *testing.T) {
 func TestParamEnforceTenantAccess_CrossTenantDenied(t *testing.T) {
 	err := paramEnforceTenantAccess("acme-corp", "tenant/other-corp/app/config/db_host", "GetParameter")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 	assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
 }
 
@@ -158,9 +158,9 @@ func TestParamEnforceTenantAccess_UnscopedPathDenied(t *testing.T) {
 	// A multi-tenant request cannot access an unscoped path
 	err := paramEnforceTenantAccess("acme-corp", "unscoped-path", "DeleteParameter")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 }
 
 func TestParamEnforceTenantAccess_OperationInErrorMessage(t *testing.T) {
@@ -191,9 +191,9 @@ func TestParamPrepareTenantContext_InvalidTenant(t *testing.T) {
 	ctx := iam.ContextWithTenant(context.Background(), "invalid tenant!@#")
 	_, err := paramPrepareTenantContext(ctx)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestParamPrepareTenantContext_TooLongTenant(t *testing.T) {

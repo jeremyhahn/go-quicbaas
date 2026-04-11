@@ -279,18 +279,18 @@ func TestNewHandlerNilService(t *testing.T) {
 	_, err := NewHandler(nil, nil, &testLogger{})
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewHandlerNilLogger(t *testing.T) {
 	_, err := NewHandler(&mockObjectStorageService{}, nil, nil)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestNewHandlerSuccess(t *testing.T) {
@@ -309,9 +309,9 @@ func TestHandlerUnknownOpcode(t *testing.T) {
 	_, err = handler.Handle(context.Background(), 0xFF, nil)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestHandlerClosed(t *testing.T) {
@@ -329,9 +329,9 @@ func TestHandlerClosed(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpGetObject, nil)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
 func TestHandleRequestNil(t *testing.T) {
@@ -762,7 +762,7 @@ func TestHandleSetTenantQuotas(t *testing.T) {
 func TestHandleServiceError(t *testing.T) {
 	svc := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,
@@ -781,9 +781,9 @@ func TestHandleServiceError(t *testing.T) {
 	_, err = handler.Handle(context.Background(), OpGetObject, reqPayload)
 	require.Error(t, err)
 
-	var dragonErr *dberrors.DragonError
-	require.True(t, dberrors.As(err, &dragonErr))
-	assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+	var qbErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
 func TestIsAdminOperation(t *testing.T) {
@@ -887,7 +887,7 @@ func TestHandleBatchWithErrors(t *testing.T) {
 	svc := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
 			if req.Key == "missing-key" {
-				return nil, &dberrors.DragonError{
+				return nil, &dberrors.QBError{
 					Code: dberrors.ErrNotFound,
 					Op:   "test",
 					Err:  assert.AnError,
@@ -938,7 +938,7 @@ func TestHandleRequestSuccess(t *testing.T) {
 func TestHandleRequestWithError(t *testing.T) {
 	svc := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrNotFound,
 				Op:   "test",
 				Err:  assert.AnError,

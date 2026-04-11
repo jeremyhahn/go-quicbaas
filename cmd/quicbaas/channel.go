@@ -54,7 +54,7 @@ Usage in .mcp.json:
     "args": ["channel", "serve", "--address", "quicbaas:9090"]
   }`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "channel",
 				Err:  ErrNoCommand,
@@ -117,7 +117,7 @@ Examples:
 // runChannelServe starts the MCP channel server over stdio.
 func runChannelServe(cmd *cobra.Command, args []string) error {
 	if channelAddress == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "channel.serve",
 			Err:  &ChannelAddressRequiredError{},
@@ -156,7 +156,7 @@ func serveChannelStdio(ctx context.Context) error {
 			if err.Error() == "EOF" {
 				return nil
 			}
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "channel.serve.decode",
 				Err:  &ChannelDecodeError{Cause: err},
@@ -166,7 +166,7 @@ func serveChannelStdio(ctx context.Context) error {
 		response := handleChannelMessage(ctx, &msg)
 		if response != nil {
 			if err := encoder.Encode(response); err != nil {
-				return &errors.DragonError{
+				return &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "channel.serve.encode",
 					Err:  &ChannelEncodeError{Cause: err},

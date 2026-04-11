@@ -481,7 +481,7 @@ func TestHandleKVPut_FullCoverage(t *testing.T) {
 			body:   json.RawMessage(`"value"`),
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
-				m.On("Put", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "entity not found"}}).Once()
+				m.On("Put", mock.Anything, mock.Anything).Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "test", Err: &errors.MessageError{Message: "entity not found"}}).Once()
 			},
 			expectedStatus: http.StatusNotFound,
 		},
@@ -624,7 +624,7 @@ func TestHandleKVGet_FullCoverage(t *testing.T) {
 			path: "/api/v1/kv/users/error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
-				m.On("Get", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "database error"}}).Once()
+				m.On("Get", mock.Anything, mock.Anything).Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "database error"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -705,7 +705,7 @@ func TestHandleKVDelete_FullCoverage(t *testing.T) {
 			path: "/api/v1/kv/users/error-key",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
-				m.On("Delete", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "delete failed"}}).Once()
+				m.On("Delete", mock.Anything, mock.Anything).Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "delete failed"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},
@@ -861,7 +861,7 @@ func TestHandleKVList_FullCoverage(t *testing.T) {
 				m.ExpectedCalls = nil
 				m.On("List", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 					// Send error through errChan by returning error from List
-				}).Return(&errors.DragonError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "list failed"}}).Once()
+				}).Return(&errors.QBError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "list failed"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
 		},

@@ -465,7 +465,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "not found error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "federation.test",
 				Err:  stderrors.New("provider not found"),
@@ -474,7 +474,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "already exists error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrAlreadyExists,
 				Op:   "federation.test",
 				Err:  stderrors.New("link already exists"),
@@ -483,7 +483,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "invalid input error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "federation.test",
 				Err:  stderrors.New("invalid provider config"),
@@ -492,7 +492,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "validation error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrValidation,
 				Op:   "federation.test",
 				Err:  stderrors.New("validation failed"),
@@ -501,7 +501,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "unauthorized error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnauthorized,
 				Op:   "federation.test",
 				Err:  stderrors.New("not authenticated"),
@@ -510,7 +510,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "forbidden error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrForbidden,
 				Op:   "federation.test",
 				Err:  stderrors.New("access denied"),
@@ -519,7 +519,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "timeout error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrTimeout,
 				Op:   "federation.test",
 				Err:  stderrors.New("operation timed out"),
@@ -528,7 +528,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "deadline exceeded error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrDeadlineExceeded,
 				Op:   "federation.test",
 				Err:  stderrors.New("deadline exceeded"),
@@ -537,7 +537,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "resource exhausted error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrResourceExhausted,
 				Op:   "federation.test",
 				Err:  stderrors.New("too many requests"),
@@ -546,7 +546,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "unavailable error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnavailable,
 				Op:   "federation.test",
 				Err:  stderrors.New("service unavailable"),
@@ -555,7 +555,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "conflict error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrConflict,
 				Op:   "federation.test",
 				Err:  stderrors.New("conflict detected"),
@@ -564,7 +564,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "unimplemented error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnimplemented,
 				Op:   "federation.test",
 				Err:  stderrors.New("not implemented"),
@@ -573,7 +573,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "not implemented error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrNotImplemented,
 				Op:   "federation.test",
 				Err:  stderrors.New("feature not implemented"),
@@ -582,7 +582,7 @@ func TestConvertFederationError(t *testing.T) {
 		},
 		{
 			name: "internal error",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "federation.test",
 				Err:  stderrors.New("internal error"),
@@ -590,13 +590,13 @@ func TestConvertFederationError(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name:         "non-DragonError returns internal",
+			name:         "non-QBError returns internal",
 			err:          stderrors.New("generic error"),
 			expectedCode: codes.Internal,
 		},
 		{
 			name: "unknown error code defaults to internal",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrorCode(8888),
 				Op:   "federation.test",
 				Err:  stderrors.New("unknown code"),

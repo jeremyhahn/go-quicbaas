@@ -221,21 +221,21 @@ func (e *SyncFailedError) Unwrap() error {
 }
 
 // ErrNotSubscribed is returned when operations require an active subscription.
-var ErrNotSubscribed = &dberrors.DragonError{
+var ErrNotSubscribed = &dberrors.QBError{
 	Code: dberrors.ErrForbidden,
 	Op:   "iam.pep.sync",
 	Err:  &IAMMessageError{Message: "not subscribed to policy changes"},
 }
 
 // ErrAlreadySubscribed is returned when trying to subscribe while already subscribed.
-var ErrAlreadySubscribed = &dberrors.DragonError{
+var ErrAlreadySubscribed = &dberrors.QBError{
 	Code: dberrors.ErrAlreadyExists,
 	Op:   "iam.pep.sync",
 	Err:  &IAMMessageError{Message: "already subscribed to policy changes"},
 }
 
 // ErrSyncerClosed is returned when operating on a closed syncer.
-var ErrSyncerClosed = &dberrors.DragonError{
+var ErrSyncerClosed = &dberrors.QBError{
 	Code: dberrors.ErrForbidden,
 	Op:   "iam.pep.sync",
 	Err:  &IAMMessageError{Message: "syncer is closed"},

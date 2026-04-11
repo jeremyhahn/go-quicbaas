@@ -130,9 +130,9 @@ func TestMySQLGenerator_ValidateConfig(t *testing.T) {
 
 			if tt.wantErr {
 				require.Error(t, err)
-				var dragonErr *errors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, tt.errCode, dragonErr.Code)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, tt.errCode, qbErr.Code)
 			} else {
 				require.NoError(t, err)
 			}
@@ -251,9 +251,9 @@ func TestMySQLGenerator_Generate(t *testing.T) {
 		_, err := gen.Generate(ctx, nil)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("error - invalid config", func(t *testing.T) {
@@ -278,9 +278,9 @@ func TestMySQLGenerator_Generate(t *testing.T) {
 		_, err := gen.Generate(ctx, role)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("error - context cancelled", func(t *testing.T) {
@@ -308,9 +308,9 @@ func TestMySQLGenerator_Generate(t *testing.T) {
 		_, err := gen.Generate(ctx, role)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("error - database connection failed", func(t *testing.T) {
@@ -336,9 +336,9 @@ func TestMySQLGenerator_Generate(t *testing.T) {
 		_, err := gen.Generate(ctx, role)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 
 	t.Run("error - statement execution failed", func(t *testing.T) {
@@ -367,9 +367,9 @@ func TestMySQLGenerator_Generate(t *testing.T) {
 		_, err := gen.Generate(ctx, role)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 }
 
@@ -396,9 +396,9 @@ func TestMySQLGenerator_Revoke(t *testing.T) {
 		err := gen.Revoke(ctx, credential)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrNotImplemented, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
 	})
 
 	t.Run("error - nil credential", func(t *testing.T) {
@@ -413,9 +413,9 @@ func TestMySQLGenerator_Revoke(t *testing.T) {
 		err := gen.Revoke(ctx, nil)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("error - context cancelled", func(t *testing.T) {
@@ -439,9 +439,9 @@ func TestMySQLGenerator_Revoke(t *testing.T) {
 		err := gen.Revoke(ctx, credential)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrTimeout, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrTimeout, qbErr.Code)
 	})
 
 	t.Run("error - missing username", func(t *testing.T) {
@@ -461,9 +461,9 @@ func TestMySQLGenerator_Revoke(t *testing.T) {
 		err := gen.Revoke(ctx, credential)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 }
 
@@ -563,9 +563,9 @@ func TestMySQLGenerator_revokeWithRole(t *testing.T) {
 		err := gen.revokeWithRole(ctx, nil, role)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("error - nil role", func(t *testing.T) {
@@ -587,9 +587,9 @@ func TestMySQLGenerator_revokeWithRole(t *testing.T) {
 		err := gen.revokeWithRole(ctx, credential, nil)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("error - missing username", func(t *testing.T) {
@@ -617,9 +617,9 @@ func TestMySQLGenerator_revokeWithRole(t *testing.T) {
 		err := gen.revokeWithRole(ctx, credential, role)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("error - connection failed", func(t *testing.T) {
@@ -649,9 +649,9 @@ func TestMySQLGenerator_revokeWithRole(t *testing.T) {
 		err := gen.revokeWithRole(ctx, credential, role)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInternal, qbErr.Code)
 	})
 
 	t.Run("partial success - statement execution errors are logged but not fatal", func(t *testing.T) {
@@ -752,9 +752,9 @@ func TestMySQLGenerator_Rotate(t *testing.T) {
 		_, err := gen.Rotate(ctx, nil, role)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("error - nil role", func(t *testing.T) {
@@ -776,9 +776,9 @@ func TestMySQLGenerator_Rotate(t *testing.T) {
 		_, err := gen.Rotate(ctx, oldCredential, nil)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("error - generate new credential fails", func(t *testing.T) {
@@ -807,9 +807,9 @@ func TestMySQLGenerator_Rotate(t *testing.T) {
 		_, err := gen.Rotate(ctx, oldCredential, role)
 
 		require.Error(t, err)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	})
 
 	t.Run("partial success - revoke fails but new credential created", func(t *testing.T) {

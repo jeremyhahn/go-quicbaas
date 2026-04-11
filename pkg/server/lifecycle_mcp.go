@@ -75,7 +75,7 @@ func (s *Server) stopMCPServer() error {
 	}
 
 	if err := mcpStopFn(s.mcpServer); err != nil {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrInternal,
 			Op:   "server.stopMCPServer",
 			Err:  &ServerCauseError{Message: "failed to shutdown MCP server", Cause: err},

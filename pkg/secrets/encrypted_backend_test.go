@@ -1152,11 +1152,11 @@ func TestEncryptedBackend_LoadVersions_ErrorPaths(t *testing.T) {
 		assert.ErrorIs(t, err, ErrDeserializationFailed)
 	})
 
-	t.Run("DragonError not found handling", func(t *testing.T) {
+	t.Run("QBError not found handling", func(t *testing.T) {
 		store := newTestMockKVStore()
 		encryptor := newTestMockSecretsEncryptor()
 
-		// Mock Get to return DragonError with ErrNotFound
+		// Mock Get to return QBError with ErrNotFound
 		store.getFn = func(ctx context.Context, key string) ([]byte, error) {
 			return nil, dberrors.New(dberrors.ErrNotFound, "Get", "key not found")
 		}

@@ -40,7 +40,7 @@ func (m *mockStorage) Get(key []byte) ([]byte, error) {
 
 	value, exists := m.data[string(key)]
 	if !exists {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "mockStorage.Get",
 		}

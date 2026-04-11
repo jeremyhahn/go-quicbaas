@@ -148,9 +148,9 @@ func TestOsAdminEnforceTenantAccess_MatchingTenant(t *testing.T) {
 func TestOsAdminEnforceTenantAccess_CrossTenantDenied(t *testing.T) {
 	err := osAdminEnforceTenantAccess("acme-corp", "tenant/other-corp/s3-primary", "GetBackend")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 	assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
 }
 
@@ -158,9 +158,9 @@ func TestOsAdminEnforceTenantAccess_UnscopedBackendDenied(t *testing.T) {
 	// A multi-tenant request cannot access an unscoped backend
 	err := osAdminEnforceTenantAccess("acme-corp", "unscoped-backend", "DeleteBackend")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 }
 
 func TestOsAdminEnforceTenantAccess_OperationInErrorMessage(t *testing.T) {
@@ -191,9 +191,9 @@ func TestOsAdminPrepareTenantContext_InvalidTenant(t *testing.T) {
 	ctx := iam.ContextWithTenant(context.Background(), "invalid tenant!@#")
 	_, err := osAdminPrepareTenantContext(ctx)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestOsAdminPrepareTenantContext_TooLongTenant(t *testing.T) {

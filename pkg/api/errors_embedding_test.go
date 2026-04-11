@@ -31,13 +31,13 @@ func TestEmbeddingInvalidInputError(t *testing.T) {
 func TestEmbeddingSimpleErrors(t *testing.T) {
 	tests := []struct {
 		name     string
-		newFn    func() *dberrors.DragonError
+		newFn    func() *dberrors.QBError
 		wantMsg  string
 		wantCode dberrors.ErrorCode
 	}{
-		{"EmptyResponse", func() *dberrors.DragonError { return NewEmbeddingEmptyResponseError("embed") }, "no embeddings returned", dberrors.ErrInternal},
-		{"EmptyInResponse", func() *dberrors.DragonError { return NewEmbeddingEmptyInResponseError("embed") }, "no embeddings in response", dberrors.ErrInternal},
-		{"CacheCapacity", func() *dberrors.DragonError { return NewEmbeddingCacheCapacityError("cache") }, "capacity must be positive", dberrors.ErrInvalidInput},
+		{"EmptyResponse", func() *dberrors.QBError { return NewEmbeddingEmptyResponseError("embed") }, "no embeddings returned", dberrors.ErrInternal},
+		{"EmptyInResponse", func() *dberrors.QBError { return NewEmbeddingEmptyInResponseError("embed") }, "no embeddings in response", dberrors.ErrInternal},
+		{"CacheCapacity", func() *dberrors.QBError { return NewEmbeddingCacheCapacityError("cache") }, "capacity must be positive", dberrors.ErrInvalidInput},
 	}
 
 	for _, tt := range tests {
@@ -77,31 +77,31 @@ func TestEmbeddingCauseErrors(t *testing.T) {
 	tests := []struct {
 		name    string
 		errFn   func() error
-		newFn   func() *dberrors.DragonError
+		newFn   func() *dberrors.QBError
 		wantMsg string
 	}{
 		{
 			"MarshalRequest",
 			func() error { return &EmbeddingMarshalRequestError{Cause: cause} },
-			func() *dberrors.DragonError { return NewEmbeddingMarshalRequestError("embed", cause) },
+			func() *dberrors.QBError { return NewEmbeddingMarshalRequestError("embed", cause) },
 			"failed to marshal request: io error",
 		},
 		{
 			"CreateRequest",
 			func() error { return &EmbeddingCreateRequestError{Cause: cause} },
-			func() *dberrors.DragonError { return NewEmbeddingCreateRequestError("embed", cause) },
+			func() *dberrors.QBError { return NewEmbeddingCreateRequestError("embed", cause) },
 			"failed to create request: io error",
 		},
 		{
 			"ReadResponse",
 			func() error { return &EmbeddingReadResponseError{Cause: cause} },
-			func() *dberrors.DragonError { return NewEmbeddingReadResponseError("embed", cause) },
+			func() *dberrors.QBError { return NewEmbeddingReadResponseError("embed", cause) },
 			"failed to read response: io error",
 		},
 		{
 			"UnmarshalResponse",
 			func() error { return &EmbeddingUnmarshalResponseError{Cause: cause} },
-			func() *dberrors.DragonError { return NewEmbeddingUnmarshalResponseError("embed", cause) },
+			func() *dberrors.QBError { return NewEmbeddingUnmarshalResponseError("embed", cause) },
 			"failed to unmarshal response: io error",
 		},
 	}

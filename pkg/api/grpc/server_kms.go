@@ -1511,7 +1511,7 @@ func convertKMSError(err error) error {
 		return nil
 	}
 
-	var dErr *errors.DragonError
+	var dErr *errors.QBError
 	if !stderrors.As(err, &dErr) {
 		return status.Error(codes.Internal, err.Error())
 	}

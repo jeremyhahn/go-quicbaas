@@ -192,7 +192,7 @@ type Server struct {
 // Authority or pre-issued TLS certificate.
 func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 	if cfg == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "server.NewServer",
 			Err:  &api.NilInputError{Name: "config"},
@@ -216,7 +216,7 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 
 	log, err := logger.New(logConfig)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
 			Op:   "server.NewServer",
 			Err:  &api.ConfigurationError{Action: "initialize logger", Cause: err},

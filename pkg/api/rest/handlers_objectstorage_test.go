@@ -551,7 +551,7 @@ func TestHandleGetObject_EmptyKey(t *testing.T) {
 func TestHandleGetObject_NotFound(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "object not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "object not found"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1127,7 +1127,7 @@ func TestHandleGetTenantQuotas_Success(t *testing.T) {
 func TestHandleObjectStorageError_NotFound(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound}
+			return nil, &errors.QBError{Code: errors.ErrNotFound}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1148,7 +1148,7 @@ func TestHandleObjectStorageError_NotFound(t *testing.T) {
 func TestHandleObjectStorageError_Forbidden(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrForbidden}
+			return nil, &errors.QBError{Code: errors.ErrForbidden}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1169,7 +1169,7 @@ func TestHandleObjectStorageError_Forbidden(t *testing.T) {
 func TestHandleObjectStorageError_QuotaExceeded(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrResourceExhausted}
+			return nil, &errors.QBError{Code: errors.ErrResourceExhausted}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1190,7 +1190,7 @@ func TestHandleObjectStorageError_QuotaExceeded(t *testing.T) {
 func TestHandleObjectStorageError_AlreadyExists(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		copyObjectFunc: func(ctx context.Context, req *service.CopyObjectRequest) (*service.CopyObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrAlreadyExists}
+			return nil, &errors.QBError{Code: errors.ErrAlreadyExists}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1474,7 +1474,7 @@ func TestHandleObjectAction_MethodNotAllowed(t *testing.T) {
 func TestHandleObjectStorageError_InvalidInput(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrInvalidInput, Err: &errors.MessageError{Message: "invalid input"}}
+			return nil, &errors.QBError{Code: errors.ErrInvalidInput, Err: &errors.MessageError{Message: "invalid input"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1495,7 +1495,7 @@ func TestHandleObjectStorageError_InvalidInput(t *testing.T) {
 func TestHandleObjectStorageError_Timeout(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrTimeout, Err: &errors.MessageError{Message: "timeout"}}
+			return nil, &errors.QBError{Code: errors.ErrTimeout, Err: &errors.MessageError{Message: "timeout"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1516,7 +1516,7 @@ func TestHandleObjectStorageError_Timeout(t *testing.T) {
 func TestHandleObjectStorageError_Storage(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1534,7 +1534,7 @@ func TestHandleObjectStorageError_Storage(t *testing.T) {
 	}
 }
 
-func TestHandleObjectStorageError_NonDragonError(t *testing.T) {
+func TestHandleObjectStorageError_NonQBError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
 			return nil, &errors.MessageError{Message: "generic error"}
@@ -1558,7 +1558,7 @@ func TestHandleObjectStorageError_NonDragonError(t *testing.T) {
 func TestHandlePutObject_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1579,7 +1579,7 @@ func TestHandlePutObject_ServiceError(t *testing.T) {
 func TestHandleDeleteObject_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		deleteObjectFunc: func(ctx context.Context, req *service.DeleteObjectRequest) (*service.DeleteObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1600,7 +1600,7 @@ func TestHandleDeleteObject_ServiceError(t *testing.T) {
 func TestHandleListObjects_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		listObjectsFunc: func(ctx context.Context, req *service.ListObjectsRequest) (*service.ListObjectsResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1621,7 +1621,7 @@ func TestHandleListObjects_ServiceError(t *testing.T) {
 func TestHandleListByTag_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		listByTagFunc: func(ctx context.Context, req *service.ListByTagRequest) (*service.ListByTagResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1642,7 +1642,7 @@ func TestHandleListByTag_ServiceError(t *testing.T) {
 func TestHandleListByTenant_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		listByTenantFunc: func(ctx context.Context, req *service.ListByTenantRequest) (*service.ListByTenantResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
+			return nil, &errors.QBError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1663,7 +1663,7 @@ func TestHandleListByTenant_ServiceError(t *testing.T) {
 func TestHandleHeadObject_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		headObjectFunc: func(ctx context.Context, req *service.HeadObjectRequest) (*service.HeadObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1684,7 +1684,7 @@ func TestHandleHeadObject_ServiceError(t *testing.T) {
 func TestHandleCopyObject_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		copyObjectFunc: func(ctx context.Context, req *service.CopyObjectRequest) (*service.CopyObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "source not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "source not found"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1706,7 +1706,7 @@ func TestHandleCopyObject_ServiceError(t *testing.T) {
 func TestHandleReplicateObject_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		replicateObjectFunc: func(ctx context.Context, req *service.ReplicateObjectRequest) (*service.ReplicateObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "replication failed"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "replication failed"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1728,7 +1728,7 @@ func TestHandleReplicateObject_ServiceError(t *testing.T) {
 func TestHandleMigrateObject_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		migrateObjectFunc: func(ctx context.Context, req *service.MigrateObjectRequest) (*service.MigrateObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "migration failed"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "migration failed"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1750,7 +1750,7 @@ func TestHandleMigrateObject_ServiceError(t *testing.T) {
 func TestHandleArchiveObject_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		archiveObjectFunc: func(ctx context.Context, req *service.ArchiveObjectRequest) (*service.ArchiveObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "archive failed"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "archive failed"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1771,7 +1771,7 @@ func TestHandleArchiveObject_ServiceError(t *testing.T) {
 func TestHandleRestoreObject_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		restoreObjectFunc: func(ctx context.Context, req *service.RestoreObjectRequest) (*service.RestoreObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not archived"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not archived"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1792,7 +1792,7 @@ func TestHandleRestoreObject_ServiceError(t *testing.T) {
 func TestHandleVerifyObject_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		verifyObjectFunc: func(ctx context.Context, req *service.VerifyObjectRequest) (*service.VerifyObjectResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "verify failed"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "verify failed"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1813,7 +1813,7 @@ func TestHandleVerifyObject_ServiceError(t *testing.T) {
 func TestHandleGetObjectPolicy_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getObjectPolicyFunc: func(ctx context.Context, req *service.GetObjectPolicyRequest) (*service.GetObjectPolicyResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1834,7 +1834,7 @@ func TestHandleGetObjectPolicy_ServiceError(t *testing.T) {
 func TestHandleSetObjectPolicy_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		setObjectPolicyFunc: func(ctx context.Context, req *service.SetObjectPolicyRequest) (*service.SetObjectPolicyResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1856,7 +1856,7 @@ func TestHandleSetObjectPolicy_ServiceError(t *testing.T) {
 func TestHandleListObjectBackends_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		listBackendsFunc: func(ctx context.Context, req *service.ListBackendsRequest) (*service.ListBackendsResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
+			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1877,7 +1877,7 @@ func TestHandleListObjectBackends_ServiceError(t *testing.T) {
 func TestHandleGetObjectBackendHealth_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getBackendHealthFunc: func(ctx context.Context, req *service.GetBackendHealthRequest) (*service.GetBackendHealthResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "backend not found"}}
+			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "backend not found"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1898,7 +1898,7 @@ func TestHandleGetObjectBackendHealth_ServiceError(t *testing.T) {
 func TestHandleGetTenantUsage_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getTenantUsageFunc: func(ctx context.Context, req *service.GetTenantUsageRequest) (*service.GetTenantUsageResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
+			return nil, &errors.QBError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1919,7 +1919,7 @@ func TestHandleGetTenantUsage_ServiceError(t *testing.T) {
 func TestHandleGetTenantQuotas_ServiceError(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getTenantQuotasFunc: func(ctx context.Context, req *service.GetTenantQuotasRequest) (*service.GetTenantQuotasResponse, error) {
-			return nil, &errors.DragonError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
+			return nil, &errors.QBError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)
@@ -2735,7 +2735,7 @@ func TestHandleObjectStorageError_DefaultCase(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
 			// Use an error code that doesn't have specific handling
-			return nil, &errors.DragonError{Code: errors.ErrRaft, Err: &errors.MessageError{Message: "raft error"}}
+			return nil, &errors.QBError{Code: errors.ErrRaft, Err: &errors.MessageError{Message: "raft error"}}
 		},
 	}
 	s := newTestObjectStorageServer(mockObjService)

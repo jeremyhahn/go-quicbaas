@@ -335,9 +335,9 @@ func ErrorToStatus(err error) byte {
 		return StatusOK
 	}
 
-	var dragonErr *dberrors.DragonError
-	if dberrors.As(err, &dragonErr) {
-		switch dragonErr.Code {
+	var qbErr *dberrors.QBError
+	if dberrors.As(err, &qbErr) {
+		switch qbErr.Code {
 		case dberrors.ErrNotFound:
 			return StatusNotFound
 		case dberrors.ErrUnauthorized:

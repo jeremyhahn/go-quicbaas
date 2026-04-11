@@ -18,23 +18,23 @@ package embedding
 import (
 	"context"
 
-	qembed "github.com/jeremyhahn/go-qrdb/pkg/embedding"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // OpenAIProvider implements Provider for OpenAI-compatible embedding APIs
-// by delegating to qembed.OpenAIProvider.
+// by delegating to qrdbsdk.OpenAIEmbeddingProvider.
 //
 // Compile-time assertion that OpenAIProvider satisfies Provider.
 var _ Provider = (*OpenAIProvider)(nil)
 
-// OpenAIProvider wraps qembed.OpenAIProvider with the single-text Embed API.
+// OpenAIProvider wraps qrdbsdk.OpenAIEmbeddingProvider with the single-text Embed API.
 type OpenAIProvider struct {
-	inner *qembed.OpenAIProvider
+	inner *qrdbsdk.OpenAIEmbeddingProvider
 }
 
 // NewOpenAIProvider creates a new OpenAI-compatible embedding provider.
 func NewOpenAIProvider(config Config) (*OpenAIProvider, error) {
-	inner, err := qembed.NewOpenAIProvider(config)
+	inner, err := qrdbsdk.NewOpenAIEmbeddingProvider(config)
 	if err != nil {
 		return nil, err
 	}

@@ -87,7 +87,7 @@ func TestHandleCryptoEncrypt(t *testing.T) {
 				"plaintext": []byte("secret-data"),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Encrypt", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Encrypt", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Encrypt",
 					Err:  assert.AnError,
@@ -178,7 +178,7 @@ func TestHandleCryptoDecrypt(t *testing.T) {
 				"ciphertext": []byte("encrypted-data"),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Decrypt", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Decrypt", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Decrypt",
 					Err:  assert.AnError,
@@ -269,7 +269,7 @@ func TestHandleCryptoRewrap(t *testing.T) {
 				"ciphertext": []byte("encrypted-data"),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Rewrap", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Rewrap", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Rewrap",
 					Err:  assert.AnError,
@@ -360,7 +360,7 @@ func TestHandleCryptoSign(t *testing.T) {
 				"message": []byte("message-to-sign"),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Sign", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Sign", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Sign",
 					Err:  assert.AnError,
@@ -462,7 +462,7 @@ func TestHandleCryptoVerify(t *testing.T) {
 				"signature": []byte("signature-data"),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Verify", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Verify", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Verify",
 					Err:  assert.AnError,
@@ -554,7 +554,7 @@ func TestHandleCryptoHash(t *testing.T) {
 				"data": []byte("data-to-hash"),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Hash", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Hash", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Hash",
 					Err:  assert.AnError,
@@ -656,7 +656,7 @@ func TestHandleCryptoRandom(t *testing.T) {
 				"num_bytes": float64(32),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("GenerateRandom", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GenerateRandom", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GenerateRandom",
 					Err:  assert.AnError,
@@ -750,7 +750,7 @@ func TestHandleCryptoDataKey(t *testing.T) {
 			body:    map[string]interface{}{},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockKMSMgr := &MockKMSManager{}
-				mockKMSMgr.On("GenerateDataKey", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil, &errors.DragonError{
+				mockKMSMgr.On("GenerateDataKey", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GenerateDataKey",
 					Err:  assert.AnError,
@@ -847,7 +847,7 @@ func TestHandleCryptoBatchEncrypt(t *testing.T) {
 				},
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("EncryptBatch", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("EncryptBatch", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "EncryptBatch",
 					Err:  assert.AnError,
@@ -944,7 +944,7 @@ func TestHandleCryptoBatchDecrypt(t *testing.T) {
 				},
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("DecryptBatch", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DecryptBatch", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "DecryptBatch",
 					Err:  assert.AnError,

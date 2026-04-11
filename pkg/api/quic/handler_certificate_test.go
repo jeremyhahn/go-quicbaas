@@ -250,7 +250,7 @@ func TestHandleCertIssue_DecodeError(t *testing.T) {
 func TestHandleCertIssue_ServiceError(t *testing.T) {
 	certSvc := &mockCertificateService{
 		issueCertificateFn: func(ctx context.Context, req *service.IssueCertificateRequest) (*service.IssueCertificateResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "CertificateService.IssueCertificate",
 				Err:  service.ErrCertMissingCommonName,
@@ -351,7 +351,7 @@ func TestHandleCertSignCSR_DecodeError(t *testing.T) {
 func TestHandleCertSignCSR_ServiceError(t *testing.T) {
 	certSvc := &mockCertificateService{
 		signCSRFn: func(ctx context.Context, req *service.SignCSRRequest) (*service.SignCSRResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "CertificateService.SignCSR",
 				Err:  service.ErrCertMissingCSR,
@@ -445,7 +445,7 @@ func TestHandleCertRevoke_DecodeError(t *testing.T) {
 func TestHandleCertRevoke_ServiceError(t *testing.T) {
 	certSvc := &mockCertificateService{
 		revokeCertificateFn: func(ctx context.Context, req *service.RevokeCertificateRequest) (*service.RevokeCertificateResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "CertificateService.RevokeCertificate",
 				Err:  service.ErrCertMissingSerial,
@@ -567,7 +567,7 @@ func TestHandleCertVerify_DecodeError(t *testing.T) {
 func TestHandleCertVerify_ServiceError(t *testing.T) {
 	certSvc := &mockCertificateService{
 		verifyCertificateFn: func(ctx context.Context, req *service.VerifyCertificateRequest) (*service.VerifyCertificateResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "CertificateService.VerifyCertificate",
 				Err:  service.ErrCertNilRequest,
@@ -659,7 +659,7 @@ func TestHandleCertGetCA_DecodeError(t *testing.T) {
 func TestHandleCertGetCA_ServiceError(t *testing.T) {
 	certSvc := &mockCertificateService{
 		getCACertificateFn: func(ctx context.Context, req *service.GetCACertificateRequest) (*service.GetCACertificateResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "CertificateService.GetCACertificate",
 				Err:  service.ErrCertMissingPEM,
@@ -754,7 +754,7 @@ func TestHandleCertGetTLSConfig_DecodeError(t *testing.T) {
 func TestHandleCertGetTLSConfig_ServiceError(t *testing.T) {
 	certSvc := &mockCertificateService{
 		getTLSConfigFn: func(ctx context.Context, req *service.GetTLSConfigRequest) (*service.GetTLSConfigResponse, error) {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "CertificateService.GetTLSConfig",
 				Err:  service.ErrCertNilRequest,

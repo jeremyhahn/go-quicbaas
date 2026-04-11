@@ -53,259 +53,259 @@ func (e *IAMContextError) Unwrap() error {
 // IAM-specific error types following QuicBaaS error conventions.
 var (
 	// ErrTenantNotFound is returned when a tenant is not found.
-	ErrTenantNotFound = &dberrors.DragonError{
+	ErrTenantNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.tenant",
 		Err:  &IAMMessageError{Message: "tenant not found"},
 	}
 
 	// ErrTenantAlreadyExists is returned when attempting to create a duplicate tenant.
-	ErrTenantAlreadyExists = &dberrors.DragonError{
+	ErrTenantAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.tenant",
 		Err:  &IAMMessageError{Message: "tenant already exists"},
 	}
 
 	// ErrInvalidTenantID is returned when a tenant ID is invalid.
-	ErrInvalidTenantID = &dberrors.DragonError{
+	ErrInvalidTenantID = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.tenant",
 		Err:  &IAMMessageError{Message: "invalid tenant ID"},
 	}
 
 	// ErrInvalidTenantName is returned when a tenant name is invalid.
-	ErrInvalidTenantName = &dberrors.DragonError{
+	ErrInvalidTenantName = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.tenant",
 		Err:  &IAMMessageError{Message: "invalid tenant name"},
 	}
 
 	// ErrQuotaExceeded is returned when a quota limit is exceeded.
-	ErrQuotaExceeded = &dberrors.DragonError{
+	ErrQuotaExceeded = &dberrors.QBError{
 		Code: dberrors.ErrResourceExhausted,
 		Op:   "iam.quota",
 		Err:  &IAMMessageError{Message: "quota exceeded"},
 	}
 
 	// ErrTenantSuspended is returned when operating on a suspended tenant.
-	ErrTenantSuspended = &dberrors.DragonError{
+	ErrTenantSuspended = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.tenant",
 		Err:  &IAMMessageError{Message: "tenant is suspended"},
 	}
 
 	// ErrTenantDeleted is returned when operating on a deleted tenant.
-	ErrTenantDeleted = &dberrors.DragonError{
+	ErrTenantDeleted = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.tenant",
 		Err:  &IAMMessageError{Message: "tenant is deleted"},
 	}
 
 	// ErrTenantInvalid is returned when tenant validation fails.
-	ErrTenantInvalid = &dberrors.DragonError{
+	ErrTenantInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.tenant",
 		Err:  &IAMMessageError{Message: "invalid tenant"},
 	}
 
 	// ErrUserInvalid is returned when user validation fails.
-	ErrUserInvalid = &dberrors.DragonError{
+	ErrUserInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.user",
 		Err:  &IAMMessageError{Message: "invalid user"},
 	}
 
 	// ErrGroupInvalid is returned when group validation fails.
-	ErrGroupInvalid = &dberrors.DragonError{
+	ErrGroupInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.group",
 		Err:  &IAMMessageError{Message: "invalid group"},
 	}
 
 	// ErrRoleInvalid is returned when role validation fails.
-	ErrRoleInvalid = &dberrors.DragonError{
+	ErrRoleInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.role",
 		Err:  &IAMMessageError{Message: "invalid role"},
 	}
 
 	// ErrPolicyInvalid is returned when policy validation fails.
-	ErrPolicyInvalid = &dberrors.DragonError{
+	ErrPolicyInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.policy",
 		Err:  &IAMMessageError{Message: "invalid policy"},
 	}
 
 	// ErrRuleInvalid is returned when rule validation fails.
-	ErrRuleInvalid = &dberrors.DragonError{
+	ErrRuleInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.rule",
 		Err:  &IAMMessageError{Message: "invalid rule"},
 	}
 
 	// ErrPolicyNotFound is returned when a policy is not found.
-	ErrPolicyNotFound = &dberrors.DragonError{
+	ErrPolicyNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.policy",
 		Err:  &IAMMessageError{Message: "policy not found"},
 	}
 
 	// ErrPolicyCompilationFailed is returned when policy compilation fails.
-	ErrPolicyCompilationFailed = &dberrors.DragonError{
+	ErrPolicyCompilationFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.policy.compile",
 		Err:  &IAMMessageError{Message: "policy compilation failed"},
 	}
 
 	// ErrPolicyEvaluationFailed is returned when policy evaluation fails.
-	ErrPolicyEvaluationFailed = &dberrors.DragonError{
+	ErrPolicyEvaluationFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.policy.evaluate",
 		Err:  &IAMMessageError{Message: "policy evaluation failed"},
 	}
 
 	// ErrPolicySyncFailed is returned when policy sync fails.
-	ErrPolicySyncFailed = &dberrors.DragonError{
+	ErrPolicySyncFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.policy.sync",
 		Err:  &IAMMessageError{Message: "policy sync failed"},
 	}
 
 	// ErrPEPClosed is returned when operating on a closed PEP.
-	ErrPEPClosed = &dberrors.DragonError{
+	ErrPEPClosed = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.pep",
 		Err:  &IAMMessageError{Message: "PEP is closed"},
 	}
 
 	// ErrInvalidCheckRequest is returned when a check request is invalid.
-	ErrInvalidCheckRequest = &dberrors.DragonError{
+	ErrInvalidCheckRequest = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.pep.check",
 		Err:  &IAMMessageError{Message: "invalid check request"},
 	}
 
 	// ErrUserNotFound is returned when a user is not found.
-	ErrUserNotFound = &dberrors.DragonError{
+	ErrUserNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.user",
 		Err:  &IAMMessageError{Message: "user not found"},
 	}
 
 	// ErrUserAlreadyExists is returned when attempting to create a user that already exists.
-	ErrUserAlreadyExists = &dberrors.DragonError{
+	ErrUserAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.user",
 		Err:  &IAMMessageError{Message: "user already exists"},
 	}
 
 	// ErrEmailAlreadyExists is returned when attempting to create a user with a duplicate email.
-	ErrEmailAlreadyExists = &dberrors.DragonError{
+	ErrEmailAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.user",
 		Err:  &IAMMessageError{Message: "email already exists"},
 	}
 
 	// ErrGroupNotFound is returned when a group is not found.
-	ErrGroupNotFound = &dberrors.DragonError{
+	ErrGroupNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.group",
 		Err:  &IAMMessageError{Message: "group not found"},
 	}
 
 	// ErrGroupAlreadyExists is returned when attempting to create a group that already exists.
-	ErrGroupAlreadyExists = &dberrors.DragonError{
+	ErrGroupAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.group",
 		Err:  &IAMMessageError{Message: "group already exists"},
 	}
 
 	// ErrRoleAlreadyExists is returned when attempting to create a role that already exists.
-	ErrRoleAlreadyExists = &dberrors.DragonError{
+	ErrRoleAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.role",
 		Err:  &IAMMessageError{Message: "role already exists"},
 	}
 
 	// ErrUserAlreadyInGroup is returned when adding a user to a group they're already in.
-	ErrUserAlreadyInGroup = &dberrors.DragonError{
+	ErrUserAlreadyInGroup = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.group.membership",
 		Err:  &IAMMessageError{Message: "user already in group"},
 	}
 
 	// ErrUserNotInGroup is returned when removing a user from a group they're not in.
-	ErrUserNotInGroup = &dberrors.DragonError{
+	ErrUserNotInGroup = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.group.membership",
 		Err:  &IAMMessageError{Message: "user not in group"},
 	}
 
 	// ErrRoleNotFound is returned when a role is not found.
-	ErrRoleNotFound = &dberrors.DragonError{
+	ErrRoleNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.role",
 		Err:  &IAMMessageError{Message: "role not found"},
 	}
 
 	// ErrRoleAlreadyAssigned is returned when assigning a role that's already assigned.
-	ErrRoleAlreadyAssigned = &dberrors.DragonError{
+	ErrRoleAlreadyAssigned = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.role.assignment",
 		Err:  &IAMMessageError{Message: "role already assigned"},
 	}
 
 	// ErrRoleNotAssigned is returned when revoking a role that's not assigned.
-	ErrRoleNotAssigned = &dberrors.DragonError{
+	ErrRoleNotAssigned = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.role.assignment",
 		Err:  &IAMMessageError{Message: "role not assigned"},
 	}
 
 	// ErrCredentialInvalid is returned when credential validation fails.
-	ErrCredentialInvalid = &dberrors.DragonError{
+	ErrCredentialInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.webauthn.credential",
 		Err:  &IAMMessageError{Message: "invalid credential"},
 	}
 
 	// ErrCredentialNotFound is returned when a credential is not found.
-	ErrCredentialNotFound = &dberrors.DragonError{
+	ErrCredentialNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.webauthn.credential",
 		Err:  &IAMMessageError{Message: "credential not found"},
 	}
 
 	// ErrChallengeInvalid is returned when challenge validation fails.
-	ErrChallengeInvalid = &dberrors.DragonError{
+	ErrChallengeInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.webauthn.challenge",
 		Err:  &IAMMessageError{Message: "invalid challenge"},
 	}
 
 	// ErrChallengeNotFound is returned when a challenge is not found.
-	ErrChallengeNotFound = &dberrors.DragonError{
+	ErrChallengeNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.webauthn.challenge",
 		Err:  &IAMMessageError{Message: "challenge not found"},
 	}
 
 	// ErrChallengeExpired is returned when a challenge has expired.
-	ErrChallengeExpired = &dberrors.DragonError{
+	ErrChallengeExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.webauthn.challenge",
 		Err:  &IAMMessageError{Message: "challenge expired"},
 	}
 
 	// ErrWebAuthnRegistrationFailed is returned when WebAuthn registration fails.
-	ErrWebAuthnRegistrationFailed = &dberrors.DragonError{
+	ErrWebAuthnRegistrationFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.webauthn.registration",
 		Err:  &IAMMessageError{Message: "WebAuthn registration failed"},
 	}
 
 	// ErrWebAuthnAuthenticationFailed is returned when WebAuthn authentication fails.
-	ErrWebAuthnAuthenticationFailed = &dberrors.DragonError{
+	ErrWebAuthnAuthenticationFailed = &dberrors.QBError{
 		Code: dberrors.ErrUnauthorized,
 		Op:   "iam.webauthn.authentication",
 		Err:  &IAMMessageError{Message: "WebAuthn authentication failed"},
@@ -314,91 +314,91 @@ var (
 	// MFA-specific errors.
 
 	// ErrMFAInvalid is returned when MFA validation fails.
-	ErrMFAInvalid = &dberrors.DragonError{
+	ErrMFAInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.mfa",
 		Err:  &IAMMessageError{Message: "invalid MFA configuration"},
 	}
 
 	// ErrMFANotEnrolled is returned when MFA is not enrolled.
-	ErrMFANotEnrolled = &dberrors.DragonError{
+	ErrMFANotEnrolled = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.mfa",
 		Err:  &IAMMessageError{Message: "MFA not enrolled"},
 	}
 
 	// ErrMFAAlreadyEnrolled is returned when MFA is already enrolled.
-	ErrMFAAlreadyEnrolled = &dberrors.DragonError{
+	ErrMFAAlreadyEnrolled = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.mfa",
 		Err:  &IAMMessageError{Message: "MFA already enrolled"},
 	}
 
 	// ErrMFAEnrollmentNotFound is returned when an enrollment is not found.
-	ErrMFAEnrollmentNotFound = &dberrors.DragonError{
+	ErrMFAEnrollmentNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.mfa.enrollment",
 		Err:  &IAMMessageError{Message: "MFA enrollment not found"},
 	}
 
 	// ErrMFAEnrollmentExpired is returned when an enrollment has expired.
-	ErrMFAEnrollmentExpired = &dberrors.DragonError{
+	ErrMFAEnrollmentExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.mfa.enrollment",
 		Err:  &IAMMessageError{Message: "MFA enrollment expired"},
 	}
 
 	// ErrMFAChallengeNotFound is returned when an MFA challenge is not found.
-	ErrMFAChallengeNotFound = &dberrors.DragonError{
+	ErrMFAChallengeNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.mfa.challenge",
 		Err:  &IAMMessageError{Message: "MFA challenge not found"},
 	}
 
 	// ErrMFAChallengeExpired is returned when an MFA challenge has expired.
-	ErrMFAChallengeExpired = &dberrors.DragonError{
+	ErrMFAChallengeExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.mfa.challenge",
 		Err:  &IAMMessageError{Message: "MFA challenge expired"},
 	}
 
 	// ErrMFACodeInvalid is returned when an MFA code is invalid.
-	ErrMFACodeInvalid = &dberrors.DragonError{
+	ErrMFACodeInvalid = &dberrors.QBError{
 		Code: dberrors.ErrUnauthorized,
 		Op:   "iam.mfa.verify",
 		Err:  &IAMMessageError{Message: "invalid MFA code"},
 	}
 
 	// ErrMFAMaxAttemptsExceeded is returned when max verification attempts are exceeded.
-	ErrMFAMaxAttemptsExceeded = &dberrors.DragonError{
+	ErrMFAMaxAttemptsExceeded = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.mfa.verify",
 		Err:  &IAMMessageError{Message: "maximum MFA verification attempts exceeded"},
 	}
 
 	// ErrMFARequired is returned when MFA is required but not verified.
-	ErrMFARequired = &dberrors.DragonError{
+	ErrMFARequired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.mfa",
 		Err:  &IAMMessageError{Message: "MFA verification required"},
 	}
 
 	// ErrMFABackupCodeInvalid is returned when a backup code is invalid.
-	ErrMFABackupCodeInvalid = &dberrors.DragonError{
+	ErrMFABackupCodeInvalid = &dberrors.QBError{
 		Code: dberrors.ErrUnauthorized,
 		Op:   "iam.mfa.backup",
 		Err:  &IAMMessageError{Message: "invalid backup code"},
 	}
 
 	// ErrMFABackupCodesExhausted is returned when all backup codes are used.
-	ErrMFABackupCodesExhausted = &dberrors.DragonError{
+	ErrMFABackupCodesExhausted = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.mfa.backup",
 		Err:  &IAMMessageError{Message: "all backup codes have been used"},
 	}
 
 	// ErrMFAMethodNotAllowed is returned when an MFA method is not allowed.
-	ErrMFAMethodNotAllowed = &dberrors.DragonError{
+	ErrMFAMethodNotAllowed = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.mfa",
 		Err:  &IAMMessageError{Message: "MFA method not allowed"},
@@ -407,35 +407,35 @@ var (
 	// Session-specific errors.
 
 	// ErrSessionInvalid is returned when session validation fails.
-	ErrSessionInvalid = &dberrors.DragonError{
+	ErrSessionInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.session",
 		Err:  &IAMMessageError{Message: "invalid session"},
 	}
 
 	// ErrSessionNotFound is returned when a session is not found.
-	ErrSessionNotFound = &dberrors.DragonError{
+	ErrSessionNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.session",
 		Err:  &IAMMessageError{Message: "session not found"},
 	}
 
 	// ErrSessionExpired is returned when a session has expired.
-	ErrSessionExpired = &dberrors.DragonError{
+	ErrSessionExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.session",
 		Err:  &IAMMessageError{Message: "session expired"},
 	}
 
 	// ErrSessionLimitExceeded is returned when max concurrent sessions exceeded.
-	ErrSessionLimitExceeded = &dberrors.DragonError{
+	ErrSessionLimitExceeded = &dberrors.QBError{
 		Code: dberrors.ErrResourceExhausted,
 		Op:   "iam.session",
 		Err:  &IAMMessageError{Message: "session limit exceeded"},
 	}
 
 	// ErrSessionRevoked is returned when a session has been revoked.
-	ErrSessionRevoked = &dberrors.DragonError{
+	ErrSessionRevoked = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.session",
 		Err:  &IAMMessageError{Message: "session revoked"},
@@ -443,21 +443,21 @@ var (
 	// Audit-specific errors.
 
 	// ErrAuditInvalid is returned when audit validation fails.
-	ErrAuditInvalid = &dberrors.DragonError{
+	ErrAuditInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.audit",
 		Err:  &IAMMessageError{Message: "invalid audit event"},
 	}
 
 	// ErrAuditEventNotFound is returned when an audit event is not found.
-	ErrAuditEventNotFound = &dberrors.DragonError{
+	ErrAuditEventNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.audit",
 		Err:  &IAMMessageError{Message: "audit event not found"},
 	}
 
 	// ErrAuditStorageClosed is returned when operating on closed audit storage.
-	ErrAuditStorageClosed = &dberrors.DragonError{
+	ErrAuditStorageClosed = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.audit",
 		Err:  &IAMMessageError{Message: "audit storage is closed"},
@@ -466,49 +466,49 @@ var (
 	// Delegated Admin errors.
 
 	// ErrAdminAssignmentNotFound is returned when an admin assignment is not found.
-	ErrAdminAssignmentNotFound = &dberrors.DragonError{
+	ErrAdminAssignmentNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.admin",
 		Err:  &IAMMessageError{Message: "admin assignment not found"},
 	}
 
 	// ErrAdminAssignmentInvalid is returned when admin assignment validation fails.
-	ErrAdminAssignmentInvalid = &dberrors.DragonError{
+	ErrAdminAssignmentInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.admin",
 		Err:  &IAMMessageError{Message: "invalid admin assignment"},
 	}
 
 	// ErrAdminAssignmentExpired is returned when an admin assignment has expired.
-	ErrAdminAssignmentExpired = &dberrors.DragonError{
+	ErrAdminAssignmentExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.admin",
 		Err:  &IAMMessageError{Message: "admin assignment expired"},
 	}
 
 	// ErrAdminPermissionDenied is returned when admin permission is denied.
-	ErrAdminPermissionDenied = &dberrors.DragonError{
+	ErrAdminPermissionDenied = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.admin",
 		Err:  &IAMMessageError{Message: "admin permission denied"},
 	}
 
 	// ErrImpersonationNotAllowed is returned when impersonation is not allowed.
-	ErrImpersonationNotAllowed = &dberrors.DragonError{
+	ErrImpersonationNotAllowed = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.admin.impersonate",
 		Err:  &IAMMessageError{Message: "impersonation not allowed"},
 	}
 
 	// ErrImpersonationSessionNotFound is returned when an impersonation session is not found.
-	ErrImpersonationSessionNotFound = &dberrors.DragonError{
+	ErrImpersonationSessionNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.admin.impersonate",
 		Err:  &IAMMessageError{Message: "impersonation session not found"},
 	}
 
 	// ErrImpersonationSessionExpired is returned when an impersonation session has expired.
-	ErrImpersonationSessionExpired = &dberrors.DragonError{
+	ErrImpersonationSessionExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.admin.impersonate",
 		Err:  &IAMMessageError{Message: "impersonation session expired"},
@@ -517,91 +517,91 @@ var (
 	// GDPR Compliance errors.
 
 	// ErrConsentNotFound is returned when a consent record is not found.
-	ErrConsentNotFound = &dberrors.DragonError{
+	ErrConsentNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.gdpr.consent",
 		Err:  &IAMMessageError{Message: "consent not found"},
 	}
 
 	// ErrConsentInvalid is returned when consent validation fails.
-	ErrConsentInvalid = &dberrors.DragonError{
+	ErrConsentInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.gdpr.consent",
 		Err:  &IAMMessageError{Message: "invalid consent"},
 	}
 
 	// ErrConsentExpired is returned when a consent has expired.
-	ErrConsentExpired = &dberrors.DragonError{
+	ErrConsentExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.gdpr.consent",
 		Err:  &IAMMessageError{Message: "consent expired"},
 	}
 
 	// ErrDataExportNotFound is returned when a data export request is not found.
-	ErrDataExportNotFound = &dberrors.DragonError{
+	ErrDataExportNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.gdpr.export",
 		Err:  &IAMMessageError{Message: "data export request not found"},
 	}
 
 	// ErrDataExportInvalid is returned when data export validation fails.
-	ErrDataExportInvalid = &dberrors.DragonError{
+	ErrDataExportInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.gdpr.export",
 		Err:  &IAMMessageError{Message: "invalid data export request"},
 	}
 
 	// ErrDataExportPending is returned when trying to re-request a pending export.
-	ErrDataExportPending = &dberrors.DragonError{
+	ErrDataExportPending = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.gdpr.export",
 		Err:  &IAMMessageError{Message: "data export already pending"},
 	}
 
 	// ErrDataExportExpired is returned when an export has expired.
-	ErrDataExportExpired = &dberrors.DragonError{
+	ErrDataExportExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.gdpr.export",
 		Err:  &IAMMessageError{Message: "data export expired"},
 	}
 
 	// ErrDeletionNotFound is returned when a deletion request is not found.
-	ErrDeletionNotFound = &dberrors.DragonError{
+	ErrDeletionNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.gdpr.deletion",
 		Err:  &IAMMessageError{Message: "deletion request not found"},
 	}
 
 	// ErrDeletionInvalid is returned when deletion validation fails.
-	ErrDeletionInvalid = &dberrors.DragonError{
+	ErrDeletionInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.gdpr.deletion",
 		Err:  &IAMMessageError{Message: "invalid deletion request"},
 	}
 
 	// ErrDeletionPending is returned when trying to re-request a pending deletion.
-	ErrDeletionPending = &dberrors.DragonError{
+	ErrDeletionPending = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.gdpr.deletion",
 		Err:  &IAMMessageError{Message: "deletion request already pending"},
 	}
 
 	// ErrDeletionInProgress is returned when deletion is already in progress.
-	ErrDeletionInProgress = &dberrors.DragonError{
+	ErrDeletionInProgress = &dberrors.QBError{
 		Code: dberrors.ErrConflict,
 		Op:   "iam.gdpr.deletion",
 		Err:  &IAMMessageError{Message: "deletion already in progress"},
 	}
 
 	// ErrDeletionCancelled is returned when deletion has been cancelled.
-	ErrDeletionCancelled = &dberrors.DragonError{
+	ErrDeletionCancelled = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.gdpr.deletion",
 		Err:  &IAMMessageError{Message: "deletion was cancelled"},
 	}
 
 	// ErrGracePeriodActive is returned when trying to process during grace period.
-	ErrGracePeriodActive = &dberrors.DragonError{
+	ErrGracePeriodActive = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.gdpr.deletion",
 		Err:  &IAMMessageError{Message: "grace period still active"},
@@ -679,7 +679,7 @@ func (e *TenantNotFoundError) Error() string {
 
 // NewTenantNotFoundError creates a new tenant not found error with context.
 func NewTenantNotFoundError(tenantID string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.tenant",
 		Err:  &TenantNotFoundError{TenantID: tenantID},
@@ -702,7 +702,7 @@ func (e *InvalidTenantIDError) Error() string {
 
 // NewInvalidTenantIDError creates a new invalid tenant ID error with context.
 func NewInvalidTenantIDError(tenantID string, reason string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.tenant",
 		Err:  &InvalidTenantIDError{TenantID: tenantID, Reason: reason},
@@ -727,7 +727,7 @@ func (e *QuotaExceededError) Error() string {
 
 // NewQuotaExceededError creates a new quota exceeded error with context.
 func NewQuotaExceededError(tenantID string, resource string, limit int64, current int64) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrResourceExhausted,
 		Op:   "iam.quota",
 		Err:  &QuotaExceededError{Resource: resource, Limit: limit, Current: current},
@@ -741,8 +741,8 @@ func NewQuotaExceededError(tenantID string, resource string, limit int64, curren
 }
 
 // NewIAMError creates a new IAM error with the specified code, operation, and message.
-func NewIAMError(base *dberrors.DragonError, op string, message string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+func NewIAMError(base *dberrors.QBError, op string, message string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: base.Code,
 		Op:   op,
 		Err:  &IAMContextError{Message: message, Cause: cause},
@@ -761,7 +761,7 @@ func (e *IAMPolicyNotFoundError) Error() string {
 
 // NewPolicyNotFoundError creates a new policy not found error with context.
 func NewPolicyNotFoundError(tenantID, policyName string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.policy",
 		Err:  &IAMPolicyNotFoundError{PolicyName: policyName},
@@ -790,7 +790,7 @@ func (e *PolicyCompilationError) Unwrap() error {
 
 // NewPolicyCompilationError creates a new policy compilation error with context.
 func NewPolicyCompilationError(tenantID, policyName string, cause error) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.policy.compile",
 		Err:  &PolicyCompilationError{PolicyName: policyName, Cause: cause},
@@ -819,7 +819,7 @@ func (e *PolicyEvaluationError) Unwrap() error {
 
 // NewPolicyEvaluationError creates a new policy evaluation error with context.
 func NewPolicyEvaluationError(tenantID, policyName string, cause error) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.policy.evaluate",
 		Err:  &PolicyEvaluationError{PolicyName: policyName, Cause: cause},
@@ -848,7 +848,7 @@ func (e *PolicySyncError) Unwrap() error {
 
 // NewPolicySyncError creates a new policy sync error with context.
 func NewPolicySyncError(tenantID string, cause error) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.policy.sync",
 		Err:  &PolicySyncError{TenantID: tenantID, Cause: cause},
@@ -870,7 +870,7 @@ func (e *InvalidCheckRequestError) Error() string {
 
 // NewInvalidCheckRequestError creates a new invalid check request error with context.
 func NewInvalidCheckRequestError(reason string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.pep.check",
 		Err:  &InvalidCheckRequestError{Reason: reason},
@@ -892,7 +892,7 @@ func (e *CredentialNotFoundError) Error() string {
 
 // NewCredentialNotFoundError creates a new credential not found error with context.
 func NewCredentialNotFoundError(tenantID, credentialID string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.webauthn.credential",
 		Err:  &CredentialNotFoundError{CredentialID: credentialID},
@@ -915,7 +915,7 @@ func (e *ChallengeNotFoundError) Error() string {
 
 // NewChallengeNotFoundError creates a new challenge not found error with context.
 func NewChallengeNotFoundError(challengeID string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.webauthn.challenge",
 		Err:  &ChallengeNotFoundError{ChallengeID: challengeID},
@@ -937,7 +937,7 @@ func (e *ChallengeExpiredError) Error() string {
 
 // NewChallengeExpiredError creates a new challenge expired error with context.
 func NewChallengeExpiredError(challengeID string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.webauthn.challenge",
 		Err:  &ChallengeExpiredError{ChallengeID: challengeID},
@@ -965,7 +965,7 @@ func (e *WebAuthnRegistrationError) Unwrap() error {
 
 // NewWebAuthnRegistrationError creates a new WebAuthn registration error with context.
 func NewWebAuthnRegistrationError(tenantID, userID string, cause error) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.webauthn.registration",
 		Err:  &WebAuthnRegistrationError{UserID: userID, Cause: cause},
@@ -994,7 +994,7 @@ func (e *WebAuthnAuthenticationError) Unwrap() error {
 
 // NewWebAuthnAuthenticationError creates a new WebAuthn authentication error with context.
 func NewWebAuthnAuthenticationError(tenantID, email string, cause error) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnauthorized,
 		Op:   "iam.webauthn.authentication",
 		Err:  &WebAuthnAuthenticationError{Email: email, Cause: cause},

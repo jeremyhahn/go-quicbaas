@@ -113,12 +113,12 @@ func TestWriteRequest(t *testing.T) {
 					t.Fatalf("WriteRequest() expected error but got nil")
 				}
 				if tt.errType != "" {
-					var dragonErr *dragonerrors.DragonError
-					if !errors.As(err, &dragonErr) {
-						t.Fatalf("expected DragonError, got %T", err)
+					var qbErr *dragonerrors.QBError
+					if !errors.As(err, &qbErr) {
+						t.Fatalf("expected QBError, got %T", err)
 					}
-					if tt.errType == "ErrInvalidInput" && dragonErr.Code != dragonerrors.ErrInvalidInput {
-						t.Errorf("expected error code ErrInvalidInput, got %v", dragonErr.Code)
+					if tt.errType == "ErrInvalidInput" && qbErr.Code != dragonerrors.ErrInvalidInput {
+						t.Errorf("expected error code ErrInvalidInput, got %v", qbErr.Code)
 					}
 				}
 				return
@@ -338,9 +338,9 @@ func TestReadRequest(t *testing.T) {
 					t.Fatalf("ReadRequest() expected error but got nil")
 				}
 				if tt.errType == "ErrInvalidInput" {
-					var dragonErr *dragonerrors.DragonError
-					if errors.As(err, &dragonErr) && dragonErr.Code != dragonerrors.ErrInvalidInput {
-						t.Errorf("expected error code ErrInvalidInput, got %v", dragonErr.Code)
+					var qbErr *dragonerrors.QBError
+					if errors.As(err, &qbErr) && qbErr.Code != dragonerrors.ErrInvalidInput {
+						t.Errorf("expected error code ErrInvalidInput, got %v", qbErr.Code)
 					}
 				}
 				return
@@ -423,9 +423,9 @@ func TestWriteResponse(t *testing.T) {
 					t.Fatalf("WriteResponse() expected error but got nil")
 				}
 				if tt.errType == "ErrInvalidInput" {
-					var dragonErr *dragonerrors.DragonError
-					if errors.As(err, &dragonErr) && dragonErr.Code != dragonerrors.ErrInvalidInput {
-						t.Errorf("expected error code ErrInvalidInput, got %v", dragonErr.Code)
+					var qbErr *dragonerrors.QBError
+					if errors.As(err, &qbErr) && qbErr.Code != dragonerrors.ErrInvalidInput {
+						t.Errorf("expected error code ErrInvalidInput, got %v", qbErr.Code)
 					}
 				}
 				return
@@ -867,69 +867,69 @@ func TestErrorToStatus(t *testing.T) {
 		},
 		{
 			name: "ErrNotFound",
-			err: &dragonerrors.DragonError{
+			err: &dragonerrors.QBError{
 				Code: dragonerrors.ErrNotFound,
 			},
 			wantStatus: StatusNotFound,
 		},
 		{
 			name: "ErrUnauthorized",
-			err: &dragonerrors.DragonError{
+			err: &dragonerrors.QBError{
 				Code: dragonerrors.ErrUnauthorized,
 			},
 			wantStatus: StatusUnauthorized,
 		},
 		{
 			name: "ErrInvalidInput",
-			err: &dragonerrors.DragonError{
+			err: &dragonerrors.QBError{
 				Code: dragonerrors.ErrInvalidInput,
 			},
 			wantStatus: StatusInvalidArgument,
 		},
 		{
 			name: "ErrAlreadyExists",
-			err: &dragonerrors.DragonError{
+			err: &dragonerrors.QBError{
 				Code: dragonerrors.ErrAlreadyExists,
 			},
 			wantStatus: StatusAlreadyExists,
 		},
 		{
 			name: "ErrTimeout",
-			err: &dragonerrors.DragonError{
+			err: &dragonerrors.QBError{
 				Code: dragonerrors.ErrTimeout,
 			},
 			wantStatus: StatusTimeout,
 		},
 		{
 			name: "ErrForbidden",
-			err: &dragonerrors.DragonError{
+			err: &dragonerrors.QBError{
 				Code: dragonerrors.ErrForbidden,
 			},
 			wantStatus: StatusPermissionDenied,
 		},
 		{
 			name: "ErrResourceExhausted",
-			err: &dragonerrors.DragonError{
+			err: &dragonerrors.QBError{
 				Code: dragonerrors.ErrResourceExhausted,
 			},
 			wantStatus: StatusResourceExhausted,
 		},
 		{
 			name: "ErrUnavailable",
-			err: &dragonerrors.DragonError{
+			err: &dragonerrors.QBError{
 				Code: dragonerrors.ErrUnavailable,
 			},
 			wantStatus: StatusUnavailable,
 		},
 		{
-			name: "unknown DragonError code",
-			err: &dragonerrors.DragonError{
+			name: "unknown QBError code",
+			err: &dragonerrors.QBError{
 				Code: 9999,
 			},
 			wantStatus: StatusInternalError,
 		},
 		{
-			name:       "non-DragonError",
+			name:       "non-QBError",
 			err:        errors.New("generic error"),
 			wantStatus: StatusInternalError,
 		},

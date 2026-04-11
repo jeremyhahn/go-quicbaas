@@ -77,9 +77,9 @@ func TestMemoryKVStore_GetNotFound(t *testing.T) {
 		_, err := store.Get(ctx, "nonexistent")
 		require.Error(t, err)
 
-		var dragonErr *dberrors.DragonError
-		require.True(t, errors.As(err, &dragonErr))
-		assert.Equal(t, dberrors.ErrNotFound, dragonErr.Code)
+		var qbErr *dberrors.QBError
+		require.True(t, errors.As(err, &qbErr))
+		assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 	})
 }
 

@@ -150,7 +150,7 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(len(req.Plaintext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrEncryption,
 				Op:   "crypto.Encrypt",
 				Err:  err,
@@ -163,7 +163,7 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("encrypt_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.Encrypt",
 			Err:  &api.OperationFailedError{Operation: "encrypt data", Cause: err},
@@ -228,7 +228,7 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrDecryption,
 				Op:   "crypto.Decrypt",
 				Err:  err,
@@ -241,7 +241,7 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 	if err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("decrypt_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrDecryption,
 			Op:   "crypto.Decrypt",
 			Err:  &api.OperationFailedError{Operation: "decrypt data", Cause: err},
@@ -297,7 +297,7 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrEncryption,
 				Op:   "crypto.Rewrap",
 				Err:  err,
@@ -310,7 +310,7 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("rewrap_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.Rewrap",
 			Err:  &api.OperationFailedError{Operation: "rewrap data", Cause: err},
@@ -373,7 +373,7 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, totalBytes); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrEncryption,
 				Op:   "crypto.EncryptBatch",
 				Err:  err,
@@ -392,7 +392,7 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("encrypt_batch_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.EncryptBatch",
 			Err:  &api.OperationFailedError{Operation: "encrypt batch", Cause: err},
@@ -456,7 +456,7 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, totalBytes); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrDecryption,
 				Op:   "crypto.DecryptBatch",
 				Err:  err,
@@ -475,7 +475,7 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 	if err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("decrypt_batch_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrDecryption,
 			Op:   "crypto.DecryptBatch",
 			Err:  &api.OperationFailedError{Operation: "decrypt batch", Cause: err},
@@ -541,7 +541,7 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 			t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrEncryption,
 				Op:   "crypto.GenerateDataKey",
 				Err:  err,
@@ -556,7 +556,7 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("generate_data_key_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.GenerateDataKey",
 			Err:  &api.OperationFailedError{Operation: "generate data key", Cause: err},
@@ -610,7 +610,7 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 			t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrEncryption,
 				Op:   "crypto.GenerateWrappedDataKey",
 				Err:  err,
@@ -625,7 +625,7 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("generate_wrapped_data_key_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.GenerateWrappedDataKey",
 			Err:  &api.OperationFailedError{Operation: "generate wrapped data key", Cause: err},
@@ -683,7 +683,7 @@ func (t *cryptoService) Sign(ctx context.Context, req *SignRequest) (*SignRespon
 	if err != nil {
 		t.metrics.signOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("sign_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.Sign",
 			Err:  &api.OperationFailedError{Operation: "sign data", Cause: err},
@@ -740,7 +740,7 @@ func (t *cryptoService) Verify(ctx context.Context, req *VerifyRequest) (*Verify
 	if err != nil {
 		t.metrics.verifyOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("verify_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.Verify",
 			Err:  &api.OperationFailedError{Operation: "verify signature", Cause: err},
@@ -804,7 +804,7 @@ func (t *cryptoService) GenerateHMAC(ctx context.Context, req *HMACRequest) (*HM
 	if err != nil {
 		t.metrics.hmacOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("generate_hmac_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.GenerateHMAC",
 			Err:  &api.OperationFailedError{Operation: "generate HMAC", Cause: err},
@@ -861,7 +861,7 @@ func (t *cryptoService) VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) 
 	if err != nil {
 		t.metrics.hmacOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("verify_hmac_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.VerifyHMAC",
 			Err:  &api.OperationFailedError{Operation: "verify HMAC", Cause: err},
@@ -913,7 +913,7 @@ func (t *cryptoService) GenerateRandom(ctx context.Context, req *GenerateRandomR
 	randomBytes, err := t.cryptoManager.GenerateRandom(ctx, req.NumBytes)
 	if err != nil {
 		t.metrics.errorsByType.With("generate_random_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.GenerateRandom",
 			Err:  &api.OperationFailedError{Operation: "generate random bytes", Cause: err},
@@ -951,7 +951,7 @@ func (t *cryptoService) Hash(ctx context.Context, req *HashRequest) (*HashRespon
 	hashValue, err := t.cryptoManager.Hash(ctx, req.Data, string(req.Algorithm))
 	if err != nil {
 		t.metrics.errorsByType.With("hash_error").Inc()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "crypto.Hash",
 			Err:  &api.OperationFailedError{Operation: "compute hash", Cause: err},
@@ -980,21 +980,21 @@ func (t *cryptoService) Hash(ctx context.Context, req *HashRequest) (*HashRespon
 
 func (t *cryptoService) validateEncryptRequest(req *EncryptRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateEncryptRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateEncryptRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
 		}
 	}
 	if len(req.Plaintext) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateEncryptRequest",
 			Err:  &api.EmptyCollectionError{Field: "plaintext"},
@@ -1005,21 +1005,21 @@ func (t *cryptoService) validateEncryptRequest(req *EncryptRequest) error {
 
 func (t *cryptoService) validateDecryptRequest(req *DecryptRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateDecryptRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateDecryptRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
 		}
 	}
 	if len(req.Ciphertext) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateDecryptRequest",
 			Err:  &api.EmptyCollectionError{Field: "ciphertext"},
@@ -1030,21 +1030,21 @@ func (t *cryptoService) validateDecryptRequest(req *DecryptRequest) error {
 
 func (t *cryptoService) validateRewrapRequest(req *RewrapRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateRewrapRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateRewrapRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
 		}
 	}
 	if len(req.Ciphertext) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateRewrapRequest",
 			Err:  &api.EmptyCollectionError{Field: "ciphertext"},
@@ -1055,21 +1055,21 @@ func (t *cryptoService) validateRewrapRequest(req *RewrapRequest) error {
 
 func (t *cryptoService) validateEncryptBatchRequest(req *EncryptBatchRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateEncryptBatchRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateEncryptBatchRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
 		}
 	}
 	if len(req.Items) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateEncryptBatchRequest",
 			Err:  &api.EmptyCollectionError{Field: "items"},
@@ -1080,21 +1080,21 @@ func (t *cryptoService) validateEncryptBatchRequest(req *EncryptBatchRequest) er
 
 func (t *cryptoService) validateDecryptBatchRequest(req *DecryptBatchRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateDecryptBatchRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateDecryptBatchRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
 		}
 	}
 	if len(req.Items) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateDecryptBatchRequest",
 			Err:  &api.EmptyCollectionError{Field: "items"},
@@ -1105,14 +1105,14 @@ func (t *cryptoService) validateDecryptBatchRequest(req *DecryptBatchRequest) er
 
 func (t *cryptoService) validateGenerateDataKeyRequest(req *GenerateDataKeyRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateGenerateDataKeyRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateGenerateDataKeyRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
@@ -1123,14 +1123,14 @@ func (t *cryptoService) validateGenerateDataKeyRequest(req *GenerateDataKeyReque
 
 func (t *cryptoService) validateGenerateWrappedDataKeyRequest(req *GenerateWrappedDataKeyRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateGenerateWrappedDataKeyRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateGenerateWrappedDataKeyRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
@@ -1141,21 +1141,21 @@ func (t *cryptoService) validateGenerateWrappedDataKeyRequest(req *GenerateWrapp
 
 func (t *cryptoService) validateSignRequest(req *SignRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateSignRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateSignRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
 		}
 	}
 	if len(req.Message) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateSignRequest",
 			Err:  &api.EmptyCollectionError{Field: "message"},
@@ -1166,28 +1166,28 @@ func (t *cryptoService) validateSignRequest(req *SignRequest) error {
 
 func (t *cryptoService) validateVerifyRequest(req *VerifyRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateVerifyRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateVerifyRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
 		}
 	}
 	if len(req.Message) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateVerifyRequest",
 			Err:  &api.EmptyCollectionError{Field: "message"},
 		}
 	}
 	if len(req.Signature) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateVerifyRequest",
 			Err:  &api.EmptyCollectionError{Field: "signature"},
@@ -1198,21 +1198,21 @@ func (t *cryptoService) validateVerifyRequest(req *VerifyRequest) error {
 
 func (t *cryptoService) validateHMACRequest(req *HMACRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateHMACRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateHMACRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
 		}
 	}
 	if len(req.Message) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateHMACRequest",
 			Err:  &api.EmptyCollectionError{Field: "message"},
@@ -1223,28 +1223,28 @@ func (t *cryptoService) validateHMACRequest(req *HMACRequest) error {
 
 func (t *cryptoService) validateVerifyHMACRequest(req *VerifyHMACRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateVerifyHMACRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.KeyID == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateVerifyHMACRequest",
 			Err:  &api.RequiredFieldError{Field: "key_id"},
 		}
 	}
 	if len(req.Message) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateVerifyHMACRequest",
 			Err:  &api.EmptyCollectionError{Field: "message"},
 		}
 	}
 	if len(req.HMAC) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateVerifyHMACRequest",
 			Err:  &api.EmptyCollectionError{Field: "hmac"},
@@ -1255,21 +1255,21 @@ func (t *cryptoService) validateVerifyHMACRequest(req *VerifyHMACRequest) error 
 
 func (t *cryptoService) validateGenerateRandomRequest(req *GenerateRandomRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateGenerateRandomRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.NumBytes <= 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateGenerateRandomRequest",
 			Err:  &api.InvalidInputError{Message: "num_bytes must be positive"},
 		}
 	}
 	if req.NumBytes > 1024*1024 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateGenerateRandomRequest",
 			Err:  &api.InvalidInputError{Message: "num_bytes cannot exceed 1MB"},
@@ -1280,21 +1280,21 @@ func (t *cryptoService) validateGenerateRandomRequest(req *GenerateRandomRequest
 
 func (t *cryptoService) validateHashRequest(req *HashRequest) error {
 	if req == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateHashRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if len(req.Data) == 0 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateHashRequest",
 			Err:  &api.EmptyCollectionError{Field: "data"},
 		}
 	}
 	if req.Algorithm == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "crypto.validateHashRequest",
 			Err:  &api.RequiredFieldError{Field: "algorithm"},

@@ -56,7 +56,7 @@ type RBACProvider struct {
 //   - error: ErrInvalidInput if rm is nil.
 func NewRBACProvider(rm interfaces.RoleManager, log *logger.Logger) (*RBACProvider, error) {
 	if rm == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "providers.NewRBACProvider",
 			Err:  ErrNilRoleManager,
@@ -72,7 +72,7 @@ func NewRBACProvider(rm interfaces.RoleManager, log *logger.Logger) (*RBACProvid
 			Component: "rbac-provider",
 		})
 		if err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "providers.NewRBACProvider",
 				Err:  err,
@@ -98,7 +98,7 @@ func NewRBACProvider(rm interfaces.RoleManager, log *logger.Logger) (*RBACProvid
 // the check completes, ErrCanceled is returned.
 func (p *RBACProvider) Authorize(ctx context.Context, req *interfaces.AuthorizationRequest) (*interfaces.AuthorizationDecision, error) {
 	if p.closed.Load() {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "RBACProvider.Authorize",
 			Err:  ErrProviderClosed,
@@ -106,7 +106,7 @@ func (p *RBACProvider) Authorize(ctx context.Context, req *interfaces.Authorizat
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrCanceled,
 			Op:   "RBACProvider.Authorize",
 			Err:  err,
@@ -114,7 +114,7 @@ func (p *RBACProvider) Authorize(ctx context.Context, req *interfaces.Authorizat
 	}
 
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "RBACProvider.Authorize",
 			Err:  ErrNilRequest,
@@ -216,7 +216,7 @@ func (p *RBACProvider) generateDecisionID() string {
 // Successfully evaluated decisions up to that point are not returned.
 func (p *RBACProvider) BatchAuthorize(ctx context.Context, reqs []*interfaces.AuthorizationRequest) ([]*interfaces.AuthorizationDecision, error) {
 	if p.closed.Load() {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "RBACProvider.BatchAuthorize",
 			Err:  ErrProviderClosed,
@@ -224,7 +224,7 @@ func (p *RBACProvider) BatchAuthorize(ctx context.Context, reqs []*interfaces.Au
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrCanceled,
 			Op:   "RBACProvider.BatchAuthorize",
 			Err:  err,
@@ -240,7 +240,7 @@ func (p *RBACProvider) BatchAuthorize(ctx context.Context, reqs []*interfaces.Au
 	for i, req := range reqs {
 		// Check context cancellation between requests
 		if err := ctx.Err(); err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrCanceled,
 				Op:   "RBACProvider.BatchAuthorize",
 				Err:  err,

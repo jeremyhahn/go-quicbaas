@@ -217,42 +217,42 @@ func (e *FederationStateExpiredError) Error() string {
 // Federation-specific error types.
 var (
 	// ErrProviderNotFound is returned when a provider is not found.
-	ErrProviderNotFound = &dberrors.DragonError{
+	ErrProviderNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.federation.provider",
 		Err:  &ProviderNotFoundError{},
 	}
 
 	// ErrProviderAlreadyExists is returned when attempting to create a duplicate provider.
-	ErrProviderAlreadyExists = &dberrors.DragonError{
+	ErrProviderAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.federation.provider",
 		Err:  &ProviderAlreadyExistsError{},
 	}
 
 	// ErrProviderInvalid is returned when provider validation fails.
-	ErrProviderInvalid = &dberrors.DragonError{
+	ErrProviderInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.federation.provider",
 		Err:  &ProviderInvalidError{},
 	}
 
 	// ErrStateNotFound is returned when a state token is not found.
-	ErrStateNotFound = &dberrors.DragonError{
+	ErrStateNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.federation.state",
 		Err:  &StateNotFoundError{},
 	}
 
 	// ErrStateExpired is returned when a state token has expired.
-	ErrStateExpired = &dberrors.DragonError{
+	ErrStateExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.federation.state",
 		Err:  &StateExpiredError{},
 	}
 
 	// ErrStateInvalid is returned when state validation fails.
-	ErrStateInvalid = &dberrors.DragonError{
+	ErrStateInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.federation.state",
 		Err:  &StateInvalidError{},
@@ -262,119 +262,119 @@ var (
 	ErrFederationStateInvalid = ErrStateInvalid
 
 	// ErrTokenExchangeFailed is returned when OAuth token exchange fails.
-	ErrTokenExchangeFailed = &dberrors.DragonError{
+	ErrTokenExchangeFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.federation.token",
 		Err:  &TokenExchangeFailedError{},
 	}
 
 	// ErrClaimsExtractionFailed is returned when claims extraction fails.
-	ErrClaimsExtractionFailed = &dberrors.DragonError{
+	ErrClaimsExtractionFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.federation.claims",
 		Err:  &ClaimsExtractionFailedError{},
 	}
 
 	// ErrIdentityNotLinked is returned when a federated identity is not linked.
-	ErrIdentityNotLinked = &dberrors.DragonError{
+	ErrIdentityNotLinked = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.federation.identity",
 		Err:  &IdentityNotLinkedError{},
 	}
 
 	// ErrIdentityAlreadyLinked is returned when an identity is already linked.
-	ErrIdentityAlreadyLinked = &dberrors.DragonError{
+	ErrIdentityAlreadyLinked = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.federation.identity",
 		Err:  &IdentityAlreadyLinkedError{},
 	}
 
 	// ErrAutoProvisionDisabled is returned when auto-provisioning is disabled.
-	ErrAutoProvisionDisabled = &dberrors.DragonError{
+	ErrAutoProvisionDisabled = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.federation.provision",
 		Err:  &AutoProvisionDisabledError{},
 	}
 
 	// ErrLinkingDisabled is returned when account linking is disabled.
-	ErrLinkingDisabled = &dberrors.DragonError{
+	ErrLinkingDisabled = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.federation.link",
 		Err:  &LinkingDisabledError{},
 	}
 
 	// ErrProviderDisabled is returned when a provider is disabled.
-	ErrProviderDisabled = &dberrors.DragonError{
+	ErrProviderDisabled = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.federation.provider",
 		Err:  &ProviderDisabledError{},
 	}
 
 	// ErrOIDCDiscoveryFailed is returned when OIDC discovery fails.
-	ErrOIDCDiscoveryFailed = &dberrors.DragonError{
+	ErrOIDCDiscoveryFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.federation.oidc",
 		Err:  &OIDCDiscoveryFailedError{},
 	}
 
 	// ErrFederatedIdentityNotFound is returned when a federated identity is not found.
-	ErrFederatedIdentityNotFound = &dberrors.DragonError{
+	ErrFederatedIdentityNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.federation.identity",
 		Err:  &FederatedIdentityNotFoundError{},
 	}
 
 	// ErrFederatedIdentityAlreadyLinked is returned when identity is already linked.
-	ErrFederatedIdentityAlreadyLinked = &dberrors.DragonError{
+	ErrFederatedIdentityAlreadyLinked = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.federation.identity",
 		Err:  &FederatedIdentityAlreadyLinkedError{},
 	}
 
 	// ErrAccountLinkingDisabled is returned when account linking is disabled.
-	ErrAccountLinkingDisabled = &dberrors.DragonError{
+	ErrAccountLinkingDisabled = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.federation.linking",
 		Err:  &AccountLinkingDisabledError{},
 	}
 
 	// ErrJITProvisioningDisabled is returned when JIT provisioning is disabled.
-	ErrJITProvisioningDisabled = &dberrors.DragonError{
+	ErrJITProvisioningDisabled = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.federation.provisioning",
 		Err:  &JITProvisioningDisabledError{},
 	}
 
 	// ErrOIDCTokenExchangeFailed is returned when OIDC token exchange fails.
-	ErrOIDCTokenExchangeFailed = &dberrors.DragonError{
+	ErrOIDCTokenExchangeFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.federation.oidc.token",
 		Err:  &OIDCTokenExchangeFailedError{},
 	}
 
 	// ErrOIDCUserInfoFailed is returned when fetching user info fails.
-	ErrOIDCUserInfoFailed = &dberrors.DragonError{
+	ErrOIDCUserInfoFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.federation.oidc.userinfo",
 		Err:  &OIDCUserInfoFailedError{},
 	}
 
 	// ErrOIDCClaimMappingFailed is returned when claim mapping fails.
-	ErrOIDCClaimMappingFailed = &dberrors.DragonError{
+	ErrOIDCClaimMappingFailed = &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.federation.oidc.claims",
 		Err:  &OIDCClaimMappingFailedError{},
 	}
 
 	// ErrFederationStateNotFound is returned when callback state is not found.
-	ErrFederationStateNotFound = &dberrors.DragonError{
+	ErrFederationStateNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.federation.state",
 		Err:  &FederationStateNotFoundError{},
 	}
 
 	// ErrFederationStateExpired is returned when callback state has expired.
-	ErrFederationStateExpired = &dberrors.DragonError{
+	ErrFederationStateExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.federation.state",
 		Err:  &FederationStateExpiredError{},

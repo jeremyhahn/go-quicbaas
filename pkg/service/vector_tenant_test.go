@@ -148,9 +148,9 @@ func TestVectorEnforceTenantAccess_MatchingTenant(t *testing.T) {
 func TestVectorEnforceTenantAccess_CrossTenantDenied(t *testing.T) {
 	err := vectorEnforceTenantAccess("acme-corp", "tenant/other-corp/embeddings", "Search")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 	assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
 }
 
@@ -158,9 +158,9 @@ func TestVectorEnforceTenantAccess_UnscopedNamespaceDenied(t *testing.T) {
 	// A multi-tenant request cannot access an unscoped namespace
 	err := vectorEnforceTenantAccess("acme-corp", "unscoped-namespace", "DeleteNamespace")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 }
 
 func TestVectorEnforceTenantAccess_OperationInErrorMessage(t *testing.T) {
@@ -191,9 +191,9 @@ func TestVectorPrepareTenantContext_InvalidTenant(t *testing.T) {
 	ctx := iam.ContextWithTenant(context.Background(), "invalid tenant!@#")
 	_, err := vectorPrepareTenantContext(ctx)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestVectorPrepareTenantContext_TooLongTenant(t *testing.T) {

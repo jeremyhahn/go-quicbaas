@@ -369,7 +369,7 @@ func TestHandleGenerateKey(t *testing.T) {
 				},
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("GenerateKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GenerateKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GenerateKey",
 					Err:  stderrors.New("internal failure"),
@@ -413,7 +413,7 @@ func TestHandleGenerateKey(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockKMSMgr := &MockKMSManager{}
-				mockKMSMgr.On("GenerateKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockKMSMgr.On("GenerateKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GenerateKey",
 					Err:  assert.AnError,
@@ -506,7 +506,7 @@ func TestHandleImportKey(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockKMSMgr := &MockKMSManager{}
-				mockKMSMgr.On("ImportKey", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockKMSMgr.On("ImportKey", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "ImportKey",
 					Err:  assert.AnError,
@@ -606,7 +606,7 @@ func TestHandleGetKey(t *testing.T) {
 			name:    "get key via KMS service layer - not found error",
 			keyName: "missing-key",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("GetKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GetKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "GetKey",
 					Err:  stderrors.New("key not found"),
@@ -625,7 +625,7 @@ func TestHandleGetKey(t *testing.T) {
 			keyName: "test-key-123",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockKMSMgr := &MockKMSManager{}
-				mockKMSMgr.On("GetKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockKMSMgr.On("GetKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "GetKey",
 					Err:  assert.AnError,
@@ -713,7 +713,7 @@ func TestHandleListKeys(t *testing.T) {
 		{
 			name: "list keys via KMS service layer - error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("ListKeys", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("ListKeys", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "ListKeys",
 					Err:  stderrors.New("internal error"),
@@ -738,7 +738,7 @@ func TestHandleListKeys(t *testing.T) {
 			name: "service error via KMS manager",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockKMSMgr := &MockKMSManager{}
-				mockKMSMgr.On("ListKeys", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockKMSMgr.On("ListKeys", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "ListKeys",
 					Err:  assert.AnError,
@@ -827,7 +827,7 @@ func TestHandleRotateKey(t *testing.T) {
 			keyName: "fail-rotate",
 			body:    map[string]interface{}{},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("RotateKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("RotateKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "RotateKey",
 					Err:  stderrors.New("key not found"),
@@ -861,7 +861,7 @@ func TestHandleRotateKey(t *testing.T) {
 					Created: time.Now(),
 					Updated: time.Now(),
 				}, nil).Once()
-				mockKMSMgr.On("RotateKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockKMSMgr.On("RotateKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "RotateKey",
 					Err:  assert.AnError,
@@ -955,7 +955,7 @@ func TestHandleDeleteKey(t *testing.T) {
 			keyName: "protected-key",
 			body:    map[string]interface{}{},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("DeleteKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DeleteKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrForbidden,
 					Op:   "DeleteKey",
 					Err:  stderrors.New("deletion protection enabled"),
@@ -983,7 +983,7 @@ func TestHandleDeleteKey(t *testing.T) {
 			body:    map[string]interface{}{"force": true},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockKMSMgr := &MockKMSManager{}
-				mockKMSMgr.On("DeleteKey", mock.Anything, mock.Anything).Return(&errors.DragonError{
+				mockKMSMgr.On("DeleteKey", mock.Anything, mock.Anything).Return(&errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "DeleteKey",
 					Err:  assert.AnError,
@@ -1078,7 +1078,7 @@ func TestHandleKMSEncrypt(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCrypto := &MockCryptoService{}
-				mockCrypto.On("Encrypt", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCrypto.On("Encrypt", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Encrypt",
 					Err:  assert.AnError,
@@ -1172,7 +1172,7 @@ func TestHandleKMSDecrypt(t *testing.T) {
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockCrypto := &MockCryptoService{}
-				mockCrypto.On("Decrypt", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockCrypto.On("Decrypt", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Decrypt",
 					Err:  assert.AnError,
@@ -1328,7 +1328,7 @@ func TestHandleListKeyVersions(t *testing.T) {
 			keyName: "nonexistent-key",
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				mockKMSMgr := &MockKMSManager{}
-				mockKMSMgr.On("GetKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				mockKMSMgr.On("GetKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrNotFound,
 					Op:   "GetKey",
 					Err:  assert.AnError,
@@ -1678,13 +1678,13 @@ func TestHandleKMSError(t *testing.T) {
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "non-DragonError returns 500",
+			name:           "non-QBError returns 500",
 			err:            stderrors.New("generic error"),
 			expectedStatus: http.StatusInternalServerError,
 		},
 		{
 			name: "ErrNotFound returns 404",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "test",
 				Err:  stderrors.New("key not found"),
@@ -1693,7 +1693,7 @@ func TestHandleKMSError(t *testing.T) {
 		},
 		{
 			name: "ErrAlreadyExists returns 409",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrAlreadyExists,
 				Op:   "test",
 				Err:  stderrors.New("key already exists"),
@@ -1702,7 +1702,7 @@ func TestHandleKMSError(t *testing.T) {
 		},
 		{
 			name: "ErrInvalidInput returns 400",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "test",
 				Err:  stderrors.New("invalid input"),
@@ -1711,7 +1711,7 @@ func TestHandleKMSError(t *testing.T) {
 		},
 		{
 			name: "ErrUnauthorized returns 401",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnauthorized,
 				Op:   "test",
 				Err:  stderrors.New("unauthorized"),
@@ -1720,7 +1720,7 @@ func TestHandleKMSError(t *testing.T) {
 		},
 		{
 			name: "ErrForbidden returns 403",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrForbidden,
 				Op:   "test",
 				Err:  stderrors.New("forbidden"),
@@ -1729,7 +1729,7 @@ func TestHandleKMSError(t *testing.T) {
 		},
 		{
 			name: "ErrTimeout returns 504",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrTimeout,
 				Op:   "test",
 				Err:  stderrors.New("timeout"),
@@ -1738,7 +1738,7 @@ func TestHandleKMSError(t *testing.T) {
 		},
 		{
 			name: "ErrResourceExhausted returns 429",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrResourceExhausted,
 				Op:   "test",
 				Err:  stderrors.New("rate limited"),
@@ -1747,7 +1747,7 @@ func TestHandleKMSError(t *testing.T) {
 		},
 		{
 			name: "ErrUnavailable returns 503",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnavailable,
 				Op:   "test",
 				Err:  stderrors.New("service unavailable"),
@@ -1756,7 +1756,7 @@ func TestHandleKMSError(t *testing.T) {
 		},
 		{
 			name: "ErrInternal returns 500",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "test",
 				Err:  stderrors.New("internal error"),
@@ -1764,8 +1764,8 @@ func TestHandleKMSError(t *testing.T) {
 			expectedStatus: http.StatusInternalServerError,
 		},
 		{
-			name: "Unknown DragonError code returns 500",
-			err: &errors.DragonError{
+			name: "Unknown QBError code returns 500",
+			err: &errors.QBError{
 				Code: errors.ErrorCode(9999),
 				Op:   "test",
 				Err:  stderrors.New("unknown error"),
@@ -1995,7 +1995,7 @@ func TestHandleRotateKeyGetKeyError(t *testing.T) {
 	defer cleanup()
 
 	mockKMSMgr := &MockKMSManager{}
-	mockKMSMgr.On("GetKey", mock.Anything, "test-key").Return(nil, &errors.DragonError{
+	mockKMSMgr.On("GetKey", mock.Anything, "test-key").Return(nil, &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "GetKey",
 		Err:  assert.AnError,
@@ -2134,7 +2134,7 @@ func TestHandleGenerateKeyServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockKMSMgr := &MockKMSManager{}
-	mockKMSMgr.On("GenerateKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockKMSMgr.On("GenerateKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "GenerateKey",
 		Err:  assert.AnError,
@@ -2221,7 +2221,7 @@ func TestHandleDeleteKeyNotFound(t *testing.T) {
 	mockKMSMgr := &MockKMSManager{}
 	// DisableKey is called first before DeleteKey
 	mockKMSMgr.On("DisableKey", mock.Anything, "test-key").Return(nil).Once()
-	mockKMSMgr.On("DeleteKey", mock.Anything, "test-key").Return(&errors.DragonError{
+	mockKMSMgr.On("DeleteKey", mock.Anything, "test-key").Return(&errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "DeleteKey",
 		Err:  assert.AnError,
@@ -2343,7 +2343,7 @@ func TestHandleListDEKsError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("ListDEKs", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("ListDEKs", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "ListDEKs",
 		Err:  assert.AnError,
@@ -2376,7 +2376,7 @@ func TestHandleGetRebalancePlanServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "ClusterStatus",
 		Err:  assert.AnError,

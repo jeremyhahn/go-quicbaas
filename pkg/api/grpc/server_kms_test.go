@@ -1526,7 +1526,7 @@ func TestConvertKMSError(t *testing.T) {
 	})
 
 	t.Run("not_found_error", func(t *testing.T) {
-		dErr := &dberrors.DragonError{
+		dErr := &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
 			Op:   "kms.GetKey",
 			Err:  stderrors.New("key not found"),
@@ -1536,7 +1536,7 @@ func TestConvertKMSError(t *testing.T) {
 	})
 
 	t.Run("already_exists_error", func(t *testing.T) {
-		dErr := &dberrors.DragonError{
+		dErr := &dberrors.QBError{
 			Code: dberrors.ErrAlreadyExists,
 			Op:   "kms.CreateKey",
 			Err:  stderrors.New("key already exists"),
@@ -1546,7 +1546,7 @@ func TestConvertKMSError(t *testing.T) {
 	})
 
 	t.Run("invalid_input_error", func(t *testing.T) {
-		dErr := &dberrors.DragonError{
+		dErr := &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "kms.CreateKey",
 			Err:  stderrors.New("invalid key id"),
@@ -1556,7 +1556,7 @@ func TestConvertKMSError(t *testing.T) {
 	})
 
 	t.Run("unauthorized_error", func(t *testing.T) {
-		dErr := &dberrors.DragonError{
+		dErr := &dberrors.QBError{
 			Code: dberrors.ErrUnauthorized,
 			Op:   "kms.GetKey",
 			Err:  stderrors.New("not authorized"),
@@ -1566,7 +1566,7 @@ func TestConvertKMSError(t *testing.T) {
 	})
 
 	t.Run("forbidden_error", func(t *testing.T) {
-		dErr := &dberrors.DragonError{
+		dErr := &dberrors.QBError{
 			Code: dberrors.ErrForbidden,
 			Op:   "kms.DeleteKey",
 			Err:  stderrors.New("forbidden"),

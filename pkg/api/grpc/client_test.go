@@ -74,14 +74,14 @@ func TestConvertGRPCError(t *testing.T) {
 			},
 		},
 		{
-			name:      "already DragonError returns as is",
+			name:      "already QBError returns as is",
 			input:     errors.Newf(errors.ErrNotFound, "test", "not found"),
 			operation: "test",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+				assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 			},
 		},
 		{
@@ -90,9 +90,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Get",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
+				assert.Equal(t, errors.ErrNotFound, qbErr.Code)
 			},
 		},
 		{
@@ -101,9 +101,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Put",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+				assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 			},
 		},
 		{
@@ -112,9 +112,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Create",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrAlreadyExists, dragonErr.Code)
+				assert.Equal(t, errors.ErrAlreadyExists, qbErr.Code)
 			},
 		},
 		{
@@ -123,9 +123,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Delete",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrForbidden, dragonErr.Code)
+				assert.Equal(t, errors.ErrForbidden, qbErr.Code)
 			},
 		},
 		{
@@ -134,9 +134,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Login",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrUnauthorized, dragonErr.Code)
+				assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 			},
 		},
 		{
@@ -145,9 +145,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "BatchPut",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrResourceExhausted, dragonErr.Code)
+				assert.Equal(t, errors.ErrResourceExhausted, qbErr.Code)
 			},
 		},
 		{
@@ -156,9 +156,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Scan",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrDeadlineExceeded, dragonErr.Code)
+				assert.Equal(t, errors.ErrDeadlineExceeded, qbErr.Code)
 			},
 		},
 		{
@@ -167,9 +167,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Connect",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrUnavailable, dragonErr.Code)
+				assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
 			},
 		},
 		{
@@ -178,9 +178,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Watch",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrCanceled, dragonErr.Code)
+				assert.Equal(t, errors.ErrCanceled, qbErr.Code)
 			},
 		},
 		{
@@ -189,9 +189,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Process",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrInternal, dragonErr.Code)
+				assert.Equal(t, errors.ErrInternal, qbErr.Code)
 			},
 		},
 		{
@@ -200,9 +200,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Transaction",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrAborted, dragonErr.Code)
+				assert.Equal(t, errors.ErrAborted, qbErr.Code)
 			},
 		},
 		{
@@ -211,9 +211,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Update",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrPreconditionFailed, dragonErr.Code)
+				assert.Equal(t, errors.ErrPreconditionFailed, qbErr.Code)
 			},
 		},
 		{
@@ -222,9 +222,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Range",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrOutOfRange, dragonErr.Code)
+				assert.Equal(t, errors.ErrOutOfRange, qbErr.Code)
 			},
 		},
 		{
@@ -233,9 +233,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "NewFeature",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrUnimplemented, dragonErr.Code)
+				assert.Equal(t, errors.ErrUnimplemented, qbErr.Code)
 			},
 		},
 		{
@@ -244,9 +244,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Backup",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrDataLoss, dragonErr.Code)
+				assert.Equal(t, errors.ErrDataLoss, qbErr.Code)
 			},
 		},
 		{
@@ -255,9 +255,9 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Unknown",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrUnknown, dragonErr.Code)
+				assert.Equal(t, errors.ErrUnknown, qbErr.Code)
 			},
 		},
 		{
@@ -266,10 +266,10 @@ func TestConvertGRPCError(t *testing.T) {
 			operation: "Unknown",
 			checkErr: func(t *testing.T, err error) {
 				assert.Error(t, err)
-				dragonErr, ok := err.(*errors.DragonError)
+				qbErr, ok := err.(*errors.QBError)
 				assert.True(t, ok)
-				assert.Equal(t, errors.ErrInternal, dragonErr.Code)
-				assert.Contains(t, dragonErr.Op, "Unknown")
+				assert.Equal(t, errors.ErrInternal, qbErr.Code)
+				assert.Contains(t, qbErr.Op, "Unknown")
 			},
 		},
 	}
@@ -2583,27 +2583,27 @@ func TestConvertErrorNilReturnsNil(t *testing.T) {
 }
 
 func TestConvertErrorNonGRPCError(t *testing.T) {
-	// Non-gRPC errors get wrapped in a DragonError with ErrInternal
+	// Non-gRPC errors get wrapped in a QBError with ErrInternal
 	plainErr := stderrors.New("plain error")
 
 	result := convertError(plainErr)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, result, &dragonErr)
-	assert.Equal(t, errors.ErrInternal, dragonErr.Code)
-	assert.Equal(t, "grpc", dragonErr.Op)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, result, &qbErr)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
+	assert.Equal(t, "grpc", qbErr.Op)
 }
 
 func TestConvertErrorGRPCStatusError(t *testing.T) {
-	// gRPC status errors get converted to DragonError with mapped code
+	// gRPC status errors get converted to QBError with mapped code
 	grpcErr := status.Error(codes.NotFound, "resource not found")
 
 	result := convertError(grpcErr)
 
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, result, &dragonErr)
-	assert.Equal(t, errors.ErrNotFound, dragonErr.Code)
-	assert.Equal(t, "grpc", dragonErr.Op)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, result, &qbErr)
+	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
+	assert.Equal(t, "grpc", qbErr.Op)
 }
 
 // =============================================================================

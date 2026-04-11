@@ -144,9 +144,9 @@ func TestPrepareTimeSeriesTenantContext_InvalidTenant(t *testing.T) {
 	ctx := iam.ContextWithTenant(context.Background(), "invalid tenant!@#")
 	_, err := prepareTimeSeriesTenantContext(ctx)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestPrepareTimeSeriesTenantContext_TooLongTenant(t *testing.T) {
@@ -155,9 +155,9 @@ func TestPrepareTimeSeriesTenantContext_TooLongTenant(t *testing.T) {
 	ctx := iam.ContextWithTenant(context.Background(), longTenant)
 	_, err := prepareTimeSeriesTenantContext(ctx)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // =============================================================================
@@ -185,9 +185,9 @@ func TestValidateTimeSeriesTenantID_InvalidChars(t *testing.T) {
 	for _, id := range invalidIDs {
 		err := validateTimeSeriesTenantID(id)
 		require.Error(t, err, "tenant ID %q should be invalid", id)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	}
 }
 
@@ -201,9 +201,9 @@ func TestValidateTimeSeriesTenantID_TooLong(t *testing.T) {
 	tooLong := strings.Repeat("a", 129)
 	err = validateTimeSeriesTenantID(tooLong)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // =============================================================================
@@ -228,18 +228,18 @@ func TestEnforceTimeSeriesTenantAccess_CrossTenant(t *testing.T) {
 	metric := tsTenantScopedMetric("other-corp", "cpu.usage")
 	err := enforceTimeSeriesTenantAccess("acme-corp", metric, "WritePoint")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 }
 
 func TestEnforceTimeSeriesTenantAccess_UnprefixedMetric(t *testing.T) {
 	// Multi-tenant mode: unprefixed metric is denied
 	err := enforceTimeSeriesTenantAccess("acme-corp", "plain-metric", "TSQuery")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 }
 
 // =============================================================================

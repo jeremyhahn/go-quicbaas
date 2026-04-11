@@ -118,7 +118,7 @@ func (d *DistributedSearchCoordinator) SearchAcrossShards(
 	}
 
 	if req.K <= 0 {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "DistributedSearchCoordinator.SearchAcrossShards",
 			Err:  &dberrors.MessageError{Message: "k must be greater than zero"},

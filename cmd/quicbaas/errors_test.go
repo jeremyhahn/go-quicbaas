@@ -37,7 +37,7 @@ func TestUnsupportedAlgorithmError(t *testing.T) {
 }
 
 func TestNewUnsupportedAlgorithmError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewUnsupportedAlgorithmError("test.op", "CHACHA20")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -66,7 +66,7 @@ func TestInvalidDayFormatError(t *testing.T) {
 }
 
 func TestNewInvalidDayFormatError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewInvalidDayFormatError("parse.duration", "xyz")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -91,7 +91,7 @@ func TestNegativeDurationError(t *testing.T) {
 }
 
 func TestNewNegativeDurationError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewNegativeDurationError("op", "-10s")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -116,7 +116,7 @@ func TestInvalidDurationFormatError(t *testing.T) {
 }
 
 func TestNewInvalidDurationFormatError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewInvalidDurationFormatError("op", "xyz")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -141,7 +141,7 @@ func TestUnsupportedOutputFormatError(t *testing.T) {
 }
 
 func TestNewUnsupportedOutputFormatError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewUnsupportedOutputFormatError("display", "yaml")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -161,7 +161,7 @@ func TestNoActiveMigrationError(t *testing.T) {
 }
 
 func TestNewNoActiveMigrationError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewNoActiveMigrationError("migrate.status")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrNotFound, de.Code)
@@ -188,7 +188,7 @@ func TestInvalidStorageURLError(t *testing.T) {
 }
 
 func TestNewInvalidStorageURLError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewInvalidStorageURLError("storage.parse", "invalid-url")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -214,7 +214,7 @@ func TestUnsupportedStorageSchemeError(t *testing.T) {
 }
 
 func TestNewUnsupportedStorageSchemeError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewUnsupportedStorageSchemeError("storage", "nfs")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -239,7 +239,7 @@ func TestMigrationPartialFailureError(t *testing.T) {
 }
 
 func TestNewMigrationPartialFailureError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewMigrationPartialFailureError("migrate.run", 100)
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInternal, de.Code)
@@ -259,7 +259,7 @@ func TestKeyNotFoundError(t *testing.T) {
 }
 
 func TestNewKeyNotFoundError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewKeyNotFoundError("data.get")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrNotFound, de.Code)
@@ -286,7 +286,7 @@ func TestInvalidFilterFormatError(t *testing.T) {
 }
 
 func TestNewInvalidFilterFormatError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewInvalidFilterFormatError("vector.search", "no-equals")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -307,7 +307,7 @@ func TestNoMetadataProvidedError(t *testing.T) {
 }
 
 func TestNewNoMetadataProvidedError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewNoMetadataProvidedError("vector.update")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -327,7 +327,7 @@ func TestFilterRequiredError(t *testing.T) {
 }
 
 func TestNewFilterRequiredError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		de := NewFilterRequiredError("vector.metadata-search")
 		require.NotNil(t, de)
 		assert.Equal(t, dragonerrors.ErrInvalidInput, de.Code)
@@ -361,7 +361,7 @@ func TestInvalidMetadataJSONError(t *testing.T) {
 }
 
 func TestNewInvalidMetadataJSONError(t *testing.T) {
-	t.Run("CreatesDragonError", func(t *testing.T) {
+	t.Run("CreatesQBError", func(t *testing.T) {
 		cause := fmt.Errorf("bad json")
 		de := NewInvalidMetadataJSONError("vector.upsert", cause)
 		require.NotNil(t, de)
@@ -582,21 +582,21 @@ func TestJobFailedError(t *testing.T) {
 	})
 
 	t.Run("NewJobFailedError", func(t *testing.T) {
-		dragonErr := NewJobFailedError("orchestrator.run", "job_789", "agent crashed")
-		require.NotNil(t, dragonErr)
-		assert.Equal(t, dragonerrors.ErrInternal, dragonErr.Code)
-		assert.Equal(t, "orchestrator.run", dragonErr.Op)
+		qbErr := NewJobFailedError("orchestrator.run", "job_789", "agent crashed")
+		require.NotNil(t, qbErr)
+		assert.Equal(t, dragonerrors.ErrInternal, qbErr.Code)
+		assert.Equal(t, "orchestrator.run", qbErr.Op)
 
 		var jobErr *JobFailedError
-		ok := errors.As(dragonErr.Err, &jobErr)
+		ok := errors.As(qbErr.Err, &jobErr)
 		require.True(t, ok)
 		assert.Equal(t, "job_789", jobErr.JobID)
 		assert.Equal(t, "agent crashed", jobErr.Message)
 	})
 
 	t.Run("NewJobFailedErrorNoMessage", func(t *testing.T) {
-		dragonErr := NewJobFailedError("orchestrator.run", "job_empty", "")
-		require.NotNil(t, dragonErr)
-		assert.Contains(t, dragonErr.Error(), "job job_empty failed")
+		qbErr := NewJobFailedError("orchestrator.run", "job_empty", "")
+		require.NotNil(t, qbErr)
+		assert.Contains(t, qbErr.Error(), "job job_empty failed")
 	})
 }

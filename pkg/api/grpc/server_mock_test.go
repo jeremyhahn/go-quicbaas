@@ -95,7 +95,7 @@ func TestServerMockPut_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.PutFunc = func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "Put",
 			Err:  &errors.MessageError{Message: "raft consensus failed"},
@@ -190,7 +190,7 @@ func TestServerMockGet_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.GetFunc = func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Get",
 			Err:  &errors.MessageError{Message: "operation timed out"},
@@ -255,7 +255,7 @@ func TestServerMockDelete_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.DeleteFunc = func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "Delete",
 			Err:  &errors.MessageError{Message: "entity not found"},
@@ -344,7 +344,7 @@ func TestServerMockBatchPut_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.BatchPutFunc = func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "BatchPut",
 			Err:  &errors.MessageError{Message: "batch operation failed"},
@@ -416,7 +416,7 @@ func TestServerMockBatchGet_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.BatchGetFunc = func(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "BatchGet",
 			Err:  &errors.MessageError{Message: "internal error"},
@@ -490,7 +490,7 @@ func TestServerMockBatchDelete_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.BatchDeleteFunc = func(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "BatchDelete",
 			Err:  &errors.MessageError{Message: "raft error"},
@@ -557,7 +557,7 @@ func TestServerMockTransaction_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.TransactionFunc = func(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "Transaction",
 			Err:  &errors.MessageError{Message: "transaction failed"},
@@ -620,7 +620,7 @@ func TestServerMockHealth_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.HealthFunc = func(ctx context.Context, req *service.HealthRequest) (*service.HealthResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Health",
 			Err:  &errors.MessageError{Message: "health check failed"},
@@ -683,7 +683,7 @@ func TestServerMockClusterStatus_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.ClusterStatusFunc = func(ctx context.Context, req *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "ClusterStatus",
 			Err:  &errors.MessageError{Message: "failed to get cluster status"},
@@ -729,7 +729,7 @@ func TestServerMockGetLeader_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.GetLeaderFunc = func(ctx context.Context, req *service.GetLeaderRequest) (*service.GetLeaderResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrLeaderNotAvailable,
 			Op:   "GetLeader",
 			Err:  &errors.MessageError{Message: "leader not available"},
@@ -797,7 +797,7 @@ func TestServerMockAggregate_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.AggregateFunc = func(ctx context.Context, req *service.AggregateRequest) (*service.AggregateResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "Aggregate",
 			Err:  &errors.MessageError{Message: "invalid aggregation"},
@@ -850,7 +850,7 @@ func TestServerMockCreateBackup_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.CreateBackupFunc = func(ctx context.Context, req *service.CreateBackupRequest) (*service.CreateBackupResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "CreateBackup",
 			Err:  &errors.MessageError{Message: "backup failed"},
@@ -1047,7 +1047,7 @@ func TestServerMockListEntityTypes_ServiceError(t *testing.T) {
 	h := newMockTestHelper(t)
 
 	h.mock.ListEntityTypesFunc = func(ctx context.Context, req *service.ListEntityTypesRequest) (*service.ListEntityTypesResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "ListEntityTypes",
 			Err:  &errors.MessageError{Message: "timeout"},

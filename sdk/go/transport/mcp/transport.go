@@ -942,7 +942,7 @@ func (t *Transport) extractToolError(content []contentItem) error {
 	return errors.New(errors.CodeInternal, "mcp.callTool", "tool execution failed")
 }
 
-// convertHTTPError converts HTTP client errors to DragonErrors.
+// convertHTTPError converts HTTP client errors to QBErrors.
 func (t *Transport) convertHTTPError(err error, op string) error {
 	if err == nil {
 		return nil

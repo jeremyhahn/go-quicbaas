@@ -8,23 +8,23 @@ import (
 	"testing"
 )
 
-func TestDragonError_Is_NonDragonError(t *testing.T) {
+func TestQBError_Is_NonQBError(t *testing.T) {
 	de := New(CodeNotFound, "op", "message")
 	regularErr := errors.New("regular error")
 
 	if de.Is(regularErr) {
-		t.Error("expected Is to return false for non-DragonError")
+		t.Error("expected Is to return false for non-QBError")
 	}
 }
 
-func TestIsRetryable_NonDragonError(t *testing.T) {
+func TestIsRetryable_NonQBError(t *testing.T) {
 	regularErr := errors.New("regular error")
 	if IsRetryable(regularErr) {
-		t.Error("expected IsRetryable to return false for non-DragonError")
+		t.Error("expected IsRetryable to return false for non-QBError")
 	}
 }
 
-func TestIsRetryable_RetryableDragonError(t *testing.T) {
+func TestIsRetryable_RetryableQBError(t *testing.T) {
 	// Test retryable error
 	err := NewUnavailable("op", "server down")
 	if !IsRetryable(err) {
@@ -32,7 +32,7 @@ func TestIsRetryable_RetryableDragonError(t *testing.T) {
 	}
 }
 
-func TestDragonError_WithContext_Chaining(t *testing.T) {
+func TestQBError_WithContext_Chaining(t *testing.T) {
 	err := New(CodeNotFound, "op", "message").
 		WithContext("key1", "value1").
 		WithContext("key2", 42).
@@ -49,7 +49,7 @@ func TestDragonError_WithContext_Chaining(t *testing.T) {
 	}
 }
 
-func TestDragonError_WrappedErrorChain(t *testing.T) {
+func TestQBError_WrappedErrorChain(t *testing.T) {
 	innerErr := errors.New("inner error")
 	middleErr := Wrap(innerErr, CodeInternal, "middle", "middle message")
 	outerErr := Wrap(middleErr, CodeUnavailable, "outer", "outer message")
@@ -138,7 +138,7 @@ func TestIsConfiguration(t *testing.T) {
 	}
 }
 
-func TestDragonError_Error_Formats(t *testing.T) {
+func TestQBError_Error_Formats(t *testing.T) {
 	// Test error string without underlying error
 	err1 := New(CodeNotFound, "Get", "key not found")
 	expected1 := "NOT_FOUND: Get: key not found"
@@ -166,7 +166,7 @@ func TestErrorCode_DefaultSwitch(t *testing.T) {
 func TestIsChecks_AllCodes(t *testing.T) {
 	tests := []struct {
 		name    string
-		err     *DragonError
+		err     *QBError
 		isFn    func(error) bool
 		fnName  string
 		isMatch bool
@@ -193,7 +193,7 @@ func TestIsChecks_AllCodes(t *testing.T) {
 }
 
 func TestIsClientError_AllClientCodes(t *testing.T) {
-	clientErrors := []*DragonError{
+	clientErrors := []*QBError{
 		NewInvalidInput("op", "msg"),
 		NewNotFound("op", "msg"),
 		NewAlreadyExists("op", "msg"),
@@ -212,7 +212,7 @@ func TestIsClientError_AllClientCodes(t *testing.T) {
 }
 
 func TestIsServerError_AllServerCodes(t *testing.T) {
-	serverErrors := []*DragonError{
+	serverErrors := []*QBError{
 		NewInternal("op", "msg"),
 		NewUnavailable("op", "msg"),
 		NewTimeout("op", "msg"),
@@ -228,7 +228,7 @@ func TestIsServerError_AllServerCodes(t *testing.T) {
 }
 
 func TestIsRetryable_AllRetryableCodes(t *testing.T) {
-	retryableErrors := []*DragonError{
+	retryableErrors := []*QBError{
 		NewUnavailable("op", "msg"),
 		NewTimeout("op", "msg"),
 		NewResourceExhausted("op", "msg"),
@@ -241,31 +241,31 @@ func TestIsRetryable_AllRetryableCodes(t *testing.T) {
 	}
 }
 
-func TestErrorsAs_DragonError(t *testing.T) {
+func TestErrorsAs_QBError(t *testing.T) {
 	err := NewNotFound("op", "not found")
-	var de *DragonError
+	var de *QBError
 	if !errors.As(err, &de) {
-		t.Error("expected errors.As to match DragonError")
+		t.Error("expected errors.As to match QBError")
 	}
 	if de.Code != CodeNotFound {
 		t.Errorf("expected CodeNotFound, got %v", de.Code)
 	}
 }
 
-func TestErrorsAs_WrappedDragonError(t *testing.T) {
+func TestErrorsAs_WrappedQBError(t *testing.T) {
 	inner := errors.New("inner")
 	outer := Wrap(inner, CodeInternal, "op", "wrapped")
 
-	var de *DragonError
+	var de *QBError
 	if !errors.As(outer, &de) {
-		t.Error("expected errors.As to match DragonError")
+		t.Error("expected errors.As to match QBError")
 	}
 	if de.Code != CodeInternal {
 		t.Errorf("expected CodeInternal, got %v", de.Code)
 	}
 }
 
-func TestDragonError_NilContext(t *testing.T) {
+func TestQBError_NilContext(t *testing.T) {
 	err := New(CodeNotFound, "op", "message")
 	if err.Context != nil {
 		t.Error("expected nil context for new error")

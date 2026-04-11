@@ -26,14 +26,14 @@ import (
 // Additional federation-specific error types for storage operations.
 var (
 	// ErrLinkNotFound is returned when a federated identity link is not found.
-	ErrLinkNotFound = &dberrors.DragonError{
+	ErrLinkNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.federation.link",
 		Err:  &IAMMessageError{Message: "federated identity link not found"},
 	}
 
 	// ErrLinkAlreadyExists is returned when attempting to create a duplicate link.
-	ErrLinkAlreadyExists = &dberrors.DragonError{
+	ErrLinkAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.federation.link",
 		Err:  &IAMMessageError{Message: "federated identity link already exists"},
@@ -146,7 +146,7 @@ func (m *MemoryProviderStorage) CreateProvider(ctx context.Context, provider *Ex
 
 	nameKey := makeKey(provider.TenantID, provider.Name)
 	if _, exists := m.providersByName[nameKey]; exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrAlreadyExists,
 			Op:   "iam.federation.provider.create",
 			Err:  &ProviderNameExistsError{Name: provider.Name},
@@ -221,7 +221,7 @@ func (m *MemoryProviderStorage) UpdateProvider(ctx context.Context, provider *Ex
 
 		// Check if new name conflicts
 		if _, exists := m.providersByName[newNameKey]; exists {
-			return &dberrors.DragonError{
+			return &dberrors.QBError{
 				Code: dberrors.ErrAlreadyExists,
 				Op:   "iam.federation.provider.update",
 				Err:  &ProviderNameExistsError{Name: provider.Name},
@@ -319,7 +319,7 @@ func (m *MemoryFederationStorage) CreateLink(ctx context.Context, link *Federate
 
 	externalKey := makeKey(link.ProviderID, link.ExternalID)
 	if _, exists := m.linksByExternal[externalKey]; exists {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrAlreadyExists,
 			Op:   "iam.federation.link.create",
 			Err:  &LinkExternalExistsError{ExternalID: link.ExternalID},
@@ -411,7 +411,7 @@ func (m *MemoryFederationStorage) UpdateLink(ctx context.Context, link *Federate
 		newExternalKey := makeKey(link.ProviderID, link.ExternalID)
 
 		if _, exists := m.linksByExternal[newExternalKey]; exists && oldExternalKey != newExternalKey {
-			return &dberrors.DragonError{
+			return &dberrors.QBError{
 				Code: dberrors.ErrAlreadyExists,
 				Op:   "iam.federation.link.update",
 				Err:  &LinkExternalExistsError{ExternalID: link.ExternalID},
@@ -575,7 +575,7 @@ func (m *MemoryStateStorage) CleanupExpired(ctx context.Context) (int, error) {
 
 // NewLinkNotFoundError creates a link not found error with context.
 func NewLinkNotFoundError(linkID string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.federation.link",
 		Err:  &FederatedLinkNotFoundError{LinkID: linkID},
@@ -587,7 +587,7 @@ func NewLinkNotFoundError(linkID string) error {
 
 // NewStateExpiredError creates a state expired error with context.
 func NewStateExpiredError(token string) error {
-	return &dberrors.DragonError{
+	return &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.federation.state",
 		Err:  &StateExpiredDetailError{Token: token},

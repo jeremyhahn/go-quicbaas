@@ -222,7 +222,7 @@ func TestMFAServer_BeginEnrollment(t *testing.T) {
 	t.Run("service error", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{
 			beginEnrollmentFn: func(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
-				return nil, &errors.DragonError{Code: errors.ErrInternal, Err: stderrors.New("internal failure")}
+				return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("internal failure")}
 			},
 		})
 
@@ -807,76 +807,76 @@ func TestConvertMFAError(t *testing.T) {
 		},
 		{
 			name:     "not found error",
-			err:      &errors.DragonError{Code: errors.ErrNotFound},
+			err:      &errors.QBError{Code: errors.ErrNotFound},
 			expected: codes.NotFound,
 		},
 		{
 			name:     "already exists error",
-			err:      &errors.DragonError{Code: errors.ErrAlreadyExists},
+			err:      &errors.QBError{Code: errors.ErrAlreadyExists},
 			expected: codes.AlreadyExists,
 		},
 		{
 			name:     "invalid input error",
-			err:      &errors.DragonError{Code: errors.ErrInvalidInput},
+			err:      &errors.QBError{Code: errors.ErrInvalidInput},
 			expected: codes.InvalidArgument,
 		},
 		{
 			name:     "validation error",
-			err:      &errors.DragonError{Code: errors.ErrValidation},
+			err:      &errors.QBError{Code: errors.ErrValidation},
 			expected: codes.InvalidArgument,
 		},
 		{
 			name:     "unauthorized error",
-			err:      &errors.DragonError{Code: errors.ErrUnauthorized},
+			err:      &errors.QBError{Code: errors.ErrUnauthorized},
 			expected: codes.Unauthenticated,
 		},
 		{
 			name:     "forbidden error",
-			err:      &errors.DragonError{Code: errors.ErrForbidden},
+			err:      &errors.QBError{Code: errors.ErrForbidden},
 			expected: codes.PermissionDenied,
 		},
 		{
 			name:     "timeout error",
-			err:      &errors.DragonError{Code: errors.ErrTimeout},
+			err:      &errors.QBError{Code: errors.ErrTimeout},
 			expected: codes.DeadlineExceeded,
 		},
 		{
 			name:     "deadline exceeded error",
-			err:      &errors.DragonError{Code: errors.ErrDeadlineExceeded},
+			err:      &errors.QBError{Code: errors.ErrDeadlineExceeded},
 			expected: codes.DeadlineExceeded,
 		},
 		{
 			name:     "resource exhausted error",
-			err:      &errors.DragonError{Code: errors.ErrResourceExhausted},
+			err:      &errors.QBError{Code: errors.ErrResourceExhausted},
 			expected: codes.ResourceExhausted,
 		},
 		{
 			name:     "unavailable error",
-			err:      &errors.DragonError{Code: errors.ErrUnavailable},
+			err:      &errors.QBError{Code: errors.ErrUnavailable},
 			expected: codes.Unavailable,
 		},
 		{
 			name:     "conflict error",
-			err:      &errors.DragonError{Code: errors.ErrConflict},
+			err:      &errors.QBError{Code: errors.ErrConflict},
 			expected: codes.FailedPrecondition,
 		},
 		{
 			name:     "unimplemented error",
-			err:      &errors.DragonError{Code: errors.ErrUnimplemented},
+			err:      &errors.QBError{Code: errors.ErrUnimplemented},
 			expected: codes.Unimplemented,
 		},
 		{
 			name:     "not implemented error",
-			err:      &errors.DragonError{Code: errors.ErrNotImplemented},
+			err:      &errors.QBError{Code: errors.ErrNotImplemented},
 			expected: codes.Unimplemented,
 		},
 		{
 			name:     "internal error",
-			err:      &errors.DragonError{Code: errors.ErrInternal},
+			err:      &errors.QBError{Code: errors.ErrInternal},
 			expected: codes.Internal,
 		},
 		{
-			name:     "non-DragonError",
+			name:     "non-QBError",
 			err:      stderrors.New("internal failure"),
 			expected: codes.Internal,
 		},

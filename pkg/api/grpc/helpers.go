@@ -27,7 +27,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
-// toProtoError converts a DragonError to a gRPC status error.
+// toProtoError converts a QBError to a gRPC status error.
 func toProtoError(err error) error {
 	if err == nil {
 		return nil
@@ -38,20 +38,20 @@ func toProtoError(err error) error {
 		return err
 	}
 
-	// Check if it's a DragonError.
-	var dragonErr *errors.DragonError
-	if !stderrors.As(err, &dragonErr) {
+	// Check if it's a QBError.
+	var qbErr *errors.QBError
+	if !stderrors.As(err, &qbErr) {
 		// Wrap unknown errors as internal.
-		dragonErr = &errors.DragonError{
+		qbErr = &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "unknown",
 			Err:  err,
 		}
 	}
 
-	// Map DragonError code to gRPC code.
-	code := mapErrorCode(dragonErr.Code)
-	message := dragonErr.Error()
+	// Map QBError code to gRPC code.
+	code := mapErrorCode(qbErr.Code)
+	message := qbErr.Error()
 
 	return status.Error(code, message)
 }

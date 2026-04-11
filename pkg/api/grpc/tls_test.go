@@ -368,7 +368,7 @@ func TestLoadClientTLSCredentials_MutualTLS(t *testing.T) {
 }
 
 func TestTLSConfig_ErrorTypes(t *testing.T) {
-	// Verify errors are DragonErrors
+	// Verify errors are QBErrors
 	config := &TLSConfig{
 		Enabled:  true,
 		CertFile: "",
@@ -378,10 +378,10 @@ func TestTLSConfig_ErrorTypes(t *testing.T) {
 	_, err := LoadServerTLSCredentials(config)
 	require.Error(t, err)
 
-	dragonErr, ok := err.(*errors.DragonError)
-	require.True(t, ok, "error should be DragonError type")
-	assert.Equal(t, errors.ErrConfiguration, dragonErr.Code)
-	assert.Equal(t, "grpc.LoadServerTLSCredentials", dragonErr.Op)
+	qbErr, ok := err.(*errors.QBError)
+	require.True(t, ok, "error should be QBError type")
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
+	assert.Equal(t, "grpc.LoadServerTLSCredentials", qbErr.Op)
 }
 
 func TestTLSMinVersions(t *testing.T) {

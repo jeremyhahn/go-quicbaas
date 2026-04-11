@@ -37,9 +37,9 @@ func (e *XKMSNotInitializedError) Is(target error) bool {
 	return ok
 }
 
-// NewXKMSNotInitializedError creates a DragonError for an uninitialized xkms.
-func NewXKMSNotInitializedError(op string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewXKMSNotInitializedError creates a QBError for an uninitialized xkms.
+func NewXKMSNotInitializedError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrPreconditionFailed,
 		Op:   op,
 		Err:  &XKMSNotInitializedError{},
@@ -94,9 +94,9 @@ func (e *XKMSInitializationError) Unwrap() error {
 	return e.Cause
 }
 
-// NewXKMSInitializationError creates a DragonError for an xkms initialization failure.
-func NewXKMSInitializationError(cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewXKMSInitializationError creates a QBError for an xkms initialization failure.
+func NewXKMSInitializationError(cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "xkms.initialize",
 		Err:  &XKMSInitializationError{Cause: cause},
@@ -286,9 +286,9 @@ func (e *KeyImportError) Is(target error) bool {
 	return ok
 }
 
-// NewKeyImportError creates a DragonError for a key import failure.
-func NewKeyImportError(op, keyType string, cause error) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// NewKeyImportError creates a QBError for a key import failure.
+func NewKeyImportError(op, keyType string, cause error) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   op,
 		Err:  &KeyImportError{Detail: keyType, Cause: cause},

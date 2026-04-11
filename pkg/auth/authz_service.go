@@ -100,7 +100,7 @@ type AuthorizationServiceImpl struct {
 // NewAuthorizationService creates a new AuthorizationService wrapping the given provider.
 func NewAuthorizationService(provider interfaces.AuthorizationProvider, log *logger.Logger) (*AuthorizationServiceImpl, error) {
 	if provider == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "auth.NewAuthorizationService",
 			Err:  ErrNilProvider,
@@ -108,7 +108,7 @@ func NewAuthorizationService(provider interfaces.AuthorizationProvider, log *log
 	}
 
 	if log == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "auth.NewAuthorizationService",
 			Err:  ErrNilLogger,
@@ -134,7 +134,7 @@ func (s *AuthorizationServiceImpl) Authorize(ctx context.Context, req *interface
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "auth.Authorize",
 			Err:  ErrServiceClosed,
@@ -143,7 +143,7 @@ func (s *AuthorizationServiceImpl) Authorize(ctx context.Context, req *interface
 	s.mu.RUnlock()
 
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "auth.Authorize",
 			Err:  ErrNilRequest,
@@ -153,7 +153,7 @@ func (s *AuthorizationServiceImpl) Authorize(ctx context.Context, req *interface
 	// Check context cancellation
 	select {
 	case <-ctx.Done():
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrCanceled,
 			Op:   "auth.Authorize",
 			Err:  ctx.Err(),
@@ -205,7 +205,7 @@ func (s *AuthorizationServiceImpl) BatchAuthorize(ctx context.Context, reqs []*i
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "auth.BatchAuthorize",
 			Err:  ErrServiceClosed,
@@ -214,7 +214,7 @@ func (s *AuthorizationServiceImpl) BatchAuthorize(ctx context.Context, reqs []*i
 	s.mu.RUnlock()
 
 	if len(reqs) == 0 {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "auth.BatchAuthorize",
 			Err:  ErrEmptyBatch,
@@ -224,7 +224,7 @@ func (s *AuthorizationServiceImpl) BatchAuthorize(ctx context.Context, reqs []*i
 	// Validate all requests before processing
 	for i, req := range reqs {
 		if req == nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "auth.BatchAuthorize",
 				Err:  ErrNilRequestInBatch,
@@ -238,7 +238,7 @@ func (s *AuthorizationServiceImpl) BatchAuthorize(ctx context.Context, reqs []*i
 	// Check context cancellation
 	select {
 	case <-ctx.Done():
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrCanceled,
 			Op:   "auth.BatchAuthorize",
 			Err:  ctx.Err(),

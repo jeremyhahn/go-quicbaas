@@ -62,7 +62,7 @@ type HybridProvider struct {
 //   - error: ErrNilRBACProvider if rbac is nil.
 func NewHybridProvider(rbac, abac interfaces.AuthorizationProvider, log *logger.Logger) (*HybridProvider, error) {
 	if rbac == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "providers.NewHybridProvider",
 			Err:  ErrNilRBACProvider,
@@ -78,7 +78,7 @@ func NewHybridProvider(rbac, abac interfaces.AuthorizationProvider, log *logger.
 			Component: "hybrid-provider",
 		})
 		if err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "providers.NewHybridProvider",
 				Err:  err,
@@ -114,7 +114,7 @@ func NewHybridProvider(rbac, abac interfaces.AuthorizationProvider, log *logger.
 // the check completes, ErrCanceled is returned.
 func (p *HybridProvider) Authorize(ctx context.Context, req *interfaces.AuthorizationRequest) (*interfaces.AuthorizationDecision, error) {
 	if p.closed.Load() {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "HybridProvider.Authorize",
 			Err:  ErrProviderClosed,
@@ -122,7 +122,7 @@ func (p *HybridProvider) Authorize(ctx context.Context, req *interfaces.Authoriz
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrCanceled,
 			Op:   "HybridProvider.Authorize",
 			Err:  err,
@@ -130,7 +130,7 @@ func (p *HybridProvider) Authorize(ctx context.Context, req *interfaces.Authoriz
 	}
 
 	if req == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "HybridProvider.Authorize",
 			Err:  ErrNilRequest,
@@ -172,7 +172,7 @@ func (p *HybridProvider) Authorize(ctx context.Context, req *interfaces.Authoriz
 	// Fall back to RBAC
 	decision, err := p.rbac.Authorize(ctx, req)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "HybridProvider.Authorize",
 			Err:  err,
@@ -203,7 +203,7 @@ func (p *HybridProvider) Authorize(ctx context.Context, req *interfaces.Authoriz
 // If the context is canceled, processing stops and ErrCanceled is returned.
 func (p *HybridProvider) BatchAuthorize(ctx context.Context, reqs []*interfaces.AuthorizationRequest) ([]*interfaces.AuthorizationDecision, error) {
 	if p.closed.Load() {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrUnavailable,
 			Op:   "HybridProvider.BatchAuthorize",
 			Err:  ErrProviderClosed,
@@ -211,7 +211,7 @@ func (p *HybridProvider) BatchAuthorize(ctx context.Context, reqs []*interfaces.
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrCanceled,
 			Op:   "HybridProvider.BatchAuthorize",
 			Err:  err,
@@ -227,7 +227,7 @@ func (p *HybridProvider) BatchAuthorize(ctx context.Context, reqs []*interfaces.
 	for i, req := range reqs {
 		// Check context cancellation between requests
 		if err := ctx.Err(); err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrCanceled,
 				Op:   "HybridProvider.BatchAuthorize",
 				Err:  err,

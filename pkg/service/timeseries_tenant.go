@@ -120,7 +120,7 @@ func validateTimeSeriesTenantID(tenantID string) error {
 		return nil
 	}
 	if len(tenantID) > 128 {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "timeseries.validateTenantID",
 			Err: &TimeSeriesTenantValidationError{
@@ -131,7 +131,7 @@ func validateTimeSeriesTenantID(tenantID string) error {
 	}
 	for _, ch := range tenantID {
 		if !isValidTenantChar(ch) {
-			return &errors.DragonError{
+			return &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "timeseries.validateTenantID",
 				Err: &TimeSeriesTenantValidationError{
@@ -152,7 +152,7 @@ func enforceTimeSeriesTenantAccess(tenantID, metric, operation string) error {
 		return nil // Single-tenant mode, no access control
 	}
 	if !tsMetricBelongsToTenant(tenantID, metric) {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrCrossTenantAccess,
 			Op:   "timeseries." + operation,
 			Err: &TimeSeriesCrossTenantAccessError{

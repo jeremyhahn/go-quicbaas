@@ -479,8 +479,8 @@ func TestVectorExtendedSubOpcodeToString_UnknownSubOpcodes_Exhaustive(t *testing
 	}
 }
 
-// TestErrorToStatus_DragonErrors_Exhaustive tests ErrorToStatus with various DragonError codes.
-func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
+// TestErrorToStatus_QBErrors_Exhaustive tests ErrorToStatus with various QBError codes.
+func TestErrorToStatus_QBErrors_Exhaustive(t *testing.T) {
 	tests := []struct {
 		name           string
 		err            error
@@ -493,7 +493,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrNotFound",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrNotFound,
 				Op:   "test",
 			},
@@ -501,7 +501,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrUnauthorized",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnauthorized,
 				Op:   "test",
 			},
@@ -509,7 +509,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrInvalidInput",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInvalidInput,
 				Op:   "test",
 			},
@@ -517,7 +517,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrAlreadyExists",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrAlreadyExists,
 				Op:   "test",
 			},
@@ -525,7 +525,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrTimeout",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrTimeout,
 				Op:   "test",
 			},
@@ -533,7 +533,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrForbidden",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrForbidden,
 				Op:   "test",
 			},
@@ -541,7 +541,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrResourceExhausted",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrResourceExhausted,
 				Op:   "test",
 			},
@@ -549,7 +549,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrUnavailable",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrUnavailable,
 				Op:   "test",
 			},
@@ -557,7 +557,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrInternal (default)",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "test",
 			},
@@ -565,7 +565,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrStorage (falls to default)",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrStorage,
 				Op:   "test",
 			},
@@ -573,7 +573,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrRaft (falls to default)",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrRaft,
 				Op:   "test",
 			},
@@ -581,7 +581,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 		},
 		{
 			name: "ErrEncryption (falls to default)",
-			err: &errors.DragonError{
+			err: &errors.QBError{
 				Code: errors.ErrEncryption,
 				Op:   "test",
 			},
@@ -599,7 +599,7 @@ func TestErrorToStatus_DragonErrors_Exhaustive(t *testing.T) {
 	}
 }
 
-// TestErrorToStatus_ErrorMessagePatterns_Exhaustive tests ErrorToStatus with non-DragonError errors
+// TestErrorToStatus_ErrorMessagePatterns_Exhaustive tests ErrorToStatus with non-QBError errors
 // that contain specific patterns in their error messages.
 func TestErrorToStatus_ErrorMessagePatterns_Exhaustive(t *testing.T) {
 	tests := []struct {
@@ -761,23 +761,23 @@ func TestStatusToError_Exhaustive(t *testing.T) {
 				t.Fatalf("StatusToError() returned nil, expected error")
 			}
 
-			var dragonErr *errors.DragonError
-			if !errors.As(result, &dragonErr) {
-				t.Fatalf("StatusToError() returned non-DragonError: %T", result)
+			var qbErr *errors.QBError
+			if !errors.As(result, &qbErr) {
+				t.Fatalf("StatusToError() returned non-QBError: %T", result)
 			}
 
-			if dragonErr.Code != tc.expectedCode {
-				t.Errorf("StatusToError().Code = %v, expected %v", dragonErr.Code, tc.expectedCode)
+			if qbErr.Code != tc.expectedCode {
+				t.Errorf("StatusToError().Code = %v, expected %v", qbErr.Code, tc.expectedCode)
 			}
 
-			if dragonErr.Op != "quic.protocol" {
-				t.Errorf("StatusToError().Op = %q, expected %q", dragonErr.Op, "quic.protocol")
+			if qbErr.Op != "quic.protocol" {
+				t.Errorf("StatusToError().Op = %q, expected %q", qbErr.Op, "quic.protocol")
 			}
 
-			if dragonErr.Err == nil {
+			if qbErr.Err == nil {
 				t.Error("StatusToError().Err is nil, expected error message")
-			} else if !strings.Contains(dragonErr.Err.Error(), tc.message) {
-				t.Errorf("StatusToError().Err = %q, expected to contain %q", dragonErr.Err.Error(), tc.message)
+			} else if !strings.Contains(qbErr.Err.Error(), tc.message) {
+				t.Errorf("StatusToError().Err = %q, expected to contain %q", qbErr.Err.Error(), tc.message)
 			}
 		})
 	}
@@ -795,14 +795,14 @@ func TestStatusToError_UnknownStatusCodes_Exhaustive(t *testing.T) {
 				t.Fatalf("StatusToError() returned nil, expected error")
 			}
 
-			var dragonErr *errors.DragonError
-			if !errors.As(result, &dragonErr) {
-				t.Fatalf("StatusToError() returned non-DragonError: %T", result)
+			var qbErr *errors.QBError
+			if !errors.As(result, &qbErr) {
+				t.Fatalf("StatusToError() returned non-QBError: %T", result)
 			}
 
 			// Unknown status codes should map to ErrInternal
-			if dragonErr.Code != errors.ErrInternal {
-				t.Errorf("StatusToError().Code = %v, expected %v for unknown status", dragonErr.Code, errors.ErrInternal)
+			if qbErr.Code != errors.ErrInternal {
+				t.Errorf("StatusToError().Code = %v, expected %v for unknown status", qbErr.Code, errors.ErrInternal)
 			}
 		})
 	}
@@ -816,23 +816,23 @@ func TestStatusToError_EmptyMessage_Exhaustive(t *testing.T) {
 		t.Fatalf("StatusToError() returned nil, expected error")
 	}
 
-	var dragonErr *errors.DragonError
-	if !errors.As(result, &dragonErr) {
-		t.Fatalf("StatusToError() returned non-DragonError: %T", result)
+	var qbErr *errors.QBError
+	if !errors.As(result, &qbErr) {
+		t.Fatalf("StatusToError() returned non-QBError: %T", result)
 	}
 
-	if dragonErr.Code != errors.ErrNotFound {
-		t.Errorf("StatusToError().Code = %v, expected %v", dragonErr.Code, errors.ErrNotFound)
+	if qbErr.Code != errors.ErrNotFound {
+		t.Errorf("StatusToError().Code = %v, expected %v", qbErr.Code, errors.ErrNotFound)
 	}
 
-	if dragonErr.Err == nil {
+	if qbErr.Err == nil {
 		t.Error("StatusToError().Err should not be nil even with empty message")
 	}
 }
 
-// TestErrorToStatus_WrappedDragonError_Exhaustive tests ErrorToStatus with wrapped DragonErrors.
-func TestErrorToStatus_WrappedDragonError_Exhaustive(t *testing.T) {
-	baseErr := &errors.DragonError{
+// TestErrorToStatus_WrappedQBError_Exhaustive tests ErrorToStatus with wrapped QBErrors.
+func TestErrorToStatus_WrappedQBError_Exhaustive(t *testing.T) {
+	baseErr := &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   "test",
 		Err:  &errors.MessageError{Message: "resource not found"},

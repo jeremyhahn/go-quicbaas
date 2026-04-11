@@ -104,9 +104,9 @@ func TestWriteRequest_WriterError_Opcode(t *testing.T) {
 		t.Fatal("WriteRequest() should fail with error writer")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 }
 
@@ -124,9 +124,9 @@ func TestWriteRequest_WriterError_Length(t *testing.T) {
 		t.Fatal("WriteRequest() should fail when writing length")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 }
 
@@ -144,9 +144,9 @@ func TestWriteRequest_WriterError_Payload(t *testing.T) {
 		t.Fatal("WriteRequest() should fail when writing payload")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 }
 
@@ -164,9 +164,9 @@ func TestWriteResponse_WriterError_Status(t *testing.T) {
 		t.Fatal("WriteResponse() should fail with error writer")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 }
 
@@ -184,9 +184,9 @@ func TestWriteResponse_WriterError_Length(t *testing.T) {
 		t.Fatal("WriteResponse() should fail when writing length")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 }
 
@@ -204,9 +204,9 @@ func TestWriteResponse_WriterError_Payload(t *testing.T) {
 		t.Fatal("WriteResponse() should fail when writing payload")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 }
 
@@ -223,9 +223,9 @@ func TestEncodePayload_UnencodableType_Channel(t *testing.T) {
 		t.Error("EncodePayload() should fail for channel type")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 }
 
@@ -238,9 +238,9 @@ func TestEncodePayload_UnencodableType_Function(t *testing.T) {
 		t.Error("EncodePayload() should fail for function type")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 }
 
@@ -256,9 +256,9 @@ func TestEncodePayload_ComplexUnencodableStruct(t *testing.T) {
 		t.Error("EncodePayload() should fail for struct with channel field")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 }
 
@@ -294,7 +294,7 @@ func TestOpcodeToString_ExtendedOpcodes(t *testing.T) {
 
 func TestErrorToStatus_UnknownErrorCode(t *testing.T) {
 	// Test error with unknown code - should map to StatusInternalError
-	err := &dragonerrors.DragonError{
+	err := &dragonerrors.QBError{
 		Code: 999, // Unknown error code
 		Op:   "test",
 		Err:  errors.New("unknown error"),
@@ -307,7 +307,7 @@ func TestErrorToStatus_UnknownErrorCode(t *testing.T) {
 }
 
 func TestErrorToStatus_StandardError(t *testing.T) {
-	// Test non-DragonError - should map to StatusInternalError
+	// Test non-QBError - should map to StatusInternalError
 	err := errors.New("standard error")
 
 	status := ErrorToStatus(err)
@@ -345,9 +345,9 @@ func TestStatusToError_AllStatusCodes(t *testing.T) {
 					t.Errorf("StatusToError(%d) should return error", tt.status)
 				}
 
-				var dragonErr *dragonerrors.DragonError
-				if !errors.As(err, &dragonErr) {
-					t.Errorf("expected DragonError, got %T", err)
+				var qbErr *dragonerrors.QBError
+				if !errors.As(err, &qbErr) {
+					t.Errorf("expected QBError, got %T", err)
 				}
 			}
 		})
@@ -373,13 +373,13 @@ func TestNewServer_NilService_WithValidTLS(t *testing.T) {
 		t.Error("NewServer() should return nil server on error")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 
-	if dragonErr.Code != dragonerrors.ErrInvalidInput {
-		t.Errorf("expected ErrInvalidInput, got %v", dragonErr.Code)
+	if qbErr.Code != dragonerrors.ErrInvalidInput {
+		t.Errorf("expected ErrInvalidInput, got %v", qbErr.Code)
 	}
 }
 
@@ -431,13 +431,13 @@ func TestNewServer_NilTLSConfig(t *testing.T) {
 		t.Error("NewServer() should return nil server on error")
 	}
 
-	var dragonErr *dragonerrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("expected DragonError, got %T", err)
+	var qbErr *dragonerrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("expected QBError, got %T", err)
 	}
 
-	if dragonErr.Code != dragonerrors.ErrInvalidInput {
-		t.Errorf("expected ErrInvalidInput, got %v", dragonErr.Code)
+	if qbErr.Code != dragonerrors.ErrInvalidInput {
+		t.Errorf("expected ErrInvalidInput, got %v", qbErr.Code)
 	}
 }
 

@@ -179,14 +179,14 @@ func NewVectorEncryptionService(
 	config *VectorEncryptionServiceConfig,
 ) (VectorEncryptionService, error) {
 	if tenantDEKMgr == nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "NewVectorEncryptionService",
 			Err:  ErrNilTenantDEKManager,
 		}
 	}
 	if logger == nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "NewVectorEncryptionService",
 			Err:  ErrNilLogger,
@@ -211,7 +211,7 @@ func (s *vectorEncryptionService) EncryptVector(
 	embedding []float32,
 ) ([]byte, error) {
 	if s.closed.Load() {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrUnavailable,
 			Op:   "VectorEncryptionService.EncryptVector",
 			Err:  ErrServiceClosed,
@@ -228,7 +228,7 @@ func (s *vectorEncryptionService) EncryptVector(
 	dek, err := s.tenantDEKMgr.GetOrCreateTenantDEK(ctx, tenantID)
 	if err != nil {
 		s.metrics.encryptErrs.Add(1)
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrEncryption,
 			Op:   "VectorEncryptionService.EncryptVector",
 			Err:  err,
@@ -247,7 +247,7 @@ func (s *vectorEncryptionService) EncryptVector(
 	ciphertext, err := s.encrypt(dek, plaintext, aad)
 	if err != nil {
 		s.metrics.encryptErrs.Add(1)
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrEncryption,
 			Op:   "VectorEncryptionService.EncryptVector",
 			Err:  err,
@@ -274,7 +274,7 @@ func (s *vectorEncryptionService) DecryptVector(
 	encryptedData []byte,
 ) ([]float32, error) {
 	if s.closed.Load() {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrUnavailable,
 			Op:   "VectorEncryptionService.DecryptVector",
 			Err:  ErrServiceClosed,
@@ -290,7 +290,7 @@ func (s *vectorEncryptionService) DecryptVector(
 	// Check encryption version
 	if encryptedData[0] != VectorEncryptionVersion {
 		s.metrics.decryptErrs.Add(1)
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrDecryption,
 			Op:   "VectorEncryptionService.DecryptVector",
 			Err:  ErrUnsupportedEncryptionVersion,
@@ -302,13 +302,13 @@ func (s *vectorEncryptionService) DecryptVector(
 	if err != nil {
 		s.metrics.decryptErrs.Add(1)
 		if dberrors.IsNotFound(err) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrDecryption,
 				Op:   "VectorEncryptionService.DecryptVector",
 				Err:  ErrTenantDEKNotFound,
 			}
 		}
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrDecryption,
 			Op:   "VectorEncryptionService.DecryptVector",
 			Err:  err,
@@ -323,7 +323,7 @@ func (s *vectorEncryptionService) DecryptVector(
 	plaintext, err := s.decrypt(dek, encryptedData, aad)
 	if err != nil {
 		s.metrics.decryptErrs.Add(1)
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrDecryption,
 			Op:   "VectorEncryptionService.DecryptVector",
 			Err:  err,
@@ -353,7 +353,7 @@ func (s *vectorEncryptionService) EncryptVectorBatch(
 	vectors map[string][]float32,
 ) (map[string][]byte, error) {
 	if s.closed.Load() {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrUnavailable,
 			Op:   "VectorEncryptionService.EncryptVectorBatch",
 			Err:  ErrServiceClosed,
@@ -361,7 +361,7 @@ func (s *vectorEncryptionService) EncryptVectorBatch(
 	}
 
 	if tenantID == "" {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.EncryptVectorBatch",
 			Err:  ErrEmptyTenantID,
@@ -369,7 +369,7 @@ func (s *vectorEncryptionService) EncryptVectorBatch(
 	}
 
 	if namespace == "" {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.EncryptVectorBatch",
 			Err:  ErrEmptyNamespace,
@@ -383,7 +383,7 @@ func (s *vectorEncryptionService) EncryptVectorBatch(
 	// Get or create tenant DEK once for the batch
 	dek, err := s.tenantDEKMgr.GetOrCreateTenantDEK(ctx, tenantID)
 	if err != nil {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrEncryption,
 			Op:   "VectorEncryptionService.EncryptVectorBatch",
 			Err:  err,
@@ -444,7 +444,7 @@ func (s *vectorEncryptionService) DecryptVectorBatch(
 	encrypted map[string][]byte,
 ) (map[string][]float32, error) {
 	if s.closed.Load() {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrUnavailable,
 			Op:   "VectorEncryptionService.DecryptVectorBatch",
 			Err:  ErrServiceClosed,
@@ -452,7 +452,7 @@ func (s *vectorEncryptionService) DecryptVectorBatch(
 	}
 
 	if tenantID == "" {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.DecryptVectorBatch",
 			Err:  ErrEmptyTenantID,
@@ -460,7 +460,7 @@ func (s *vectorEncryptionService) DecryptVectorBatch(
 	}
 
 	if namespace == "" {
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.DecryptVectorBatch",
 			Err:  ErrEmptyNamespace,
@@ -475,13 +475,13 @@ func (s *vectorEncryptionService) DecryptVectorBatch(
 	dek, err := s.tenantDEKMgr.GetTenantDEK(ctx, tenantID)
 	if err != nil {
 		if dberrors.IsNotFound(err) {
-			return nil, &dberrors.DragonError{
+			return nil, &dberrors.QBError{
 				Code: dberrors.ErrDecryption,
 				Op:   "VectorEncryptionService.DecryptVectorBatch",
 				Err:  ErrTenantDEKNotFound,
 			}
 		}
-		return nil, &dberrors.DragonError{
+		return nil, &dberrors.QBError{
 			Code: dberrors.ErrDecryption,
 			Op:   "VectorEncryptionService.DecryptVectorBatch",
 			Err:  err,
@@ -571,7 +571,7 @@ func (s *vectorEncryptionService) IsEncrypted(data []byte) bool {
 // validateEncryptInput validates input parameters for encryption.
 func (s *vectorEncryptionService) validateEncryptInput(tenantID, namespace, vectorID string, embedding []float32) error {
 	if tenantID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.EncryptVector",
 			Err:  ErrEmptyTenantID,
@@ -579,7 +579,7 @@ func (s *vectorEncryptionService) validateEncryptInput(tenantID, namespace, vect
 	}
 
 	if namespace == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.EncryptVector",
 			Err:  ErrEmptyNamespace,
@@ -587,7 +587,7 @@ func (s *vectorEncryptionService) validateEncryptInput(tenantID, namespace, vect
 	}
 
 	if vectorID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.EncryptVector",
 			Err:  ErrEmptyVectorID,
@@ -595,7 +595,7 @@ func (s *vectorEncryptionService) validateEncryptInput(tenantID, namespace, vect
 	}
 
 	if len(embedding) == 0 {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.EncryptVector",
 			Err:  ErrEmptyEmbedding,
@@ -608,7 +608,7 @@ func (s *vectorEncryptionService) validateEncryptInput(tenantID, namespace, vect
 // validateDecryptInput validates input parameters for decryption.
 func (s *vectorEncryptionService) validateDecryptInput(tenantID, namespace, vectorID string, encryptedData []byte) error {
 	if tenantID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.DecryptVector",
 			Err:  ErrEmptyTenantID,
@@ -616,7 +616,7 @@ func (s *vectorEncryptionService) validateDecryptInput(tenantID, namespace, vect
 	}
 
 	if namespace == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.DecryptVector",
 			Err:  ErrEmptyNamespace,
@@ -624,7 +624,7 @@ func (s *vectorEncryptionService) validateDecryptInput(tenantID, namespace, vect
 	}
 
 	if vectorID == "" {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.DecryptVector",
 			Err:  ErrEmptyVectorID,
@@ -632,7 +632,7 @@ func (s *vectorEncryptionService) validateDecryptInput(tenantID, namespace, vect
 	}
 
 	if len(encryptedData) < vectorMinEncryptedSize {
-		return &dberrors.DragonError{
+		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "VectorEncryptionService.DecryptVector",
 			Err:  ErrInvalidEncryptedData,

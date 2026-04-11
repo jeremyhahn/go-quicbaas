@@ -72,7 +72,7 @@ func (g *PostgreSQLGenerator) ValidateConfig(config map[string]string) error {
 // Generate creates a new PostgreSQL user with the specified role configuration.
 func (g *PostgreSQLGenerator) Generate(ctx context.Context, role *credentials.Role) (*credentials.Credential, error) {
 	if role == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "PostgreSQLGenerator.Generate",
 			Err:  stderrors.New("role cannot be nil"),
@@ -80,7 +80,7 @@ func (g *PostgreSQLGenerator) Generate(ctx context.Context, role *credentials.Ro
 	}
 
 	if err := g.ValidateConfig(role.Config); err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "PostgreSQLGenerator.Generate",
 			Err:  &api.WrappedMessageError{Message: "invalid role config", Cause: err},
@@ -88,7 +88,7 @@ func (g *PostgreSQLGenerator) Generate(ctx context.Context, role *credentials.Ro
 	}
 
 	if ctx.Err() != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "PostgreSQLGenerator.Generate",
 			Err:  ctx.Err(),
@@ -132,7 +132,7 @@ func (g *PostgreSQLGenerator) Generate(ctx context.Context, role *credentials.Ro
 	connectionURL := role.Config["connection_url"]
 	db, err := g.connector(connectionURL)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "PostgreSQLGenerator.Generate",
 			Err:  &api.WrappedMessageError{Message: "failed to connect to database", Cause: err},
@@ -143,7 +143,7 @@ func (g *PostgreSQLGenerator) Generate(ctx context.Context, role *credentials.Ro
 	// Execute creation statements
 	for _, stmt := range stmts {
 		if err := db.ExecContext(ctx, stmt); err != nil {
-			return nil, &errors.DragonError{
+			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "PostgreSQLGenerator.Generate",
 				Err:  &api.WrappedMessageError{Message: "failed to execute creation statement", Cause: err},
@@ -181,7 +181,7 @@ func (g *PostgreSQLGenerator) Generate(ctx context.Context, role *credentials.Ro
 // Revoke removes a PostgreSQL user from the database.
 func (g *PostgreSQLGenerator) Revoke(ctx context.Context, credential *credentials.Credential) error {
 	if credential == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "PostgreSQLGenerator.Revoke",
 			Err:  stderrors.New("credential cannot be nil"),
@@ -189,7 +189,7 @@ func (g *PostgreSQLGenerator) Revoke(ctx context.Context, credential *credential
 	}
 
 	if ctx.Err() != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "PostgreSQLGenerator.Revoke",
 			Err:  ctx.Err(),
@@ -198,7 +198,7 @@ func (g *PostgreSQLGenerator) Revoke(ctx context.Context, credential *credential
 
 	username := credential.Data["username"]
 	if username == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "PostgreSQLGenerator.Revoke",
 			Err:  stderrors.New("username not found in credential data"),
@@ -208,7 +208,7 @@ func (g *PostgreSQLGenerator) Revoke(ctx context.Context, credential *credential
 	// Note: We need the role config to get connection URL and revocation statements
 	// In a real implementation, this would be passed or looked up
 	// For now, we'll return an error indicating this limitation
-	return &errors.DragonError{
+	return &errors.QBError{
 		Code: errors.ErrNotImplemented,
 		Op:   "PostgreSQLGenerator.Revoke",
 		Err:  stderrors.New("revocation requires role configuration - use service layer"),
@@ -219,7 +219,7 @@ func (g *PostgreSQLGenerator) Revoke(ctx context.Context, credential *credential
 // This is the internal method that should be called with the full role context.
 func (g *PostgreSQLGenerator) revokeWithRole(ctx context.Context, credential *credentials.Credential, role *credentials.Role) error {
 	if credential == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "PostgreSQLGenerator.revokeWithRole",
 			Err:  stderrors.New("credential cannot be nil"),
@@ -227,7 +227,7 @@ func (g *PostgreSQLGenerator) revokeWithRole(ctx context.Context, credential *cr
 	}
 
 	if role == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "PostgreSQLGenerator.revokeWithRole",
 			Err:  stderrors.New("role cannot be nil"),
@@ -236,7 +236,7 @@ func (g *PostgreSQLGenerator) revokeWithRole(ctx context.Context, credential *cr
 
 	username := credential.Data["username"]
 	if username == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "PostgreSQLGenerator.revokeWithRole",
 			Err:  stderrors.New("username not found in credential data"),
@@ -259,7 +259,7 @@ func (g *PostgreSQLGenerator) revokeWithRole(ctx context.Context, credential *cr
 	connectionURL := role.Config["connection_url"]
 	db, err := g.connector(connectionURL)
 	if err != nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "PostgreSQLGenerator.revokeWithRole",
 			Err:  &api.WrappedMessageError{Message: "failed to connect to database", Cause: err},
@@ -288,7 +288,7 @@ func (g *PostgreSQLGenerator) revokeWithRole(ctx context.Context, credential *cr
 // Rotate creates a new credential and revokes the old one.
 func (g *PostgreSQLGenerator) Rotate(ctx context.Context, old *credentials.Credential, role *credentials.Role) (*credentials.Credential, error) {
 	if old == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "PostgreSQLGenerator.Rotate",
 			Err:  stderrors.New("old credential cannot be nil"),
@@ -296,7 +296,7 @@ func (g *PostgreSQLGenerator) Rotate(ctx context.Context, old *credentials.Crede
 	}
 
 	if role == nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "PostgreSQLGenerator.Rotate",
 			Err:  stderrors.New("role cannot be nil"),

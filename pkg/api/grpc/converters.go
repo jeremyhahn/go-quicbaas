@@ -146,20 +146,20 @@ func toServiceError(err error) error {
 		return err
 	}
 
-	// Check if it's a DragonError.
-	var dragonErr *errors.DragonError
-	if !stderrors.As(err, &dragonErr) {
+	// Check if it's a QBError.
+	var qbErr *errors.QBError
+	if !stderrors.As(err, &qbErr) {
 		// Wrap unknown errors as internal
-		dragonErr = &errors.DragonError{
+		qbErr = &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "unknown",
 			Err:  err,
 		}
 	}
 
-	// Map DragonError code to gRPC code
-	code := mapServiceErrorCode(dragonErr.Code)
-	message := dragonErr.Error()
+	// Map QBError code to gRPC code
+	code := mapServiceErrorCode(qbErr.Code)
+	message := qbErr.Error()
 
 	return status.Error(code, message)
 }

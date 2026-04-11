@@ -182,8 +182,8 @@ func TestMemoryStorage_UserOperations(t *testing.T) {
 
 	// Test CreateUser duplicate
 	err = storage.CreateUser(ctx, user)
-	var dragonErr *dberrors.DragonError
-	if !errors.As(err, &dragonErr) || dragonErr.Code != dberrors.ErrAlreadyExists {
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrAlreadyExists {
 		t.Errorf("Expected ErrAlreadyExists, got: %v", err)
 	}
 
@@ -637,8 +637,8 @@ func TestMemoryStorage_GetAppByTenant(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when app belongs to different tenant")
 	}
-	var dragonErr *dberrors.DragonError
-	if !errors.As(err, &dragonErr) || dragonErr.Code != dberrors.ErrNotFound {
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrNotFound {
 		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 
@@ -647,7 +647,7 @@ func TestMemoryStorage_GetAppByTenant(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for nonexistent app")
 	}
-	if !errors.As(err, &dragonErr) || dragonErr.Code != dberrors.ErrNotFound {
+	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrNotFound {
 		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }
@@ -722,8 +722,8 @@ func TestMemoryStorage_GetAuthCode(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for nonexistent auth code")
 	}
-	var dragonErr *dberrors.DragonError
-	if !errors.As(err, &dragonErr) || dragonErr.Code != dberrors.ErrNotFound {
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrNotFound {
 		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }
@@ -796,8 +796,8 @@ func TestMemoryStorage_GetTokenByValue(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for nonexistent token value")
 	}
-	var dragonErr *dberrors.DragonError
-	if !errors.As(err, &dragonErr) || dragonErr.Code != dberrors.ErrNotFound {
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrNotFound {
 		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 
@@ -1161,12 +1161,12 @@ func TestMemoryStorage_GetSettings(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when getting settings for non-existent tenant")
 	}
-	var dragonErr *dberrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("Expected DragonError, got: %v", err)
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("Expected QBError, got: %v", err)
 	}
-	if dragonErr.Code != dberrors.ErrNotFound {
-		t.Errorf("Expected ErrNotFound code, got: %v", dragonErr.Code)
+	if qbErr.Code != dberrors.ErrNotFound {
+		t.Errorf("Expected ErrNotFound code, got: %v", qbErr.Code)
 	}
 }
 
@@ -1227,12 +1227,12 @@ func TestMemoryStorage_UpdateSettings(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when updating settings for non-existent tenant")
 	}
-	var dragonErr *dberrors.DragonError
-	if !errors.As(err, &dragonErr) {
-		t.Errorf("Expected DragonError, got: %v", err)
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) {
+		t.Errorf("Expected QBError, got: %v", err)
 	}
-	if dragonErr.Code != dberrors.ErrNotFound {
-		t.Errorf("Expected ErrNotFound code, got: %v", dragonErr.Code)
+	if qbErr.Code != dberrors.ErrNotFound {
+		t.Errorf("Expected ErrNotFound code, got: %v", qbErr.Code)
 	}
 }
 

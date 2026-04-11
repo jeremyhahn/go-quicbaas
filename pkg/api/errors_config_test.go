@@ -33,28 +33,28 @@ func TestConfigValidationErrors(t *testing.T) {
 	tests := []struct {
 		name     string
 		errFn    func() error
-		newFn    func() *dberrors.DragonError
+		newFn    func() *dberrors.QBError
 		wantMsg  string
 		wantCode dberrors.ErrorCode
 	}{
 		{
 			"PositiveValueRequired",
 			func() error { return &PositiveValueRequiredError{Field: "port"} },
-			func() *dberrors.DragonError { return NewPositiveValueRequiredError("validate", "port") },
+			func() *dberrors.QBError { return NewPositiveValueRequiredError("validate", "port") },
 			"port must be positive",
 			dberrors.ErrValidation,
 		},
 		{
 			"NonNegativeValueRequired",
 			func() error { return &NonNegativeValueRequiredError{Field: "timeout"} },
-			func() *dberrors.DragonError { return NewNonNegativeValueRequiredError("validate", "timeout") },
+			func() *dberrors.QBError { return NewNonNegativeValueRequiredError("validate", "timeout") },
 			"timeout cannot be negative",
 			dberrors.ErrValidation,
 		},
 		{
 			"FloatRange",
 			func() error { return &FloatRangeError{Field: "ratio", Min: 0.0, Max: 1.0} },
-			func() *dberrors.DragonError { return NewFloatRangeError("validate", "ratio", 0.0, 1.0) },
+			func() *dberrors.QBError { return NewFloatRangeError("validate", "ratio", 0.0, 1.0) },
 			"ratio must be between 0 and 1",
 			dberrors.ErrValidation,
 		},
@@ -63,7 +63,7 @@ func TestConfigValidationErrors(t *testing.T) {
 			func() error {
 				return &ValueExceedsLimitError{Field: "batch", Value: 200, LimitOf: "max", LimitVal: 100}
 			},
-			func() *dberrors.DragonError {
+			func() *dberrors.QBError {
 				return NewValueExceedsLimitError("validate", "batch", 200, "max", 100)
 			},
 			"batch (200) cannot exceed max (100)",
@@ -72,14 +72,14 @@ func TestConfigValidationErrors(t *testing.T) {
 		{
 			"EmptyWhenEnabled",
 			func() error { return &EmptyWhenEnabledError{Field: "cert", Feature: "TLS"} },
-			func() *dberrors.DragonError { return NewEmptyWhenEnabledError("validate", "cert", "TLS") },
+			func() *dberrors.QBError { return NewEmptyWhenEnabledError("validate", "cert", "TLS") },
 			"cert cannot be empty when TLS is enabled",
 			dberrors.ErrValidation,
 		},
 		{
 			"ProviderRequirement",
 			func() error { return &ProviderRequirementError{Provider: "aws", Requirement: "region"} },
-			func() *dberrors.DragonError { return NewProviderRequirementError("validate", "aws", "region") },
+			func() *dberrors.QBError { return NewProviderRequirementError("validate", "aws", "region") },
 			"aws provider requires region",
 			dberrors.ErrValidation,
 		},
@@ -88,7 +88,7 @@ func TestConfigValidationErrors(t *testing.T) {
 			func() error {
 				return &DimensionMismatchError{Source: "model", SourceDim: 768, Target: "index", TargetDim: 512}
 			},
-			func() *dberrors.DragonError {
+			func() *dberrors.QBError {
 				return NewDimensionMismatchError("validate", "model", 768, "index", 512)
 			},
 			"dimension mismatch: model=768, index=512",

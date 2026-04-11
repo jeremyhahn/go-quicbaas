@@ -113,9 +113,9 @@ func TestGeneratorRegistry_Register(t *testing.T) {
 
 			if tt.wantErr {
 				require.Error(t, err)
-				var dragonErr *errors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, tt.errCode, dragonErr.Code)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, tt.errCode, qbErr.Code)
 				assert.Contains(t, err.Error(), tt.errMsg)
 			} else {
 				require.NoError(t, err)
@@ -155,9 +155,9 @@ func TestGeneratorRegistry_Register_Duplicate(t *testing.T) {
 
 			if tt.wantErr {
 				require.Error(t, err)
-				var dragonErr *errors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, tt.errCode, dragonErr.Code)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, tt.errCode, qbErr.Code)
 				assert.ErrorIs(t, err, ErrGeneratorAlreadyRegistered)
 				assert.Contains(t, err.Error(), "credential generator already registered")
 			}
@@ -215,9 +215,9 @@ func TestGeneratorRegistry_Get(t *testing.T) {
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Nil(t, gen)
-				var dragonErr *errors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, tt.errCode, dragonErr.Code)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, tt.errCode, qbErr.Code)
 				assert.Contains(t, err.Error(), tt.errMsg)
 			} else {
 				require.NoError(t, err)
@@ -324,9 +324,9 @@ func TestGeneratorRegistry_Unregister(t *testing.T) {
 
 			if tt.wantErr {
 				require.Error(t, err)
-				var dragonErr *errors.DragonError
-				require.ErrorAs(t, err, &dragonErr)
-				assert.Equal(t, tt.errCode, dragonErr.Code)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, tt.errCode, qbErr.Code)
 				assert.Contains(t, err.Error(), tt.errMsg)
 				assert.Equal(t, initialCount, registry.Count())
 			} else {

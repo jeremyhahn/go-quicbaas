@@ -72,7 +72,7 @@ func NewGeneratorRegistry() *GeneratorRegistry {
 // Returns an error if a generator with the same type is already registered.
 func (r *GeneratorRegistry) Register(gen CredentialGenerator) error {
 	if gen == nil {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "GeneratorRegistry.Register",
 			Err:  stderrors.New("generator cannot be nil"),
@@ -81,7 +81,7 @@ func (r *GeneratorRegistry) Register(gen CredentialGenerator) error {
 
 	genType := gen.Type()
 	if genType == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "GeneratorRegistry.Register",
 			Err:  stderrors.New("generator type cannot be empty"),
@@ -92,7 +92,7 @@ func (r *GeneratorRegistry) Register(gen CredentialGenerator) error {
 	defer r.mu.Unlock()
 
 	if _, exists := r.generators[genType]; exists {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrAlreadyExists,
 			Op:   "GeneratorRegistry.Register",
 			Err:  &api.WrappedMessageError{Message: ErrGeneratorAlreadyRegistered.Error(), Cause: ErrGeneratorAlreadyRegistered},
@@ -107,7 +107,7 @@ func (r *GeneratorRegistry) Register(gen CredentialGenerator) error {
 // Returns an error if no generator is registered for the type.
 func (r *GeneratorRegistry) Get(genType string) (CredentialGenerator, error) {
 	if genType == "" {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "GeneratorRegistry.Get",
 			Err:  stderrors.New("generator type cannot be empty"),
@@ -119,7 +119,7 @@ func (r *GeneratorRegistry) Get(genType string) (CredentialGenerator, error) {
 
 	gen, exists := r.generators[genType]
 	if !exists {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "GeneratorRegistry.Get",
 			Err:  ErrGeneratorNotFound,
@@ -145,7 +145,7 @@ func (r *GeneratorRegistry) List() []string {
 // Unregister removes a credential generator from the registry.
 func (r *GeneratorRegistry) Unregister(genType string) error {
 	if genType == "" {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "GeneratorRegistry.Unregister",
 			Err:  stderrors.New("generator type cannot be empty"),
@@ -156,7 +156,7 @@ func (r *GeneratorRegistry) Unregister(genType string) error {
 	defer r.mu.Unlock()
 
 	if _, exists := r.generators[genType]; !exists {
-		return &errors.DragonError{
+		return &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "GeneratorRegistry.Unregister",
 			Err:  ErrGeneratorNotFound,

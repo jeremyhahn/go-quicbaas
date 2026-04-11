@@ -26,7 +26,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
-	dragonErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qbErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/shards"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
@@ -163,16 +163,16 @@ func NewVectorService(
 	opts ...VectorServiceOption,
 ) (VectorService, error) {
 	if storage == nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "service.NewVectorService",
 			Err:  &api.RequiredFieldError{Field: "storage"},
 		}
 	}
 
 	if logger == nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "service.NewVectorService",
 			Err:  &api.RequiredFieldError{Field: "logger"},
 		}
@@ -197,8 +197,8 @@ func NewVectorService(
 
 	// Load existing namespaces and initialize indexes
 	if err := svc.loadNamespaces(); err != nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "service.NewVectorService",
 			Err:  &api.OperationFailedError{Operation: "load namespaces", Cause: err},
 		}
@@ -338,8 +338,8 @@ func (v *vectorService) ensureIndex(ctx context.Context, namespace string) (inte
 
 	// If no factory is available, we cannot create indexes
 	if v.indexFactory == nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.ensureIndex",
 			Err:  &api.ServiceUnavailableError{Service: "vector index factory not configured"},
 		}
@@ -415,16 +415,16 @@ func (v *vectorService) ensureIndex(ctx context.Context, namespace string) (inte
 // Writes are routed through the qrdb SDK which handles Raft consensus internally.
 func (v *vectorService) vectorClient() (qrdbtransport.VectorClient, error) {
 	if v.sdkProvider == nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.vectorClient",
 			Err:  &api.ServiceUnavailableError{Service: "SDK client provider not configured for vector writes"},
 		}
 	}
 	client, err := v.sdkProvider.ForShard(v.shardID)
 	if err != nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrRaft,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrRaft,
 			Op:   "vector.vectorClient",
 			Err:  err,
 		}
@@ -477,8 +477,8 @@ func (v *vectorService) CreateNamespace(ctx context.Context, req *CreateNamespac
 	defer v.mu.Unlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.CreateNamespace",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -490,8 +490,8 @@ func (v *vectorService) CreateNamespace(ctx context.Context, req *CreateNamespac
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("create_namespace", "already_exists").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrAlreadyExists,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrAlreadyExists,
 			Op:   "vector.CreateNamespace",
 			Err:  &api.InvalidInputError{Message: "namespace " + req.Namespace + " already exists"},
 		}
@@ -522,8 +522,8 @@ func (v *vectorService) CreateNamespace(ctx context.Context, req *CreateNamespac
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("create_namespace", "sdk_error").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrRaft,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrRaft,
 			Op:   "vector.CreateNamespace",
 			Err:  err,
 		}
@@ -575,8 +575,8 @@ func (v *vectorService) DeleteNamespace(ctx context.Context, req *DeleteNamespac
 	defer v.mu.Unlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.DeleteNamespace",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -593,8 +593,8 @@ func (v *vectorService) DeleteNamespace(ctx context.Context, req *DeleteNamespac
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("delete_namespace", "sdk_error").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrRaft,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrRaft,
 			Op:   "vector.DeleteNamespace",
 			Err:  err,
 		}
@@ -628,8 +628,8 @@ func (v *vectorService) ListNamespaces(ctx context.Context, req *ListNamespacesR
 	defer v.mu.RUnlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.ListNamespaces",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -641,8 +641,8 @@ func (v *vectorService) ListNamespaces(ctx context.Context, req *ListNamespacesR
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("list_namespaces", "storage_error").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrStorage,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrStorage,
 			Op:   "vector.ListNamespaces",
 			Err:  &api.OperationFailedError{Operation: "list namespaces", Cause: err},
 		}
@@ -740,8 +740,8 @@ func (v *vectorService) GetNamespaceInfo(ctx context.Context, req *GetNamespaceI
 	defer v.mu.RUnlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.GetNamespaceInfo",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -753,8 +753,8 @@ func (v *vectorService) GetNamespaceInfo(ctx context.Context, req *GetNamespaceI
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("get_namespace_info", "not_found").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.GetNamespaceInfo",
 			Err:  &api.OperationFailedError{Operation: "find namespace", Cause: err},
 		}
@@ -831,8 +831,8 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 	defer v.mu.RUnlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.UpsertVector",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -844,8 +844,8 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("upsert_vector", "namespace_not_found").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.UpsertVector",
 			Err:  &api.OperationFailedError{Operation: "find namespace", Cause: err},
 		}
@@ -857,8 +857,8 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("upsert_vector", "invalid_dimension").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.UpsertVector",
 			Err:  &api.InvalidInputError{Message: fmt.Sprintf("vector dimension %d does not match namespace dimension %d", len(req.Vector), nsInfo.Dimension)},
 		}
@@ -882,8 +882,8 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("upsert_vector", "sdk_error").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrRaft,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrRaft,
 			Op:   "vector.UpsertVector",
 			Err:  err,
 		}
@@ -946,8 +946,8 @@ func (v *vectorService) GetVector(ctx context.Context, req *GetVectorRequest) (*
 	defer v.mu.RUnlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.GetVector",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -959,8 +959,8 @@ func (v *vectorService) GetVector(ctx context.Context, req *GetVectorRequest) (*
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("get_vector", "not_found").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.GetVector",
 			Err:  &api.OperationFailedError{Operation: "find vector", Cause: err},
 		}
@@ -1013,8 +1013,8 @@ func (v *vectorService) DeleteVector(ctx context.Context, req *DeleteVectorReque
 	defer v.mu.RUnlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.DeleteVector",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -1036,8 +1036,8 @@ func (v *vectorService) DeleteVector(ctx context.Context, req *DeleteVectorReque
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("delete_vector", "sdk_error").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrRaft,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrRaft,
 			Op:   "vector.DeleteVector",
 			Err:  err,
 		}
@@ -1095,8 +1095,8 @@ func (v *vectorService) BatchUpsert(ctx context.Context, req *BatchUpsertRequest
 	defer v.mu.RUnlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.BatchUpsert",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -1128,8 +1128,8 @@ func (v *vectorService) BatchUpsert(ctx context.Context, req *BatchUpsertRequest
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("batch_upsert", "sdk_error").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrRaft,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrRaft,
 			Op:   "vector.BatchUpsert",
 			Err:  err,
 		}
@@ -1199,8 +1199,8 @@ func (v *vectorService) SearchSimilar(ctx context.Context, req *SearchSimilarReq
 	defer v.mu.RUnlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.SearchSimilar",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -1237,8 +1237,8 @@ func (v *vectorService) SearchSimilar(ctx context.Context, req *SearchSimilarReq
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("search_similar", "search_failed").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.SearchSimilar",
 			Err:  &api.OperationFailedError{Operation: "HNSW search", Cause: err},
 		}
@@ -1316,8 +1316,8 @@ func (v *vectorService) SearchByMetadata(ctx context.Context, req *SearchByMetad
 	defer v.mu.RUnlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.SearchByMetadata",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -1352,8 +1352,8 @@ func (v *vectorService) SearchByMetadata(ctx context.Context, req *SearchByMetad
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("search_by_metadata", "scan_failed").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.SearchByMetadata",
 			Err:  &api.OperationFailedError{Operation: "metadata scan", Cause: err},
 		}
@@ -1467,8 +1467,8 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 	// Get namespace info
 	info, err := v.storage.GetNamespaceInfo(ctx, scopedNamespace)
 	if err != nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.RebuildIndex",
 			Err:  &api.OperationFailedError{Operation: "find namespace", Cause: err},
 		}
@@ -1567,8 +1567,8 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 	v.jobMu.RUnlock()
 
 	if !found {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.GetRebuildProgress",
 			Err:  &api.NotFoundError{Resource: "rebuild job", ID: ""},
 		}
@@ -1647,8 +1647,8 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 	v.jobMu.RUnlock()
 
 	if !exists {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.performIndexRebuild",
 			Err:  &api.NotFoundError{Resource: "rebuild job", ID: jobID},
 		}
@@ -1667,8 +1667,8 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 		job.mu.Lock()
 		job.Error = &api.ServiceUnavailableError{Service: "vector index factory not configured"}
 		job.mu.Unlock()
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.performIndexRebuild",
 			Err:  &api.ServiceUnavailableError{Service: "vector index factory not configured"},
 		}
@@ -1715,8 +1715,8 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 		job.mu.Lock()
 		job.Error = err
 		job.mu.Unlock()
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.performIndexRebuild",
 			Err:  &api.OperationFailedError{Operation: "create new index", Cause: err},
 		}
@@ -1735,8 +1735,8 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 			job.mu.Lock()
 			job.Error = err
 			job.mu.Unlock()
-			return &dragonErrors.DragonError{
-				Code: dragonErrors.ErrInternal,
+			return &qbErrors.QBError{
+				Code: qbErrors.ErrInternal,
 				Op:   "vector.performIndexRebuild",
 				Err:  &api.OperationFailedError{Operation: "scan vectors", Cause: err},
 			}
@@ -1809,8 +1809,8 @@ func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsReq
 	defer v.mu.RUnlock()
 
 	if v.closed {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.GetIndexStats",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -1819,8 +1819,8 @@ func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsReq
 	// Get namespace info
 	info, err := v.storage.GetNamespaceInfo(ctx, scopedNamespace)
 	if err != nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.GetIndexStats",
 			Err:  &api.OperationFailedError{Operation: "find namespace", Cause: err},
 		}
@@ -1905,22 +1905,22 @@ func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsReq
 
 func (v *vectorService) validateCreateNamespaceRequest(req *CreateNamespaceRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateCreateNamespaceRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateCreateNamespaceRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
 	}
 	if req.Dimension == 0 {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateCreateNamespaceRequest",
 			Err:  &api.InvalidInputError{Message: "dimension must be greater than 0"},
 		}
@@ -1930,15 +1930,15 @@ func (v *vectorService) validateCreateNamespaceRequest(req *CreateNamespaceReque
 
 func (v *vectorService) validateDeleteNamespaceRequest(req *DeleteNamespaceRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateDeleteNamespaceRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateDeleteNamespaceRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
@@ -1948,15 +1948,15 @@ func (v *vectorService) validateDeleteNamespaceRequest(req *DeleteNamespaceReque
 
 func (v *vectorService) validateGetNamespaceInfoRequest(req *GetNamespaceInfoRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetNamespaceInfoRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetNamespaceInfoRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
@@ -1966,29 +1966,29 @@ func (v *vectorService) validateGetNamespaceInfoRequest(req *GetNamespaceInfoReq
 
 func (v *vectorService) validateUpsertVectorRequest(req *UpsertVectorRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateUpsertVectorRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateUpsertVectorRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
 	}
 	if req.ID == 0 {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateUpsertVectorRequest",
 			Err:  &api.InvalidInputError{Message: "ID must be greater than 0"},
 		}
 	}
 	if len(req.Vector) == 0 {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateUpsertVectorRequest",
 			Err:  &api.RequiredFieldError{Field: "vector"},
 		}
@@ -1998,22 +1998,22 @@ func (v *vectorService) validateUpsertVectorRequest(req *UpsertVectorRequest) er
 
 func (v *vectorService) validateGetVectorRequest(req *GetVectorRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetVectorRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetVectorRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
 	}
 	if req.ID == 0 {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetVectorRequest",
 			Err:  &api.InvalidInputError{Message: "ID must be greater than 0"},
 		}
@@ -2023,22 +2023,22 @@ func (v *vectorService) validateGetVectorRequest(req *GetVectorRequest) error {
 
 func (v *vectorService) validateDeleteVectorRequest(req *DeleteVectorRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateDeleteVectorRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateDeleteVectorRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
 	}
 	if req.ID == 0 {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateDeleteVectorRequest",
 			Err:  &api.InvalidInputError{Message: "ID must be greater than 0"},
 		}
@@ -2048,22 +2048,22 @@ func (v *vectorService) validateDeleteVectorRequest(req *DeleteVectorRequest) er
 
 func (v *vectorService) validateBatchUpsertRequest(req *BatchUpsertRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateBatchUpsertRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateBatchUpsertRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
 	}
 	if len(req.Vectors) == 0 {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateBatchUpsertRequest",
 			Err:  &api.RequiredFieldError{Field: "vectors"},
 		}
@@ -2073,29 +2073,29 @@ func (v *vectorService) validateBatchUpsertRequest(req *BatchUpsertRequest) erro
 
 func (v *vectorService) validateSearchSimilarRequest(req *SearchSimilarRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateSearchSimilarRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateSearchSimilarRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
 	}
 	if len(req.QueryVector) == 0 {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateSearchSimilarRequest",
 			Err:  &api.RequiredFieldError{Field: "query vector"},
 		}
 	}
 	if req.K <= 0 {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateSearchSimilarRequest",
 			Err:  &api.InvalidInputError{Message: "k must be greater than 0"},
 		}
@@ -2105,15 +2105,15 @@ func (v *vectorService) validateSearchSimilarRequest(req *SearchSimilarRequest) 
 
 func (v *vectorService) validateSearchByMetadataRequest(req *SearchByMetadataRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateSearchByMetadataRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateSearchByMetadataRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
@@ -2123,15 +2123,15 @@ func (v *vectorService) validateSearchByMetadataRequest(req *SearchByMetadataReq
 
 func (v *vectorService) validateRebuildIndexRequest(req *RebuildIndexRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateRebuildIndexRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateRebuildIndexRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
@@ -2141,15 +2141,15 @@ func (v *vectorService) validateRebuildIndexRequest(req *RebuildIndexRequest) er
 
 func (v *vectorService) validateGetRebuildProgressRequest(req *GetRebuildProgressRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetRebuildProgressRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.JobID == "" && req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetRebuildProgressRequest",
 			Err:  &api.InvalidInputError{Message: "job_id or namespace is required"},
 		}
@@ -2159,15 +2159,15 @@ func (v *vectorService) validateGetRebuildProgressRequest(req *GetRebuildProgres
 
 func (v *vectorService) validateGetIndexStatsRequest(req *GetIndexStatsRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetIndexStatsRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetIndexStatsRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
@@ -2251,8 +2251,8 @@ func (v *vectorService) CompactNamespace(ctx context.Context, req *CompactNamesp
 	v.mu.RLock()
 	if v.closed {
 		v.mu.RUnlock()
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.CompactNamespace",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -2265,8 +2265,8 @@ func (v *vectorService) CompactNamespace(ctx context.Context, req *CompactNamesp
 		if v.metrics != nil {
 			v.metrics.operationErrors.With("compact_namespace", "not_found").Inc()
 		}
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.CompactNamespace",
 			Err:  &api.OperationFailedError{Operation: "find namespace", Cause: err},
 		}
@@ -2345,8 +2345,8 @@ func (v *vectorService) performCompaction(ctx context.Context, operationID, name
 	v.jobMu.RUnlock()
 
 	if !exists {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.performCompaction",
 			Err:  &api.NotFoundError{Resource: "compaction job", ID: operationID},
 		}
@@ -2372,8 +2372,8 @@ func (v *vectorService) performCompaction(ctx context.Context, operationID, name
 		job.mu.Lock()
 		job.Error = err
 		job.mu.Unlock()
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrStorage,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrStorage,
 			Op:   "vector.performCompaction",
 			Err:  &api.OperationFailedError{Operation: "compaction", Cause: err},
 		}
@@ -2425,8 +2425,8 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	v.mu.RLock()
 	if v.closed {
 		v.mu.RUnlock()
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.GetCompactionProgress",
 			Err:  &api.ServiceUnavailableError{Service: "vector"},
 		}
@@ -2440,8 +2440,8 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	if req.OperationID != "" {
 		job, exists := v.compactionJobs[req.OperationID]
 		if !exists {
-			return nil, &dragonErrors.DragonError{
-				Code: dragonErrors.ErrNotFound,
+			return nil, &qbErrors.QBError{
+				Code: qbErrors.ErrNotFound,
 				Op:   "vector.GetCompactionProgress",
 				Err:  &api.NotFoundError{Resource: "compaction operation", ID: req.OperationID},
 			}
@@ -2493,8 +2493,8 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	}
 
 	if latestJob == nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.GetCompactionProgress",
 			Err:  &api.NotFoundError{Resource: "compaction operations for namespace", ID: req.Namespace},
 		}
@@ -2538,15 +2538,15 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 // validateCompactNamespaceRequest validates the compact namespace request.
 func (v *vectorService) validateCompactNamespaceRequest(req *CompactNamespaceRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateCompactNamespaceRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateCompactNamespaceRequest",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
@@ -2557,16 +2557,16 @@ func (v *vectorService) validateCompactNamespaceRequest(req *CompactNamespaceReq
 // validateGetCompactionProgressRequest validates the get compaction progress request.
 func (v *vectorService) validateGetCompactionProgressRequest(req *GetCompactionProgressRequest) error {
 	if req == nil {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetCompactionProgressRequest",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	// Either operation ID or namespace must be provided
 	if req.OperationID == "" && req.Namespace == "" {
-		return &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.validateGetCompactionProgressRequest",
 			Err:  &api.InvalidInputError{Message: "either operation_id or namespace is required"},
 		}
@@ -2584,22 +2584,22 @@ func (v *vectorService) BatchDeleteVectors(ctx context.Context, req *BatchDelete
 
 	// Validate request
 	if req == nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.BatchDelete",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.BatchDelete",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
 	}
 	if len(req.IDs) == 0 {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.BatchDelete",
 			Err:  &api.EmptyCollectionError{Field: "vector IDs"},
 		}
@@ -2664,15 +2664,15 @@ func (v *vectorService) ListVectors(ctx context.Context, req *ListVectorsRequest
 
 	// Validate request
 	if req == nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.ListVectors",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.ListVectors",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
@@ -2688,8 +2688,8 @@ func (v *vectorService) ListVectors(ctx context.Context, req *ListVectorsRequest
 	// Get namespace info to validate it exists and get vector count
 	namespaceInfo, err := v.storage.GetNamespaceInfo(ctx, scopedNamespace)
 	if err != nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.ListVectors",
 			Err:  &api.OperationFailedError{Operation: "find namespace " + req.Namespace, Cause: err},
 		}
@@ -2719,8 +2719,8 @@ func (v *vectorService) ListVectors(ctx context.Context, req *ListVectorsRequest
 	}
 	vectors, err := v.storage.ScanNamespace(ctx, scopedNamespace, scanOpts)
 	if err != nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.ListVectors",
 			Err:  &api.OperationFailedError{Operation: "list vectors", Cause: err},
 		}
@@ -2777,22 +2777,22 @@ func (v *vectorService) UpdateMetadata(ctx context.Context, req *UpdateVectorMet
 
 	// Validate request
 	if req == nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.UpdateMetadata",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.UpdateMetadata",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
 	}
 	if req.ID == 0 {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.UpdateMetadata",
 			Err:  &api.RequiredFieldError{Field: "vector ID"},
 		}
@@ -2808,8 +2808,8 @@ func (v *vectorService) UpdateMetadata(ctx context.Context, req *UpdateVectorMet
 	// Get existing vector
 	existingVector, err := v.storage.GetVector(ctx, scopedNamespace, req.ID)
 	if err != nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.UpdateMetadata",
 			Err:  &api.OperationFailedError{Operation: fmt.Sprintf("find vector %d in namespace %s", req.ID, req.Namespace), Cause: err},
 		}
@@ -2848,8 +2848,8 @@ func (v *vectorService) UpdateMetadata(ctx context.Context, req *UpdateVectorMet
 
 	resp, err := v.UpsertVector(ctx, upsertReq)
 	if err != nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInternal,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
 			Op:   "vector.UpdateMetadata",
 			Err:  &api.OperationFailedError{Operation: "update metadata", Cause: err},
 		}
@@ -2873,29 +2873,29 @@ func (v *vectorService) SearchByID(ctx context.Context, req *SearchByIDRequest) 
 
 	// Validate request
 	if req == nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.SearchByID",
 			Err:  &api.NilInputError{Name: "request"},
 		}
 	}
 	if req.Namespace == "" {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.SearchByID",
 			Err:  &api.RequiredFieldError{Field: "namespace"},
 		}
 	}
 	if req.ID == 0 {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.SearchByID",
 			Err:  &api.RequiredFieldError{Field: "source vector ID"},
 		}
 	}
 	if req.K <= 0 {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrInvalidInput,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrInvalidInput,
 			Op:   "vector.SearchByID",
 			Err:  &api.InvalidInputError{Message: "k must be positive"},
 		}
@@ -2911,8 +2911,8 @@ func (v *vectorService) SearchByID(ctx context.Context, req *SearchByIDRequest) 
 	// Get the source vector
 	sourceVector, err := v.storage.GetVector(ctx, scopedNamespace, req.ID)
 	if err != nil {
-		return nil, &dragonErrors.DragonError{
-			Code: dragonErrors.ErrNotFound,
+		return nil, &qbErrors.QBError{
+			Code: qbErrors.ErrNotFound,
 			Op:   "vector.SearchByID",
 			Err:  &api.OperationFailedError{Operation: fmt.Sprintf("find source vector %d in namespace %s", req.ID, req.Namespace), Cause: err},
 		}

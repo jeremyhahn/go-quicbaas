@@ -41,7 +41,7 @@ func (m *mockKVStore) Put(_ context.Context, key string, value []byte) error {
 func (m *mockKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	value, ok := m.data[key]
 	if !ok {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "mock.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "mock.get"}
 	}
 	valueCopy := make([]byte, len(value))
 	copy(valueCopy, value)
@@ -1608,7 +1608,7 @@ func (m *mockKVStore91) Put(_ context.Context, key string, value []byte) error {
 func (m *mockKVStore91) Get(_ context.Context, key string) ([]byte, error) {
 	value, ok := m.data[key]
 	if !ok {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "mock.get"}
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "mock.get"}
 	}
 	valueCopy := make([]byte, len(value))
 	copy(valueCopy, value)

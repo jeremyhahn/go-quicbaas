@@ -32,9 +32,9 @@ func (e *StandaloneModeError) Error() string {
 	return e.Operation + " unavailable in standalone mode"
 }
 
-// newStandaloneModeError creates a DragonError for standalone mode operations.
-func newStandaloneModeError(op, operation string) *dberrors.DragonError {
-	return &dberrors.DragonError{
+// newStandaloneModeError creates a QBError for standalone mode operations.
+func newStandaloneModeError(op, operation string) *dberrors.QBError {
+	return &dberrors.QBError{
 		Code: dberrors.ErrUnavailable,
 		Op:   op,
 		Err:  &StandaloneModeError{Operation: operation},

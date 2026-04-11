@@ -61,7 +61,7 @@ func TestHandleSealStatus(t *testing.T) {
 		{
 			name: "service error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Status", mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Status", mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "SealStatus",
 					Err:  assert.AnError,
@@ -152,7 +152,7 @@ func TestHandleSealInit(t *testing.T) {
 				"total_shares": float64(5),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Initialize", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Initialize", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "SealInitialize",
 					Err:  assert.AnError,
@@ -227,7 +227,7 @@ func TestHandleUnseal(t *testing.T) {
 				"share": []byte("key-share-123"),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Unseal", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Unseal", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Unseal",
 					Err:  assert.AnError,
@@ -277,7 +277,7 @@ func TestHandleSeal(t *testing.T) {
 		{
 			name: "service error",
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Seal", mock.Anything).Return(&errors.DragonError{
+				m.On("Seal", mock.Anything).Return(&errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Seal",
 					Err:  assert.AnError,
@@ -366,7 +366,7 @@ func TestHandleRekey(t *testing.T) {
 				"new_total_shares": float64(5),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("Rekey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("Rekey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "Rekey",
 					Err:  assert.AnError,
@@ -462,7 +462,7 @@ func TestHandleGenerateRecoveryKey(t *testing.T) {
 				"recovery_total_keys": float64(3),
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("GenerateRecoveryKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GenerateRecoveryKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GenerateRecoveryKey",
 					Err:  assert.AnError,
@@ -537,7 +537,7 @@ func TestHandleDeleteRecoveryKey(t *testing.T) {
 				"confirm": true,
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("DeleteRecoveryKey", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("DeleteRecoveryKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "DeleteRecoveryKey",
 					Err:  assert.AnError,
@@ -610,7 +610,7 @@ func TestHandleGenerateRootToken(t *testing.T) {
 				"strategy": "recovery",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.On("GenerateRootToken", mock.Anything, mock.Anything).Return(nil, &errors.DragonError{
+				m.On("GenerateRootToken", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
 					Code: errors.ErrInternal,
 					Op:   "GenerateRootToken",
 					Err:  assert.AnError,
@@ -649,7 +649,7 @@ func TestHandleSealStatusServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("Status", mock.Anything).Return(nil, &errors.DragonError{
+	mockService.On("Status", mock.Anything).Return(nil, &errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "SealStatus",
 		Err:  assert.AnError,
@@ -668,7 +668,7 @@ func TestHandleSealError(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	mockService.On("Seal", mock.Anything).Return(&errors.DragonError{
+	mockService.On("Seal", mock.Anything).Return(&errors.QBError{
 		Code: errors.ErrInternal,
 		Op:   "Seal",
 		Err:  assert.AnError,

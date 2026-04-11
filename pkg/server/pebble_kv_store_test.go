@@ -80,7 +80,7 @@ func TestPebbleKVStore_PutGetDeleteExistsListScan(t *testing.T) {
 	t.Run("get missing key returns ErrNotFound", func(t *testing.T) {
 		_, err := store.Get(ctx, "nonexistent")
 		require.Error(t, err)
-		var de *dberrors.DragonError
+		var de *dberrors.QBError
 		assert.True(t, errors.As(err, &de))
 		assert.Equal(t, dberrors.ErrNotFound, de.Code)
 	})

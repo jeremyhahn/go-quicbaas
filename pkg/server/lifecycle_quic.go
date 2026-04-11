@@ -61,7 +61,7 @@ func (s *Server) startQUICServer() error {
 
 	// Guard against nil TLS config (CA initialization must complete first)
 	if s.tlsConfig == nil {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrConfiguration,
 			Op:   "server.startQUICServer",
 			Err:  &api.ConfigurationError{Action: "TLS configuration is required for QUIC server"},
@@ -93,7 +93,7 @@ func (s *Server) startQUICServer() error {
 	// Create QUIC server using QuicBaaS facade
 	quicServer, err := newQUIC(s.quicBaaSService, quicConfig, s.logger)
 	if err != nil {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrInternal,
 			Op:   "server.startQUICServer",
 			Err:  &api.OperationFailedError{Operation: "create QUIC server", Cause: err},
@@ -102,7 +102,7 @@ func (s *Server) startQUICServer() error {
 
 	// Start QUIC server
 	if err := quicServer.Start(); err != nil {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrInternal,
 			Op:   "server.startQUICServer",
 			Err:  &api.OperationFailedError{Operation: "start QUIC server", Cause: err},

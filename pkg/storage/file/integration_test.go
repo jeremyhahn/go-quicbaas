@@ -759,8 +759,8 @@ func TestIntegration_StressTest(t *testing.T) {
 					_, err := storage.Get([]byte(key))
 					// NotFound is acceptable for keys not yet written
 					if err != nil {
-						var dragonErr interface{ Error() string }
-						if ok := err.(interface{ Error() string }); ok != nil && strings.Contains(dragonErr.Error(), "not found") {
+						var qbErr interface{ Error() string }
+						if ok := err.(interface{ Error() string }); ok != nil && strings.Contains(qbErr.Error(), "not found") {
 							continue
 						}
 						readErrors.Add(1)

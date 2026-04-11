@@ -111,9 +111,9 @@ func (e *DeltaDiffError) Error() string {
 	return "diffable interface failed: " + e.Cause
 }
 
-// NewDeltaNilInputError creates a new DragonError for nil input.
-func NewDeltaNilInputError(op, parameter string) *errors.DragonError {
-	return &errors.DragonError{
+// NewDeltaNilInputError creates a new QBError for nil input.
+func NewDeltaNilInputError(op, parameter string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeDeltaNilInput,
 		Op:   op,
 		Err: &DeltaNilInputError{
@@ -125,9 +125,9 @@ func NewDeltaNilInputError(op, parameter string) *errors.DragonError {
 	}
 }
 
-// NewDeltaTypeMismatchError creates a new DragonError for type mismatch.
-func NewDeltaTypeMismatchError(op, oldType, newType, path string) *errors.DragonError {
-	return &errors.DragonError{
+// NewDeltaTypeMismatchError creates a new QBError for type mismatch.
+func NewDeltaTypeMismatchError(op, oldType, newType, path string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeDeltaTypeMismatch,
 		Op:   op,
 		Err: &DeltaTypeMismatchError{
@@ -143,9 +143,9 @@ func NewDeltaTypeMismatchError(op, oldType, newType, path string) *errors.Dragon
 	}
 }
 
-// NewDeltaMaxDepthExceededError creates a new DragonError for max depth exceeded.
-func NewDeltaMaxDepthExceededError(op string, maxDepth int, path string) *errors.DragonError {
-	return &errors.DragonError{
+// NewDeltaMaxDepthExceededError creates a new QBError for max depth exceeded.
+func NewDeltaMaxDepthExceededError(op string, maxDepth int, path string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeDeltaMaxDepthExceeded,
 		Op:   op,
 		Err: &DeltaMaxDepthExceededError{
@@ -159,9 +159,9 @@ func NewDeltaMaxDepthExceededError(op string, maxDepth int, path string) *errors
 	}
 }
 
-// NewDeltaUnsupportedTypeError creates a new DragonError for unsupported type.
-func NewDeltaUnsupportedTypeError(op, typeName, path string) *errors.DragonError {
-	return &errors.DragonError{
+// NewDeltaUnsupportedTypeError creates a new QBError for unsupported type.
+func NewDeltaUnsupportedTypeError(op, typeName, path string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeDeltaUnsupportedType,
 		Op:   op,
 		Err: &DeltaUnsupportedTypeError{
@@ -175,9 +175,9 @@ func NewDeltaUnsupportedTypeError(op, typeName, path string) *errors.DragonError
 	}
 }
 
-// NewDeltaDeserializationError creates a new DragonError for deserialization failure.
-func NewDeltaDeserializationError(op, cause string) *errors.DragonError {
-	return &errors.DragonError{
+// NewDeltaDeserializationError creates a new QBError for deserialization failure.
+func NewDeltaDeserializationError(op, cause string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeDeltaDeserializationFailed,
 		Op:   op,
 		Err: &DeltaDeserializationError{
@@ -189,9 +189,9 @@ func NewDeltaDeserializationError(op, cause string) *errors.DragonError {
 	}
 }
 
-// NewDeltaDiffError creates a new DragonError for Diffable interface failure.
-func NewDeltaDiffError(op, cause string) *errors.DragonError {
-	return &errors.DragonError{
+// NewDeltaDiffError creates a new QBError for Diffable interface failure.
+func NewDeltaDiffError(op, cause string) *errors.QBError {
+	return &errors.QBError{
 		Code: ErrCodeDeltaDiffFailed,
 		Op:   op,
 		Err: &DeltaDiffError{
@@ -968,7 +968,7 @@ func IsDeltaNilInput(err error) bool {
 	if stderrors.As(err, &dni) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeDeltaNilInput
 	}
@@ -984,7 +984,7 @@ func IsDeltaTypeMismatch(err error) bool {
 	if stderrors.As(err, &dtm) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeDeltaTypeMismatch
 	}
@@ -1000,7 +1000,7 @@ func IsDeltaMaxDepthExceeded(err error) bool {
 	if stderrors.As(err, &dmde) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeDeltaMaxDepthExceeded
 	}
@@ -1016,7 +1016,7 @@ func IsDeltaUnsupportedType(err error) bool {
 	if stderrors.As(err, &dut) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeDeltaUnsupportedType
 	}
@@ -1032,7 +1032,7 @@ func IsDeltaDeserializationFailed(err error) bool {
 	if stderrors.As(err, &dde) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeDeltaDeserializationFailed
 	}
@@ -1048,7 +1048,7 @@ func IsDeltaDiffFailed(err error) bool {
 	if stderrors.As(err, &ddf) {
 		return true
 	}
-	var de *errors.DragonError
+	var de *errors.QBError
 	if stderrors.As(err, &de) {
 		return de.Code == ErrCodeDeltaDiffFailed
 	}

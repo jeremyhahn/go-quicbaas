@@ -141,7 +141,7 @@ func TestDistributedSearch_SingleShard_InvalidK(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for k=0")
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if !errors.As(err, &de) || de.Code != dberrors.ErrInvalidInput {
 		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
@@ -279,7 +279,7 @@ func TestDistributedSearch_ShardFailure_AllFail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when all shards fail")
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if !errors.As(err, &de) || de.Code != dberrors.ErrUnavailable {
 		t.Errorf("expected ErrUnavailable, got %v", err)
 	}
@@ -334,7 +334,7 @@ func TestDistributedSearch_EmptyShards(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil shards")
 	}
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if !errors.As(err, &de) || de.Code != dberrors.ErrInvalidInput {
 		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
@@ -506,7 +506,7 @@ func TestGRPCShardSearcher_SearchShard_NoTransport(t *testing.T) {
 		t.Fatal("expected error from uninitialized gRPC searcher")
 	}
 
-	var de *dberrors.DragonError
+	var de *dberrors.QBError
 	if !errors.As(err, &de) || de.Code != dberrors.ErrUnavailable {
 		t.Errorf("expected ErrUnavailable, got %v", err)
 	}

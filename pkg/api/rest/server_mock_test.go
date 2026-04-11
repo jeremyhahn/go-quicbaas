@@ -105,7 +105,7 @@ func TestHandleKVPut_ServiceError_WithFuncMock(t *testing.T) {
 	defer cleanup()
 
 	mockService.PutFunc = func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "Put",
 			Err:  stderrors.New("internal service error"),
@@ -279,7 +279,7 @@ func TestHandleKVDelete_ServiceError_WithFuncMock(t *testing.T) {
 	defer cleanup()
 
 	mockService.DeleteFunc = func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "Delete",
 			Err:  stderrors.New("not found"),
@@ -1213,7 +1213,7 @@ func TestHandleServiceError_NotFound_WithFuncMock(t *testing.T) {
 	defer cleanup()
 
 	mockService.GetFunc = func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   "Get",
 			Err:  stderrors.New("not found"),
@@ -1238,7 +1238,7 @@ func TestHandleServiceError_Timeout_WithFuncMock(t *testing.T) {
 	defer cleanup()
 
 	mockService.PutFunc = func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error) {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrTimeout,
 			Op:   "Put",
 			Err:  stderrors.New("timeout"),

@@ -18,23 +18,23 @@ package embedding
 import (
 	"context"
 
-	qembed "github.com/jeremyhahn/go-qrdb/pkg/embedding"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // VoyageProvider implements Provider for Voyage AI by delegating to
-// qembed.VoyageProvider.
+// qrdbsdk.VoyageEmbeddingProvider.
 //
 // Compile-time assertion that VoyageProvider satisfies Provider.
 var _ Provider = (*VoyageProvider)(nil)
 
-// VoyageProvider wraps qembed.VoyageProvider with the single-text Embed API.
+// VoyageProvider wraps qrdbsdk.VoyageEmbeddingProvider with the single-text Embed API.
 type VoyageProvider struct {
-	inner *qembed.VoyageProvider
+	inner *qrdbsdk.VoyageEmbeddingProvider
 }
 
 // NewVoyageProvider creates a new Voyage AI embedding provider.
 func NewVoyageProvider(config Config) (*VoyageProvider, error) {
-	inner, err := qembed.NewVoyageProvider(config)
+	inner, err := qrdbsdk.NewVoyageEmbeddingProvider(config)
 	if err != nil {
 		return nil, err
 	}

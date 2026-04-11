@@ -1219,17 +1219,17 @@ func TestValidateSetParametersRequest_ContextInError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	if !ok {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 
 	// Verify context contains index
-	if dragonErr.Context == nil {
+	if qbErr.Context == nil {
 		t.Fatal("expected non-nil context")
 	}
-	if dragonErr.Context["index"] != 1 {
-		t.Errorf("expected index 1 in context, got %v", dragonErr.Context["index"])
+	if qbErr.Context["index"] != 1 {
+		t.Errorf("expected index 1 in context, got %v", qbErr.Context["index"])
 	}
 }
 
@@ -1245,17 +1245,17 @@ func TestValidateSetParametersRequest_ValueRequired(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	dragonErr, ok := err.(*errors.DragonError)
+	qbErr, ok := err.(*errors.QBError)
 	if !ok {
-		t.Fatalf("expected DragonError, got %T", err)
+		t.Fatalf("expected QBError, got %T", err)
 	}
 
 	// Verify context contains path
-	if dragonErr.Context == nil {
+	if qbErr.Context == nil {
 		t.Fatal("expected non-nil context")
 	}
-	if dragonErr.Context["path"] != "/valid/path" {
-		t.Errorf("expected path in context, got %v", dragonErr.Context["path"])
+	if qbErr.Context["path"] != "/valid/path" {
+		t.Errorf("expected path in context, got %v", qbErr.Context["path"])
 	}
 }
 

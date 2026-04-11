@@ -796,22 +796,22 @@ func TestUnknownFederationSubOpError(t *testing.T) {
 func TestAuthenticationErrors(t *testing.T) {
 	tests := []struct {
 		name        string
-		constructor func() *dberrors.DragonError
+		constructor func() *dberrors.QBError
 		wantMsg     string
 		wantCode    dberrors.ErrorCode
 	}{
-		{"AuthenticationDisabled", func() *dberrors.DragonError { return NewAuthenticationDisabledError("login") }, "authentication is not enabled", dberrors.ErrConfiguration},
-		{"PasswordAuthDisabled", func() *dberrors.DragonError { return NewPasswordAuthDisabledError("login") }, "password-based authentication is disabled; use mTLS certificate or FIDO2/WebAuthn authentication", dberrors.ErrUnauthorized},
-		{"TokenRequired", func() *dberrors.DragonError { return NewTokenRequiredError("api") }, "authentication token required", dberrors.ErrUnauthorized},
-		{"TokenRevoked", func() *dberrors.DragonError { return NewTokenRevokedError("api") }, "token has been revoked", dberrors.ErrUnauthorized},
-		{"InsufficientPermissions", func() *dberrors.DragonError { return NewInsufficientPermissionsError("admin") }, "insufficient permissions", dberrors.ErrForbidden},
-		{"InvalidCredentials", func() *dberrors.DragonError { return NewInvalidCredentialsError("login") }, "invalid credentials", dberrors.ErrUnauthorized},
-		{"CredentialsRequired", func() *dberrors.DragonError { return NewCredentialsRequiredError("login") }, "username and password are required", dberrors.ErrUnauthorized},
-		{"NoPasswordSet", func() *dberrors.DragonError { return NewNoPasswordSetError("login") }, "user has no password set; use IAM authentication", dberrors.ErrUnauthorized},
-		{"InvalidTokenClaims", func() *dberrors.DragonError { return NewInvalidTokenClaimsError("auth") }, "invalid token claims", dberrors.ErrUnauthorized},
-		{"InvalidRefreshToken", func() *dberrors.DragonError { return NewInvalidRefreshTokenError("refresh") }, "invalid refresh token", dberrors.ErrUnauthorized},
-		{"InvalidUserType", func() *dberrors.DragonError { return NewInvalidUserTypeError("auth") }, "invalid user type", dberrors.ErrInternal},
-		{"RolesNotFound", func() *dberrors.DragonError { return NewRolesNotFoundError("assign") }, "one or more roles do not exist", dberrors.ErrInvalidInput},
+		{"AuthenticationDisabled", func() *dberrors.QBError { return NewAuthenticationDisabledError("login") }, "authentication is not enabled", dberrors.ErrConfiguration},
+		{"PasswordAuthDisabled", func() *dberrors.QBError { return NewPasswordAuthDisabledError("login") }, "password-based authentication is disabled; use mTLS certificate or FIDO2/WebAuthn authentication", dberrors.ErrUnauthorized},
+		{"TokenRequired", func() *dberrors.QBError { return NewTokenRequiredError("api") }, "authentication token required", dberrors.ErrUnauthorized},
+		{"TokenRevoked", func() *dberrors.QBError { return NewTokenRevokedError("api") }, "token has been revoked", dberrors.ErrUnauthorized},
+		{"InsufficientPermissions", func() *dberrors.QBError { return NewInsufficientPermissionsError("admin") }, "insufficient permissions", dberrors.ErrForbidden},
+		{"InvalidCredentials", func() *dberrors.QBError { return NewInvalidCredentialsError("login") }, "invalid credentials", dberrors.ErrUnauthorized},
+		{"CredentialsRequired", func() *dberrors.QBError { return NewCredentialsRequiredError("login") }, "username and password are required", dberrors.ErrUnauthorized},
+		{"NoPasswordSet", func() *dberrors.QBError { return NewNoPasswordSetError("login") }, "user has no password set; use IAM authentication", dberrors.ErrUnauthorized},
+		{"InvalidTokenClaims", func() *dberrors.QBError { return NewInvalidTokenClaimsError("auth") }, "invalid token claims", dberrors.ErrUnauthorized},
+		{"InvalidRefreshToken", func() *dberrors.QBError { return NewInvalidRefreshTokenError("refresh") }, "invalid refresh token", dberrors.ErrUnauthorized},
+		{"InvalidUserType", func() *dberrors.QBError { return NewInvalidUserTypeError("auth") }, "invalid user type", dberrors.ErrInternal},
+		{"RolesNotFound", func() *dberrors.QBError { return NewRolesNotFoundError("assign") }, "one or more roles do not exist", dberrors.ErrInvalidInput},
 	}
 
 	for _, tt := range tests {
@@ -1780,98 +1780,98 @@ func TestKMSErrorConstructors(t *testing.T) {
 func TestRaftConstructors_Simple(t *testing.T) {
 	tests := []struct {
 		name     string
-		buildFn  func() *dberrors.DragonError
+		buildFn  func() *dberrors.QBError
 		wantCode dberrors.ErrorCode
 		wantOp   string
 	}{
 		{
 			"NewResourceClosedError",
-			func() *dberrors.DragonError {
+			func() *dberrors.QBError {
 				return NewResourceClosedError("raft.Write", "writer", dberrors.ErrUnavailable)
 			},
 			dberrors.ErrUnavailable, "raft.Write",
 		},
 		{
 			"NewChecksumError",
-			func() *dberrors.DragonError { return NewChecksumError("raft.Restore", "snapshot") },
+			func() *dberrors.QBError { return NewChecksumError("raft.Restore", "snapshot") },
 			dberrors.ErrDataLoss, "raft.Restore",
 		},
 		{
 			"NewUnsupportedValueError",
-			func() *dberrors.DragonError {
+			func() *dberrors.QBError {
 				return NewUnsupportedValueError("raft.Parse", "format", "xml")
 			},
 			dberrors.ErrInvalidInput, "raft.Parse",
 		},
 		{
 			"NewInvalidOpcodeError",
-			func() *dberrors.DragonError {
+			func() *dberrors.QBError {
 				return NewInvalidOpcodeError("raft.Dispatch", 0xFF, "batch")
 			},
 			dberrors.ErrInvalidInput, "raft.Dispatch",
 		},
 		{
 			"NewIncompleteDataError",
-			func() *dberrors.DragonError { return NewIncompleteDataError("raft.Decode", "header") },
+			func() *dberrors.QBError { return NewIncompleteDataError("raft.Decode", "header") },
 			dberrors.ErrInvalidInput, "raft.Decode",
 		},
 		{
 			"NewDeadlineRequiredError",
-			func() *dberrors.DragonError { return NewDeadlineRequiredError("raft.Read") },
+			func() *dberrors.QBError { return NewDeadlineRequiredError("raft.Read") },
 			dberrors.ErrInvalidInput, "raft.Read",
 		},
 		{
 			"NewDeadlineExceededError",
-			func() *dberrors.DragonError { return NewDeadlineExceededError("raft.Read") },
+			func() *dberrors.QBError { return NewDeadlineExceededError("raft.Read") },
 			dberrors.ErrDeadlineExceeded, "raft.Read",
 		},
 		{
 			"NewUnknownOperationError",
-			func() *dberrors.DragonError { return NewUnknownOperationError("raft.Handle", "foobar") },
+			func() *dberrors.QBError { return NewUnknownOperationError("raft.Handle", "foobar") },
 			dberrors.ErrInvalidInput, "raft.Handle",
 		},
 		{
 			"NewInvalidContextTypeError",
-			func() *dberrors.DragonError {
+			func() *dberrors.QBError {
 				return NewInvalidContextTypeError("raft.Lookup", "[]byte")
 			},
 			dberrors.ErrInternal, "raft.Lookup",
 		},
 		{
 			"NewCanceledError",
-			func() *dberrors.DragonError { return NewCanceledError("raft.Propose", "write") },
+			func() *dberrors.QBError { return NewCanceledError("raft.Propose", "write") },
 			dberrors.ErrCanceled, "raft.Propose",
 		},
 		{
 			"NewComponentNotInitializedError",
-			func() *dberrors.DragonError {
+			func() *dberrors.QBError {
 				return NewComponentNotInitializedError("raft.Start", "nodehost")
 			},
 			dberrors.ErrInternal, "raft.Start",
 		},
 		{
 			"NewWriterClosedError",
-			func() *dberrors.DragonError { return NewWriterClosedError("raft.Write") },
+			func() *dberrors.QBError { return NewWriterClosedError("raft.Write") },
 			dberrors.ErrUnavailable, "raft.Write",
 		},
 		{
 			"NewAlreadyBootstrappedError",
-			func() *dberrors.DragonError { return NewAlreadyBootstrappedError("raft.Bootstrap") },
+			func() *dberrors.QBError { return NewAlreadyBootstrappedError("raft.Bootstrap") },
 			dberrors.ErrAlreadyExists, "raft.Bootstrap",
 		},
 		{
 			"NewInvalidNodeIDZeroError",
-			func() *dberrors.DragonError { return NewInvalidNodeIDZeroError("raft.Validate") },
+			func() *dberrors.QBError { return NewInvalidNodeIDZeroError("raft.Validate") },
 			dberrors.ErrInvalidInput, "raft.Validate",
 		},
 		{
 			"NewInvalidNodeIDMembersError",
-			func() *dberrors.DragonError { return NewInvalidNodeIDMembersError("raft.Validate") },
+			func() *dberrors.QBError { return NewInvalidNodeIDMembersError("raft.Validate") },
 			dberrors.ErrInvalidInput, "raft.Validate",
 		},
 		{
 			"NewMTLSConfigError",
-			func() *dberrors.DragonError { return NewMTLSConfigError("raft.Init") },
+			func() *dberrors.QBError { return NewMTLSConfigError("raft.Init") },
 			dberrors.ErrConfiguration, "raft.Init",
 		},
 	}
@@ -2210,62 +2210,62 @@ func TestRaftConstructors_WithCause(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		buildFn  func() *dberrors.DragonError
+		buildFn  func() *dberrors.QBError
 		wantCode dberrors.ErrorCode
 	}{
 		{
 			"NewNodeHostCreationError",
-			func() *dberrors.DragonError { return NewNodeHostCreationError("raft.Init", cause) },
+			func() *dberrors.QBError { return NewNodeHostCreationError("raft.Init", cause) },
 			dberrors.ErrRaft,
 		},
 		{
 			"NewGroupConfigValidationError",
-			func() *dberrors.DragonError { return NewGroupConfigValidationError("raft.Config", cause) },
+			func() *dberrors.QBError { return NewGroupConfigValidationError("raft.Config", cause) },
 			dberrors.ErrValidation,
 		},
 		{
 			"NewRaftConfigCreationError",
-			func() *dberrors.DragonError { return NewRaftConfigCreationError("raft.Config", cause) },
+			func() *dberrors.QBError { return NewRaftConfigCreationError("raft.Config", cause) },
 			dberrors.ErrConfiguration,
 		},
 		{
 			"NewSessionError",
-			func() *dberrors.DragonError { return NewSessionError("raft.GetSession", cause) },
+			func() *dberrors.QBError { return NewSessionError("raft.GetSession", cause) },
 			dberrors.ErrRaft,
 		},
 		{
 			"NewReadOptionsValidationError",
-			func() *dberrors.DragonError { return NewReadOptionsValidationError("raft.Read", cause) },
+			func() *dberrors.QBError { return NewReadOptionsValidationError("raft.Read", cause) },
 			dberrors.ErrInvalidInput,
 		},
 		{
 			"NewDiscoveryError",
-			func() *dberrors.DragonError { return NewDiscoveryError("raft.Discover", cause) },
+			func() *dberrors.QBError { return NewDiscoveryError("raft.Discover", cause) },
 			dberrors.ErrUnavailable,
 		},
 		{
 			"NewClusterDetectionError",
-			func() *dberrors.DragonError { return NewClusterDetectionError("raft.Detect", cause) },
+			func() *dberrors.QBError { return NewClusterDetectionError("raft.Detect", cause) },
 			dberrors.ErrInternal,
 		},
 		{
 			"NewRaftGroupStartError",
-			func() *dberrors.DragonError { return NewRaftGroupStartError("raft.Start", cause) },
+			func() *dberrors.QBError { return NewRaftGroupStartError("raft.Start", cause) },
 			dberrors.ErrRaft,
 		},
 		{
 			"NewLeaderElectionError",
-			func() *dberrors.DragonError { return NewLeaderElectionError("raft.Elect", cause) },
+			func() *dberrors.QBError { return NewLeaderElectionError("raft.Elect", cause) },
 			dberrors.ErrLeaderNotAvailable,
 		},
 		{
 			"NewClusterJoinError",
-			func() *dberrors.DragonError { return NewClusterJoinError("raft.Join", cause) },
+			func() *dberrors.QBError { return NewClusterJoinError("raft.Join", cause) },
 			dberrors.ErrRaft,
 		},
 		{
 			"NewClientContextCanceledError",
-			func() *dberrors.DragonError { return NewClientContextCanceledError("raft.Call", cause) },
+			func() *dberrors.QBError { return NewClientContextCanceledError("raft.Call", cause) },
 			dberrors.ErrCanceled,
 		},
 	}

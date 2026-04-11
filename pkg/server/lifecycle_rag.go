@@ -80,7 +80,7 @@ func (s *Server) stopRAG() error {
 
 	s.logger.Debug("Closing RAG system...")
 	if err := s.ragSystem.Close(); err != nil {
-		return &dragonerrors.DragonError{
+		return &dragonerrors.QBError{
 			Code: dragonerrors.ErrInternal,
 			Op:   "server.stopRAG",
 			Err:  &ServerCauseError{Message: "failed to close RAG system", Cause: err},

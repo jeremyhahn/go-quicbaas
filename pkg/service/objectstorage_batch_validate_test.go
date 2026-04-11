@@ -32,7 +32,7 @@ func TestBatchPutObjectsRequest_Validate_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -80,7 +80,7 @@ func TestBatchGetObjectsRequest_Validate_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }
@@ -122,7 +122,7 @@ func TestBatchDeleteObjectsRequest_Validate_NilRequest(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 
-	var dErr *dberrors.DragonError
+	var dErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &dErr))
 	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
 }

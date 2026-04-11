@@ -95,7 +95,7 @@ func EncryptField(value []byte, key []byte, algorithm string) ([]byte, error) {
 	// Derive the correct key size from the master key
 	derivedKey, err := deriveKey(key, algorithm)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrEncryption,
 			Op:   "encryption.EncryptField",
 			Err:  err,
@@ -151,7 +151,7 @@ func DecryptField(value []byte, key []byte, algorithm string) ([]byte, error) {
 	// Derive the correct key size from the master key
 	derivedKey, err := deriveKey(key, algorithm)
 	if err != nil {
-		return nil, &errors.DragonError{
+		return nil, &errors.QBError{
 			Code: errors.ErrDecryption,
 			Op:   "encryption.DecryptField",
 			Err:  err,

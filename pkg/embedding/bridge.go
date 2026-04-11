@@ -18,14 +18,14 @@ package embedding
 import (
 	"context"
 
-	qembed "github.com/jeremyhahn/go-qrdb/pkg/embedding"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// providerBridgeIn adapts a qembed.Provider (batch-first, with model param)
+// providerBridgeIn adapts a qrdbsdk.EmbeddingProvider (batch-first, with model param)
 // to the go-quicbaas Provider interface (single-text, no model param).
 // It is used when a go-qrdb provider is retrieved from the Manager.
 type providerBridgeIn struct {
-	inner qembed.Provider
+	inner qrdbsdk.EmbeddingProvider
 	model string // default model used when Embed is called
 }
 
@@ -54,13 +54,13 @@ func (p *providerBridgeIn) Name() string     { return p.inner.Name() }
 func (p *providerBridgeIn) Close() error     { return p.inner.Close() }
 
 // providerBridgeOut adapts a go-quicbaas Provider (single-text, no model param)
-// to the qembed.Provider interface (batch-first, with model param).
+// to the qrdbsdk.EmbeddingProvider interface (batch-first, with model param).
 // It is used when a go-quicbaas Provider is registered with the Manager.
 type providerBridgeOut struct {
 	inner Provider
 }
 
-func (p *providerBridgeOut) Embed(ctx context.Context, texts []string, _ string) (*qembed.EmbeddingResult, error) {
+func (p *providerBridgeOut) Embed(ctx context.Context, texts []string, _ string) (*qrdbsdk.EmbeddingResult, error) {
 	// For a single text use Embed (preserves test hooks keyed on embedFunc).
 	// For multiple texts use EmbedBatch (preserves test hooks keyed on embedBatchFunc).
 	if len(texts) == 1 {
@@ -68,7 +68,7 @@ func (p *providerBridgeOut) Embed(ctx context.Context, texts []string, _ string)
 		if err != nil {
 			return nil, err
 		}
-		return &qembed.EmbeddingResult{
+		return &qrdbsdk.EmbeddingResult{
 			Embeddings: [][]float32{emb},
 			Model:      p.inner.Name(),
 		}, nil
@@ -78,13 +78,13 @@ func (p *providerBridgeOut) Embed(ctx context.Context, texts []string, _ string)
 	if err != nil {
 		return nil, err
 	}
-	return &qembed.EmbeddingResult{
+	return &qrdbsdk.EmbeddingResult{
 		Embeddings: embeddings,
 		Model:      p.inner.Name(),
 	}, nil
 }
 
-func (p *providerBridgeOut) Dimensions() int                                        { return p.inner.Dimensions() }
-func (p *providerBridgeOut) Name() string                                           { return p.inner.Name() }
-func (p *providerBridgeOut) Models(_ context.Context) ([]qembed.ModelInfo, error)   { return nil, nil }
-func (p *providerBridgeOut) Close() error                                           { return p.inner.Close() }
+func (p *providerBridgeOut) Dimensions() int                                           { return p.inner.Dimensions() }
+func (p *providerBridgeOut) Name() string                                              { return p.inner.Name() }
+func (p *providerBridgeOut) Models(_ context.Context) ([]qrdbsdk.EmbeddingModelInfo, error) { return nil, nil }
+func (p *providerBridgeOut) Close() error                                              { return p.inner.Close() }

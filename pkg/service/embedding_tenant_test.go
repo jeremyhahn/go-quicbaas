@@ -128,9 +128,9 @@ func TestPrepareEmbeddingTenantContext_InvalidTenant(t *testing.T) {
 	ctx := iam.ContextWithTenant(context.Background(), "invalid tenant!@#")
 	_, err := prepareEmbeddingTenantContext(ctx)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestPrepareEmbeddingTenantContext_TooLongTenant(t *testing.T) {
@@ -139,9 +139,9 @@ func TestPrepareEmbeddingTenantContext_TooLongTenant(t *testing.T) {
 	ctx := iam.ContextWithTenant(context.Background(), longTenant)
 	_, err := prepareEmbeddingTenantContext(ctx)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // =============================================================================
@@ -169,9 +169,9 @@ func TestValidateEmbeddingTenantID_InvalidChars(t *testing.T) {
 	for _, id := range invalidIDs {
 		err := validateEmbeddingTenantID(id)
 		require.Error(t, err, "tenant ID %q should be invalid", id)
-		var dragonErr *errors.DragonError
-		require.ErrorAs(t, err, &dragonErr)
-		assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+		var qbErr *errors.QBError
+		require.ErrorAs(t, err, &qbErr)
+		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 	}
 }
 
@@ -185,9 +185,9 @@ func TestValidateEmbeddingTenantID_TooLong(t *testing.T) {
 	tooLong := strings.Repeat("a", 129)
 	err = validateEmbeddingTenantID(tooLong)
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrInvalidInput, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // =============================================================================
@@ -212,18 +212,18 @@ func TestEnforceEmbeddingTenantAccess_CrossTenant(t *testing.T) {
 	key := embeddingTenantScopedCacheKey("other-corp", "hello")
 	err := enforceEmbeddingTenantAccess("acme-corp", key, "GenerateEmbedding")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 }
 
 func TestEnforceEmbeddingTenantAccess_UnprefixedKey(t *testing.T) {
 	// Multi-tenant mode: unprefixed key is denied
 	err := enforceEmbeddingTenantAccess("acme-corp", "plain-text", "GenerateEmbedding")
 	require.Error(t, err)
-	var dragonErr *errors.DragonError
-	require.ErrorAs(t, err, &dragonErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, dragonErr.Code)
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
 }
 
 // =============================================================================
