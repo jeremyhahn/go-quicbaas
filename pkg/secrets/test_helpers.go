@@ -499,7 +499,7 @@ func newTestMockLogger() *testMockLogger {
 	}
 }
 
-func (l *testMockLogger) Debug(msg string) {
+func (l *testMockLogger) Debug(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.entries = append(l.entries, "DEBUG: "+msg)
@@ -509,7 +509,7 @@ func (l *testMockLogger) Debugf(format string, args ...interface{}) {
 	l.Debug(format)
 }
 
-func (l *testMockLogger) Info(msg string) {
+func (l *testMockLogger) Info(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.entries = append(l.entries, "INFO: "+msg)
@@ -519,7 +519,7 @@ func (l *testMockLogger) Infof(format string, args ...interface{}) {
 	l.Info(format)
 }
 
-func (l *testMockLogger) Warn(msg string) {
+func (l *testMockLogger) Warn(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.entries = append(l.entries, "WARN: "+msg)
@@ -529,7 +529,7 @@ func (l *testMockLogger) Warnf(format string, args ...interface{}) {
 	l.Warn(format)
 }
 
-func (l *testMockLogger) Error(msg string) {
+func (l *testMockLogger) Error(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.entries = append(l.entries, "ERROR: "+msg)

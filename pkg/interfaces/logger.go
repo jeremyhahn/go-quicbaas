@@ -18,26 +18,26 @@ package interfaces
 type Logger interface {
 	// Leveled logging methods
 
-	// Debug logs a debug-level message.
-	Debug(msg string)
+	// Debug logs a debug-level message with optional structured key-value pairs.
+	Debug(msg string, args ...any)
 
 	// Debugf logs a formatted debug-level message.
 	Debugf(format string, args ...interface{})
 
-	// Info logs an info-level message.
-	Info(msg string)
+	// Info logs an info-level message with optional structured key-value pairs.
+	Info(msg string, args ...any)
 
 	// Infof logs a formatted info-level message.
 	Infof(format string, args ...interface{})
 
-	// Warn logs a warning-level message.
-	Warn(msg string)
+	// Warn logs a warning-level message with optional structured key-value pairs.
+	Warn(msg string, args ...any)
 
 	// Warnf logs a formatted warning-level message.
 	Warnf(format string, args ...interface{})
 
-	// Error logs an error-level message.
-	Error(msg string)
+	// Error logs an error-level message with optional structured key-value pairs.
+	Error(msg string, args ...any)
 
 	// Errorf logs a formatted error-level message.
 	Errorf(format string, args ...interface{})

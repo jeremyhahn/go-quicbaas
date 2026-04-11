@@ -13,12 +13,9 @@
 
 package logger
 
-// InvalidLogLevelError is returned when an unsupported log level is specified.
-type InvalidLogLevelError struct {
-	Level string
-}
+import (
+	qrdblogger "github.com/jeremyhahn/go-qrdb/pkg/logger"
+)
 
-// Error implements the error interface.
-func (e *InvalidLogLevelError) Error() string {
-	return "invalid log level: " + e.Level
-}
+// InvalidLogLevelError is returned when an unsupported log level is specified.
+type InvalidLogLevelError = qrdblogger.InvalidLogLevelError

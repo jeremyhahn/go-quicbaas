@@ -28,32 +28,32 @@ func newLoggerAdapter(impl *logger.Logger) interfaces.Logger {
 	return &loggerAdapter{impl: impl}
 }
 
-func (l *loggerAdapter) Debug(msg string) {
-	l.impl.Debug(msg)
+func (l *loggerAdapter) Debug(msg string, args ...any) {
+	l.impl.Debug(msg, args...)
 }
 
 func (l *loggerAdapter) Debugf(format string, args ...interface{}) {
 	l.impl.Debugf(format, args...)
 }
 
-func (l *loggerAdapter) Info(msg string) {
-	l.impl.Info(msg)
+func (l *loggerAdapter) Info(msg string, args ...any) {
+	l.impl.Info(msg, args...)
 }
 
 func (l *loggerAdapter) Infof(format string, args ...interface{}) {
 	l.impl.Infof(format, args...)
 }
 
-func (l *loggerAdapter) Warn(msg string) {
-	l.impl.Warn(msg)
+func (l *loggerAdapter) Warn(msg string, args ...any) {
+	l.impl.Warn(msg, args...)
 }
 
 func (l *loggerAdapter) Warnf(format string, args ...interface{}) {
 	l.impl.Warnf(format, args...)
 }
 
-func (l *loggerAdapter) Error(msg string) {
-	l.impl.Error(msg)
+func (l *loggerAdapter) Error(msg string, args ...any) {
+	l.impl.Error(msg, args...)
 }
 
 func (l *loggerAdapter) Errorf(format string, args ...interface{}) {
