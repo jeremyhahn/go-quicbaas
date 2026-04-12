@@ -548,6 +548,8 @@ func (m *mockSDKClientForMCP) Certificate() quicbaas.CertificateClient { return 
 
 func (m *mockSDKClientForMCP) ClusterDEK() quicbaas.ClusterDEKClient { return nil }
 
+func (m *mockSDKClientForMCP) DEK() quicbaas.DEKClient { return nil }
+
 func (m *mockSDKClientForMCP) IAM() quicbaas.IAMClient { return nil }
 
 func (m *mockSDKClientForMCP) Vector() quicbaas.VectorClient { return nil }

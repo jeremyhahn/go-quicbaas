@@ -82,6 +82,7 @@ func (m *mockRAGSDKClient) RBAC() quicbaas.RBACClient                           
 func (m *mockRAGSDKClient) DynamicSecrets() quicbaas.DynamicSecretsClient         { return nil }
 func (m *mockRAGSDKClient) Certificate() quicbaas.CertificateClient               { return nil }
 func (m *mockRAGSDKClient) ClusterDEK() quicbaas.ClusterDEKClient                 { return nil }
+func (m *mockRAGSDKClient) DEK() quicbaas.DEKClient                               { return nil }
 func (m *mockRAGSDKClient) IAM() quicbaas.IAMClient                               { return nil }
 func (m *mockRAGSDKClient) Vector() quicbaas.VectorClient                         { return nil }
 func (m *mockRAGSDKClient) TimeSeries() quicbaas.TimeSeriesClient                 { return nil }

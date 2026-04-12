@@ -125,6 +125,7 @@ func (m *mockSDKClient) RBAC() quicbaas.RBACClient                             {
 func (m *mockSDKClient) DynamicSecrets() quicbaas.DynamicSecretsClient         { return nil }
 func (m *mockSDKClient) Certificate() quicbaas.CertificateClient               { return nil }
 func (m *mockSDKClient) ClusterDEK() quicbaas.ClusterDEKClient                 { return nil }
+func (m *mockSDKClient) DEK() quicbaas.DEKClient                               { return nil }
 func (m *mockSDKClient) IAM() quicbaas.IAMClient                               { return nil }
 func (m *mockSDKClient) Vector() quicbaas.VectorClient                         { return nil }
 func (m *mockSDKClient) TimeSeries() quicbaas.TimeSeriesClient                 { return nil }

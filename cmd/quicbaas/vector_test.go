@@ -890,6 +890,8 @@ func (m *mockSDKClientWithVector) Certificate() quicbaas.CertificateClient { ret
 
 func (m *mockSDKClientWithVector) ClusterDEK() quicbaas.ClusterDEKClient { return nil }
 
+func (m *mockSDKClientWithVector) DEK() quicbaas.DEKClient { return nil }
+
 func (m *mockSDKClientWithVector) IAM() quicbaas.IAMClient { return nil }
 
 func (m *mockSDKClientWithVector) TimeSeries() quicbaas.TimeSeriesClient { return nil }
@@ -1294,6 +1296,8 @@ func (m *testSDKClientForVector) DynamicSecrets() quicbaas.DynamicSecretsClient 
 func (m *testSDKClientForVector) Certificate() quicbaas.CertificateClient { return nil }
 
 func (m *testSDKClientForVector) ClusterDEK() quicbaas.ClusterDEKClient { return nil }
+
+func (m *testSDKClientForVector) DEK() quicbaas.DEKClient { return nil }
 
 func (m *testSDKClientForVector) IAM() quicbaas.IAMClient { return nil }
 

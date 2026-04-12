@@ -47,6 +47,7 @@ func (m *mockClient) RBAC() quicbaas.RBACClient                             { re
 func (m *mockClient) DynamicSecrets() quicbaas.DynamicSecretsClient         { return nil }
 func (m *mockClient) Certificate() quicbaas.CertificateClient               { return nil }
 func (m *mockClient) ClusterDEK() quicbaas.ClusterDEKClient                 { return nil }
+func (m *mockClient) DEK() quicbaas.DEKClient                               { return nil }
 func (m *mockClient) IAM() quicbaas.IAMClient                               { return nil }
 func (m *mockClient) Vector() quicbaas.VectorClient                         { return nil }
 func (m *mockClient) TimeSeries() quicbaas.TimeSeriesClient                 { return nil }

@@ -2575,6 +2575,8 @@ func (m *mockSDKClientForClusterCovPlusTest) Certificate() quicbaas.CertificateC
 
 func (m *mockSDKClientForClusterCovPlusTest) ClusterDEK() quicbaas.ClusterDEKClient { return nil }
 
+func (m *mockSDKClientForClusterCovPlusTest) DEK() quicbaas.DEKClient { return nil }
+
 func (m *mockSDKClientForClusterCovPlusTest) IAM() quicbaas.IAMClient { return nil }
 
 func (m *mockSDKClientForClusterCovPlusTest) Vector() quicbaas.VectorClient { return nil }
