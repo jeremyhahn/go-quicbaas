@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -637,6 +638,9 @@ func (m *mockService) ListEntityTypes(ctx context.Context, req *service.ListEnti
 	}
 	return nil, errors.New("not implemented")
 }
+
+// SetTenantIsolationManager is a no-op for the mock.
+func (m *mockService) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
 
 // =============================================================================
 // Helper Functions

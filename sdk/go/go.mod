@@ -6,7 +6,7 @@ require (
 	github.com/jeremyhahn/go-qrdb v0.0.0
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0
 	github.com/jeremyhahn/go-quicbaas v0.0.0
-	github.com/jeremyhahn/go-xkms v0.2.2-alpha
+	github.com/jeremyhahn/go-xkms v0.0.0
 	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0
 	github.com/quic-go/quic-go v0.59.0
 	github.com/stretchr/testify v1.11.1

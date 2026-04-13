@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -539,6 +540,9 @@ func (m *mockService) SetQRDBClient(provider service.QRDBClientProvider) {
 func (m *mockService) WatchManager() *watch.Manager {
 	return nil
 }
+
+// SetTenantIsolationManager is a no-op for the mock.
+func (m *mockService) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
 
 // =============================================================================
 // Comprehensive Server Tests

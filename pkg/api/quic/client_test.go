@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -926,6 +927,9 @@ func (e *e2eMockService) Signal() interface{} {
 
 func (e *e2eMockService) SetSignalService(svc interface{}) {
 }
+
+// SetTenantIsolationManager is a no-op for the mock.
+func (e *e2eMockService) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
 
 // e2eSealService implements the SealService interface returning success.
 type e2eSealService struct{}

@@ -20,7 +20,7 @@ require (
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0
 	github.com/jeremyhahn/go-signal v0.0.0
-	github.com/jeremyhahn/go-xkms v0.2.2-alpha
+	github.com/jeremyhahn/go-xkms v0.0.0
 	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0
 	github.com/klauspost/compress v1.18.4
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
