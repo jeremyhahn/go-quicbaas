@@ -621,6 +621,19 @@ func (m *mockCertificateAuthority) VerifyPeerCertificate(_ [][]byte, _ [][]*x509
 	return nil
 }
 
+// Trust Pool
+func (m *mockCertificateAuthority) CABundleCertPool() (*x509.CertPool, error) { return nil, nil }
+func (m *mockCertificateAuthority) TrustedRootCertPool(_ *x509.Certificate) (*x509.CertPool, error) {
+	return nil, nil
+}
+func (m *mockCertificateAuthority) TrustedIntermediateCertPool(_ *x509.Certificate) (*x509.CertPool, error) {
+	return nil, nil
+}
+func (m *mockCertificateAuthority) OSTrustStore() (*x509.CertPool, error) { return nil, nil }
+func (m *mockCertificateAuthority) QuantumSafeTLSConfig(_ *xkmstypes.KeyAttributes) (*tls.Config, error) {
+	return nil, nil
+}
+
 // Storage
 func (m *mockCertificateAuthority) KeyStore() xkmsbackend.Backend      { return nil }
 func (m *mockCertificateAuthority) CertStore() xkmscertstore.CertStore { return nil }
