@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // quicAuthManagerAdapter wraps auth.InMemoryAuthManager to satisfy interfaces.AuthManager.
@@ -37,7 +38,7 @@ type quicAuthManagerAdapter struct {
 }
 
 // Authenticate wraps the concrete Authenticate to return interface{}.
-func (a *quicAuthManagerAdapter) Authenticate(ctx context.Context, username, password string) (interface{}, error) {
+func (a *quicAuthManagerAdapter) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
 	return a.manager.Authenticate(ctx, username, password)
 }
 
