@@ -15,116 +15,121 @@ package grpc
 
 import (
 	"context"
-	stderrors "errors"
 
-	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// SealStatus returns the current seal status.
+// Deprecated seal-CLI client adapter. The seal/* CLI surface and its
+// gRPC RPCs (SealStatus, SealInit, Unseal, Seal, SealRekey) are
+// retained for one release with deprecation aliases — see
+// docs/migrations/seal-to-barrier.md. New code SHOULD use the
+// /v1/barrier/* surface and the BarrierClient SDK adapter
+// (pkg/barrier).
+//
+// These methods are thin wrappers over the existing proto RPCs that
+// translate the proto wire shape into the service-layer DTOs the CLI
+// SealClient interface (cmd/quicbaas/factories.go) expects. They
+// remain in place until Phase 12 of the seal→barrier rename
+// (cmd/quicbaas/seal.go split into barrier/init/bootstrap) lands and
+// the SealClient interface is retired in favour of BarrierClient.
+
+// SealStatus returns the current seal status of the database.
 func (c *Client) SealStatus(ctx context.Context) (*service.SealStatusResponse, error) {
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
-	pbResp, err := c.client.SealStatus(ctx, &pb.SealStatusRequest{})
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.opts.timeout)
+		defer cancel()
+	}
+	ctx = c.addMetadata(ctx)
+	pc, err := c.getClient()
 	if err != nil {
-		return nil, convertError(err)
+		return nil, convertGRPCError(err, "SealStatus")
 	}
-
-	if pbResp.Error != "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "Client.SealStatus",
-			Err:  stderrors.New(pbResp.Error),
-		}
+	var resp *proto.SealStatusResponse
+	err = retryWithBackoff(ctx, c.opts.maxRetries, c.opts.retryBackoff, c.opts.maxRetryBackoff, func() error {
+		var rpcErr error
+		resp, rpcErr = pc.SealStatus(ctx, &proto.SealStatusRequest{})
+		return rpcErr
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "SealStatus")
 	}
-
 	return &service.SealStatusResponse{
-		Sealed:         pbResp.Sealed,
-		Initialized:    pbResp.Initialized,
-		Mode:           convertProtoSealMode(pbResp.Mode),
-		Threshold:      int(pbResp.Threshold),
-		TotalShares:    int(pbResp.TotalShares),
-		SharesProvided: int(pbResp.SharesProvided),
-		TPMAvailable:   pbResp.TpmAvailable,
-		ClusterNodes:   int(pbResp.ClusterNodes),
-		Version:        pbResp.Version,
+		Sealed:         resp.GetSealed(),
+		Initialized:    resp.GetInitialized(),
+		Threshold:      int(resp.GetThreshold()),
+		TotalShares:    int(resp.GetTotalShares()),
+		SharesProvided: int(resp.GetSharesProvided()),
+		Version:        resp.GetVersion(),
 	}, nil
 }
 
-// SealInit initializes the seal and generates key shares.
+// SealInit initializes the seal manager and returns generated shares.
 func (c *Client) SealInit(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	if req == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "Client.SealInit",
-			Err:  ErrRequestNil,
-		}
+	if err := c.ensureConnected(ctx); err != nil {
+		return nil, err
 	}
-
-	pbReq := &pb.SealInitRequest{
-		Threshold:           int32(req.Threshold),   //nolint:gosec // G115: small values
-		TotalShares:         int32(req.TotalShares), //nolint:gosec // G115: small values
-		RecoveryKeysEnabled: req.RecoveryKeysEnabled,
-		RecoveryThreshold:   int32(req.RecoveryThreshold), //nolint:gosec // G115: small values
-		RecoveryTotalKeys:   int32(req.RecoveryTotalKeys), //nolint:gosec // G115: small values
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.opts.timeout)
+		defer cancel()
 	}
-
-	pbResp, err := c.client.SealInit(ctx, pbReq)
+	ctx = c.addMetadata(ctx)
+	pc, err := c.getClient()
 	if err != nil {
-		return nil, convertError(err)
+		return nil, convertGRPCError(err, "SealInit")
 	}
-
-	if pbResp.Error != "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "Client.SealInit",
-			Err:  stderrors.New(pbResp.Error),
-		}
+	var resp *proto.SealInitResponse
+	err = retryWithBackoff(ctx, c.opts.maxRetries, c.opts.retryBackoff, c.opts.maxRetryBackoff, func() error {
+		var rpcErr error
+		resp, rpcErr = pc.SealInit(ctx, &proto.SealInitRequest{
+			Threshold:   int32(req.Threshold),
+			TotalShares: int32(req.TotalShares),
+		})
+		return rpcErr
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "SealInit")
 	}
-
 	return &service.SealInitResponse{
-		Shares:       pbResp.Shares,
-		RecoveryKeys: pbResp.RecoveryKeys,
-		RootToken:    pbResp.RootToken,
-		Version:      pbResp.Version,
+		Shares:    resp.GetShares(),
+		RootToken: resp.GetRootToken(),
+		Version:   resp.GetVersion(),
 	}, nil
 }
 
-// Unseal provides a key share to unseal the database.
+// Unseal submits one share toward unseal quorum.
 func (c *Client) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	if req == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "Client.Unseal",
-			Err:  ErrRequestNil,
-		}
+	if err := c.ensureConnected(ctx); err != nil {
+		return nil, err
 	}
-
-	pbReq := &pb.UnsealRequest{
-		Share:     req.Share,
-		NodeId:    req.NodeID,
-		Signature: req.Signature,
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.opts.timeout)
+		defer cancel()
 	}
-
-	pbResp, err := c.client.Unseal(ctx, pbReq)
+	ctx = c.addMetadata(ctx)
+	pc, err := c.getClient()
 	if err != nil {
-		return nil, convertError(err)
+		return nil, convertGRPCError(err, "Unseal")
 	}
-
-	if pbResp.Error != "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "Client.Unseal",
-			Err:  stderrors.New(pbResp.Error),
-		}
+	var resp *proto.UnsealResponse
+	err = retryWithBackoff(ctx, c.opts.maxRetries, c.opts.retryBackoff, c.opts.maxRetryBackoff, func() error {
+		var rpcErr error
+		resp, rpcErr = pc.Unseal(ctx, &proto.UnsealRequest{Share: req.Share})
+		return rpcErr
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "Unseal")
 	}
-
 	return &service.UnsealResponse{
-		Sealed:         pbResp.Sealed,
-		SharesProvided: int(pbResp.SharesProvided),
-		Threshold:      int(pbResp.Threshold),
+		Sealed:         resp.GetSealed(),
+		SharesProvided: int(resp.GetSharesProvided()),
+		Threshold:      int(resp.GetThreshold()),
 	}, nil
 }
 
@@ -133,66 +138,55 @@ func (c *Client) Seal(ctx context.Context) error {
 	if err := c.ensureConnected(ctx); err != nil {
 		return err
 	}
-	pbResp, err := c.client.Seal(ctx, &pb.SealRequest{Force: false})
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.opts.timeout)
+		defer cancel()
+	}
+	ctx = c.addMetadata(ctx)
+	pc, err := c.getClient()
 	if err != nil {
-		return convertError(err)
+		return convertGRPCError(err, "Seal")
 	}
-
-	if pbResp.Error != "" {
-		return &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "Client.Seal",
-			Err:  stderrors.New(pbResp.Error),
-		}
+	err = retryWithBackoff(ctx, c.opts.maxRetries, c.opts.retryBackoff, c.opts.maxRetryBackoff, func() error {
+		_, rpcErr := pc.Seal(ctx, &proto.SealRequest{})
+		return rpcErr
+	})
+	if err != nil {
+		return convertGRPCError(err, "Seal")
 	}
-
 	return nil
 }
 
 // Rekey generates new key shares with a new threshold configuration.
 func (c *Client) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-	if req == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "Client.Rekey",
-			Err:  ErrRequestNil,
-		}
+	if err := c.ensureConnected(ctx); err != nil {
+		return nil, err
 	}
-
-	pbReq := &pb.SealRekeyRequest{
-		NewThreshold: int32(req.NewThreshold),   //nolint:gosec // G115: small values
-		NewTotal:     int32(req.NewTotalShares), //nolint:gosec // G115: small values
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.opts.timeout)
+		defer cancel()
 	}
-
-	pbResp, err := c.client.SealRekey(ctx, pbReq)
+	ctx = c.addMetadata(ctx)
+	pc, err := c.getClient()
 	if err != nil {
-		return nil, convertError(err)
+		return nil, convertGRPCError(err, "Rekey")
 	}
-
-	if pbResp.Error != "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "Client.Rekey",
-			Err:  stderrors.New(pbResp.Error),
-		}
+	var resp *proto.SealRekeyResponse
+	err = retryWithBackoff(ctx, c.opts.maxRetries, c.opts.retryBackoff, c.opts.maxRetryBackoff, func() error {
+		var rpcErr error
+		resp, rpcErr = pc.SealRekey(ctx, &proto.SealRekeyRequest{
+			NewThreshold: int32(req.NewThreshold),
+			NewTotal:     int32(req.NewTotalShares),
+		})
+		return rpcErr
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "Rekey")
 	}
-
 	return &service.RekeyResponse{
-		Shares:  pbResp.Shares,
-		Version: pbResp.Version,
+		Shares:  resp.GetShares(),
+		Version: resp.GetVersion(),
 	}, nil
-}
-
-// convertProtoSealMode converts proto SealMode to string.
-func convertProtoSealMode(mode pb.SealMode) string {
-	switch mode {
-	case pb.SealMode_SEAL_MODE_MANUAL:
-		return "manual"
-	case pb.SealMode_SEAL_MODE_AUTO:
-		return "auto"
-	case pb.SealMode_SEAL_MODE_CRYPTO:
-		return "crypto"
-	default:
-		return "unspecified"
-	}
 }

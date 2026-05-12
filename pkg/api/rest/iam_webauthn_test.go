@@ -24,6 +24,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
 // TestBeginRegistration tests the BeginRegistration handler.
@@ -351,4 +356,99 @@ func TestFinishLogin(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Contains(t, w.Body.String(), "WebAuthn manager not available")
 	})
+}
+
+// =============================================================================
+// Audit logging unit tests for WebAuthn handlers
+// =============================================================================
+
+// webauthnAuditMockService embeds MockQuicBaaS and overrides GetAuditLogger
+// to surface a captureAuditLogger for audit-event assertions.
+type webauthnAuditMockService struct {
+	*testutil.MockQuicBaaS
+	auditLogger *captureAuditLogger
+}
+
+func (s *webauthnAuditMockService) GetAuditLogger(_ context.Context) (iam.AuditLogger, error) {
+	return s.auditLogger, nil
+}
+
+// newWebAuthnAuditServer creates a Server with a captureAuditLogger wired.
+func newWebAuthnAuditServer(t *testing.T, capture *captureAuditLogger) *Server {
+	t.Helper()
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+	mock := &webauthnAuditMockService{
+		MockQuicBaaS: testutil.NewMockQuicBaaS(),
+		auditLogger:  capture,
+	}
+	cfg := DefaultConfig()
+	cfg.Address = ":0"
+	srv, err := NewServer(mock, cfg, log)
+	require.NoError(t, err)
+	return srv
+}
+
+// TestWebAuthn_LogBeginLoginAudit verifies that logWebAuthnBeginLoginAudit
+// emits event_type "auth.login.fido2.begin" with the expected payload fields.
+func TestWebAuthn_LogBeginLoginAudit(t *testing.T) {
+	capture := &captureAuditLogger{}
+	srv := newWebAuthnAuditServer(t, capture)
+	h := &IAMHandler{server: srv}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/webauthn/login/begin", nil)
+	req.Header.Set("X-Request-ID", "begin-req-1")
+
+	h.logWebAuthnBeginLoginAudit(context.Background(), "tenant-1", "user@example.com", "begin-req-1", req)
+
+	require.Len(t, capture.events, 1)
+	ev := capture.events[0]
+	assert.Equal(t, "auth.login.fido2.begin", ev.Action)
+	assert.Equal(t, iam.AuditOutcomeSuccess, ev.Outcome)
+	assert.Equal(t, "user@example.com", ev.Details["user_email"])
+	assert.Equal(t, "begin-req-1", ev.Details["request_id"])
+}
+
+// TestWebAuthn_LogSuccessAudit verifies that logWebAuthnLoginAudit
+// emits event_type "auth.login.fido2.finish.success" with the expected payload.
+func TestWebAuthn_LogSuccessAudit(t *testing.T) {
+	capture := &captureAuditLogger{}
+	srv := newWebAuthnAuditServer(t, capture)
+	h := &IAMHandler{server: srv}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/webauthn/login/finish", nil)
+	req.Header.Set("X-Request-ID", "finish-req-2")
+
+	h.logWebAuthnLoginAudit(context.Background(), "tenant-1", "user-1", "user@example.com",
+		"aaguid-hex", "finish-req-2", req)
+
+	require.Len(t, capture.events, 1)
+	ev := capture.events[0]
+	assert.Equal(t, "auth.login.fido2.finish.success", ev.Action)
+	assert.Equal(t, iam.AuditOutcomeSuccess, ev.Outcome)
+	assert.Equal(t, "user-1", ev.Details["user_id"])
+	assert.Equal(t, "user@example.com", ev.Details["user_email"])
+	assert.Equal(t, "aaguid-hex", ev.Details["aaguid"])
+	assert.Equal(t, "finish-req-2", ev.Details["request_id"])
+}
+
+// TestWebAuthn_LogFailureAudit verifies that logWebAuthnLoginFailureAudit
+// emits event_type "auth.login.fido2.finish.failure" with the expected payload.
+func TestWebAuthn_LogFailureAudit(t *testing.T) {
+	capture := &captureAuditLogger{}
+	srv := newWebAuthnAuditServer(t, capture)
+	h := &IAMHandler{server: srv}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/webauthn/login/finish", nil)
+	req.Header.Set("X-Request-ID", "fail-req-3")
+
+	h.logWebAuthnLoginFailureAudit(context.Background(), "tenant-1", "user@example.com",
+		ErrUnauthorized, "credential mismatch", "fail-req-3", req)
+
+	require.Len(t, capture.events, 1)
+	ev := capture.events[0]
+	assert.Equal(t, "auth.login.fido2.finish.failure", ev.Action)
+	assert.Equal(t, iam.AuditOutcomeFailure, ev.Outcome)
+	assert.Equal(t, ErrUnauthorized, ev.Details["error_code"])
+	assert.Equal(t, "fail-req-3", ev.Details["request_id"])
 }

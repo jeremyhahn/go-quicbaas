@@ -24,10 +24,14 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // =============================================================================
@@ -369,15 +373,20 @@ func (m *mockQuicBaaS) ObjectStorageAdminService() service.ObjectStorageAdminSer
 func (m *mockQuicBaaS) ParameterStoreService() service.ParameterStoreService         { return nil }
 func (m *mockQuicBaaS) ObjectTransferService() service.ObjectTransferService         { return nil }
 func (m *mockQuicBaaS) Scheduler() service.SchedulerService                          { return nil }
-func (m *mockQuicBaaS) Agent() service.AgentService                                  { return nil }
+func (m *mockQuicBaaS) SchedulerEngine() *scheduler.SchedulerEngine                  { return nil }
+func (m *mockQuicBaaS) Agent() orchestration.AgentService                            { return nil }
+func (m *mockQuicBaaS) SSHClient() xkmsssh.Client                                    { return nil }
+func (m *mockQuicBaaS) SetTenantIsolationManager(m2 security.TenantIsolationManager) {}
 func (m *mockQuicBaaS) SetIAMProvider(provider service.IAMComponents)                {}
 func (m *mockQuicBaaS) Messaging() messaging.Service                                 { return nil }
 func (m *mockQuicBaaS) SetMessagingService(ms messaging.Service)                     {}
-func (m *mockQuicBaaS) SetAgentService(agent service.AgentService)                   {}
+func (m *mockQuicBaaS) SetAgentService(agent orchestration.AgentService)             {}
 func (m *mockQuicBaaS) WatchManager() *watch.Manager                                 { return nil }
 func (m *mockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider)            {}
 func (m *mockQuicBaaS) Database() service.DatabaseService                            { return nil }
 func (m *mockQuicBaaS) SetDatabaseService(ds service.DatabaseService)                {}
+func (m *mockQuicBaaS) AgentAdmin() service.AgentAdminService                        { return nil }
+func (m *mockQuicBaaS) Project() service.ProjectService                              { return nil }
 func (m *mockQuicBaaS) Close() error                                                 { return nil }
 
 // =============================================================================
@@ -520,6 +529,10 @@ func (m *mockKMSService) StartReencryption(ctx context.Context, req *service.Sta
 
 func (m *mockKMSService) GetReencryptionProgress(ctx context.Context, req *service.GetReencryptionProgressRequest) (*service.GetReencryptionProgressResponse, error) {
 	return &service.GetReencryptionProgressResponse{Progress: &service.ReencryptionProgress{PercentComplete: 50.0}}, nil
+}
+
+func (m *mockKMSService) SetDefaultKey(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
+	return &service.SetDefaultKeyResponse{}, nil
 }
 
 // =============================================================================
@@ -2308,4 +2321,86 @@ func TestTransport_AllRBACOperations(t *testing.T) {
 		var invalidReqErr *InvalidRequestTypeError
 		assert.True(t, errors.As(err, &invalidReqErr))
 	})
+}
+
+// TestUnaryHandlers_OrchestratorAndProjectKeysRegistered verifies that Gap 5
+// is complete: the unaryHandlers map contains entries for every orchestrator
+// and project operation so that Request() never returns UnknownMethodError for
+// a valid method name. This is a compile-time + map coverage test.
+func TestUnaryHandlers_OrchestratorAndProjectKeysRegistered(t *testing.T) {
+	orchestratorKeys := []string{
+		"quicbaas.Orchestrator/Inference",
+		"quicbaas.Orchestrator/SpawnSession",
+		"quicbaas.Orchestrator/PromptSession",
+		"quicbaas.Orchestrator/SessionStatus",
+		"quicbaas.Orchestrator/CloseSession",
+		"quicbaas.Orchestrator/ListSessions",
+		"quicbaas.Orchestrator/CreateTask",
+		"quicbaas.Orchestrator/GetTask",
+		"quicbaas.Orchestrator/ListTasks",
+		"quicbaas.Orchestrator/ClaimTask",
+		"quicbaas.Orchestrator/CompleteTask",
+		"quicbaas.Orchestrator/SubmitTaskArtifacts",
+		"quicbaas.Orchestrator/GetTaskArtifact",
+		"quicbaas.Orchestrator/ListTaskArtifacts",
+		"quicbaas.Orchestrator/RegisterAgent",
+		"quicbaas.Orchestrator/GetAgent",
+		"quicbaas.Orchestrator/ListAgents",
+		"quicbaas.Orchestrator/RemoveAgent",
+		"quicbaas.Orchestrator/AgentHeartbeat",
+		"quicbaas.Orchestrator/DisableAgent",
+		"quicbaas.Orchestrator/EnableAgent",
+		"quicbaas.Orchestrator/StartJob",
+		"quicbaas.Orchestrator/GetJobStatus",
+		"quicbaas.Orchestrator/ListJobs",
+		"quicbaas.Orchestrator/CancelJob",
+		"quicbaas.Orchestrator/SpawnChildJob",
+		"quicbaas.Orchestrator/Health",
+		"quicbaas.Orchestrator/ListBackends",
+		"quicbaas.Orchestrator/DecomposeTask",
+	}
+	projectKeys := []string{
+		"quicbaas.Project/Create",
+		"quicbaas.Project/Get",
+		"quicbaas.Project/GetByName",
+		"quicbaas.Project/Update",
+		"quicbaas.Project/Delete",
+		"quicbaas.Project/List",
+		"quicbaas.Project/GrantAgentRole",
+		"quicbaas.Project/RevokeAgentRole",
+	}
+
+	allKeys := append(orchestratorKeys, projectKeys...)
+
+	for _, key := range allKeys {
+		if _, ok := unaryHandlers[key]; !ok {
+			t.Errorf("unaryHandlers missing key: %q", key)
+		}
+	}
+}
+
+// TestTransport_Request_UnknownOrchestratorMethod verifies that an
+// unregistered method returns UnknownMethodError (not a panic or nil).
+func TestTransport_Request_UnknownOrchestratorMethod(t *testing.T) {
+	mock := &mockQuicBaaS{}
+	tr, err := New(mock)
+	require.NoError(t, err)
+
+	_, err = tr.Request(context.Background(), "quicbaas.Orchestrator", "NonExistentMethod", nil)
+	require.Error(t, err)
+	var unknownErr *UnknownMethodError
+	assert.True(t, errors.As(err, &unknownErr), "expected *UnknownMethodError, got %T", err)
+}
+
+// TestTransport_Request_UnknownProjectMethod verifies that an unregistered
+// project method returns UnknownMethodError.
+func TestTransport_Request_UnknownProjectMethod(t *testing.T) {
+	mock := &mockQuicBaaS{}
+	tr, err := New(mock)
+	require.NoError(t, err)
+
+	_, err = tr.Request(context.Background(), "quicbaas.Project", "NonExistentMethod", nil)
+	require.Error(t, err)
+	var unknownErr *UnknownMethodError
+	assert.True(t, errors.As(err, &unknownErr), "expected *UnknownMethodError, got %T", err)
 }

@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/uuid"
 
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -167,11 +168,18 @@ type quicBaaS struct {
 	parameterStoreService     ParameterStoreService
 	objectTransferService     ObjectTransferService
 	schedulerService          SchedulerService
+	projectService            ProjectService
+	agentAdminService         AgentAdminService
 	agentService              orchestration.AgentService
 	messagingService          messaging.Service
 	databaseService           DatabaseService
 	schedulerEngine           interfaces.SchedulerEngine
+	sshClient                 xkmsssh.Client
 	iamService                *iamServiceProvider
+
+	// sealService handles database seal/unseal operations.
+	// Nil when seal is disabled.
+	sealService SealService
 
 	// IAM provider - stores IAMComponents for REST handlers
 	// Uses IAMServiceProvider interface for proper type safety and testability
@@ -349,13 +357,13 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 
 	// Create service instance
 	svc := &quicBaaS{
-		config:           b.config,
-		raftNode:         raftNode,
-		storage:          storage,
-		cacheManager:     cacheManager,
-		authManager:      authManager,
-		backupMgr:        backupMgr,
-		logger:           logger,
+		config:                 b.config,
+		raftNode:               raftNode,
+		storage:                storage,
+		cacheManager:           cacheManager,
+		authManager:            authManager,
+		backupMgr:              backupMgr,
+		logger:                 logger,
 		keyspaceResolver:       NewKeyspaceResolver(),
 		tenantIsolationManager: newTenantIsolationManager(b.config.TenantIsolation),
 		startTime:              time.Now(),
@@ -421,6 +429,17 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 
 	// Initialize watch manager for key change notifications
 	svc.watchManager = watch.NewManager()
+
+	// Initialize SSH client. Transport is selected by the XKMS config:
+	// non-empty URL → REST client pointed at xkmsd; empty URL → file-
+	// backed embedded store rooted at SSHStoreDir (derived from DataDir
+	// when empty). Construction failures surface to the caller — SSH is
+	// a core service surface and silent downgrade would mask a misconfig.
+	sshClient, err := newSSHClient(b.config)
+	if err != nil {
+		return nil, err
+	}
+	svc.sshClient = sshClient
 
 	// Initialize KMS service if KMS manager is provided
 	if kmsManager != nil {
@@ -610,6 +629,12 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	if b.ollamaService != nil {
 		svc.ollamaService = b.ollamaService
 	}
+
+	// Initialize Project service (always available — backed by in-memory store by default).
+	svc.projectService = NewProjectService(orchestration.NewInMemoryProjectStore())
+
+	// Initialize Agent Admin service (always available — backed by in-memory registry by default).
+	svc.agentAdminService = NewAgentAdminService(orchestration.NewInMemoryAgentRegistry())
 
 	if svc.logger != nil {
 		svc.logger.WithFields(map[string]interface{}{
@@ -2667,41 +2692,8 @@ func (b *backupService) VerifyBackup(ctx context.Context, req *VerifyBackupReque
 
 type authService struct{ svc *quicBaaS }
 
-func (a *authService) Login(ctx context.Context, req *LoginRequest) (*LoginResponse, error) {
-	// Check if auth manager is available
-	if a.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.Login",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
-		}
-	}
-
-	// Authenticate with auth manager
-	tokenRaw, err := a.svc.authManager.Authenticate(ctx, req.Username, req.Password)
-	if err != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrUnauthorized,
-			Op:   "service.Login",
-			Err:  err,
-		}
-	}
-	token, ok := tokenRaw.(*auth.Token)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.Authenticate",
-			Err:  &api.InvalidTypeError{Field: "token", Expected: "*auth.Token"},
-		}
-	}
-
-	// Map auth.Token to LoginResponse
-	return &LoginResponse{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt.UnixNano(),
-		UserID:       "", // UserID not included in auth.Token, could be extracted from JWT claims if needed
-	}, nil
+func (a *authService) Login(_ context.Context, _ *LoginRequest) (*LoginResponse, error) {
+	return nil, api.NewNotImplementedError("password-based login; use WebAuthn or PIV authentication")
 }
 
 func (a *authService) Logout(ctx context.Context, req *LogoutRequest) (*LogoutResponse, error) {
@@ -2815,16 +2807,16 @@ func (r *rbacService) CreateUser(ctx context.Context, req *AuthCreateUserRequest
 	}
 
 	// Validate request
-	if req.Username == "" || req.Password == "" {
+	if req.Username == "" {
 		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.CreateUser",
-			Err:  &api.InvalidInputError{Message: "username and password are required"},
+			Err:  &api.InvalidInputError{Message: "username is required"},
 		}
 	}
 
 	// Create user through AuthManager
-	userRaw, err := r.svc.authManager.CreateUser(req.Username, req.Password, req.Roles)
+	userRaw, err := r.svc.authManager.CreateUser(req.Username, "", req.Roles)
 	if err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
@@ -5027,6 +5019,49 @@ func (s *quicBaaS) Scheduler() SchedulerService {
 	return s.schedulerService
 }
 
+// SchedulerEngine returns the raw *scheduler.SchedulerEngine for
+// callers that need handler registration (RegisterHandler) or
+// direct job-loop control — surface area the service-level
+// SchedulerService deliberately omits.
+//
+// Returns nil when the scheduler is not enabled in config.
+//
+// Typical use: platformd registers its cert-renewal handler and
+// other in-process handlers via this accessor after Build()
+// completes. External (over-the-wire) callers should use the
+// service-level Scheduler() surface instead.
+func (s *quicBaaS) SchedulerEngine() *scheduler.SchedulerEngine {
+	if s.schedulerEngine == nil {
+		return nil
+	}
+	// s.schedulerEngine is the concrete type stored via
+	// interfaces.SchedulerEngine — type-assert back for callers
+	// that need the engine's full surface.
+	if eng, ok := s.schedulerEngine.(*scheduler.SchedulerEngine); ok {
+		return eng
+	}
+	return nil
+}
+
+// SSHClient returns the SSH key, known-hosts, and authorized-keys
+// client. Transport is selected at construction time based on the
+// ServiceConfig.XKMS fields: a non-empty URL selects the REST
+// transport; otherwise a file-backed embedded store is used. The
+// returned Client is owned by the service and closed during Close.
+func (s *quicBaaS) SSHClient() xkmsssh.Client {
+	return s.sshClient
+}
+
+// Project returns the Project service for managing agentic project entities.
+func (s *quicBaaS) Project() ProjectService {
+	return s.projectService
+}
+
+// AgentAdmin returns the Agent Admin service for global agent lifecycle management.
+func (s *quicBaaS) AgentAdmin() AgentAdminService {
+	return s.agentAdminService
+}
+
 // Agent returns the Agent service (returns nil if not configured).
 // Agent provides AI agent orchestration across multiple backends.
 func (s *quicBaaS) Agent() orchestration.AgentService {
@@ -5058,6 +5093,113 @@ func (s *quicBaaS) SetTenantIsolationManager(m security.TenantIsolationManager) 
 	s.mu.Lock()
 	s.tenantIsolationManager = m
 	s.mu.Unlock()
+}
+
+// SetSealService wires the SealService into the facade at runtime.
+// Called by the server after the seal manager has been initialized.
+func (s *quicBaaS) SetSealService(svc SealService) {
+	s.mu.Lock()
+	s.sealService = svc
+	s.mu.Unlock()
+}
+
+// Status returns the current seal status. Implements SealService for the facade.
+func (s *quicBaaS) Status(ctx context.Context) (*SealStatusResponse, error) {
+	s.mu.RLock()
+	svc := s.sealService
+	s.mu.RUnlock()
+	if svc == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Status", "seal service not initialized")
+	}
+	return svc.Status(ctx)
+}
+
+// Initialize performs first-time initialization of the database seal. Implements SealService for the facade.
+func (s *quicBaaS) Initialize(ctx context.Context, req *SealInitRequest) (*SealInitResponse, error) {
+	s.mu.RLock()
+	svc := s.sealService
+	s.mu.RUnlock()
+	if svc == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Initialize", "seal service not initialized")
+	}
+	return svc.Initialize(ctx, req)
+}
+
+// Unseal provides one key share to unseal the database. Implements SealService for the facade.
+func (s *quicBaaS) Unseal(ctx context.Context, req *UnsealRequest) (*UnsealResponse, error) {
+	s.mu.RLock()
+	svc := s.sealService
+	s.mu.RUnlock()
+	if svc == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Unseal", "seal service not initialized")
+	}
+	return svc.Unseal(ctx, req)
+}
+
+// Seal immediately seals the database. Implements SealService for the facade.
+func (s *quicBaaS) Seal(ctx context.Context) error {
+	s.mu.RLock()
+	svc := s.sealService
+	s.mu.RUnlock()
+	if svc == nil {
+		return errors.New(errors.ErrUnavailable, "quicBaaS.Seal", "seal service not initialized")
+	}
+	return svc.Seal(ctx)
+}
+
+// Rekey rotates the master key. Implements SealService for the facade.
+func (s *quicBaaS) Rekey(ctx context.Context, req *RekeyRequest) (*RekeyResponse, error) {
+	s.mu.RLock()
+	svc := s.sealService
+	s.mu.RUnlock()
+	if svc == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Rekey", "seal service not initialized")
+	}
+	return svc.Rekey(ctx, req)
+}
+
+// GenerateRecoveryKey creates new recovery keys. Implements SealService for the facade.
+func (s *quicBaaS) GenerateRecoveryKey(ctx context.Context, req *GenerateRecoveryKeyRequest) (*GenerateRecoveryKeyResponse, error) {
+	s.mu.RLock()
+	svc := s.sealService
+	s.mu.RUnlock()
+	if svc == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.GenerateRecoveryKey", "seal service not initialized")
+	}
+	return svc.GenerateRecoveryKey(ctx, req)
+}
+
+// DeleteRecoveryKey removes all recovery keys. Implements SealService for the facade.
+func (s *quicBaaS) DeleteRecoveryKey(ctx context.Context, req *DeleteRecoveryKeyRequest) (*DeleteRecoveryKeyResponse, error) {
+	s.mu.RLock()
+	svc := s.sealService
+	s.mu.RUnlock()
+	if svc == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.DeleteRecoveryKey", "seal service not initialized")
+	}
+	return svc.DeleteRecoveryKey(ctx, req)
+}
+
+// RotateRootKey rotates the root encryption key. Implements SealService for the facade.
+func (s *quicBaaS) RotateRootKey(ctx context.Context, req *RotateRootKeyRequest) (*RotateRootKeyResponse, error) {
+	s.mu.RLock()
+	svc := s.sealService
+	s.mu.RUnlock()
+	if svc == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.RotateRootKey", "seal service not initialized")
+	}
+	return svc.RotateRootKey(ctx, req)
+}
+
+// GenerateRootToken creates a new root token for admin access. Implements SealService for the facade.
+func (s *quicBaaS) GenerateRootToken(ctx context.Context, req *GenerateRootTokenRequest) (*GenerateRootTokenResponse, error) {
+	s.mu.RLock()
+	svc := s.sealService
+	s.mu.RUnlock()
+	if svc == nil {
+		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.GenerateRootToken", "seal service not initialized")
+	}
+	return svc.GenerateRootToken(ctx, req)
 }
 
 // Database returns the Database service (returns nil if not configured).
@@ -5238,6 +5380,12 @@ func (s *quicBaaS) Close() error {
 	if s.qrdbClient != nil {
 		if err := s.qrdbClient.Close(); err != nil {
 			errs = append(errs, &api.OperationFailedError{Operation: "close qrdb client", Cause: err})
+		}
+	}
+
+	if s.sshClient != nil {
+		if err := s.sshClient.Close(); err != nil {
+			errs = append(errs, &api.OperationFailedError{Operation: "close ssh client", Cause: err})
 		}
 	}
 

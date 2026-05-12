@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -126,12 +127,14 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request
 	var req struct {
-		ID         string                 `json:"id,omitempty"`
-		Email      string                 `json:"email"`
-		Username   string                 `json:"username,omitempty"`
-		Name       string                 `json:"name,omitempty"`
-		Attributes map[string]interface{} `json:"attributes,omitempty"`
-		Enabled    bool                   `json:"enabled"`
+		ID               string                 `json:"id,omitempty"`
+		Email            string                 `json:"email"`
+		Username         string                 `json:"username,omitempty"`
+		Name             string                 `json:"name,omitempty"`
+		Attributes       map[string]interface{} `json:"attributes,omitempty"`
+		Enabled          bool                   `json:"enabled"`
+		AuthMethods      []string               `json:"auth_methods,omitempty"`
+		InviteExpiryHours int                   `json:"invite_expiry_hours,omitempty"`
 	}
 
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -145,6 +148,19 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "email is required"))
 		return
+	}
+
+	// Default and cap invite expiry hours.
+	if req.InviteExpiryHours <= 0 {
+		req.InviteExpiryHours = 24
+	}
+	if req.InviteExpiryHours > 168 {
+		req.InviteExpiryHours = 168
+	}
+
+	// Default auth methods.
+	if len(req.AuthMethods) == 0 {
+		req.AuthMethods = []string{"webauthn"}
 	}
 
 	// Get identity store
@@ -189,13 +205,16 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create user
+	inviteExpiry := time.Duration(req.InviteExpiryHours) * time.Hour
 	opts := iam.CreateUserOptions{
-		ID:         req.ID,
-		Email:      req.Email,
-		Username:   req.Username,
-		Name:       req.Name,
-		Attributes: req.Attributes,
-		Enabled:    req.Enabled,
+		ID:           req.ID,
+		Email:        req.Email,
+		Username:     req.Username,
+		Name:         req.Name,
+		Attributes:   req.Attributes,
+		Enabled:      req.Enabled,
+		AuthMethods:  req.AuthMethods,
+		InviteExpiry: inviteExpiry,
 	}
 
 	user, err := store.CreateUser(ctx, tenantID, opts)
@@ -204,6 +223,59 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate a one-time invite token.
+	inviteToken, err := iam.GenerateInviteToken()
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	expiresAt := time.Now().UTC().Add(inviteExpiry)
+
+	// Store the invite record so that the activation handlers can look it up.
+	inviteRecord := &iam.InviteRecord{
+		TokenHash: iam.TokenHashExported(inviteToken),
+		UserID:    user.ID,
+		TenantID:  tenantID,
+		ExpiresAt: expiresAt,
+	}
+	if err := h.inviteStore.Create(ctx, inviteRecord); err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	// Attach invite state to the user record (cleared on activation).
+	pendingState := iam.UserStatePending
+	updateOpts := iam.UpdateUserOptions{
+		State:           &pendingState,
+		AuthMethods:     &req.AuthMethods,
+		InviteToken:     &inviteToken,
+		InviteExpiresAt: func() **time.Time { p := &expiresAt; return &p }(),
+	}
+
+	if _, updateErr := store.UpdateUser(ctx, tenantID, user.ID, updateOpts); updateErr != nil {
+		// Non-fatal: user was created; just cannot issue invite. Log and continue.
+		h.logAuditEvent(ctx, tenantID,
+			iam.AuditEventUserManagement,
+			iam.AuditCategoryAdministration,
+			"create",
+			iam.AuditOutcomeFailure,
+			&iam.AuditResource{Type: "user", ID: user.ID, Name: user.Email},
+			map[string]interface{}{"email": user.Email, "error": updateErr.Error()},
+		)
+	}
+
+	// Derive invite URL. Use X-Forwarded-Host or Host header.
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	host := r.Host
+	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
+		host = fwd
+	}
+	inviteURL := scheme + "://" + host + "/#/invite/" + inviteToken
+
 	// Log audit event
 	h.logAuditEvent(ctx, tenantID,
 		iam.AuditEventUserManagement,
@@ -211,10 +283,18 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		"create",
 		iam.AuditOutcomeSuccess,
 		&iam.AuditResource{Type: "user", ID: user.ID, Name: user.Email},
-		map[string]interface{}{"email": user.Email},
+		map[string]interface{}{"email": user.Email, "auth_methods": req.AuthMethods},
 	)
 
-	RespondJSON(w, r, http.StatusCreated, user)
+	// Return user + one-time invite. The token is NOT stored in cleartext after this response.
+	resp := map[string]interface{}{
+		"user_id":      user.ID,
+		"email":        user.Email,
+		"invite_token": inviteToken,
+		"invite_url":   inviteURL,
+		"expires_at":   expiresAt,
+	}
+	RespondJSON(w, r, http.StatusCreated, resp)
 }
 
 // GetUser handles GET /api/v1/tenants/{tenant_id}/users/{user_id} - Get a specific user.

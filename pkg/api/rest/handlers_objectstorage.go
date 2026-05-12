@@ -1392,18 +1392,22 @@ func (s *Server) handleObjectStorageError(w http.ResponseWriter, r *http.Request
 
 // registerObjectStorageRoutes registers all object storage routes.
 func registerObjectStorageRoutes(s *Server, r chi.Router) {
-	// Object listing routes (must be registered before wildcard routes)
-	r.Get("/objects", s.HandleListObjects)
-	r.Get("/objects/by-tag", s.HandleListByTag)
-	r.Get("/objects/by-tenant/{tenant}", s.HandleListByTenant)
-
-	// Batch routes
-	r.Post("/objects/batch", s.HandleBatchPutObjects)
-	r.Post("/objects/batch/get", s.HandleBatchGetObjects)
-	r.Post("/objects/batch/delete", s.HandleBatchDeleteObjects)
-
-	// Object CRUD and action routes using wildcard
+	// All object routes are grouped under a single sub-router so that chi's
+	// prefix-matching logic is applied consistently.  Specific named routes
+	// (list, by-tag, batch, …) must be registered BEFORE the wildcard
+	// catch-all; within a chi sub-router, exact routes always win over "/*".
 	r.Route("/objects", func(r chi.Router) {
+		// Listing routes — exact matches, registered before the wildcard.
+		r.Get("/", s.HandleListObjects)
+		r.Get("/by-tag", s.HandleListByTag)
+		r.Get("/by-tenant/{tenant}", s.HandleListByTenant)
+
+		// Batch routes
+		r.Post("/batch", s.HandleBatchPutObjects)
+		r.Post("/batch/get", s.HandleBatchGetObjects)
+		r.Post("/batch/delete", s.HandleBatchDeleteObjects)
+
+		// Object CRUD and action routes — wildcard catch-all.
 		r.Put("/*", s.handleObjectAction)
 		r.Get("/*", s.handleObjectAction)
 		r.Delete("/*", s.handleObjectAction)

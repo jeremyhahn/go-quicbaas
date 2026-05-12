@@ -1062,46 +1062,6 @@ func TestPeerCredentialsFromContext_FromContextValue_Coverage(t *testing.T) {
 }
 
 // =============================================================================
-// Client Seal Functions - Nil Request Tests
-// =============================================================================
-
-func TestClient_SealInit_NilRequest_Coverage(t *testing.T) {
-	t.Parallel()
-
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SealInit(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClient_Unseal_NilRequest_Coverage(t *testing.T) {
-	t.Parallel()
-
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.Unseal(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClient_Rekey_NilRequest_Coverage(t *testing.T) {
-	t.Parallel()
-
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.Rekey(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-// =============================================================================
 // PoolStats Tests
 // =============================================================================
 

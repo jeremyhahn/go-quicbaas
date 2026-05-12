@@ -309,44 +309,24 @@ func RecoveryMiddleware(log *logger.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// timeoutStatusRewriter wraps a response writer to rewrite 503 to 408 for timeout responses.
-type timeoutStatusRewriter struct {
-	http.ResponseWriter
-	statusWritten bool
-}
-
-// WriteHeader rewrites 503 (from http.TimeoutHandler) to 408.
-func (t *timeoutStatusRewriter) WriteHeader(statusCode int) {
-	if t.statusWritten {
-		return
-	}
-	t.statusWritten = true
-	if statusCode == http.StatusServiceUnavailable {
-		statusCode = http.StatusRequestTimeout
-	}
-	t.ResponseWriter.WriteHeader(statusCode)
-}
-
-// Write ensures WriteHeader is called before writing body.
-func (t *timeoutStatusRewriter) Write(b []byte) (int, error) {
-	if !t.statusWritten {
-		t.WriteHeader(http.StatusOK)
-	}
-	return t.ResponseWriter.Write(b)
-}
-
 // TimeoutMiddleware adds a timeout to request processing.
-// It wraps http.TimeoutHandler to provide consistent timeout handling with
-// proper response buffering to prevent race conditions. The status code is
-// rewritten from 503 to 408 for consistency with REST API conventions.
+//
+// It wraps http.TimeoutHandler, which buffers the inner handler's response and
+// writes 503 Service Unavailable with a JSON body if the deadline fires before
+// the handler completes. Per RFC 7231 §6.5.7, status 408 Request Timeout is
+// reserved for "the server did not receive a complete request message within
+// the time that it was prepared to wait" — i.e. the client stalled mid-request.
+// A server-side handler exceeding its own processing deadline is correctly
+// modeled as 503 (the canonical http.TimeoutHandler behavior), not 408.
+//
+// This middleware does NOT rewrite the status code emitted by the inner
+// handler. Handler-emitted 503 responses (e.g. "barrier sealed", "no leader
+// available") pass through unchanged so callers can distinguish them and the
+// canonical envelopes (Retry-After, typed error codes) reach the wire intact.
 func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 	timeoutMessage := `{"error":"request timeout after ` + timeout.String() + `","retryable":true}`
 	return func(next http.Handler) http.Handler {
-		timeoutHandler := http.TimeoutHandler(next, timeout, timeoutMessage)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rewriter := &timeoutStatusRewriter{ResponseWriter: w}
-			timeoutHandler.ServeHTTP(rewriter, r)
-		})
+		return http.TimeoutHandler(next, timeout, timeoutMessage)
 	}
 }
 

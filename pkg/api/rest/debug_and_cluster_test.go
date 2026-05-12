@@ -90,3 +90,70 @@ func TestHandleClusterShards_WithNodeHostInfo(t *testing.T) {
 	// Verify response structure
 	assert.Contains(t, resp, "shards")
 }
+
+// ---------------------------------------------------------------------------
+// Regression tests: HandleClusterStatus must include node_id (Issue 4 fix)
+// ---------------------------------------------------------------------------
+
+// TestHandleClusterStatus_NodeIDFromServiceNodes verifies that when the service
+// returns nodes the first node's ID is used as node_id in the response.
+func TestHandleClusterStatus_NodeIDFromServiceNodes(t *testing.T) {
+	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	mockSvc := testutil.NewMockQuicBaaS()
+
+	mockSvc.On("ClusterStatus", mock.Anything, mock.Anything).Return(&service.ClusterStatusResponse{
+		ClusterID: "quicbaas",
+		Nodes: []*service.NodeInfo{
+			{NodeID: 42, Address: "127.0.0.1:9000", IsLeader: true, HealthStatus: service.HealthStatusHealthy},
+		},
+		Shards: []*service.ShardInfo{
+			{ShardID: 1, LeaderID: 42, Replicas: []uint64{42}, Status: service.HealthStatusHealthy},
+		},
+	}, nil).Once()
+
+	cfg := DefaultConfig()
+	cfg.NodeID = 7 // daemon config; should be overridden by service response
+	srv, err := NewServer(mockSvc, cfg, log)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/status", nil)
+	w := httptest.NewRecorder()
+	srv.GetRouter().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp ClusterStatusResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, uint64(42), resp.NodeID, "node_id must come from service response nodes list")
+}
+
+// TestHandleClusterStatus_NodeIDFallbackFromConfig verifies that when the
+// service returns an empty Nodes slice (standalone mode), the node_id in the
+// response falls back to the daemon's own Raft node ID from Config.NodeID.
+func TestHandleClusterStatus_NodeIDFallbackFromConfig(t *testing.T) {
+	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	mockSvc := testutil.NewMockQuicBaaS()
+
+	// Simulate standalone mode: service returns no nodes (topology unavailable).
+	mockSvc.On("ClusterStatus", mock.Anything, mock.Anything).Return(&service.ClusterStatusResponse{
+		ClusterID: "quicbaas",
+		Nodes:     []*service.NodeInfo{},
+		Shards:    []*service.ShardInfo{},
+	}, nil).Once()
+
+	cfg := DefaultConfig()
+	cfg.NodeID = 1 // the daemon's own Raft node ID
+	srv, err := NewServer(mockSvc, cfg, log)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/status", nil)
+	w := httptest.NewRecorder()
+	srv.GetRouter().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp ClusterStatusResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, uint64(1), resp.NodeID,
+		"node_id must fall back to config NodeID when service returns no nodes")
+}

@@ -1,0 +1,357 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package orchestration
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+)
+
+// SessionEventKind discriminates the payload carried by a SessionEvent. Each
+// kind pairs with exactly one of the `*Payload` pointer fields on
+// SessionEvent; consumers switch on Kind and then dereference the matching
+// pointer.
+type SessionEventKind string
+
+const (
+	// KindPromptSubmitted records a prompt sent to the agent by an operator
+	// or the orchestrator's control loop.
+	KindPromptSubmitted SessionEventKind = "prompt_submitted"
+
+	// KindAssistantChunk records one fragment of assistant output. Long
+	// responses produce many KindAssistantChunk events in sequence; the
+	// final fragment carries StopReason.
+	KindAssistantChunk SessionEventKind = "assistant_chunk"
+
+	// KindToolInvocation records the agent invoking a tool (Read, Write,
+	// Edit, Grep, Bash, etc.) with its arguments.
+	KindToolInvocation SessionEventKind = "tool_invocation"
+
+	// KindToolResult records the result of a prior tool invocation. Paired
+	// with the invocation via InvocationID.
+	KindToolResult SessionEventKind = "tool_result"
+
+	// KindFileOp records a file read/write/edit produced by a tool.
+	// Reported alongside KindToolResult so attachers can render diffs.
+	KindFileOp SessionEventKind = "file_op"
+
+	// KindSystemMessage records orchestrator-internal events: session
+	// resumed after daemon restart, policy enforcement decisions,
+	// non-fatal warnings surfaced to operators.
+	KindSystemMessage SessionEventKind = "system_message"
+
+	// KindOperatorJoined records an operator attaching to the session. The
+	// payload carries operator identity + interface (cli, web, signal).
+	KindOperatorJoined SessionEventKind = "operator_joined"
+
+	// KindOperatorLeft records an operator detaching.
+	KindOperatorLeft SessionEventKind = "operator_left"
+
+	// KindSessionClosed records session termination. Always the last event
+	// appended to a session log. Payload carries the termination reason.
+	KindSessionClosed SessionEventKind = "session_closed"
+
+	// KindSessionResumed records a daemon-side session reattach after a
+	// daemon or central restart.
+	KindSessionResumed SessionEventKind = "session_resumed"
+
+	// KindInferenceSubmitted records a stateless inference prompt submitted
+	// through the fleet-routed Infer path. Distinct from KindPromptSubmitted
+	// which requires a prior session Spawn.
+	KindInferenceSubmitted SessionEventKind = "inference_submitted"
+
+	// KindInferenceCompleted records the successful completion of a stateless
+	// inference call. Carries the model name and stop reason from the backend.
+	KindInferenceCompleted SessionEventKind = "inference_completed"
+)
+
+// InferenceSubmittedPayload is the payload for KindInferenceSubmitted.
+type InferenceSubmittedPayload struct {
+	// Backend is the named backend the prompt was dispatched to.
+	Backend string `json:"backend"`
+
+	// Model is the model name requested by the caller.
+	Model string `json:"model,omitempty"`
+
+	// Prompt is the user prompt text.
+	Prompt string `json:"prompt"`
+
+	// SystemPrompt is the optional system message.
+	SystemPrompt string `json:"system_prompt,omitempty"`
+}
+
+// InferenceCompletedPayload is the payload for KindInferenceCompleted.
+type InferenceCompletedPayload struct {
+	// Backend is the named backend that produced the response.
+	Backend string `json:"backend"`
+
+	// Model is the model that generated the response.
+	Model string `json:"model,omitempty"`
+
+	// StopReason is the reason the model stopped generating
+	// (e.g., "end_turn", "max_tokens").
+	StopReason string `json:"stop_reason,omitempty"`
+}
+
+// SessionEvent is the canonical envelope stored in the session event log.
+// Every kind of session state change is recorded as a SessionEvent and
+// delivered to attachers in strict per-session sequence order.
+//
+// Exactly one of the payload pointer fields is non-nil, corresponding to
+// Kind. The rest are nil and marshal out via `omitempty`. Consumers switch
+// on Kind and dereference the matching payload.
+type SessionEvent struct {
+	// Sequence is a monotonically increasing per-session counter. Gaps are
+	// not allowed; consumers validate monotonicity before delivering an
+	// event to subscribers. Starts at 1.
+	Sequence uint64 `json:"sequence"`
+
+	// SessionID is the session this event belongs to.
+	SessionID string `json:"session_id"`
+
+	// TenantID is the tenant namespace. Used to scope event visibility to
+	// operators within the tenant.
+	TenantID string `json:"tenant_id"`
+
+	// Timestamp is when the event was produced. UTC.
+	Timestamp time.Time `json:"timestamp"`
+
+	// Source identifies the producer. Free-form but follows a convention:
+	//   agent:<backend>         - the agent itself (assistant chunks, tool calls)
+	//   operator:<user_id>      - a human operator (prompts, joins, leaves)
+	//   system:<component>      - orchestrator internals (session_resumed, etc.)
+	//   daemon:<agent_id>       - the daemon forwarding events
+	Source string `json:"source,omitempty"`
+
+	// Kind selects the payload.
+	Kind SessionEventKind `json:"kind"`
+
+	// Exactly one of these is populated; the rest are nil.
+	Prompt         *PromptSubmittedPayload  `json:"prompt,omitempty"`
+	AssistantChunk *AssistantChunkPayload   `json:"assistant_chunk,omitempty"`
+	ToolInvocation *ToolInvocationPayload   `json:"tool_invocation,omitempty"`
+	ToolResult     *ToolResultPayload       `json:"tool_result,omitempty"`
+	FileOp         *FileOpPayload           `json:"file_op,omitempty"`
+	System         *SystemMessagePayload    `json:"system,omitempty"`
+	OperatorJoined *OperatorJoinedPayload   `json:"operator_joined,omitempty"`
+	OperatorLeft   *OperatorLeftPayload     `json:"operator_left,omitempty"`
+	Closed         *SessionClosedPayload    `json:"closed,omitempty"`
+	Resumed        *SessionResumedPayload   `json:"resumed,omitempty"`
+}
+
+// PromptSubmittedPayload is the payload for KindPromptSubmitted.
+type PromptSubmittedPayload struct {
+	// Prompt is the text the operator (or lead agent) submitted.
+	Prompt string `json:"prompt"`
+
+	// Model is the model name the caller requested, or empty to use the
+	// session default.
+	Model string `json:"model,omitempty"`
+
+	// SystemPrompt is an optional system message applied to this prompt.
+	SystemPrompt string `json:"system_prompt,omitempty"`
+}
+
+// AssistantChunkPayload carries one fragment of assistant output.
+type AssistantChunkPayload struct {
+	// Text is the assistant output for this chunk.
+	Text string `json:"text"`
+
+	// StopReason is non-empty only on the terminal chunk of a response
+	// (e.g., "end_turn", "tool_use", "max_tokens"). Consumers use this to
+	// know when to finalize a coalesced rendering (e.g., stop editing a
+	// Signal message or close an SSE paragraph).
+	StopReason string `json:"stop_reason,omitempty"`
+
+	// Model is the model that produced this chunk.
+	Model string `json:"model,omitempty"`
+}
+
+// ToolInvocationPayload describes a tool call the agent made.
+type ToolInvocationPayload struct {
+	// InvocationID is the daemon's ID for this invocation. Used by
+	// ToolResult events to reference their invocation.
+	InvocationID string `json:"invocation_id"`
+
+	// Name is the tool name ("Read", "Bash", "Edit", etc.).
+	Name string `json:"name"`
+
+	// Args is the tool's input as JSON. Rendered collapsed in the UI; click
+	// to expand. Large args (>1 MB) are truncated with a marker.
+	Args json.RawMessage `json:"args,omitempty"`
+}
+
+// ToolResultPayload carries the result of a prior ToolInvocation.
+type ToolResultPayload struct {
+	// InvocationID links back to the ToolInvocationPayload that initiated
+	// this result.
+	InvocationID string `json:"invocation_id"`
+
+	// Content is the tool's output, usually text. Large outputs (>1 MB)
+	// are truncated with a marker and a continuation URL.
+	Content string `json:"content,omitempty"`
+
+	// IsError indicates the tool exited non-zero / returned an error shape.
+	IsError bool `json:"is_error,omitempty"`
+
+	// TruncatedBytes is non-zero when Content was clipped for size.
+	TruncatedBytes int64 `json:"truncated_bytes,omitempty"`
+}
+
+// FileOpPayload records a file mutation produced by a tool. Reported
+// alongside KindToolResult so attachers can render diffs.
+type FileOpPayload struct {
+	// Op is "read", "write", "edit", or "delete".
+	Op string `json:"op"`
+
+	// Path is the absolute workspace path.
+	Path string `json:"path"`
+
+	// Size is the resulting file size in bytes, when known.
+	Size int64 `json:"size,omitempty"`
+
+	// Diff is a unified-diff snippet for "edit" operations. Omitted when
+	// the operation isn't a modification.
+	Diff string `json:"diff,omitempty"`
+
+	// InvocationID ties this FileOp back to the tool invocation that
+	// produced it.
+	InvocationID string `json:"invocation_id,omitempty"`
+}
+
+// SystemMessagePayload carries orchestrator-level events: warnings, policy
+// denials, session lifecycle transitions.
+type SystemMessagePayload struct {
+	// Level is "info", "warn", or "error".
+	Level string `json:"level"`
+
+	// Message is the human-readable message.
+	Message string `json:"message"`
+
+	// Code is an optional machine-readable tag (e.g., "sandbox_violation",
+	// "tenant_mismatch").
+	Code string `json:"code,omitempty"`
+}
+
+// OperatorJoinedPayload records an operator attaching to a session.
+type OperatorJoinedPayload struct {
+	// OperatorID is the IAM subject / user ID of the attaching operator.
+	OperatorID string `json:"operator_id"`
+
+	// DisplayName is the operator's friendly name if available.
+	DisplayName string `json:"display_name,omitempty"`
+
+	// Interface is "cli", "web", "signal", or "sdk".
+	Interface string `json:"interface"`
+}
+
+// OperatorLeftPayload records an operator detaching. Symmetric to
+// OperatorJoinedPayload.
+type OperatorLeftPayload struct {
+	OperatorID  string `json:"operator_id"`
+	DisplayName string `json:"display_name,omitempty"`
+	Interface   string `json:"interface"`
+}
+
+// SessionClosedPayload is the final event on a session log.
+type SessionClosedPayload struct {
+	// Reason is "user", "operator", "error", "timeout", or "tenant_revoked".
+	Reason string `json:"reason"`
+
+	// Detail is optional free-form context (e.g., the error message).
+	Detail string `json:"detail,omitempty"`
+}
+
+// SessionResumedPayload records a daemon-side session reattach after a
+// process restart.
+type SessionResumedPayload struct {
+	// ResumedBy identifies what triggered the resume ("daemon_restart",
+	// "central_restart", "manual").
+	ResumedBy string `json:"resumed_by"`
+}
+
+// =============================================================================
+// Session Metadata
+// =============================================================================
+
+// SessionMeta is the top-level record for a session, stored alongside the
+// event log under sessions/{tenant}/{session_id}/meta. Mutable fields
+// (Status, LatestSequence, LastActivity) are updated on each append;
+// immutable fields (CreatedAt, CreatedBy, Backend, Model) are set once at
+// session start.
+type SessionMeta struct {
+	SessionID      string        `json:"session_id"`
+	TenantID       string        `json:"tenant_id"`
+	ProjectID      string        `json:"project_id,omitempty"`
+	Backend        string        `json:"backend"`
+	Model          string        `json:"model,omitempty"`
+	Host           string        `json:"host,omitempty"`      // reachable agent daemon host, when remote
+	Status         SessionState  `json:"status"`
+	CreatedAt      time.Time     `json:"created_at"`
+	CreatedBy      string        `json:"created_by,omitempty"`
+	LastActivity   time.Time     `json:"last_activity"`
+	LatestSequence uint64        `json:"latest_sequence"`
+	EventCount     uint64        `json:"event_count"`
+	Labels         map[string]string `json:"labels,omitempty"`
+}
+
+// SessionFilter narrows a ListSessions query.
+type SessionFilter struct {
+	// Backend filters by backend name. Empty = any.
+	Backend string
+
+	// Status filters by session state. Empty = any.
+	Status SessionState
+
+	// CreatedAfter filters to sessions created on or after this time.
+	// Zero value = no lower bound.
+	CreatedAfter time.Time
+
+	// CreatedBefore filters to sessions created on or before this time.
+	// Zero value = no upper bound.
+	CreatedBefore time.Time
+
+	// Labels, when non-empty, requires every key/value to be present in
+	// SessionMeta.Labels.
+	Labels map[string]string
+}
+
+// =============================================================================
+// Errors
+// =============================================================================
+
+// ErrSessionLogGap indicates the event log received a non-monotonic sequence
+// number. The caller has either a misbehaving daemon or a bug upstream;
+// either way we refuse the append so downstream replay stays gapless.
+var ErrSessionLogGap = errors.New("orchestration session log: sequence gap")
+
+// ErrSessionLogNotFound indicates a lookup for a session that has no events
+// or metadata on record. Distinct from a session whose log is empty mid-lifetime.
+var ErrSessionLogNotFound = errors.New("orchestration session log: session not found")
+
+// SessionLogAppendError wraps underlying storage failures on append so
+// callers can distinguish persistence problems from gap / validation errors.
+type SessionLogAppendError struct {
+	SessionID string
+	Sequence  uint64
+	Cause     error
+}
+
+func (e *SessionLogAppendError) Error() string {
+	return fmt.Sprintf("orchestration session log: append session=%s seq=%d: %v", e.SessionID, e.Sequence, e.Cause)
+}
+
+func (e *SessionLogAppendError) Unwrap() error { return e.Cause }

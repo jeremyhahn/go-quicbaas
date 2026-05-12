@@ -1278,6 +1278,9 @@ func (s *securityTestKMSService) SafetyReport(ctx context.Context, req *service.
 func (s *securityTestKMSService) GetPublicKey(ctx context.Context, req *service.GetPublicKeyRequest) (*service.GetPublicKeyResponse, error) {
 	return &service.GetPublicKeyResponse{}, nil
 }
+func (s *securityTestKMSService) SetDefaultKey(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
+	return &service.SetDefaultKeyResponse{}, nil
+}
 
 // errorKMSService is a mock KMS service that returns errors for all operations.
 // Used to test error handling paths in handler functions.
@@ -1385,6 +1388,9 @@ func (s *errorKMSService) SafetyReport(ctx context.Context, req *service.SafetyR
 	return nil, errKMSServiceError
 }
 func (s *errorKMSService) GetPublicKey(ctx context.Context, req *service.GetPublicKeyRequest) (*service.GetPublicKeyResponse, error) {
+	return nil, errKMSServiceError
+}
+func (s *errorKMSService) SetDefaultKey(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
 	return nil, errKMSServiceError
 }
 
@@ -1497,6 +1503,9 @@ func (s *securityTestSealService) DeleteRecoveryKey(ctx context.Context, req *se
 }
 func (s *securityTestSealService) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
 	return &service.GenerateRootTokenResponse{}, nil
+}
+func (s *securityTestSealService) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
+	return &service.RotateRootKeyResponse{}, nil
 }
 
 // Test KMS handlers with success paths
@@ -2585,6 +2594,9 @@ func (s *successSealService) DeleteRecoveryKey(ctx context.Context, req *service
 func (s *successSealService) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
 	return &service.GenerateRootTokenResponse{}, nil
 }
+func (s *successSealService) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
+	return &service.RotateRootKeyResponse{}, nil
+}
 
 // TestHandleSealStatus_Success_ViaDispatch verifies the seal status
 // success path through HandleRequest.
@@ -2930,6 +2942,9 @@ func (s *coverageErrorSealService) DeleteRecoveryKey(ctx context.Context, req *s
 	return nil, errCoverageSealError
 }
 func (s *coverageErrorSealService) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
+	return nil, errCoverageSealError
+}
+func (s *coverageErrorSealService) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
 	return nil, errCoverageSealError
 }
 

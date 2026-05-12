@@ -36,6 +36,16 @@ type parameterContextKey struct{}
 
 // Core types - minimal stubs for compilation.
 
+// UserState represents the lifecycle state of a user account.
+type UserState string
+
+// UserState constants define the possible states of a user account.
+const (
+	UserStatePending  UserState = "pending"
+	UserStateActive   UserState = "active"
+	UserStateDisabled UserState = "disabled"
+)
+
 // Tenant represents a logical isolation boundary in QuicBaaS IAM.
 type Tenant struct {
 	ID       string         `json:"id" yaml:"id"`
@@ -89,8 +99,13 @@ type User struct {
 	MFAEnrolledAt *time.Time             `json:"mfa_enrolled_at,omitempty" yaml:"mfa_enrolled_at,omitempty"`
 	MFAVerified   bool                   `json:"mfa_verified" yaml:"mfa_verified"`
 	MFATimestamp  *time.Time             `json:"mfa_timestamp,omitempty" yaml:"mfa_timestamp,omitempty"`
-	Suspended     bool                   `json:"suspended,omitempty" yaml:"suspended,omitempty"`
-	Locked        bool                   `json:"locked,omitempty" yaml:"locked,omitempty"`
+	Suspended         bool                   `json:"suspended,omitempty" yaml:"suspended,omitempty"`
+	Locked            bool                   `json:"locked,omitempty" yaml:"locked,omitempty"`
+	State             UserState              `json:"state,omitempty" yaml:"state,omitempty"`
+	AuthMethods       []string               `json:"auth_methods,omitempty" yaml:"auth_methods,omitempty"`
+	PIVCertThumbprint string                 `json:"piv_cert_thumbprint,omitempty" yaml:"piv_cert_thumbprint,omitempty"`
+	InviteToken       string                 `json:"invite_token,omitempty" yaml:"invite_token,omitempty"`
+	InviteExpiresAt   *time.Time             `json:"invite_expires_at,omitempty" yaml:"invite_expires_at,omitempty"`
 }
 
 // Group represents a collection of users for policy targeting.
@@ -117,16 +132,20 @@ type Role struct {
 
 // Application represents an OAuth2/OIDC client application.
 type Application struct {
-	ClientID       string    `json:"client_id" yaml:"client_id"`
-	ClientSecret   string    `json:"client_secret,omitempty" yaml:"client_secret,omitempty"`
-	Name           string    `json:"name" yaml:"name"`
-	TenantID       string    `json:"tenant_id" yaml:"tenant_id"`
-	RedirectURIs   []string  `json:"redirect_uris,omitempty" yaml:"redirect_uris,omitempty"`
-	ResourcePrefix string    `json:"resource_prefix,omitempty" yaml:"resource_prefix,omitempty"`
-	GrantTypes     []string  `json:"grant_types,omitempty" yaml:"grant_types,omitempty"`
-	ResponseTypes  []string  `json:"response_types,omitempty" yaml:"response_types,omitempty"`
-	Created        time.Time `json:"created" yaml:"created"`
-	Updated        time.Time `json:"updated" yaml:"updated"`
+	ClientID                string    `json:"client_id" yaml:"client_id"`
+	ClientSecret            string    `json:"client_secret,omitempty" yaml:"client_secret,omitempty"`
+	Name                    string    `json:"name" yaml:"name"`
+	TenantID                string    `json:"tenant_id" yaml:"tenant_id"`
+	RedirectURIs            []string  `json:"redirect_uris,omitempty" yaml:"redirect_uris,omitempty"`
+	ResourcePrefix          string    `json:"resource_prefix,omitempty" yaml:"resource_prefix,omitempty"`
+	GrantTypes              []string  `json:"grant_types,omitempty" yaml:"grant_types,omitempty"`
+	ResponseTypes           []string  `json:"response_types,omitempty" yaml:"response_types,omitempty"`
+	TokenEndpointAuthMethod string    `json:"token_endpoint_auth_method,omitempty" yaml:"token_endpoint_auth_method,omitempty"`
+	MTLSCertThumbprint      string    `json:"mtls_cert_thumbprint,omitempty" yaml:"mtls_cert_thumbprint,omitempty"`
+	MTLSSubjectDN           string    `json:"mtls_subject_dn,omitempty" yaml:"mtls_subject_dn,omitempty"`
+	MTLSSANDNS              string    `json:"mtls_san_dns,omitempty" yaml:"mtls_san_dns,omitempty"`
+	Created                 time.Time `json:"created" yaml:"created"`
+	Updated                 time.Time `json:"updated" yaml:"updated"`
 }
 
 // Policy represents an ABAC policy.
@@ -514,10 +533,59 @@ type CompiledPolicy struct {
 	Name string `json:"name" yaml:"name"`
 }
 
+// AuditEventType classifies audit events.
+type AuditEventType string
+
+const (
+	AuditEventAuthentication AuditEventType = "authentication"
+	AuditEventAuthorization  AuditEventType = "authorization"
+	AuditEventUserManagement AuditEventType = "user_management"
+	AuditEventGroupManagement AuditEventType = "group_management"
+	AuditEventRoleManagement AuditEventType = "role_management"
+	AuditEventPolicyChange   AuditEventType = "policy_change"
+	AuditEventMFAEvent       AuditEventType = "mfa"
+	AuditEventSessionEvent   AuditEventType = "session"
+	AuditEventTenantEvent    AuditEventType = "tenant"
+	AuditEventAppEvent       AuditEventType = "application"
+)
+
+// AuditCategory is the high-level category for an audit event.
+type AuditCategory string
+
+const (
+	AuditCategoryAuthentication AuditCategory = "authentication"
+	AuditCategoryAuthorization  AuditCategory = "authorization"
+	AuditCategoryAdministration AuditCategory = "administration"
+	AuditCategorySecurity       AuditCategory = "security"
+)
+
+// AuditOutcome represents the result of an audited action.
+type AuditOutcome string
+
+const (
+	AuditOutcomeSuccess AuditOutcome = "success"
+	AuditOutcomeFailure AuditOutcome = "failure"
+	AuditOutcomeDenied  AuditOutcome = "denied"
+)
+
+// AuditResource represents a resource affected by an action.
+type AuditResource struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
 // AuditEvent represents an audit event.
 type AuditEvent struct {
-	ID        string    `json:"id" yaml:"id"`
-	Timestamp time.Time `json:"timestamp" yaml:"timestamp"`
+	ID        string         `json:"id" yaml:"id"`
+	Timestamp time.Time      `json:"timestamp" yaml:"timestamp"`
+	TenantID  string         `json:"tenant_id,omitempty"`
+	EventType AuditEventType `json:"event_type,omitempty"`
+	Category  AuditCategory  `json:"category,omitempty"`
+	Action    string         `json:"action,omitempty"`
+	Outcome   AuditOutcome   `json:"outcome,omitempty"`
+	Resource  *AuditResource `json:"resource,omitempty"`
+	Details   map[string]interface{} `json:"details,omitempty"`
 }
 
 // AuditActor represents the actor in an audit event.
@@ -794,9 +862,6 @@ type OIDCProvider struct{}
 // DefaultMFAManager stub for MFA operations.
 type DefaultMFAManager struct{}
 
-// WebAuthnManager stub for WebAuthn operations.
-type WebAuthnManager struct{}
-
 // AdminManager stub for admin management.
 type AdminManager struct{}
 
@@ -822,9 +887,6 @@ type DefaultSessionManager struct{}
 
 // MemoryMFAStorage stub for MFA storage.
 type MemoryMFAStorage struct{}
-
-// MemoryCredentialStorage stub for credential storage.
-type MemoryCredentialStorage struct{}
 
 // MemorySessionStorage stub for session storage.
 type MemorySessionStorage struct{}
@@ -978,25 +1040,6 @@ func NewMFAManager(_ ...interface{}) (*DefaultMFAManager, error) {
 	return nil, ErrIAMNotCompiled
 }
 
-// NewWebAuthnManager returns an error indicating IAM is not compiled.
-func NewWebAuthnManager(_ *WebAuthnConfig, _ WebAuthnDependencies) (*WebAuthnManager, error) {
-	return nil, ErrIAMNotCompiled
-}
-
-// WebAuthnConfig contains WebAuthn configuration.
-type WebAuthnConfig struct {
-	RPDisplayName string
-	RPID          string
-	RPOrigins     []string
-}
-
-// WebAuthnDependencies contains WebAuthn dependencies.
-type WebAuthnDependencies struct {
-	IdentityStore     interface{}
-	CredentialStorage interface{}
-	SessionStorage    interface{}
-}
-
 // NewOIDCProvider returns an error indicating IAM is not compiled.
 func NewOIDCProvider(_ *OIDCConfig, _ OIDCDependencies) (*OIDCProvider, error) {
 	return nil, ErrIAMNotCompiled
@@ -1014,11 +1057,6 @@ type OIDCDependencies struct{}
 
 // NewMemoryMFAStorage returns an error indicating IAM is not compiled.
 func NewMemoryMFAStorage() *MemoryMFAStorage {
-	return nil
-}
-
-// NewMemoryCredentialStorage returns an error indicating IAM is not compiled.
-func NewMemoryCredentialStorage() *MemoryCredentialStorage {
 	return nil
 }
 

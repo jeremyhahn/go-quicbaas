@@ -39,13 +39,19 @@ func (s *Server) startMCPServer() error {
 
 	s.logger.Info("Starting MCP server...")
 
-	// Create MCP server configuration
+	// Create MCP server configuration. The MCP HTTP transport reuses the
+	// daemon's in-memory tls.Config (built by initializeCA from OpaqueKeys)
+	// so every public listener — REST, gRPC, QUIC, MCP — presents the same
+	// CA-chained certificate. Without this the MCP listener would fall back
+	// to plain HTTP and clients dialing https://host:11443 would fail with
+	// "http: server gave HTTP response to HTTPS client".
 	mcpConfig := &mcpapi.Config{
 		ServerName:     "QuicBaaS",
 		ServerVersion:  "1.0.0",
 		Transport:      "http",
 		HTTPAddr:       fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.MCP.Port),
 		RequestTimeout: 30 * time.Second,
+		TLSConfig:      s.tlsConfig,
 	}
 
 	// Create MCP server using QuicBaaS facade

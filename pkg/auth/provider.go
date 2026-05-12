@@ -16,13 +16,15 @@ package auth
 
 import (
 	"context"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // AuthProvider defines the interface for external authentication providers.
 type AuthProvider interface {
 	// Authenticate validates credentials against the external provider
 	// Returns user information including username and roles on success
-	Authenticate(ctx context.Context, username, password string) (*ExternalUserInfo, error)
+	Authenticate(ctx context.Context, username string, password *secure.Buffer) (*ExternalUserInfo, error)
 
 	// Close cleans up provider resources
 	Close() error

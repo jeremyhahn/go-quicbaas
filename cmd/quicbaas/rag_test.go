@@ -128,6 +128,8 @@ func (m *mockRAGSDKClient) Close() error {
 	return nil
 }
 
+func (m *mockRAGSDKClient) Project() quicbaas.ProjectClient { return nil }
+
 func (m *mockRAGSDKClient) Orchestrator() quicbaas.OrchestratorClient { return nil }
 
 // saveAndRestoreRAGState saves and returns a function to restore RAG-related global state.
@@ -980,3 +982,4 @@ func TestCreateStorageFromURL_EmptyURL(t *testing.T) {
 	_, err := createStorageFromURL("")
 	assert.Error(t, err)
 }
+

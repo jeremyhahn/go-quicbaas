@@ -36,13 +36,9 @@ func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb
 	if req.GetUsername() == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
-	if req.GetPassword() == "" {
-		return nil, status.Error(codes.InvalidArgument, "password is required")
-	}
 
 	serviceReq := &service.AuthCreateUserRequest{
 		Username: req.GetUsername(),
-		Password: req.GetPassword(),
 		Roles:    req.GetRoles(),
 	}
 

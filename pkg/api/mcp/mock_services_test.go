@@ -139,6 +139,10 @@ func (m *mockEmbeddingService) ClearCache(ctx context.Context, req *service.Clea
 	}, nil
 }
 
+func (m *mockEmbeddingService) SetProviderStatus(_ context.Context, req *service.SetProviderStatusRequest) (*service.SetProviderStatusResponse, error) {
+	return &service.SetProviderStatusResponse{Name: req.Name, Enabled: req.Enabled, Timestamp: time.Now()}, nil
+}
+
 // =============================================================================
 // Mock Ollama Service
 // =============================================================================

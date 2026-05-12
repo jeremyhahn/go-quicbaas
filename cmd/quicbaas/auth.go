@@ -19,20 +19,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 var (
 	// Auth command flags.
-	authPassword     string
 	authTokenFile    string
 	authNoStore      bool
 	authOutputFormat string
@@ -60,130 +56,38 @@ authentication tokens. Tokens are securely stored in your home directory by defa
 // newAuthLoginCommand creates the login command.
 func newAuthLoginCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "login <username>",
-		Short: "Authenticate and get token",
-		Long: `Authenticate with a QuicBaaS server and obtain an access token.
+		Use:   "login",
+		Short: "Authenticate using WebAuthn or PIV smartcard",
+		Long: `QuicBaaS uses WebAuthn (FIDO2) and PIV smartcard authentication.
 
-The token will be securely stored in your home directory at ~/.quicbaas/token
-and automatically used for subsequent CLI commands that require authentication.
+Password-based login is not supported. To authenticate:
 
-You can optionally specify a custom token file location using the --token-file flag.
+  - WebAuthn: use the web interface at https://<server>/login/webauthn
+  - PIV:      present your PIV smartcard certificate via mTLS
+
+The server will issue a JWT after successful authentication.
+Store the resulting token using --token-file or the QUICBAAS_TOKEN env var.
 
 Examples:
-  # Login with interactive password prompt
-  quicbaas auth login admin
-
-  # Login with password from environment variable
-  QUICBAAS_PASSWORD=secret quicbaas auth login admin
-
-  # Login and store token in custom location
-  quicbaas auth login admin --token-file /path/to/token
-
-  # Login without storing token (print to stdout)
-  quicbaas auth login admin --no-store
-
-  # Login to specific server
-  quicbaas auth login admin --server quicbaas.example.com:50051
-
-  # Login with TLS
-  quicbaas auth login admin --tls --tls-cert client.crt --tls-key client.key --tls-ca ca.crt`,
-		Args: cobra.ExactArgs(1),
+  # Show login instructions
+  quicbaas auth login`,
 		RunE: runAuthLoginCommand,
 	}
 
-	cmd.Flags().StringVar(&authPassword, "password", "", "Password (not recommended, use interactive prompt instead)")
-	cmd.Flags().StringVar(&authTokenFile, "token-file", "", "Custom token file location (default: ~/.quicbaas/token)")
+	cmd.Flags().StringVar(&authTokenFile, "token-file", "", "Token file location (default: ~/.quicbaas/token)")
 	cmd.Flags().BoolVar(&authNoStore, "no-store", false, "Don't store token, print to stdout instead")
 
 	return cmd
 }
 
-// runAuthLoginCommand executes the login command.
+// runAuthLoginCommand explains the supported authentication methods.
 func runAuthLoginCommand(cmd *cobra.Command, args []string) error {
-	username := args[0]
-
-	// Get password from flag, environment, or interactive prompt
-	password := authPassword
-	if password == "" {
-		password = os.Getenv("QUICBAAS_PASSWORD")
-	}
-	if password == "" {
-		fmt.Printf("Password for %s: ", username)
-		passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
-		fmt.Println() // New line after password input
-		if err != nil {
-			return errors.Wrapf(err, errors.ErrInvalidInput, "auth.login", "failed to read password")
-		}
-		password = string(passwordBytes)
-	}
-
-	if password == "" {
-		return errors.New(errors.ErrInvalidInput, "auth.login", "password is required")
-	}
-
-	// Create SDK auth client directly using the factory from factories.go
-	authClient, err := authClientFactory()
-	if err != nil {
-		return err
-	}
-
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	// Authenticate using SDK auth client with auth.LoginRequest
-	if log != nil {
-		log.Debugf("Authenticating user: %s", username)
-	}
-	loginResp, err := authClient.Login(ctx, &service.ExtendedLoginRequest{
-		Username: username,
-		Password: password,
-	})
-	if err != nil {
-		return formatError(err)
-	}
-
-	// Convert SDK response to cli.TokenData for storage
-	tokenData := &cli.TokenData{
-		AccessToken:  loginResp.AccessToken,
-		RefreshToken: loginResp.RefreshToken,
-		ExpiresAt:    loginResp.ExpiresAt,
-		TokenType:    loginResp.TokenType,
-	}
-
-	// Store or display token
-	if authNoStore {
-		// Print token to stdout in JSON format
-		output := map[string]interface{}{
-			"access_token":  tokenData.AccessToken,
-			"refresh_token": tokenData.RefreshToken,
-			"expires_at":    tokenData.ExpiresAt,
-			"token_type":    tokenData.TokenType,
-		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(output); err != nil {
-			return errors.Wrapf(err, errors.ErrInternal, "auth.login", "failed to encode token")
-		}
-	} else {
-		// Store token securely
-		tokenFile := authTokenFile
-		if tokenFile == "" {
-			tokenFile, err = cli.GetDefaultTokenPath()
-			if err != nil {
-				return err
-			}
-		}
-
-		if err := cli.SaveToken(tokenFile, tokenData); err != nil {
-			return err
-		}
-
-		fmt.Printf("Authentication successful!\n")
-		fmt.Printf("Token stored at: %s\n", tokenFile)
-		fmt.Printf("Token expires at: %s\n", tokenData.ExpiresAt.Format(time.RFC3339))
-	}
-
+	fmt.Fprintln(cmd.OutOrStdout(), "QuicBaaS uses WebAuthn (FIDO2) and PIV smartcard authentication.")
+	fmt.Fprintln(cmd.OutOrStdout(), "Password-based login is not supported.")
+	fmt.Fprintln(cmd.OutOrStdout(), "")
+	fmt.Fprintln(cmd.OutOrStdout(), "To authenticate:")
+	fmt.Fprintln(cmd.OutOrStdout(), "  WebAuthn: open https://<server>/login/webauthn in your browser")
+	fmt.Fprintln(cmd.OutOrStdout(), "  PIV:      configure mTLS with your PIV smartcard certificate")
 	return nil
 }
 

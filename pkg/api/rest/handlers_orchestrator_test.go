@@ -55,6 +55,8 @@ type mockAgentService struct {
 	listTasksFunc        func(ctx context.Context, tenantID string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error)
 	claimTaskFunc        func(ctx context.Context, tenantID, taskID, agentID string) error
 	completeTaskFunc     func(ctx context.Context, tenantID, taskID string, result *orchestration.TaskResult) error
+	updateWorkflowFunc   func(def *orchestration.WorkflowDefinition) error
+	deleteWorkflowFunc   func(name string) error
 }
 
 func (m *mockAgentService) DiscoverProjects(ctx context.Context, req *orchestration.DiscoverProjectsRequest) (*orchestration.DiscoverProjectsResponse, error) {
@@ -149,6 +151,10 @@ func (m *mockAgentService) RegisterBackend(ctx context.Context, req *orchestrati
 	if m.registerBackendFunc != nil {
 		return m.registerBackendFunc(ctx, req)
 	}
+	return nil
+}
+
+func (m *mockAgentService) RegisterAPIInferenceBackend(_ context.Context, _ *orchestration.RegisterAPIInferenceBackendRequest) error {
 	return nil
 }
 
@@ -252,6 +258,66 @@ func (m *mockAgentService) SubscribeJobEvents(ctx context.Context, tenantID, job
 
 func (m *mockAgentService) BackendToolGuidance(_ string) string {
 	return ""
+}
+
+// Infer is a no-op stub satisfying the orchestration.AgentService interface.
+func (m *mockAgentService) Infer(_ context.Context, _ *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+	ch := make(chan *orchestration.InferChunk)
+	close(ch)
+	return ch, nil
+}
+
+func (m *mockAgentService) ListWorkflows(_ context.Context) ([]*orchestration.WorkflowDefinition, error) {
+	return []*orchestration.WorkflowDefinition{}, nil
+}
+
+func (m *mockAgentService) GetWorkflow(_ context.Context, name string) (*orchestration.WorkflowDefinition, error) {
+	return nil, &orchestration.WorkflowNotFoundError{Name: name}
+}
+
+func (m *mockAgentService) RegisterWorkflow(_ context.Context, def *orchestration.WorkflowDefinition) error {
+	return nil
+}
+
+func (m *mockAgentService) UpdateWorkflow(_ context.Context, def *orchestration.WorkflowDefinition) error {
+	if m.updateWorkflowFunc != nil {
+		return m.updateWorkflowFunc(def)
+	}
+	return nil
+}
+
+func (m *mockAgentService) DeleteWorkflow(_ context.Context, name string) error {
+	if m.deleteWorkflowFunc != nil {
+		return m.deleteWorkflowFunc(name)
+	}
+	return nil
+}
+
+func (m *mockAgentService) SpawnChildJob(_ context.Context, _ *orchestration.SpawnChildJobRequest) (*orchestration.SpawnChildJobResponse, error) {
+	return &orchestration.SpawnChildJobResponse{ChildJobID: "child-job-1"}, nil
+}
+
+func (m *mockAgentService) SubmitTaskArtifacts(_ context.Context, _, _ string, _ []orchestration.Artifact) error {
+	return nil
+}
+
+func (m *mockAgentService) GetTaskArtifact(_ context.Context, _, _, _ string) (*orchestration.Artifact, error) {
+	return nil, nil
+}
+
+func (m *mockAgentService) ListTaskArtifacts(_ context.Context, _, _ string) ([]orchestration.Artifact, error) {
+	return nil, nil
+}
+
+func (m *mockAgentService) ListBackendModels(_ context.Context, backendName string) ([]string, error) {
+	switch backendName {
+	case "ollama":
+		return []string{"llama3.2:latest", "qwen3:1.7b"}, nil
+	case "claude":
+		return []string{"claude-sonnet-4-7", "claude-opus-4-7"}, nil
+	default:
+		return []string{}, nil
+	}
 }
 
 // =============================================================================
@@ -395,6 +461,72 @@ func TestOrchestratorSpawn_ServiceError(t *testing.T) {
 	server.HandleOrchestratorSpawn(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestOrchestratorSpawn_UnsupportedOperation — Bug #3 regression (part B).
+// A backend that is registered but doesn't support spawn (e.g. ollama in
+// stateless-only mode) must return 400 with the actionable message, not a
+// 500 "internal server error".
+func TestOrchestratorSpawn_UnsupportedOperation(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+		return nil, &orchestration.UnsupportedOperationError{Backend: "ollama", Operation: "spawn"}
+	}
+
+	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "ollama"})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions?tenant_id=default", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorSpawn(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"UnsupportedOperationError must map to 400, not 500")
+	respBody := rec.Body.String()
+	assert.Contains(t, respBody, "does not support spawn",
+		"response must identify which operation is unsupported")
+	assert.NotContains(t, respBody, "internal server error")
+}
+
+// TestOrchestratorSpawn_BackendNotFound — Bug #3 regression.
+//
+// Before the fix, a spawn against an unregistered backend mapped through
+// the default branch of handleOrchestratorError and returned HTTP 500 with
+// the opaque body "internal server error". Users saw that in the UI dialog
+// with zero clue that the fix was to register a backend.
+//
+// After the fix, BackendNotFoundError classifies as not-found (404) and the
+// response body carries the actionable original message.
+func TestOrchestratorSpawn_BackendNotFound(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+		return nil, &orchestration.BackendNotFoundError{Backend: "ollama"}
+	}
+
+	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "ollama"})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorSpawn(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code, "BackendNotFoundError must map to 404, not 500")
+
+	respBody := rec.Body.String()
+	assert.Contains(t, respBody, "backend not found",
+		"response body must surface the actionable error, not an opaque 'internal server error'")
+	assert.Contains(t, respBody, "ollama",
+		"response body must identify which backend was missing")
+	assert.NotContains(t, respBody, "internal server error",
+		"Bug #3 regression: the opaque 500 message must not leak back")
 }
 
 // =============================================================================
@@ -900,3 +1032,377 @@ func TestOrchestratorErrorMapping_NotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+// =============================================================================
+// Workflow Handler Tests
+// =============================================================================
+
+func TestHandleOrchestratorListWorkflows_Empty(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/workflows", nil)
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorListWorkflows(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+	wfs, ok := body["workflows"]
+	require.True(t, ok, "response must contain 'workflows' key")
+	// Should be an empty array, not null.
+	require.NotNil(t, wfs)
+}
+
+func TestHandleOrchestratorListWorkflows_NoAgent(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	// Remove agent service.
+	server.service = testutil.NewMockQuicBaaS()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/workflows", nil)
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorListWorkflows(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+func TestHandleOrchestratorGetWorkflow_NotFound(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/workflows/does-not-exist", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", "does-not-exist")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorGetWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandleOrchestratorGetWorkflow_MissingName(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/workflows/", nil)
+	rctx := chi.NewRouteContext()
+	// Do not set "name" URL param — simulates a missing name.
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorGetWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleOrchestratorCreateWorkflow_Success(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	body := map[string]interface{}{
+		"name": "test-workflow",
+		"definition": map[string]interface{}{
+			"name":        "test-workflow",
+			"description": "A test workflow",
+			"mode":        "autonomous",
+			"agents":      []interface{}{},
+			"settings": map[string]interface{}{
+				"max_iterations": 10,
+			},
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorCreateWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+}
+
+func TestHandleOrchestratorCreateWorkflow_MissingName(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	body := map[string]interface{}{
+		"definition": map[string]interface{}{
+			"mode": "autonomous",
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorCreateWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleOrchestratorCreateWorkflow_MissingDefinition(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	body := map[string]interface{}{
+		"name": "test-workflow",
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorCreateWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleOrchestratorCreateWorkflow_InvalidJSON(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(`{invalid`)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorCreateWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// =============================================================================
+// Update Workflow Tests
+// =============================================================================
+
+// TestHandleUpdateWorkflow_Success verifies a valid PUT request updates the workflow.
+func TestHandleUpdateWorkflow_Success(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	updated := &orchestration.WorkflowDefinition{
+		Name:        "my-workflow",
+		Description: "Updated description",
+		Mode:        "autonomous",
+	}
+	agentSvc.updateWorkflowFunc = func(def *orchestration.WorkflowDefinition) error {
+		*updated = *def
+		return nil
+	}
+
+	body, err := json.Marshal(updated)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/orchestrator/workflows/my-workflow", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", "my-workflow")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorUpdateWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp map[string]interface{}
+	err = json.NewDecoder(rec.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.NotNil(t, resp["workflow"])
+}
+
+// TestHandleUpdateWorkflow_NotFound verifies that a missing workflow returns 404.
+func TestHandleUpdateWorkflow_NotFound(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	agentSvc.updateWorkflowFunc = func(def *orchestration.WorkflowDefinition) error {
+		return &orchestration.WorkflowNotFoundError{Name: def.Name}
+	}
+
+	body, err := json.Marshal(orchestration.WorkflowDefinition{
+		Name: "ghost",
+		Mode: "autonomous",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/orchestrator/workflows/ghost", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", "ghost")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorUpdateWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// =============================================================================
+// Delete Workflow Tests
+// =============================================================================
+
+// TestHandleDeleteWorkflow_Success verifies a valid DELETE request removes the workflow.
+func TestHandleDeleteWorkflow_Success(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/orchestrator/workflows/my-workflow", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", "my-workflow")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorDeleteWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp map[string]interface{}
+	err := json.NewDecoder(rec.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, true, resp["deleted"])
+}
+
+// TestHandleDeleteWorkflow_NotFound verifies that deleting a missing workflow returns 404.
+func TestHandleDeleteWorkflow_NotFound(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	agentSvc.deleteWorkflowFunc = func(name string) error {
+		return &orchestration.WorkflowNotFoundError{Name: name}
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/orchestrator/workflows/ghost", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", "ghost")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorDeleteWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// =============================================================================
+// ListBackendModels Tests
+// =============================================================================
+
+// TestHandleOrchestratorListBackendModels_OllamaSuccess verifies that the
+// handler returns the model list for a known ollama backend.
+func TestHandleOrchestratorListBackendModels_OllamaSuccess(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/agents/gpu-host/backends/ollama/models", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("agentID", "gpu-host")
+	rctx.URLParams.Add("backendName", "ollama")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorListBackendModels(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp map[string]interface{}
+	err := json.NewDecoder(rec.Body).Decode(&resp)
+	require.NoError(t, err)
+
+	assert.Equal(t, "ollama", resp["backend"])
+	models, ok := resp["models"].([]interface{})
+	require.True(t, ok, "models should be an array")
+	assert.Contains(t, []string{models[0].(string), models[1].(string)}, "qwen3:1.7b")
+}
+
+// TestHandleOrchestratorListBackendModels_MissingBackend verifies that
+// the handler returns 400 when no backend name is provided.
+func TestHandleOrchestratorListBackendModels_MissingBackend(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/agents/gpu-host/backends//models", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("agentID", "gpu-host")
+	// backendName is intentionally omitted to trigger validation.
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorListBackendModels(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestHandleOrchestratorListBackendModels_UnknownReturnsEmpty verifies that an
+// unregistered backend name returns 200 with an empty model list (not an error),
+// matching the mock's default behaviour.
+func TestHandleOrchestratorListBackendModels_UnknownReturnsEmpty(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/agents/any/backends/unknown/models", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("agentID", "any")
+	rctx.URLParams.Add("backendName", "unknown")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorListBackendModels(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp map[string]interface{}
+	err := json.NewDecoder(rec.Body).Decode(&resp)
+	require.NoError(t, err)
+	models, ok := resp["models"].([]interface{})
+	require.True(t, ok)
+	assert.Empty(t, models)
+}
+
+// =============================================================================
+// CreateTask with HostAffinity + GpuRequired Tests
+// =============================================================================
+
+// TestOrchestratorCreateTask_WithHostAffinityAndGPU verifies that host_affinity and
+// gpu_required fields are parsed and passed through to the service layer.
+func TestOrchestratorCreateTask_WithHostAffinityAndGPU(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	var captured *orchestration.CreateTaskRequest
+	agentSvc.createTaskFunc = func(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error) {
+		captured = req
+		return &orchestration.Task{
+			ID:       "task-gpu-01",
+			TenantID: req.TenantID,
+			Subject:  req.Subject,
+			Metadata: req.Metadata,
+		}, nil
+	}
+
+	body := `{
+		"tenant_id": "default",
+		"subject": "Train ML model",
+		"host_affinity": "gpu-node-01",
+		"gpu_required": true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorCreateTask(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, captured, "createTaskFunc must have been called")
+
+	// Verify the REST handler decoded and forwarded the new fields.
+	assert.Equal(t, "gpu-node-01", captured.HostAffinity)
+	assert.True(t, captured.GpuRequired)
+}
+
+// Ensure time import doesn't get removed.
+var _ = time.Second

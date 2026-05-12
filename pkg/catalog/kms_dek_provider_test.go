@@ -15,6 +15,7 @@ package catalog
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
@@ -860,4 +861,11 @@ func TestKMSDEKProviderError_Unwrap(t *testing.T) {
 
 func TestKMSDEKProvider_ImplementsDEKProvider(t *testing.T) {
 	var _ DEKProvider = (*KMSDEKProvider)(nil)
+}
+
+// Signer returns a crypto.Signer for the given keyID. Tests that don't
+// exercise the signer path receive a nil signer and no error; tests
+// that do can stub this by redefining the method on a wrapped type.
+func (m *dekProviderMockKMSManager) Signer(_ context.Context, _ string) (crypto.Signer, error) {
+	return nil, nil
 }

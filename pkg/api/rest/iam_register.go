@@ -19,8 +19,26 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// registerIAMRoutes registers IAM API routes.
+// registerIAMRoutes registers IAM API routes and stores the IAMHandler on the
+// server so lifecycle code can call SetMTLSAuthenticators after construction.
 func (s *Server) registerIAMRoutes(r chi.Router) {
-	iamHandler := NewIAMHandler(IAMHandlerDependencies{Server: s})
-	iamHandler.RegisterRoutes(r)
+	h := NewIAMHandler(IAMHandlerDependencies{Server: s})
+	h.RegisterRoutes(r)
+
+	// Store so lifecycle_iam_mtls.go can wire mTLS authenticators after startup.
+	s.iamHandler = h
+
+	// Register the public agent registration endpoint at the root
+	// router so it sits alongside /oauth2/token rather than inside the
+	// authz-middleware-protected /api/v1 block. The endpoint is the
+	// authentication bootstrap itself: the caller authenticates via
+	// its mTLS client certificate on the TLS handshake, and the
+	// handler mints OAuth2 client credentials in return.
+	s.registerAgentRegistrationPublicRoutes(r)
+}
+
+// IAMHandler returns the IAMHandler registered on this server, or nil when the
+// iam build tag is not active. Callers must type-assert to *IAMHandler.
+func (s *Server) IAMHandler() interface{} {
+	return s.iamHandler
 }

@@ -36,6 +36,12 @@ type UserClient interface {
 	// GetByEmail retrieves a user by email address.
 	GetByEmail(ctx context.Context, tenantID, email string) (*User, error)
 
+	// FindByUsername retrieves a user by tenant-scoped username. The
+	// tenantID may be empty to use the default tenant. Returns
+	// errors.NotFound when no user with the given username exists in the
+	// tenant.
+	FindByUsername(ctx context.Context, tenantID, username string) (*User, error)
+
 	// Update updates a user.
 	Update(ctx context.Context, tenantID, userID string, req *UpdateUserRequest) (*User, error)
 
@@ -62,9 +68,18 @@ type UserClient interface {
 
 	// Unsuspend reactivates a suspended user account.
 	Unsuspend(ctx context.Context, tenantID, userID string) error
+
+	// Approve transitions a pending self-registered user to active state.
+	// Maps to POST /api/v1/iam/users/{userID}/approve?tenant_id={tenantID}.
+	Approve(ctx context.Context, tenantID, userID string) error
+
+	// Reject soft-disables a pending self-registered user.
+	// The optional reason is attached to the audit record.
+	// Maps to POST /api/v1/iam/users/{userID}/reject?tenant_id={tenantID}.
+	Reject(ctx context.Context, tenantID, userID, reason string) error
 }
 
-// CreateUserRequest is a request to create a user.
+// CreateUserRequest is a request to create a user using the passwordless invite flow.
 type CreateUserRequest struct {
 	// Username is the unique username within the tenant.
 	Username string `json:"username"`
@@ -72,11 +87,16 @@ type CreateUserRequest struct {
 	// Email is the user's email address.
 	Email string `json:"email"`
 
-	// Password is the user's password (will be hashed).
-	Password string `json:"password"`
-
 	// DisplayName is the human-readable display name.
 	DisplayName string `json:"display_name,omitempty"`
+
+	// AuthMethods lists the allowed authentication methods for this user.
+	// Valid values: "webauthn", "piv". Defaults to ["webauthn"] when empty.
+	AuthMethods []string `json:"auth_methods,omitempty"`
+
+	// InviteExpiryHours is the number of hours until the invite token expires.
+	// Valid range: 1–168. Defaults to 24 when zero.
+	InviteExpiryHours int `json:"invite_expiry_hours,omitempty"`
 
 	// Roles are initial role IDs to assign.
 	Roles []string `json:"roles,omitempty"`
@@ -86,9 +106,6 @@ type CreateUserRequest struct {
 
 	// Metadata contains additional user metadata.
 	Metadata map[string]string `json:"metadata,omitempty"`
-
-	// RequireEmailVerification requires email verification before activation.
-	RequireEmailVerification bool `json:"require_email_verification,omitempty"`
 }
 
 // UpdateUserRequest is a request to update a user.
@@ -102,8 +119,8 @@ type UpdateUserRequest struct {
 	// DisplayName is the human-readable display name.
 	DisplayName string `json:"display_name,omitempty"`
 
-	// Password is a new password (will be hashed).
-	Password string `json:"password,omitempty"`
+	// AuthMethods replaces the user's allowed authentication methods.
+	AuthMethods []string `json:"auth_methods,omitempty"`
 
 	// Metadata contains additional user metadata.
 	Metadata map[string]string `json:"metadata,omitempty"`
@@ -156,6 +173,11 @@ type getUserByEmailRequest struct {
 	Email    string `json:"email"`
 }
 
+type getUserByUsernameRequest struct {
+	TenantID string `json:"tenant_id"`
+	Username string `json:"username"`
+}
+
 type updateUserRequestInternal struct {
 	TenantID string             `json:"tenant_id"`
 	UserID   string             `json:"user_id"`
@@ -203,6 +225,21 @@ type unsuspendUserRequest struct {
 }
 
 type unsuspendUserResponse struct{}
+
+type approveUserRequest struct {
+	TenantID string `json:"tenant_id"`
+	UserID   string `json:"user_id"`
+}
+
+type approveUserResponse struct{}
+
+type rejectUserRequest struct {
+	TenantID string `json:"tenant_id"`
+	UserID   string `json:"user_id"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+type rejectUserResponse struct{}
 
 // convertToUser converts a response to a User type.
 // It handles both *User pointers and map[string]interface{} (from REST/gRPC transports).
@@ -493,6 +530,42 @@ func (c *userClient) GetByEmail(ctx context.Context, tenantID, email string) (*U
 	user, ok := convertToUser(resp)
 	if !ok {
 		return nil, errors.NewInternal("iam.user.GetByEmail", "invalid response type")
+	}
+
+	return user, nil
+}
+
+// FindByUsername retrieves a user by tenant-scoped username.
+//
+// FindByUsername is a thin wrapper over the underlying qrdb user
+// service's username lookup primitive. It is the canonical surface for
+// resolving a username (e.g. supplied via a CLI flag) to a user record
+// before invoking other identity-bound APIs (such as the auth-factor
+// enrollment flow) that require a stable user ID.
+func (c *userClient) FindByUsername(ctx context.Context, tenantID, username string) (*User, error) {
+	if username == "" {
+		return nil, errors.NewInvalidInput("iam.user.FindByUsername", "username is required")
+	}
+
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("iam.user.FindByUsername", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, userServiceName, "FindByUsername", &getUserByUsernameRequest{
+		TenantID: tenantID,
+		Username: username,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewNotFound("iam.user.FindByUsername", "user not found")
+	}
+
+	user, ok := convertToUser(resp)
+	if !ok {
+		return nil, errors.NewInternal("iam.user.FindByUsername", "invalid response type")
 	}
 
 	return user, nil
@@ -860,6 +933,55 @@ func (c *userClient) Unsuspend(ctx context.Context, tenantID, userID string) err
 	return nil
 }
 
+// Approve transitions a pending self-registered user to active state.
+func (c *userClient) Approve(ctx context.Context, tenantID, userID string) error {
+	if tenantID == "" {
+		return errors.NewInvalidInput("iam.user.Approve", "tenant ID is required")
+	}
+	if userID == "" {
+		return errors.NewInvalidInput("iam.user.Approve", "user ID is required")
+	}
+	if ctx == nil {
+		return errors.NewInvalidInput("iam.user.Approve", "context is required")
+	}
+	resp, err := c.transport.Request(ctx, userServiceName, "Approve", &approveUserRequest{
+		TenantID: tenantID,
+		UserID:   userID,
+	})
+	if err != nil {
+		return err
+	}
+	if !isUserSuccessResponse(resp) {
+		return errors.NewInternal("iam.user.Approve", "approve operation failed")
+	}
+	return nil
+}
+
+// Reject soft-disables a pending self-registered user.
+func (c *userClient) Reject(ctx context.Context, tenantID, userID, reason string) error {
+	if tenantID == "" {
+		return errors.NewInvalidInput("iam.user.Reject", "tenant ID is required")
+	}
+	if userID == "" {
+		return errors.NewInvalidInput("iam.user.Reject", "user ID is required")
+	}
+	if ctx == nil {
+		return errors.NewInvalidInput("iam.user.Reject", "context is required")
+	}
+	resp, err := c.transport.Request(ctx, userServiceName, "Reject", &rejectUserRequest{
+		TenantID: tenantID,
+		UserID:   userID,
+		Reason:   reason,
+	})
+	if err != nil {
+		return err
+	}
+	if !isUserSuccessResponse(resp) {
+		return errors.NewInternal("iam.user.Reject", "reject operation failed")
+	}
+	return nil
+}
+
 // Validation functions.
 
 func validateCreateUserRequest(tenantID string, req *CreateUserRequest) error {
@@ -874,9 +996,6 @@ func validateCreateUserRequest(tenantID string, req *CreateUserRequest) error {
 	}
 	if req.Email == "" {
 		return errors.NewInvalidInput("iam.user.Create", "email is required")
-	}
-	if req.Password == "" {
-		return errors.NewInvalidInput("iam.user.Create", "password is required")
 	}
 	return nil
 }

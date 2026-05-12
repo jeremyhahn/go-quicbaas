@@ -63,6 +63,14 @@ func (p *iamServiceAdapter) GetAppManager(_ context.Context) (*iam.AppManager, e
 	return p.components.GetAppManager(), nil
 }
 
+// GetAppStorage returns the underlying OAuth2 application storage backend.
+func (p *iamServiceAdapter) GetAppStorage(_ context.Context) (iam.AppStorage, error) {
+	if p.components == nil {
+		return nil, nil
+	}
+	return p.components.GetAppStorage(), nil
+}
+
 // GetOIDCProvider returns the OIDC provider from IAM components.
 func (p *iamServiceAdapter) GetOIDCProvider(_ context.Context) (*iam.OIDCProvider, error) {
 	if p.components == nil {
@@ -143,6 +151,7 @@ func (p *iamServiceAdapter) GetAuthManager(_ context.Context) (AuthManagerInterf
 	}
 	return p.components.GetAuthManager(), nil
 }
+
 
 // initializeIAMProvider initializes the IAM provider for REST handlers.
 // This is the iam version that returns nil because IAM components

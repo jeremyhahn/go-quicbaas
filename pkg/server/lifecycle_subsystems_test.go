@@ -180,4 +180,42 @@ func TestInitVectorStorage(t *testing.T) {
 			srv.vectorStorage.Close()
 		}
 	})
+
+	// EnvVarFastPath_BackfillsDefaults locks in the bug fix for the documented
+	// QUICBAAS_VECTOR_ENABLED=true UX path. Before the fix, enabling vector
+	// without supplying an HNSW block crashed the daemon with
+	// "configuration: invalid vector configuration: hnsw configuration is required".
+	// This test mirrors the env-var path: Enabled=true, no HNSW, no ShardID,
+	// no StoragePath. initVectorStorage must backfill defaults from the
+	// daemon's data directory and start cleanly. If anyone removes the
+	// ApplyDefaults call this test will fail, restoring the original UX bug.
+	t.Run("EnvVarFastPath_BackfillsDefaults", func(t *testing.T) {
+		cfg := createTestConfig(t)
+		t.Cleanup(func() { cleanupTestData(t, cfg) })
+
+		// Simulate exactly what QUICBAAS_VECTOR_ENABLED=true produces: only
+		// the Enabled flag is set; everything else is zero.
+		cfg.Vector = config.VectorConfig{Enabled: true}
+
+		srv, err := NewServer(cfg)
+		require.NoError(t, err)
+
+		err = srv.initVectorStorage()
+		require.NoError(t, err, "initVectorStorage must succeed on the env-var fast path; HNSW defaults must be applied")
+		require.NotNil(t, srv.vectorStorage)
+
+		// Verify the canonical defaults landed exactly where we expect them.
+		require.NotNil(t, srv.config.Vector.HNSW)
+		assert.Equal(t, 16, srv.config.Vector.HNSW.M)
+		assert.Equal(t, 200, srv.config.Vector.HNSW.EfConstruction)
+		assert.Equal(t, 10000, srv.config.Vector.HNSW.MaxElements)
+		assert.Equal(t, 1.0, srv.config.Vector.HNSW.Ml)
+		assert.Equal(t, uint64(200), srv.config.Vector.ShardID)
+		assert.NotEmpty(t, srv.config.Vector.StoragePath, "StoragePath must be derived from Storage.DataDir")
+
+		// Cleanup
+		if srv.vectorStorage != nil {
+			srv.vectorStorage.Close()
+		}
+	})
 }

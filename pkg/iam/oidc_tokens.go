@@ -114,6 +114,18 @@ func (s *TokenService) GenerateIDToken(ctx context.Context, claims *IDTokenClaim
 	if claims.Nonce != "" {
 		jwtClaims["nonce"] = claims.Nonce
 	}
+	if len(claims.AMR) > 0 {
+		jwtClaims["amr"] = claims.AMR
+	}
+	if claims.ACR != "" {
+		jwtClaims["acr"] = claims.ACR
+	}
+	if claims.AttestAAGUID != "" {
+		jwtClaims["attest_aaguid"] = claims.AttestAAGUID
+	}
+	if claims.AttestLevel != "" {
+		jwtClaims["attest_level"] = claims.AttestLevel
+	}
 
 	// Sign token using XKMS JWT
 	tokenString, err := xkms.JWTSignWithSigner(s.signingKey, jwtClaims, s.config.SigningAlgorithm)
@@ -264,6 +276,216 @@ func parseScopes(scope string) []string {
 		result = append(result, current)
 	}
 	return result
+}
+
+// HardwareTokenSet is the set of tokens issued after a successful hardware-attested login.
+type HardwareTokenSet struct {
+	// AccessToken is the signed JWT access token.
+	AccessToken string
+	// IDToken is the signed OIDC ID token containing amr/acr/attest claims.
+	IDToken string
+	// RefreshToken is the opaque refresh token.
+	RefreshToken string
+	// ExpiresIn is the access token lifetime in seconds.
+	ExpiresIn int64
+	// TokenType is always "Bearer".
+	TokenType string
+}
+
+// HardwareTokenOptions controls the contents of tokens issued for hardware-attested logins.
+type HardwareTokenOptions struct {
+	// User is the authenticated IAM user.
+	User *User
+	// AMR is the list of authentication method references (RFC 8176).
+	// E.g. ["webauthn","hwk"] or ["smartcard","mfa"].
+	AMR []string
+	// ACR is the authentication context class reference.
+	// Use ACRHardwareAttested for hardware-backed credentials.
+	ACR string
+	// AttestAAGUID is the hex-encoded FIDO2 AAGUID (WebAuthn only; empty for PIV).
+	AttestAAGUID string
+	// AttestLevel is a human-readable attestation level.
+	AttestLevel string
+	// ClientID is the OAuth2 client on behalf of which tokens are issued.
+	// May be empty when no client_id is applicable (direct hardware login).
+	ClientID string
+	// Scope is the space-separated list of granted scopes (defaults to "openid profile email").
+	Scope string
+}
+
+// ACRHardwareAttested is the ACR value for hardware-attested authentication.
+const ACRHardwareAttested = "urn:quicbaas:auth:hardware-attested"
+
+// IssueHardwareTokens mints an access token, ID token, and refresh token for a
+// successfully hardware-attested login (WebAuthn FIDO2 or PIV smartcard).
+func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTokenOptions) (*HardwareTokenSet, error) {
+	if opts.User == nil {
+		return nil, dberrors.New(dberrors.ErrInvalidInput, "iam.TokenService.IssueHardwareTokens", "user is required")
+	}
+
+	now := time.Now()
+	scope := opts.Scope
+	if scope == "" {
+		scope = "openid profile email"
+	}
+	issuer := s.config.Issuer
+
+	accessClaims := &Claims{
+		Issuer:    issuer,
+		Subject:   opts.User.ID,
+		Audience:  []string{issuer},
+		ExpiresAt: UnixTime{Time: now.Add(s.config.AccessTokenTTL)},
+		IssuedAt:  UnixTime{Time: now},
+		NotBefore: UnixTime{Time: now},
+		JTI:       generateJTI(),
+		TenantID:  opts.User.TenantID,
+		Roles:     opts.User.Roles,
+		Groups:    opts.User.Groups,
+		Email:     opts.User.Email,
+		Name:      opts.User.Name,
+		Scope:     scope,
+		ClientID:  opts.ClientID,
+		AMR:       opts.AMR,
+		ACR:       opts.ACR,
+	}
+
+	accessToken, err := s.GenerateAccessToken(ctx, accessClaims)
+	if err != nil {
+		return nil, err
+	}
+
+	idClaims := &IDTokenClaims{
+		Issuer:        issuer,
+		Subject:       opts.User.ID,
+		Audience:      []string{issuer},
+		ExpiresAt:     UnixTime{Time: now.Add(s.config.IDTokenTTL)},
+		IssuedAt:      UnixTime{Time: now},
+		AuthTime:      UnixTime{Time: now},
+		Email:         opts.User.Email,
+		EmailVerified: true,
+		Name:          opts.User.Name,
+		TenantID:      opts.User.TenantID,
+		Roles:         opts.User.Roles,
+		Groups:        opts.User.Groups,
+		MFAVerified:   true,
+		AMR:           opts.AMR,
+		ACR:           opts.ACR,
+		AttestAAGUID:  opts.AttestAAGUID,
+		AttestLevel:   opts.AttestLevel,
+	}
+
+	idToken, err := s.GenerateIDToken(ctx, idClaims)
+	if err != nil {
+		return nil, err
+	}
+
+	refreshToken, err := s.GenerateRefreshToken(ctx, opts.User.ID, opts.ClientID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &HardwareTokenSet{
+		AccessToken:  accessToken,
+		IDToken:      idToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    int64(s.config.AccessTokenTTL.Seconds()),
+		TokenType:    "Bearer",
+	}, nil
+}
+
+// ServiceAccountTokenSet holds tokens issued for a service-account mTLS login.
+type ServiceAccountTokenSet struct {
+	// AccessToken is the signed JWT with cnf/x5t#S256 proof-of-possession.
+	AccessToken string
+	// ExpiresIn is the access token lifetime in seconds.
+	ExpiresIn int64
+	// TokenType is always "Bearer".
+	TokenType string
+}
+
+// ServiceAccountTokenOptions controls the content of tokens issued for mTLS
+// service-account authentication.
+type ServiceAccountTokenOptions struct {
+	// ClientID is the authenticated OAuth2 client identifier.
+	ClientID string
+	// TenantID is the tenant context.
+	TenantID string
+	// Scope is the space-separated list of granted scopes.
+	Scope string
+	// CertThumbprintS256 is the base64url-encoded SHA-256 thumbprint of the
+	// client certificate used during authentication (RFC 8705 §3.1).
+	CertThumbprintS256 string
+	// AttestMethod is "tpm", "xkey", or "manual".
+	AttestMethod string
+	// AMR is the list of authentication method references (RFC 8176).
+	AMR []string
+}
+
+// IssueServiceAccountTokens mints an mTLS-bound access token for a service
+// account that authenticated via mutual TLS (RFC 8705).
+//
+// The resulting JWT contains:
+//   - cnf: { "x5t#S256": "<thumbprint>" }  per RFC 8705 §3.1
+//   - amr: ["mtls"] or ["mtls","hwk"] for TPM IDevID certs
+//   - attest_method: "tpm" | "xkey" | "manual"
+func (s *TokenService) IssueServiceAccountTokens(ctx context.Context, opts ServiceAccountTokenOptions) (*ServiceAccountTokenSet, error) {
+	if opts.ClientID == "" {
+		return nil, dberrors.New(dberrors.ErrInvalidInput, "iam.TokenService.IssueServiceAccountTokens", "client_id is required")
+	}
+	if opts.CertThumbprintS256 == "" {
+		return nil, dberrors.New(dberrors.ErrInvalidInput, "iam.TokenService.IssueServiceAccountTokens", "cert thumbprint is required")
+	}
+
+	now := time.Now()
+	scope := opts.Scope
+	if scope == "" {
+		scope = "openid"
+	}
+	issuer := s.config.Issuer
+
+	jwtClaims := xkms.JWTClaims{
+		"iss":           issuer,
+		"sub":           opts.ClientID,
+		"aud":           []string{issuer},
+		"exp":           now.Add(s.config.AccessTokenTTL).Unix(),
+		"iat":           now.Unix(),
+		"nbf":           now.Unix(),
+		"jti":           generateJTI(),
+		"tenant_id":     opts.TenantID,
+		"scope":         scope,
+		"client_id":     opts.ClientID,
+		"auth_method":   "mtls",
+		"attest_method": opts.AttestMethod,
+		"amr":           opts.AMR,
+		"cnf": map[string]interface{}{
+			"x5t#S256": opts.CertThumbprintS256,
+		},
+	}
+
+	tokenString, err := xkms.JWTSignWithSigner(s.signingKey, jwtClaims, s.config.SigningAlgorithm)
+	if err != nil {
+		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.IssueServiceAccountTokens", "failed to sign service account token")
+	}
+
+	tokenMeta := &Token{
+		JTI:       jwtClaims["jti"].(string),
+		Subject:   opts.ClientID,
+		TenantID:  opts.TenantID,
+		Scopes:    parseScopes(scope),
+		Expires:   now.Add(s.config.AccessTokenTTL),
+		Issued:    now,
+		TokenType: TokenTypeAccess,
+		ClientID:  opts.ClientID,
+	}
+	if err := s.storage.StoreToken(ctx, tokenMeta); err != nil {
+		return nil, dberrors.Wrapf(err, dberrors.ErrStorage, "iam.TokenService.IssueServiceAccountTokens", "failed to store token")
+	}
+
+	return &ServiceAccountTokenSet{
+		AccessToken: tokenString,
+		ExpiresIn:   int64(s.config.AccessTokenTTL.Seconds()),
+		TokenType:   "Bearer",
+	}, nil
 }
 
 // validatePKCES256 validates a PKCE code verifier against a S256 challenge.

@@ -223,6 +223,15 @@ type QRDBTenantBarrierInitRequest = qrdbtransport.TenantBarrierInitRequest
 // QRDBTenantBarrierUnsealRequest is a re-export of the qrdb TenantBarrierUnsealRequest type.
 type QRDBTenantBarrierUnsealRequest = qrdbtransport.TenantBarrierUnsealRequest
 
+// QRDBTenantBarrierSealRequest is a re-export of the qrdb TenantBarrierSealRequest type.
+type QRDBTenantBarrierSealRequest = qrdbtransport.TenantBarrierSealRequest
+
+// QRDBTenantBarrierStatusRequest is a re-export of the qrdb TenantBarrierStatusRequest type.
+type QRDBTenantBarrierStatusRequest = qrdbtransport.TenantBarrierStatusRequest
+
+// QRDBTenantBarrierStatusResponse is a re-export of the qrdb TenantBarrierStatusResponse type.
+type QRDBTenantBarrierStatusResponse = qrdbtransport.TenantBarrierStatusResponse
+
 // =============================================================================
 // QRDB Barrier Request/Response Re-exports
 // =============================================================================

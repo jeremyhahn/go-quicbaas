@@ -27,6 +27,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -782,7 +783,10 @@ type boost81MockAuthManager struct {
 	validateTokenErr    error
 }
 
-func (m *boost81MockAuthManager) Authenticate(ctx context.Context, username, password string) (interface{}, error) {
+func (m *boost81MockAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
+	if password != nil {
+		password.Destroy()
+	}
 	if m.authenticateErr != nil {
 		return nil, m.authenticateErr
 	}
@@ -1003,10 +1007,10 @@ func (l *boost82MockLogger) Infof(format string, args ...interface{})  {}
 func (l *boost82MockLogger) Warnf(format string, args ...interface{})  { l.warnfCalled = true }
 func (l *boost82MockLogger) Errorf(format string, args ...interface{}) { l.errorfCalled = true }
 func (l *boost82MockLogger) Fatalf(format string, args ...interface{}) {}
-func (l *boost82MockLogger) Debug(msg string, args ...any)                          {}
-func (l *boost82MockLogger) Info(msg string, args ...any)                           {}
-func (l *boost82MockLogger) Warn(msg string, args ...any)                           {}
-func (l *boost82MockLogger) Error(msg string, args ...any)                          {}
+func (l *boost82MockLogger) Debug(msg string, args ...any)             {}
+func (l *boost82MockLogger) Info(msg string, args ...any)              {}
+func (l *boost82MockLogger) Warn(msg string, args ...any)              {}
+func (l *boost82MockLogger) Error(msg string, args ...any)             {}
 func (l *boost82MockLogger) Fatal(msg string)                          {}
 
 func (l *boost82MockLogger) WithField(key string, value interface{}) interfaces.Logger  { return l }
@@ -1521,16 +1525,15 @@ func TestTimeSeriesMethods_TSQuery(t *testing.T) {
 }
 
 func TestAuthServiceImpl_Login_NilManager(t *testing.T) {
+	// Password-based login is removed. Login() always returns ErrNotImplemented.
 	svc := &quicBaaS{authManager: nil}
 	authSvc := &authService{svc: svc}
 
 	_, err := authSvc.Login(context.Background(), &LoginRequest{
 		Username: "test",
-		Password: "pass",
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
 }
 
 func TestAuthServiceImpl_Logout_NilManager(t *testing.T) {
@@ -1571,7 +1574,10 @@ func TestAuthServiceImpl_ValidateToken_NilManager(t *testing.T) {
 
 func TestAuthServiceImpl_Login_Success(t *testing.T) {
 	authMgr := &mockAuthManager{
-		authenticateFn: func(ctx context.Context, username, password string) (*auth.Token, error) {
+		authenticateFn: func(ctx context.Context, username string, password *secure.Buffer) (*auth.Token, error) {
+			if password != nil {
+				password.Destroy()
+			}
 			return &auth.Token{
 				AccessToken:  "access",
 				RefreshToken: "refresh",
@@ -1582,7 +1588,9 @@ func TestAuthServiceImpl_Login_Success(t *testing.T) {
 
 	// Direct test with mockAuthManager
 	ctx := context.Background()
-	token, err := authMgr.Authenticate(ctx, "test", "pass")
+	pwBuf, err := secure.NewBufferFromBytes([]byte("pass"))
+	require.NoError(t, err)
+	token, err := authMgr.Authenticate(ctx, "test", pwBuf)
 	require.NoError(t, err)
 	assert.Equal(t, "access", token.(*auth.Token).AccessToken)
 }
@@ -1629,7 +1637,6 @@ func TestRBACServiceImpl_CreateUser_NilManager(t *testing.T) {
 
 	_, err := rbacSvc.CreateUser(context.Background(), &CreateUserRequest{
 		Username: "testuser",
-		Password: "password",
 		Roles:    []string{"admin"},
 	})
 
@@ -2478,20 +2485,15 @@ func TestServiceImpl_Readiness_Delegation(t *testing.T) {
 	assert.True(t, resp.Ready)
 }
 
-func TestAuthService_Login_NoAuthManager(t *testing.T) {
+func TestAuthService_Login_PasswordlessOnly(t *testing.T) {
+	// Password-based login is removed. Use WebAuthn or PIV smartcard authentication.
 	mockRaft := &mockRaftNode{}
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	req := &LoginRequest{
-		Username: "testuser",
-		Password: "password",
-	}
-
-	resp, err := svc.Login(context.Background(), req)
+	req := &LoginRequest{Username: "testuser"}
+	_, err := svc.Login(context.Background(), req)
 	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "authentication service not configured")
 }
 
 func TestAuthService_Logout_RevokeError(t *testing.T) {
@@ -2550,7 +2552,6 @@ func TestRBACService_CreateUser_NoAuthManager(t *testing.T) {
 
 	req := &CreateUserRequest{
 		Username: "newuser",
-		Password: "password",
 	}
 
 	resp, err := svc.CreateUser(context.Background(), req)
@@ -2566,13 +2567,12 @@ func TestRBACService_CreateUser_MissingUsername(t *testing.T) {
 
 	req := &CreateUserRequest{
 		Username: "",
-		Password: "password",
 	}
 
 	resp, err := svc.CreateUser(context.Background(), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "username and password are required")
+	assert.Contains(t, err.Error(), "username is required")
 }
 
 func TestClusterService_AddNode_NilRequest(t *testing.T) {

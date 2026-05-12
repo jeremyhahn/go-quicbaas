@@ -16,6 +16,7 @@ package service
 
 import (
 	"context"
+	"crypto"
 	stderrors "errors"
 	"fmt"
 	"testing"
@@ -4987,4 +4988,11 @@ func TestKMSValidationErrorTypes(t *testing.T) {
 		require.ErrorAs(t, err, &qbErr)
 		assert.Equal(t, quicbaasErrors.ErrAlreadyExists, qbErr.Code)
 	})
+}
+
+// Signer returns a crypto.Signer for the given keyID. Tests that don't
+// exercise the signer path receive a nil signer and no error; tests
+// that do can stub this by redefining the method on a wrapped type.
+func (m *mockKMSManager) Signer(_ context.Context, _ string) (crypto.Signer, error) {
+	return nil, nil
 }

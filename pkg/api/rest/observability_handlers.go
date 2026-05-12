@@ -212,43 +212,10 @@ func (h *Phase4Handler) HandleDeleteBackup(w http.ResponseWriter, r *http.Reques
 // Authentication Operations
 // =============================================================================
 
-// HandleLogin authenticates a user
-// POST /api/v1/auth/login.
+// HandleLogin is not supported. QuicBaaS uses WebAuthn (FIDO2) and PIV smartcard authentication.
+// POST /api/v1/auth/login returns 410 Gone.
 func (h *Phase4Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req pb.LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	token, err := h.authMgr.Authenticate(r.Context(), req.Username, req.Password)
-	if err != nil {
-		http.Error(w, "Authentication failed", http.StatusUnauthorized)
-		return
-	}
-
-	user := h.authMgr.GetUserStore().GetByUsername(req.Username)
-	if user == nil {
-		http.Error(w, "User not found", http.StatusInternalServerError)
-		return
-	}
-
-	resp := &pb.LoginResponse{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt.UnixNano(),
-		TokenType:    token.TokenType,
-		UserId:       user.GetID(),
-		Roles:        user.GetRoles(),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp) // Best effort encoding
+	http.Error(w, "password-based login is not supported; use WebAuthn or PIV authentication", http.StatusGone)
 }
 
 // HandleLogout revokes user tokens
@@ -327,7 +294,7 @@ func (h *Phase4Handler) HandleCreateUser(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	user, err := h.authMgr.CreateUser(req.Username, req.Password, req.Roles)
+	user, err := h.authMgr.CreateUser(req.Username, "", req.Roles)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

@@ -23,32 +23,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// Login authenticates a user and returns access/refresh tokens.
-func (s *Server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is nil")
-	}
-
-	// Convert proto request to service request
-	serviceReq := &service.LoginRequest{
-		Username: req.GetUsername(),
-		Password: req.GetPassword(),
-	}
-
-	// Call service layer
-	serviceResp, err := s.service.Login(ctx, serviceReq)
-	if err != nil {
-		return nil, toProtoError(err)
-	}
-
-	// Convert service response to proto response
-	return &pb.LoginResponse{
-		AccessToken:  serviceResp.AccessToken,
-		RefreshToken: serviceResp.RefreshToken,
-		ExpiresAt:    serviceResp.ExpiresAt,
-		TokenType:    "Bearer",
-		UserId:       serviceResp.UserID,
-	}, nil
+// Login is not supported. QuicBaaS uses WebAuthn (FIDO2) and PIV smartcard authentication.
+// Use the WebAuthn login endpoints under /api/v1/tenants/{tenant_id}/webauthn/login/*.
+func (s *Server) Login(_ context.Context, _ *pb.LoginRequest) (*pb.LoginResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "password-based login is not supported; use WebAuthn or PIV authentication")
 }
 
 // Logout invalidates the current session and tokens.

@@ -128,231 +128,6 @@ func (m *mockSDKAuthClient) GetOpenIDConfiguration(ctx context.Context) (*servic
 	return nil, nil
 }
 
-// TestAuthLoginCommand_Success tests successful login scenarios.
-func TestAuthLoginCommand_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	tokenFile := filepath.Join(tmpDir, "token")
-
-	tests := []struct {
-		name           string
-		username       string
-		env            map[string]string
-		flags          map[string]string
-		expectedToken  *service.ExtendedLoginResponse
-		checkTokenFile bool
-	}{
-		{
-			name:     "login with password from env",
-			username: "testuser",
-			env: map[string]string{
-				"QUICBAAS_PASSWORD": "testpassword",
-			},
-			flags: map[string]string{
-				"token-file": tokenFile,
-			},
-			expectedToken: &service.ExtendedLoginResponse{
-				AccessToken:  "test-access-token",
-				RefreshToken: "test-refresh-token",
-				ExpiresAt:    time.Now().Add(1 * time.Hour),
-				TokenType:    "Bearer",
-			},
-			checkTokenFile: true,
-		},
-		{
-			name:     "login with no-store flag",
-			username: "testuser",
-			env: map[string]string{
-				"QUICBAAS_PASSWORD": "testpassword",
-			},
-			flags: map[string]string{
-				"no-store": "true",
-			},
-			expectedToken: &service.ExtendedLoginResponse{
-				AccessToken:  "no-store-token",
-				RefreshToken: "no-store-refresh",
-				ExpiresAt:    time.Now().Add(2 * time.Hour),
-				TokenType:    "Bearer",
-			},
-			checkTokenFile: false,
-		},
-		{
-			name:     "login with custom token file",
-			username: "admin",
-			env: map[string]string{
-				"QUICBAAS_PASSWORD": "adminpass",
-			},
-			flags: map[string]string{
-				"token-file": filepath.Join(tmpDir, "custom_token"),
-			},
-			expectedToken: &service.ExtendedLoginResponse{
-				AccessToken:  "custom-token",
-				RefreshToken: "custom-refresh",
-				ExpiresAt:    time.Now().Add(3 * time.Hour),
-				TokenType:    "Bearer",
-			},
-			checkTokenFile: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Save original factory
-			origFactory := authClientFactory
-			defer func() { authClientFactory = origFactory }()
-
-			// Set environment variables
-			for k, v := range tt.env {
-				os.Setenv(k, v)
-				defer os.Unsetenv(k)
-			}
-
-			// Create mock client
-			mockClient := &mockSDKAuthClient{
-				LoginFunc: func(ctx context.Context, req *service.ExtendedLoginRequest) (*service.ExtendedLoginResponse, error) {
-					assert.Equal(t, tt.username, req.Username)
-					return tt.expectedToken, nil
-				},
-			}
-
-			authClientFactory = func() (auth.Client, error) {
-				return mockClient, nil
-			}
-
-			// Build command args
-			args := []string{tt.username}
-			for flag, value := range tt.flags {
-				if flag == "no-store" {
-					args = append(args, "--no-store")
-				} else {
-					args = append(args, "--"+flag, value)
-				}
-			}
-
-			// Create and execute command
-			cmd := newAuthLoginCommand()
-			cmd.SetArgs(args)
-
-			err := cmd.Execute()
-			require.NoError(t, err)
-
-			// Check token file
-			if tt.checkTokenFile {
-				tokenPath := tokenFile
-				if customPath, ok := tt.flags["token-file"]; ok {
-					tokenPath = customPath
-				}
-
-				loadedToken, err := cli.LoadToken(tokenPath)
-				require.NoError(t, err)
-				assert.Equal(t, tt.expectedToken.AccessToken, loadedToken.AccessToken)
-				assert.Equal(t, tt.expectedToken.RefreshToken, loadedToken.RefreshToken)
-				assert.Equal(t, tt.expectedToken.TokenType, loadedToken.TokenType)
-
-				// Cleanup
-				os.Remove(tokenPath)
-			}
-		})
-	}
-}
-
-// TestAuthLoginCommand_Errors tests error scenarios for login command.
-func TestAuthLoginCommand_Errors(t *testing.T) {
-	tmpDir := t.TempDir()
-	tokenFile := filepath.Join(tmpDir, "token")
-
-	tests := []struct {
-		name          string
-		username      string
-		env           map[string]string
-		flags         map[string]string
-		factoryErr    error
-		loginErr      error
-		expectedError string
-	}{
-		{
-			name:     "factory error",
-			username: "testuser",
-			env: map[string]string{
-				"QUICBAAS_PASSWORD": "testpass",
-			},
-			flags: map[string]string{
-				"token-file": tokenFile,
-			},
-			factoryErr:    errors.New(errors.ErrUnavailable, "auth.factory", "connection refused"),
-			expectedError: "connection refused",
-		},
-		{
-			name:     "login error - invalid credentials",
-			username: "testuser",
-			env: map[string]string{
-				"QUICBAAS_PASSWORD": "wrongpass",
-			},
-			flags: map[string]string{
-				"token-file": tokenFile,
-			},
-			loginErr:      errors.New(errors.ErrUnauthorized, "auth.login", "invalid credentials"),
-			expectedError: "invalid credentials",
-		},
-		{
-			name:     "login error - user not found",
-			username: "nonexistent",
-			env: map[string]string{
-				"QUICBAAS_PASSWORD": "testpass",
-			},
-			flags: map[string]string{
-				"token-file": tokenFile,
-			},
-			loginErr:      errors.New(errors.ErrNotFound, "auth.login", "user not found"),
-			expectedError: "user not found",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Save original factory
-			origFactory := authClientFactory
-			defer func() { authClientFactory = origFactory }()
-
-			// Set environment variables
-			for k, v := range tt.env {
-				os.Setenv(k, v)
-				defer os.Unsetenv(k)
-			}
-
-			// Setup factory
-			if tt.factoryErr != nil {
-				authClientFactory = func() (auth.Client, error) {
-					return nil, tt.factoryErr
-				}
-			} else if tt.loginErr != nil {
-				mockClient := &mockSDKAuthClient{
-					LoginFunc: func(ctx context.Context, req *service.ExtendedLoginRequest) (*service.ExtendedLoginResponse, error) {
-						return nil, tt.loginErr
-					},
-				}
-				authClientFactory = func() (auth.Client, error) {
-					return mockClient, nil
-				}
-			}
-
-			// Build command args
-			args := []string{tt.username}
-			for flag, value := range tt.flags {
-				args = append(args, "--"+flag, value)
-			}
-
-			// Create and execute command
-			cmd := newAuthLoginCommand()
-			cmd.SetArgs(args)
-
-			err := cmd.Execute()
-			require.Error(t, err)
-			if tt.expectedError != "" {
-				assert.Contains(t, err.Error(), tt.expectedError)
-			}
-		})
-	}
-}
 
 // TestAuthLogoutCommand_Success tests successful logout scenarios.
 func TestAuthLogoutCommand_Success(t *testing.T) {
@@ -729,28 +504,6 @@ func TestAuthCommands_DefaultTokenPath(t *testing.T) {
 		return mockClient, nil
 	}
 
-	t.Run("login with default token path", func(t *testing.T) {
-		// Set password via environment
-		os.Setenv("QUICBAAS_PASSWORD", "testpass")
-		defer os.Unsetenv("QUICBAAS_PASSWORD")
-
-		cmd := newAuthLoginCommand()
-		cmd.SetArgs([]string{"testuser"})
-
-		err := cmd.Execute()
-		require.NoError(t, err)
-
-		// Get default token path and verify file exists
-		defaultPath, err := cli.GetDefaultTokenPath()
-		require.NoError(t, err)
-
-		_, err = os.Stat(defaultPath)
-		assert.NoError(t, err, "Token should be saved to default path")
-
-		// Cleanup
-		os.Remove(defaultPath)
-	})
-
 	t.Run("status with default token path", func(t *testing.T) {
 		// Create token at default path
 		defaultPath, err := cli.GetDefaultTokenPath()
@@ -817,7 +570,7 @@ func TestNewAuthCommand(t *testing.T) {
 	var foundLogin, foundLogout, foundStatus bool
 	for _, subcmd := range subcommands {
 		switch subcmd.Use {
-		case "login <username>":
+		case "login":
 			foundLogin = true
 		case "logout":
 			foundLogout = true
@@ -831,73 +584,23 @@ func TestNewAuthCommand(t *testing.T) {
 	assert.True(t, foundStatus, "Should have status subcommand")
 }
 
-// TestAuthLoginCommand_PasswordFromFlag tests login with password from flag.
-func TestAuthLoginCommand_PasswordFromFlag(t *testing.T) {
-	tmpDir := t.TempDir()
-	tokenFile := filepath.Join(tmpDir, "token")
-
-	// Save original factory
-	origFactory := authClientFactory
-	defer func() { authClientFactory = origFactory }()
-
-	mockClient := &mockSDKAuthClient{
-		LoginFunc: func(ctx context.Context, req *service.ExtendedLoginRequest) (*service.ExtendedLoginResponse, error) {
-			assert.Equal(t, "testuser", req.Username)
-			assert.Equal(t, "flagpass", req.Password)
-			return &service.ExtendedLoginResponse{
-				AccessToken:  "flag-token",
-				RefreshToken: "flag-refresh",
-				ExpiresAt:    time.Now().Add(1 * time.Hour),
-				TokenType:    "Bearer",
-			}, nil
-		},
-	}
-
-	authClientFactory = func() (auth.Client, error) {
-		return mockClient, nil
-	}
-
+// TestAuthLoginCommand_PrintsInstructions verifies that `quicbaas auth login`
+// returns successfully and prints WebAuthn/PIV authentication instructions.
+// The CLI no longer performs password-based login; it only directs users
+// to the supported authentication methods.
+func TestAuthLoginCommand_PrintsInstructions(t *testing.T) {
 	cmd := newAuthLoginCommand()
-	cmd.SetArgs([]string{"testuser", "--password", "flagpass", "--token-file", tokenFile})
+	cmd.SetArgs([]string{})
+
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
 
 	err := cmd.Execute()
 	require.NoError(t, err)
-}
 
-// TestAuthLoginCommand_ContextTimeout tests login with proper context usage.
-func TestAuthLoginCommand_ContextTimeout(t *testing.T) {
-	tmpDir := t.TempDir()
-	tokenFile := filepath.Join(tmpDir, "token")
-
-	// Save original factory
-	origFactory := authClientFactory
-	defer func() { authClientFactory = origFactory }()
-
-	mockClient := &mockSDKAuthClient{
-		LoginFunc: func(ctx context.Context, req *service.ExtendedLoginRequest) (*service.ExtendedLoginResponse, error) {
-			// Verify context is a valid context.Context
-			assert.NotNil(t, ctx, "Context should be passed to Login")
-			return &service.ExtendedLoginResponse{
-				AccessToken:  "ctx-token",
-				RefreshToken: "ctx-refresh",
-				ExpiresAt:    time.Now().Add(1 * time.Hour),
-				TokenType:    "Bearer",
-			}, nil
-		},
-	}
-
-	authClientFactory = func() (auth.Client, error) {
-		return mockClient, nil
-	}
-
-	os.Setenv("QUICBAAS_PASSWORD", "testpass")
-	defer os.Unsetenv("QUICBAAS_PASSWORD")
-
-	cmd := newAuthLoginCommand()
-	cmd.SetArgs([]string{"testuser", "--token-file", tokenFile})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
+	output := stdout.String()
+	assert.Contains(t, output, "WebAuthn", "output should mention WebAuthn")
+	assert.Contains(t, output, "PIV", "output should mention PIV")
 }
 
 // TestTokenStorage tests comprehensive token storage scenarios.

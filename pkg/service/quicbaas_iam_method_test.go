@@ -52,6 +52,8 @@ func (m *mockIAMComponents) GetInternalAuthManager() interfaces.AuthManager {
 	return m.internalAuthManager
 }
 
+func (m *mockIAMComponents) GetAppStorage() iam.AppStorage { return nil }
+
 func (m *mockTenantManager) CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
 	if m.createFn != nil {
 		return m.createFn(ctx, opts)

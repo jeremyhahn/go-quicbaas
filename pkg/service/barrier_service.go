@@ -1,0 +1,423 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package service
+
+import (
+	"context"
+	"time"
+
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+)
+
+// =============================================================================
+// Barrier Service — facade over go-qrdb's BarrierClient.
+// =============================================================================
+//
+// BarrierServicer mirrors go-qrdb's pkg/service.BarrierServicer surface and
+// re-exports the same operations through the QuicBaaS service layer. The
+// implementation is a thin facade that delegates to the qrdb SDK
+// transport.BarrierClient — QuicBaaS does not own the storage barrier
+// itself, so this layer exists purely so the QuicBaaS REST/gRPC handlers
+// have a stable, package-local target type.
+//
+// Lifecycle wiring (Phase 11) instantiates a BarrierService against the
+// qrdb SDK client used by the rest of the daemon and threads it through
+// the service facade. Phase 9 only delivers the facade and REST shim; the
+// service is constructed lazily and may be nil in handlers that pre-date
+// the wiring.
+// =============================================================================
+
+// BarrierServicer exposes barrier lifecycle operations through the QuicBaaS
+// service facade. All methods delegate to a transport.BarrierClient at the
+// SDK layer; semantics match go-qrdb exactly.
+type BarrierServicer interface {
+	// BarrierStatus returns the current barrier state.
+	BarrierStatus(ctx context.Context) (*BarrierStatusInfo, error)
+
+	// BarrierInitialize initialises the barrier with a single passphrase.
+	BarrierInitialize(ctx context.Context, secret string) error
+
+	// BarrierUnseal unseals the barrier with a single passphrase.
+	BarrierUnseal(ctx context.Context, secret string) error
+
+	// BarrierSeal transitions the barrier to the sealed state.
+	BarrierSeal(ctx context.Context) error
+
+	// BarrierInitializeShamir initialises the barrier with Shamir secret
+	// sharing and returns the generated shares.
+	BarrierInitializeShamir(ctx context.Context, secret string, threshold, total int) (*ShamirInitInfo, error)
+
+	// BarrierUnsealWithShare submits a single Shamir share toward the unseal
+	// quorum.
+	BarrierUnsealWithShare(ctx context.Context, share string) (*UnsealShareProgress, error)
+
+	// BarrierUnsealWithShares unseals the barrier using a complete set of
+	// Shamir shares in a single call.
+	BarrierUnsealWithShares(ctx context.Context, shares []string) error
+
+	// BarrierShamirListShares returns metadata about persisted shares.
+	BarrierShamirListShares(ctx context.Context) (*ShamirSharesInfo, error)
+
+	// BarrierShamirDeleteShare removes a single share by index.
+	BarrierShamirDeleteShare(ctx context.Context, index int) error
+
+	// BarrierShamirDeleteAllShares removes all persisted shares.
+	BarrierShamirDeleteAllShares(ctx context.Context) error
+
+	// BarrierShamirVerify validates the consistency of persisted shares.
+	BarrierShamirVerify(ctx context.Context) error
+
+	// BarrierRekey generates new Shamir shares for the existing root key.
+	BarrierRekey(ctx context.Context, threshold, total int) (*ShamirInitInfo, error)
+
+	// BarrierGenerateRecoveryKeys generates recovery shares for disaster
+	// recovery.
+	BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*RecoveryKeysInfo, error)
+
+	// BarrierRecoverWithKeys unseals the barrier using recovery shares.
+	BarrierRecoverWithKeys(ctx context.Context, keys []string) error
+
+	// BarrierDeleteRecoveryKeys removes recovery key metadata.
+	BarrierDeleteRecoveryKeys(ctx context.Context) error
+
+	// BarrierHasRecoveryKeys reports whether recovery key metadata exists.
+	BarrierHasRecoveryKeys(ctx context.Context) (bool, error)
+
+	// BarrierGenerateRootToken creates a new root token by proving knowledge
+	// of the master key through Shamir shares.
+	BarrierGenerateRootToken(ctx context.Context, shares []string) (*RootTokenInfo, error)
+}
+
+// BarrierStatusInfo describes the current state of the storage barrier.
+// Mirrors go-qrdb's service.BarrierStatusInfo so the REST handlers can
+// shape responses identically across both daemons.
+type BarrierStatusInfo struct {
+	// Sealed is true when the barrier is in sealed state.
+	Sealed bool
+
+	// Strategy identifies which sealing strategy protects the root key.
+	Strategy string
+
+	// HardwareBacked is true when the active strategy uses dedicated
+	// cryptographic hardware.
+	HardwareBacked bool
+
+	// InitializedAt records when the barrier was first initialised.
+	InitializedAt time.Time
+}
+
+// ShamirInitInfo contains the output of a Shamir initialisation or rekey.
+type ShamirInitInfo struct {
+	// Shares are the Shamir share values for distribution.
+	Shares []string
+
+	// Threshold is the minimum number of shares required for reconstruction.
+	Threshold int
+
+	// TotalShares is the total number of shares generated.
+	TotalShares int
+}
+
+// UnsealShareProgress reports the current state of quorum-based unsealing.
+type UnsealShareProgress struct {
+	// Required is the minimum number of shares needed to unseal.
+	Required int
+
+	// Submitted is the number of shares provided so far.
+	Submitted int
+
+	// Complete is true when the quorum threshold has been met.
+	Complete bool
+}
+
+// ShamirSharesInfo describes the persisted Shamir share state.
+type ShamirSharesInfo struct {
+	// Count is the number of shares currently in storage.
+	Count int
+
+	// Threshold is the minimum shares required for reconstruction.
+	Threshold int
+
+	// Total is the total shares generated during initialisation.
+	Total int
+}
+
+// RecoveryKeysInfo contains the output of recovery key generation.
+type RecoveryKeysInfo struct {
+	// Keys are the recovery share values for distribution.
+	Keys []string
+
+	// Threshold is the minimum number of keys required for recovery.
+	Threshold int
+
+	// Total is the total number of keys generated.
+	Total int
+}
+
+// RootTokenInfo represents a generated root token.
+type RootTokenInfo struct {
+	// Token is the hex-encoded root token value.
+	Token string
+
+	// CreatedAt records when the token was generated.
+	CreatedAt time.Time
+}
+
+// BarrierServiceMissingError signals that the barrier facade was constructed
+// without an underlying go-qrdb BarrierClient. The error is returned from
+// every BarrierService method so handlers can report 503 Service Unavailable
+// rather than nil-panic.
+type BarrierServiceMissingError struct{}
+
+// Error returns the error message.
+func (e *BarrierServiceMissingError) Error() string {
+	return "barrier service not configured"
+}
+
+// BarrierService implements BarrierServicer by delegating to a
+// transport.BarrierClient from the go-qrdb SDK. The client field is allowed
+// to be nil during early boot; every method short-circuits with
+// BarrierServiceMissingError when the underlying transport is missing.
+type BarrierService struct {
+	// client is the qrdb SDK BarrierClient. May be nil before lifecycle
+	// wiring completes.
+	client transport.BarrierClient
+}
+
+// Compile-time interface check.
+var _ BarrierServicer = (*BarrierService)(nil)
+
+// NewBarrierService constructs a BarrierService backed by the supplied
+// qrdb BarrierClient. Passing nil yields a service whose methods all
+// return BarrierServiceMissingError; callers may therefore install the
+// facade unconditionally and let lifecycle wiring populate the client
+// once the qrdb SDK is online.
+func NewBarrierService(client transport.BarrierClient) *BarrierService {
+	return &BarrierService{client: client}
+}
+
+// BarrierStatus returns the current barrier status.
+func (s *BarrierService) BarrierStatus(ctx context.Context) (*BarrierStatusInfo, error) {
+	if s.client == nil {
+		return nil, &BarrierServiceMissingError{}
+	}
+	resp, err := s.client.BarrierStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	info := &BarrierStatusInfo{
+		Sealed:         resp.Sealed,
+		Strategy:       resp.Strategy,
+		HardwareBacked: resp.HardwareBacked,
+	}
+	if resp.InitializedAt != "" {
+		// The qrdb wire format is RFC3339; parse defensively.
+		if t, parseErr := time.Parse(time.RFC3339, resp.InitializedAt); parseErr == nil {
+			info.InitializedAt = t
+		}
+	}
+	return info, nil
+}
+
+// BarrierInitialize initialises the barrier with a passphrase.
+func (s *BarrierService) BarrierInitialize(ctx context.Context, secret string) error {
+	if s.client == nil {
+		return &BarrierServiceMissingError{}
+	}
+	return s.client.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{Secret: secret})
+}
+
+// BarrierUnseal unseals the barrier with a passphrase.
+func (s *BarrierService) BarrierUnseal(ctx context.Context, secret string) error {
+	if s.client == nil {
+		return &BarrierServiceMissingError{}
+	}
+	return s.client.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{Secret: secret})
+}
+
+// BarrierSeal transitions the barrier to the sealed state.
+func (s *BarrierService) BarrierSeal(ctx context.Context) error {
+	if s.client == nil {
+		return &BarrierServiceMissingError{}
+	}
+	return s.client.BarrierSeal(ctx)
+}
+
+// BarrierInitializeShamir initialises the barrier with Shamir secret sharing.
+func (s *BarrierService) BarrierInitializeShamir(ctx context.Context, secret string, threshold, total int) (*ShamirInitInfo, error) {
+	if s.client == nil {
+		return nil, &BarrierServiceMissingError{}
+	}
+	resp, err := s.client.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
+		Secret:      secret,
+		Threshold:   threshold,
+		TotalShares: total,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ShamirInitInfo{
+		Shares:      resp.Shares,
+		Threshold:   resp.Threshold,
+		TotalShares: resp.TotalShares,
+	}, nil
+}
+
+// BarrierUnsealWithShare submits a single Shamir share.
+func (s *BarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*UnsealShareProgress, error) {
+	if s.client == nil {
+		return nil, &BarrierServiceMissingError{}
+	}
+	resp, err := s.client.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{Share: share})
+	if err != nil {
+		return nil, err
+	}
+	return &UnsealShareProgress{
+		Required:  resp.Required,
+		Submitted: resp.Submitted,
+		Complete:  resp.Complete,
+	}, nil
+}
+
+// BarrierUnsealWithShares unseals the barrier using a complete set of shares.
+func (s *BarrierService) BarrierUnsealWithShares(ctx context.Context, shares []string) error {
+	if s.client == nil {
+		return &BarrierServiceMissingError{}
+	}
+	return s.client.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{Shares: shares})
+}
+
+// BarrierShamirListShares returns metadata about persisted shares.
+func (s *BarrierService) BarrierShamirListShares(ctx context.Context) (*ShamirSharesInfo, error) {
+	if s.client == nil {
+		return nil, &BarrierServiceMissingError{}
+	}
+	resp, err := s.client.BarrierShamirListShares(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &ShamirSharesInfo{
+		Count:     resp.Count,
+		Threshold: resp.Threshold,
+		Total:     resp.Total,
+	}, nil
+}
+
+// BarrierShamirDeleteShare removes a single share by index.
+func (s *BarrierService) BarrierShamirDeleteShare(ctx context.Context, index int) error {
+	if s.client == nil {
+		return &BarrierServiceMissingError{}
+	}
+	return s.client.BarrierShamirDeleteShare(ctx, &transport.BarrierShamirDeleteShareRequest{Index: index})
+}
+
+// BarrierShamirDeleteAllShares removes all persisted shares.
+func (s *BarrierService) BarrierShamirDeleteAllShares(ctx context.Context) error {
+	if s.client == nil {
+		return &BarrierServiceMissingError{}
+	}
+	return s.client.BarrierShamirDeleteAllShares(ctx)
+}
+
+// BarrierShamirVerify validates persisted share consistency.
+func (s *BarrierService) BarrierShamirVerify(ctx context.Context) error {
+	if s.client == nil {
+		return &BarrierServiceMissingError{}
+	}
+	return s.client.BarrierShamirVerify(ctx)
+}
+
+// BarrierRekey generates new Shamir shares for the existing root key.
+func (s *BarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*ShamirInitInfo, error) {
+	if s.client == nil {
+		return nil, &BarrierServiceMissingError{}
+	}
+	resp, err := s.client.BarrierRekey(ctx, &transport.BarrierRekeyRequest{
+		Threshold: threshold,
+		Total:     total,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ShamirInitInfo{
+		Shares:      resp.Shares,
+		Threshold:   resp.Threshold,
+		TotalShares: resp.TotalShares,
+	}, nil
+}
+
+// BarrierGenerateRecoveryKeys generates recovery shares.
+func (s *BarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*RecoveryKeysInfo, error) {
+	if s.client == nil {
+		return nil, &BarrierServiceMissingError{}
+	}
+	resp, err := s.client.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{
+		Threshold: threshold,
+		Total:     total,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &RecoveryKeysInfo{
+		Keys:      resp.Keys,
+		Threshold: resp.Threshold,
+		Total:     resp.Total,
+	}, nil
+}
+
+// BarrierRecoverWithKeys unseals the barrier using recovery shares.
+func (s *BarrierService) BarrierRecoverWithKeys(ctx context.Context, keys []string) error {
+	if s.client == nil {
+		return &BarrierServiceMissingError{}
+	}
+	return s.client.BarrierRecoverWithKeys(ctx, &transport.BarrierRecoverWithKeysRequest{Keys: keys})
+}
+
+// BarrierDeleteRecoveryKeys removes recovery key metadata.
+func (s *BarrierService) BarrierDeleteRecoveryKeys(ctx context.Context) error {
+	if s.client == nil {
+		return &BarrierServiceMissingError{}
+	}
+	return s.client.BarrierDeleteRecoveryKeys(ctx)
+}
+
+// BarrierHasRecoveryKeys reports whether recovery key metadata exists.
+func (s *BarrierService) BarrierHasRecoveryKeys(ctx context.Context) (bool, error) {
+	if s.client == nil {
+		return false, &BarrierServiceMissingError{}
+	}
+	resp, err := s.client.BarrierHasRecoveryKeys(ctx)
+	if err != nil {
+		return false, err
+	}
+	return resp.HasKeys, nil
+}
+
+// BarrierGenerateRootToken creates a new root token from Shamir shares.
+func (s *BarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*RootTokenInfo, error) {
+	if s.client == nil {
+		return nil, &BarrierServiceMissingError{}
+	}
+	resp, err := s.client.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{Shares: shares})
+	if err != nil {
+		return nil, err
+	}
+	info := &RootTokenInfo{Token: resp.Token}
+	if resp.CreatedAt != "" {
+		if t, parseErr := time.Parse(time.RFC3339, resp.CreatedAt); parseErr == nil {
+			info.CreatedAt = t
+		}
+	}
+	return info, nil
+}

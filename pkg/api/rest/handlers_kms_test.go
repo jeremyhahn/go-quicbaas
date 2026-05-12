@@ -18,6 +18,7 @@ package rest
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
 	"encoding/json"
@@ -2388,4 +2389,189 @@ func TestHandleGetRebalancePlanServiceError(t *testing.T) {
 	server.HandleGetRebalancePlan(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// Signer returns a crypto.Signer for the given keyID. Tests that don't
+// exercise the signer path receive a nil signer and no error; tests
+// that do can stub this by redefining the method on a wrapped type.
+func (m *MockKMSManager) Signer(_ context.Context, _ string) (crypto.Signer, error) {
+	return nil, nil
+}
+
+func TestHandleSetDefaultKey(t *testing.T) {
+	tests := []struct {
+		name           string
+		keyName        string
+		setupMock      func(*testutil.MockQuicBaaS)
+		expectedStatus int
+	}{
+		{
+			name:    "set default key successfully",
+			keyName: "my-key",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("SetDefaultKey", mock.Anything, &service.SetDefaultKeyRequest{Name: "my-key"}).
+					Return(&service.SetDefaultKeyResponse{
+						Name:      "my-key",
+						IsDefault: true,
+					}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:    "key not found returns 404",
+			keyName: "missing-key",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("SetDefaultKey", mock.Anything, &service.SetDefaultKeyRequest{Name: "missing-key"}).
+					Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "kms.SetDefaultKey"}).Once()
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "missing key name returns 400",
+			keyName:        "",
+			setupMock:      func(m *testutil.MockQuicBaaS) {},
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockService, cleanup := setupMockServer(t)
+			defer cleanup()
+			tt.setupMock(mockService)
+
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/kms/keys/"+tt.keyName+"/default", nil)
+			w := httptest.NewRecorder()
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("name", tt.keyName)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+			server.HandleSetDefaultKey(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests: isSystemKey filter (Issue 2 fix)
+// ---------------------------------------------------------------------------
+
+// TestIsSystemKey ensures the predicate correctly classifies system keys
+// so the KMS list API excludes daemon-internal keys from operator responses.
+func TestIsSystemKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		keyID     string
+		algorithm string
+		want      bool
+	}{
+		// System keys — must be excluded
+		{"empty algorithm (CA cert)", "QuicBaaS Root CA", "", true},
+		{"empty algorithm (TLS server cert)", "localhost", "", true},
+		{"empty algorithm (TLS IP cert)", "127.0.0.1", "", true},
+		{"empty algorithm (agent identity)", "agent-embedded-host-abc12345", "", true},
+		{"well-known CA name without algorithm", "QuicBaaS Root CA", "", true},
+		{"agent-embedded prefix", "agent-embedded-vm-host-2-0c592403", "", true},
+		{"agent-embedded prefix with algorithm empty", "agent-embedded-myhost", "", true},
+		// Legitimate operator keys — must be included
+		{"tenant DEK key", "quicbaas-tenant-dek-kek", "AES-256-GCM", false},
+		{"operator key AES", "my-encryption-key", "AES-256-GCM", false},
+		{"operator key RSA", "signing-key", "RSA-2048", false},
+		{"operator key ECDSA", "jwt-key", "ECDSA-P256", false},
+		// Edge: agent-embedded-like name but has algorithm (hypothetical future case)
+		{"agent-embedded with algorithm", "agent-embedded-host", "AES-256-GCM", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isSystemKey(tt.keyID, tt.algorithm)
+			assert.Equal(t, tt.want, got, "isSystemKey(%q, %q)", tt.keyID, tt.algorithm)
+		})
+	}
+}
+
+// TestHandleListKeys_ExcludesSystemKeys verifies that HandleListKeys
+// never returns keys with empty algorithm or known system-key IDs.
+func TestHandleListKeys_ExcludesSystemKeys(t *testing.T) {
+	server, mockService, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	epoch := time.Unix(-62135596800, 0)
+	now := time.Now()
+
+	// Mix of system keys and one legitimate operator key.
+	svcKeys := []*service.KeyHandle{
+		{KeyID: "QuicBaaS Root CA", Algorithm: service.KeyAlgorithm(""), Version: 1, Status: service.KeyStatusEnabled, CreatedAt: epoch},
+		{KeyID: "localhost", Algorithm: service.KeyAlgorithm(""), Version: 1, Status: service.KeyStatusEnabled, CreatedAt: epoch},
+		{KeyID: "127.0.0.1", Algorithm: service.KeyAlgorithm(""), Version: 1, Status: service.KeyStatusEnabled, CreatedAt: epoch},
+		{KeyID: "agent-embedded-host-abc12345", Algorithm: service.KeyAlgorithm(""), Version: 1, Status: service.KeyStatusEnabled, CreatedAt: epoch},
+		{KeyID: "quicbaas-tenant-dek-kek", Algorithm: service.KeyAlgorithm("AES-256-GCM"), Version: 1, Status: service.KeyStatusEnabled, CreatedAt: now},
+	}
+	mockService.On("ListKeys", mock.Anything, mock.Anything).Return(&service.ListKeysResponse{
+		Keys:       svcKeys,
+		TotalCount: len(svcKeys),
+		Timestamp:  now,
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/kms/keys", nil)
+	w := httptest.NewRecorder()
+	server.HandleListKeys(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp ListKeysRESTResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	// Only the operator key should remain.
+	require.Len(t, resp.Keys, 1, "only operator keys must be returned")
+	assert.Equal(t, "quicbaas-tenant-dek-kek", resp.Keys[0].KeyID)
+	assert.Equal(t, "AES-256-GCM", resp.Keys[0].Algorithm)
+}
+
+// TestHandleListKeyVersions_NonZeroCreatedAt asserts that every version entry in
+// the response carries a non-zero created_at Unix timestamp (bug #88).  A zero
+// value would cause the frontend to display "1/21/1970" instead of the actual
+// creation date.
+func TestHandleListKeyVersions_NonZeroCreatedAt(t *testing.T) {
+	server, mockService, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	keyCreated := time.Date(2025, 5, 3, 0, 0, 0, 0, time.UTC)
+
+	mockKMSMgr := &MockKMSManager{}
+	mockKMSMgr.On("GetKey", mock.Anything, "my-key").Return(&kms.KeyMetadata{
+		KeyID:     "my-key",
+		Algorithm: "AES-256-GCM",
+		Version:   2,
+		State:     kms.KeyStateEnabled,
+		Created:   keyCreated,
+		Updated:   keyCreated,
+	}, nil).Once()
+	mockService.DisableKMS = true
+	mockService.On("KMSManager").Return(mockKMSMgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/kms/keys/my-key/versions", nil)
+	w := httptest.NewRecorder()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", "my-key")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	server.HandleListKeyVersions(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp ListKeyVersionsRESTResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	require.Len(t, resp.Versions, 2, "expected one entry per version")
+	for _, v := range resp.Versions {
+		assert.Greater(t, v.CreatedAt, int64(0),
+			"version %d: created_at must be a non-zero Unix timestamp (got %d)", v.Version, v.CreatedAt)
+	}
+	// Sanity-check: the timestamp must encode the correct year (2025).
+	expectedUnix := keyCreated.Unix()
+	assert.Equal(t, expectedUnix, resp.Versions[0].CreatedAt)
 }

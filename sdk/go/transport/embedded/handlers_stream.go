@@ -17,6 +17,7 @@ import (
 	"context"
 	"reflect"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )
@@ -260,6 +261,55 @@ func handleTimeSeriesQueryStream(ctx context.Context, svc service.QuicBaaS, req 
 	}
 }
 
+// handleOrchestratorInference handles the Orchestrator Inference unary operation in-process.
+// It calls AgentService.Infer, accumulates all chunks, and returns an *orchestratorSDK.InferenceResponse.
+func handleOrchestratorInference(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.InferenceRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "Inference",
+			"*orchestrator.InferenceRequest", reflect.TypeOf(req).String())
+	}
+
+	agentSvc := svc.Agent()
+	if agentSvc == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "Inference")
+	}
+
+	inferReq := &orchestration.InferRequest{
+		Backend:      r.Backend,
+		Model:        r.Model,
+		Prompt:       r.Prompt,
+		SystemPrompt: r.SystemPrompt,
+		HostAffinity: r.HostAffinity,
+		Metadata:     r.Metadata,
+	}
+
+	chunks, err := agentSvc.Infer(ctx, inferReq)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := orchestration.AccumulateChunks(chunks)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert orchestration.ContentBlock to SDK InferenceContentBlock.
+	sdkContent := make([]orchestratorSDK.InferenceContentBlock, len(resp.Content))
+	for i, block := range resp.Content {
+		sdkContent[i] = orchestratorSDK.InferenceContentBlock{
+			Type: block.Type,
+			Text: block.Text,
+		}
+	}
+
+	return &orchestratorSDK.InferenceResponse{
+		Content:    sdkContent,
+		Model:      resp.Model,
+		StopReason: resp.StopReason,
+	}, nil
+}
+
 // handleSubscribeJobEventsStream handles the Orchestrator SubscribeJobEvents streaming operation.
 func handleSubscribeJobEventsStream(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error {
 	r, ok := req.(*orchestratorSDK.SubscribeJobEventsRequest)
@@ -300,6 +350,70 @@ func handleSubscribeJobEventsStream(ctx context.Context, svc service.QuicBaaS, r
 			}
 			select {
 			case s.recvChan() <- sdkEvt:
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-s.context().Done():
+				return s.context().Err()
+			}
+		}
+	}
+}
+
+// handleOrchestratorInferenceStream handles the Orchestrator InferenceStream streaming operation.
+// It calls AgentService.Infer and forwards each InferChunk as an *orchestratorSDK.InferenceChunk.
+func handleOrchestratorInferenceStream(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error {
+	// InferenceStream receives an *InferenceRequest from the SDK client.
+	r, ok := req.(*orchestratorSDK.InferenceRequest)
+	if !ok {
+		return NewInvalidRequestTypeError("quicbaas.Orchestrator", "InferenceStream",
+			"*orchestrator.InferenceRequest", reflect.TypeOf(req).String())
+	}
+
+	agentSvc := svc.Agent()
+	if agentSvc == nil {
+		return NewUnknownMethodError("quicbaas.Orchestrator", "InferenceStream")
+	}
+
+	inferReq := &orchestration.InferRequest{
+		Backend:      r.Backend,
+		Model:        r.Model,
+		Prompt:       r.Prompt,
+		SystemPrompt: r.SystemPrompt,
+		HostAffinity: r.HostAffinity,
+		Metadata:     r.Metadata,
+	}
+
+	chunkCh, err := agentSvc.Infer(ctx, inferReq)
+	if err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.context().Done():
+			return s.context().Err()
+		case chunk, ok := <-chunkCh:
+			if !ok {
+				return nil
+			}
+			// Convert orchestration.ContentBlock slices to SDK InferenceContentBlock.
+			sdkDelta := make([]orchestratorSDK.InferenceContentBlock, len(chunk.Delta))
+			for i, block := range chunk.Delta {
+				sdkDelta[i] = orchestratorSDK.InferenceContentBlock{
+					Type: block.Type,
+					Text: block.Text,
+				}
+			}
+			sdkChunk := &orchestratorSDK.InferenceChunk{
+				Delta:      sdkDelta,
+				Model:      chunk.Model,
+				StopReason: chunk.StopReason,
+				Final:      chunk.Final,
+			}
+			select {
+			case s.recvChan() <- sdkChunk:
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-s.context().Done():

@@ -161,7 +161,7 @@ func (h *iamHandler) transformTenantRequest(method string, req interface{}) (int
 func (h *iamHandler) transformUserRequest(method string, req interface{}) (interface{}, error) {
 	switch method {
 	case "Create":
-		// SDK sends: {tenant_id: "...", request: {username, email, password, ...}}
+		// SDK sends: {tenant_id: "...", request: {username, email, auth_methods, ...}}
 		// Server expects: {tenant_id: "...", email, username, name, roles, groups, attributes} flat
 		return transformUserCreateRequest(req)
 	case "Get":
@@ -170,6 +170,10 @@ func (h *iamHandler) transformUserRequest(method string, req interface{}) (inter
 		return req, nil
 	case "GetByEmail":
 		// SDK sends: {tenant_id: "...", email: "..."}
+		// Server expects: same format
+		return req, nil
+	case "FindByUsername":
+		// SDK sends: {tenant_id: "...", username: "..."}
 		// Server expects: same format
 		return req, nil
 	case "Update":
@@ -504,7 +508,7 @@ func transformUserCreateRequest(req interface{}) (interface{}, error) {
 		result["email"] = email
 	}
 
-	// Password is not used by the server IAM service (it handles auth differently)
+	// Password field is intentionally not mapped; authentication is passwordless (FIDO2/PIV).
 
 	// Check for roles with both lowercase and uppercase keys
 	if roles, ok := getInterfaceField(fieldSource, "roles", "Roles"); ok {
@@ -1002,7 +1006,7 @@ func (h *iamHandler) transformTenantResponse(method string, resp map[string]inte
 // transformUserResponse transforms user responses.
 func (h *iamHandler) transformUserResponse(method string, resp map[string]interface{}) (interface{}, error) {
 	switch method {
-	case "Create", "Get", "Update", "GetByEmail":
+	case "Create", "Get", "Update", "GetByEmail", "FindByUsername":
 		// Server returns: {"user": {...}, "timestamp": "..."}
 		// SDK expects: {"id": "...", "username": "...", ...}
 		return extractUser(resp), nil

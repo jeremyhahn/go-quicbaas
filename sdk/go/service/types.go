@@ -616,6 +616,8 @@ type (
 	UnwrapKeyResponse         = pkgservice.UnwrapKeyResponse
 	SetKeySafetyRequest       = pkgservice.SetKeySafetyRequest
 	SetKeySafetyResponse      = pkgservice.SetKeySafetyResponse
+	SetDefaultKeyRequest      = pkgservice.SetDefaultKeyRequest
+	SetDefaultKeyResponse     = pkgservice.SetDefaultKeyResponse
 	ClearKeySafetyRequest     = pkgservice.ClearKeySafetyRequest
 	ClearKeySafetyResponse    = pkgservice.ClearKeySafetyResponse
 	GetPublicKeyRequest       = pkgservice.GetPublicKeyRequest

@@ -1,0 +1,208 @@
+# QuicBaaS Agent Daemon Configuration Reference
+#
+# This file demonstrates all configuration options for the remote agent daemon.
+# Use this as a template for your deployment-specific config.yaml.
+#
+# Config can be loaded from a YAML file OR via command-line flags:
+#   - Flags take precedence over file settings
+#   - Environment variables can override both
+#
+# Example (file-based):
+#   quicbaas agent serve --config /etc/quicbaas/agent.yaml
+#
+# Example (flags override file):
+#   quicbaas agent serve --config /etc/quicbaas/agent.yaml --sandbox-policy=preferred
+#
+# See pkg/agent/config.go for Effective*() defaults when a field is omitted.
+
+# =============================================================================
+# REQUIRED FIELDS (daemon will not start without these)
+# =============================================================================
+
+# central_addr: gRPC/QUIC endpoint of the central QuicBaaS orchestrator
+# Format: https://hostname:port or https://IP:port
+# Example: https://quicbaas.internal:8443 or https://198.51.100.51:8443
+# Required: YES
+central_addr: "https://quicbaas-central.example.com:8443"
+
+# tenant_id: The tenant this daemon serves
+# All spawn requests for other tenants are rejected with PERMISSION_DENIED.
+# Example: acme, customer-42, compliance-prod
+# Required: YES
+tenant_id: "acme"
+
+# bind_addr: Local address where the daemon listens for AgentRuntime RPC
+# Format: host:port
+# Default: 127.0.0.1:9091
+# Common values: 127.0.0.1:9091 (localhost), 0.0.0.0:9091 (all interfaces)
+# Required: YES (but has a sensible default)
+bind_addr: "0.0.0.0:9091"
+
+# work_dir: Base directory for session state, persisted credentials, and workspace
+# This directory is created at daemon startup if it doesn't exist.
+# Permissions: 0700 (daemon user only)
+# Example: /var/lib/quicbaas-agent (systemd), /home/agent/.quicbaas (user)
+# Required: YES
+work_dir: "/var/lib/quicbaas-agent"
+
+# enrollment_token: One-shot bootstrap token issued by the central orchestrator
+# Obtained via: quicbaas iam role grant agent-runtime --tenant <id>
+# Consumed on first start to exchange for persistent client credentials
+# Persisted credentials are stored in work_dir/credentials.json (not needed on restart)
+# Either enrollment_token OR device_cert_path must be set on first start.
+# Required on first start: YES (if device_cert_path not set)
+enrollment_token: "eyJhbGciOiJFUzI1NiIsImtpZCI6ImFnZW50LWVucm9sbC1rZXkyMDI1In0.eyJzdWIiOiJhZ2VudC1kYWVtb24iLCJpc3MiOiJodHRwczovL3F1aWNiYWFzLWNlbnRyYWwuZXhhbXBsZS5jb206ODQ0MyIsImF1ZCI6ImFnZW50LXJ1bnRpbWUiLCJleHAiOjE3MTM2MzcyNDcsImlhdCI6MTcxMzYzMzY0NywianRpIjoib25lLXNob3QtdG9rZW4tMDEifQ.signature_here"
+
+# device_cert_path: Path to a TPM 2.0 or Secure Enclave device certificate
+# Alternative to enrollment_token for hardware-bound identity.
+# Only set if your agent host has TPM/Secure Enclave support.
+# Either enrollment_token OR device_cert_path must be set on first start.
+# Default: "" (not used unless explicitly set)
+# device_cert_path: "/etc/quicbaas/agent-device.crt"
+
+# =============================================================================
+# SANDBOX POLICY (controls execution isolation defaults)
+# =============================================================================
+
+# sandbox_policy: Server-side policy for resolving SandboxModeDefault
+# Controls how DEFAULT sandbox requests are resolved and which modes are allowed.
+# Values:
+#   required  → DEFAULT resolves to container-sandboxed; NONE forbidden
+#   preferred → DEFAULT resolves to container-sandboxed; NONE allowed
+#   opt-in    → DEFAULT resolves to raw exec; NONE allowed (legacy, least secure)
+# Default: required
+# Recommended: required (compliance-first, secure by default)
+# Development: opt-in (ease-of-use for testing)
+# Staging: preferred (balance security and flexibility)
+sandbox_policy: "required"
+
+# =============================================================================
+# BACKENDS (which spawn paths this daemon exposes)
+# =============================================================================
+
+# backends: List of enabled agent backends
+# Values: acp (Claude Code, Codex), ollama (Ollama inference)
+# Default: [acp, ollama] (both backends enabled)
+# Examples:
+#   backends: [acp]           # only Claude Code/Codex
+#   backends: [ollama]        # only Ollama
+#   backends: [acp, ollama]   # both
+backends: ["acp", "ollama"]
+
+# =============================================================================
+# CONTAINER RUNTIME (for sandboxed execution)
+# =============================================================================
+
+# container_runtime: Which OCI runtime to use for sandboxed sessions
+# Values:
+#   auto   → detect docker, then fall back to podman (default)
+#   docker → use docker only
+#   podman → use podman only
+#   none   → disable container-sandboxed execution (requires raw exec opt-in)
+# Default: auto
+# Notes:
+#   - Requires /var/run/docker.sock (or podman socket) mounted
+#   - "auto" probes at startup; if neither is available, sandboxed requests fail
+container_runtime: "auto"
+
+# =============================================================================
+# CONTAINER IMAGE MAPPING (for sandboxed spawns)
+# =============================================================================
+
+# image_map: Maps backend names to container image references
+# Used by the daemon to resolve which image to spawn when a request
+# doesn't specify an explicit image.
+# Format: backend_name: fully_qualified_image_ref
+# Examples:
+#   claude-code: quicbaas/claude-code:v1.0
+#   codex: registry.internal/codex:main
+#   ollama: (no mapping needed; uses Ollama HTTP API)
+# Default: {} (empty; requests must specify image)
+# Note: If auto_pull=true, these images are pulled at startup if missing
+image_map:
+  claude-code: "quicbaas/claude-code:latest"
+  codex: "quicbaas/codex:latest"
+  opencode: "quicbaas/opencode:latest"
+
+# image_registry: Optional registry prefix for unqualified image references
+# Applied to image_map values that lack a slash (i.e., unqualified).
+# Example:
+#   image_registry: ghcr.io/automatethethings
+#   image_map: { claude-code: claude-code:v1 }
+#   → Resolves to: ghcr.io/automatethethings/claude-code:v1
+# Default: "" (no prefix)
+# Use case: Multi-tenant deployments where each tenant pulls from a different registry
+image_registry: ""
+
+# auto_pull: Pull missing container images at daemon startup
+# If true, the daemon attempts to `docker pull` each image in image_map
+# at startup. Failures are logged and retried on first spawn.
+# If false, missing images cause spawn requests to fail.
+# Default: false
+auto_pull: false
+
+# =============================================================================
+# HEARTBEAT (fleet registration)
+# =============================================================================
+
+# heartbeat_interval: How often the daemon reports liveness to central
+# Format: duration string (1s, 30s, 5m, etc.)
+# Default: 30s
+# Notes:
+#   - Zero or omitted → 30s default applied
+#   - Heartbeat updates: active session count, sandbox policy, available backends
+#   - Failed heartbeats are retried on next tick (no exponential backoff)
+#   - Central marks daemon offline after ~3 missed heartbeats
+heartbeat_interval: "30s"
+
+# =============================================================================
+# SHUTDOWN BEHAVIOR (graceful session drain)
+# =============================================================================
+
+# shutdown_grace: Max time to wait for in-flight sessions to drain on shutdown
+# Format: duration string (10s, 30s, 1m, etc.)
+# Default: 30s
+# Notes:
+#   - When daemon receives SIGTERM, it enters graceful shutdown
+#   - Existing sessions get `shutdown_grace` to finish
+#   - After timeout, sessions are forcefully terminated
+#   - In-progress RPCs return error to central
+shutdown_grace: "30s"
+
+# =============================================================================
+# PRODUCTION EXAMPLE
+# =============================================================================
+# Use this config for compliance-sensitive deployments (FedRAMP, HIPAA, PCI DSS):
+#
+# central_addr: https://quicbaas-prod.internal:8443
+# tenant_id: acme-prod
+# bind_addr: 0.0.0.0:9091
+# work_dir: /var/lib/quicbaas-agent
+# enrollment_token: <issue via: quicbaas iam role grant agent-runtime>
+# sandbox_policy: required
+# backends: [acp, ollama]
+# container_runtime: auto
+# auto_pull: true
+# image_map:
+#   claude-code: quicbaas/claude-code:v1.0-prod
+#   codex: quicbaas/codex:v1.0-prod
+# heartbeat_interval: 30s
+# shutdown_grace: 30s
+
+# =============================================================================
+# DEVELOPMENT EXAMPLE
+# =============================================================================
+# Use this config for local testing and development:
+#
+# central_addr: http://localhost:9090
+# tenant_id: test
+# bind_addr: 127.0.0.1:9091
+# work_dir: /tmp/quicbaas-agent-dev
+# enrollment_token: dev-token-for-testing
+# sandbox_policy: opt-in
+# backends: [acp, ollama]
+# container_runtime: auto
+# auto_pull: false
+# image_map: {}
+# heartbeat_interval: 5s
+# shutdown_grace: 10s

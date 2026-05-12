@@ -417,15 +417,15 @@ func TestAuthenticateWithThrottling_SuccessResetsCounter(t *testing.T) {
 	ctx := context.Background()
 
 	// Fail a few times with wrong password
-	_, err = am.Authenticate(ctx, "testuser", "wrong-password-definitely")
+	_, err = am.Authenticate(ctx, "testuser", passwordBuffer(t, "wrong-password-definitely"))
 	assert.Error(t, err)
-	_, err = am.Authenticate(ctx, "testuser", "wrong-password-definitely")
+	_, err = am.Authenticate(ctx, "testuser", passwordBuffer(t, "wrong-password-definitely"))
 	assert.Error(t, err)
 
 	assert.Equal(t, int64(2), am.GetAttemptTracker().FailedAttempts("testuser"))
 
 	// Successful login resets the counter
-	token, err := am.Authenticate(ctx, "testuser", "correct-password-long-enough")
+	token, err := am.Authenticate(ctx, "testuser", passwordBuffer(t, "correct-password-long-enough"))
 	assert.NoError(t, err)
 	assert.NotNil(t, token)
 
@@ -455,12 +455,12 @@ func TestAuthenticateWithThrottling_LockoutAfterMaxAttempts(t *testing.T) {
 
 	// Fail up to the max
 	for i := 0; i < 3; i++ {
-		_, err = am.Authenticate(ctx, "lockuser", "wrong-password-attempt")
+		_, err = am.Authenticate(ctx, "lockuser", passwordBuffer(t, "wrong-password-attempt"))
 		assert.Error(t, err)
 	}
 
 	// Account should now be locked - even correct password should fail
-	_, err = am.Authenticate(ctx, "lockuser", "password-long-enough-123")
+	_, err = am.Authenticate(ctx, "lockuser", passwordBuffer(t, "password-long-enough-123"))
 	assert.Error(t, err)
 	assert.True(t, api.IsAccountLocked(err))
 	assert.Contains(t, err.Error(), "account locked")
@@ -488,8 +488,8 @@ func TestAuthenticateWithThrottling_LockoutAutoExpires(t *testing.T) {
 	ctx := context.Background()
 
 	// Lock the account with wrong attempts
-	_, _ = am.Authenticate(ctx, "expireuser", "wrong-password-attempt")
-	_, err = am.Authenticate(ctx, "expireuser", "wrong-password-attempt")
+	_, _ = am.Authenticate(ctx, "expireuser", passwordBuffer(t, "wrong-password-attempt"))
+	_, err = am.Authenticate(ctx, "expireuser", passwordBuffer(t, "wrong-password-attempt"))
 	assert.Error(t, err)
 
 	// Spin-wait for lockout to expire
@@ -501,7 +501,7 @@ func TestAuthenticateWithThrottling_LockoutAutoExpires(t *testing.T) {
 	}
 
 	// Should be able to login again with correct password
-	token, err := am.Authenticate(ctx, "expireuser", "password-correct-123")
+	token, err := am.Authenticate(ctx, "expireuser", passwordBuffer(t, "password-correct-123"))
 	assert.NoError(t, err)
 	assert.NotNil(t, token)
 }
@@ -519,7 +519,7 @@ func TestAuthenticateWithThrottling_DisabledAuthBypassesThrottling(t *testing.T)
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	_, err = am.Authenticate(ctx, "anyuser", "anypassword-long")
+	_, err = am.Authenticate(ctx, "anyuser", passwordBuffer(t, "anypassword-long"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "authentication is not enabled")
 
@@ -542,7 +542,7 @@ func TestAuthenticateWithThrottling_PasswordAuthDisabledBypassesThrottling(t *te
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	_, err = am.Authenticate(ctx, "anyuser", "anypassword-long")
+	_, err = am.Authenticate(ctx, "anyuser", passwordBuffer(t, "anypassword-long"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "password-based authentication is disabled")
 
@@ -573,7 +573,7 @@ func TestAuthenticateWithThrottling_DisabledThrottling(t *testing.T) {
 
 	// Fail many times - account should never lock
 	for i := 0; i < 20; i++ {
-		_, err = am.Authenticate(ctx, "admin", "wrong-password-attempt")
+		_, err = am.Authenticate(ctx, "admin", passwordBuffer(t, "wrong-password-attempt"))
 		assert.Error(t, err)
 		assert.False(t, api.IsAccountLocked(err), "account should never lock when throttling is disabled")
 	}
@@ -584,7 +584,7 @@ func TestAuthenticateWithThrottling_DisabledThrottling(t *testing.T) {
 	assert.False(t, am.GetAttemptTracker().IsLocked("admin"))
 
 	// Correct password should still work after many failures
-	token, err := am.Authenticate(ctx, "admin", "correct-password-long")
+	token, err := am.Authenticate(ctx, "admin", passwordBuffer(t, "correct-password-long"))
 	assert.NoError(t, err)
 	assert.NotNil(t, token)
 }

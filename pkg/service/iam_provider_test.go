@@ -21,24 +21,25 @@ import (
 )
 
 type mockIAMComponents struct {
-	tenantManager       iam.TenantManager
-	identityStore       *iam.IdentityStore
-	policyEngine        *iam.PolicyEngine
-	appManager          *iam.AppManager
-	oidcProvider        *iam.OIDCProvider
-	federationManager   iam.FederationManager
-	mfaManager          MFAManager
-	webAuthnMgr         WebAuthnManager
-	auditLogger         iam.AuditLogger
-	sessionStorage      iam.SessionStorage
-	sessionManager      iam.SessionManager
-	adminManager        *iam.AdminManager
-	gdprManager         *iam.GDPRManager
-	authManager         AuthManagerInterface
-	internalAuthManager interfaces.AuthManager
+	tenantManager         iam.TenantManager
+	identityStore         *iam.IdentityStore
+	policyEngine          *iam.PolicyEngine
+	appManager            *iam.AppManager
+	oidcProvider          *iam.OIDCProvider
+	federationManager     iam.FederationManager
+	mfaManager            MFAManager
+	webAuthnMgr           WebAuthnManager
+	auditLogger           iam.AuditLogger
+	sessionStorage        iam.SessionStorage
+	sessionManager        iam.SessionManager
+	adminManager          *iam.AdminManager
+	gdprManager           *iam.GDPRManager
+	authManager           AuthManagerInterface
+	internalAuthManager   interfaces.AuthManager
 }
 
 var _ IAMComponents = (*mockIAMComponents)(nil)
+
 
 func TestIAMServiceAdapter_GetTenantManager_WithComponents(t *testing.T) {
 	components := &mockIAMComponents{}
@@ -278,36 +279,40 @@ func TestIAMServiceAdapter_GetAuthManager_NilComponents(t *testing.T) {
 	assert.Nil(t, am)
 }
 
-type mockIAMServiceProvider struct {
-	tenantMgr      iam.TenantManager
-	identityStore  *iam.IdentityStore
-	policyEngine   *iam.PolicyEngine
-	appMgr         *iam.AppManager
-	oidcProvider   *iam.OIDCProvider
-	federationMgr  iam.FederationManager
-	mfaMgr         MFAManager
-	webAuthnMgr    WebAuthnManager
-	auditLogger    iam.AuditLogger
-	sessionStorage iam.SessionStorage
-	sessionMgr     SessionManager
-	adminMgr       *iam.AdminManager
-	gdprMgr        *iam.GDPRManager
-	authMgr        AuthManagerInterface
 
-	tenantMgrErr      error
-	identityStoreErr  error
-	policyEngineErr   error
-	appMgrErr         error
-	oidcProviderErr   error
-	federationMgrErr  error
-	mfaMgrErr         error
-	webAuthnMgrErr    error
-	auditLoggerErr    error
-	sessionStorageErr error
-	sessionMgrErr     error
-	adminMgrErr       error
-	gdprMgrErr        error
-	authMgrErr        error
+
+type mockIAMServiceProvider struct {
+	tenantMgr          iam.TenantManager
+	identityStore      *iam.IdentityStore
+	policyEngine       *iam.PolicyEngine
+	appMgr             *iam.AppManager
+	appStorage         iam.AppStorage
+	oidcProvider       *iam.OIDCProvider
+	federationMgr      iam.FederationManager
+	mfaMgr             MFAManager
+	webAuthnMgr        WebAuthnManager
+	auditLogger        iam.AuditLogger
+	sessionStorage     iam.SessionStorage
+	sessionMgr         SessionManager
+	adminMgr           *iam.AdminManager
+	gdprMgr            *iam.GDPRManager
+	authMgr            AuthManagerInterface
+
+	tenantMgrErr          error
+	identityStoreErr      error
+	policyEngineErr       error
+	appMgrErr             error
+	appStorageErr         error
+	oidcProviderErr       error
+	federationMgrErr      error
+	mfaMgrErr             error
+	webAuthnMgrErr        error
+	auditLoggerErr        error
+	sessionStorageErr     error
+	sessionMgrErr         error
+	adminMgrErr           error
+	gdprMgrErr            error
+	authMgrErr            error
 }
 
 type mockTenantManager struct {

@@ -2942,43 +2942,6 @@ func TestParseSecretsUpdateStatusResponse_UnmarshalError(t *testing.T) {
 }
 
 // =============================================================================
-// User Update Command - Additional Paths
-// =============================================================================
-
-func TestRunUserUpdateCommand_PasswordTooShort(t *testing.T) {
-	origFactory := rbacClientFactory
-	defer func() { rbacClientFactory = origFactory }()
-
-	cmd := &cobra.Command{}
-	cmd.Flags().StringSlice("roles", nil, "")
-	cmd.Flags().String("password", "", "")
-
-	_ = cmd.Flags().Set("password", "short")
-
-	origPwd := userPassword
-	defer func() { userPassword = origPwd }()
-	userPassword = "short"
-
-	err := runUserUpdateCommand(cmd, []string{"testuser"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "at least 8 characters")
-}
-
-func TestRunUserUpdateCommand_NoFlagsSet(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().StringSlice("roles", nil, "")
-	cmd.Flags().String("password", "", "")
-
-	origPwd := userPassword
-	defer func() { userPassword = origPwd }()
-	userPassword = ""
-
-	err := runUserUpdateCommand(cmd, []string{"testuser"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one of")
-}
-
-// =============================================================================
 // Scheduler Helper Functions
 // =============================================================================
 

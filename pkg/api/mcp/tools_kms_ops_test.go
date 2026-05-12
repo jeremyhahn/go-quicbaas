@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"crypto"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -227,6 +229,10 @@ func (s *testKMSService) SafetyReport(_ context.Context, _ *service.SafetyReport
 	return &service.SafetyReportResponse{}, nil
 }
 
+func (s *testKMSService) SetDefaultKey(_ context.Context, _ *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
+	return &service.SetDefaultKeyResponse{}, nil
+}
+
 func (s *testKMSService) GetPublicKey(_ context.Context, _ *service.GetPublicKeyRequest) (*service.GetPublicKeyResponse, error) {
 	return nil, nil
 }
@@ -399,6 +405,12 @@ func (m *testKMSManagerForOps) Decrypt(_ context.Context, _ string, _ []byte, _ 
 
 func (m *testKMSManagerForOps) Sign(_ context.Context, _ string, _ []byte, _ string) ([]byte, error) {
 	return []byte("signature"), nil
+}
+
+// Signer satisfies interfaces.KMSManager for tests that do not exercise a
+// crypto.Signer. Tests requiring a live signer should supply a concrete mock.
+func (m *testKMSManagerForOps) Signer(_ context.Context, _ string) (crypto.Signer, error) {
+	return nil, dberrors.New(dberrors.ErrNotImplemented, "testKMSManagerForOps.Signer", "signer stub")
 }
 
 func (m *testKMSManagerForOps) Verify(_ context.Context, _ string, _ []byte, _ []byte, _ string) (bool, error) {

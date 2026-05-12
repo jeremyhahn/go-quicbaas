@@ -48,6 +48,76 @@ type agentServiceImpl struct {
 	workflowLoader   *WorkflowLoader    // workflow loader for job resumption
 	logger           interfaces.Logger
 	eventSubscribers sync.Map // map[string]*subscriberList keyed by tenantID/jobID
+	sandboxPolicy    SandboxPolicy
+	tenantPolicies   TenantPolicyProvider  // optional resolver for per-tenant overrides
+	remoteResolver   RemoteBackendResolver // optional: routes daemon-kind registrations to RemoteACPBackend
+	sessionLog       SessionEventLog       // optional: append-only per-session event log for attach/replay
+	projectAuthz     *ProjectAuthz         // optional: enforces per-project agent role matrix
+}
+
+// TenantPolicyProvider supplies per-tenant policy overrides that can tighten
+// (but never loosen) the server-level SandboxPolicy. Implementations are
+// typically backed by the IAM subsystem.
+type TenantPolicyProvider interface {
+	// SandboxPolicy returns the tenant's sandbox policy override if one is
+	// configured, or nil to defer to the server-level policy.
+	SandboxPolicy(tenantID string) *SandboxPolicy
+}
+
+// RemoteBackendResolver lets the BackendDispatcher route a backend name to a
+// remote daemon (e.g., RemoteACPBackend) before falling back to locally
+// registered backends. Returning (backend, true) wins; (nil, false) defers
+// to the local lookup. Implementations are typically driven by the
+// AgentRegistry, matching registrations where kind=daemon and backend=name.
+//
+// Routing hints beyond backend+projectID (e.g. host affinity) are threaded
+// via the context using WithHostAffinity / HostAffinityFromContext so this
+// function signature stays stable as we add more selectors.
+type RemoteBackendResolver func(ctx context.Context, backend, projectID string) (AgentBackend, bool)
+
+// hostAffinityKey is the unexported context key used to thread a requested
+// host affinity from SpawnSession down into a RemoteBackendResolver.
+type hostAffinityKey struct{}
+
+// WithHostAffinity returns a context carrying the given host affinity hint.
+// Resolvers use HostAffinityFromContext to read it back.
+func WithHostAffinity(ctx context.Context, host string) context.Context {
+	if host == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, hostAffinityKey{}, host)
+}
+
+// HostAffinityFromContext returns the host affinity hint, or "" when none
+// was set. Safe to call on any context.
+func HostAffinityFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(hostAffinityKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// gpuRequiredKey is the unexported context key used to thread a GPU
+// requirement from Spawn / Infer requests into the RemoteBackendResolver.
+type gpuRequiredKey struct{}
+
+// WithGpuRequired returns a context that signals the resolver must restrict
+// candidate daemons to those advertising "gpu" in their Capabilities slice.
+func WithGpuRequired(ctx context.Context) context.Context {
+	return context.WithValue(ctx, gpuRequiredKey{}, true)
+}
+
+// GpuRequiredFromContext returns true when the context carries a GPU
+// requirement set via WithGpuRequired. Safe to call on any context.
+func GpuRequiredFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(gpuRequiredKey{}).(bool)
+	return v
 }
 
 // runningJob tracks a running control loop and its cancellation function.
@@ -177,6 +247,301 @@ func (s *agentServiceImpl) SetKVStore(kv interfaces.KVStore) {
 // When set, recovered jobs can reload their workflow definitions by name.
 func (s *agentServiceImpl) SetWorkflowLoader(wl *WorkflowLoader) {
 	s.workflowLoader = wl
+}
+
+// ListWorkflows returns all registered workflow definitions sorted by name.
+func (s *agentServiceImpl) ListWorkflows(_ context.Context) ([]*WorkflowDefinition, error) {
+	if s.workflowLoader == nil {
+		return []*WorkflowDefinition{}, nil
+	}
+	return s.workflowLoader.ListDefinitions(), nil
+}
+
+// GetWorkflow returns a workflow definition by name.
+func (s *agentServiceImpl) GetWorkflow(_ context.Context, name string) (*WorkflowDefinition, error) {
+	if s.workflowLoader == nil {
+		return nil, &WorkflowNotFoundError{Name: name}
+	}
+	return s.workflowLoader.Get(name)
+}
+
+// RegisterWorkflow validates and registers a workflow definition.
+func (s *agentServiceImpl) RegisterWorkflow(_ context.Context, def *WorkflowDefinition) error {
+	if s.workflowLoader == nil {
+		s.workflowLoader = NewWorkflowLoader()
+	}
+	return s.workflowLoader.Register(def)
+}
+
+// UpdateWorkflow replaces an existing workflow definition by name.
+func (s *agentServiceImpl) UpdateWorkflow(_ context.Context, def *WorkflowDefinition) error {
+	if s.workflowLoader == nil {
+		return &WorkflowNotFoundError{Name: def.Name}
+	}
+	return s.workflowLoader.Update(def)
+}
+
+// DeleteWorkflow removes a workflow definition by name.
+func (s *agentServiceImpl) DeleteWorkflow(_ context.Context, name string) error {
+	if s.workflowLoader == nil {
+		return &WorkflowNotFoundError{Name: name}
+	}
+	return s.workflowLoader.Delete(name)
+}
+
+// SpawnChildJob fans out a child job from a parent job's lead agent.
+// The calling agent (identified via req.CallerAgentID populated by the gRPC
+// handler from mTLS context) must be the registered lead of the parent job.
+// Any other agent receives NotLeadOfParentError (mapped to HTTP 403).
+//
+// Pattern for agentic fan-out:
+//
+//	Agent A (lead) decomposes work and calls SpawnChildJob for each sub-task.
+//	Child jobs run on different hosts; their status is retrievable via GetJobStatus.
+//	The parent's ChildJobIDs slice is updated atomically after each successful spawn.
+func (s *agentServiceImpl) SpawnChildJob(ctx context.Context, req *SpawnChildJobRequest) (*SpawnChildJobResponse, error) {
+	if req == nil {
+		return nil, &AgentServiceError{
+			Sentinel: ErrAgentServiceUnavailable,
+			Message:  "spawn child job request must not be nil",
+		}
+	}
+
+	if req.ParentJobID == "" {
+		return nil, &AgentServiceError{
+			Sentinel: ErrParentJobNotFound,
+			Message:  "parent_job_id is required",
+		}
+	}
+
+	// Resolve tenant from context.
+	tenantID := TenantFromContext(ctx)
+	if tenantID == "" {
+		return nil, &AgentServiceError{
+			Sentinel: ErrTenantIDRequired,
+			Message:  "tenant ID is required",
+		}
+	}
+
+	// Load parent job status from memory or KV.
+	parentStatus, err := s.GetJobStatus(ctx, tenantID, req.ParentJobID)
+	if err != nil {
+		return nil, &ParentJobNotFoundError{ParentJobID: req.ParentJobID}
+	}
+
+	// Enforce lead-only constraint: the caller must match the parent's LeadAgentID.
+	if parentStatus.Config != nil && parentStatus.Config.LeadAgentID != "" {
+		if req.CallerAgentID != parentStatus.Config.LeadAgentID {
+			return nil, &NotLeadOfParentError{
+				ParentJobID:   req.ParentJobID,
+				CallerAgentID: req.CallerAgentID,
+				LeadAgentID:   parentStatus.Config.LeadAgentID,
+			}
+		}
+	}
+
+	// Build the description for the child job from inline task specs.
+	description := "child of " + req.ParentJobID
+	if len(req.Tasks) > 0 {
+		description = req.Tasks[0].Description
+		if len(req.Tasks) > 1 {
+			description += " (+ " + itoa(len(req.Tasks)-1) + " more tasks)"
+		}
+	}
+
+	childReq := &StartJobRequest{
+		TenantID:     tenantID,
+		Description:  description,
+		ProjectID:    req.ProjectID,
+		WorkflowName: req.WorkflowID,
+	}
+
+	resp, startErr := s.StartJob(ctx, childReq)
+	if startErr != nil {
+		return nil, startErr
+	}
+
+	childJobID := resp.JobID
+
+	// Tag the child job with parent lineage via its persisted status.
+	// We update the KV store directly since the job has already started.
+	if s.kvStore != nil {
+		if childStatus, loadErr := s.loadJobStatus(tenantID, childJobID); loadErr == nil {
+			childStatus.ParentJobID = req.ParentJobID
+			childStatus.SpawnedBy = req.CallerAgentID
+			childStatus.SpawnedAt = time.Now().UnixNano()
+			s.persistJobStatus(tenantID, childStatus)
+		}
+	}
+
+	// Atomically append the child ID to the parent's ChildJobIDs.
+	s.appendChildJobID(ctx, tenantID, req.ParentJobID, childJobID)
+
+	s.logger.Infof("orchestration: spawned child job %s from parent %s by agent %s",
+		childJobID, req.ParentJobID, req.CallerAgentID)
+
+	return &SpawnChildJobResponse{ChildJobID: childJobID}, nil
+}
+
+// appendChildJobID atomically appends childID to the parent job's ChildJobIDs.
+// It updates both the in-memory runningJob status and the KV store.
+func (s *agentServiceImpl) appendChildJobID(ctx context.Context, tenantID, parentJobID, childJobID string) {
+	jobKey := tenantID + "/" + parentJobID
+
+	// Update in-memory running job if present.
+	if val, ok := s.jobs.Load(jobKey); ok {
+		if rj, ok := val.(*runningJob); ok {
+			if st := rj.loop.Status(); st != nil {
+				st.ChildJobIDs = append(st.ChildJobIDs, childJobID)
+			}
+		}
+	}
+
+	// Persist to KV store for durability and cross-restart visibility.
+	if s.kvStore == nil {
+		return
+	}
+	if parentStatus, err := s.loadJobStatus(tenantID, parentJobID); err == nil {
+		parentStatus.ChildJobIDs = append(parentStatus.ChildJobIDs, childJobID)
+		s.persistJobStatus(tenantID, parentStatus)
+	}
+}
+
+// SubmitTaskArtifacts delegates to the task store's artifact submission.
+func (s *agentServiceImpl) SubmitTaskArtifacts(ctx context.Context, tenantID, taskID string, artifacts []Artifact) error {
+	if s.taskStore == nil {
+		return &AgentServiceError{Sentinel: ErrTaskStoreRequired, Message: "task store is required for artifact submission"}
+	}
+	return s.taskStore.SubmitTaskArtifacts(ctx, tenantID, taskID, artifacts)
+}
+
+// GetTaskArtifact retrieves a named artifact, resolving KV refs to bytes.
+func (s *agentServiceImpl) GetTaskArtifact(ctx context.Context, tenantID, taskID, name string) (*Artifact, error) {
+	if s.taskStore == nil {
+		return nil, &AgentServiceError{Sentinel: ErrTaskStoreRequired, Message: "task store is required for artifact retrieval"}
+	}
+	return s.taskStore.GetTaskArtifact(ctx, tenantID, taskID, name)
+}
+
+// ListTaskArtifacts returns output artifact metadata for a task.
+func (s *agentServiceImpl) ListTaskArtifacts(ctx context.Context, tenantID, taskID string) ([]Artifact, error) {
+	if s.taskStore == nil {
+		return nil, &AgentServiceError{Sentinel: ErrTaskStoreRequired, Message: "task store is required for artifact listing"}
+	}
+	return s.taskStore.ListTaskArtifacts(ctx, tenantID, taskID)
+}
+
+// SetSandboxPolicy sets the server-level policy that governs how
+// SandboxModeDefault is resolved and which explicit SandboxMode values are
+// permitted. Unset policies default to SandboxPolicyRequired.
+func (s *agentServiceImpl) SetSandboxPolicy(policy SandboxPolicy) {
+	s.sandboxPolicy = policy
+}
+
+// SetTenantPolicyProvider registers a resolver for per-tenant SandboxPolicy
+// overrides. Passing nil removes the provider.
+func (s *agentServiceImpl) SetTenantPolicyProvider(p TenantPolicyProvider) {
+	s.tenantPolicies = p
+}
+
+// SetRemoteBackendResolver installs a resolver that routes daemon-kind
+// registrations to their RemoteACPBackend before the locally registered
+// backends are consulted. Passing nil disables remote routing.
+func (s *agentServiceImpl) SetRemoteBackendResolver(r RemoteBackendResolver) {
+	s.remoteResolver = r
+}
+
+// SetSessionEventLog installs the append-only session event log. When set,
+// session lifecycle events (spawn, prompt submission, close) are appended
+// for attacher consumption. Passing nil disables the log — useful for
+// embedded deployments that don't need scrollback.
+// SetProjectAuthz configures the project-level authorization helper. When set,
+// ClaimTask enforces the project's AgentRoles matrix for scoped tasks.
+// Unscoped tasks (empty ProjectID) bypass authorization unchanged.
+func (s *agentServiceImpl) SetProjectAuthz(authz *ProjectAuthz) {
+	s.projectAuthz = authz
+}
+
+func (s *agentServiceImpl) SetSessionEventLog(log SessionEventLog) {
+	s.sessionLog = log
+}
+
+// SessionEventLog returns the currently-installed session event log, or
+// nil when unset. Exposed so the REST/gRPC handlers can Range and Subscribe
+// on the same instance the orchestrator appends to.
+func (s *agentServiceImpl) SessionEventLog() SessionEventLog {
+	return s.sessionLog
+}
+
+// appendSessionEvent persists a session event on behalf of the orchestrator
+// control loop. Errors are logged but never propagated — append is a
+// side effect of the main operation (spawn, prompt, close) and must not
+// fail those operations on its own.
+func (s *agentServiceImpl) appendSessionEvent(ctx context.Context, event *SessionEvent) {
+	if s.sessionLog == nil {
+		return
+	}
+	if err := s.sessionLog.Append(ctx, event); err != nil {
+		s.logger.Warnf("orchestration: append session event %s seq=%d: %v", event.SessionID, event.Sequence, err)
+	}
+}
+
+// nextSessionSequence returns the next sequence number to assign to an
+// event appended on behalf of the orchestrator. Falls back to 1 on lookup
+// error so the first event of a fresh session starts at 1 as expected.
+func (s *agentServiceImpl) nextSessionSequence(ctx context.Context, tenantID, sessionID string) uint64 {
+	if s.sessionLog == nil {
+		return 0
+	}
+	latest, err := s.sessionLog.LatestSequence(ctx, tenantID, sessionID)
+	if err != nil {
+		return 1
+	}
+	return latest + 1
+}
+
+// sessionCreator extracts a friendly identifier for the operator who
+// initiated this request. Used to stamp SessionMeta.CreatedBy so attachers
+// see who started each session. Falls back to the tenant ID when no
+// richer context exists; refined by downstream IAM scope propagation.
+func sessionCreator(ctx context.Context) string {
+	if creator, ok := ctx.Value(creatorContextKey{}).(string); ok && creator != "" {
+		return creator
+	}
+	return TenantFromContext(ctx)
+}
+
+// creatorContextKey threads the calling operator's identity down into
+// orchestrator handlers. Used by gRPC/REST interceptors; defined here so
+// the orchestrator can read it without a cross-package dependency.
+type creatorContextKey struct{}
+
+// WithSessionCreator returns a context stamped with the operator's identity
+// for SessionMeta.CreatedBy. Interceptors call this; downstream orchestrator
+// code calls sessionCreator() to read it back.
+func WithSessionCreator(ctx context.Context, operatorID string) context.Context {
+	if operatorID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, creatorContextKey{}, operatorID)
+}
+
+// resolveSandboxMode turns a request's SandboxMode into the effective mode
+// the backend should honor, given the server policy, any tenant override,
+// and whether the orchestrator or its selected backend has access to a
+// container runtime.
+func (s *agentServiceImpl) resolveSandboxMode(
+	ctx context.Context,
+	req *SpawnSessionRequest,
+	backendHasRuntime bool,
+) (SandboxMode, error) {
+	var tenantOverride *SandboxPolicy
+	if s.tenantPolicies != nil {
+		tenantOverride = s.tenantPolicies.SandboxPolicy(TenantFromContext(ctx))
+	}
+	hasRuntime := backendHasRuntime ||
+		(s.containerRuntime != nil && s.containerRuntime.IsAvailable())
+	return ResolveSandboxMode(req.EffectiveSandboxMode(), s.sandboxPolicy, tenantOverride, hasRuntime)
 }
 
 // validateTenant checks tenant access if the guard is configured.
@@ -409,7 +774,14 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		return nil, &AgentServiceError{Sentinel: ErrBackendRequired}
 	}
 
-	backend, err := s.lookupBackend(req.Backend)
+	// Thread host-affinity and GPU requirement into the context so the
+	// remote-backend resolver can filter candidate daemons accordingly.
+	ctx = WithHostAffinity(ctx, req.HostAffinity)
+	if req.GpuRequired {
+		ctx = WithGpuRequired(ctx)
+	}
+
+	backend, err := s.lookupBackendCtx(ctx, req.Backend, req.ProjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +815,16 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	// with SetContainerRuntime handle their own container lifecycle.
 	acpBackend, isACP := backend.(*ACPBackend)
 	backendHandlesContainers := isACP && acpBackend.containerRuntime != nil
-	if req.Sandboxed && !backendHandlesContainers && s.containerRuntime != nil && s.containerRuntime.IsAvailable() {
+
+	// Resolve sandbox mode against server policy + tenant override + runtime
+	// availability. This fails fast before any side effects (container spawn
+	// or backend call), giving callers a deterministic policy violation error.
+	effectiveMode, modeErr := s.resolveSandboxMode(ctx, req, backendHandlesContainers)
+	if modeErr != nil {
+		return nil, modeErr
+	}
+
+	if effectiveMode == SandboxModeRequired && !backendHandlesContainers && s.containerRuntime != nil && s.containerRuntime.IsAvailable() {
 		containerID, spawnErr := s.spawnSandboxedSession(ctx, req, workDir, model)
 		if spawnErr != nil {
 			return nil, spawnErr
@@ -503,7 +884,8 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		}, nil
 	}
 
-	// Standard backend spawn path
+	// Standard backend spawn path. Sandboxed is derived from the resolved
+	// effective mode for legacy backends that still consult it.
 	spawnReq := &SpawnRequest{
 		ProjectID:      req.ProjectID,
 		WorkDir:        workDir,
@@ -513,7 +895,8 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		Env:            req.Env,
 		ExtraArgs:      req.ExtraArgs,
 		Persistent:     req.Persistent,
-		Sandboxed:      req.Sandboxed,
+		SandboxMode:    effectiveMode,
+		Sandboxed:      effectiveMode == SandboxModeRequired,
 		ContainerImage: req.ContainerImage,
 	}
 
@@ -557,6 +940,35 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		"session_id": session.ID,
 		"backend":    req.Backend,
 	})
+
+	// Register the session in the event log so attachers can list + scroll
+	// back from seq=1. Log presence is optional; no-op when log is nil.
+	if s.sessionLog != nil {
+		_ = s.sessionLog.PutMeta(ctx, &SessionMeta{
+			SessionID:    session.ID,
+			TenantID:     tenantID,
+			ProjectID:    req.ProjectID,
+			Backend:      req.Backend,
+			Model:        model,
+			Status:       SessionStateActive,
+			CreatedAt:    time.Unix(0, now).UTC(),
+			CreatedBy:    sessionCreator(ctx),
+			LastActivity: time.Unix(0, now).UTC(),
+		})
+		s.appendSessionEvent(ctx, &SessionEvent{
+			Sequence:  s.nextSessionSequence(ctx, tenantID, session.ID),
+			SessionID: session.ID,
+			TenantID:  tenantID,
+			Timestamp: time.Unix(0, now).UTC(),
+			Source:    "system:orchestrator",
+			Kind:      KindSystemMessage,
+			System: &SystemMessagePayload{
+				Level:   "info",
+				Message: "session spawned",
+				Code:    "session_spawned",
+			},
+		})
+	}
 
 	return &SpawnSessionResponse{
 		SessionID: session.ID,
@@ -641,7 +1053,7 @@ func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSession
 		}
 	}
 
-	backend, err := s.lookupBackend(backendName)
+	backend, err := s.lookupBackendCtx(ctx, backendName, req.ProjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -663,6 +1075,26 @@ func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSession
 		EventCallback: req.EventCallback,
 	}
 
+	// Append a PromptSubmitted event BEFORE dispatching so attachers see
+	// the prompt even if the backend call fails.
+	tenantID := TenantFromContext(ctx)
+	if s.sessionLog != nil && req.SessionID != "" {
+		now := time.Now().UTC()
+		s.appendSessionEvent(ctx, &SessionEvent{
+			Sequence:  s.nextSessionSequence(ctx, tenantID, req.SessionID),
+			SessionID: req.SessionID,
+			TenantID:  tenantID,
+			Timestamp: now,
+			Source:    "operator:" + sessionCreator(ctx),
+			Kind:      KindPromptSubmitted,
+			Prompt: &PromptSubmittedPayload{
+				Prompt:       req.Prompt,
+				Model:        model,
+				SystemPrompt: req.SystemPrompt,
+			},
+		})
+	}
+
 	resp, err := backend.Prompt(ctx, promptReq)
 	if err != nil {
 		return nil, err
@@ -679,6 +1111,31 @@ func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSession
 		}
 	}
 
+	// Append assistant output as a single AssistantChunk with stop_reason.
+	// Backend-side streaming will eventually produce multiple chunks; for
+	// non-streaming responses (claude/codex/opencode's current shape) we
+	// still emit exactly one event with the full text.
+	if s.sessionLog != nil && sessionID != "" {
+		for _, block := range resp.Content {
+			if block.Type != "text" || block.Text == "" {
+				continue
+			}
+			s.appendSessionEvent(ctx, &SessionEvent{
+				Sequence:  s.nextSessionSequence(ctx, tenantID, sessionID),
+				SessionID: sessionID,
+				TenantID:  tenantID,
+				Timestamp: time.Now().UTC(),
+				Source:    "agent:" + backendName,
+				Kind:      KindAssistantChunk,
+				AssistantChunk: &AssistantChunkPayload{
+					Text:       block.Text,
+					StopReason: resp.StopReason,
+					Model:      resp.Model,
+				},
+			})
+		}
+	}
+
 	return &PromptSessionResponse{
 		SessionID:  resp.SessionID,
 		Content:    resp.Content,
@@ -686,6 +1143,83 @@ func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSession
 		StopReason: resp.StopReason,
 		Timestamp:  time.Now().UnixNano(),
 	}, nil
+}
+
+// Infer runs a stateless fleet-routed inference call against the named
+// backend. The backend is resolved via the RemoteBackendResolver (which
+// applies host-affinity and tenant filtering) so it follows the same
+// routing path as Spawn and Prompt. The call is rejected with
+// InferUnsupportedError when the resolved backend's Capabilities show
+// PersistentSessions=true, since those backends require a Spawn first.
+func (s *agentServiceImpl) Infer(ctx context.Context, req *InferRequest) (<-chan *InferChunk, error) {
+	if err := s.validateTenant(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, &AgentServiceError{Sentinel: ErrBackendRequired, Message: "request is required"}
+	}
+	if req.Backend == "" {
+		return nil, &AgentServiceError{Sentinel: ErrBackendRequired}
+	}
+	if req.Prompt == "" {
+		return nil, &AgentServiceError{Sentinel: ErrPromptRequired}
+	}
+
+	// Thread host affinity and GPU requirement through the context so the
+	// RemoteBackendResolver can filter candidate daemons accordingly.
+	inferCtx := ctx
+	if req.HostAffinity != "" {
+		inferCtx = WithHostAffinity(inferCtx, req.HostAffinity)
+	}
+	if req.GpuRequired {
+		inferCtx = WithGpuRequired(inferCtx)
+	}
+
+	backend, err := s.lookupBackendCtx(inferCtx, req.Backend, "")
+	if err != nil {
+		return nil, err
+	}
+
+	// RemoteACPBackend implements Infer natively; the remote daemon
+	// enforces its own per-backend Infer-support check (Runtime.Infer
+	// rejects Spawn-required backends). Local sessionless backends
+	// (OllamaBackend) are wrapped: call Prompt and emit the result as a
+	// single final chunk so callers have a uniform channel interface.
+	type inferrer interface {
+		Infer(ctx context.Context, req *InferRequest) (<-chan *InferChunk, error)
+	}
+
+	if r, ok := backend.(inferrer); ok {
+		return r.Infer(inferCtx, req)
+	}
+
+	// Local-only path: reject session-based backends that require Spawn
+	// first. Remote daemons never reach this branch because the remote
+	// backend adapter implements Infer above.
+	if backend.Capabilities().PersistentSessions {
+		return nil, &InferUnsupportedError{Backend: req.Backend, Operation: "infer"}
+	}
+
+	// Local backend fallback: call Prompt and bridge the result to a channel.
+	promptReq := &PromptRequest{
+		Prompt:       req.Prompt,
+		Model:        req.Model,
+		SystemPrompt: req.SystemPrompt,
+	}
+	resp, err := backend.Prompt(inferCtx, promptReq)
+	if err != nil {
+		return nil, &InferBackendError{Op: "Prompt", Err: err}
+	}
+
+	ch := make(chan *InferChunk, 1)
+	ch <- &InferChunk{
+		Delta:      resp.Content,
+		Model:      resp.Model,
+		StopReason: resp.StopReason,
+		Final:      true,
+	}
+	close(ch)
+	return ch, nil
 }
 
 // SessionStatus returns the status of an active session.
@@ -719,7 +1253,7 @@ func (s *agentServiceImpl) SessionStatus(ctx context.Context, req *SessionStatus
 		}, nil
 	}
 
-	backend, err := s.lookupBackend(backendName)
+	backend, err := s.lookupBackendCtx(ctx, backendName, "")
 	if err != nil {
 		return nil, err
 	}
@@ -753,7 +1287,7 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 		return nil, err
 	}
 
-	backend, err := s.lookupBackend(backendName)
+	backend, err := s.lookupBackendCtx(ctx, backendName, "")
 	if err != nil {
 		return nil, err
 	}
@@ -787,6 +1321,28 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 		"session_id": req.SessionID,
 		"backend":    backendName,
 	})
+
+	// Append the terminal SessionClosed event so attachers see the lifecycle
+	// end in their replay stream.
+	if s.sessionLog != nil {
+		now := time.Now().UTC()
+		s.appendSessionEvent(ctx, &SessionEvent{
+			Sequence:  s.nextSessionSequence(ctx, tenantID, req.SessionID),
+			SessionID: req.SessionID,
+			TenantID:  tenantID,
+			Timestamp: now,
+			Source:    "operator:" + sessionCreator(ctx),
+			Kind:      KindSessionClosed,
+			Closed: &SessionClosedPayload{
+				Reason: "operator",
+			},
+		})
+		if meta, metaErr := s.sessionLog.GetMeta(ctx, tenantID, req.SessionID); metaErr == nil {
+			meta.Status = SessionStateClosed
+			meta.LastActivity = now
+			_ = s.sessionLog.PutMeta(ctx, meta)
+		}
+	}
 
 	return &CloseSessionResponse{
 		SessionID: req.SessionID,
@@ -991,6 +1547,24 @@ func (s *agentServiceImpl) BackendToolGuidance(backendName string) string {
 	return backend.ToolGuidance()
 }
 
+// ListBackendModels returns model names available on the named backend.
+// Backends that implement ModelLister are queried directly; others return
+// ErrBackendNotFound if unknown, or an empty slice when no lister is available.
+func (s *agentServiceImpl) ListBackendModels(ctx context.Context, backendName string) ([]string, error) {
+	backend, err := s.lookupBackendCtx(ctx, backendName, "")
+	if err != nil {
+		return nil, err
+	}
+
+	lister, ok := backend.(ModelLister)
+	if !ok {
+		// Backend exists but does not expose a model catalog.
+		return []string{}, nil
+	}
+
+	return lister.ListModels(ctx)
+}
+
 // ListBackends returns all registered agent backends.
 func (s *agentServiceImpl) ListBackends(ctx context.Context) ([]*AgentBackendInfo, error) {
 	// ListBackends is a global operation - backends are not tenant-scoped.
@@ -1106,6 +1680,11 @@ func (s *agentServiceImpl) LoadPersistedSessions(ctx context.Context) error {
 // CreateTask creates a new orchestration task via the task store.
 // It validates the tenant, generates a task ID, persists the task, and
 // publishes lifecycle events to messaging and channel server when configured.
+//
+// When req.AutoSpawn is true, the task is immediately dispatched as a
+// one-shot job on the best-matching agent. The task is always persisted first;
+// if no matching agent exists, it is returned with empty SpawnedJobID and
+// ErrNoMatchingAgent is returned.
 func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskRequest) (*Task, error) {
 	if err := s.validateTenant(ctx); err != nil {
 		return nil, err
@@ -1130,6 +1709,24 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 		}
 	}
 
+	// Merge scheduling hints into metadata so the task scheduler and
+	// downstream consumers can read them without a schema change.
+	meta := req.Metadata
+	if req.HostAffinity != "" || req.GpuRequired || req.Backend != "" {
+		if meta == nil {
+			meta = make(map[string]string)
+		}
+		if req.HostAffinity != "" {
+			meta["host_affinity"] = req.HostAffinity
+		}
+		if req.GpuRequired {
+			meta["gpu_required"] = "true"
+		}
+		if req.Backend != "" {
+			meta["backend"] = req.Backend
+		}
+	}
+
 	task := &Task{
 		ID:           taskID,
 		TenantID:     req.TenantID,
@@ -1138,22 +1735,206 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 		Description:  req.Description,
 		AssignedTo:   req.AssignedTo,
 		Dependencies: req.Dependencies,
-		Metadata:     req.Metadata,
+		Metadata:     meta,
 		Status:       TaskStatusPending,
+		AutoSpawn:    req.AutoSpawn,
+		ProjectID:    req.ProjectID,
 	}
 
 	if err := s.taskStore.CreateTask(ctx, task); err != nil {
 		return nil, err
 	}
 
-	s.logger.Debugf("created task: id=%s tenant=%s subject=%s", taskID, req.TenantID, req.Subject)
+	s.logger.Debugf("created task: id=%s tenant=%s subject=%s auto_spawn=%v", taskID, req.TenantID, req.Subject, req.AutoSpawn)
 
 	s.publishEvent(ctx, req.TenantID, "task_created", map[string]string{
-		"task_id": taskID,
-		"subject": req.Subject,
+		"task_id":    taskID,
+		"subject":    req.Subject,
+		"auto_spawn": boolStr(req.AutoSpawn),
 	})
 
+	// When AutoSpawn is requested, dispatch the task immediately as a one-shot job.
+	// The task is already persisted; spawn errors are returned to the caller while
+	// the task remains queryable with empty SpawnedJobID.
+	if req.AutoSpawn {
+		spawnErr := s.autoSpawnTask(ctx, req, task)
+		if spawnErr != nil {
+			return task, spawnErr
+		}
+	}
+
 	return task, nil
+}
+
+// autoSpawnTask dispatches a task immediately as a one-shot orchestration job.
+// It selects the best matching agent using the same filters as the control loop
+// (backend → gpu → host_affinity). If a matching agent is found, a StartJob call
+// is issued, and the task is updated with SpawnedJobID and SpawnedAt. If no
+// agent matches, the task is returned unchanged and ErrNoMatchingAgent is set.
+// The task is always persisted before this is called, so callers always get
+// a valid task back even when spawn fails.
+func (s *agentServiceImpl) autoSpawnTask(ctx context.Context, req *CreateTaskRequest, task *Task) error {
+	if s.agentRegistry == nil {
+		return &NoMatchingAgentError{
+			Constraint: "agent_registry",
+			Detail:     "agent registry not configured for auto-spawn",
+		}
+	}
+
+	// Build the work item for matchAgentForTask using request routing hints.
+	item := &WorkItem{
+		ID:          task.ID,
+		Title:       task.Subject,
+		Description: task.Description,
+		Backend:     req.Backend,
+		HostAffinity: req.HostAffinity,
+	}
+	if req.GpuRequired {
+		item.RequiredCapabilities = []string{"gpu"}
+	}
+
+	// List all online agents for the tenant; online = not offline/error status.
+	agents, listErr := s.agentRegistry.ListAgents(ctx, req.TenantID, &AgentFilter{})
+	if listErr != nil {
+		return &NoMatchingAgentError{
+			Constraint: "agent_list",
+			Detail:     "failed to list agents: " + listErr.Error(),
+		}
+	}
+
+	// Filter to online agents only.
+	online := make([]*AgentRegistration, 0, len(agents))
+	for _, a := range agents {
+		if a.Status != AgentStatusOffline && a.Status != AgentStatusError {
+			online = append(online, a)
+		}
+	}
+
+	// Use the control loop's matching logic (backend → gpu → host_affinity).
+	// We instantiate a temporary loop purely for the matching helper.
+	cl := NewControlLoop(s, s.logger)
+	backends, _ := s.ListBackends(ctx)
+
+	agentID, _, matchErr := cl.matchAgentForTask(item, online, backends)
+	if matchErr != nil {
+		return matchErr
+	}
+	if agentID == "" {
+		return &NoMatchingAgentError{
+			Constraint: "agent_selection",
+			Detail:     "no online agents satisfy backend/gpu/host_affinity constraints",
+		}
+	}
+
+	// Build the job description from the task.
+	desc := task.Subject
+	if task.Description != "" {
+		desc = task.Subject + ": " + task.Description
+	}
+
+	jobReq := &StartJobRequest{
+		TenantID:    req.TenantID,
+		Description: desc,
+		LeadBackend: req.Backend,
+	}
+	if req.GpuRequired {
+		// Embed gpu hint so the lead job targets the right backend.
+		jobReq.LeadBackend = req.Backend
+	}
+
+	jobResp, jobErr := s.StartJob(ctx, jobReq)
+	if jobErr != nil {
+		return &AgentServiceError{
+			Sentinel: ErrAgentServiceUnavailable,
+			Message:  "auto-spawn: failed to start job: " + jobErr.Error(),
+		}
+	}
+
+	// Update the task with spawned job metadata.
+	// task.Version is the version returned by CreateTask; UpdateTask expects
+	// the caller to pass the current version and handles the increment itself.
+	now := time.Now().UnixNano()
+	task.SpawnedJobID = jobResp.JobID
+	task.SpawnedAt = now
+
+	if updateErr := s.taskStore.UpdateTask(ctx, task); updateErr != nil {
+		// Non-fatal: task is valid, job is running. Log and continue.
+		s.logger.Warnf("auto-spawn: task=%s job=%s spawned but task update failed: %s",
+			task.ID, jobResp.JobID, updateErr.Error())
+		// Reset in-memory fields so the returned task matches persisted state.
+		task.SpawnedJobID = ""
+		task.SpawnedAt = 0
+	} else {
+		s.logger.Infof("auto-spawn: task=%s job=%s dispatched to agent=%s", task.ID, jobResp.JobID, agentID)
+	}
+
+	// Subscribe to job events in a background goroutine and mirror job terminal
+	// status back to the parent task when the job completes or fails.
+	go s.mirrorJobStatusToTask(req.TenantID, task.ID, jobResp.JobID)
+
+	s.publishEvent(ctx, req.TenantID, "task_auto_spawned", map[string]string{
+		"task_id": task.ID,
+		"job_id":  jobResp.JobID,
+		"agent":   agentID,
+	})
+
+	return nil
+}
+
+// mirrorJobStatusToTask watches a job's event stream and updates the parent task
+// to completed or failed when the job reaches a terminal state. It is launched
+// as a goroutine by autoSpawnTask and runs until the job terminates or the
+// subscription channel is closed.
+func (s *agentServiceImpl) mirrorJobStatusToTask(tenantID, taskID, jobID string) {
+	ctx := ContextWithTenant(context.Background(), tenantID)
+
+	events, subErr := s.SubscribeJobEvents(ctx, tenantID, jobID)
+	if subErr != nil {
+		s.logger.Warnf("auto-spawn mirror: task=%s job=%s subscribe failed: %s", taskID, jobID, subErr.Error())
+		return
+	}
+
+	for ev := range events {
+		if !IsTerminalJobState(ev.State) {
+			continue
+		}
+
+		switch ev.State {
+		case JobStateCompleted:
+			if err := s.taskStore.CompleteTask(ctx, tenantID, taskID, &TaskResult{
+				Output: ev.Message,
+				Metadata: map[string]string{
+					"job_id":     jobID,
+					"job_status": string(ev.State),
+				},
+			}); err != nil {
+				s.logger.Warnf("auto-spawn mirror: task=%s job=%s complete failed: %s", taskID, jobID, err.Error())
+			} else {
+				s.logger.Debugf("auto-spawn mirror: task=%s marked completed from job=%s", taskID, jobID)
+			}
+		case JobStateFailed:
+			if err := s.taskStore.FailTask(ctx, tenantID, taskID, "job "+jobID+" failed: "+ev.Message); err != nil {
+				s.logger.Warnf("auto-spawn mirror: task=%s job=%s fail update failed: %s", taskID, jobID, err.Error())
+			} else {
+				s.logger.Debugf("auto-spawn mirror: task=%s marked failed from job=%s", taskID, jobID)
+			}
+		}
+
+		s.publishEvent(ctx, tenantID, "task_auto_spawn_completed", map[string]string{
+			"task_id":    taskID,
+			"job_id":     jobID,
+			"job_status": string(ev.State),
+		})
+		return
+	}
+}
+
+// boolStr converts a bool to "true" or "false" for metadata maps.
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // GetTask retrieves a task by ID within a tenant namespace.
@@ -1194,6 +1975,11 @@ func (s *agentServiceImpl) ListTasks(ctx context.Context, tenantID string, filte
 }
 
 // ClaimTask atomically claims a task for an agent using compare-and-swap.
+// When the task is scoped to a project (Task.ProjectID non-empty) and a
+// ProjectAuthz helper is configured, the claiming agent must hold at least
+// the worker role in that project. Agents with the denied or observer role,
+// or agents absent from a scoped project's role matrix, are rejected with
+// ProjectAccessDeniedError. Empty AgentRoles (legacy unscoped project) allows all.
 func (s *agentServiceImpl) ClaimTask(ctx context.Context, tenantID, taskID, agentID string) error {
 	if err := s.validateTenant(ctx); err != nil {
 		return err
@@ -1211,6 +1997,21 @@ func (s *agentServiceImpl) ClaimTask(ctx context.Context, tenantID, taskID, agen
 	}
 	if agentID == "" {
 		return &AgentServiceError{Sentinel: ErrAgentIDRequired}
+	}
+
+	// Enforce project-level access when the task is project-scoped.
+	if s.projectAuthz != nil {
+		task, err := s.taskStore.GetTask(ctx, tenantID, taskID)
+		if err != nil {
+			return err
+		}
+		if task.ProjectID != "" {
+			if authzErr := s.projectAuthz.AuthorizeAgentForTenant(
+				ctx, tenantID, task.ProjectID, agentID, ProjectRoleWorker,
+			); authzErr != nil {
+				return authzErr
+			}
+		}
 	}
 
 	if err := s.taskStore.ClaimTask(ctx, tenantID, taskID, agentID); err != nil {
@@ -1593,7 +2394,9 @@ func (s *agentServiceImpl) resumeJob(ctx context.Context, status *JobStatus) err
 // Internal Helpers
 // =============================================================================
 
-// lookupBackend retrieves a backend by name.
+// lookupBackend retrieves a backend by name from the locally registered set.
+// Callers that have request context should prefer lookupBackendCtx so a
+// remote-kind registration can preempt the local lookup.
 func (s *agentServiceImpl) lookupBackend(name string) (AgentBackend, error) {
 	val, ok := s.backends.Load(name)
 	if !ok {
@@ -1604,6 +2407,19 @@ func (s *agentServiceImpl) lookupBackend(name string) (AgentBackend, error) {
 		return nil, &BackendNotFoundError{Backend: name}
 	}
 	return backend, nil
+}
+
+// lookupBackendCtx resolves a backend for the given request context. It first
+// consults any registered RemoteBackendResolver; if the resolver returns a
+// backend, it is used. Otherwise the locally registered backend table is
+// consulted. This is the routing primitive used by the BackendDispatcher.
+func (s *agentServiceImpl) lookupBackendCtx(ctx context.Context, name, projectID string) (AgentBackend, error) {
+	if s.remoteResolver != nil {
+		if backend, ok := s.remoteResolver(ctx, name, projectID); ok && backend != nil {
+			return backend, nil
+		}
+	}
+	return s.lookupBackend(name)
 }
 
 // defaultBackendName returns the name of the default backend to use when none
@@ -1965,6 +2781,7 @@ func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (
 		Description:   req.Description,
 		LeadBackend:   req.LeadBackend,
 		LeadModel:     req.LeadModel,
+		LeadAgentID:   req.LeadAgentID,
 		ProjectID:     req.ProjectID,
 		PollInterval:  pollInterval,
 		MaxIterations: maxIter,

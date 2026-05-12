@@ -1,42 +1,48 @@
 # quicbaas auth
 
-Authentication commands for managing QuicBaaS sessions.
+Authentication commands for managing QuicBaaS sessions (passwordless).
 
 ## Commands
 
 ### login
 
-Authenticate with a QuicBaaS server and obtain an access token.
+Authenticate with a QuicBaaS server and obtain an access token using a hardware authenticator.
 
 ```bash
 quicbaas auth login <username>
 ```
 
+**Authentication Methods** (choose one):
+- **WebAuthn (Passkey)**: Use a platform authenticator (Touch ID, Windows Hello, biometric) or a roaming security key (YubiKey, Titan)
+- **PIV Smartcard**: Insert a smartcard and enter PIN (if PIV is enabled)
+- **mTLS**: Provide a TLS client certificate (for service accounts)
+
 #### Flags
-- `--password string`: Password (not recommended, use interactive prompt instead)
 - `--token-file string`: Custom token file location (default: ~/.quicbaas/token)
 - `--no-store`: Don't store token, print to stdout instead
+- `--method string`: Auth method: `webauthn` or `smartcard` (auto-detected if not specified)
 
 #### Examples
 
 ```bash
-# Login with interactive password prompt
-quicbaas auth login admin
+# Login with WebAuthn (passkey/security key)
+quicbaas auth login alice@example.com
 
-# Login with password from environment variable
-QUICBAAS_PASSWORD=secret quicbaas auth login admin
+# Login with smartcard (PIV)
+quicbaas auth login alice@example.com --method smartcard
 
-# Login and store token in custom location
-quicbaas auth login admin --token-file /path/to/token
+# Store token in custom location
+quicbaas auth login alice@example.com --token-file /path/to/token
 
-# Login without storing token (print to stdout)
-quicbaas auth login admin --no-store
+# Print token to stdout without storing
+quicbaas auth login alice@example.com --no-store
 
 # Login to specific server
-quicbaas auth login admin --address quicbaas.example.com:50051
+quicbaas auth login alice@example.com --address quicbaas.example.com:50051
 
-# Login with TLS
-quicbaas auth login admin --tls --tls-cert client.crt --tls-key client.key --tls-ca ca.crt
+# Login with mTLS client certificate (service account)
+quicbaas auth login --address quicbaas.example.com:50051 \
+  --tls --tls-cert client.crt --tls-key client.key --tls-ca ca.crt
 ```
 
 ### logout

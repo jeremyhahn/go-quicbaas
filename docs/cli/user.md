@@ -1,16 +1,16 @@
 # quicbaas user
 
-User management commands for QuicBaaS authentication system.
+User management commands for QuicBaaS authentication system (passwordless).
 
 ## Overview
 
-These commands allow you to create, delete, and list users in the QuicBaaS authentication system. User management requires admin privileges.
+These commands allow you to create, delete, and list users in the QuicBaaS authentication system. User management requires admin privileges. QuicBaaS uses **passwordless authentication only**—users enroll hardware authenticators (passkeys, security keys, smartcards) instead of passwords.
 
 ## Commands
 
 ### create
 
-Create a new user in the QuicBaaS authentication system.
+Create a new user in the QuicBaaS authentication system with `pending` status. The user must then activate by enrolling a hardware authenticator (WebAuthn passkey/security key or PIV smartcard).
 
 ```bash
 quicbaas user create <username>
@@ -18,25 +18,22 @@ quicbaas user create <username>
 
 #### Flags
 - `--roles stringSlice`: Roles to assign to user (comma-separated) (default: ["readonly"])
-- `--password string`: Password (not recommended, use interactive prompt instead)
+- `--email string`: User's email address (recommended for invite flow)
 
 #### Examples
 
 ```bash
-# Create user with interactive password prompt
-quicbaas user create john --roles readwrite
+# Create user who will enroll a passkey
+quicbaas user create alice@example.com --email alice@example.com --roles readwrite
 
 # Create admin user
-quicbaas user create admin --roles admin
+quicbaas user create admin-user --roles admin
 
 # Create user with multiple roles
-quicbaas user create jane --roles readonly,readwrite
-
-# Create user with password from environment
-QUICBAAS_PASSWORD=secret quicbaas user create john --roles readwrite
+quicbaas user create jane@example.com --email jane@example.com --roles readonly,readwrite
 
 # Create user on specific server with TLS
-quicbaas user create john --roles readwrite --address quicbaas.example.com:50051 --tls
+quicbaas user create alice@example.com --roles readwrite --address quicbaas.example.com:50051 --tls
 ```
 
 ### delete
@@ -110,14 +107,13 @@ quicbaas user show john --output json
 
 ### update
 
-Update user information (password or roles).
+Update user information (roles only). Authenticators are managed via the WebAuthn or PIV APIs.
 
 ```bash
 quicbaas user update <username>
 ```
 
 #### Flags
-- `--password string`: New password
 - `--roles stringSlice`: New roles (replaces existing roles)
 - `--add-roles stringSlice`: Add roles to existing roles
 - `--remove-roles stringSlice`: Remove roles from existing roles
@@ -125,9 +121,6 @@ quicbaas user update <username>
 #### Examples
 
 ```bash
-# Update password interactively
-quicbaas user update john
-
 # Update roles
 quicbaas user update john --roles admin,readwrite
 
@@ -146,21 +139,24 @@ quicbaas user update john --remove-roles readonly
 
 For custom roles, see the `quicbaas role` command.
 
-## Password Requirements
+## Authenticator Management
 
-- Minimum length: 8 characters
-- Interactive prompt recommended for security
-- Avoid using `--password` flag in production
-- Use environment variable `QUICBAAS_PASSWORD` for automation
+Users enroll and manage hardware authenticators via the Web UI or REST API:
+
+- **WebAuthn (Passkey)**: Platform authenticators (Touch ID, Windows Hello) or roaming keys (YubiKey, Titan)
+- **PIV Smartcard**: If PIV support is enabled
+- **mTLS Certificate**: For service accounts (see [Passwordless Authentication](../auth/passwordless.md))
+
+Users can register **multiple authenticators** as backups. See the [WebAuthn API](../iam/webauthn.md) or GUI for enrolling and managing credentials.
 
 ## Security Best Practices
 
-1. **Interactive Passwords**: Use interactive prompts instead of command-line flags
-2. **Strong Passwords**: Use complex passwords with minimum 8 characters
-3. **Least Privilege**: Assign minimal required roles
-4. **Regular Rotation**: Rotate passwords periodically
-5. **Audit Logging**: Monitor user creation and deletion events
-6. **TLS**: Use TLS for all authentication operations
+1. **Passkey or Security Key**: Recommend users enroll a platform passkey + a backup hardware key
+2. **Least Privilege**: Assign minimal required roles
+3. **Regular Audit**: Monitor user creation and deletion events; review inactive users
+4. **TLS**: Use TLS for all API calls
+5. **Backup Authenticators**: Encourage users to register multiple authenticators to prevent lockout
+6. **See Also**: [Passwordless Authentication](../auth/passwordless.md) for the authentication model
 
 ## Notes
 

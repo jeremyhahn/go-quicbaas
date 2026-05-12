@@ -197,12 +197,28 @@ func (b *ACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Session, er
 		return b.spawnOneShotCLI(req)
 	}
 
-	// Sandboxed container path: run the agent in an isolated container.
-	if req.Sandboxed && b.containerRuntime != nil {
+	// Sandbox-first policy routing. The orchestrator layer resolves
+	// SandboxModeDefault before dispatching, so at this point the mode is
+	// either Required (container) or None (raw exec). Legacy Sandboxed=true
+	// callers are mapped via EffectiveSandboxMode().
+	switch req.EffectiveSandboxMode() {
+	case SandboxModeRequired:
+		if b.containerRuntime == nil {
+			return nil, &SandboxModeViolationError{
+				Requested: SandboxModeRequired,
+				Policy:    SandboxPolicyRequired,
+				Reason:    "backend has no container runtime configured",
+			}
+		}
 		return b.spawnContainerJSONRPC(ctx, req)
+	case SandboxModeNone, SandboxModeDefault:
+		return b.spawnJSONRPC(ctx, req)
+	default:
+		return nil, &InputValidationError{
+			Field:   "sandbox_mode",
+			Message: "unknown mode value",
+		}
 	}
-
-	return b.spawnJSONRPC(ctx, req)
 }
 
 // spawnContainerJSONRPC starts an agent in a container using RunInteractive
@@ -1190,6 +1206,51 @@ func (b *ACPBackend) ToolGuidance() string {
 			"- The Read tool requires 'filePath' (string), NOT 'path'.\n"
 	}
 	return ""
+}
+
+// acpModelCatalog maps the command basename to the curated list of supported
+// model identifiers. The catalog is authoritative for in-process ACP backends;
+// remote daemon registrations may extend it via their own Capabilities reply.
+var acpModelCatalog = map[string][]string{
+	"claude": {
+		"claude-opus-4-5",
+		"claude-sonnet-4-5",
+		"claude-haiku-4-5",
+		"claude-opus-4-7",
+		"claude-sonnet-4-7",
+		"claude-haiku-4-7",
+	},
+	"claude-code": {
+		"claude-opus-4-5",
+		"claude-sonnet-4-5",
+		"claude-haiku-4-5",
+		"claude-opus-4-7",
+		"claude-sonnet-4-7",
+	},
+	"codex": {
+		"codex-mini-latest",
+		"o4-mini",
+		"o3",
+	},
+	"opencode": {
+		"anthropic/claude-opus-4-5",
+		"anthropic/claude-sonnet-4-5",
+		"anthropic/claude-haiku-4-5",
+		"openai/o4-mini",
+		"openai/o3",
+		"google/gemini-2.5-pro",
+		"google/gemini-2.5-flash",
+	},
+}
+
+// ListModels returns the curated model catalog for this ACP backend based on
+// its command basename. Returns an empty slice for unknown commands.
+func (b *ACPBackend) ListModels(_ context.Context) ([]string, error) {
+	base := filepath.Base(b.config.Command)
+	if models, ok := acpModelCatalog[base]; ok {
+		return models, nil
+	}
+	return []string{}, nil
 }
 
 // generateSessionID creates a cryptographically random session identifier.

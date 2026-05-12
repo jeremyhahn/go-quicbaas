@@ -1,7 +1,18 @@
 <!--
   StatusBadge renders a daisyUI badge with an optional pulse indicator dot.
+
+  Variants map to daisyUI semantic colors so badges inherit theme tokens and
+  stay legible across both light and dark themes. The previous `badge-soft`
+  modifier produced near-invisible tinted text on the light theme; the
+  canonical filled variants ship with proper foreground contrast.
 -->
 <script lang="ts">
+  /**
+   * StatusVariant is the canonical mapping from a high-level intent to a
+   * daisyUI semantic color. The mapping is consumed by view-specific helpers
+   * that translate raw status strings (e.g. "active", "failed", "queued")
+   * into a variant — see `statusToVariant()` below for the canonical mapping.
+   */
   export type StatusVariant = 'success' | 'error' | 'warning' | 'info' | 'primary' | 'ghost' | 'neutral';
 
   let {
@@ -25,11 +36,11 @@
   } as const;
 
   const dotColors: Readonly<Record<StatusVariant, string>> = {
-    success: 'bg-success',
-    error: 'bg-error',
-    warning: 'bg-warning',
-    info: 'bg-info',
-    primary: 'bg-primary',
+    success: 'bg-success-content',
+    error: 'bg-error-content',
+    warning: 'bg-warning-content',
+    info: 'bg-info-content',
+    primary: 'bg-primary-content',
     ghost: 'bg-base-content/40',
     neutral: 'bg-neutral-content',
   } as const;

@@ -29,7 +29,21 @@ import (
 // IAMHandler handles all IAM-related REST API endpoints including
 // OIDC, tenant management, user/group/role management, policies, and WebAuthn.
 type IAMHandler struct {
-	server *Server
+	server      *Server
+	inviteStore iam.InviteStore
+
+	// selfSignedAuth authenticates mTLS clients via pinned SHA-256 cert thumbprint
+	// (self_signed_tls_client_auth per RFC 8705 §2.2). Wired at startup.
+	selfSignedAuth iam.MTLSClientAuthenticator
+
+	// pkiAuth authenticates mTLS clients by verifying the cert chain against a
+	// trusted root pool and matching Subject DN or SAN dNSName (tls_client_auth
+	// per RFC 8705 §2.1). Wired at startup when an operator CA pool is available.
+	pkiAuth iam.MTLSClientAuthenticator
+
+	// tpmResolver classifies the peer certificate origin for amr/attest_method
+	// claim enrichment. May be nil; defaults to AttestMethodManual when absent.
+	tpmResolver *iam.TPMAttestationResolver
 }
 
 // IAMHandlerDependencies contains dependencies for the IAM handler.
@@ -40,7 +54,8 @@ type IAMHandlerDependencies struct {
 // NewIAMHandler creates a new IAM handler with the specified dependencies.
 func NewIAMHandler(deps IAMHandlerDependencies) *IAMHandler {
 	return &IAMHandler{
-		server: deps.Server,
+		server:      deps.Server,
+		inviteStore: iam.NewMemoryInviteStore(),
 	}
 }
 
@@ -56,6 +71,7 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	// OAuth2/OIDC endpoints (public)
 	router.Get("/oauth2/authorize", h.Authorize)
 	router.Post("/oauth2/token", h.Token)
+	router.Post("/oauth2/token-mtls", h.TokenMTLS) // RFC 8705 §5 mTLS alias
 	router.Get("/oauth2/userinfo", h.UserInfo)
 	router.Post("/oauth2/revoke", h.Revoke)
 
@@ -65,13 +81,17 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	router.Put("/oauth2/register/{client_id}", h.UpdateDynamicClient)
 	router.Delete("/oauth2/register/{client_id}", h.DeleteDynamicClient)
 
-	// Password-based authentication endpoints (public when enabled)
-	// These are only functional when AllowPasswordAuth is enabled in config.
+	// Token management endpoints (public).
 	router.Route("/api/v1/auth", func(r chi.Router) {
-		r.Post("/login", h.Login)            // Authenticate with username/password
 		r.Post("/refresh", h.RefreshToken)   // Refresh access token
 		r.Post("/logout", h.Logout)          // Revoke access token
 		r.Post("/validate", h.ValidateToken) // Validate access token
+		r.Post("/login/piv", h.PIVLogin)     // PIV smartcard mTLS login
+
+		// Self-service registration (public — no auth required).
+		// Gated by iam.self_service_registration.enabled in config.
+		r.Post("/register/begin", h.RegisterSelfBegin)
+		r.Post("/register/finish", h.RegisterSelfFinish)
 	})
 
 	// Federated authentication endpoints (public)
@@ -190,8 +210,26 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 
 	})
 
+	// Invite activation endpoints (public — no auth required).
+	// These are intentionally outside the /api/v1/iam auth block so that
+	// new users can activate before they have a session token.
+	router.Route("/api/v1/iam/invites", func(r chi.Router) {
+		r.Get("/{token}", h.GetInvite)
+		r.Post("/{token}/activate/fido2/begin", h.ActivateFIDO2Begin)
+		r.Post("/{token}/activate/fido2/finish", h.ActivateFIDO2Finish)
+		r.Post("/{token}/activate/piv", h.ActivatePIV)
+	})
+
 	// IAM utility endpoints (not tenant-scoped)
 	router.Route("/api/v1/iam", func(r chi.Router) {
+		// Public tenant listing for the login UI tenant selector — no auth required.
+		r.Get("/tenants/public", h.ListPublicTenants)
+
+		// Admin approval/rejection for pending self-registered users.
+		// Requires Admin@system scope; tenant_id passed as query parameter.
+		r.Post("/users/{user_id}/approve", h.ApproveUser)
+		r.Post("/users/{user_id}/reject", h.RejectUser)
+
 		r.Post("/validate-client", h.ValidateClient)
 		// PEP (Policy Enforcement Point) endpoints
 		r.Post("/check", h.CheckAccess)
@@ -213,6 +251,12 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 
 	// Register delegated admin routes
 	RegisterAdminRoutes(router, h)
+
+	// Mount xkms's native WebAuthn routes under /api/v1/iam/{tenant_id}/webauthn.
+	// This is the canonical surface for tenant-scoped FIDO2 ceremonies; the
+	// legacy /api/v1/tenants/{tenant_id}/webauthn routes above remain wired
+	// for clients that have not yet migrated.
+	h.MountXKMSWebAuthnRoutes(router)
 }
 
 // Type aliases to iam package interfaces.

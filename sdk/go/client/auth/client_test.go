@@ -110,7 +110,6 @@ func TestLogin(t *testing.T) {
 		c := NewClient(mockT)
 		resp, err := c.Login(context.Background(), &service.ExtendedLoginRequest{
 			Username: "testuser",
-			Password: "testpass",
 		})
 
 		if err != nil {
@@ -141,7 +140,6 @@ func TestLogin(t *testing.T) {
 		c := NewClient(mockT)
 		resp, err := c.Login(context.Background(), &service.ExtendedLoginRequest{
 			Username: "testuser",
-			Password: "testpass",
 		})
 
 		if err != nil {
@@ -169,20 +167,9 @@ func TestLogin(t *testing.T) {
 	t.Run("empty username returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
 		_, err := c.Login(context.Background(), &service.ExtendedLoginRequest{
-			Password: "testpass",
 		})
 		if err == nil {
 			t.Error("expected error for empty username")
-		}
-	})
-
-	t.Run("empty password returns error", func(t *testing.T) {
-		c := NewClient(newMockTransport())
-		_, err := c.Login(context.Background(), &service.ExtendedLoginRequest{
-			Username: "testuser",
-		})
-		if err == nil {
-			t.Error("expected error for empty password")
 		}
 	})
 
@@ -190,7 +177,6 @@ func TestLogin(t *testing.T) {
 		c := NewClient(newMockTransport())
 		_, err := c.Login(nil, &service.ExtendedLoginRequest{ //nolint:staticcheck
 			Username: "testuser",
-			Password: "testpass",
 		})
 		if err == nil {
 			t.Error("expected error for nil context")
@@ -204,7 +190,6 @@ func TestLogin(t *testing.T) {
 		c := NewClient(mockT)
 		_, err := c.Login(context.Background(), &service.ExtendedLoginRequest{
 			Username: "testuser",
-			Password: "testpass",
 		})
 		if err == nil {
 			t.Error("expected error for transport failure")
@@ -218,7 +203,6 @@ func TestLogin(t *testing.T) {
 		c := NewClient(mockT)
 		_, err := c.Login(context.Background(), &service.ExtendedLoginRequest{
 			Username: "testuser",
-			Password: "testpass",
 		})
 		if err == nil {
 			t.Error("expected error for nil response")
@@ -232,7 +216,6 @@ func TestLogin(t *testing.T) {
 		c := NewClient(mockT)
 		_, err := c.Login(context.Background(), &service.ExtendedLoginRequest{
 			Username: "testuser",
-			Password: "testpass",
 		})
 		if err == nil {
 			t.Error("expected error for invalid response type")
@@ -1211,7 +1194,7 @@ func TestTransportError(t *testing.T) {
 		call func(c Client) error
 	}{
 		{"Login", func(c Client) error {
-			_, err := c.Login(context.Background(), &service.ExtendedLoginRequest{Username: "u", Password: "p"})
+			_, err := c.Login(context.Background(), &service.ExtendedLoginRequest{Username: "u"})
 			return err
 		}},
 		{"RefreshToken", func(c Client) error {

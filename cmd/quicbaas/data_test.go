@@ -166,6 +166,8 @@ func (m *mockSDKClient) Close() error {
 	return nil
 }
 
+func (m *mockSDKClient) Project() quicbaas.ProjectClient { return nil }
+
 func (m *mockSDKClient) Orchestrator() quicbaas.OrchestratorClient { return nil }
 
 func TestNewDataCommands(t *testing.T) {
@@ -2020,27 +2022,6 @@ func TestVectorCommandsExecution(t *testing.T) {
 
 // TestAuthCommandEdgeCases tests authentication command edge cases
 func TestAuthCommandEdgeCases(t *testing.T) {
-	t.Run("login command no password", func(t *testing.T) {
-		cmd := newAuthLoginCommand()
-		cmd.SetArgs([]string{"testuser", "--no-store"})
-
-		// Redirect stdin to prevent blocking
-		oldStdin := os.Stdin
-		defer func() { os.Stdin = oldStdin }()
-
-		r, w, _ := os.Pipe()
-		os.Stdin = r
-		w.Close() // Close immediately to simulate EOF
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		// Should error because password read fails or client connection fails
-		assert.Error(t, err)
-	})
-
 	t.Run("logout command with custom token file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		tokenFile := filepath.Join(tmpDir, "token")
@@ -2559,3 +2540,5 @@ func TestCommandHelpOutput(t *testing.T) {
 		})
 	}
 }
+
+

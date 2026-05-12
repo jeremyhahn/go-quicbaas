@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"encoding/json"
 	"fmt"
@@ -166,7 +167,7 @@ func (m *mockStorage) Close() error {
 
 // mockAuthManager mocks auth.AuthManager for testing.
 type mockAuthManager struct {
-	authenticateFn    func(ctx context.Context, username, password string) (*auth.Token, error)
+	authenticateFn    func(ctx context.Context, username string, password *secure.Buffer) (*auth.Token, error)
 	authorizeFn       func(ctx context.Context, token, resource, action string) error
 	revokeTokenFn     func(ctx context.Context, token string) error
 	refreshTokenFn    func(ctx context.Context, refreshToken string) (*auth.Token, error)
@@ -183,9 +184,12 @@ type mockAuthManager struct {
 	roleManagerReturn interfaces.RoleManager
 }
 
-func (m *mockAuthManager) Authenticate(ctx context.Context, username, password string) (interface{}, error) {
+func (m *mockAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
 	if m.authenticateFn != nil {
 		return m.authenticateFn(ctx, username, password)
+	}
+	if password != nil {
+		password.Destroy()
 	}
 	return nil, stderrors.New("not implemented")
 }
@@ -1499,29 +1503,15 @@ func TestBackupService_VerifyBackup_InvalidResult(t *testing.T) {
 // Auth Service Tests
 // =============================================================================
 
-func TestAuthService_Login_Success(t *testing.T) {
-	mockAuth := &mockAuthManager{
-		authenticateFn: func(ctx context.Context, username, password string) (*auth.Token, error) {
-			return &auth.Token{
-				AccessToken:  "access-token",
-				RefreshToken: "refresh-token",
-				ExpiresAt:    time.Now().Add(1 * time.Hour),
-				TokenType:    "Bearer",
-			}, nil
-		},
-	}
-	svc := createTestService(t, withAuthManager(mockAuth))
+func TestAuthService_Login_ReturnsNotImplemented(t *testing.T) {
+	// Password-based login is removed. Login() always returns ErrNotImplemented.
+	// Use WebAuthn or PIV smartcard authentication instead.
+	svc := createTestService(t)
 	defer svc.Close()
 
-	req := &LoginRequest{
-		Username: "testuser",
-		Password: "password",
-	}
-
-	resp, err := svc.Login(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "access-token", resp.AccessToken)
+	req := &LoginRequest{Username: "testuser"}
+	_, err := svc.Login(context.Background(), req)
+	require.Error(t, err)
 }
 
 func TestAuthService_Logout_Success(t *testing.T) {
@@ -1613,7 +1603,6 @@ func TestRBACService_CreateUser_Success(t *testing.T) {
 
 	req := &AuthCreateUserRequest{
 		Username: "newuser",
-		Password: "password",
 		Roles:    []string{"viewer"},
 	}
 
@@ -3258,85 +3247,27 @@ func Test81_NewQuicBaaS_NilConfig(t *testing.T) {
 	assert.Contains(t, err.Error(), "config is required")
 }
 
-func Test81_AuthService_Login_NilAuthManager(t *testing.T) {
+// TestOIDCAuthorize_RejectsPasswordGrant verifies that the authService.Login
+// stub always returns not-implemented since password login is removed.
+func TestOIDCAuthorize_RejectsPasswordGrant(t *testing.T) {
 	log := createTestLogger(t)
 	svc := &quicBaaS{logger: log, authManager: nil}
 	authSvc := &authService{svc: svc}
 
-	resp, err := authSvc.Login(context.Background(), &LoginRequest{
-		Username: "testuser",
-		Password: "testpass",
-	})
+	_, err := authSvc.Login(context.Background(), &LoginRequest{Username: "user"})
 	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	qbErr, ok := err.(*errors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
-	assert.Contains(t, err.Error(), "authentication service not configured")
+	assert.Contains(t, err.Error(), "password-based login")
 }
 
-func Test81_AuthService_Login_AuthenticateError(t *testing.T) {
+func Test81_AuthService_Login_AlwaysReturnsNotImplemented(t *testing.T) {
+	// Login() always returns ErrNotImplemented regardless of auth manager state.
+	// Use WebAuthn FinishLogin or POST /api/v1/auth/login/piv instead.
 	log := createTestLogger(t)
-	mockAuth := &boost81MockAuthManager{
-		authenticateErr: stderrors.New("invalid credentials"),
-	}
-	svc := &quicBaaS{logger: log, authManager: mockAuth}
+	svc := &quicBaaS{logger: log, authManager: &boost81MockAuthManager{}}
 	authSvc := &authService{svc: svc}
 
-	resp, err := authSvc.Login(context.Background(), &LoginRequest{
-		Username: "testuser",
-		Password: "wrongpass",
-	})
+	_, err := authSvc.Login(context.Background(), &LoginRequest{Username: "user"})
 	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	qbErr, ok := err.(*errors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
-}
-
-func Test81_AuthService_Login_InvalidTokenType(t *testing.T) {
-	log := createTestLogger(t)
-	mockAuth := &boost81MockAuthManager{
-		authenticateResult: "not-a-token-struct", // Wrong type
-	}
-	svc := &quicBaaS{logger: log, authManager: mockAuth}
-	authSvc := &authService{svc: svc}
-
-	resp, err := authSvc.Login(context.Background(), &LoginRequest{
-		Username: "testuser",
-		Password: "testpass",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	qbErr, ok := err.(*errors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-	assert.Contains(t, err.Error(), "token must be *auth.Token")
-}
-
-func Test81_AuthService_Login_SuccessPath(t *testing.T) {
-	log := createTestLogger(t)
-	mockAuth := &boost81MockAuthManager{
-		authenticateResult: &auth.Token{
-			AccessToken:  "access-token-123",
-			RefreshToken: "refresh-token-456",
-			ExpiresAt:    time.Now().Add(time.Hour),
-		},
-	}
-	svc := &quicBaaS{logger: log, authManager: mockAuth}
-	authSvc := &authService{svc: svc}
-
-	resp, err := authSvc.Login(context.Background(), &LoginRequest{
-		Username: "testuser",
-		Password: "testpass",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "access-token-123", resp.AccessToken)
-	assert.Equal(t, "refresh-token-456", resp.RefreshToken)
 }
 
 func Test81_AuthService_Logout_NilAuthManager(t *testing.T) {

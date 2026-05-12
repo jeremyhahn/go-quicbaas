@@ -261,7 +261,7 @@ func TestPersistentValidateCredentialsErrorPaths(t *testing.T) {
 
 		// Password-based authentication is disabled
 		// Authenticate should fail with password auth disabled error
-		_, err = pam.Authenticate(ctx, "testuser", "password123")
+		_, err = pam.Authenticate(ctx, "testuser", passwordBuffer(t, "password123"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "password-based authentication is disabled")
 	})
@@ -489,7 +489,7 @@ func TestPersistentAuthManager_ValidateCredentials_EmptyUsername(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	_, err = pam.validateCredentials(ctx, "", "password")
+	_, err = pam.validateCredentials(ctx, "", passwordBuffer(t, "password"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "username and password are required")
 }
@@ -510,7 +510,7 @@ func TestPersistentAuthManager_ValidateCredentials_EmptyPassword(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	_, err = pam.validateCredentials(ctx, "user", "")
+	_, err = pam.validateCredentials(ctx, "user", passwordBuffer(t, ""))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "username and password are required")
 }
@@ -531,7 +531,7 @@ func TestPersistentAuthManager_ValidateCredentials_UserNotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	_, err = pam.validateCredentials(ctx, "nonexistent", "password")
+	_, err = pam.validateCredentials(ctx, "nonexistent", passwordBuffer(t, "password"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid credentials")
 }
@@ -556,7 +556,7 @@ func TestPersistentAuthManager_ValidateCredentials_NoPasswordSet(t *testing.T) {
 	_, err = pam.CreateUser("nopassword-user", "", []string{RoleNameReadOnly})
 	require.NoError(t, err)
 
-	_, err = pam.validateCredentials(ctx, "nopassword-user", "somepassword")
+	_, err = pam.validateCredentials(ctx, "nopassword-user", passwordBuffer(t, "somepassword"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no password set")
 }
@@ -581,7 +581,7 @@ func TestPersistentAuthManager_ValidateCredentials_WrongPassword(t *testing.T) {
 	_, err = pam.CreateUser("passworduser", "correct-password", []string{RoleNameReadOnly})
 	require.NoError(t, err)
 
-	_, err = pam.validateCredentials(ctx, "passworduser", "wrong-password")
+	_, err = pam.validateCredentials(ctx, "passworduser", passwordBuffer(t, "wrong-password"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid credentials")
 }
@@ -609,7 +609,7 @@ func TestPersistentAuthManager_Authenticate_FullFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	// Authenticate
-	token, err := pam.Authenticate(ctx, "authuser", "secure-password-123")
+	token, err := pam.Authenticate(ctx, "authuser", passwordBuffer(t, "secure-password-123"))
 	require.NoError(t, err)
 	assert.NotEmpty(t, token.AccessToken)
 	assert.NotEmpty(t, token.RefreshToken)
@@ -629,7 +629,7 @@ func TestPersistentAuthManager_Authenticate_AuthDisabled(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	_, err = pam.Authenticate(ctx, "user", "pass")
+	_, err = pam.Authenticate(ctx, "user", passwordBuffer(t, "pass"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "authentication is not enabled")
 }

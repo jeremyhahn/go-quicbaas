@@ -187,6 +187,10 @@ func (m *mockSealManager) GenerateRootToken(ctx context.Context, strategy string
 	return "generated-root-token-12345", nil
 }
 
+func (m *mockSealManager) RotateRootKey(_ context.Context) error {
+	return nil
+}
+
 func (m *mockSealManager) Close() error {
 	return nil
 }

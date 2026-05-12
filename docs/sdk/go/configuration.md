@@ -72,16 +72,7 @@ client, err := quicbaas.NewClient("http://localhost:8080",
 
 MCP supports two authentication methods:
 
-**Auto-authentication with credentials** -- the transport calls `quicbaas_login` automatically before requests that require authentication:
-
-```go
-client, err := quicbaas.NewClient("http://localhost:8080",
-    quicbaas.WithMCP(),
-    quicbaas.WithMCPCredentials("admin", "admin"),
-)
-```
-
-**Pre-existing token** -- useful when a token has already been obtained (e.g., from a stored CLI session):
+**Pre-existing token** -- recommended when a token has already been obtained (e.g., from browser WebAuthn login, CLI session, or OAuth2 client credentials flow):
 
 ```go
 client, err := quicbaas.NewClient("http://localhost:8080",
@@ -90,15 +81,25 @@ client, err := quicbaas.NewClient("http://localhost:8080",
 )
 ```
 
+**Auto-authentication via bearer token** (legacy) -- the transport reuses a stored token:
+
+```go
+client, err := quicbaas.NewClient("http://localhost:8080",
+    quicbaas.WithMCP(),
+    quicbaas.WithMCPAuthToken(storedToken),
+)
+```
+
+**Note:** The `WithMCPCredentials(user, pass)` option is deprecated. QuicBaaS is passwordless-first; obtain tokens via WebAuthn, smartcard, or OAuth2 client credentials instead. See [Passwordless Authentication](../../auth/passwordless.md).
+
 ### MCP Options
 
 | Option | Description |
 |--------|-------------|
 | `WithMCP()` | Select MCP transport |
-| `WithMCPCredentials(user, pass)` | Auto-authenticate with username/password |
-| `WithMCPAuthToken(token)` | Use a pre-existing Bearer token |
+| `WithMCPAuthToken(token)` | Use a pre-existing Bearer token from OAuth2 / WebAuthn |
 
-Public tools (`quicbaas_login`, `quicbaas_health`, `quicbaas_liveness`, `quicbaas_readiness`) do not require authentication.
+Public tools (`quicbaas_health`, `quicbaas_liveness`, `quicbaas_readiness`) do not require authentication.
 
 ### Limitations
 

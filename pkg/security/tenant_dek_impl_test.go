@@ -17,6 +17,7 @@ package security
 
 import (
 	"context"
+	"crypto"
 	"errors"
 	"sync"
 	"testing"
@@ -734,4 +735,245 @@ func TestTenantDEKProvisioner_DeprovisionDEK_NonExistent(t *testing.T) {
 	p := NewTenantDEKProvisioner(mgr)
 	err := p.DeprovisionDEK(context.Background(), "never-existed")
 	assert.NoError(t, err)
+}
+
+// ----------------------------------------------------------------------------
+// Regression: first-create must not attempt Decrypt (scenario b).
+// ----------------------------------------------------------------------------
+
+// TestGetOrCreateTenantDEK_FirstCreate_NoDecryptCall asserts that on a truly
+// fresh data dir (storage returns nil for the current-DEK key) the manager
+// generates a new DEK without ever calling KMS.Decrypt. Regression for the
+// class of bug where an empty ciphertext is fed into AEAD open and surfaces
+// as "cipher: message authentication failed".
+func TestGetOrCreateTenantDEK_FirstCreate_NoDecryptCall(t *testing.T) {
+	kms := newMockKMS()
+	store := newMockKVStore()
+
+	pt := fakePlaintext(0x51)
+	kms.queueGenerate(pt, fakeWrapped(0x51), nil)
+	// Deliberately queue NO Decrypt response — a cache-miss path that
+	// incorrectly reached Decrypt would panic inside mockKMS.Decrypt.
+
+	mgr := newTestManager(kms, store)
+	defer mgr.Close()
+
+	got, err := mgr.GetOrCreateTenantDEK(context.Background(), "fresh-tenant")
+	require.NoError(t, err)
+	assert.Equal(t, pt, got)
+	assert.Equal(t, 0, kms.decryptCalls, "Decrypt must not be called on first-ever create")
+	assert.Equal(t, 1, kms.generateCalls, "GenerateDataKey must be called exactly once")
+}
+
+// TestGetOrCreateTenantDEK_EmptyStoredCiphertext_TreatedAsMissing asserts
+// that an empty byte slice (length 0) returned from the KV store is treated
+// as "not present" rather than fed into KMS.Decrypt. This is defence-in-depth
+// against backends that translate a missing key into (nil, nil) or
+// (emptySlice, nil); the AEAD path must never see zero-length ciphertext.
+func TestGetOrCreateTenantDEK_EmptyStoredCiphertext_TreatedAsMissing(t *testing.T) {
+	kms := newMockKMS()
+	store := newMockKVStore()
+
+	// Seed the store with an empty value at the DEK key. A naive
+	// implementation would take the "entry exists" branch and fail
+	// JSON-unmarshal or Decrypt. The correct behaviour is to generate.
+	ctx := context.Background()
+	require.NoError(t, store.Put(ctx, currentStorageKey("empty-tenant"), []byte{}))
+
+	pt := fakePlaintext(0x52)
+	kms.queueGenerate(pt, fakeWrapped(0x52), nil)
+
+	mgr := newTestManager(kms, store)
+	defer mgr.Close()
+
+	got, err := mgr.GetOrCreateTenantDEK(ctx, "empty-tenant")
+	require.NoError(t, err)
+	assert.Equal(t, pt, got)
+	assert.Equal(t, 0, kms.decryptCalls, "Decrypt must not be called for empty stored ciphertext")
+	assert.Equal(t, 1, kms.generateCalls)
+}
+
+// ----------------------------------------------------------------------------
+// Regression: stale KEK surface a typed error (scenario c).
+// ----------------------------------------------------------------------------
+
+// TestGetOrCreateTenantDEK_StaleKEK_ReturnsTypedError asserts that when the
+// persisted DEK ciphertext cannot be unwrapped by the current KEK — the
+// canonical symptom being "cipher: message authentication failed" — the
+// manager returns a StaleTenantDEKError that satisfies errors.Is for
+// ErrStaleTenantDEK and carries the tenant + KEK identity plus a repair hint.
+func TestGetOrCreateTenantDEK_StaleKEK_ReturnsTypedError(t *testing.T) {
+	kms := newMockKMS()
+	store := newMockKVStore()
+	ctx := context.Background()
+
+	// Seed storage with a DEK wrapped under a (now-forgotten) prior KEK.
+	kms.queueGenerate(fakePlaintext(0x60), fakeWrapped(0x60), nil)
+	mgr1 := newTestManager(kms, store)
+	_, err := mgr1.GetOrCreateTenantDEK(ctx, "stale-tenant")
+	require.NoError(t, err)
+	require.NoError(t, mgr1.Close())
+
+	// Simulate the fresh-KEK scenario: storage still has the wrapped DEK
+	// but the KMS now returns the stdlib AEAD auth-failure error when
+	// asked to decrypt. mgr2 has a cold cache so it must go through
+	// unwrapAndCache.
+	kms.queueDecrypt(nil, errors.New("decryption operation failed: cipher: message authentication failed"))
+	mgr2 := newTestManager(kms, store)
+	defer mgr2.Close()
+
+	_, err = mgr2.GetOrCreateTenantDEK(ctx, "stale-tenant")
+	require.Error(t, err)
+
+	// Must be the sentinel per errors.Is.
+	assert.True(t, errors.Is(err, ErrStaleTenantDEK), "error must match ErrStaleTenantDEK sentinel: %v", err)
+
+	// Must be retrievable via errors.As with structured fields.
+	var staleErr *StaleTenantDEKError
+	require.True(t, errors.As(err, &staleErr), "error must unwrap to *StaleTenantDEKError")
+	assert.Equal(t, "stale-tenant", staleErr.TenantID)
+	assert.Equal(t, TenantDEKMasterKeyID, staleErr.KEKID)
+	assert.NotNil(t, staleErr.Cause)
+
+	// Repair hint must appear in the message so operators see a path
+	// forward rather than a raw crypto error.
+	assert.Contains(t, staleErr.Error(), "deprovisioning", "error message must include a repair hint")
+}
+
+// TestGetTenantDEK_StaleKEK_ReturnsTypedError mirrors the above for
+// GetTenantDEK so both ingress paths surface the same typed error.
+func TestGetTenantDEK_StaleKEK_ReturnsTypedError(t *testing.T) {
+	kms := newMockKMS()
+	store := newMockKVStore()
+	ctx := context.Background()
+
+	kms.queueGenerate(fakePlaintext(0x61), fakeWrapped(0x61), nil)
+	mgr1 := newTestManager(kms, store)
+	_, err := mgr1.GetOrCreateTenantDEK(ctx, "stale-get-tenant")
+	require.NoError(t, err)
+	require.NoError(t, mgr1.Close())
+
+	kms.queueDecrypt(nil, errors.New("xkms: cipher: message authentication failed"))
+	mgr2 := newTestManager(kms, store)
+	defer mgr2.Close()
+
+	_, err = mgr2.GetTenantDEK(ctx, "stale-get-tenant")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrStaleTenantDEK))
+
+	var staleErr *StaleTenantDEKError
+	require.True(t, errors.As(err, &staleErr))
+	assert.Equal(t, "stale-get-tenant", staleErr.TenantID)
+}
+
+// TestGetOrCreateTenantDEK_NonAuthDecryptError_NotStale ensures that
+// generic (non-AEAD-auth) decryption errors remain wrapped as-is and are
+// NOT mis-classified as StaleTenantDEKError. Only the specific
+// "message authentication failed" case is treated as a stale-KEK signal.
+func TestGetOrCreateTenantDEK_NonAuthDecryptError_NotStale(t *testing.T) {
+	kms := newMockKMS()
+	store := newMockKVStore()
+	ctx := context.Background()
+
+	kms.queueGenerate(fakePlaintext(0x62), fakeWrapped(0x62), nil)
+	mgr1 := newTestManager(kms, store)
+	_, err := mgr1.GetOrCreateTenantDEK(ctx, "transient-tenant")
+	require.NoError(t, err)
+	require.NoError(t, mgr1.Close())
+
+	kms.queueDecrypt(nil, errors.New("kms backend unavailable"))
+	mgr2 := newTestManager(kms, store)
+	defer mgr2.Close()
+
+	_, err = mgr2.GetOrCreateTenantDEK(ctx, "transient-tenant")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrStaleTenantDEK), "non-auth errors must not be classified as stale DEK")
+	assert.Contains(t, err.Error(), "kms backend unavailable")
+}
+
+// TestGetOrCreateTenantDEK_PersistentKEK_SurvivesRestart is the regression
+// test for the ephemeral-KEK bug. It verifies that a TenantDEKManager that
+// shares a KMS instance with a previous manager (simulating a process restart
+// where the KEK is loaded from persistent storage rather than regenerated)
+// can successfully unwrap a DEK stored by the previous instance.
+//
+// Without the fix (lifecycle.go: in-memory KMS key storage replaced with
+// file-based storage when a data directory is configured), a new KMS instance
+// with a freshly-generated KEK would fail to decrypt with "message
+// authentication failed", surfacing as StaleTenantDEKError.
+func TestGetOrCreateTenantDEK_PersistentKEK_SurvivesRestart(t *testing.T) {
+	t.Parallel()
+
+	kms := newMockKMS()
+	store := newMockKVStore()
+	ctx := context.Background()
+
+	// --- First "process run": generate and store the wrapped DEK. ---
+	pt := fakePlaintext(0x70)
+	wk := fakeWrapped(0x70)
+	kms.queueGenerate(pt, wk, nil)
+
+	mgr1 := newTestManager(kms, store)
+	got1, err := mgr1.GetOrCreateTenantDEK(ctx, "restart-tenant")
+	require.NoError(t, err)
+	require.Equal(t, pt, got1)
+	require.NoError(t, mgr1.Close()) // clears in-memory cache
+
+	// Verify the DEK was persisted to the store.
+	stored, err := store.Get(ctx, currentStorageKey("restart-tenant"))
+	require.NoError(t, err)
+	require.NotEmpty(t, stored, "wrapped DEK must be persisted")
+
+	// --- Simulated process restart with SAME persistent KEK loaded. ---
+	// The second manager shares the same KMS instance (same KEK, simulating
+	// file-based persistent key storage that survives restart). It must
+	// successfully unwrap the DEK stored by mgr1 — no StaleTenantDEKError.
+	kms.queueDecrypt(pt, nil)
+
+	mgr2 := newTestManager(kms, store)
+	defer mgr2.Close()
+
+	got2, err := mgr2.GetOrCreateTenantDEK(ctx, "restart-tenant")
+	require.NoError(t, err, "unwrap must succeed when KEK is persistent across restarts")
+	require.Equal(t, pt, got2, "plaintext must match original DEK")
+	require.Equal(t, 1, kms.decryptCalls, "Decrypt must be called exactly once on restart")
+	require.Equal(t, 1, kms.generateCalls, "GenerateDataKey must not be called again on restart")
+}
+
+// TestGetOrCreateTenantDEK_EphemeralKEK_FailsOnRestart contrasts
+// TestGetOrCreateTenantDEK_PersistentKEK_SurvivesRestart by confirming the
+// pre-fix failure mode: a new KEK (different random bytes) cannot unwrap a
+// DEK stored by the previous process run, producing StaleTenantDEKError.
+func TestGetOrCreateTenantDEK_EphemeralKEK_FailsOnRestart(t *testing.T) {
+	t.Parallel()
+
+	kms := newMockKMS()
+	store := newMockKVStore()
+	ctx := context.Background()
+
+	// --- First "process run": generate and store the wrapped DEK. ---
+	kms.queueGenerate(fakePlaintext(0x71), fakeWrapped(0x71), nil)
+	mgr1 := newTestManager(kms, store)
+	_, err := mgr1.GetOrCreateTenantDEK(ctx, "ephemeral-tenant")
+	require.NoError(t, err)
+	require.NoError(t, mgr1.Close())
+
+	// --- Simulated restart with NEW (ephemeral) KEK — the bug scenario. ---
+	// Decrypt returns the AEAD auth-failure error that results from using a
+	// different KEK than the one that wrapped the stored DEK.
+	kms.queueDecrypt(nil, errors.New("decryption operation failed: cipher: message authentication failed"))
+	mgr2 := newTestManager(kms, store)
+	defer mgr2.Close()
+
+	_, err = mgr2.GetOrCreateTenantDEK(ctx, "ephemeral-tenant")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrStaleTenantDEK),
+		"ephemeral KEK must surface StaleTenantDEKError on restart with stale stored DEK")
+}
+
+// Signer returns a crypto.Signer for the given keyID. Tests that don't
+// exercise the signer path receive a nil signer and no error; tests
+// that do can stub this by redefining the method on a wrapped type.
+func (m *mockKMS) Signer(_ context.Context, _ string) (crypto.Signer, error) {
+	return nil, nil
 }

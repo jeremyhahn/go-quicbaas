@@ -2011,7 +2011,9 @@ func TestCov91_HandleDeleteParameter_MissingPath(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCov91_HandleSealInit_ServiceNotAvailable(t *testing.T) {
+func TestCov91_HandleSealInit_Success(t *testing.T) {
+	// SealService is now promoted onto the facade; the mock returns default
+	// success responses, so a valid request must return 200 OK.
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -2020,10 +2022,12 @@ func TestCov91_HandleSealInit_ServiceNotAvailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleSealInit(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestCov91_HandleUnseal_ServiceNotAvailable(t *testing.T) {
+func TestCov91_HandleUnseal_Success(t *testing.T) {
+	// SealService is now promoted onto the facade; the mock returns default
+	// success responses, so a valid request must return 200 OK.
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -2032,10 +2036,12 @@ func TestCov91_HandleUnseal_ServiceNotAvailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleUnseal(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestCov91_HandleGenerateRootToken_ServiceNotAvailable(t *testing.T) {
+func TestCov91_HandleGenerateRootToken_Success(t *testing.T) {
+	// SealService is now promoted onto the facade; the mock returns default
+	// success responses, so a valid request must return 200 OK.
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -2044,7 +2050,7 @@ func TestCov91_HandleGenerateRootToken_ServiceNotAvailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleGenerateRootToken(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestCov91_HandleReplaceNode_InvalidShardID(t *testing.T) {
@@ -2420,13 +2426,11 @@ func newTestCacheManager(t *testing.T) *cache.CacheManager {
 	return mgr
 }
 
-func TestPhase4HandlerLogin_AuthenticateSuccess(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
-
-	// Create a user first (password must be >= 12 characters)
-	_, err := authMgr.CreateUser("testuser", "testpass12345", []string{"admin"})
-	require.NoError(t, err)
+// TestPhase4HandlerLogin_ReturnsGone verifies that the password-based login endpoint returns
+// 410 Gone for all requests. Password authentication is removed in OAuth 2.1;
+// use WebAuthn (/api/v1/auth/webauthn/login/finish) or PIV (/api/v1/auth/login/piv) instead.
+func TestPhase4HandlerLogin_ReturnsGone(t *testing.T) {
+	handler := NewPhase4Handler(nil, nil, nil)
 
 	body := `{"username":"testuser","password":"testpass12345"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
@@ -2435,32 +2439,21 @@ func TestPhase4HandlerLogin_AuthenticateSuccess(t *testing.T) {
 
 	handler.HandleLogin(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
-
-	var resp pb.LoginResponse
-	err = json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.AccessToken)
-	assert.NotEmpty(t, resp.RefreshToken)
-	assert.Equal(t, "Bearer", resp.TokenType)
-	assert.NotEmpty(t, resp.UserId)
-	assert.Contains(t, resp.Roles, "admin")
+	assert.Equal(t, http.StatusGone, w.Code)
+	assert.Contains(t, w.Body.String(), "WebAuthn")
 }
 
-func TestPhase4HandlerLogin_AuthenticateFailure(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
+// TestPhase4HandlerLogin_GoneForAnyMethod verifies that HandleLogin returns 410 Gone
+// regardless of the HTTP method used, since the endpoint is permanently removed.
+func TestPhase4HandlerLogin_GoneForAnyMethod(t *testing.T) {
+	handler := NewPhase4Handler(nil, nil, nil)
 
-	body := `{"username":"nonexistent","password":"wrongpass1234"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/login", nil)
 	w := httptest.NewRecorder()
 
 	handler.HandleLogin(w, req)
 
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.Contains(t, w.Body.String(), "Authentication failed")
+	assert.Equal(t, http.StatusGone, w.Code)
 }
 
 func TestPhase4HandlerLogout_RevokeTokenSuccess(t *testing.T) {
@@ -2471,7 +2464,7 @@ func TestPhase4HandlerLogout_RevokeTokenSuccess(t *testing.T) {
 	_, err := authMgr.CreateUser("logoutuser", "password12345", []string{"user"})
 	require.NoError(t, err)
 
-	token, err := authMgr.Authenticate(context.Background(), "logoutuser", "password12345")
+	token, err := authMgr.Authenticate(context.Background(), "logoutuser", pwBuffer(t, "password12345"))
 	require.NoError(t, err)
 
 	body := fmt.Sprintf(`{"access_token":"%s"}`, token.AccessToken)
@@ -2497,7 +2490,7 @@ func TestPhase4HandlerRefreshToken_Success(t *testing.T) {
 	_, err := authMgr.CreateUser("refreshuser", "password12345", []string{"user"})
 	require.NoError(t, err)
 
-	token, err := authMgr.Authenticate(context.Background(), "refreshuser", "password12345")
+	token, err := authMgr.Authenticate(context.Background(), "refreshuser", pwBuffer(t, "password12345"))
 	require.NoError(t, err)
 
 	body := fmt.Sprintf(`{"refresh_token":"%s"}`, token.RefreshToken)
@@ -3014,7 +3007,8 @@ func TestPhase4HandlerMethodNotAllowed(t *testing.T) {
 
 		handler.HandleLogin(w, req)
 
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		// Password login is permanently removed (OAuth 2.1); always returns 410 Gone.
+		assert.Equal(t, http.StatusGone, w.Code)
 	})
 
 	t.Run("logout with GET method", func(t *testing.T) {
@@ -3102,7 +3096,8 @@ func TestPhase4HandlerInvalidJSON(t *testing.T) {
 
 		handler.HandleLogin(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
+		// Password login is permanently removed (OAuth 2.1); always returns 410 Gone.
+		assert.Equal(t, http.StatusGone, w.Code)
 	})
 
 	t.Run("logout with invalid JSON", func(t *testing.T) {
@@ -7615,7 +7610,9 @@ func TestRemaining91_HandleGetSchedulerStatus_Success(t *testing.T) {
 // Seal Handlers
 // =============================================================================
 
-func TestRemaining91_HandleSealStatus_NotAvailable(t *testing.T) {
+func TestRemaining91_HandleSealStatus_Success(t *testing.T) {
+	// SealService is now promoted onto the facade; the mock returns a default
+	// unsealed status, so the handler must return 200 OK.
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -7623,7 +7620,7 @@ func TestRemaining91_HandleSealStatus_NotAvailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleSealStatus(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestRemaining91_HandleSealInit_InvalidJSON(t *testing.T) {
@@ -7673,7 +7670,9 @@ func TestRemaining91_HandleSealInit_ThresholdExceedsTotal(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleSealInit_NotAvailable(t *testing.T) {
+func TestRemaining91_HandleSealInit_Success(t *testing.T) {
+	// SealService is now promoted onto the facade; the mock returns a default
+	// success response, so a valid request must return 200 OK.
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -7682,7 +7681,7 @@ func TestRemaining91_HandleSealInit_NotAvailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleSealInit(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestRemaining91_HandleUnseal_InvalidJSON(t *testing.T) {
@@ -7708,7 +7707,9 @@ func TestRemaining91_HandleUnseal_EmptyShare(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleSeal_NotAvailable(t *testing.T) {
+func TestRemaining91_HandleSeal_Success(t *testing.T) {
+	// SealService is now promoted onto the facade; the mock Seal() returns nil,
+	// so the handler must return 200 OK.
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -7716,7 +7717,7 @@ func TestRemaining91_HandleSeal_NotAvailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleSeal(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestRemaining91_HandleRekey_InvalidJSON(t *testing.T) {
@@ -9083,12 +9084,6 @@ func TestObservabilityHandlers_MethodValidation(t *testing.T) {
 			invalidMethod: http.MethodGet,
 		},
 		{
-			name:          "HandleLogin",
-			handler:       handler.HandleLogin,
-			validMethod:   http.MethodPost,
-			invalidMethod: http.MethodGet,
-		},
-		{
 			name:          "HandleLogout",
 			handler:       handler.HandleLogout,
 			validMethod:   http.MethodPost,
@@ -9149,11 +9144,6 @@ func TestObservabilityHandlers_InvalidJSON(t *testing.T) {
 		{
 			name:    "HandleCreateBackup",
 			handler: handler.HandleCreateBackup,
-			method:  http.MethodPost,
-		},
-		{
-			name:    "HandleLogin",
-			handler: handler.HandleLogin,
 			method:  http.MethodPost,
 		},
 		{

@@ -1,0 +1,493 @@
+//go:build iam
+
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package server
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/oauth2"
+	"google.golang.org/grpc"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+)
+
+// installRemoteBackendResolver wires the BackendDispatcher's optional
+// resolver that routes daemon-kind registrations to a RemoteACPBackend. When
+// the resolver returns (backend, true), the orchestrator dispatches through
+// it; otherwise the dispatcher falls back to local backends registered at
+// NewAgentService. The resolver is the runtime glue that turns the registry
+// + daemon-side gRPC server into a working remote execution path.
+//
+// Prerequisites:
+//   - s.agentRegistry is non-nil (set during IAM init; see iam_init.go)
+//   - s.orchestratorDaemonClient is non-nil (bootstrapped during IAM init)
+//
+// When either is missing we log and skip resolver installation — the central
+// continues to run with only local backends.
+func (s *Server) installRemoteBackendResolver(agentSvc orchestration.AgentService) {
+	if s.agentRegistry == nil {
+		s.logger.Warn("Remote backend resolver not installed: agent registry unavailable")
+		return
+	}
+	if s.orchestratorDaemonClient == nil {
+		s.logger.Warn("Remote backend resolver not installed: orchestrator daemon client not bootstrapped")
+		return
+	}
+	wirer, ok := agentSvc.(interface {
+		SetRemoteBackendResolver(orchestration.RemoteBackendResolver)
+	})
+	if !ok {
+		s.logger.Warn("Remote backend resolver not installed: agent service lacks SetRemoteBackendResolver")
+		return
+	}
+
+	adapter := logger.NewAdapter(s.logger)
+	pool := newRemoteBackendPool(s.agentRegistry, s.orchestratorDaemonClient, s.centralTokenEndpoint(), s.config.Orchestration.HostAffinity, adapter)
+
+	// Wire the embedded dialer registry so in-process agents bypass TCP.
+	// Initialized here so the pool is ready before embedded agent startup;
+	// the registry itself is populated later by installEmbeddedBackendDialer.
+	if s.embeddedDialerRegistry == nil {
+		s.embeddedDialerRegistry = NewEmbeddedDialerRegistry()
+	}
+	pool.embeddedDialers = s.embeddedDialerRegistry
+
+	wirer.SetRemoteBackendResolver(pool.resolve)
+	s.logger.Info("Remote backend resolver installed: daemon-kind registrations will be dispatched via RemoteACPBackend")
+}
+
+// centralTokenEndpoint returns the fully-qualified /oauth2/token URL for this
+// server. The resolver uses it to mint JWTs for outbound daemon calls using
+// the orchestrator's client_credentials app. Falls back to 127.0.0.1 when
+// Server.Host is 0.0.0.0 since the central dials itself.
+func (s *Server) centralTokenEndpoint() string {
+	host := s.config.Server.Host
+	if host == "" || host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
+	port := s.config.Server.REST.Port
+	if port == 0 {
+		// Fall back to the grpc port if REST is disabled — we only need to
+		// reach the OIDC provider which is registered on both transports.
+		port = s.config.Server.GRPC.Port
+	}
+	return fmt.Sprintf("https://%s:%d/oauth2/token", host, port)
+}
+
+// =============================================================================
+// remoteBackendPool
+// =============================================================================
+
+// remoteBackendPool caches RemoteACPBackend instances keyed by target daemon
+// host so we don't re-dial per spawn request. Cache entries are evicted when
+// the backing registration goes offline (via heartbeat expiry detected on
+// next resolve call).
+type remoteBackendPool struct {
+	registry    orchestration.AgentRegistry
+	centralCred *OrchestratorDaemonClient
+	tokenURL    string
+	logger      interfaces.Logger
+
+	// hostAffinityCfg carries the operator-level enforcement default for
+	// host_affinity hints. Per-request HostAffinityStrict overrides via
+	// context still take precedence; this is the fall-through default.
+	hostAffinityCfg config.SchedulerHostAffinityConfig
+
+	// embeddedDialers maps AgentRegistration.Host to a bufconn dialer for
+	// embedded agents. When non-nil and a dialer is found for a host, the
+	// pool bypasses the TCP/TLS dial path entirely.
+	embeddedDialers *EmbeddedDialerRegistry
+
+	mu      sync.Mutex
+	entries map[string]*pooledBackend
+}
+
+type pooledBackend struct {
+	backend        *orchestration.RemoteACPBackend
+	registrationID string
+}
+
+func newRemoteBackendPool(
+	registry orchestration.AgentRegistry,
+	cred *OrchestratorDaemonClient,
+	tokenURL string,
+	hostAffinityCfg config.SchedulerHostAffinityConfig,
+	logger interfaces.Logger,
+) *remoteBackendPool {
+	return &remoteBackendPool{
+		registry:        registry,
+		centralCred:     cred,
+		tokenURL:        tokenURL,
+		hostAffinityCfg: hostAffinityCfg,
+		logger:          logger,
+		entries:         map[string]*pooledBackend{},
+	}
+}
+
+// resolve implements orchestration.RemoteBackendResolver. Returns (backend,
+// true) when a registered daemon satisfies all of: serving the requested
+// backend, host-affinity, and GPU constraints; returns (nil, false) to let
+// the dispatcher fall through to local backends.
+//
+// Filtering rules applied in order:
+//  1. Backend filter: agent must serve the named backend (Backend field or Capabilities).
+//  2. Host-affinity filter (when non-empty): Name, Host exact match, or Host prefix match.
+//  3. GPU filter (when GpuRequired): agent Capabilities must contain "gpu".
+//
+// When all online agents exist but none survives filtering, a
+// NoMatchingAgentError is logged; (nil, false) is still returned so the
+// dispatcher can surface BackendNotFoundError to the caller.
+func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID string) (orchestration.AgentBackend, bool) {
+	tenantID := orchestration.TenantFromContext(ctx)
+	if tenantID == "" {
+		return nil, false
+	}
+	hostAffinity := orchestration.HostAffinityFromContext(ctx)
+	gpuRequired := orchestration.GpuRequiredFromContext(ctx)
+
+	// Pull all tenant+backend matches across multiple status values; a
+	// just-enrolled daemon is in AgentStatusRegistered until its first
+	// heartbeat, which would otherwise hide it from dispatch.
+	var allRegs []*orchestration.AgentRegistration
+	for _, status := range []orchestration.AgentStatus{
+		orchestration.AgentStatusRunning,
+		orchestration.AgentStatusIdle,
+		orchestration.AgentStatusRegistered,
+	} {
+		regs, err := p.registry.ListAgents(ctx, tenantID, &orchestration.AgentFilter{
+			Backend: backend,
+			Status:  status,
+		})
+		if err != nil {
+			p.logger.Warnf("remote resolver: list agents failed: tenant=%s backend=%s status=%s err=%v",
+				tenantID, backend, status, err)
+			continue
+		}
+		allRegs = append(allRegs, regs...)
+	}
+	if len(allRegs) == 0 {
+		return nil, false
+	}
+
+	reg, constraint := p.pickDaemon(allRegs, backend, hostAffinity, gpuRequired)
+	if reg == nil {
+		noMatchErr := buildNoMatchError(backend, hostAffinity, gpuRequired, constraint)
+		// In hard mode (operator default OR per-request override) and when
+		// the failure was specifically the host-affinity filter, stash the
+		// typed error on the context so the public-API handler can surface
+		// 400 no_matching_agent rather than the soft 404 fall-through.
+		strict := orchestration.HostAffinityStrictFromContext(ctx) || p.hostAffinityCfg.IsHard()
+		if strict && constraint == "host_affinity" {
+			noMatchErr.Detail = "host " + hostAffinity + " is offline"
+			orchestration.StashResolveError(ctx, noMatchErr)
+		}
+		p.logger.Warnf("remote resolver: %s tenant=%s strict=%v", noMatchErr.Error(), tenantID, strict)
+		return nil, false
+	}
+	return p.backendFor(ctx, reg)
+}
+
+// pickDaemon filters a registration slice to the first daemon-kind agent
+// that satisfies all three constraints: backend, host affinity, and GPU.
+// It returns the matching registration and an empty constraint name on
+// success. On failure it returns (nil, <constraint>) where constraint names
+// the first filter that eliminated all candidates, helping callers build
+// actionable error messages.
+//
+// Constraint evaluation order mirrors the priority operators expect:
+//  1. backend — the agent must serve the named backend
+//  2. host_affinity — Name, Host exact match, or Host prefix match
+//  3. gpu — Capabilities must contain "gpu"
+func (p *remoteBackendPool) pickDaemon(
+	regs []*orchestration.AgentRegistration,
+	backend, hostAffinity string,
+	gpuRequired bool,
+) (reg *orchestration.AgentRegistration, failedConstraint string) {
+	passedBackend := false
+	passedAffinity := false
+
+	for _, r := range regs {
+		if r == nil {
+			continue
+		}
+		kind := r.EffectiveKind()
+		if kind != orchestration.AgentKindDaemon && kind != orchestration.AgentKindEmbedded {
+			continue
+		}
+		if r.Backend != backend && !capabilityContains(r.Capabilities, backend) {
+			continue
+		}
+		passedBackend = true
+
+		if hostAffinity != "" && r.Name != hostAffinity && r.Host != hostAffinity && !strings.HasPrefix(r.Host, hostAffinity+":") {
+			continue
+		}
+		passedAffinity = true
+
+		if gpuRequired && !capabilityContains(r.Capabilities, "gpu") {
+			continue
+		}
+
+		return r, ""
+	}
+
+	// Identify the earliest constraint that blocked all candidates.
+	if !passedBackend {
+		return nil, "backend"
+	}
+	if hostAffinity != "" && !passedAffinity {
+		return nil, "host_affinity"
+	}
+	return nil, "gpu"
+}
+
+// buildNoMatchError constructs a NoMatchingAgentError that names the
+// unsatisfied constraint and all active filters for clear operator messaging.
+func buildNoMatchError(backend, hostAffinity string, gpuRequired bool, constraint string) *orchestration.NoMatchingAgentError {
+	detail := "no online agents serve backend=" + backend
+	if hostAffinity != "" {
+		detail += " and host_affinity=" + hostAffinity
+	}
+	if gpuRequired {
+		detail += " and have capability=gpu"
+	}
+	return &orchestration.NoMatchingAgentError{
+		Constraint: constraint,
+		Detail:     detail,
+	}
+}
+
+// capabilityContains reports whether the capabilities slice advertises the
+// named backend. Used when a daemon serves multiple backends from a single
+// registration record.
+func capabilityContains(caps []string, backend string) bool {
+	for _, c := range caps {
+		if c == backend {
+			return true
+		}
+	}
+	return false
+}
+
+// backendFor returns a cached *RemoteACPBackend for the registration, or
+// constructs one on first use. Cache key is registration.Host since that is
+// the dialable target — multiple registrations for the same daemon (shouldn't
+// happen, but defensive) share one backend.
+func (p *remoteBackendPool) backendFor(ctx context.Context, reg *orchestration.AgentRegistration) (orchestration.AgentBackend, bool) {
+	key := reg.Host
+	p.mu.Lock()
+	if entry, ok := p.entries[key]; ok && entry.registrationID == reg.ID {
+		p.mu.Unlock()
+		return entry.backend, true
+	}
+	// Drop stale cache entry for the same host (different reg id = daemon
+	// replaced) before constructing the replacement.
+	if _, ok := p.entries[key]; ok {
+		delete(p.entries, key)
+	}
+	p.mu.Unlock()
+
+	// For embedded agents, use the bufconn dialer so RPCs stay in-process.
+	// The dialer is keyed by Host, which is the logical agent name set at
+	// registration time (e.g. the hostname or host-affinity tag).
+	var connDialer func(ctx context.Context, target string) (*grpc.ClientConn, error)
+	isEmbedded := false
+	if p.embeddedDialers != nil {
+		if d, ok := p.embeddedDialers.Lookup(reg.Host); ok {
+			connDialer = d
+			isEmbedded = true
+		}
+	}
+
+	// Embedded agents run in-process with a synthetic identity set on their
+	// GRPCSpawnServer (see embedded_agent.go buildEmbeddedAgentIdentity).
+	// Their bufconn gRPC server has no bearer-token interceptor, so the token
+	// fetch is unnecessary and causes TLS handshake noise when the loopback
+	// client tries to hit /oauth2/token. Skip the token source for embedded
+	// agents; only remote daemon backends need OAuth2 bearer tokens.
+	var tokenSource oauth2.TokenSource
+	if !isEmbedded {
+		tokenSource = newCentralOAuth2TokenSource(p.centralCred, p.tokenURL)
+	}
+
+	backend, err := orchestration.NewRemoteACPBackend(orchestration.RemoteACPBackendDeps{
+		Registration: reg,
+		TokenSource:  tokenSource,
+		ConnDialer:   connDialer,
+		Logger:       p.logger,
+	})
+	if err != nil {
+		p.logger.Warnf("remote resolver: build RemoteACPBackend failed: host=%s err=%v", reg.Host, err)
+		return nil, false
+	}
+	p.mu.Lock()
+	p.entries[key] = &pooledBackend{backend: backend, registrationID: reg.ID}
+	p.mu.Unlock()
+	p.logger.Infof("remote resolver: routed backend=%q tenant=%s → daemon=%s host=%s", reg.Backend, reg.TenantID, reg.Name, reg.Host)
+	return backend, true
+}
+
+// =============================================================================
+// centralOAuth2TokenSource — oauth2.TokenSource implementation
+// =============================================================================
+
+// centralOAuth2TokenSource implements oauth2.TokenSource by calling the
+// central's own /oauth2/token endpoint with client_credentials.
+//
+// Using the OIDC network round-trip (rather than minting the JWT in-process)
+// keeps this code honest: the central authenticates to daemons exactly the
+// way any third-party client would, which means daemons never need special
+// trust of the central beyond the standard JWT validation.
+type centralOAuth2TokenSource struct {
+	client      *http.Client
+	cred        *OrchestratorDaemonClient
+	tokenURL    string
+	insecureTLS bool
+
+	mu        sync.Mutex
+	cached    *oauth2.Token
+	expiresAt time.Time
+}
+
+// newCentralOAuth2TokenSource constructs the source. The http.Client is the
+// default client — we rely on the central's cert being self-trusted here
+// because /oauth2/token is served over the same listener we just started
+// and operators configure their clients with the right root CA.
+func newCentralOAuth2TokenSource(cred *OrchestratorDaemonClient, tokenURL string) *centralOAuth2TokenSource {
+	return &centralOAuth2TokenSource{
+		client:   &http.Client{Timeout: 15 * time.Second},
+		cred:     cred,
+		tokenURL: tokenURL,
+		// Loopback-local token endpoint calls hit a cert issued by the
+		// central's own CA. Rather than build up a trust store that duplicates
+		// the CA chain already on disk, we accept the loopback cert — the
+		// central is literally talking to itself on 127.0.0.1.
+		insecureTLS: isLoopback(tokenURL),
+	}
+}
+
+// Token implements oauth2.TokenSource.
+func (t *centralOAuth2TokenSource) Token() (*oauth2.Token, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.cached != nil && time.Until(t.expiresAt) > 5*time.Second {
+		return t.cached, nil
+	}
+	tok, err := t.refresh()
+	if err != nil {
+		return nil, err
+	}
+	t.cached = tok
+	t.expiresAt = tok.Expiry
+	return tok, nil
+}
+
+// refresh performs the client_credentials exchange. Uses HTTP Basic auth per
+// RFC 6749 §2.3.1 since that is the form pkg/api/rest/iam_oidc.go's Token
+// handler prefers.
+func (t *centralOAuth2TokenSource) refresh() (*oauth2.Token, error) {
+	body := url.Values{}
+	body.Set("grant_type", "client_credentials")
+	body.Set("scope", strings.Join(t.cred.Scopes, " "))
+
+	req, err := http.NewRequest(http.MethodPost, t.tokenURL, strings.NewReader(body.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.SetBasicAuth(t.cred.ClientID, t.cred.ClientSecret)
+
+	client := t.client
+	if t.insecureTLS {
+		client = loopbackInsecureClient()
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("central token exchange: status=%d", resp.StatusCode)
+	}
+
+	// Minimal decode — we only need access_token + expires_in.
+	var out struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+		ExpiresIn   int    `json:"expires_in"`
+		Scope       string `json:"scope"`
+	}
+	if err := decodeJSON(resp.Body, &out); err != nil {
+		return nil, err
+	}
+	if out.AccessToken == "" {
+		return nil, errors.New("central token exchange: empty access_token")
+	}
+	ttl := time.Duration(out.ExpiresIn) * time.Second
+	if ttl <= 0 {
+		ttl = 5 * time.Minute
+	}
+	return &oauth2.Token{
+		AccessToken: out.AccessToken,
+		TokenType:   out.TokenType,
+		Expiry:      time.Now().Add(ttl),
+	}, nil
+}
+
+// decodeJSON wraps json.Decode with a 1 MiB body cap so a compromised or
+// pathological token endpoint can't exhaust memory.
+func decodeJSON(r io.Reader, v interface{}) error {
+	return json.NewDecoder(io.LimitReader(r, 1<<20)).Decode(v)
+}
+
+// isLoopback reports whether the URL host resolves to 127.0.0.1 / ::1. Used
+// to decide whether to accept the self-issued cert on the loopback token
+// endpoint. Non-loopback token URLs go through the normal system roots.
+func isLoopback(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "127.0.0.1" || host == "::1" || host == "localhost"
+}
+
+// loopbackInsecureClient returns an http.Client that skips TLS verification.
+// Only ever used when the target is loopback — the central is talking to
+// itself on 127.0.0.1, so MITM is not a threat model worth hardening.
+func loopbackInsecureClient() *http.Client {
+	return &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // loopback only; see isLoopback guard
+		},
+	}
+}

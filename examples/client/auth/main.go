@@ -99,9 +99,10 @@ func demonstrateJWTAuthentication(ctx context.Context, client quicbaas.Client) {
 
 	// Step 1: Login with username and password
 	fmt.Println("Step 1: Logging in with username/password...")
+	// TODO: Password-based login was removed; this example needs to migrate to
+	// WebAuthn/PIV smartcard once those flows are wired through the SDK.
 	loginResp, err := client.Auth().Login(ctx, &service.ExtendedLoginRequest{
 		Username: "admin@example.com",
-		Password: "SecureP@ssw0rd!",
 		TenantID: "default",
 	})
 	if err != nil {
@@ -232,9 +233,9 @@ func demonstrateMFAAuthentication(ctx context.Context, client quicbaas.Client) {
 
 	// Step 2: Complete MFA verification
 	fmt.Println("Step 2: Completing MFA verification...")
+	// TODO: Password-based login was removed; MFA flow now relies on WebAuthn/PIV evidence.
 	mfaLoginResp, err := client.Auth().Login(ctx, &service.ExtendedLoginRequest{
 		Username: "secure-user@example.com",
-		Password: "SecureP@ssw0rd!",
 		MFACode:  "123456", // TOTP code from authenticator app
 		TenantID: "default",
 	})

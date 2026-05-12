@@ -1,6 +1,6 @@
 # QuicBaaS API Documentation
 
-QuicBaaS provides multiple API protocols for diverse client requirements. All APIs share a common service facade, ensuring consistent behavior across protocols.
+QuicBaaS provides multiple API protocols for diverse client requirements. **All APIs share a common SDK abstraction**, so every CLI command, SDK call, and GUI action works identically over every transport. See [multiprotocol.md](multiprotocol.md) for the parity contract and the integration tests that enforce it.
 
 ## Available APIs
 
@@ -10,6 +10,10 @@ QuicBaaS provides multiple API protocols for diverse client requirements. All AP
 | QUIC | Mobile clients, high-latency networks | UDP/TLS 1.3, Binary | 100K+ ops/sec, <3ms P99 | [quic.md](quic.md) |
 | REST | Web applications, HTTP clients | HTTP/1.1-2, JSON | 25K+ ops/sec, <15ms P99 | [rest.md](rest.md) |
 | MCP | AI agents, LLM integration | Stdio/HTTP, JSON-RPC | Context-aware operations | [mcp.md](mcp.md) |
+| Unix | Local CLI / desktop GUI | gRPC over UDS, no TLS | gRPC-equivalent, lowest latency | (uses gRPC docs) |
+| Embedded | Wails desktop app | direct Go calls | no IPC overhead | (Wails-only) |
+
+> **Multi-protocol parity is mandatory.** A method that works on REST must work on gRPC, QUIC, Unix, and MCP. The integration suite at `test/integration/cli/` exercises every CLI command via every transport — adding a feature means implementing each transport's handler in the same PR. See [multiprotocol.md](multiprotocol.md).
 
 ## Default Transport: Unix Socket
 

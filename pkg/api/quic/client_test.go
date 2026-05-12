@@ -911,6 +911,10 @@ func (e *e2eMockService) GenerateRootToken(ctx context.Context, req *service.Gen
 	return e.sealSvc.GenerateRootToken(ctx, req)
 }
 
+func (e *e2eMockService) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
+	return e.sealSvc.RotateRootKey(ctx, req)
+}
+
 func (e *e2eMockService) SetQRDBClient(provider service.QRDBClientProvider) {
 }
 
@@ -957,6 +961,10 @@ func (s *e2eSealService) DeleteRecoveryKey(ctx context.Context, req *service.Del
 }
 func (s *e2eSealService) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
 	return &service.GenerateRootTokenResponse{}, nil
+}
+
+func (s *e2eSealService) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
+	return &service.RotateRootKeyResponse{Success: true, Message: "ok", Timestamp: time.Now()}, nil
 }
 
 // e2eSchedulerService implements the SchedulerService interface.

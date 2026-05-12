@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,16 +24,76 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// WorkflowPersistor is the storage backend the loader writes to on every
+// Register/Update/Delete. It must be safe for concurrent use. Implementations
+// typically wrap the QuicBaaS internal KV store so workflows survive daemon
+// restarts and replicate across raft peers — exactly like every other
+// orchestration entity. An in-memory loader without a persistor is acceptable
+// only for tests and ephemeral test daemons.
+type WorkflowPersistor interface {
+	// Save writes the definition. Overwrites any existing entry with the same
+	// name. Errors should be returned to the caller; the loader rolls back
+	// in-memory state on failure to keep memory consistent with storage.
+	Save(ctx context.Context, def *WorkflowDefinition) error
+
+	// Remove deletes the entry by name. Returns nil if the name was not
+	// present (idempotent).
+	Remove(ctx context.Context, name string) error
+
+	// LoadAll returns every persisted workflow. Called once at startup to
+	// rehydrate the in-memory cache.
+	LoadAll(ctx context.Context) ([]*WorkflowDefinition, error)
+}
+
 // WorkflowLoader loads, validates, and manages workflow definitions from
 // YAML files or programmatic registration. It uses a sync.Map for lock-free
 // concurrent access to the workflow registry.
+//
+// When a WorkflowPersistor is attached, every Register/Update writes through
+// the persistor before updating the in-memory cache, and Delete removes the
+// persistor entry first. The orchestrator's startup hook calls Rehydrate to
+// load any previously stored definitions back into the cache.
 type WorkflowLoader struct {
 	workflows sync.Map // map[string]*WorkflowDefinition
+	persistor WorkflowPersistor
 }
 
-// NewWorkflowLoader creates a new WorkflowLoader.
+// NewWorkflowLoader creates a new WorkflowLoader without a persistor. Useful
+// for tests and ephemeral processes where workflow durability does not matter.
 func NewWorkflowLoader() *WorkflowLoader {
 	return &WorkflowLoader{}
+}
+
+// SetPersistor attaches a backing store. Subsequent Register/Update/Delete
+// calls flow through the persistor; existing in-memory entries are NOT pushed
+// to the persistor automatically. Pair with Rehydrate at startup.
+func (wl *WorkflowLoader) SetPersistor(p WorkflowPersistor) {
+	wl.persistor = p
+}
+
+// Rehydrate clears the in-memory cache and reloads it from the persistor. Call
+// once at startup, after SetPersistor, to restore any previously saved
+// workflow definitions into memory. Returns the count of workflows loaded.
+func (wl *WorkflowLoader) Rehydrate(ctx context.Context) (int, error) {
+	if wl.persistor == nil {
+		return 0, nil
+	}
+	defs, err := wl.persistor.LoadAll(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// Reset the cache so a Rehydrate after a partial state has clean view.
+	wl.workflows.Range(func(k, _ any) bool {
+		wl.workflows.Delete(k)
+		return true
+	})
+	for _, def := range defs {
+		if def == nil || def.Name == "" {
+			continue
+		}
+		wl.workflows.Store(def.Name, def)
+	}
+	return len(defs), nil
 }
 
 // LoadFromFile loads a workflow definition from a YAML file at the given path.
@@ -83,14 +144,69 @@ func (wl *WorkflowLoader) LoadFromDir(dir string) error {
 }
 
 // Register adds a workflow definition directly to the registry.
-// The definition is validated before registration. Returns an error
-// if validation fails or a workflow with the same name already exists.
+// The definition is validated before registration. When a persistor is
+// attached, the definition is written through to the persistor first; on
+// disk-write failure the in-memory store is rolled back so memory and
+// storage never diverge. Returns an error if validation fails or a workflow
+// with the same name already exists.
 func (wl *WorkflowLoader) Register(def *WorkflowDefinition) error {
 	if err := def.Validate(); err != nil {
 		return err
 	}
 	if _, loaded := wl.workflows.LoadOrStore(def.Name, def); loaded {
 		return &WorkflowAlreadyExistsError{Name: def.Name}
+	}
+	if wl.persistor != nil {
+		if err := wl.persistor.Save(context.Background(), def); err != nil {
+			wl.workflows.Delete(def.Name)
+			return err
+		}
+	}
+	return nil
+}
+
+// Update replaces an existing workflow definition in the registry.
+// The definition is validated before updating. Returns WorkflowNotFoundError
+// if no workflow with the given name exists. When a persistor is attached
+// the new definition is persisted; on persistor failure the previous
+// in-memory definition is restored.
+func (wl *WorkflowLoader) Update(def *WorkflowDefinition) error {
+	if err := def.Validate(); err != nil {
+		return err
+	}
+	prevAny, ok := wl.workflows.Load(def.Name)
+	if !ok {
+		return &WorkflowNotFoundError{Name: def.Name}
+	}
+	wl.workflows.Store(def.Name, def)
+	if wl.persistor != nil {
+		if err := wl.persistor.Save(context.Background(), def); err != nil {
+			if prev, ok := prevAny.(*WorkflowDefinition); ok {
+				wl.workflows.Store(def.Name, prev)
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// Delete removes a workflow definition from the registry by name.
+// Returns WorkflowNotFoundError if no workflow with the given name exists.
+// When a persistor is attached the persistor entry is removed; on persistor
+// failure the in-memory entry is restored.
+func (wl *WorkflowLoader) Delete(name string) error {
+	prevAny, ok := wl.workflows.Load(name)
+	if !ok {
+		return &WorkflowNotFoundError{Name: name}
+	}
+	wl.workflows.Delete(name)
+	if wl.persistor != nil {
+		if err := wl.persistor.Remove(context.Background(), name); err != nil {
+			if prev, ok := prevAny.(*WorkflowDefinition); ok {
+				wl.workflows.Store(name, prev)
+			}
+			return err
+		}
 	}
 	return nil
 }

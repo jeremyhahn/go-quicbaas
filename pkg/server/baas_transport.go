@@ -69,6 +69,29 @@ func (e *BaasTransportNotSupportedError) Error() string {
 	return "baas embedded transport: " + e.Operation + " not supported"
 }
 
+// BaasTransportNilRequestError indicates a method was called with a nil
+// request struct. The Operation field identifies the caller for diagnostics.
+type BaasTransportNilRequestError struct {
+	Operation string
+}
+
+// Error implements the error interface.
+func (e *BaasTransportNilRequestError) Error() string {
+	return "baas embedded transport: " + e.Operation + ": nil request"
+}
+
+// BaasTransportNilResponseError indicates the underlying service returned a
+// nil response where one was expected. The Operation field identifies the
+// caller for diagnostics.
+type BaasTransportNilResponseError struct {
+	Operation string
+}
+
+// Error implements the error interface.
+func (e *BaasTransportNilResponseError) Error() string {
+	return "baas embedded transport: " + e.Operation + ": nil service response"
+}
+
 // baasTransport implements the qrdb SDK transport.Client interface for
 // BaaS embedded mode. KV operations delegate to the configured KVStore
 // (memory, file, or PebbleDB). TimeSeries operations are implemented
@@ -99,8 +122,14 @@ type baasTransport struct {
 	credentialSvc     BaasCredentialService
 	custodianGroupSvc BaasCustodianGroupService
 	shareSvc          BaasShareService
+	tenantSvc         BaasTenantService
 	closed            atomic.Bool
 }
+
+// BaasTenantService is the multi-tenant lifecycle service interface required by
+// the BaaS transport for per-tenant barrier delegation. It is satisfied by
+// qrdbsdk.ServiceTenantServicer (a re-export of pkg/tenant.TenantServicer).
+type BaasTenantService = qrdbsdk.ServiceTenantServicer
 
 // newBaasTransport creates a new BaaS embedded transport backed by the given
 // KV store. An optional VectorStorage can be provided to route vector write
@@ -361,6 +390,10 @@ func (t *baasTransport) CreateUser(_ context.Context, _ *transport.CreateUserReq
 
 func (t *baasTransport) GetUser(_ context.Context, _ string) (*transport.User, error) {
 	return nil, &BaasTransportNotSupportedError{Operation: "GetUser"}
+}
+
+func (t *baasTransport) GetUserByUsername(_ context.Context, _ string, _ string) (*transport.User, error) {
+	return nil, &BaasTransportNotSupportedError{Operation: "GetUserByUsername"}
 }
 
 func (t *baasTransport) UpdateUser(_ context.Context, _ *transport.UpdateUserRequest) (*transport.User, error) {
@@ -675,6 +708,7 @@ type baasTransportStore struct {
 	credentialSvc     BaasCredentialService
 	custodianGroupSvc BaasCustodianGroupService
 	shareSvc          BaasShareService
+	tenantSvc         BaasTenantService
 	stores            sync.Map // map[uint64]interfaces.KVStore
 }
 
@@ -784,6 +818,7 @@ func (s *baasTransportStore) transportForShard(shardID uint64) (*baasTransport, 
 	t.credentialSvc = s.credentialSvc
 	t.custodianGroupSvc = s.custodianGroupSvc
 	t.shareSvc = s.shareSvc
+	t.tenantSvc = s.tenantSvc
 	return t, nil
 }
 
@@ -903,10 +938,89 @@ func (t *baasTransport) DeleteTenant(_ context.Context, _ string) error {
 	return &BaasTransportNotSupportedError{Operation: "DeleteTenant"}
 }
 
-func (t *baasTransport) TenantBarrierInit(_ context.Context, _ *transport.TenantBarrierInitRequest) error {
-	return &BaasTransportNotSupportedError{Operation: "TenantBarrierInit"}
+// UpdateTenant is a stub — the embedded BaaS transport does not support
+// partial tenant updates. The qrdb transport.TenantClient interface added
+// this method after our initial stub set was written; we keep parity with
+// the other tenant operations by returning NotSupported.
+func (t *baasTransport) UpdateTenant(_ context.Context, _ *transport.UpdateTenantRequest) (*transport.UpdateTenantResponse, error) {
+	return nil, &BaasTransportNotSupportedError{Operation: "UpdateTenant"}
 }
 
-func (t *baasTransport) TenantBarrierUnseal(_ context.Context, _ *transport.TenantBarrierUnsealRequest) error {
-	return &BaasTransportNotSupportedError{Operation: "TenantBarrierUnseal"}
+// UpdateTenantQuotas is a stub for the same reason as UpdateTenant — qrdb's
+// TenantClient interface added this method in a follow-up; embedded BaaS
+// has no quota semantics so we return NotSupported.
+func (t *baasTransport) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
+	return nil, &BaasTransportNotSupportedError{Operation: "UpdateTenantQuotas"}
+}
+
+// TenantBarrierInit initializes a per-tenant barrier by delegating to the
+// injected BaasTenantService. Returns BaasTransportNotSupportedError when no
+// service has been configured. Returns NilRequestError on nil req.
+func (t *baasTransport) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
+	if t.tenantSvc == nil {
+		return &BaasTransportNotSupportedError{Operation: "TenantBarrierInit"}
+	}
+	if req == nil {
+		return &BaasTransportNilRequestError{Operation: "TenantBarrierInit"}
+	}
+	return t.tenantSvc.TenantBarrierInit(ctx, req.TenantID, req.Threshold, req.Shares)
+}
+
+// TenantBarrierUnseal unseals a per-tenant barrier by delegating to the
+// injected BaasTenantService. The Key field is preferred when both Key and
+// Share are populated; an empty Key falls back to Share for compatibility
+// with older callers. Returns BaasTransportNotSupportedError when no service
+// is configured. Returns NilRequestError on nil req.
+func (t *baasTransport) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
+	if t.tenantSvc == nil {
+		return &BaasTransportNotSupportedError{Operation: "TenantBarrierUnseal"}
+	}
+	if req == nil {
+		return &BaasTransportNilRequestError{Operation: "TenantBarrierUnseal"}
+	}
+	key := req.Key
+	if len(key) == 0 {
+		key = req.Share
+	}
+	return t.tenantSvc.TenantBarrierUnseal(ctx, req.TenantID, key)
+}
+
+// TenantBarrierSeal seals a per-tenant barrier by delegating to the injected
+// BaasTenantService. Returns BaasTransportNotSupportedError when no service
+// is configured. Returns NilRequestError on nil req.
+func (t *baasTransport) TenantBarrierSeal(ctx context.Context, req *transport.TenantBarrierSealRequest) error {
+	if t.tenantSvc == nil {
+		return &BaasTransportNotSupportedError{Operation: "TenantBarrierSeal"}
+	}
+	if req == nil {
+		return &BaasTransportNilRequestError{Operation: "TenantBarrierSeal"}
+	}
+	return t.tenantSvc.TenantBarrierSeal(ctx, req.TenantID)
+}
+
+// TenantBarrierStatus reports the current sealed/initialized state and active
+// strategy metadata of a per-tenant barrier by delegating to the injected
+// BaasTenantService. Returns BaasTransportNotSupportedError when no service
+// is configured. Returns NilRequestError on nil req.
+func (t *baasTransport) TenantBarrierStatus(ctx context.Context, req *transport.TenantBarrierStatusRequest) (*transport.TenantBarrierStatusResponse, error) {
+	if t.tenantSvc == nil {
+		return nil, &BaasTransportNotSupportedError{Operation: "TenantBarrierStatus"}
+	}
+	if req == nil {
+		return nil, &BaasTransportNilRequestError{Operation: "TenantBarrierStatus"}
+	}
+	st, err := t.tenantSvc.TenantBarrierStatus(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if st == nil {
+		return nil, &BaasTransportNilResponseError{Operation: "TenantBarrierStatus"}
+	}
+	return &transport.TenantBarrierStatusResponse{
+		TenantID:       st.TenantID,
+		Sealed:         st.Sealed,
+		Initialized:    st.Initialized,
+		Strategy:       st.Strategy,
+		HardwareBacked: st.HardwareBacked,
+	}, nil
 }

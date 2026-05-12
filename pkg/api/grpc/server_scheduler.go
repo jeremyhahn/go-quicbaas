@@ -70,6 +70,7 @@ func (s *SchedulerServer) CreateJob(ctx context.Context, req *pb.CreateJobReques
 		Priority:       req.Priority,
 		Timeout:        time.Duration(req.TimeoutSeconds) * time.Second,
 		MaxRetries:     req.MaxRetries,
+		NodeAffinity:   req.NodeAffinity,
 		Labels:         req.Labels,
 	}
 

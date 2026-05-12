@@ -1012,12 +1012,12 @@ func TestFT2_IAMAdapter_AllMethods(t *testing.T) {
 	ctx := context.Background()
 
 	// Test Authenticate - success.
-	result, err := adapter.Authenticate(ctx, "admin", "quicbaas-dev-admin")
+	result, err := adapter.Authenticate(ctx, "admin", pwBuffer(t, "quicbaas-dev-admin"))
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 
 	// Test Authenticate - wrong password.
-	_, err = adapter.Authenticate(ctx, "admin", "wrong")
+	_, err = adapter.Authenticate(ctx, "admin", pwBuffer(t, "wrong"))
 	assert.Error(t, err)
 
 	// Test IssueTokenForUser.
@@ -1091,7 +1091,7 @@ func TestFT2_InMemoryAuthManagerAdapter_Methods(t *testing.T) {
 	ctx := context.Background()
 
 	// Test Authenticate.
-	token, err := authMgr.Authenticate(ctx, "admin", "quicbaas-dev-admin")
+	token, err := authMgr.Authenticate(ctx, "admin", pwBuffer(t, "quicbaas-dev-admin"))
 	assert.NoError(t, err)
 	assert.NotNil(t, token)
 
@@ -1556,46 +1556,6 @@ func TestFT2_StartService_WithMessaging(t *testing.T) {
 	err = srv.startService()
 	assert.NoError(t, err)
 
-}
-
-// =============================================================================
-// WebAuthn Adapter Tests
-// =============================================================================
-
-func TestFT2_WebAuthnServiceAdapter_Creation(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	adapter := newWebAuthnServiceAdapter(nil)
-	assert.NotNil(t, adapter)
-	assert.Nil(t, adapter.manager)
-}
-
-func TestFT2_ParseCredentialCreationResponse_InvalidJSON(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	credential := map[string]interface{}{
-		"id":    "test-id",
-		"type":  "public-key",
-		"rawId": "invalid-base64",
-	}
-
-	result, err := parseCredentialCreationResponse(credential)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestFT2_ParseCredentialAssertionResponse_InvalidJSON(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	credential := map[string]interface{}{
-		"id":    "test-id",
-		"type":  "public-key",
-		"rawId": "invalid-base64",
-	}
-
-	result, err := parseCredentialAssertionResponse(credential)
-	assert.Error(t, err)
-	assert.Nil(t, result)
 }
 
 // =============================================================================

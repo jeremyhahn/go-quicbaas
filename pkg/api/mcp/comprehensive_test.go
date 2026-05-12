@@ -30,6 +30,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+
+	schedulerpkg "github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
 
@@ -509,6 +513,18 @@ func (m *mockService) Scheduler() service.SchedulerService {
 	return nil
 }
 
+// SchedulerEngine is a no-op for the mcp mock; MCP tests don't drive
+// the scheduler engine directly.
+func (m *mockService) SchedulerEngine() *schedulerpkg.SchedulerEngine { return nil }
+
+func (m *mockService) Project() service.ProjectService {
+	return nil
+}
+
+// SSHClient returns nil for the mcp mock; tests that exercise SSH
+// routing wire a real xkmsssh.Client directly.
+func (m *mockService) SSHClient() xkmsssh.Client { return nil }
+
 func (m *mockService) Agent() orchestration.AgentService {
 	return nil
 }
@@ -543,6 +559,48 @@ func (m *mockService) WatchManager() *watch.Manager {
 
 // SetTenantIsolationManager is a no-op for the mock.
 func (m *mockService) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
+
+// SetSealService is a no-op for the mock.
+func (m *mockService) SetSealService(_ service.SealService) {}
+
+// SealService default stubs to satisfy the QuicBaaS interface.
+// Tests that exercise seal behavior compose mockServiceWithSeal or supply
+// a dedicated SealService implementation.
+func (m *mockService) Status(_ context.Context) (*service.SealStatusResponse, error) {
+	return &service.SealStatusResponse{}, nil
+}
+
+func (m *mockService) Initialize(_ context.Context, _ *service.SealInitRequest) (*service.SealInitResponse, error) {
+	return &service.SealInitResponse{}, nil
+}
+
+func (m *mockService) Unseal(_ context.Context, _ *service.UnsealRequest) (*service.UnsealResponse, error) {
+	return &service.UnsealResponse{}, nil
+}
+
+func (m *mockService) Seal(_ context.Context) error { return nil }
+
+func (m *mockService) Rekey(_ context.Context, _ *service.RekeyRequest) (*service.RekeyResponse, error) {
+	return &service.RekeyResponse{}, nil
+}
+
+func (m *mockService) GenerateRecoveryKey(_ context.Context, _ *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
+	return &service.GenerateRecoveryKeyResponse{}, nil
+}
+
+func (m *mockService) DeleteRecoveryKey(_ context.Context, _ *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
+	return &service.DeleteRecoveryKeyResponse{Deleted: true}, nil
+}
+
+func (m *mockService) GenerateRootToken(_ context.Context, _ *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
+	return &service.GenerateRootTokenResponse{}, nil
+}
+
+func (m *mockService) RotateRootKey(_ context.Context, _ *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
+	return &service.RotateRootKeyResponse{Success: true}, nil
+}
+
+func (m *mockService) AgentAdmin() service.AgentAdminService { return nil }
 
 // =============================================================================
 // Comprehensive Server Tests
@@ -764,15 +822,6 @@ func TestComprehensive_handleToolsCall(t *testing.T) {
 			toolName: "quicbaas_backup_verify",
 			args: map[string]interface{}{
 				"backupID": "backup-1",
-			},
-			wantErr: false,
-		},
-		{
-			name:     "quicbaas_login success",
-			toolName: "quicbaas_login",
-			args: map[string]interface{}{
-				"username": "testuser",
-				"password": "password123",
 			},
 			wantErr: false,
 		},

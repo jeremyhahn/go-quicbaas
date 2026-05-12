@@ -40,11 +40,13 @@ import (
 // =============================================================================
 
 var (
-	orchOutputFmt   string
-	orchBackend     string
-	orchModel       string
-	orchSystemPrmpt string
-	orchProjectID   string
+	orchOutputFmt    string
+	orchBackend      string
+	orchModel        string
+	orchSystemPrmpt  string
+	orchProjectID    string
+	orchSandbox      string
+	orchHostAffinity string
 
 	// Task flags.
 	orchTaskSubject     string
@@ -54,6 +56,9 @@ var (
 	orchTaskStatus      string
 	orchTaskAgentID     string
 	orchTaskResult      string
+	orchTaskAutoSpawn   bool
+	orchTaskBackend     string
+	orchTaskGpuRequired bool
 
 	// Job flags.
 	orchJobMaxIterations int
@@ -98,6 +103,7 @@ Examples:
 	cmd.AddCommand(newOrchStatusCommand())
 	cmd.AddCommand(newOrchCloseCommand())
 	cmd.AddCommand(newOrchSessionsCommand())
+	cmd.AddCommand(newOrchAttachCommand())
 	cmd.AddCommand(newOrchBackendsCommand())
 	cmd.AddCommand(newOrchHealthCommand())
 
@@ -113,6 +119,9 @@ Examples:
 
 	// Workflow commands.
 	cmd.AddCommand(newOrchWorkflowCommand())
+
+	// Stateless inference command.
+	cmd.AddCommand(newOrchInferenceCommand())
 
 	return cmd
 }
@@ -146,12 +155,31 @@ Examples:
 	cmd.Flags().StringVar(&orchModel, "model", "", "Model to use for the session")
 	cmd.Flags().StringVar(&orchSystemPrmpt, "system-prompt", "", "System prompt for the session")
 	cmd.Flags().StringVar(&orchProjectID, "project", "", "Project ID to associate with the session")
+	cmd.Flags().StringVar(&orchSandbox, "sandbox", "default",
+		"Sandbox selector: default (server policy), required (force container), none (force raw exec)")
+	cmd.Flags().StringVar(&orchHostAffinity, "host-affinity", "",
+		"Pin the session to a specific agent daemon by Name or Host (e.g. 'gpu-host' or '198.51.100.91:9091'). Empty = any available daemon.")
 
 	if err := cmd.MarkFlagRequired("backend"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to mark backend flag as required: %v\n", err)
 	}
 
 	return cmd
+}
+
+// parseCLISandbox converts the --sandbox flag value into the SDK SandboxMode.
+func parseCLISandbox(s string) (orchestratorSDK.SandboxMode, error) {
+	switch s {
+	case "", "default":
+		return orchestratorSDK.SandboxModeDefault, nil
+	case "required":
+		return orchestratorSDK.SandboxModeRequired, nil
+	case "none":
+		return orchestratorSDK.SandboxModeNone, nil
+	default:
+		return orchestratorSDK.SandboxModeDefault,
+			fmt.Errorf("invalid --sandbox value %q (want: default | required | none)", s)
+	}
 }
 
 // runOrchSpawn executes the spawn command.
@@ -165,10 +193,17 @@ func runOrchSpawn(cmd *cobra.Command, args []string) error {
 	ctx, cancel := orchContext()
 	defer cancel()
 
+	mode, parseErr := parseCLISandbox(orchSandbox)
+	if parseErr != nil {
+		return formatError(parseErr)
+	}
+
 	req := &orchestratorSDK.SpawnSessionRequest{
-		Backend:   orchBackend,
-		ProjectID: orchProjectID,
-		Model:     orchModel,
+		Backend:      orchBackend,
+		ProjectID:    orchProjectID,
+		Model:        orchModel,
+		SandboxMode:  mode,
+		HostAffinity: orchHostAffinity,
 	}
 
 	resp, err := client.SpawnSession(ctx, req)
@@ -472,6 +507,9 @@ Examples:
 	cmd.Flags().StringVar(&orchTaskDescription, "description", "", "Task description")
 	cmd.Flags().StringVar(&orchTaskTeamName, "team", "", "Team name for the task")
 	cmd.Flags().StringVar(&orchTaskAssignedTo, "assigned-to", "", "Agent ID to assign the task to")
+	cmd.Flags().BoolVar(&orchTaskAutoSpawn, "auto-spawn", false, "Dispatch a one-shot job immediately on the best-matching agent")
+	cmd.Flags().StringVar(&orchTaskBackend, "backend", "", "Restrict auto-spawn agent selection to this backend (e.g. ollama, acp)")
+	cmd.Flags().BoolVar(&orchTaskGpuRequired, "gpu", false, "Restrict auto-spawn to GPU-capable agents")
 
 	if err := cmd.MarkFlagRequired("subject"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to mark subject flag as required: %v\n", err)
@@ -497,6 +535,9 @@ func runOrchTaskCreate(cmd *cobra.Command, args []string) error {
 		Description: orchTaskDescription,
 		TeamName:    orchTaskTeamName,
 		AssignedTo:  orchTaskAssignedTo,
+		AutoSpawn:   orchTaskAutoSpawn,
+		Backend:     orchTaskBackend,
+		GpuRequired: orchTaskGpuRequired,
 	}
 
 	resp, err := client.CreateTask(ctx, req)
@@ -985,6 +1026,12 @@ func formatOrchTaskResponse(task *orchestratorSDK.Task, format string, w io.Writ
 		if task.AssignedTo != "" {
 			fmt.Fprintf(tw, "Assigned To:\t%s\n", task.AssignedTo)
 		}
+		if task.AutoSpawn {
+			fmt.Fprintf(tw, "Auto-Spawn:\t%v\n", task.AutoSpawn)
+		}
+		if task.SpawnedJobID != "" {
+			fmt.Fprintf(tw, "Spawned Job:\t%s\n", task.SpawnedJobID)
+		}
 		if task.Result != nil {
 			fmt.Fprintf(tw, "Result:\t%s\n", task.Result.Output)
 		}
@@ -994,6 +1041,9 @@ func formatOrchTaskResponse(task *orchestratorSDK.Task, format string, w io.Writ
 		}
 		if task.ClaimedAt != 0 {
 			fmt.Fprintf(tw, "Claimed:\t%s\n", time.Unix(0, task.ClaimedAt).Format(time.RFC3339))
+		}
+		if task.SpawnedAt != 0 {
+			fmt.Fprintf(tw, "Spawned:\t%s\n", time.Unix(0, task.SpawnedAt).Format(time.RFC3339))
 		}
 		if task.CompletedAt != 0 {
 			fmt.Fprintf(tw, "Completed:\t%s\n", time.Unix(0, task.CompletedAt).Format(time.RFC3339))

@@ -18,6 +18,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -31,9 +32,10 @@ import (
 // It orchestrates embedding generation through the embedding manager,
 // integrates with caching, and provides observability through metrics.
 type embeddingService struct {
-	manager interfaces.EmbeddingManager
-	logger  interfaces.Logger
-	metrics *embeddingMetrics
+	manager          interfaces.EmbeddingManager
+	logger           interfaces.Logger
+	metrics          *embeddingMetrics
+	disabledProviders sync.Map // tracks provider name (string) → true when disabled
 }
 
 // embeddingMetrics holds Prometheus metrics for embedding operations.
@@ -364,6 +366,7 @@ func (s *embeddingService) ListProviders(ctx context.Context, req *ListProviders
 
 		info := &ProviderInfo{
 			Name:   name,
+			Type:   EmbeddingProvider(name),
 			Status: EmbeddingStatusAvailable,
 		}
 
@@ -695,6 +698,40 @@ func (s *embeddingService) handleEmbeddingError(err error, operation, provider s
 		Op:   "embeddings." + operation,
 		Err:  err,
 	}
+}
+
+// SetProviderStatus enables or disables an embedding provider.
+func (s *embeddingService) SetProviderStatus(ctx context.Context, req *SetProviderStatusRequest) (*SetProviderStatusResponse, error) {
+	if req == nil {
+		return nil, NewError(quicbaasErrors.ErrInvalidInput, "embeddings.SetProviderStatus", "request is nil")
+	}
+	if req.Name == "" {
+		return nil, NewError(quicbaasErrors.ErrInvalidInput, "embeddings.SetProviderStatus", "provider name is required")
+	}
+
+	// Verify the provider exists
+	if _, err := s.manager.GetProvider(req.Name); err != nil {
+		return nil, NewError(quicbaasErrors.ErrNotFound, "embeddings.SetProviderStatus", "provider not found: "+req.Name)
+	}
+
+	if req.Enabled {
+		s.disabledProviders.Delete(req.Name)
+	} else {
+		s.disabledProviders.Store(req.Name, true)
+	}
+
+	if s.logger != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"provider": req.Name,
+			"enabled":  req.Enabled,
+		}).Info("Provider status updated")
+	}
+
+	return &SetProviderStatusResponse{
+		Name:      req.Name,
+		Enabled:   req.Enabled,
+		Timestamp: time.Now(),
+	}, nil
 }
 
 // estimateTokens provides a rough estimate of token count based on text length.

@@ -20,10 +20,12 @@
 
 import { appendEvent } from './orchestrator.svelte.ts';
 import type { JobEvent } from './orchestrator.svelte.ts';
+import { getSDKClient } from './sdkClient.ts';
 
 let activeJobID = $state('');
 let subscriptionActive = $state(false);
-let eventSource: EventSource | null = null;
+// Cleanup function returned by client.orchestrator.subscribeJobEvents().
+let unsubscribe: (() => void) | null = null;
 
 export const eventSubStore = {
   get activeJobID() { return activeJobID; },
@@ -31,7 +33,8 @@ export const eventSubStore = {
 };
 
 /**
- * Starts an SSE stream for the given job. Stops any existing stream first.
+ * Starts an SSE stream for the given job via the SDK client.
+ * Stops any existing stream first.
  */
 export function startEventStream(tenantID: string, jobID: string): void {
   stopEventStream();
@@ -39,32 +42,26 @@ export function startEventStream(tenantID: string, jobID: string): void {
   activeJobID = jobID;
   subscriptionActive = true;
 
-  const url = `/v1/tenants/${encodeURIComponent(tenantID)}/jobs/${encodeURIComponent(jobID)}/events`;
-  const es = new EventSource(url);
-
-  es.onmessage = (evt) => {
-    try {
-      const event = JSON.parse(evt.data as string) as JobEvent;
-      appendEvent(event);
-    } catch {
-      // Ignore malformed events.
-    }
-  };
-
-  es.onerror = () => {
+  void getSDKClient().then((client) => {
+    unsubscribe = client.orchestrator.subscribeJobEvents(
+      tenantID,
+      jobID,
+      (event: JobEvent) => {
+        appendEvent(event);
+      },
+    );
+  }).catch(() => {
     subscriptionActive = false;
-  };
-
-  eventSource = es;
+  });
 }
 
 /**
  * Stops the active event stream and cleans up resources.
  */
 export function stopEventStream(): void {
-  if (eventSource !== null) {
-    eventSource.close();
-    eventSource = null;
+  if (unsubscribe !== null) {
+    unsubscribe();
+    unsubscribe = null;
   }
   activeJobID = '';
   subscriptionActive = false;

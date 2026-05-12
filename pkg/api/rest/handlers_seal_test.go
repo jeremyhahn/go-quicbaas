@@ -20,7 +20,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -680,4 +682,55 @@ func TestHandleSealError(t *testing.T) {
 	server.HandleSeal(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	mockService.AssertExpectations(t)
+}
+
+func TestHandleRotateRootKey(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		setupMock      func(*testutil.MockQuicBaaS)
+		expectedStatus int
+	}{
+		{
+			name: "rotate root key successfully",
+			body: `{}`,
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("RotateRootKey", mock.Anything, mock.Anything).
+					Return(&service.RotateRootKeyResponse{
+						Success:   true,
+						Message:   "root key rotated successfully",
+						Timestamp: time.Now(),
+					}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "service unavailable returns 503",
+			body: `{}`,
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("RotateRootKey", mock.Anything, mock.Anything).
+					Return(nil, &errors.QBError{
+						Code: errors.ErrUnavailable,
+						Op:   "seal.RotateRootKey",
+					}).Once()
+			},
+			expectedStatus: http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockService, cleanup := setupMockServer(t)
+			defer cleanup()
+			tt.setupMock(mockService)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/seal/rotate-root", strings.NewReader(tt.body))
+			w := httptest.NewRecorder()
+
+			server.HandleRotateRootKey(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			mockService.AssertExpectations(t)
+		})
+	}
 }

@@ -619,7 +619,10 @@ func TestHandleQuery_MissingEntityType_WithFuncMock(t *testing.T) {
 // Seal/Unseal Handler Tests
 // =============================================================================
 
-func TestHandleSealStatus_ServiceNotAvailable_WithFuncMock(t *testing.T) {
+func TestHandleSealStatus_ReturnsStatus_WithFuncMock(t *testing.T) {
+	// The seal service is now promoted onto the QuicBaaS facade, so the type
+	// assertion in the handler always succeeds. The mock returns a default
+	// unsealed status, so the handler must return 200 OK.
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -627,7 +630,7 @@ func TestHandleSealStatus_ServiceNotAvailable_WithFuncMock(t *testing.T) {
 	rec := httptest.NewRecorder()
 	server.HandleSealStatus(rec, req)
 
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
 func TestHandleSealInit_MissingThreshold_WithFuncMock(t *testing.T) {
@@ -712,7 +715,10 @@ func TestHandleUnseal_InvalidJSON_WithFuncMock(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestHandleSeal_ServiceNotAvailable_WithFuncMock(t *testing.T) {
+func TestHandleSeal_Success_WithFuncMock(t *testing.T) {
+	// The seal service is now promoted onto the QuicBaaS facade, so the type
+	// assertion in the handler always succeeds. The mock Seal() returns nil
+	// (success), so the handler must return 200 OK.
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -720,7 +726,7 @@ func TestHandleSeal_ServiceNotAvailable_WithFuncMock(t *testing.T) {
 	rec := httptest.NewRecorder()
 	server.HandleSeal(rec, req)
 
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
 // =============================================================================

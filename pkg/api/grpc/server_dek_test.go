@@ -183,6 +183,10 @@ func (m *mockKMSService) SafetyReport(ctx context.Context, req *service.SafetyRe
 	return nil, nil
 }
 
+func (m *mockKMSService) SetDefaultKey(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
+	return nil, nil
+}
+
 // Ensure mockKMSService implements service.KMSService
 var _ service.KMSService = (*mockKMSService)(nil)
 

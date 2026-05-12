@@ -128,7 +128,7 @@ func TestAuthenticate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			token, err := am.Authenticate(ctx, tt.username, tt.password)
+			token, err := am.Authenticate(ctx, tt.username, passwordBuffer(t, tt.password))
 
 			// Password-based authentication is disabled - all attempts should fail
 			assert.Error(t, err)
@@ -674,14 +674,14 @@ func TestAuthenticateWithBcrypt(t *testing.T) {
 	require.NotNil(t, user)
 
 	t.Run("correct password authenticates", func(t *testing.T) {
-		token, err := am.Authenticate(ctx, "bcryptuser", password)
+		token, err := am.Authenticate(ctx, "bcryptuser", passwordBuffer(t, password))
 		require.NoError(t, err)
 		require.NotNil(t, token)
 		assert.NotEmpty(t, token.AccessToken)
 	})
 
 	t.Run("wrong password rejected", func(t *testing.T) {
-		token, err := am.Authenticate(ctx, "bcryptuser", "wrong-password-123")
+		token, err := am.Authenticate(ctx, "bcryptuser", passwordBuffer(t, "wrong-password-123"))
 		assert.Error(t, err)
 		assert.Nil(t, token)
 	})
@@ -724,7 +724,7 @@ func TestLegacyHashMigrationOnLogin(t *testing.T) {
 	assert.False(t, isBcryptHash(userObj.password), "should start as SHA-256 hash")
 
 	// Authenticate with correct password - should succeed and migrate hash
-	token, err := am.Authenticate(ctx, "legacyuser", password)
+	token, err := am.Authenticate(ctx, "legacyuser", passwordBuffer(t, password))
 	require.NoError(t, err)
 	require.NotNil(t, token)
 
@@ -736,7 +736,7 @@ func TestLegacyHashMigrationOnLogin(t *testing.T) {
 	assert.True(t, isBcryptHash(userObj.password), "hash should be migrated to bcrypt after login")
 
 	// Verify the user can still authenticate with the new bcrypt hash
-	token2, err := am.Authenticate(ctx, "legacyuser", password)
+	token2, err := am.Authenticate(ctx, "legacyuser", passwordBuffer(t, password))
 	require.NoError(t, err)
 	require.NotNil(t, token2)
 }
@@ -753,7 +753,7 @@ func TestAuthDisabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Authenticate should fail when auth is disabled
-	_, err = am.Authenticate(ctx, "testuser", "password")
+	_, err = am.Authenticate(ctx, "testuser", passwordBuffer(t, "password"))
 	assert.Error(t, err)
 
 	// Authorize should succeed when auth is disabled
@@ -986,31 +986,31 @@ func TestInMemoryValidateCredentials(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty username", func(t *testing.T) {
-		_, err := am.validateCredentials(ctx, "", "password")
+		_, err := am.validateCredentials(ctx, "", passwordBuffer(t, "password"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "username and password are required")
 	})
 
 	t.Run("empty password", func(t *testing.T) {
-		_, err := am.validateCredentials(ctx, "pwduser", "")
+		_, err := am.validateCredentials(ctx, "pwduser", passwordBuffer(t, ""))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "username and password are required")
 	})
 
 	t.Run("nonexistent user", func(t *testing.T) {
-		_, err := am.validateCredentials(ctx, "noone", "password")
+		_, err := am.validateCredentials(ctx, "noone", passwordBuffer(t, "password"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid credentials")
 	})
 
 	t.Run("wrong password", func(t *testing.T) {
-		_, err := am.validateCredentials(ctx, "pwduser", "wrongpassword")
+		_, err := am.validateCredentials(ctx, "pwduser", passwordBuffer(t, "wrongpassword"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid credentials")
 	})
 
 	t.Run("correct credentials", func(t *testing.T) {
-		u, err := am.validateCredentials(ctx, "pwduser", "secret123long")
+		u, err := am.validateCredentials(ctx, "pwduser", passwordBuffer(t, "secret123long"))
 		require.NoError(t, err)
 		assert.Equal(t, "pwduser", u.Username)
 	})
@@ -1019,7 +1019,7 @@ func TestInMemoryValidateCredentials(t *testing.T) {
 		_, err := am.CreateUser("nopwduser", "", []string{RoleNameReadOnly})
 		require.NoError(t, err)
 
-		_, err = am.validateCredentials(ctx, "nopwduser", "anything")
+		_, err = am.validateCredentials(ctx, "nopwduser", passwordBuffer(t, "anything"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user has no password set")
 	})
@@ -1034,7 +1034,7 @@ func TestInMemoryAuthenticate(t *testing.T) {
 		am, err := NewInMemoryAuthManager(cfg, log)
 		require.NoError(t, err)
 
-		_, err = am.Authenticate(context.Background(), "user", "pass")
+		_, err = am.Authenticate(context.Background(), "user", passwordBuffer(t, "pass"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not enabled")
 	})
@@ -1048,7 +1048,7 @@ func TestInMemoryAuthenticate(t *testing.T) {
 		am, err := NewInMemoryAuthManager(cfg, log)
 		require.NoError(t, err)
 
-		_, err = am.Authenticate(context.Background(), "user", "pass")
+		_, err = am.Authenticate(context.Background(), "user", passwordBuffer(t, "pass"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "password-based authentication is disabled")
 	})
@@ -1065,7 +1065,7 @@ func TestInMemoryAuthenticate(t *testing.T) {
 		_, err = am.CreateUser("authuser", "mypassword12", []string{RoleNameReadOnly})
 		require.NoError(t, err)
 
-		token, err := am.Authenticate(context.Background(), "authuser", "mypassword12")
+		token, err := am.Authenticate(context.Background(), "authuser", passwordBuffer(t, "mypassword12"))
 		require.NoError(t, err)
 		assert.NotEmpty(t, token.AccessToken)
 		assert.NotEmpty(t, token.RefreshToken)

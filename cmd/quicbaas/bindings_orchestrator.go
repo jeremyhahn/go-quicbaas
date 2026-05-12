@@ -27,6 +27,12 @@ import (
 
 // OrchestratorBinding wraps the SDK orchestrator client for Wails IPC,
 // exposing orchestration operations to the frontend.
+//
+// Every binding method accepts the SDK request struct directly so Wails
+// can marshal the TypeScript object into the Go value without an extra
+// translation layer. This matches how the Svelte frontend calls the
+// bindings (`orchestratorBinding().ListAgents(req)`) and keeps the wire
+// contract identical to the SDK interface.
 type OrchestratorBinding struct {
 	logger *logger.Logger
 	conn   *ConnectionBinding
@@ -53,15 +59,16 @@ func (b *OrchestratorBinding) shutdown(ctx context.Context) {
 }
 
 // ListJobs returns all orchestration jobs for the given tenant.
-func (b *OrchestratorBinding) ListJobs(tenantID string) ([]map[string]interface{}, error) {
+func (b *OrchestratorBinding) ListJobs(req *orchestratorSDK.ListJobsRequest) ([]map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.ListJobs")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := client.Orchestrator().ListJobs(b.ctx, &orchestratorSDK.ListJobsRequest{
-		TenantID: tenantID,
-	})
+	resp, err := client.Orchestrator().ListJobs(b.ctx, req)
 	if err != nil {
 		return nil, NewGUITransportError("OrchestratorBinding.ListJobs", err)
 	}
@@ -87,16 +94,16 @@ func (b *OrchestratorBinding) ListJobs(tenantID string) ([]map[string]interface{
 }
 
 // GetJobStatus returns the status of a specific orchestration job.
-func (b *OrchestratorBinding) GetJobStatus(tenantID, jobID string) (map[string]interface{}, error) {
+func (b *OrchestratorBinding) GetJobStatus(req *orchestratorSDK.GetJobStatusRequest) (map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.GetJobStatus")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	status, err := client.Orchestrator().GetJobStatus(b.ctx, &orchestratorSDK.GetJobStatusRequest{
-		TenantID: tenantID,
-		JobID:    jobID,
-	})
+	status, err := client.Orchestrator().GetJobStatus(b.ctx, req)
 	if err != nil {
 		return nil, NewGUITransportError("OrchestratorBinding.GetJobStatus", err)
 	}
@@ -116,19 +123,16 @@ func (b *OrchestratorBinding) GetJobStatus(tenantID, jobID string) (map[string]i
 }
 
 // StartJob starts a new autonomous orchestration job.
-func (b *OrchestratorBinding) StartJob(tenantID, description, workflowName, leadBackend, leadModel string) (map[string]interface{}, error) {
+func (b *OrchestratorBinding) StartJob(req *orchestratorSDK.StartJobRequest) (map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.StartJob")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := client.Orchestrator().StartJob(b.ctx, &orchestratorSDK.StartJobRequest{
-		TenantID:     tenantID,
-		Description:  description,
-		WorkflowName: workflowName,
-		LeadBackend:  leadBackend,
-		LeadModel:    leadModel,
-	})
+	resp, err := client.Orchestrator().StartJob(b.ctx, req)
 	if err != nil {
 		return nil, NewGUITransportError("OrchestratorBinding.StartJob", err)
 	}
@@ -140,16 +144,16 @@ func (b *OrchestratorBinding) StartJob(tenantID, description, workflowName, lead
 }
 
 // CancelJob cancels a running orchestration job.
-func (b *OrchestratorBinding) CancelJob(tenantID, jobID string) error {
+func (b *OrchestratorBinding) CancelJob(req *orchestratorSDK.CancelJobRequest) error {
+	if req == nil {
+		return NewGUIRequestRequiredError("OrchestratorBinding.CancelJob")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return err
 	}
 
-	_, err = client.Orchestrator().CancelJob(b.ctx, &orchestratorSDK.CancelJobRequest{
-		TenantID: tenantID,
-		JobID:    jobID,
-	})
+	_, err = client.Orchestrator().CancelJob(b.ctx, req)
 	if err != nil {
 		return NewGUITransportError("OrchestratorBinding.CancelJob", err)
 	}
@@ -158,15 +162,16 @@ func (b *OrchestratorBinding) CancelJob(tenantID, jobID string) error {
 }
 
 // ListAgents returns all registered agents for the given tenant.
-func (b *OrchestratorBinding) ListAgents(tenantID string) ([]map[string]interface{}, error) {
+func (b *OrchestratorBinding) ListAgents(req *orchestratorSDK.ListAgentsRequest) ([]map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.ListAgents")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := client.Orchestrator().ListAgents(b.ctx, &orchestratorSDK.ListAgentsRequest{
-		TenantID: tenantID,
-	})
+	resp, err := client.Orchestrator().ListAgents(b.ctx, req)
 	if err != nil {
 		return nil, NewGUITransportError("OrchestratorBinding.ListAgents", err)
 	}
@@ -194,16 +199,16 @@ func (b *OrchestratorBinding) ListAgents(tenantID string) ([]map[string]interfac
 }
 
 // GetAgent returns a specific agent by ID.
-func (b *OrchestratorBinding) GetAgent(tenantID, agentID string) (map[string]interface{}, error) {
+func (b *OrchestratorBinding) GetAgent(req *orchestratorSDK.GetAgentRequest) (map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.GetAgent")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	agent, err := client.Orchestrator().GetAgent(b.ctx, &orchestratorSDK.GetAgentRequest{
-		TenantID: tenantID,
-		AgentID:  agentID,
-	})
+	agent, err := client.Orchestrator().GetAgent(b.ctx, req)
 	if err != nil {
 		return nil, NewGUITransportError("OrchestratorBinding.GetAgent", err)
 	}
@@ -225,16 +230,17 @@ func (b *OrchestratorBinding) GetAgent(tenantID, agentID string) (map[string]int
 	}, nil
 }
 
-// ListSessions returns all active sessions, optionally filtered by backend.
-func (b *OrchestratorBinding) ListSessions(backend string) ([]map[string]interface{}, error) {
+// ListSessions returns all sessions matching the filter criteria.
+func (b *OrchestratorBinding) ListSessions(req *orchestratorSDK.ListSessionsRequest) ([]map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.ListSessions")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := client.Orchestrator().ListSessions(b.ctx, &orchestratorSDK.ListSessionsRequest{
-		Backend: backend,
-	})
+	resp, err := client.Orchestrator().ListSessions(b.ctx, req)
 	if err != nil {
 		return nil, NewGUITransportError("OrchestratorBinding.ListSessions", err)
 	}
@@ -255,15 +261,16 @@ func (b *OrchestratorBinding) ListSessions(backend string) ([]map[string]interfa
 }
 
 // ListTasks returns all tasks for the given tenant.
-func (b *OrchestratorBinding) ListTasks(tenantID string) ([]map[string]interface{}, error) {
+func (b *OrchestratorBinding) ListTasks(req *orchestratorSDK.ListTasksRequest) ([]map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.ListTasks")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := client.Orchestrator().ListTasks(b.ctx, &orchestratorSDK.ListTasksRequest{
-		TenantID: tenantID,
-	})
+	resp, err := client.Orchestrator().ListTasks(b.ctx, req)
 	if err != nil {
 		return nil, NewGUITransportError("OrchestratorBinding.ListTasks", err)
 	}
@@ -291,16 +298,16 @@ func (b *OrchestratorBinding) ListTasks(tenantID string) ([]map[string]interface
 }
 
 // GetTask returns a specific task by ID.
-func (b *OrchestratorBinding) GetTask(tenantID, taskID string) (map[string]interface{}, error) {
+func (b *OrchestratorBinding) GetTask(req *orchestratorSDK.GetTaskRequest) (map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.GetTask")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	task, err := client.Orchestrator().GetTask(b.ctx, &orchestratorSDK.GetTaskRequest{
-		TenantID: tenantID,
-		TaskID:   taskID,
-	})
+	task, err := client.Orchestrator().GetTask(b.ctx, req)
 	if err != nil {
 		return nil, NewGUITransportError("OrchestratorBinding.GetTask", err)
 	}
@@ -322,7 +329,8 @@ func (b *OrchestratorBinding) GetTask(tenantID, taskID string) (map[string]inter
 	}, nil
 }
 
-// ListBackends returns all available orchestration backends.
+// ListBackends returns all available orchestration backends. This method
+// takes no arguments.
 func (b *OrchestratorBinding) ListBackends() ([]map[string]interface{}, error) {
 	client, err := b.conn.loadClient()
 	if err != nil {
@@ -347,7 +355,39 @@ func (b *OrchestratorBinding) ListBackends() ([]map[string]interface{}, error) {
 	return result, nil
 }
 
-// HealthCheck returns the orchestrator health check report.
+// ListBackendModels returns the model names available on the named backend
+// as seen from the specified agent. The frontend uses this to populate the
+// model selector after a backend is chosen.
+//
+// Wails marshals the TypeScript object {agent_id, backend_name} into the
+// SDK request struct directly. An empty agent_id (or "any") tells the
+// server-side resolver to skip host affinity.
+//
+// The Models slice is always non-nil; callers that pass an unknown agent
+// or a backend with no model lister get an empty slice and a nil error
+// rather than a transport-style failure.
+func (b *OrchestratorBinding) ListBackendModels(req *orchestratorSDK.ListBackendModelsRequest) ([]string, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.ListBackendModels")
+	}
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Orchestrator().ListBackendModels(b.ctx, req)
+	if err != nil {
+		return nil, NewGUITransportError("OrchestratorBinding.ListBackendModels", err)
+	}
+
+	if resp == nil || resp.Models == nil {
+		return []string{}, nil
+	}
+	return resp.Models, nil
+}
+
+// HealthCheck returns the orchestrator health check report. This method
+// takes no arguments.
 func (b *OrchestratorBinding) HealthCheck() (map[string]interface{}, error) {
 	client, err := b.conn.loadClient()
 	if err != nil {
@@ -367,19 +407,55 @@ func (b *OrchestratorBinding) HealthCheck() (map[string]interface{}, error) {
 	}, nil
 }
 
+// Inference runs a stateless fleet-routed inference call against a named
+// backend without requiring a prior session spawn. It accepts the SDK
+// InferenceRequest struct directly (Wails marshals the TypeScript object
+// into the Go value) and returns the aggregated InferenceResponse as a
+// map so the Wails JSON bridge can serialise it for the frontend.
+func (b *OrchestratorBinding) Inference(req *orchestratorSDK.InferenceRequest) (map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.Inference")
+	}
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Orchestrator().Inference(b.ctx, req)
+	if err != nil {
+		return nil, NewGUITransportError("OrchestratorBinding.Inference", err)
+	}
+
+	// Serialise content blocks as a plain []map so the TypeScript InferenceResponse
+	// type can decode them without needing a registered codec on the bridge.
+	content := make([]map[string]interface{}, 0, len(resp.Content))
+	for _, block := range resp.Content {
+		content = append(content, map[string]interface{}{
+			"type": block.Type,
+			"text": block.Text,
+		})
+	}
+
+	return map[string]interface{}{
+		"content":     content,
+		"model":       resp.Model,
+		"stop_reason": resp.StopReason,
+	}, nil
+}
+
 // SubscribeJobEvents starts a background goroutine that reads real-time events
 // for the specified job and emits them to the Wails frontend via runtime events.
 // The goroutine terminates when the event channel closes or the context is cancelled.
-func (b *OrchestratorBinding) SubscribeJobEvents(tenantID, jobID string) error {
+func (b *OrchestratorBinding) SubscribeJobEvents(req *orchestratorSDK.SubscribeJobEventsRequest) error {
+	if req == nil {
+		return NewGUIRequestRequiredError("OrchestratorBinding.SubscribeJobEvents")
+	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return err
 	}
 
-	events, err := client.Orchestrator().SubscribeJobEvents(b.ctx, &orchestratorSDK.SubscribeJobEventsRequest{
-		TenantID: tenantID,
-		JobID:    jobID,
-	})
+	events, err := client.Orchestrator().SubscribeJobEvents(b.ctx, req)
 	if err != nil {
 		return NewGUITransportError("OrchestratorBinding.SubscribeJobEvents", err)
 	}

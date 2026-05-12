@@ -86,6 +86,10 @@ func (m *healthMockAgentService) RegisterBackend(ctx context.Context, req *Regis
 	return nil
 }
 
+func (m *healthMockAgentService) RegisterAPIInferenceBackend(_ context.Context, _ *RegisterAPIInferenceBackendRequest) error {
+	return nil
+}
+
 func (m *healthMockAgentService) CreateTask(_ context.Context, _ *CreateTaskRequest) (*Task, error) {
 	return &Task{}, nil
 }
@@ -153,6 +157,53 @@ func (m *healthMockAgentService) SubscribeJobEvents(_ context.Context, _, _ stri
 
 func (m *healthMockAgentService) BackendToolGuidance(_ string) string {
 	return ""
+}
+
+func (m *healthMockAgentService) ListBackendModels(_ context.Context, _ string) ([]string, error) {
+	return []string{}, nil
+}
+
+// Infer is a no-op stub satisfying the AgentService interface.
+func (m *healthMockAgentService) Infer(_ context.Context, _ *InferRequest) (<-chan *InferChunk, error) {
+	ch := make(chan *InferChunk)
+	close(ch)
+	return ch, nil
+}
+
+func (m *healthMockAgentService) ListWorkflows(_ context.Context) ([]*WorkflowDefinition, error) {
+	return []*WorkflowDefinition{}, nil
+}
+
+func (m *healthMockAgentService) GetWorkflow(_ context.Context, name string) (*WorkflowDefinition, error) {
+	return nil, &WorkflowNotFoundError{Name: name}
+}
+
+func (m *healthMockAgentService) RegisterWorkflow(_ context.Context, def *WorkflowDefinition) error {
+	return nil
+}
+
+func (m *healthMockAgentService) UpdateWorkflow(_ context.Context, def *WorkflowDefinition) error {
+	return nil
+}
+
+func (m *healthMockAgentService) DeleteWorkflow(_ context.Context, name string) error {
+	return nil
+}
+
+func (m *healthMockAgentService) SubmitTaskArtifacts(_ context.Context, _, _ string, _ []Artifact) error {
+	return nil
+}
+
+func (m *healthMockAgentService) GetTaskArtifact(_ context.Context, _, _, _ string) (*Artifact, error) {
+	return nil, nil
+}
+
+func (m *healthMockAgentService) ListTaskArtifacts(_ context.Context, _, _ string) ([]Artifact, error) {
+	return nil, nil
+}
+
+func (m *healthMockAgentService) SpawnChildJob(_ context.Context, _ *SpawnChildJobRequest) (*SpawnChildJobResponse, error) {
+	return nil, nil
 }
 
 // Compile-time interface check.

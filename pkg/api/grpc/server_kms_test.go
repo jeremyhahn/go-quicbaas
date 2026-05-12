@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"crypto"
 	stderrors "errors"
 	"testing"
 	"time"
@@ -1914,4 +1915,11 @@ func TestListKeys_FallbackError(t *testing.T) {
 
 	_, err := srv.ListKeys(context.Background(), &pb.ListKeysRequest{})
 	require.Error(t, err)
+}
+
+// Signer returns a crypto.Signer for the given keyID. Tests that don't
+// exercise the signer path receive a nil signer and no error; tests
+// that do can stub this by redefining the method on a wrapped type.
+func (m *mockKMSManager) Signer(_ context.Context, _ string) (crypto.Signer, error) {
+	return nil, nil
 }

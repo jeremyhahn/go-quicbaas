@@ -35,7 +35,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cluster"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
@@ -978,122 +977,6 @@ func TestCovPush_StartCatalogManager_WorkerCreationErrors(t *testing.T) {
 }
 
 // =============================================================================
-// WebAuthn adapter methods at 0% coverage
-// FinishRegistration, BeginLogin, FinishLogin
-// =============================================================================
-
-func TestCovPush_WebAuthnAdapter_FinishRegistration_ParseError(t *testing.T) {
-	t.Parallel()
-	adapter := newWebAuthnServiceAdapter(nil)
-
-	err := adapter.FinishRegistration(context.Background(), "tenant-1", "user-1", map[string]interface{}{
-		"invalid": "data",
-	})
-	assert.Error(t, err)
-}
-
-func TestCovPush_WebAuthnAdapter_FinishRegistration_NilCredential(t *testing.T) {
-	t.Parallel()
-	adapter := newWebAuthnServiceAdapter(nil)
-
-	err := adapter.FinishRegistration(context.Background(), "tenant-1", "user-1", nil)
-	assert.Error(t, err)
-}
-
-func TestCovPush_WebAuthnAdapter_BeginLogin_NilManager(t *testing.T) {
-	t.Parallel()
-	adapter := newWebAuthnServiceAdapter(nil)
-
-	defer func() {
-		if r := recover(); r != nil {
-			// Expected - nil pointer dereference on nil manager
-		}
-	}()
-
-	_, err := adapter.BeginLogin(context.Background(), "tenant-1", "user@test.com")
-	if err != nil {
-		assert.Error(t, err)
-	}
-}
-
-func TestCovPush_WebAuthnAdapter_FinishLogin_ParseError(t *testing.T) {
-	t.Parallel()
-	adapter := newWebAuthnServiceAdapter(nil)
-
-	_, err := adapter.FinishLogin(context.Background(), "tenant-1", map[string]interface{}{
-		"invalid": "data",
-	})
-	assert.Error(t, err)
-}
-
-func TestCovPush_WebAuthnAdapter_FinishLogin_NilCredential(t *testing.T) {
-	t.Parallel()
-	adapter := newWebAuthnServiceAdapter(nil)
-
-	_, err := adapter.FinishLogin(context.Background(), "tenant-1", nil)
-	assert.Error(t, err)
-}
-
-func TestCovPush_WebAuthnAdapter_FinishRegistration_ValidStructure(t *testing.T) {
-	t.Parallel()
-	adapter := newWebAuthnServiceAdapter(nil)
-
-	credential := map[string]interface{}{
-		"id":    "dGVzdC1jcmVkZW50aWFsLWlk",
-		"rawId": "dGVzdC1jcmVkZW50aWFsLWlk",
-		"type":  "public-key",
-		"response": map[string]interface{}{
-			"clientDataJSON":    "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiZEdWemRDMWphR0ZzYkdWdVoyVSIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODA4MCJ9",
-			"attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjFSZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2NFAAAAAK3OAAI1vMYKZIsLJfHwVQMAIHRlc3QtY3JlZGVudGlhbC1pZC10ZXN0LWNyZWRlbnRpYWwtaWShZWNyZWRQcm90ZWN0",
-		},
-	}
-
-	err := adapter.FinishRegistration(context.Background(), "tenant-1", "user-1", credential)
-	assert.Error(t, err) // Nil manager or invalid attestation
-}
-
-func TestCovPush_WebAuthnAdapter_FinishLogin_ValidStructure(t *testing.T) {
-	t.Parallel()
-
-	// Use a real manager to avoid nil dereference after successful parse
-	credStorage := iam.NewMemoryCredentialStorage()
-	sessionStorage := iam.NewMemorySessionStorage()
-	userStorage := iam.NewMemoryStorage()
-
-	mgr, err := iam.NewWebAuthnManager(
-		&iam.WebAuthnConfig{
-			RPID:      "localhost",
-			RPName:    "Test",
-			RPOrigins: []string{"http://localhost:8080"},
-		},
-		iam.WebAuthnDependencies{
-			CredentialStorage: credStorage,
-			SessionStorage:    sessionStorage,
-			IdentityStore:     userStorage,
-		},
-	)
-	require.NoError(t, err)
-
-	adapter := newWebAuthnServiceAdapter(mgr)
-
-	credential := map[string]interface{}{
-		"id":    "dGVzdC1jcmVkZW50aWFsLWlk",
-		"rawId": "dGVzdC1jcmVkZW50aWFsLWlk",
-		"type":  "public-key",
-		"response": map[string]interface{}{
-			"clientDataJSON":    "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZEdWemRDMWphR0ZzYkdWdVoyVSIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODA4MCJ9",
-			"authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAQ",
-			"signature":         "MEUCIQDKnvHtLWfJzGNhNqKk3k",
-			"userHandle":        "dGVzdC11c2VyLWlk",
-		},
-	}
-
-	// parse succeeds, then FinishLogin fails on session/credential validation
-	_, err = adapter.FinishLogin(context.Background(), "tenant-1", credential)
-	assert.Error(t, err)
-}
-
-// =============================================================================
 // startService (lifecycle.go:1017) - currently 71.3%
 // Covers: cache config paths with custom values, backup manager attached
 // =============================================================================
@@ -1310,33 +1193,3 @@ func TestCovPush_InitializeIAMComponents_NilQRDBClient(t *testing.T) {
 	assert.Nil(t, components)
 }
 
-// =============================================================================
-// WebAuthn adapter with real manager for BeginLogin coverage
-// =============================================================================
-
-func TestCovPush_WebAuthnAdapter_BeginLogin_WithRealManager(t *testing.T) {
-	t.Parallel()
-
-	credStorage := iam.NewMemoryCredentialStorage()
-	sessionStorage := iam.NewMemorySessionStorage()
-	userStorage := iam.NewMemoryStorage()
-
-	mgr, err := iam.NewWebAuthnManager(
-		&iam.WebAuthnConfig{
-			RPID:      "localhost",
-			RPName:    "Test",
-			RPOrigins: []string{"https://localhost"},
-		},
-		iam.WebAuthnDependencies{
-			CredentialStorage: credStorage,
-			SessionStorage:    sessionStorage,
-			IdentityStore:     userStorage,
-		},
-	)
-	require.NoError(t, err)
-
-	adapter := newWebAuthnServiceAdapter(mgr)
-
-	_, err = adapter.BeginLogin(context.Background(), "tenant-1", "nonexistent@test.com")
-	assert.Error(t, err)
-}

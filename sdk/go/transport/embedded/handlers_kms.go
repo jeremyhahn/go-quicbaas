@@ -21,6 +21,7 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	dekclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/dek"
 	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -468,11 +469,23 @@ func handleKMSCreateDEK(ctx context.Context, svc service.QuicBaaS, req interface
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.CreateDEKRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "CreateDEK", "*service.CreateDEKRequest", reflect.TypeOf(req).String())
+	if r, ok := req.(*service.CreateDEKRequest); ok {
+		return kms.CreateDEK(ctx, r)
 	}
-	return kms.CreateDEK(ctx, r)
+	if r, ok := req.(*dekclient.CreateDEKRequest); ok {
+		svcReq := &service.CreateDEKRequest{
+			Path:           r.Path,
+			Algorithm:      stringToKeyAlgorithm(r.Algorithm),
+			Description:    r.Description,
+			MaxOperations:  r.MaxOperations,
+			MaxBytes:       r.MaxBytes,
+			WarningPercent: r.WarningPercent,
+		}
+		return kms.CreateDEK(ctx, svcReq)
+	}
+	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "CreateDEK",
+		"*service.CreateDEKRequest or *dek.CreateDEKRequest",
+		reflect.TypeOf(req).String())
 }
 
 func handleKMSGetDEK(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -480,11 +493,16 @@ func handleKMSGetDEK(ctx context.Context, svc service.QuicBaaS, req interface{})
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.GetDEKRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetDEK", "*service.GetDEKRequest", reflect.TypeOf(req).String())
+	if r, ok := req.(*service.GetDEKRequest); ok {
+		return kms.GetDEK(ctx, r)
 	}
-	return kms.GetDEK(ctx, r)
+	// SDK uses unexported getDEKRequest{Path}; accept anything with a Path field.
+	if path, ok := dekRequestPath(req); ok {
+		return kms.GetDEK(ctx, &service.GetDEKRequest{Path: path})
+	}
+	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "GetDEK",
+		"*service.GetDEKRequest or *dek.getDEKRequest",
+		reflect.TypeOf(req).String())
 }
 
 func handleKMSListDEKs(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -492,11 +510,19 @@ func handleKMSListDEKs(ctx context.Context, svc service.QuicBaaS, req interface{
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.ListDEKsRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ListDEKs", "*service.ListDEKsRequest", reflect.TypeOf(req).String())
+	if r, ok := req.(*service.ListDEKsRequest); ok {
+		return kms.ListDEKs(ctx, r)
 	}
-	return kms.ListDEKs(ctx, r)
+	if r, ok := req.(*dekclient.ListDEKsRequest); ok {
+		return kms.ListDEKs(ctx, &service.ListDEKsRequest{
+			Prefix:    r.Prefix,
+			Recursive: r.Recursive,
+			Limit:     r.Limit,
+		})
+	}
+	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "ListDEKs",
+		"*service.ListDEKsRequest or *dek.ListDEKsRequest",
+		reflect.TypeOf(req).String())
 }
 
 func handleKMSRotateDEK(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -504,11 +530,18 @@ func handleKMSRotateDEK(ctx context.Context, svc service.QuicBaaS, req interface
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.RotateDEKRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "RotateDEK", "*service.RotateDEKRequest", reflect.TypeOf(req).String())
+	if r, ok := req.(*service.RotateDEKRequest); ok {
+		return kms.RotateDEK(ctx, r)
 	}
-	return kms.RotateDEK(ctx, r)
+	if r, ok := req.(*dekclient.RotateDEKRequest); ok {
+		return kms.RotateDEK(ctx, &service.RotateDEKRequest{
+			Path:       r.Path,
+			Background: r.Background,
+		})
+	}
+	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "RotateDEK",
+		"*service.RotateDEKRequest or *dek.RotateDEKRequest",
+		reflect.TypeOf(req).String())
 }
 
 func handleKMSDeleteDEK(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -516,11 +549,19 @@ func handleKMSDeleteDEK(ctx context.Context, svc service.QuicBaaS, req interface
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.DeleteDEKRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "DeleteDEK", "*service.DeleteDEKRequest", reflect.TypeOf(req).String())
+	if r, ok := req.(*service.DeleteDEKRequest); ok {
+		return kms.DeleteDEK(ctx, r)
 	}
-	return kms.DeleteDEK(ctx, r)
+	if r, ok := req.(*dekclient.DeleteDEKRequest); ok {
+		return kms.DeleteDEK(ctx, &service.DeleteDEKRequest{
+			Path:      r.Path,
+			Force:     r.Force,
+			MigrateTo: r.MigrateTo,
+		})
+	}
+	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "DeleteDEK",
+		"*service.DeleteDEKRequest or *dek.DeleteDEKRequest",
+		reflect.TypeOf(req).String())
 }
 
 func handleKMSGetDEKStatus(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -528,11 +569,58 @@ func handleKMSGetDEKStatus(ctx context.Context, svc service.QuicBaaS, req interf
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.GetDEKStatusRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetDEKStatus", "*service.GetDEKStatusRequest", reflect.TypeOf(req).String())
+	if r, ok := req.(*service.GetDEKStatusRequest); ok {
+		return kms.GetDEKStatus(ctx, r)
 	}
-	return kms.GetDEKStatus(ctx, r)
+	if path, ok := dekRequestPath(req); ok {
+		return kms.GetDEKStatus(ctx, &service.GetDEKStatusRequest{Path: path})
+	}
+	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "GetDEKStatus",
+		"*service.GetDEKStatusRequest or *dek.getDEKStatusRequest",
+		reflect.TypeOf(req).String())
+}
+
+// dekRequestPath extracts a Path string from any struct that has it via
+// reflection. The DEK SDK uses unexported getDEKRequest / getDEKStatusRequest
+// types, so a typed assertion is impossible from outside the package; we
+// match structurally instead.
+func dekRequestPath(req interface{}) (string, bool) {
+	v := reflect.ValueOf(req)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return "", false
+	}
+	f := v.FieldByName("Path")
+	if !f.IsValid() || f.Kind() != reflect.String {
+		return "", false
+	}
+	return f.String(), true
+}
+
+// stringToKeyAlgorithm converts the dek SDK's string algorithm name into
+// the service-layer KeyAlgorithm enum used by QuicBaaS internals.
+func stringToKeyAlgorithm(s string) service.KeyAlgorithm {
+	switch s {
+	case "AES-256-GCM", "AES256GCM":
+		return service.KeyAlgAES256GCM
+	case "CHACHA20-POLY1305", "CHACHA20POLY1305":
+		return service.KeyAlgChaCha20Poly1305
+	case "RSA-2048", "RSA2048":
+		return service.KeyAlgRSA2048
+	case "RSA-4096", "RSA4096":
+		return service.KeyAlgRSA4096
+	case "ECDSA-P256", "ECDSAP256":
+		return service.KeyAlgECDSAP256
+	case "ECDSA-P384", "ECDSAP384":
+		return service.KeyAlgECDSAP384
+	case "ED25519":
+		return service.KeyAlgEd25519
+	case "":
+		return service.KeyAlgAES256GCM
+	}
+	return service.KeyAlgAES256GCM
 }
 
 func handleKMSSetDefaultDEK(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

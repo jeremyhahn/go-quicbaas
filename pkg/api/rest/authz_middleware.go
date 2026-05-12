@@ -93,6 +93,14 @@ func (m *AuthzMiddleware) Authorize(next http.Handler) http.Handler {
 			return
 		}
 
+		// Enforce RFC 8705 §3.1 mTLS proof-of-possession for cnf-bound tokens.
+		// enforceMTLSBinding is a no-op when the iam build tag is absent.
+		if err := enforceMTLSBinding(r, token); err != nil {
+			m.logUnauthorized(r, "mTLS token binding check failed: "+err.Error())
+			respondUnauthorized(w, r, "invalid_token")
+			return
+		}
+
 		// Build subject from validated token
 		subject := interfaces.Subject{
 			ID:            result.UserID,
@@ -178,15 +186,24 @@ func GetUsername(ctx context.Context) string {
 }
 
 // publicEndpoints defines endpoints that bypass authorization.
-// Authentication endpoints must be public to allow login.
 var publicEndpoints = []string{
-	// Authentication endpoints (password-based login)
+	// Password login is permanently removed (OAuth 2.1 / WebAuthn / PIV only).
+	// The route returns 410 Gone; keep it public so unauthenticated callers receive the clear error
+	// rather than a 401 that might suggest re-trying with credentials.
 	"/api/v1/auth/login",
+	// Token management endpoints
 	"/api/v1/auth/refresh",
+	// Hardware-attested login endpoints (WebAuthn + PIV) — tokens are not yet available here.
+	"/api/v1/auth/webauthn",
+	"/api/v1/auth/login/piv",
+	// Public tenant listing for the login UI tenant selector — no token available yet.
+	"/api/v1/iam/tenants/public",
 	// Health and metrics endpoints
 	"/api/v1/health",
 	"/api/v1/health/liveness",
 	"/api/v1/health/readiness",
+	// Version (read-only build info; consumed by the GUI dashboard).
+	"/api/v1/version",
 	"/metrics",
 }
 

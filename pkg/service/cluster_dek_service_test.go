@@ -238,6 +238,10 @@ func (m *clusterDEKMockSealManager) GenerateRootToken(ctx context.Context, strat
 	return "mock-root-token", nil
 }
 
+func (m *clusterDEKMockSealManager) RotateRootKey(_ context.Context) error {
+	return nil
+}
+
 // =============================================================================
 // Mock Logger for Unit Testing
 // =============================================================================

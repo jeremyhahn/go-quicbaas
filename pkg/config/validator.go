@@ -92,6 +92,7 @@ func (v *Validator) Validate(cfg *Config) error {
 	v.validateSecurity(&cfg.Security)
 	v.validateLogging(&cfg.Logging)
 	v.validateKMS(&cfg.KMS)
+	v.validateOrchestration(&cfg.Orchestration)
 
 	// Return errors if any
 	if len(v.errors) > 0 {
@@ -485,6 +486,24 @@ func (v *Validator) ensureDirectoryWritable(path string) error {
 	_ = os.Remove(testFile) //nolint:gosec // G104: intentionally ignoring remove error for test file
 
 	return nil
+}
+
+// validateOrchestration validates orchestration configuration. The only
+// configurable nested policy at present is host_affinity.mode which must be
+// either "soft" (warn-and-fallback) or "hard" (typed-error). Empty maps to
+// "soft" for backward compatibility with existing deployments.
+func (v *Validator) validateOrchestration(cfg *OrchestrationConfig) {
+	if cfg == nil {
+		return
+	}
+	switch cfg.HostAffinity.Mode {
+	case "", HostAffinityModeSoft, HostAffinityModeHard:
+		// valid
+	default:
+		v.addError("orchestration.host_affinity.mode",
+			fmt.Sprintf("invalid mode: %q (valid: %q, %q)",
+				cfg.HostAffinity.Mode, HostAffinityModeSoft, HostAffinityModeHard))
+	}
 }
 
 // isFIPSAvailable checks if FIPS mode is available on the host system.

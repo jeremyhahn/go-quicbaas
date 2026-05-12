@@ -190,6 +190,17 @@ type CreateJobRequest struct {
 	MaxRetries  int               `json:"max_retries,omitempty"`
 	Timeout     time.Duration     `json:"timeout,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
+
+	// NodeAffinity restricts execution to the node whose
+	// SchedulerEngine was constructed with a matching node ID.
+	// Empty (default) makes the job cluster-wide — it executes on
+	// whichever node is currently the Raft leader. Set to the
+	// creating node's ID (OwnerID is a common choice when
+	// OwnerType=System) to pin execution to that node regardless of
+	// leadership; this is the correct setting for jobs that depend
+	// on node-local state (e.g., certs whose private keys live only
+	// on the local node).
+	NodeAffinity string `json:"node_affinity,omitempty"`
 }
 
 // CreateJobResponse is the response from job creation.

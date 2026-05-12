@@ -17,6 +17,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
@@ -211,7 +212,10 @@ func (s *rotateKeyTestScheduler) ScheduleJob(ctx context.Context, job *Scheduler
 }
 
 // svcBoostAuthManager implements interfaces.AuthManager
-func (m *svcBoostAuthManager) Authenticate(_ context.Context, _, _ string) (interface{}, error) {
+func (m *svcBoostAuthManager) Authenticate(_ context.Context, _ string, password *secure.Buffer) (interface{}, error) {
+	if password != nil {
+		password.Destroy()
+	}
 	return nil, nil
 }
 func (m *svcBoostAuthManager) IssueTokenForUser(_ context.Context, _ interfaces.UserInfo) (interface{}, error) {

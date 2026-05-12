@@ -1,5 +1,20 @@
-export { getClient, isDesktop, isWailsRuntime } from './factory.js';
-export type { Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
+export { createClient, getClient, isDesktop, isWailsRuntime, createBarrierClient, createCeremonyClient, createBootstrapClient, } from './factory.js';
+export type { AuthClient, Client, ConnectionClient, OrchestratorClient, IAMClient, KMSClient, KMSKeyVersion, BarrierClient, CeremonyClient, BootstrapClient, 
+/** @deprecated Use BarrierClient. */
+SealClient, SecretsClient, UpdateUserRequest, UpdateTenantRequest, CreateRoleRequest, UpdateRoleRequest, CreatePolicyRequest, UpdatePolicyRequest, SSHKeysClient, SSHKnownHostsClient, SSHAuthorizedKeysClient, SSHClient, } from './interfaces.js';
+export type { DataClient, KVEntry, KVListResponse, VectorsClient, VectorNamespace, VectorSearchResult, TimeSeriesClient, TSPoint, TSQueryResponse, ObjectsClient, ObjectEntry, ObjectListResponse, } from './interfaces.js';
+export type { RAGClient, RAGQueryRequest, RAGQueryResponse, RAGBuildContextRequest, RAGBuildContextResponse, RAGCitation, RAGResultInput, RAGDocument, RAGListDocumentsResponse, RAGReindexRequest, } from './rag.js';
+export type { EmbeddingsClient, EmbeddingProviderInfo, EmbeddingMetadata, GenerateEmbeddingRequest, GenerateEmbeddingResponse, ListProvidersRequest, ListProvidersResponse, SetProviderStatusResponse, } from './embedding_sdk.js';
+export type { MessagingClient, MessagingChannel, MessagingMessage, ListChannelsRequest, ListChannelsResponse, CreateChannelRequest, CreateChannelResponse, DeleteChannelResponse, PublishRequest, PublishResponse, } from './messaging_sdk.js';
+export type { SchedulerClient, SchedulerJob, SchedulerStatus, ListJobsRequest, ListJobsResponse, CreateJobRequest, CreateJobResponse, DeleteJobResponse, TriggerJobResponse, } from './scheduler_sdk.js';
+export type { ProjectsClient, Project, ProjectRole, ProjectWorkspace, ProjectGit, ProjectPermissions, ProjectQuotas, CreateProjectRequest, CreateProjectResponse, GetProjectResponse, UpdateProjectRequest, UpdateProjectResponse, DeleteProjectResponse, ListProjectsResponse, GrantAgentRoleRequest, GrantAgentRoleResponse, RevokeAgentRoleRequest, RevokeAgentRoleResponse, } from './projects.js';
 export type * from './types.js';
-export { QuicBaaSError, ConnectionError, NotConnectedError, APIError } from './errors.js';
+export { SandboxMode } from './types.js';
+export { QuicBaaSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
+export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } from './rest.js';
+export { RestBarrierClient, RestCeremonyClient, RestBootstrapClient } from './rest.js';
+export { GrpcWebNotImplementedError } from './grpc_web.js';
+export { UnixNotImplementedError } from './unix.js';
+export { McpNotImplementedError } from './mcp.js';
+export { QuicNotImplementedError } from './quic.js';
 //# sourceMappingURL=index.d.ts.map

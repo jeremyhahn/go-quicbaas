@@ -41,6 +41,7 @@ type grpcTestAgentService struct {
 	listSessionsFunc  func(ctx context.Context, req *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error)
 	listBackendsFunc  func(ctx context.Context) ([]*orchestration.AgentBackendInfo, error)
 	healthCheckFunc   func(ctx context.Context) (*orchestration.HealthCheckReport, error)
+	inferFunc         func(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error)
 }
 
 func (m *grpcTestAgentService) DiscoverProjects(ctx context.Context, req *orchestration.DiscoverProjectsRequest) (*orchestration.DiscoverProjectsResponse, error) {
@@ -117,6 +118,10 @@ func (m *grpcTestAgentService) ListBackends(ctx context.Context) ([]*orchestrati
 }
 
 func (m *grpcTestAgentService) RegisterBackend(ctx context.Context, req *orchestration.RegisterBackendRequest) error {
+	return nil
+}
+
+func (m *grpcTestAgentService) RegisterAPIInferenceBackend(_ context.Context, _ *orchestration.RegisterAPIInferenceBackendRequest) error {
 	return nil
 }
 
@@ -204,6 +209,56 @@ func (m *grpcTestAgentService) SubscribeJobEvents(ctx context.Context, tenantID,
 
 func (m *grpcTestAgentService) BackendToolGuidance(_ string) string {
 	return ""
+}
+
+func (m *grpcTestAgentService) ListBackendModels(_ context.Context, _ string) ([]string, error) {
+	return []string{}, nil
+}
+
+func (m *grpcTestAgentService) ListWorkflows(_ context.Context) ([]*orchestration.WorkflowDefinition, error) {
+	return []*orchestration.WorkflowDefinition{}, nil
+}
+
+func (m *grpcTestAgentService) GetWorkflow(_ context.Context, name string) (*orchestration.WorkflowDefinition, error) {
+	return nil, &orchestration.WorkflowNotFoundError{Name: name}
+}
+
+func (m *grpcTestAgentService) RegisterWorkflow(_ context.Context, def *orchestration.WorkflowDefinition) error {
+	return nil
+}
+
+func (m *grpcTestAgentService) UpdateWorkflow(_ context.Context, def *orchestration.WorkflowDefinition) error {
+	return nil
+}
+
+func (m *grpcTestAgentService) DeleteWorkflow(_ context.Context, name string) error {
+	return nil
+}
+
+func (m *grpcTestAgentService) SpawnChildJob(_ context.Context, _ *orchestration.SpawnChildJobRequest) (*orchestration.SpawnChildJobResponse, error) {
+	return &orchestration.SpawnChildJobResponse{ChildJobID: "child-job-1"}, nil
+}
+
+func (m *grpcTestAgentService) SubmitTaskArtifacts(_ context.Context, _, _ string, _ []orchestration.Artifact) error {
+	return nil
+}
+
+func (m *grpcTestAgentService) GetTaskArtifact(_ context.Context, _, _, _ string) (*orchestration.Artifact, error) {
+	return nil, nil
+}
+
+func (m *grpcTestAgentService) ListTaskArtifacts(_ context.Context, _, _ string) ([]orchestration.Artifact, error) {
+	return nil, nil
+}
+
+// Infer calls inferFunc if set, otherwise returns an empty closed channel.
+func (m *grpcTestAgentService) Infer(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+	if m.inferFunc != nil {
+		return m.inferFunc(ctx, req)
+	}
+	ch := make(chan *orchestration.InferChunk)
+	close(ch)
+	return ch, nil
 }
 
 // =============================================================================

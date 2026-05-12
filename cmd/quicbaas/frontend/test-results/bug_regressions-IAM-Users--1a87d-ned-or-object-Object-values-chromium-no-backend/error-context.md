@@ -1,0 +1,172 @@
+# Instructions
+
+- Following Playwright test failed.
+- Explain why, be concise, respect Playwright best practices.
+- Provide a snippet of code with the fix, if possible.
+
+# Test info
+
+- Name: bug_regressions.spec.ts >> IAM Users table — column bindings >> Users tab does not show undefined or [object Object] values
+- Location: test/e2e/bug_regressions.spec.ts:107:3
+
+# Error details
+
+```
+Test timeout of 30000ms exceeded.
+```
+
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - button "Toggle sidebar" [ref=e6] [cursor=pointer]:
+        - img [ref=e7]
+      - generic [ref=e8]: QuicBaaS
+      - generic [ref=e9]: Connected
+      - list [ref=e12]:
+        - listitem [ref=e13]: QuicBaaS
+        - listitem [ref=e14]: Security
+        - listitem [ref=e15]: IAM
+      - generic [ref=e16]:
+        - combobox "Active tenant" [ref=e18]:
+          - option "default" [selected]
+        - button "Toggle theme" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+  - generic [ref=e21]:
+    - complementary [ref=e22]:
+      - navigation [ref=e23]:
+        - generic [ref=e24]: OVERVIEW
+        - button "Overview" [ref=e25]:
+          - img [ref=e26]
+          - generic [ref=e27]: Overview
+        - generic [ref=e28]: ORCHESTRATION
+        - button "Orchestration" [ref=e29]:
+          - img [ref=e30]
+          - generic [ref=e31]: Orchestration
+        - button "Jobs" [ref=e32]:
+          - img [ref=e33]
+          - generic [ref=e34]: Jobs
+        - button "Agent Fleet" [ref=e35]:
+          - img [ref=e36]
+          - generic [ref=e37]: Agent Fleet
+        - button "Sessions" [ref=e38]:
+          - img [ref=e39]
+          - generic [ref=e40]: Sessions
+        - button "Tasks" [ref=e41]:
+          - img [ref=e42]
+          - generic [ref=e43]: Tasks
+        - button "Workflows" [ref=e44]:
+          - img [ref=e45]
+          - generic [ref=e46]: Workflows
+        - button "Live Events" [ref=e47]:
+          - img [ref=e48]
+          - generic [ref=e49]: Live Events
+        - button "Cost Tracking" [ref=e50]:
+          - img [ref=e51]
+          - generic [ref=e52]: Cost Tracking
+        - button "Inference" [ref=e53]:
+          - img [ref=e54]
+          - generic [ref=e55]: Inference
+        - button "Projects" [ref=e56]:
+          - img [ref=e57]
+          - generic [ref=e58]: Projects
+        - generic [ref=e59]: DATA
+        - button "KV Store" [ref=e60]:
+          - img [ref=e61]
+          - generic [ref=e62]: KV Store
+        - button "Vectors" [ref=e63]:
+          - img [ref=e64]
+          - generic [ref=e65]: Vectors
+        - button "Time-Series" [ref=e66]:
+          - img [ref=e67]
+          - generic [ref=e68]: Time-Series
+        - button "Objects" [ref=e69]:
+          - img [ref=e70]
+          - generic [ref=e71]: Objects
+        - generic [ref=e72]: AI/ML
+        - button "RAG" [ref=e73]:
+          - img [ref=e74]
+          - generic [ref=e75]: RAG
+        - button "Embeddings" [ref=e76]:
+          - img [ref=e77]
+          - generic [ref=e78]: Embeddings
+        - generic [ref=e79]: ASYNC
+        - button "Messaging" [ref=e80]:
+          - img [ref=e81]
+          - generic [ref=e82]: Messaging
+        - button "Scheduler" [ref=e83]:
+          - img [ref=e84]
+          - generic [ref=e85]: Scheduler
+        - generic [ref=e86]: SECURITY
+        - button "IAM" [ref=e87]:
+          - img [ref=e88]
+          - generic [ref=e89]: IAM
+        - button "KMS" [ref=e90]:
+          - img [ref=e91]
+          - generic [ref=e92]: KMS
+        - button "Secrets" [ref=e93]:
+          - img [ref=e94]
+          - generic [ref=e95]: Secrets
+        - button "Barrier" [ref=e96]:
+          - img [ref=e97]
+          - generic [ref=e98]: Barrier
+        - button "Ceremony" [ref=e99]:
+          - img [ref=e100]
+          - generic [ref=e101]: Ceremony
+        - button "Bootstrap" [ref=e102]:
+          - img [ref=e103]
+          - generic [ref=e104]: Bootstrap
+        - button "SSH Keys" [ref=e105]:
+          - img [ref=e106]
+          - generic [ref=e107]: SSH Keys
+        - generic [ref=e108]: CLUSTER
+        - button "Cluster" [ref=e109]:
+          - img [ref=e110]
+          - generic [ref=e111]: Cluster
+        - button "Nodes soon" [ref=e112]:
+          - img [ref=e113]
+          - generic [ref=e114]: Nodes
+          - generic [ref=e115]: soon
+        - button "Backup soon" [ref=e116]:
+          - img [ref=e117]
+          - generic [ref=e118]: Backup
+          - generic [ref=e119]: soon
+        - generic [ref=e120]: SETTINGS
+        - button "Connection soon" [ref=e121]:
+          - img [ref=e122]
+          - generic [ref=e123]: Connection
+          - generic [ref=e124]: soon
+    - main [ref=e125]:
+      - generic [ref=e127]:
+        - generic [ref=e128]:
+          - generic [ref=e129]:
+            - img [ref=e131]
+            - generic [ref=e132]:
+              - heading "IAM" [level=1] [ref=e133]
+              - paragraph [ref=e134]: Identity, Access, and Policy Management
+          - button "Invite user" [ref=e136] [cursor=pointer]: + Invite User
+        - generic [ref=e137]:
+          - generic [ref=e138]: Tenant
+          - combobox "Tenant" [ref=e139]:
+            - option "default" [selected]
+        - tablist [ref=e140]:
+          - tab "Users" [ref=e141] [cursor=pointer]
+          - tab "Tenants" [ref=e142] [cursor=pointer]
+          - tab "Roles" [ref=e143] [cursor=pointer]
+          - tab "Policies" [ref=e144] [cursor=pointer]
+        - generic [ref=e145]:
+          - img [ref=e146]
+          - generic [ref=e147]:
+            - paragraph [ref=e148]: No users in tenant default — + Invite User is how you start.
+            - paragraph [ref=e149]: Users authenticate to the platform and can be assigned roles and policies.
+          - button "+ Invite User" [ref=e151] [cursor=pointer]
+  - contentinfo [ref=e152]:
+    - generic [ref=e153]:
+      - generic [ref=e154]: https://localhost:18080
+      - generic [ref=e155]: rest
+    - generic [ref=e156]:
+      - generic [ref=e157]: healthy
+      - generic [ref=e158]: QuicBaaS v0.1.0
+```

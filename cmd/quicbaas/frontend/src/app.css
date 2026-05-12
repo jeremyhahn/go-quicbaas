@@ -9,11 +9,26 @@
   --color-brand-red: oklch(0.58 0.22 25);
 }
 
+/*
+ * Color-token strategy
+ * --------------------
+ *   --color-primary  → confident accent for non-destructive CTAs
+ *                      ("+ Spawn", "Run Query", "Send", ...). Blue keeps
+ *                      the brand orange/red reserved for destructive
+ *                      actions and error semantics.
+ *   --color-secondary → brand orange (used by .gradient-text and any
+ *                       chrome that wants a brand pop).
+ *   --color-accent    → brand red — used sparingly for accents where the
+ *                       brand identity matters.
+ *   --color-error     → destructive actions (delete, abort, force seal)
+ *                       and error envelopes.
+ */
+
 /* QuicBaaS Dark Theme */
 [data-theme="quicbaas-dark"] {
-  --color-primary: oklch(0.65 0.19 30);
-  --color-secondary: oklch(0.58 0.22 25);
-  --color-accent: oklch(0.72 0.14 60);
+  --color-primary: oklch(0.60 0.15 250);
+  --color-secondary: oklch(0.65 0.19 30);
+  --color-accent: oklch(0.58 0.22 25);
   --color-neutral: oklch(0.20 0.02 30);
   --color-base-100: oklch(0.14 0.02 30);
   --color-base-200: oklch(0.12 0.02 30);
@@ -27,14 +42,23 @@
 
 /* QuicBaaS Light Theme */
 [data-theme="quicbaas-light"] {
-  --color-primary: oklch(0.60 0.20 30);
-  --color-secondary: oklch(0.55 0.22 25);
-  --color-accent: oklch(0.65 0.15 60);
+  --color-primary: oklch(0.50 0.20 250);
+  --color-primary-content: oklch(0.98 0.005 80);
+  --color-secondary: oklch(0.60 0.20 30);
+  --color-accent: oklch(0.55 0.22 25);
   --color-neutral: oklch(0.25 0.02 30);
   --color-base-100: oklch(0.98 0.005 80);
   --color-base-200: oklch(0.94 0.005 80);
-  --color-base-300: oklch(0.90 0.01 80);
+  --color-base-300: oklch(0.88 0.01 80);
   --color-base-content: oklch(0.20 0.02 30);
+  --color-info: oklch(0.55 0.18 240);
+  --color-info-content: oklch(0.98 0.005 80);
+  --color-success: oklch(0.55 0.18 145);
+  --color-success-content: oklch(0.98 0.005 80);
+  --color-warning: oklch(0.55 0.16 85);
+  --color-warning-content: oklch(0.15 0.02 80);
+  --color-error: oklch(0.50 0.22 25);
+  --color-error-content: oklch(0.98 0.005 80);
 }
 
 /* Gradient brand text */
@@ -50,8 +74,140 @@
   background: var(--color-base-100);
 }
 
+/*
+ * Button hover normalization.
+ * daisyUI v5 btn-ghost hover shows background tint only — no border.
+ * This ensures ghost/icon buttons never render a visible outline on hover.
+ */
+.btn-ghost:hover,
+.btn-ghost:focus-visible {
+  border-color: transparent;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: oklch(0.30 0.02 30); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: oklch(0.40 0.02 30); }
+
+/*
+ * Respect the operating-system "reduce motion" preference.
+ * Screen readers, assistive technologies, and accessibility tooling may set
+ * this flag. Honour it by removing CSS animations, keeping loading indicators
+ * visible but static.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .loading {
+    animation: none;
+  }
+}
+
+/*
+ * Inline `<code>` chips inside alert/banner components.
+ *
+ * Without this rule, raw <code> elements inherit the dark global background
+ * defined by Tailwind's preflight which clashes badly with the colored
+ * backgrounds used by `.alert-info`, `.alert-warning`, `.alert-success`,
+ * and `.alert-error`. We use color-mix so the chip blends with whichever
+ * theme is active without hard-coding a color.
+ */
+.alert code,
+.alert .code {
+  background: color-mix(in oklch, var(--color-base-100) 70%, transparent);
+  color: inherit;
+  border-radius: 0.25rem;
+  padding: 0 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875em;
+}
+
+/*
+ * Light-theme polish.
+ *
+ * The cream base palette in `quicbaas-light` lacks the contrast that the
+ * dark theme enjoys. The rules below give cards, table rows, sidebar items,
+ * and hover affordances visible boundaries against the cream background
+ * without disturbing the dark theme.
+ */
+[data-theme="quicbaas-light"] {
+  /* Card boundary fallback used by surfaces that don't already set a
+     border. The `.stat` border in StatCard.svelte uses --color-base-300
+     directly. */
+  --color-card-border: oklch(0.82 0.01 80);
+}
+
+/* Subtle hover state for sidebar nav items in light theme. */
+[data-theme="quicbaas-light"] aside button:hover {
+  background-color: oklch(0.92 0.01 80);
+}
+
+/*
+ * Active sidebar item — light theme.
+ * bg-base-300 (oklch 0.88) vs bg-base-200 (oklch 0.94) is perceptually too
+ * close. Override to a tinted primary surface so the active row is clearly
+ * distinct from its neighbours in both collapsed and expanded states.
+ */
+[data-theme="quicbaas-light"] aside button.bg-base-300 {
+  background-color: color-mix(in oklch, var(--color-primary) 12%, var(--color-base-100));
+  color: var(--color-primary);
+}
+
+/*
+ * Muted-text floor for light theme.
+ *
+ * Tailwind opacity modifiers like /30 and /40 produce near-invisible text on
+ * the cream base. Cap the minimum effective luminance so secondary text
+ * (section headers, breadcrumb ancestors, stat labels, description text) stays
+ * readable without removing the intentional subdued appearance.
+ *
+ * The stat-title and stat-desc selectors override StatCard.svelte's
+ * text-base-content/50 and /40 classes directly so the values need no
+ * per-component edit.
+ */
+[data-theme="quicbaas-light"] .stat-title {
+  color: oklch(0.40 0.02 80);
+}
+
+[data-theme="quicbaas-light"] .stat-desc {
+  color: oklch(0.45 0.02 80);
+}
+
+/* Breadcrumb ancestor items and sidebar section headings use /30–/40
+   opacity. Provide a concrete minimum for light theme. */
+[data-theme="quicbaas-light"] .breadcrumbs li.text-base-content\/40,
+[data-theme="quicbaas-light"] .breadcrumbs .text-base-content\/40 {
+  color: oklch(0.48 0.02 80);
+}
+
+/*
+ * Faded/placeholder text floor for light theme.
+ *
+ * Tailwind's /30 opacity modifier applied to the near-black base-content
+ * (oklch 0.20) yields an effective luminance of ~0.26 before the base-100
+ * background interaction — far too light on cream. These rules provide
+ * concrete fallback values for common placeholder patterns so each component
+ * does not need individual edits.
+ *
+ * Covers:
+ *   - "Subsystem disabled." placeholders (text-base-content/30)
+ *   - Empty state hints ("No metrics found.", etc.)
+ *   - Stat figure icons (text-base-content/25)
+ *   - Connection detail dt labels (text-base-content/40)
+ */
+[data-theme="quicbaas-light"] .text-base-content\/30 {
+  color: oklch(0.52 0.02 80);
+}
+
+[data-theme="quicbaas-light"] .text-base-content\/25 {
+  color: oklch(0.55 0.02 80);
+}
+
+[data-theme="quicbaas-light"] .text-base-content\/40 {
+  color: oklch(0.46 0.02 80);
+}
+
+/* Table zebra striping in light theme — daisyUI's default zebra row is
+   too subtle on cream. */
+[data-theme="quicbaas-light"] .table-zebra tbody tr:nth-child(even) {
+  background-color: oklch(0.96 0.005 80);
+}

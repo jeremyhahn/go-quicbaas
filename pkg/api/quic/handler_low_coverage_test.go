@@ -180,20 +180,6 @@ func TestHandleVerifyBackup_ServiceError(t *testing.T) {
 // Auth Handler Success + Service Error Tests (33.3% -> ~91%)
 // =============================================================================
 
-func TestHandleLogin_Success(t *testing.T) {
-	svc := &mockService{
-		loginFn: func(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error) {
-			return &service.LoginResponse{}, nil
-		},
-	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
-	payload, _ := EncodePayload(&service.LoginRequest{})
-	resp := handler.handleLogin(context.Background(), &Request{Payload: payload})
-	if resp.Status != StatusOK {
-		t.Errorf("expected StatusOK, got %d", resp.Status)
-	}
-}
-
 func TestHandleLogin_NilService(t *testing.T) {
 	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.LoginRequest{})

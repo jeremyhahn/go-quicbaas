@@ -103,7 +103,6 @@ type GDPRManagerDependencies struct {
 	DeletionStorage   DeletionStorage
 	UserStorage       UserStorage
 	SessionStorage    SessionStorage
-	CredentialStorage CredentialStorage
 
 	// Optional audit logger
 	AuditLogger GDPRAuditLogger
@@ -534,25 +533,11 @@ func (m *GDPRManager) collectUserData(ctx context.Context, request *DataExportRe
 		}
 	}
 
-	// Get credentials (metadata only, not secrets)
-	if m.shouldIncludeCategory("credentials", request) && m.deps.CredentialStorage != nil {
-		creds, err := m.deps.CredentialStorage.GetCredentialsByUser(ctx, request.TenantID, request.UserID)
-		if err == nil && len(creds) > 0 {
-			export.Credentials = make([]*CredentialExport, 0, len(creds))
-			for _, cred := range creds {
-				lastUsed := time.Time{}
-				if cred.LastUsedAt != nil {
-					lastUsed = *cred.LastUsedAt
-				}
-				export.Credentials = append(export.Credentials, &CredentialExport{
-					ID:         cred.ID,
-					Type:       "webauthn",
-					CreatedAt:  cred.CreatedAt,
-					LastUsedAt: lastUsed,
-				})
-			}
-		}
-	}
+	// NOTE: WebAuthn credential export was removed in Phase 5 of the
+	// identity refactor. Credentials are now owned by go-xkms and
+	// surfaced through xkms's CredentialStore. A future iteration will
+	// add a credential-export hook against the xkms SDK; until then the
+	// "credentials" export category is a no-op.
 
 	return export, nil
 }
@@ -885,14 +870,10 @@ func (m *GDPRManager) deleteUserData(ctx context.Context, request *DataDeletionR
 		}
 	}
 
-	// Delete credentials
-	if shouldDelete("credentials") && m.deps.CredentialStorage != nil {
-		creds, _ := m.deps.CredentialStorage.GetCredentialsByUser(ctx, request.TenantID, request.UserID)
-		for _, cred := range creds {
-			_ = m.deps.CredentialStorage.DeleteCredential(ctx, request.TenantID, cred.ID)
-			summary.CredentialsDeleted++
-		}
-	}
+	// NOTE: WebAuthn credential deletion is now owned by go-xkms; see
+	// the export-side note above. The CredentialsDeleted counter is
+	// retained for wire-format stability but stays at zero until the
+	// xkms-backed deletion hook lands.
 
 	// Delete consents
 	if shouldDelete("consents") {

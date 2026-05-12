@@ -16,10 +16,22 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
+  // base is "./" so Vite emits RELATIVE asset paths (e.g. ./assets/index.js)
+  // in index.html. This works in both deployment contexts without tweaking:
+  //   - Daemon (pkg/api/rest/ui/embed.go) serves index.html at /ui/; the
+  //     relative ./assets/... resolves to /ui/assets/... ✓
+  //   - Wails desktop serves index.html at /; the relative ./assets/...
+  //     resolves to /assets/... ✓
+  // An absolute /ui/ base would break Wails (it embeds assets at root, not
+  // under /ui/), which is Bug #7 — blank desktop window.
+  base: "./",
   plugins: [svelte(), tailwindcss()],
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // Sourcemaps off in production for security; flip to "true" locally
+    // when diagnosing minified runtime errors.
+    sourcemap: false,
   },
   resolve: {
     alias: {

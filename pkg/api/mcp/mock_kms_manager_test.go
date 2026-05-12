@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"crypto"
 	"sync"
 	"time"
 
@@ -195,4 +196,11 @@ func createTestKeyMetadata(keyID, name, algorithm string) *kms.KeyMetadata {
 		Tags:               map[string]string{"env": "test"},
 		Owner:              "test-user",
 	}
+}
+
+// Signer returns a crypto.Signer for the given keyID. Tests that don't
+// exercise the signer path receive a nil signer and no error; tests
+// that do can stub this by redefining the method on a wrapped type.
+func (m *MockKMSManager) Signer(_ context.Context, _ string) (crypto.Signer, error) {
+	return nil, nil
 }

@@ -225,10 +225,13 @@ func TestTimeoutMiddleware(t *testing.T) {
 			shouldTimeout:  false,
 		},
 		{
+			// Per RFC 7231 §6.5.7, server-side handler timeouts are 503
+			// (the canonical http.TimeoutHandler behavior). 408 is reserved
+			// for client-side request stalls.
 			name:           "times out",
 			timeout:        50 * time.Millisecond,
 			handlerDelay:   200 * time.Millisecond,
-			expectedStatus: http.StatusRequestTimeout,
+			expectedStatus: http.StatusServiceUnavailable,
 			shouldTimeout:  true,
 		},
 	}
@@ -863,46 +866,116 @@ func TestRateLimitErrorMessageFormatting(t *testing.T) {
 	assert.Equal(t, "rate limit exceeded: 100 requests per 1s", err.Error())
 }
 
-func TestTimeoutStatusRewriterBehavior(t *testing.T) {
-	t.Run("rewrites 503 to 408", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
+// TestTimeoutMiddleware_HandlerEmitted503PassesThrough is the regression guard
+// for the bug where TimeoutMiddleware globally rewrote every 503 (including
+// handler-emitted ones such as "barrier sealed" or "no leader available") to
+// 408. After the fix, handler-emitted status codes pass through unchanged.
+func TestTimeoutMiddleware_HandlerEmitted503PassesThrough(t *testing.T) {
+	middleware := TimeoutMiddleware(1 * time.Second)
 
-		rewriter.WriteHeader(http.StatusServiceUnavailable)
-
-		assert.Equal(t, http.StatusRequestTimeout, baseWriter.Code)
-		assert.True(t, rewriter.statusWritten)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"barrier sealed","code":"SEALED"}`))
 	})
 
-	t.Run("does not rewrite other status codes", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
+	wrapped := middleware(handler)
 
-		rewriter.WriteHeader(http.StatusOK)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusOK, baseWriter.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
+		"handler-emitted 503 must reach the wire intact (not rewritten to 408)")
+	assert.Equal(t, "5", w.Header().Get("Retry-After"))
+	assert.Contains(t, w.Body.String(), `"barrier sealed"`)
+	assert.Contains(t, w.Body.String(), `"SEALED"`)
+}
+
+// TestTimeoutMiddleware_HandlerEmitted408PassesThrough confirms that handlers
+// which intentionally emit 408 (e.g. ctx.Done() branches mapping to a typed
+// RequestTimeoutError) are also unmolested by the middleware.
+func TestTimeoutMiddleware_HandlerEmitted408PassesThrough(t *testing.T) {
+	middleware := TimeoutMiddleware(1 * time.Second)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusRequestTimeout)
+		_, _ = w.Write([]byte(`{"error":"client stalled"}`))
 	})
 
-	t.Run("write calls WriteHeader if not written", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
+	wrapped := middleware(handler)
 
-		n, err := rewriter.Write([]byte("test"))
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
 
-		assert.NoError(t, err)
-		assert.Equal(t, 4, n)
-		assert.True(t, rewriter.statusWritten)
+	assert.Equal(t, http.StatusRequestTimeout, w.Code)
+	assert.Contains(t, w.Body.String(), "client stalled")
+}
+
+// TestTimeoutMiddleware_TimeoutFires503 confirms that when http.TimeoutHandler
+// fires (handler exceeded its deadline), it emits 503 — the canonical RFC 7231
+// behavior. 408 is reserved for client-side request stalls.
+func TestTimeoutMiddleware_TimeoutFires503(t *testing.T) {
+	middleware := TimeoutMiddleware(20 * time.Millisecond)
+
+	done := make(chan struct{})
+	defer close(done)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-done:
+		}
 	})
 
-	t.Run("ignores duplicate WriteHeader calls", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
+	wrapped := middleware(handler)
 
-		rewriter.WriteHeader(http.StatusCreated)
-		rewriter.WriteHeader(http.StatusOK) // Should be ignored
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusCreated, baseWriter.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
+		"server-side handler timeout must surface as 503 per RFC 7231 §6.5.7")
+	assert.Contains(t, w.Body.String(), "request timeout after")
+}
+
+// TestSealedWindowMiddleware_Returns503NotRewritten is the regression guard
+// for the sealed-window contract: a middleware in the chain that returns 503
+// (e.g. SealedWindowMiddleware emitting `503 barrier sealed`) must reach the
+// wire intact when stacked with TimeoutMiddleware. This pins the canonical
+// envelope from /home/jhahn/.claude/plans/immutable-bouncing-catmull.md.
+func TestSealedWindowMiddleware_Returns503NotRewritten(t *testing.T) {
+	// Simulate a sealed-window middleware that short-circuits with 503.
+	sealedWindowMW := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "5")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"barrier sealed","code":"SEALED"}`))
+		})
+	}
+
+	timeoutMW := TimeoutMiddleware(1 * time.Second)
+
+	// Inner handler should never be reached.
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("inner handler must not be invoked while sealed")
 	})
+
+	// Compose: timeout wraps sealedWindow wraps inner.
+	chain := timeoutMW(sealedWindowMW(inner))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/kv/foo", nil)
+	w := httptest.NewRecorder()
+	chain.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
+		"sealed-window 503 must reach the wire intact through TimeoutMiddleware")
+	assert.Equal(t, "5", w.Header().Get("Retry-After"))
+	assert.Contains(t, w.Body.String(), `"barrier sealed"`)
+	assert.Contains(t, w.Body.String(), `"SEALED"`)
 }
 
 func TestInternalServerErrorMessageOutput(t *testing.T) {
@@ -1004,96 +1077,6 @@ func TestTokenBucketRefill(t *testing.T) {
 	result := tb.consume()
 	assert.True(t, result, "Should have tokens after refill")
 	assert.LessOrEqual(t, tb.tokens, tb.capacity)
-}
-
-func TestTimeoutStatusRewriterWriteHeader(t *testing.T) {
-	t.Run("rewrites 503 to 408", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
-
-		rewriter.WriteHeader(http.StatusServiceUnavailable)
-
-		assert.Equal(t, http.StatusRequestTimeout, baseWriter.Code)
-		assert.True(t, rewriter.statusWritten)
-	})
-
-	t.Run("does not rewrite other status codes", func(t *testing.T) {
-		testCases := []int{
-			http.StatusOK,
-			http.StatusCreated,
-			http.StatusBadRequest,
-			http.StatusNotFound,
-			http.StatusInternalServerError,
-		}
-
-		for _, statusCode := range testCases {
-			baseWriter := httptest.NewRecorder()
-			rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
-
-			rewriter.WriteHeader(statusCode)
-
-			assert.Equal(t, statusCode, baseWriter.Code)
-		}
-	})
-
-	t.Run("ignores subsequent WriteHeader calls", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
-
-		rewriter.WriteHeader(http.StatusOK)
-		rewriter.WriteHeader(http.StatusBadRequest) // Should be ignored
-		rewriter.WriteHeader(http.StatusNotFound)   // Should be ignored
-
-		assert.Equal(t, http.StatusOK, baseWriter.Code)
-	})
-
-	t.Run("503 after already written is ignored", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
-
-		rewriter.WriteHeader(http.StatusOK)
-		rewriter.WriteHeader(http.StatusServiceUnavailable) // Should be ignored
-
-		assert.Equal(t, http.StatusOK, baseWriter.Code)
-	})
-}
-
-func TestTimeoutStatusRewriterWrite(t *testing.T) {
-	t.Run("calls WriteHeader with 200 if not already written", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
-
-		n, err := rewriter.Write([]byte("test body"))
-
-		assert.NoError(t, err)
-		assert.Equal(t, 9, n)
-		assert.True(t, rewriter.statusWritten)
-		assert.Equal(t, http.StatusOK, baseWriter.Code)
-		assert.Equal(t, "test body", baseWriter.Body.String())
-	})
-
-	t.Run("does not call WriteHeader if already written", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
-
-		rewriter.WriteHeader(http.StatusCreated)
-		n, err := rewriter.Write([]byte("test body"))
-
-		assert.NoError(t, err)
-		assert.Equal(t, 9, n)
-		assert.Equal(t, http.StatusCreated, baseWriter.Code)
-	})
-
-	t.Run("empty write still triggers WriteHeader", func(t *testing.T) {
-		baseWriter := httptest.NewRecorder()
-		rewriter := &timeoutStatusRewriter{ResponseWriter: baseWriter}
-
-		n, err := rewriter.Write([]byte{})
-
-		assert.NoError(t, err)
-		assert.Equal(t, 0, n)
-		assert.True(t, rewriter.statusWritten)
-	})
 }
 
 func TestRateLimiterAllowNewClient(t *testing.T) {

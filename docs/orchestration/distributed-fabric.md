@@ -174,6 +174,92 @@ Full distributed mode with Raft consensus. Multiple QuicBaaS nodes, agents on an
 
 **Use case**: Production, HA, multi-datacenter, large agent teams across many machines.
 
+### Mode 4: Remote Daemon with Container Sandboxing (DEFAULT)
+
+A long-lived daemon (`quicbaas agent serve`) runs on remote GPU hosts and exposes an AgentRuntime gRPC service. The central orchestrator calls this service to spawn sandboxed (containerized) sessions. This is the **sandbox-first** default.
+
+```
+  CENTRAL QUICBAAS               REMOTE GPU HOST (198.51.100.91)
+┌────────────────────────┐     ┌──────────────────────────────────────┐
+│                        │     │                                       │
+│ BackendDispatcher      │     │  quicbaas agent serve                 │
+│  │                     │     │  (daemon process)                     │
+│  ├─ LocalACPBackend    │     │  ┌─────────────────────────────────┐ │
+│  │  (local spawn)      │     │  │ AgentRuntime gRPC Service       │ │
+│  │                     │     │  │ (port 9091)                     │ │
+│  ├─ RemoteACPBackend   │────────→│ ┌─────────────────────────────┐│ │
+│  │  (call daemon)      │gRPC+QUIC││ Runtime (reuses pkg/orch):    ││ │
+│  │                     │     │  │ │  - ACPBackend                ││ │
+│  └─ OllamaBackend      │     │  │ │  - OllamaBackend             ││ │
+│     (Ollama API)       │     │  │ │  - ContainerRuntime          ││ │
+│                        │     │  │ │  - SandboxResolver           ││ │
+│                        │     │  │ └─────────────────────────────┘│ │
+│                        │     │  │ ┌─────────────────────────────┐│ │
+│                        │     │  │ │ Enrolled identity (OAuth2)  ││ │
+│                        │     │  │ │ JWT token scoped:           ││ │
+│                        │     │  │ │  - agent:runtime:spawn      ││ │
+│                        │     │  │ │  - agent:runtime:prompt     ││ │
+│                        │     │  │ │  - agent:runtime:status     ││ │
+│                        │     │  │ └─────────────────────────────┘│ │
+│                        │     │  └─────────────────────────────────┘ │
+│                        │     │          ↓                           │
+│                        │     │  Docker daemon (host socket mount)   │
+│                        │     │  Ollama (http://localhost:11434)    │
+└────────────────────────┘     └──────────────────────────────────────┘
+```
+
+**Key features:**
+- Daemon enrolls with central using OAuth2 Client Credentials (one-shot enrollment token)
+- Heartbeats into fleet registry; central can spawn sessions remotely
+- Sandbox policy: **required** (default; container-only) — raw exec forbidden unless explicitly allowed
+- Reuses existing `ACPBackend`, `OllamaBackend`, `ContainerRuntime` (no parallel spawn logic)
+- Session state encrypted with tenant DEK; audit logging per RPC
+- Graceful shutdown drains in-flight sessions with configurable timeout
+
+**Operators guide**: See `docs/agents/daemon.md` for deployment, enrollment, troubleshooting, and systemd integration.
+
+**Use case**: Production GPU hosts, compliance-sensitive tenants (FedRAMP/HIPAA), central orchestrator needs direct control of session lifecycle.
+
+### Mode 5: Remote Daemon with Raw Process Execution (OPT-IN)
+
+Same architecture as Mode 4, but with sandbox policy `opt-in` or `preferred`, allowing clients to explicitly request raw process execution (no container). This is less secure but useful for legacy systems or trusted development environments.
+
+```
+  CENTRAL QUICBAAS               REMOTE HOST
+┌────────────────────────┐     ┌──────────────────────────────────────┐
+│                        │     │                                       │
+│ BackendDispatcher      │     │  quicbaas agent serve                 │
+│  │                     │     │  --sandbox-policy=opt-in              │
+│  ├─ LocalACPBackend    │     │  (daemon process)                     │
+│  │                     │     │  ┌─────────────────────────────────┐ │
+│  ├─ RemoteACPBackend   │────────→│ AgentRuntime gRPC Service       │ │
+│  │  (call daemon)      │     │  │ ┌─────────────────────────────┐│ │
+│  │                     │     │  │ │ SandboxResolver:            ││ │
+│  └─ OllamaBackend      │     │  │ │ - DEFAULT → raw exec        ││ │
+│                        │     │  │ │ - REQUIRED → container ✓    ││ │
+│                        │     │  │ │ - NONE → raw exec ✓         ││ │
+│                        │     │  │ └─────────────────────────────┘│ │
+│                        │     │  │ ┌─────────────────────────────┐│ │
+│                        │     │  │ │ Execution paths:            ││ │
+│                        │     │  │ │  - exec.Command() [raw]     ││ │
+│                        │     │  │ │  - Docker [sandboxed]       ││ │
+│                        │     │  │ └─────────────────────────────┘│ │
+│                        │     │  └─────────────────────────────────┘ │
+│                        │     │          ↓                           │
+│                        │     │  stdio transport (local process)      │
+│                        │     │  OR docker socket (containerized)     │
+└────────────────────────┘     └──────────────────────────────────────┘
+```
+
+**Policy override by tenant:** Even if daemon is set to `opt-in`, the central can force `required` policy per tenant during enrollment, ensuring FedRAMP/HIPAA tenants always run in containers regardless of daemon setting.
+
+**Security note:** Raw exec is less secure. Use only for:
+- Development/testing environments
+- Trusted code (internal teams, proprietary software)
+- Legacy systems that require direct process access
+
+**Use case**: Development environments, internal automation, mixed workloads where some sessions need sandbox and others don't.
+
 ### Backend-Agnostic Orchestration
 
 The orchestrator is NOT married to Claude Code. It works with ANY backend implementing the `AgentBackend` interface (`pkg/acp/backend.go`):

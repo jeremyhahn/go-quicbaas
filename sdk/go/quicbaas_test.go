@@ -17,6 +17,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/clusterdek"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/crypto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/dynamicsecrets"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/embedding"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
@@ -27,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/parameterstore"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/vector"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -655,6 +657,40 @@ func (m *mockKMSClientForCoverage) RotateKey(ctx context.Context, keyID string) 
 	return nil, nil
 }
 func (m *mockKMSClientForCoverage) DeleteKey(ctx context.Context, keyID string) error { return nil }
+func (m *mockKMSClientForCoverage) ImportKey(ctx context.Context, req *kms.ImportKeyRequest) (*kms.ImportKeyResponse, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) ExportKey(ctx context.Context, req *kms.ExportKeyRequest) (*kms.ExportKeyResponse, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) RevokeKey(ctx context.Context, keyID string) error { return nil }
+func (m *mockKMSClientForCoverage) ListKeyVersions(ctx context.Context, keyID string) (*kms.ListKeyVersionsResponse, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) UpdateKeyStatus(ctx context.Context, req *kms.UpdateKeyStatusRequest) (*kms.UpdateKeyStatusResponse, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) GetKeyMetadata(ctx context.Context, keyID string) (*kms.KeyMetadataResponse, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) UpdateKeyMetadata(ctx context.Context, req *kms.UpdateKeyMetadataRequest) (*kms.KeyMetadataResponse, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) SetKeyPolicy(ctx context.Context, req *kms.SetKeyPolicyRequest) error {
+	return nil
+}
+func (m *mockKMSClientForCoverage) GetKeyPolicy(ctx context.Context, keyID string) (*kms.KeyPolicy, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) GetSupportedAlgorithms(ctx context.Context) (*kms.SupportedAlgorithmsResponse, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) BackendStatus(ctx context.Context) (*kms.BackendStatusResponse, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) UnwrapKey(ctx context.Context, req *kms.UnwrapKeyRequest) (*kms.UnwrapKeyResponse, error) {
+	return nil, nil
+}
 
 type mockSecretsClientForCoverage struct{}
 
@@ -668,6 +704,30 @@ func (m *mockSecretsClientForCoverage) List(ctx context.Context, prefix string) 
 	return nil, nil
 }
 func (m *mockSecretsClientForCoverage) Delete(ctx context.Context, path string) error { return nil }
+func (m *mockSecretsClientForCoverage) Ensure(ctx context.Context, req *secrets.EnsureSecretRequest) (*secrets.EnsureSecretResponse, error) {
+	return nil, nil
+}
+func (m *mockSecretsClientForCoverage) GetVersion(ctx context.Context, req *secrets.GetSecretVersionRequest) (*secrets.SecretVersionInfo, error) {
+	return nil, nil
+}
+func (m *mockSecretsClientForCoverage) ListVersions(ctx context.Context, secretID string) (*secrets.ListSecretVersionsResponse, error) {
+	return nil, nil
+}
+func (m *mockSecretsClientForCoverage) Rotate(ctx context.Context, req *secrets.RotateSecretRequest) (*secrets.RotateSecretResponse, error) {
+	return nil, nil
+}
+func (m *mockSecretsClientForCoverage) Rollback(ctx context.Context, req *secrets.RollbackSecretRequest) (*secrets.RollbackSecretResponse, error) {
+	return nil, nil
+}
+func (m *mockSecretsClientForCoverage) UpdateStatus(ctx context.Context, req *secrets.UpdateSecretStatusRequest) error {
+	return nil
+}
+func (m *mockSecretsClientForCoverage) SetRotationPolicy(ctx context.Context, req *secrets.SetRotationPolicyRequest) error {
+	return nil
+}
+func (m *mockSecretsClientForCoverage) GetRotationPolicy(ctx context.Context, secretID string) (*secrets.RotationPolicy, error) {
+	return nil, nil
+}
 
 type mockCryptoClientForCoverage struct{}
 
@@ -681,6 +741,33 @@ func (m *mockCryptoClientForCoverage) Sign(ctx context.Context, req *SignRequest
 	return nil, nil
 }
 func (m *mockCryptoClientForCoverage) Verify(ctx context.Context, req *VerifyRequest) (*VerifyResponse, error) {
+	return nil, nil
+}
+func (m *mockCryptoClientForCoverage) Rewrap(ctx context.Context, req *crypto.RewrapRequest) (*crypto.RewrapResponse, error) {
+	return nil, nil
+}
+func (m *mockCryptoClientForCoverage) EncryptBatch(ctx context.Context, req *crypto.EncryptBatchRequest) (*crypto.EncryptBatchResponse, error) {
+	return nil, nil
+}
+func (m *mockCryptoClientForCoverage) DecryptBatch(ctx context.Context, req *crypto.DecryptBatchRequest) (*crypto.DecryptBatchResponse, error) {
+	return nil, nil
+}
+func (m *mockCryptoClientForCoverage) GenerateDataKey(ctx context.Context, req *crypto.GenerateDataKeyRequest) (*crypto.GenerateDataKeyResponse, error) {
+	return nil, nil
+}
+func (m *mockCryptoClientForCoverage) GenerateWrappedDataKey(ctx context.Context, req *crypto.GenerateWrappedDataKeyRequest) (*crypto.GenerateWrappedDataKeyResponse, error) {
+	return nil, nil
+}
+func (m *mockCryptoClientForCoverage) GenerateHMAC(ctx context.Context, req *crypto.GenerateHMACRequest) (*crypto.GenerateHMACResponse, error) {
+	return nil, nil
+}
+func (m *mockCryptoClientForCoverage) VerifyHMAC(ctx context.Context, req *crypto.VerifyHMACRequest) (*crypto.VerifyHMACResponse, error) {
+	return nil, nil
+}
+func (m *mockCryptoClientForCoverage) GenerateRandom(ctx context.Context, req *crypto.GenerateRandomRequest) (*crypto.GenerateRandomResponse, error) {
+	return nil, nil
+}
+func (m *mockCryptoClientForCoverage) Hash(ctx context.Context, req *crypto.HashRequest) (*crypto.HashResponse, error) {
 	return nil, nil
 }
 
@@ -787,6 +874,7 @@ func (m *mockIAMClientForCoverage) Session() iam.SessionClient { return nil }
 func (m *mockIAMClientForCoverage) Audit() iam.AuditClient     { return nil }
 func (m *mockIAMClientForCoverage) GDPR() iam.GDPRClient       { return nil }
 func (m *mockIAMClientForCoverage) Admin() iam.AdminClient     { return nil }
+func (m *mockIAMClientForCoverage) Invite() iam.InviteClient   { return nil }
 func (m *mockIAMClientForCoverage) CreateProvider(ctx context.Context, opts *cli.CreateProviderOptions) (*cli.Provider, error) {
 	return nil, nil
 }

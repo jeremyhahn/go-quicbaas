@@ -43,6 +43,18 @@ type SchedulerEngine struct {
 	config  *SchedulerConfig
 	storage JobStorage
 
+	// nodeID identifies this node for NodeAffinity matching. Empty
+	// string disables affinity-based gating (all jobs are eligible
+	// regardless of affinity) — appropriate for single-node and
+	// test-mode deployments.
+	nodeID string
+
+	// leader reports Raft leadership for the scheduler's storage
+	// shard. Nil means "always leader" (single-node / test mode);
+	// when non-nil, cluster-wide jobs (Job.NodeAffinity == "") only
+	// execute when IsLeader() returns true.
+	leader LeaderChecker
+
 	// Map-based dispatch for O(1) handler lookup
 	handlers   map[string]JobHandler
 	handlersMu sync.RWMutex
@@ -93,7 +105,30 @@ type SchedulerEngine struct {
 var _ Scheduler = (*SchedulerEngine)(nil)
 
 // New creates a new scheduler engine with the given configuration.
+// Single-node behavior (nil LeaderChecker, empty NodeID) is preserved
+// for backward compatibility. Cluster callers use NewWithClustering
+// to inject Raft leader gating and node affinity.
 func New(config *SchedulerConfig, storage JobStorage) *SchedulerEngine {
+	return NewWithClustering(config, storage, "", nil)
+}
+
+// NewWithClustering creates a scheduler engine wired for Raft-cluster
+// deployment. nodeID identifies this node for Job.NodeAffinity
+// matching; leader gates cluster-wide job execution to the Raft
+// leader only.
+//
+// Behavior matrix:
+//
+//	| nodeID | leader     | Cluster-wide job (Affinity=="")         | Affine job (Affinity=="X")
+//	|--------|------------|-----------------------------------------|---------------------------
+//	| ""     | nil        | always fires                            | always fires (affinity ignored)
+//	| "N"    | nil        | always fires                            | fires only when X == N
+//	| ""     | non-nil    | fires only when leader.IsLeader()       | always fires (affinity ignored)
+//	| "N"    | non-nil    | fires only when leader.IsLeader()       | fires only when X == N
+//
+// Pass empty nodeID + nil leader for single-node / test mode. Pass
+// both for clustered production deployments.
+func NewWithClustering(config *SchedulerConfig, storage JobStorage, nodeID string, leader LeaderChecker) *SchedulerEngine {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -101,6 +136,8 @@ func New(config *SchedulerConfig, storage JobStorage) *SchedulerEngine {
 	return &SchedulerEngine{
 		config:     config,
 		storage:    storage,
+		nodeID:     nodeID,
+		leader:     leader,
 		handlers:   make(map[string]JobHandler),
 		triggerCh:  make(chan uint64, 100),
 		semaphore:  make(chan struct{}, config.MaxConcurrentJobs),
@@ -784,6 +821,9 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	}
 
 	for _, job := range jobs {
+		if !s.shouldExecute(job) {
+			continue
+		}
 		// Check if we can acquire semaphore
 		select {
 		case s.semaphore <- struct{}{}:
@@ -800,6 +840,52 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 			continue
 		}
 	}
+}
+
+// shouldExecute applies the cluster-dispatch gate to a due job.
+// Returns true iff this node should execute the job right now.
+//
+// Rules (see NewWithClustering godoc for the full behavior matrix):
+//
+//   - If Job.NodeAffinity is set and this engine has a non-empty
+//     nodeID, execute only when the two match. Affine jobs ignore
+//     leadership: the affine node is the only one that can perform
+//     the work (local state), regardless of whether it is the Raft
+//     leader.
+//
+//   - If Job.NodeAffinity is empty (cluster-wide job), execute only
+//     when this node is the leader. A nil LeaderChecker disables
+//     the gate (single-node / test mode); the scheduler behaves as
+//     the sole leader.
+//
+//   - If the engine has no nodeID (empty string), affinity matching
+//     is disabled and affine jobs always fire — preserving
+//     pre-clustering behavior for single-node deployments.
+func (s *SchedulerEngine) shouldExecute(job *Job) bool {
+	if job.NodeAffinity != "" && s.nodeID != "" {
+		if job.NodeAffinity != s.nodeID {
+			s.logDebug("Skipping job %d (%s): NodeAffinity=%q, this node=%q",
+				job.ID, job.Name, job.NodeAffinity, s.nodeID)
+			return false
+		}
+		// Affinity matches: always execute regardless of leadership.
+		return true
+	}
+	// Cluster-wide job: gate on leadership.
+	if s.leader == nil {
+		return true
+	}
+	isLeader, err := s.leader.IsLeader()
+	if err != nil {
+		s.logWarn("Skipping job %d (%s): leader check failed: %v",
+			job.ID, job.Name, err)
+		return false
+	}
+	if !isLeader {
+		s.logDebug("Skipping job %d (%s): not leader", job.ID, job.Name)
+		return false
+	}
+	return true
 }
 
 // triggerJobByID immediately executes a specific job by ID.

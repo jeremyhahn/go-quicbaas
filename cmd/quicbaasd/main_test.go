@@ -43,6 +43,7 @@ func TestRootCommand(t *testing.T) {
 		// Check persistent flags exist on rootCmd.
 		assert.NotNil(t, rootCmd.PersistentFlags().Lookup("config"))
 		assert.NotNil(t, rootCmd.PersistentFlags().Lookup("log-level"))
+		assert.NotNil(t, rootCmd.PersistentFlags().Lookup("log-file"))
 		assert.NotNil(t, rootCmd.PersistentFlags().Lookup("fips"))
 		assert.NotNil(t, rootCmd.PersistentFlags().Lookup("data-dir"))
 

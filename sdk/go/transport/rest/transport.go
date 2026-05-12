@@ -54,6 +54,7 @@ type Transport struct {
 	embeddingHandler    *embeddingHandler
 	backupHandler       *backupHandler
 	orchestratorHandler *orchestratorHandler
+	projectHandler      *projectRESTHandler
 
 	mu sync.RWMutex
 }
@@ -118,6 +119,9 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 
 	// Initialize Orchestrator handler
 	t.orchestratorHandler = newOrchestratorHandler(t)
+
+	// Initialize Project handler
+	t.projectHandler = newProjectRESTHandler(t)
 
 	// Mark as healthy initially
 	t.lastHealth.Store(time.Now().UnixNano())
@@ -248,6 +252,11 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	// Route Orchestrator requests through the Orchestrator handler for proper response type conversion
 	if isOrchestratorService(service) {
 		return t.orchestratorHandler.handleRequest(ctx, service, method, req)
+	}
+
+	// Route Project requests through the Project handler.
+	if isProjectService(service) {
+		return t.projectHandler.handleRequest(ctx, method, req)
 	}
 
 	return t.requestWithRetry(ctx, service, method, req)

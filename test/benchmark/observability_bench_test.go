@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -402,7 +404,7 @@ func BenchmarkAuthTokenValidation(b *testing.B) {
 
 	// Create test user and token
 	authManager.CreateUser("benchuser", "password", []string{"admin"})
-	token, _ := authManager.Authenticate(ctx, "benchuser", "password")
+	token, _ := authManager.Authenticate(ctx, "benchuser", mustBenchPassword("password"))
 
 	b.Run("Authorize-Valid", func(b *testing.B) {
 		b.ResetTimer()
@@ -439,7 +441,7 @@ func BenchmarkAuthConcurrent(b *testing.B) {
 	for i := 0; i < 100; i++ {
 		username := fmt.Sprintf("user%d", i)
 		authManager.CreateUser(username, "password", []string{"user"})
-		token, _ := authManager.Authenticate(ctx, username, "password")
+		token, _ := authManager.Authenticate(ctx, username, mustBenchPassword("password"))
 		tokens[i] = token
 	}
 
@@ -495,7 +497,7 @@ func BenchmarkExtendedFullStack(b *testing.B) {
 
 	// Create test user
 	authManager.CreateUser("benchuser", "password", []string{"admin"})
-	token, _ := authManager.Authenticate(ctx, "benchuser", "password")
+	token, _ := authManager.Authenticate(ctx, "benchuser", mustBenchPassword("password"))
 
 	b.Run("WithAllFeatures", func(b *testing.B) {
 		value := make([]byte, 1024)
@@ -581,7 +583,7 @@ func BenchmarkExtendedConcurrent(b *testing.B) {
 	for i := 0; i < 10; i++ {
 		username := fmt.Sprintf("user%d", i)
 		authManager.CreateUser(username, "password", []string{"user"})
-		token, _ := authManager.Authenticate(ctx, username, "password")
+		token, _ := authManager.Authenticate(ctx, username, mustBenchPassword("password"))
 		tokens[i] = token
 	}
 
@@ -674,7 +676,7 @@ func BenchmarkComparison(b *testing.B) {
 					MaxTokens: 1000,
 				}, log)
 				authManager.CreateUser("benchuser", "password", []string{"admin"})
-				token, _ = authManager.Authenticate(ctx, "benchuser", "password")
+				token, _ = authManager.Authenticate(ctx, "benchuser", mustBenchPassword("password"))
 			}
 
 			if tt.enableCache {
@@ -722,4 +724,19 @@ func BenchmarkComparison(b *testing.B) {
 			}
 		})
 	}
+}
+
+
+// mustBenchPassword builds a *secure.Buffer for benchmark code paths
+// that cannot accept *testing.T. It panics on allocation failure,
+// which is acceptable in benchmark-only contexts.
+func mustBenchPassword(password string) *secure.Buffer {
+	if password == "" {
+		return nil
+	}
+	buf, err := secure.NewBufferFromBytes([]byte(password))
+	if err != nil {
+		panic(err)
+	}
+	return buf
 }

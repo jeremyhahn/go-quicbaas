@@ -1,56 +1,93 @@
 # Authentication
 
-QuicBaaS SDK authentication supports multiple methods including mTLS, JWT tokens, and OIDC federation.
+QuicBaaS SDK authentication is **passwordless-first**, using hardware authenticators (WebAuthn, smartcards) for users and mTLS with bound access tokens for service accounts. See [Passwordless Authentication](../../auth/passwordless.md) for the authentication model.
 
 ## Overview
 
 QuicBaaS provides comprehensive authentication options for secure client-server communication.
 
-| Method | Status | Description |
-|--------|--------|-------------|
-| mTLS | Production | Mutual TLS with X.509 certificates |
-| JWT | Production | JSON Web Token authentication |
-| OIDC | Production | OpenID Connect federation |
-| Session Management | Production | Multi-device session control |
-| MFA | Production | Multi-factor authentication support |
+| Method | Identity Type | Status | Description |
+|--------|---|--------|-------------|
+| WebAuthn (Passkey) | Human user | Production | FIDO2 hardware authenticator (browser-based) |
+| PIV Smartcard | Human user | Production | Smartcard with PIN (browser-based) |
+| mTLS + Bound Token | Service account | Production | TLS client certificate + access token (RFC 8705) |
+| OIDC Federation | Human user | Production | External IdP (Google, Okta, Azure AD) |
+| OAuth2 Client Credentials | Service account | Production | Machine-to-machine with client_secret (RFC 6749 §2.3.1) |
+| JWT | API-direct | Production | Pre-issued JSON Web Token |
+| Session Management | Both | Production | Multi-device session control |
+| MFA | Human user | Production | Time-based OTP, smartcard PIN as second factor |
 
-## JWT Token Authentication
+## WebAuthn / FIDO2 Authentication (Browser-Based)
 
-The SDK provides full JWT authentication with access and refresh tokens.
+For human users, use WebAuthn to obtain JWT tokens. See [WebAuthn Integration](../../iam/webauthn.md) for browser examples.
 
-### Login with Credentials
+The SDK then uses the JWT token for API calls (see [Using Access Tokens](#using-access-tokens) below).
+
+## mTLS + Bound Access Token (Service Accounts)
+
+Service accounts (non-human identities) authenticate via mTLS with a bound token.
+
+### 1. Register the Service Account
+
+First, enroll the mTLS certificate:
+
+```bash
+quicbaas oauth2 client register \
+  --client-name "my-app" \
+  --auth-method self_signed_tls_client_auth \
+  --cert-pem /path/to/client.crt \
+  --key-pem /path/to/client.key
+```
+
+Returns `client_id` and a `cnf.x5t#S256` (certificate thumbprint).
+
+### 2. Obtain Access Token via Client Credentials
 
 ```go
 package main
 
 import (
     "context"
+    "crypto/tls"
     "log"
 
     "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
 func main() {
-    client, err := quicbaas.NewClient("localhost:50051")
+    // Load client certificate
+    cert, err := tls.LoadX509KeyPair("/path/to/client.crt", "/path/to/client.key")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Create client with mTLS
+    tlsConfig := &tls.Config{
+        Certificates: []tls.Certificate{cert},
+        ServerName:   "quicbaas.example.com",
+    }
+
+    client, err := quicbaas.NewClientWithTLS("quicbaas.example.com:50051", tlsConfig)
     if err != nil {
         log.Fatal(err)
     }
     defer client.Close()
 
-    // Login with username and password
-    resp, err := client.Auth().Login(ctx, &quicbaas.LoginRequest{
-        Username: "user@example.com",
-        Password: "secret",
+    // Request access token (client_credentials flow)
+    resp, err := client.Auth().ClientCredentials(context.Background(), &quicbaas.ClientCredentialsRequest{
+        ClientID: "svc_abc123xyz",
     })
     if err != nil {
         log.Fatal(err)
     }
 
-    // Use the access token for API calls
+    // Token is bound to the mTLS certificate via cnf.x5t#S256
     log.Printf("Access Token: %s", resp.AccessToken)
     log.Printf("Expires At: %s", resp.ExpiresAt)
 }
 ```
+
+All subsequent API calls over this mTLS connection use the `Authorization: Bearer <access_token>` header. The server verifies that the token's `cnf.x5t#S256` matches the client certificate presented on the TLS connection.
 
 ### Token Refresh
 
@@ -104,34 +141,82 @@ When MFA is enabled, login may require additional verification.
 
 > **Note:** WebAuthn/FIDO2 authentication is handled by browser-based clients. The Go SDK can use JWT tokens obtained from WebAuthn-authenticated browser sessions.
 
-### MFA Login Flow
+## Using Access Tokens
+
+Once you have an access token (from WebAuthn, smartcard, or client credentials), use it for API calls:
+
+### Direct Token Usage
 
 ```go
-// Initial login attempt
-resp, err := client.Auth().Login(ctx, &quicbaas.LoginRequest{
-    Username: "user@example.com",
-    Password: "secret",
-})
+// Create client
+client, err := quicbaas.NewClient("quicbaas.example.com:50051")
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
 
-if resp.MFARequired {
-    // MFA verification needed
-    log.Printf("MFA Type: %s", resp.MFAChallenge.Type)
-    log.Printf("Challenge ID: %s", resp.MFAChallenge.ChallengeID)
+// Set access token from earlier authentication
+ctx := context.Background()
+ctx = client.WithToken(ctx, "eyJhbGciOiJSUzI1NiIs...")
 
-    // Prompt user for MFA code and retry
-    resp, err = client.Auth().Login(ctx, &quicbaas.LoginRequest{
-        Username: "user@example.com",
-        Password: "secret",
-        MFACode:  totpCode, // User-provided TOTP code
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
+// Use the context for API calls
+result, err := client.Get(ctx, "mykey")
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+### Token Refresh
+
+```go
+// Refresh token before it expires
+refreshResp, err := client.Auth().RefreshToken(ctx, refreshToken)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("New Access Token: %s", refreshResp.AccessToken)
+```
+
+### Token Validation
+
+```go
+// Validate a token and get claims
+claims, err := client.Auth().ValidateToken(ctx, accessToken)
+if err != nil {
+    log.Fatal(err)
 }
 
-// Now authenticated with MFA
-log.Printf("Access Token: %s", resp.AccessToken)
+if claims.Valid {
+    log.Printf("User: %s", claims.Subject)
+    log.Printf("Roles: %v", claims.Roles)
+    log.Printf("Auth Method: %v", claims.AMR) // ["webauthn","hwk"] or ["mtls","hwk"]
+    log.Printf("Attestation: %s", claims.AttestationMethod)
+}
 ```
+
+### Logout
+
+```go
+// Logout and invalidate tokens
+err := client.Auth().Logout(ctx, accessToken)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+## Multi-Factor Authentication (MFA)
+
+WebAuthn devices (FIDO2 / U2F) provide **hardware-backed MFA** built-in. Platform authenticators (Touch ID, Windows Hello) and security keys prevent phishing.
+
+When SmartCard (PIV) is enabled, the PIN acts as the second factor.
+
+For APIs that require additional MFA (e.g., sensitive operations), an access token with `amr: ["webauthn", "hwk", "mfa"]` or `amr: ["smartcard", "mfa"]` is required.
+
+| Type | Implementation |
+|------|---|
+| TOTP | Time-based One-Time Password (optional, for non-hardware MFA) |
+| Smartcard PIN | PIV smartcard PIN as second factor |
+| WebAuthn Device | FIDO2 device inherently provides MFA (user verification) |
 
 ## OIDC/OAuth2 Federated Authentication
 

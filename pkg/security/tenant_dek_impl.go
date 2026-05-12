@@ -41,6 +41,69 @@ const (
 	TenantDEKMasterKeyID = "quicbaas-tenant-dek-kek"
 )
 
+// Sentinel errors for tenant DEK operations.
+var (
+	// ErrStaleTenantDEK indicates that a persisted tenant DEK ciphertext
+	// cannot be unwrapped with the currently configured KEK. This typically
+	// means the KMS key-encryption key was rotated or regenerated while the
+	// wrapped DEK on disk was created under a previous KEK. Operator action
+	// is required to repair the state — either restore the prior KEK,
+	// rewrap the DEK, or deprovision the tenant DEK so that a fresh one is
+	// generated on next use.
+	ErrStaleTenantDEK = errors.New("tenant DEK ciphertext cannot be unwrapped by the current KEK")
+)
+
+// StaleTenantDEKError is a typed error returned when a stored tenant DEK
+// cannot be unwrapped by the active KEK. It carries enough context for
+// operators to diagnose and repair the mismatch. The Cause field holds the
+// underlying decryption error from the KMS backend for forensic logging.
+type StaleTenantDEKError struct {
+	TenantID string
+	KEKID    string
+	Cause    error
+}
+
+// Error implements the error interface. The message includes a repair hint
+// so the operator receives actionable guidance rather than a raw crypto
+// failure.
+func (e *StaleTenantDEKError) Error() string {
+	return fmt.Sprintf(
+		"stale tenant DEK for %q: wrapped key on disk cannot be decrypted by KEK %q (cause: %v); repair by restoring the prior KEK, rewrapping the DEK, or deprovisioning the tenant DEK",
+		e.TenantID, e.KEKID, e.Cause,
+	)
+}
+
+// Unwrap returns the underlying cause so errors.Is / errors.As can walk the
+// chain to the original KMS failure.
+func (e *StaleTenantDEKError) Unwrap() error {
+	return e.Cause
+}
+
+// Is reports whether the target matches this error. Matches ErrStaleTenantDEK
+// so callers can assert with errors.Is(err, ErrStaleTenantDEK).
+func (e *StaleTenantDEKError) Is(target error) bool {
+	return target == ErrStaleTenantDEK
+}
+
+// aeadAuthFailureMarker is the canonical substring emitted by Go's
+// crypto/cipher AEAD implementations when ciphertext authentication fails.
+// Matching by substring is stable across Go versions (the error text is part
+// of stdlib's public contract since at least Go 1.0). We cannot use errors.Is
+// because stdlib's errOpen is unexported.
+const aeadAuthFailureMarker = "message authentication failed"
+
+// isAEADAuthFailure reports whether err is caused by an AEAD authentication
+// tag mismatch. Such failures indicate ciphertext tampering, wrong key,
+// wrong AAD, or wrong nonce — from the tenant DEK's perspective the
+// overwhelming common cause is a KEK mismatch (rotated or regenerated KEK
+// applied against a DEK wrapped under the prior KEK).
+func isAEADAuthFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), aeadAuthFailureMarker)
+}
+
 // dekEntry is the on-disk representation of a tenant DEK.
 type dekEntry struct {
 	DEKID         string    `json:"dek_id"`
@@ -110,10 +173,14 @@ func (m *tenantDEKManager) GetOrCreateTenantDEK(ctx context.Context, tenantID st
 		return out, nil
 	}
 
-	// Storage check.
+	// Storage check. A missing entry manifests either as a not-found error
+	// from the store or as a nil/empty byte slice — both paths fall through
+	// to generateAndStore. This matters because the Decrypt call is an AEAD
+	// operation and would fail with a misleading "message authentication
+	// failed" if we handed it an empty ciphertext.
 	key := currentStorageKey(tenantID)
 	data, err := m.store.Get(ctx, key)
-	if err == nil && data != nil {
+	if err == nil && len(data) > 0 {
 		// Entry exists — unwrap and cache.
 		return m.unwrapAndCache(ctx, tenantID, data)
 	}
@@ -295,6 +362,23 @@ func (m *tenantDEKManager) unwrapAndCache(ctx context.Context, tenantID string, 
 
 	plaintext, err := m.kms.Decrypt(ctx, m.masterKeyID, entry.WrappedKey, nil)
 	if err != nil {
+		// An AEAD authentication failure almost always means the KEK has
+		// changed since the DEK was wrapped (key store rebuilt, KEK rotated
+		// without rewrap, or ciphertext corrupted). Surface it as a typed
+		// error so callers and operators can branch on ErrStaleTenantDEK
+		// rather than string-matching the underlying crypto message.
+		if isAEADAuthFailure(err) {
+			m.logger.WithFields(map[string]interface{}{
+				"tenant_id":     tenantID,
+				"master_key_id": m.masterKeyID,
+				"dek_version":   entry.Version,
+			}).Error("tenant DEK unwrap failed: KEK mismatch — wrapped DEK cannot be decrypted by current master key")
+			return nil, &StaleTenantDEKError{
+				TenantID: tenantID,
+				KEKID:    m.masterKeyID,
+				Cause:    err,
+			}
+		}
 		return nil, fmt.Errorf("security.tenantDEKManager: unwrap DEK for %q: %w", tenantID, err)
 	}
 

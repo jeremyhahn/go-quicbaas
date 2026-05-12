@@ -418,7 +418,8 @@ func resolveSubjectField(parts []string, subject *Subject) interface{} {
 	case "last_login":
 		return subject.LastLogin
 	case "password_changed":
-		return subject.PasswordChange
+		// password_changed is no longer supported (passwordless authentication only)
+		return nil
 	case "attrs", "attributes":
 		// Support both attrs and attributes for backward compatibility
 		attrs := subject.Attrs

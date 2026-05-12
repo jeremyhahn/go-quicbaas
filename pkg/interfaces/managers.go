@@ -16,9 +16,11 @@ package interfaces
 
 import (
 	"context"
+	"crypto"
 	"time"
 
 	types "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
@@ -140,7 +142,7 @@ type AuthManager interface {
 	// DEPRECATED: Password-based authentication is disabled. Use mTLS certificates
 	// or FIDO2/WebAuthn for authentication, then call IssueTokenForUser.
 	// Returns *auth.Token
-	Authenticate(ctx context.Context, username, password string) (interface{}, error)
+	Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error)
 
 	// IssueTokenForUser issues JWT tokens for a user who has been authenticated
 	// via mTLS certificate, FIDO2/WebAuthn, or other IAM provider.
@@ -263,6 +265,13 @@ type KMSManager interface {
 	// Sign creates a digital signature of the digest.
 	// algorithm specifies the signature algorithm (e.g., "SHA256withRSA", "ECDSA-P256-SHA256").
 	Sign(ctx context.Context, keyID string, digest []byte, algorithm string) ([]byte, error)
+
+	// Signer returns a crypto.Signer backed by the stored key. The returned
+	// signer delegates Sign calls to the KMS backend so the private
+	// material never leaves the KMS boundary. Callers that need to interop
+	// with x/crypto/ssh, crypto/tls, and other standard-library APIs that
+	// accept crypto.Signer can use this without owning the raw key.
+	Signer(ctx context.Context, keyID string) (crypto.Signer, error)
 
 	// Verify validates a signature against the digest.
 	Verify(ctx context.Context, keyID string, digest, signature []byte, algorithm string) (bool, error)
@@ -406,53 +415,70 @@ type CryptoManager interface {
 	Close() error
 }
 
-// SealManager defines the interface for database seal/unseal operations.
-// The seal mechanism protects the master key at rest using Shamir's Secret Sharing.
-type SealManager interface {
-	// Status returns the current seal status.
+// BarrierManager defines the interface for cryptographic barrier operations.
+// The barrier protects the master encryption key at rest using a strategy
+// chain (software passphrase, Shamir secret sharing, TPM2, PKCS#11, AWS
+// KMS, GCP KMS, Azure Key Vault, HashiCorp Vault). Concrete implementations
+// live in pkg/barrier and forward to a go-qrdb StorageBarrier.
+type BarrierManager interface {
+	// Status returns the current barrier status. The returned value carries
+	// the active strategy ID so that callers can distinguish software,
+	// shamir, and hardware-backed deployments without further probing.
 	Status(ctx context.Context) (interface{}, error)
 
-	// IsSealed returns true if the database is currently sealed.
+	// IsSealed returns true if the barrier is currently sealed.
 	IsSealed() bool
 
-	// IsInitialized returns true if the database has been initialized.
+	// IsInitialized returns true if the barrier has been initialized.
 	IsInitialized() bool
 
-	// Initialize sets up the seal with the specified number of shares and threshold.
-	// Returns the key shares (must be distributed to operators).
+	// Initialize sets up the barrier with the specified number of shares
+	// and threshold. Returns the key shares (which must be distributed to
+	// operators). The barrier is left in the sealed state so the caller
+	// must drive an explicit unseal flow.
 	Initialize(ctx context.Context, shares, threshold int) (interface{}, error)
 
-	// Unseal submits a key share to attempt unsealing.
-	// Returns progress information.
+	// Unseal submits a key share toward the quorum threshold and returns
+	// progress information.
 	Unseal(ctx context.Context, share []byte) (interface{}, error)
 
-	// Seal re-seals the database, clearing the master key from memory.
+	// Seal re-seals the barrier, clearing the master key from memory.
 	Seal(ctx context.Context) error
 
 	// Rekey generates new key shares with potentially different parameters.
-	// Requires the database to be unsealed.
+	// Requires the barrier to be unsealed.
 	Rekey(ctx context.Context, shares, threshold int) (interface{}, error)
 
-	// GenerateRecoveryKeys generates new recovery keys using Shamir secret sharing.
-	// The recovery keys can be used for emergency access if regular unseal shares are lost.
-	// threshold specifies the minimum number of keys needed to recover.
-	// totalKeys specifies the total number of recovery keys to generate.
-	// Returns the recovery key shares (must be securely distributed).
+	// GenerateRecoveryKeys generates new recovery keys using Shamir secret
+	// sharing. Recovery keys provide an emergency unseal path if the
+	// primary key shares are lost. threshold is the minimum keys needed
+	// and totalKeys is the total number of recovery keys to generate.
 	GenerateRecoveryKeys(ctx context.Context, threshold, totalKeys int) ([][]byte, error)
 
-	// DeleteRecoveryKeys removes all stored recovery keys from the system.
-	// This is a destructive operation that cannot be undone.
+	// DeleteRecoveryKeys removes all stored recovery key metadata. This is
+	// a destructive operation that cannot be undone.
 	DeleteRecoveryKeys(ctx context.Context) error
 
-	// GenerateRootToken generates a new root token using provided key shares.
-	// strategy specifies how to authenticate: "recovery_keys" or "shamir_shares".
-	// shares are the key shares that must reconstruct the master key.
-	// Returns a base64-encoded root token for administrative access.
+	// GenerateRootToken derives a new root token by proving knowledge of
+	// the master key through key shares. strategy selects between
+	// "recovery_keys" and "shamir_shares".
 	GenerateRootToken(ctx context.Context, strategy string, shares [][]byte) (string, error)
 
-	// Close releases any resources held by the seal manager.
+	// RotateRootKey rotates the root encryption key used to protect master
+	// key shares. Returns an error if the underlying barrier does not
+	// support a standalone rotation primitive.
+	RotateRootKey(ctx context.Context) error
+
+	// Close releases any resources held by the barrier manager.
 	Close() error
 }
+
+// SealManager is a deprecated alias for BarrierManager retained for one
+// release while existing service-layer code migrates to the BarrierManager
+// name. New code MUST reference BarrierManager directly.
+//
+// Deprecated: use BarrierManager.
+type SealManager = BarrierManager
 
 // ClusterDEKManager defines the interface for cluster-wide Data Encryption Key management.
 // The cluster DEK is distributed via Raft and used for encrypting data at rest.

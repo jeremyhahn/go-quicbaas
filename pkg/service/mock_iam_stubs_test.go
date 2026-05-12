@@ -31,6 +31,9 @@ func (p *mockIAMServiceProvider) GetPolicyEngine(_ context.Context) (*iam.Policy
 func (p *mockIAMServiceProvider) GetAppManager(_ context.Context) (*iam.AppManager, error) {
 	return p.appMgr, p.appMgrErr
 }
+func (p *mockIAMServiceProvider) GetAppStorage(_ context.Context) (iam.AppStorage, error) {
+	return p.appStorage, p.appStorageErr
+}
 func (p *mockIAMServiceProvider) GetOIDCProvider(_ context.Context) (*iam.OIDCProvider, error) {
 	return p.oidcProvider, p.oidcProviderErr
 }

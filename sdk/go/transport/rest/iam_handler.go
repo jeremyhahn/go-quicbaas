@@ -134,6 +134,14 @@ func (h *iamRESTHandler) handleUserRequest(ctx context.Context, method string, r
 		}
 		return h.doRequest(ctx, http.MethodGet, "/api/v1/tenants/"+tenantID+"/users?email="+email, nil)
 
+	case "FindByUsername":
+		// GET /api/v1/tenants/{tenant_id}/users?username={username}
+		username := getString(reqMap, "username")
+		if username == "" {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleUserRequest", "username is required")
+		}
+		return h.doRequest(ctx, http.MethodGet, "/api/v1/tenants/"+tenantID+"/users?username="+username, nil)
+
 	case "Update":
 		// PUT /api/v1/tenants/{tenant_id}/users/{user_id}
 		userID := getString(reqMap, "user_id")
@@ -1244,8 +1252,8 @@ func (h *iamRESTHandler) doRequest(ctx context.Context, httpMethod, path string,
 }
 
 // mapUserCreateRequest maps SDK CreateUserRequest fields to REST API fields.
-// SDK sends: username, email, display_name, password, roles, groups, metadata
-// REST expects: id, email, username, name, attributes, enabled
+// SDK sends: username, email, display_name, auth_methods, roles, groups, metadata
+// REST expects: id, email, username, name, auth_methods, attributes, enabled
 func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 	if req == nil {
 		return nil

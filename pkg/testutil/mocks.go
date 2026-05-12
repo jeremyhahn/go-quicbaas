@@ -20,9 +20,12 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
@@ -60,6 +63,11 @@ type MockQuicBaaS struct {
 	// DisableKMS causes KMS() to return nil, forcing handlers into the
 	// KMSManager() fallback path for testing.
 	DisableKMS bool
+
+	// SSHClientOverride is returned by SSHClient. Left nil by default so
+	// SSHClient reports "not configured"; tests that exercise SSH routing
+	// set this to a real xkmsssh.Client.
+	SSHClientOverride xkmsssh.Client
 }
 
 // Ensure MockQuicBaaS implements service.QuicBaaS at compile time.
@@ -553,9 +561,39 @@ func (m *MockQuicBaaS) Scheduler() service.SchedulerService {
 	return m
 }
 
+// SchedulerEngine returns nil for the mock — tests that need a
+// real engine construct one via scheduler.New or
+// scheduler.NewWithClustering directly.
+func (m *MockQuicBaaS) SchedulerEngine() *scheduler.SchedulerEngine {
+	return nil
+}
+
+// SSHClient returns the caller-provided SSHClientOverride when set and
+// nil otherwise. Tests that exercise SSH routing assign a concrete
+// xkmsssh.Client (typically built via xkmsssh.NewEmbedded over an
+// in-memory storage.Backend) before invoking the handler under test.
+// Leaving the field nil is the documented "SSH not configured" path.
+func (m *MockQuicBaaS) SSHClient() xkmsssh.Client {
+	return m.SSHClientOverride
+}
+
 // Agent returns nil for the mock.
 func (m *MockQuicBaaS) Agent() orchestration.AgentService {
 	return nil
+}
+
+// Project returns a new in-memory project service for the mock.
+func (m *MockQuicBaaS) Project() service.ProjectService {
+	args := m.Called()
+	svc, _ := args.Get(0).(service.ProjectService)
+	return svc
+}
+
+// AgentAdmin delegates to testify mock infrastructure.
+func (m *MockQuicBaaS) AgentAdmin() service.AgentAdminService {
+	args := m.Called()
+	result, _ := args.Get(0).(service.AgentAdminService)
+	return result
 }
 
 // Messaging delegates to testify mock infrastructure.
@@ -685,4 +723,17 @@ func (m *MockQuicBaaS) GenerateRootToken(ctx context.Context, req *service.Gener
 	args := m.Called(ctx, req)
 	resp, _ := args.Get(0).(*service.GenerateRootTokenResponse)
 	return resp, args.Error(1)
+}
+
+// RotateRootKey delegates to testify mock infrastructure.
+func (m *MockQuicBaaS) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.RotateRootKeyResponse)
+	return resp, args.Error(1)
+}
+
+// SetSealService is a no-op for the mock. The mock implements the SealService
+// methods directly so no inner service needs to be injected.
+func (m *MockQuicBaaS) SetSealService(_ service.SealService) {
+	// No-op for mock — seal methods are implemented directly on MockQuicBaaS.
 }

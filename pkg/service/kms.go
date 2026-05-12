@@ -186,6 +186,7 @@ type kmsServiceImpl struct {
 	reencryptionState *reencryptionState
 	dekStore          *dekStore
 	keyNames          sync.Map           // tracks key names to prevent duplicates
+	defaultKeyName    atomic.Value       // stores string: the current default key name
 	scheduler         KMSScheduler       // scheduler for grace period jobs
 	versionStatus     sync.Map           // local cache: "keyID:version" -> *versionStatusInfo
 	kvStore           interfaces.KVStore // persistent store for version status (Raft-replicated)
@@ -2649,6 +2650,37 @@ func (k *kmsServiceImpl) SetDefaultDEK(ctx context.Context, req *SetDefaultDEKRe
 	return &SetDefaultDEKResponse{
 		Path:            normalizedPath,
 		PreviousDefault: previousDefault,
+		Timestamp:       time.Now(),
+	}, nil
+}
+
+// SetDefaultKey marks the named key as the system default.
+// The name must correspond to an existing key. The previous default (if any)
+// is returned for audit purposes.
+func (k *kmsServiceImpl) SetDefaultKey(ctx context.Context, req *SetDefaultKeyRequest) (*SetDefaultKeyResponse, error) {
+	if req == nil {
+		return nil, NewError(errors.ErrInvalidInput, "kms.SetDefaultKey", "request is nil")
+	}
+	if req.Name == "" {
+		return nil, NewError(errors.ErrInvalidInput, "kms.SetDefaultKey", "key name is required")
+	}
+
+	// Verify the key exists by looking up its ID from the name map.
+	if _, ok := k.keyNames.Load(req.Name); !ok {
+		return nil, NewError(errors.ErrNotFound, "kms.SetDefaultKey", "key not found: "+req.Name)
+	}
+
+	// Swap in the new default, capturing the previous value.
+	prev := ""
+	if v := k.defaultKeyName.Load(); v != nil {
+		prev, _ = v.(string)
+	}
+	k.defaultKeyName.Store(req.Name)
+
+	return &SetDefaultKeyResponse{
+		Name:            req.Name,
+		IsDefault:       true,
+		PreviousDefault: prev,
 		Timestamp:       time.Now(),
 	}, nil
 }

@@ -1586,3 +1586,4 @@ func TestFormatEmbeddingProviderInfoResponse_NoRateLimit(t *testing.T) {
 	err := formatEmbeddingProviderInfoResponse(resp)
 	assert.NoError(t, err)
 }
+

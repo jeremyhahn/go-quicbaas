@@ -89,13 +89,13 @@ func (r *ToolRegistry) initXKMSHandlers() map[string]XKMSToolHandler {
 		"xkms.fido2.finishAuthentication": r.handleXKMSFIDO2FinishAuthentication,
 
 		// CA operations
-		"xkms.ca.getBundle":   r.handleXKMSCAGetBundle,
-		"xkms.ca.getCert":     r.handleXKMSCAGetCert,
-		"xkms.ca.signCSR":     r.handleXKMSCASignCSR,
-		"xkms.ca.issueCert":   r.handleXKMSCAIssueCert,
-		"xkms.ca.revokeCert":  r.handleXKMSCARevokeCert,
-		"xkms.ca.generateCRL": r.handleXKMSCAGenerateCRL,
-		"xkms.ca.isRevoked":   r.handleXKMSCAIsRevoked,
+		"xkms.ca.getBundle":   r.handleTrustedCAGetBundle,
+		"xkms.ca.getCert":     r.handleTrustedCAGetCert,
+		"xkms.ca.signCSR":     r.handleTrustedCASignCSR,
+		"xkms.ca.issueCert":   r.handleTrustedCAIssueCert,
+		"xkms.ca.revokeCert":  r.handleTrustedCARevokeCert,
+		"xkms.ca.generateCRL": r.handleTrustedCAGenerateCRL,
+		"xkms.ca.isRevoked":   r.handleTrustedCAIsRevoked,
 
 		// PIN operations
 		"xkms.pin.setSO":         r.handleXKMSPINSetSO,
@@ -133,7 +133,7 @@ func (r *ToolRegistry) registerXKMSTools() {
 	r.registerXKMSCoreTools()
 	r.registerXKMSPIVTools()
 	r.registerXKMSFIDO2Tools()
-	r.registerXKMSCATools()
+	r.registerTrustedCATools()
 	r.registerXKMSPINTools()
 }
 
@@ -565,8 +565,8 @@ func (r *ToolRegistry) registerXKMSFIDO2Tools() {
 	})
 }
 
-// registerXKMSCATools registers CA (Certificate Authority) tool definitions.
-func (r *ToolRegistry) registerXKMSCATools() {
+// registerTrustedCATools registers CA (Certificate Authority) tool definitions.
+func (r *ToolRegistry) registerTrustedCATools() {
 	r.addTool(ToolDefinition{
 		Name:        "xkms.ca.getBundle",
 		Description: "Get the CA certificate bundle",
@@ -1767,8 +1767,8 @@ func (r *ToolRegistry) handleXKMSFIDO2FinishAuthentication(_ context.Context, ar
 // CA Tool Handlers
 // =============================================================================
 
-// handleXKMSCAGetBundle retrieves the CA certificate bundle.
-func (r *ToolRegistry) handleXKMSCAGetBundle(_ context.Context, args map[string]interface{}) (interface{}, error) {
+// handleTrustedCAGetBundle retrieves the CA certificate bundle.
+func (r *ToolRegistry) handleTrustedCAGetBundle(_ context.Context, args map[string]interface{}) (interface{}, error) {
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
@@ -1777,8 +1777,8 @@ func (r *ToolRegistry) handleXKMSCAGetBundle(_ context.Context, args map[string]
 	return nil, &XKMSOperationError{Operation: "ca.getBundle", Cause: xkmssdk.ServiceErrOperationNotSupported}
 }
 
-// handleXKMSCAGetCert retrieves the CA certificate.
-func (r *ToolRegistry) handleXKMSCAGetCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
+// handleTrustedCAGetCert retrieves the CA certificate.
+func (r *ToolRegistry) handleTrustedCAGetCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
@@ -1786,8 +1786,8 @@ func (r *ToolRegistry) handleXKMSCAGetCert(_ context.Context, args map[string]in
 	return nil, &XKMSOperationError{Operation: "ca.getCert", Cause: xkmssdk.ServiceErrOperationNotSupported}
 }
 
-// handleXKMSCASignCSR signs a certificate signing request.
-func (r *ToolRegistry) handleXKMSCASignCSR(_ context.Context, args map[string]interface{}) (interface{}, error) {
+// handleTrustedCASignCSR signs a certificate signing request.
+func (r *ToolRegistry) handleTrustedCASignCSR(_ context.Context, args map[string]interface{}) (interface{}, error) {
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
@@ -1800,8 +1800,8 @@ func (r *ToolRegistry) handleXKMSCASignCSR(_ context.Context, args map[string]in
 	return nil, &XKMSOperationError{Operation: "ca.signCSR", Cause: xkmssdk.ServiceErrOperationNotSupported}
 }
 
-// handleXKMSCAIssueCert issues a new certificate.
-func (r *ToolRegistry) handleXKMSCAIssueCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
+// handleTrustedCAIssueCert issues a new certificate.
+func (r *ToolRegistry) handleTrustedCAIssueCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
@@ -1819,8 +1819,8 @@ func (r *ToolRegistry) handleXKMSCAIssueCert(_ context.Context, args map[string]
 	return nil, &XKMSOperationError{Operation: "ca.issueCert", Cause: xkmssdk.ServiceErrOperationNotSupported}
 }
 
-// handleXKMSCARevokeCert revokes a certificate by serial number.
-func (r *ToolRegistry) handleXKMSCARevokeCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
+// handleTrustedCARevokeCert revokes a certificate by serial number.
+func (r *ToolRegistry) handleTrustedCARevokeCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
@@ -1833,8 +1833,8 @@ func (r *ToolRegistry) handleXKMSCARevokeCert(_ context.Context, args map[string
 	return nil, &XKMSOperationError{Operation: "ca.revokeCert", Cause: xkmssdk.ServiceErrOperationNotSupported}
 }
 
-// handleXKMSCAGenerateCRL generates a certificate revocation list.
-func (r *ToolRegistry) handleXKMSCAGenerateCRL(_ context.Context, _ map[string]interface{}) (interface{}, error) {
+// handleTrustedCAGenerateCRL generates a certificate revocation list.
+func (r *ToolRegistry) handleTrustedCAGenerateCRL(_ context.Context, _ map[string]interface{}) (interface{}, error) {
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
@@ -1842,8 +1842,8 @@ func (r *ToolRegistry) handleXKMSCAGenerateCRL(_ context.Context, _ map[string]i
 	return nil, &XKMSOperationError{Operation: "ca.generateCRL", Cause: xkmssdk.ServiceErrOperationNotSupported}
 }
 
-// handleXKMSCAIsRevoked checks if a certificate is revoked.
-func (r *ToolRegistry) handleXKMSCAIsRevoked(_ context.Context, args map[string]interface{}) (interface{}, error) {
+// handleTrustedCAIsRevoked checks if a certificate is revoked.
+func (r *ToolRegistry) handleTrustedCAIsRevoked(_ context.Context, args map[string]interface{}) (interface{}, error) {
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}

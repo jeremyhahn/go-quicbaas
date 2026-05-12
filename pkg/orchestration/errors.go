@@ -343,6 +343,10 @@ var (
 	// ErrNoAgentsAvailable indicates no agents are available for a task assignment.
 	ErrNoAgentsAvailable = errors.New("orchestration: no agents available for task")
 
+	// ErrNoMatchingAgent indicates no online agent satisfies the combined
+	// backend, GPU, and host-affinity constraints for the request.
+	ErrNoMatchingAgent = errors.New("orchestration: no online agent matches constraints")
+
 	// ErrReviewParseFailed indicates the lead agent's review response could not be parsed.
 	ErrReviewParseFailed = errors.New("orchestration: failed to parse review response")
 
@@ -416,6 +420,25 @@ func (e *NoAgentsAvailableError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *NoAgentsAvailableError) Unwrap() error {
 	return ErrNoAgentsAvailable
+}
+
+// NoMatchingAgentError indicates no online agent satisfies the combined
+// backend, GPU, and host-affinity constraints for the request.
+type NoMatchingAgentError struct {
+	// Constraint describes which constraint failed (e.g. "gpu", "host_affinity", "backend").
+	Constraint string
+	// Detail provides a human-readable summary of the unsatisfied constraint.
+	Detail string
+}
+
+// Error implements the error interface.
+func (e *NoMatchingAgentError) Error() string {
+	return ErrNoMatchingAgent.Error() + ": " + e.Detail
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *NoMatchingAgentError) Unwrap() error {
+	return ErrNoMatchingAgent
 }
 
 // ReviewParseError indicates the lead agent review response was not valid JSON.
@@ -685,3 +708,46 @@ func (e *JobResumeError) Unwrap() []error {
 	}
 	return []error{ErrJobResumeFailed}
 }
+
+// =============================================================================
+// Sub-job Spawning Errors
+// =============================================================================
+
+var (
+	// ErrNotLeadOfParent indicates the calling agent is not the registered
+	// lead of the parent job and therefore may not spawn child jobs.
+	ErrNotLeadOfParent = errors.New("orchestration: not lead of parent job")
+
+	// ErrParentJobNotFound indicates the parent job ID does not exist.
+	ErrParentJobNotFound = errors.New("orchestration: parent job not found")
+)
+
+// NotLeadOfParentError is returned when an agent attempts to spawn a child
+// job but is not the registered lead of the referenced parent job.
+type NotLeadOfParentError struct {
+	ParentJobID   string
+	CallerAgentID string
+	LeadAgentID   string
+}
+
+// Error implements the error interface.
+func (e *NotLeadOfParentError) Error() string {
+	return ErrNotLeadOfParent.Error() + ": parent=" + e.ParentJobID +
+		" caller=" + e.CallerAgentID + " lead=" + e.LeadAgentID
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *NotLeadOfParentError) Unwrap() error { return ErrNotLeadOfParent }
+
+// ParentJobNotFoundError is returned when the referenced parent job does not exist.
+type ParentJobNotFoundError struct {
+	ParentJobID string
+}
+
+// Error implements the error interface.
+func (e *ParentJobNotFoundError) Error() string {
+	return ErrParentJobNotFound.Error() + ": " + e.ParentJobID
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *ParentJobNotFoundError) Unwrap() error { return ErrParentJobNotFound }

@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 	"github.com/stretchr/testify/assert"
@@ -1045,5 +1046,133 @@ func TestGetIntFromInterfaceMap(t *testing.T) {
 		}
 		result := getIntFromInterfaceMap(m, "key")
 		assert.Equal(t, -99, result)
+	})
+}
+
+// =============================================================================
+// RAG Document CRUD Tests
+// =============================================================================
+
+func TestHandleRAGListDocuments(t *testing.T) {
+	t.Run("list documents successfully", func(t *testing.T) {
+		mockDB := testutil.NewMockQuicBaaS()
+		vectorSvc := &mockVectorServiceForRAG{}
+		vectorSvc.On("ListVectors", mock.Anything, mock.Anything).Return(&service.ListVectorsResponse{
+			Vectors: []*service.VectorData{
+				{
+					ID:        1,
+					Metadata:  map[string]interface{}{"content": "doc content"},
+					UpdatedAt: time.Now().UnixNano(),
+				},
+			},
+			NextCursor: "",
+			TotalCount: 1,
+		}, nil)
+		mockDB.VectorService = vectorSvc
+
+		s := &Server{service: mockDB}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/rag/documents?namespace=test", nil)
+		w := httptest.NewRecorder()
+		s.HandleRAGListDocuments(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp RAGListDocumentsResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		assert.NoError(t, err)
+		assert.Len(t, resp.Documents, 1)
+		assert.Equal(t, uint64(1), resp.Documents[0].ID)
+	})
+
+	t.Run("vector service not configured returns 503", func(t *testing.T) {
+		baseMockDB := testutil.NewMockQuicBaaS()
+		mockDB := &mockQuicBaaSWithNilVector{MockQuicBaaS: baseMockDB}
+		s := &Server{service: mockDB}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/rag/documents", nil)
+		w := httptest.NewRecorder()
+		s.HandleRAGListDocuments(w, req)
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	})
+}
+
+func TestHandleRAGGetDocument(t *testing.T) {
+	t.Run("get document by id successfully", func(t *testing.T) {
+		mockDB := testutil.NewMockQuicBaaS()
+		vectorSvc := &mockVectorServiceForRAG{}
+		vectorSvc.On("GetVector", mock.Anything, mock.MatchedBy(func(req *service.GetVectorRequest) bool {
+			return req.ID == 42 && req.Namespace == "default"
+		})).Return(&service.GetVectorResponse{
+			ID:        42,
+			Metadata:  map[string]interface{}{"content": "my document"},
+			Found:     true,
+			UpdatedAt: time.Now().UnixNano(),
+		}, nil)
+		mockDB.VectorService = vectorSvc
+
+		s := &Server{service: mockDB}
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "42")
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/rag/documents/42", nil)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+
+		s.HandleRAGGetDocument(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp RAGDocumentResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(42), resp.ID)
+		assert.Equal(t, "my document", resp.Content)
+	})
+
+	t.Run("invalid document id returns 400", func(t *testing.T) {
+		mockDB := testutil.NewMockQuicBaaS()
+		s := &Server{service: mockDB}
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "not-a-number")
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/rag/documents/not-a-number", nil)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+
+		s.HandleRAGGetDocument(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+}
+
+func TestHandleRAGDeleteDocument(t *testing.T) {
+	t.Run("delete document successfully", func(t *testing.T) {
+		mockDB := testutil.NewMockQuicBaaS()
+		vectorSvc := &mockVectorServiceForRAG{}
+		vectorSvc.On("DeleteVector", mock.Anything, mock.MatchedBy(func(req *service.DeleteVectorRequest) bool {
+			return req.ID == 7
+		})).Return(&service.DeleteVectorResponse{Success: true}, nil)
+		mockDB.VectorService = vectorSvc
+
+		s := &Server{service: mockDB}
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "7")
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/rag/documents/7", nil)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+
+		s.HandleRAGDeleteDocument(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("invalid id returns 400", func(t *testing.T) {
+		mockDB := testutil.NewMockQuicBaaS()
+		s := &Server{service: mockDB}
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "bad")
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/rag/documents/bad", nil)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+
+		s.HandleRAGDeleteDocument(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 }

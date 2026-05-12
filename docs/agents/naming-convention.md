@@ -1,12 +1,23 @@
 # Naming Convention
 
-Strict nomenclature for distinguishing infrastructure agents from AI coding agents.
+Strict nomenclature for distinguishing infrastructure agents from AI coding agents, and for naming the QuicBaaS planes.
+
+## Planes
+
+QuicBaaS as a Backend-as-a-Service spans two planes; the same `quicbaasd` process serves both, but the responsibilities are distinct:
+
+| Plane | What it does | Who calls it |
+|-------|--------------|--------------|
+| **Data plane** | KV / vector / secrets / KMS / messaging / object storage / time-series CRUD. The actual BaaS workload. | Application clients via the SDK |
+| **Control plane** | IAM (tenants, users, roles, policies, sessions), agent fleet (enroll, heartbeat, dispatch), orchestrator (jobs, sessions, projects), event log, certificate authority. | `quicbaas agent serve`, the desktop/web GUI, go-trusted-platform, operator CLI |
+
+The CLI flag is `--server` (it covers both planes — one process, one endpoint). Architecturally, internal narrative uses **control plane** when describing the role the agent fleet and orchestrator subsystems play, and **server** or **QuicBaaS server** for the addressable endpoint. The server may be a single `quicbaasd` process or a Raft-replicated cluster (via go-qrdb); from the agent's perspective the address is the same.
 
 ## Definitions
 
 | Term | Meaning | Examples |
 |------|---------|---------|
-| **QuicBaaS agent** | The infrastructure agent binary that runs on remote systems. Handles enrollment, attestation, fleet heartbeat, and MCP tool execution. | `quicbaas-agent` binary, fleet registration endpoint, agent heartbeat |
+| **QuicBaaS agent** (daemon) | The infrastructure daemon (`quicbaas agent serve`) that runs on remote systems. Handles enrollment with the control plane, fleet heartbeat, and gRPC AgentRuntime service for spawn/prompt/status/close RPCs. Self-enrolls using OAuth2 Client Credentials, reuses pkg/orchestration backends (ACPBackend, OllamaBackend, ContainerRuntime), and enforces sandbox-first execution with tenant isolation. | `quicbaas agent serve` CLI, `pkg/agent/daemon.go`, AgentRuntime gRPC service on port 9091, heartbeat into fleet registry |
 | **AI agent** / **orchestrated agent** | An AI coding tool (Claude Code, Codex, OpenCode) managed by the QuicBaaS orchestrator. Runs inside a container or on a developer machine. | Claude Code CLI, Codex CLI, OpenCode CLI |
 
 ## Why This Distinction Matters

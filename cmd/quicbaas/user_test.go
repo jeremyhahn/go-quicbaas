@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,22 +53,20 @@ func setupMockToken(t *testing.T) string {
 }
 
 // TestRunUserCreateCommand tests the runUserCreateCommand function.
+// Authentication is via WebAuthn/PIV; the CLI does not accept passwords.
 func TestRunUserCreateCommand(t *testing.T) {
 	tests := []struct {
 		name          string
 		username      string
-		password      string
 		roles         []string
 		mockFactory   func() (rbac.Client, error)
 		expectError   bool
 		errorContains string
 		outputFormat  string
-		checkOutput   func(t *testing.T, output string)
 	}{
 		{
 			name:     "successful user creation with default output",
 			username: "testuser",
-			password: "password123",
 			roles:    []string{"readonly"},
 			mockFactory: func() (rbac.Client, error) {
 				return &MockRBACClient{
@@ -83,14 +80,10 @@ func TestRunUserCreateCommand(t *testing.T) {
 			},
 			expectError:  false,
 			outputFormat: "table",
-			checkOutput: func(t *testing.T, output string) {
-				// Output goes to os.Stdout, not cmd stdout
-			},
 		},
 		{
 			name:     "successful user creation with JSON output",
 			username: "jsonuser",
-			password: "password123",
 			roles:    []string{"admin"},
 			mockFactory: func() (rbac.Client, error) {
 				return &MockRBACClient{
@@ -108,7 +101,6 @@ func TestRunUserCreateCommand(t *testing.T) {
 		{
 			name:     "empty username error",
 			username: "",
-			password: "password123",
 			roles:    []string{"readonly"},
 			mockFactory: func() (rbac.Client, error) {
 				t.Fatal("should not call factory")
@@ -118,21 +110,8 @@ func TestRunUserCreateCommand(t *testing.T) {
 			errorContains: "username is required",
 		},
 		{
-			name:     "password too short error",
-			username: "testuser",
-			password: "short",
-			roles:    []string{"readonly"},
-			mockFactory: func() (rbac.Client, error) {
-				t.Fatal("should not call factory")
-				return nil, nil
-			},
-			expectError:   true,
-			errorContains: "password must be at least 8 characters",
-		},
-		{
 			name:     "rbac client factory error",
 			username: "testuser",
-			password: "password123",
 			roles:    []string{"readonly"},
 			mockFactory: func() (rbac.Client, error) {
 				return nil, errors.Newf(errors.ErrUnauthorized, "rbac.client", "not authenticated")
@@ -143,7 +122,6 @@ func TestRunUserCreateCommand(t *testing.T) {
 		{
 			name:     "create user API error",
 			username: "existinguser",
-			password: "password123",
 			roles:    []string{"readonly"},
 			mockFactory: func() (rbac.Client, error) {
 				return &MockRBACClient{
@@ -166,11 +144,9 @@ func TestRunUserCreateCommand(t *testing.T) {
 
 			// Save and restore flags
 			oldRoles := userRoles
-			oldPassword := userPassword
 			oldOutputFormat := outputFormat
 			defer func() {
 				userRoles = oldRoles
-				userPassword = oldPassword
 				outputFormat = oldOutputFormat
 			}()
 
@@ -181,7 +157,6 @@ func TestRunUserCreateCommand(t *testing.T) {
 
 			// Set test values AFTER command creation
 			userRoles = tt.roles
-			userPassword = tt.password
 			if tt.outputFormat != "" {
 				outputFormat = tt.outputFormat
 			} else {
@@ -610,21 +585,19 @@ func TestRunUserShowCommand(t *testing.T) {
 }
 
 // TestRunUserUpdateCommand tests the runUserUpdateCommand function.
+// The CLI no longer accepts --password; only role updates are supported.
 func TestRunUserUpdateCommand(t *testing.T) {
 	tests := []struct {
 		name          string
 		username      string
-		password      string
 		roles         []string
 		mockFactory   func() (rbac.Client, error)
 		expectError   bool
 		errorContains string
-		setFlags      func(cmd *cobra.Command)
 	}{
 		{
 			name:     "successful update roles only",
 			username: "testuser",
-			password: "",
 			roles:    []string{"admin", "readwrite"},
 			mockFactory: func() (rbac.Client, error) {
 				return &MockRBACClient{
@@ -653,34 +626,17 @@ func TestRunUserUpdateCommand(t *testing.T) {
 		{
 			name:     "error: no flags provided",
 			username: "testuser",
-			password: "",
 			roles:    nil,
 			mockFactory: func() (rbac.Client, error) {
 				t.Fatal("should not call factory")
 				return nil, nil
 			},
 			expectError:   true,
-			errorContains: "at least one of --roles or --password must be specified",
-		},
-		{
-			name:     "error: password too short",
-			username: "testuser",
-			password: "short",
-			roles:    nil,
-			mockFactory: func() (rbac.Client, error) {
-				t.Fatal("should not call factory")
-				return nil, nil
-			},
-			expectError:   true,
-			errorContains: "password must be at least 8 characters",
-			setFlags: func(cmd *cobra.Command) {
-				cmd.Flags().Set("password", "short")
-			},
+			errorContains: "--roles must be specified",
 		},
 		{
 			name:     "rbac client factory error",
 			username: "testuser",
-			password: "",
 			roles:    []string{"admin"},
 			mockFactory: func() (rbac.Client, error) {
 				return nil, errors.Newf(errors.ErrUnauthorized, "rbac.client", "not authenticated")
@@ -691,7 +647,6 @@ func TestRunUserUpdateCommand(t *testing.T) {
 		{
 			name:     "update user API error - user not found",
 			username: "testuser",
-			password: "",
 			roles:    []string{"admin"},
 			mockFactory: func() (rbac.Client, error) {
 				return &MockRBACClient{
@@ -717,14 +672,11 @@ func TestRunUserUpdateCommand(t *testing.T) {
 
 			// Save and restore flags
 			oldRoles := userRoles
-			oldPassword := userPassword
 			defer func() {
 				userRoles = oldRoles
-				userPassword = oldPassword
 			}()
 
 			userRoles = tt.roles
-			userPassword = tt.password
 
 			// Create command
 			cmd := newUserUpdateCommand()
@@ -732,15 +684,7 @@ func TestRunUserUpdateCommand(t *testing.T) {
 			if tt.roles != nil {
 				args = append(args, "--roles", strings.Join(tt.roles, ","))
 			}
-			if tt.password != "" && tt.setFlags == nil {
-				args = append(args, "--password", tt.password)
-			}
 			cmd.SetArgs(args)
-
-			// Set additional flags if needed
-			if tt.setFlags != nil {
-				tt.setFlags(cmd)
-			}
 
 			// Execute command
 			err := cmd.Execute()
@@ -835,80 +779,6 @@ func TestUserInfoSerialization(t *testing.T) {
 	})
 }
 
-// TestPasswordValidation tests password validation logic.
-func TestPasswordValidation(t *testing.T) {
-	tests := []struct {
-		name     string
-		password string
-		valid    bool
-	}{
-		{"valid password", "validpass123", true},
-		{"too short", "short", false},
-		{"exactly 8 chars", "12345678", true},
-		{"empty password", "", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Mock factory that should not be called for invalid passwords
-			origFactory := rbacClientFactory
-			defer func() { rbacClientFactory = origFactory }()
-			rbacClientFactory = func() (rbac.Client, error) {
-				if !tt.valid && len(tt.password) < 8 && tt.password != "" {
-					t.Fatal("factory should not be called for invalid password")
-				}
-				return &MockRBACClient{
-					CreateUserFunc: func(ctx context.Context, req *rbac.CreateUserRequest) (*rbac.CreateUserResponse, error) {
-						return &rbac.CreateUserResponse{
-							UserID:    "user-123",
-							Timestamp: time.Now().UnixNano(),
-						}, nil
-					},
-				}, nil
-			}
-
-			// Save and restore flags
-			oldPassword := userPassword
-			oldRoles := userRoles
-			defer func() {
-				userPassword = oldPassword
-				userRoles = oldRoles
-			}()
-
-			// Create command FIRST (before setting flags to avoid reset)
-			cmd := newUserCreateCommand()
-			args := []string{"testuser"}
-			cmd.SetArgs(args)
-
-			// Set flags AFTER command creation
-			userPassword = tt.password
-			userRoles = []string{"readonly"}
-
-			var stdout, stderr bytes.Buffer
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-
-			err := cmd.Execute()
-
-			if tt.valid {
-				// Password is valid, so error should not be about password length
-				if err != nil {
-					assert.NotContains(t, err.Error(), "password must be at least 8 characters")
-				}
-			} else {
-				require.Error(t, err)
-				if tt.password != "" && len(tt.password) < 8 {
-					assert.Contains(t, err.Error(), "password must be at least 8 characters")
-				} else if tt.password == "" {
-					// Empty password causes the command to try reading from stdin
-					// In test environment, this fails with ioctl error
-					assert.Contains(t, err.Error(), "failed to read password")
-				}
-			}
-		})
-	}
-}
-
 // TestUserCommands_Integration tests the integration of user commands.
 func TestUserCommands_Integration(t *testing.T) {
 	// This test verifies that the command structure is correct
@@ -981,14 +851,11 @@ func TestUserCreateCommand_EdgeCases(t *testing.T) {
 				}, nil
 			}
 
-			oldPassword := userPassword
 			oldRoles := userRoles
 			defer func() {
-				userPassword = oldPassword
 				userRoles = oldRoles
 			}()
 
-			userPassword = "validpassword123"
 			userRoles = []string{"readonly"}
 
 			cmd := newUserCreateCommand()
@@ -1113,70 +980,25 @@ func TestUserDeleteCommand_WithoutForceFlag(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestRunUserCreateCommand_EnvironmentPassword tests password from environment variable.
-func TestRunUserCreateCommand_EnvironmentPassword(t *testing.T) {
-	origFactory := rbacClientFactory
-	defer func() { rbacClientFactory = origFactory }()
-
-	rbacClientFactory = func() (rbac.Client, error) {
-		return &MockRBACClient{
-			CreateUserFunc: func(ctx context.Context, req *rbac.CreateUserRequest) (*rbac.CreateUserResponse, error) {
-				// Verify password came from environment
-				assert.Equal(t, "env-password123", req.Password)
-				return &rbac.CreateUserResponse{
-					UserID:    "user-123",
-					Timestamp: time.Now().UnixNano(),
-				}, nil
-			},
-		}, nil
-	}
-
-	// Set environment variable
-	os.Setenv("QUICBAAS_PASSWORD", "env-password123")
-	defer os.Unsetenv("QUICBAAS_PASSWORD")
-
-	oldPassword := userPassword
-	oldRoles := userRoles
-	defer func() {
-		userPassword = oldPassword
-		userRoles = oldRoles
-	}()
-
-	userPassword = "" // Empty to trigger env lookup
-	userRoles = []string{"readonly"}
-
-	cmd := newUserCreateCommand()
-	cmd.SetArgs([]string{"testuser"})
-
-	err := cmd.Execute()
-	// Will succeed or fail at API level, but password validation should pass
-	if err != nil {
-		assert.NotContains(t, err.Error(), "password is required")
-		assert.NotContains(t, err.Error(), "password must be at least 8 characters")
-	}
-}
-
-// TestUserUpdateCommand_FlagCombinations tests various flag combinations.
+// TestUserUpdateCommand_FlagCombinations tests --roles flag handling.
+// The --password flag has been removed; only --roles is supported.
 func TestUserUpdateCommand_FlagCombinations(t *testing.T) {
 	tests := []struct {
 		name          string
 		setRoles      bool
-		setPassword   bool
 		expectError   bool
 		errorContains string
 	}{
 		{
 			name:        "roles only",
 			setRoles:    true,
-			setPassword: false,
 			expectError: false,
 		},
 		{
-			name:          "neither roles nor password",
+			name:          "no roles flag",
 			setRoles:      false,
-			setPassword:   false,
 			expectError:   true,
-			errorContains: "at least one of --roles or --password must be specified",
+			errorContains: "--roles must be specified",
 		},
 	}
 
@@ -1209,27 +1031,16 @@ func TestUserUpdateCommand_FlagCombinations(t *testing.T) {
 			}
 
 			oldRoles := userRoles
-			oldPassword := userPassword
 			defer func() {
 				userRoles = oldRoles
-				userPassword = oldPassword
 			}()
 
-			var args []string
-			args = append(args, "testuser")
-
+			args := []string{"testuser"}
 			if tt.setRoles {
 				userRoles = []string{"admin"}
 				args = append(args, "--roles", "admin")
 			} else {
 				userRoles = nil
-			}
-
-			if tt.setPassword {
-				userPassword = "newpassword123"
-				args = append(args, "--password", "newpassword123")
-			} else {
-				userPassword = ""
 			}
 
 			cmd := newUserUpdateCommand()
@@ -1460,14 +1271,11 @@ func TestUserRevokeRoleCommand(t *testing.T) {
 func TestRunUserUpdateCommand_RolesUpdateSuccess(t *testing.T) {
 	origFactory := rbacClientFactory
 	origRoles := userRoles
-	origPassword := userPassword
 	defer func() {
 		rbacClientFactory = origFactory
 		userRoles = origRoles
-		userPassword = origPassword
 	}()
 
-	userPassword = ""
 	userRoles = []string{"admin", "editor"}
 
 	rbacClientFactory = func() (rbac.Client, error) {
@@ -1490,7 +1298,6 @@ func TestRunUserUpdateCommand_RolesUpdateSuccess(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("roles", nil, "")
-	cmd.Flags().String("password", "", "")
 	require.NoError(t, cmd.Flags().Set("roles", "admin,editor"))
 
 	err := runUserUpdateCommand(cmd, []string{"testuser"})
@@ -1500,14 +1307,11 @@ func TestRunUserUpdateCommand_RolesUpdateSuccess(t *testing.T) {
 func TestRunUserUpdateCommand_RolesUpdateUserNotFound(t *testing.T) {
 	origFactory := rbacClientFactory
 	origRoles := userRoles
-	origPassword := userPassword
 	defer func() {
 		rbacClientFactory = origFactory
 		userRoles = origRoles
-		userPassword = origPassword
 	}()
 
-	userPassword = ""
 	userRoles = []string{"admin"}
 
 	rbacClientFactory = func() (rbac.Client, error) {
@@ -1520,7 +1324,6 @@ func TestRunUserUpdateCommand_RolesUpdateUserNotFound(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("roles", nil, "")
-	cmd.Flags().String("password", "", "")
 	require.NoError(t, cmd.Flags().Set("roles", "admin"))
 
 	err := runUserUpdateCommand(cmd, []string{"nonexistent"})
@@ -1531,14 +1334,11 @@ func TestRunUserUpdateCommand_RolesUpdateUserNotFound(t *testing.T) {
 func TestRunUserUpdateCommand_RolesUpdateListUsersError(t *testing.T) {
 	origFactory := rbacClientFactory
 	origRoles := userRoles
-	origPassword := userPassword
 	defer func() {
 		rbacClientFactory = origFactory
 		userRoles = origRoles
-		userPassword = origPassword
 	}()
 
-	userPassword = ""
 	userRoles = []string{"admin"}
 
 	rbacClientFactory = func() (rbac.Client, error) {
@@ -1551,89 +1351,21 @@ func TestRunUserUpdateCommand_RolesUpdateListUsersError(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("roles", nil, "")
-	cmd.Flags().String("password", "", "")
 	require.NoError(t, cmd.Flags().Set("roles", "admin"))
 
 	err := runUserUpdateCommand(cmd, []string{"testuser"})
 	assert.Error(t, err)
 }
 
-func TestRunUserUpdateCommand_PasswordUpdateSuccess(t *testing.T) {
-	origFactory := rbacClientFactory
-	origRoles := userRoles
-	origPassword := userPassword
-	defer func() {
-		rbacClientFactory = origFactory
-		userRoles = origRoles
-		userPassword = origPassword
-	}()
-
-	userPassword = "newpassword123"
-	userRoles = nil
-
-	rbacClientFactory = func() (rbac.Client, error) {
-		return &MockRBACClient{}, nil
-	}
-
-	cmd := &cobra.Command{}
-	cmd.Flags().StringSlice("roles", nil, "")
-	cmd.Flags().String("password", "", "")
-	require.NoError(t, cmd.Flags().Set("password", "newpassword123"))
-
-	err := runUserUpdateCommand(cmd, []string{"testuser"})
-	assert.NoError(t, err)
-}
-
-func TestRunUserUpdateCommand_RolesAndPasswordUpdate(t *testing.T) {
-	origFactory := rbacClientFactory
-	origRoles := userRoles
-	origPassword := userPassword
-	defer func() {
-		rbacClientFactory = origFactory
-		userRoles = origRoles
-		userPassword = origPassword
-	}()
-
-	userPassword = "securepass12"
-	userRoles = []string{"admin"}
-
-	rbacClientFactory = func() (rbac.Client, error) {
-		return &MockRBACClient{
-			ListUsersFunc: func(ctx context.Context, req *rbac.ListUsersRequest) (*rbac.ListUsersResponse, error) {
-				return &rbac.ListUsersResponse{
-					Users: []*rbac.UserInfo{
-						{Username: "testuser", Roles: []string{"readonly"}},
-					},
-				}, nil
-			},
-			RevokeRoleFunc: func(ctx context.Context, req *rbac.RevokeRoleRequest) (*rbac.RevokeRoleResponse, error) {
-				return &rbac.RevokeRoleResponse{Success: true}, nil
-			},
-			AssignRoleFunc: func(ctx context.Context, req *rbac.AssignRoleRequest) (*rbac.AssignRoleResponse, error) {
-				return &rbac.AssignRoleResponse{Success: true}, nil
-			},
-		}, nil
-	}
-
-	cmd := &cobra.Command{}
-	cmd.Flags().StringSlice("roles", nil, "")
-	cmd.Flags().String("password", "", "")
-	require.NoError(t, cmd.Flags().Set("roles", "admin"))
-	require.NoError(t, cmd.Flags().Set("password", "securepass12"))
-
-	err := runUserUpdateCommand(cmd, []string{"testuser"})
-	assert.NoError(t, err)
-}
-
 func TestRunUserUpdateCommand_FactoryErr(t *testing.T) {
 	origFactory := rbacClientFactory
-	origPassword := userPassword
+	origRoles := userRoles
 	defer func() {
 		rbacClientFactory = origFactory
-		userPassword = origPassword
+		userRoles = origRoles
 	}()
 
-	userPassword = "validpasswd"
+	userRoles = []string{"admin"}
 
 	rbacClientFactory = func() (rbac.Client, error) {
 		return nil, errors.New(errors.ErrUnavailable, "test", "unavailable")
@@ -1641,8 +1373,7 @@ func TestRunUserUpdateCommand_FactoryErr(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("roles", nil, "")
-	cmd.Flags().String("password", "", "")
-	require.NoError(t, cmd.Flags().Set("password", "validpasswd"))
+	require.NoError(t, cmd.Flags().Set("roles", "admin"))
 
 	err := runUserUpdateCommand(cmd, []string{"testuser"})
 	assert.Error(t, err)
@@ -1694,7 +1425,7 @@ func TestRunUserRevokeRoleCommand_FailResponse(t *testing.T) {
 	}
 
 	cmd := &cobra.Command{}
-	err := runUserRevokeRoleCommand(cmd, []string{"testuser", "superadmin"})
+	err := runUserRevokeRoleCommand(cmd, []string{"testuser", "platform-admin"})
 	assert.NoError(t, err)
 }
 
@@ -1768,22 +1499,6 @@ func TestRunRoleUnassignCommand_ClientErr(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	err := runRoleUnassignCommand(cmd, []string{"admin", "testuser"})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// Auth Login - No Password
-// =============================================================================
-
-func TestRunAuthLoginCommand_NoPasswordFromFlagOrEnv(t *testing.T) {
-	origPassword := authPassword
-	defer func() { authPassword = origPassword }()
-
-	authPassword = ""
-	os.Unsetenv("QUICBAAS_PASSWORD")
-
-	cmd := &cobra.Command{}
-	err := runAuthLoginCommand(cmd, []string{"admin"})
 	assert.Error(t, err)
 }
 

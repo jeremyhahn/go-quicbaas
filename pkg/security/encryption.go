@@ -378,6 +378,12 @@ func (kr *Keyring) initializeXKMS() error {
 // InitializeWithVault initializes the keyring with HashiCorp Vault backend.
 // This should be called before NewEncryptionManager when using Vault.
 //
+// NOTE: the Vault backend is currently only reachable via the xkms pkg/
+// tree; github.com/jeremyhahn/go-xkms/sdk/go does not re-export
+// vault.NewBackend or vault.Config. Applications that need the Vault
+// backend must import pkg/backend/vault directly until an SDK alias is
+// added.
+//
 // Example:
 //
 //	import "github.com/jeremyhahn/go-xkms/pkg/backend/vault"
@@ -391,6 +397,12 @@ func InitializeWithVault(cfg *EncryptionConfig, log *logger.Logger) error {
 
 // InitializeWithAWSKMS initializes the keyring with AWS KMS backend.
 // This should be called before NewEncryptionManager when using AWS KMS.
+//
+// NOTE: the AWS KMS backend is currently only reachable via the xkms
+// pkg/ tree; github.com/jeremyhahn/go-xkms/sdk/go does not re-export
+// awskms.NewBackend or awskms.Config. Applications that need the AWS
+// KMS backend must import pkg/backend/awskms directly until an SDK
+// alias is added.
 //
 // Example:
 //

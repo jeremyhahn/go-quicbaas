@@ -2654,6 +2654,8 @@ func (m *mockSDKClientForClusterCovPlusTest) Close() error {
 	return nil
 }
 
+func (m *mockSDKClientForClusterCovPlusTest) Project() quicbaas.ProjectClient { return nil }
+
 func (m *mockSDKClientForClusterCovPlusTest) Orchestrator() quicbaas.OrchestratorClient {
 	return nil
 }
@@ -3235,3 +3237,4 @@ func TestCreateSDKClient_EmptyAddressCovPlus(t *testing.T) {
 	assert.Nil(t, client)
 	assert.Contains(t, err.Error(), "empty")
 }
+

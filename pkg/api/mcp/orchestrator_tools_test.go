@@ -203,6 +203,7 @@ type mockAgentService struct {
 	decomposeFn       func(ctx context.Context, req *orchestration.DecomposeTaskRequest) (*orchestration.DecomposeTaskResponse, error)
 	listBackendsFn    func(ctx context.Context) ([]*orchestration.AgentBackendInfo, error)
 	registerBackendFn func(ctx context.Context, req *orchestration.RegisterBackendRequest) error
+	inferFn           func(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error)
 }
 
 func (m *mockAgentService) DiscoverProjects(ctx context.Context, req *orchestration.DiscoverProjectsRequest) (*orchestration.DiscoverProjectsResponse, error) {
@@ -282,6 +283,10 @@ func (m *mockAgentService) RegisterBackend(ctx context.Context, req *orchestrati
 	return nil
 }
 
+func (m *mockAgentService) RegisterAPIInferenceBackend(_ context.Context, _ *orchestration.RegisterAPIInferenceBackendRequest) error {
+	return nil
+}
+
 func (m *mockAgentService) HealthCheck(ctx context.Context) (*orchestration.HealthCheckReport, error) {
 	return &orchestration.HealthCheckReport{}, nil
 }
@@ -352,6 +357,56 @@ func (m *mockAgentService) SubscribeJobEvents(ctx context.Context, tenantID, job
 
 func (m *mockAgentService) BackendToolGuidance(_ string) string {
 	return ""
+}
+
+func (m *mockAgentService) ListBackendModels(_ context.Context, _ string) ([]string, error) {
+	return []string{}, nil
+}
+
+func (m *mockAgentService) ListWorkflows(_ context.Context) ([]*orchestration.WorkflowDefinition, error) {
+	return []*orchestration.WorkflowDefinition{}, nil
+}
+
+func (m *mockAgentService) GetWorkflow(_ context.Context, name string) (*orchestration.WorkflowDefinition, error) {
+	return nil, &orchestration.WorkflowNotFoundError{Name: name}
+}
+
+func (m *mockAgentService) RegisterWorkflow(_ context.Context, def *orchestration.WorkflowDefinition) error {
+	return nil
+}
+
+func (m *mockAgentService) UpdateWorkflow(_ context.Context, def *orchestration.WorkflowDefinition) error {
+	return nil
+}
+
+func (m *mockAgentService) DeleteWorkflow(_ context.Context, name string) error {
+	return nil
+}
+
+// Infer delegates to inferFn when set; otherwise returns an empty closed channel.
+func (m *mockAgentService) Infer(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+	if m.inferFn != nil {
+		return m.inferFn(ctx, req)
+	}
+	ch := make(chan *orchestration.InferChunk)
+	close(ch)
+	return ch, nil
+}
+
+func (m *mockAgentService) SpawnChildJob(_ context.Context, req *orchestration.SpawnChildJobRequest) (*orchestration.SpawnChildJobResponse, error) {
+	return nil, nil
+}
+
+func (m *mockAgentService) SubmitTaskArtifacts(_ context.Context, _, _ string, _ []orchestration.Artifact) error {
+	return nil
+}
+
+func (m *mockAgentService) GetTaskArtifact(_ context.Context, _, _, _ string) (*orchestration.Artifact, error) {
+	return nil, nil
+}
+
+func (m *mockAgentService) ListTaskArtifacts(_ context.Context, _, _ string) ([]orchestration.Artifact, error) {
+	return nil, nil
 }
 
 // Compile-time check.

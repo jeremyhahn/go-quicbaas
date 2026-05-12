@@ -35,6 +35,7 @@ var (
 	// Global flags.
 	cfgFile        string
 	logLevel       string
+	logFile        string
 	fipsMode       bool
 	dataDir        string
 	address        string
@@ -157,6 +158,7 @@ func init() {
 	// Global persistent flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.quicbaas.yaml)")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (trace|debug|info|warn|error|fatal|panic)")
+	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "log file path (default: stderr; appends to the file when set)")
 	rootCmd.PersistentFlags().BoolVar(&fipsMode, "fips", false, "enable FIPS 140-3 mode")
 	rootCmd.PersistentFlags().StringVar(&dataDir, "data-dir", "./data", "data directory path")
 	rootCmd.PersistentFlags().StringVar(&address, "address", config.DefaultUnixSocket, "QuicBaaS server address (Unix socket path or host:port)")
@@ -171,6 +173,7 @@ func init() {
 
 	// Bind flags to viper
 	viper.BindPFlag("logging.level", rootCmd.PersistentFlags().Lookup("log-level"))
+	viper.BindPFlag("logging.file", rootCmd.PersistentFlags().Lookup("log-file"))
 	viper.BindPFlag("security.fips_mode", rootCmd.PersistentFlags().Lookup("fips"))
 	viper.BindPFlag("storage.data_dir", rootCmd.PersistentFlags().Lookup("data-dir"))
 
@@ -192,8 +195,12 @@ func init() {
 	// Add new KMS, Secrets, Seal, and Crypto commands
 	rootCmd.AddCommand(newKMSCommand())
 	rootCmd.AddCommand(newSecretsCommand())
-	rootCmd.AddCommand(newSealCommand())
+	// Canonical surface: replace legacy "seal" with "barrier" per
+	// docs/08-bootstrap-auth-architecture.md §6. The canonical wiring
+	// adds a redirect stub for the renamed "seal" path.
+	configureCanonicalSurface()
 	rootCmd.AddCommand(newCryptoCommand())
+	rootCmd.AddCommand(newSSHCommand())
 	rootCmd.AddCommand(newTimeSeriesCommands())
 	rootCmd.AddCommand(newVectorCommands())
 	rootCmd.AddCommand(newEmbeddingCommands())
@@ -203,6 +210,9 @@ func init() {
 
 	// Add IAM command (requires -tags=iam to enable full functionality)
 	rootCmd.AddCommand(newIAMCommand())
+
+	// Add OAuth2 client management commands (requires -tags=iam)
+	rootCmd.AddCommand(newOAuth2Command())
 
 	// Add Scheduler command for job scheduling
 	rootCmd.AddCommand(newSchedulerCommand())
@@ -218,6 +228,7 @@ func init() {
 
 	// Add Agent command for fleet management
 	rootCmd.AddCommand(newAgentCommand())
+	rootCmd.AddCommand(newSignalBridgeCommand())
 }
 
 // initConfig reads in config file and ENV variables.
@@ -284,6 +295,7 @@ func initConfig() error {
 	viper.BindEnv("logging.level")
 	viper.BindEnv("logging.format")
 	viper.BindEnv("logging.output")
+	viper.BindEnv("logging.file")
 
 	// Security configuration
 	viper.BindEnv("security.fips_mode")
@@ -309,25 +321,39 @@ func initConfig() error {
 	return nil
 }
 
-// initLogger initializes the logger.
-// For CLI applications, logs should go to stderr to avoid polluting stdout
-// which is used for command output (especially JSON).
-func initLogger() error {
-	logConfig := logger.LogConfig{
-		Level:  cfg.Logging.Level,
-		Format: cfg.Logging.Format,
+// buildLoggerConfig constructs a logger.LogConfig from the current global
+// CLI state. When --log-file is set, the logger writes to that file
+// (append + create); otherwise it writes to stderr so JSON command output
+// on stdout stays clean. This helper is shared between initLogger (the CLI
+// path) and launchGUI (the Wails path) so both honour --log-file.
+func buildLoggerConfig(level, format, file string) logger.LogConfig {
+	lc := logger.LogConfig{
+		Level:  level,
+		Format: format,
+	}
+	if lc.Level == "" {
+		lc.Level = "info"
+	}
+	if lc.Format == "" {
+		lc.Format = "json"
+	}
+	if file != "" {
+		lc.Output = "file"
+		lc.File = file
+	} else {
 		// CLI applications MUST use stderr to avoid polluting stdout
-		// which is used for command output (JSON, table, etc.)
-		// This overrides any config file setting.
-		Output: "stderr",
+		// which is used for command output (JSON, table, etc.).
+		lc.Output = "stderr"
 	}
+	return lc
+}
 
-	if logConfig.Level == "" {
-		logConfig.Level = "info"
-	}
-	if logConfig.Format == "" {
-		logConfig.Format = "json"
-	}
+// initLogger initializes the logger.
+// For CLI applications, logs default to stderr to avoid polluting stdout
+// which is used for command output (especially JSON). When --log-file is
+// set the logger is redirected to that path instead.
+func initLogger() error {
+	logConfig := buildLoggerConfig(cfg.Logging.Level, cfg.Logging.Format, logFile)
 
 	var err error
 	log, err = logger.New(logConfig)
@@ -338,47 +364,128 @@ func initLogger() error {
 	return nil
 }
 
-// isGUIOnly returns true when no subcommand was provided.
-// It checks os.Args to determine if only global flags (or nothing) were passed.
+// persistentFlagsWithValues lists the long-form persistent flags that
+// take a value in the next arg. Used by isGUIOnly to distinguish
+// `--log-level debug` (two args, GUI launch) from
+// `data put key value` (four args, CLI subcommand). Short forms (`-x`)
+// aren't declared at the root, so we only match long-form.
+var persistentFlagsWithValues = map[string]struct{}{
+	"--config":    {},
+	"--log-level": {},
+	"--log-file":  {},
+	"--data-dir":  {},
+	"--address":   {},
+	"--transport": {},
+	"--timeout":   {},
+	"--tls-ca":    {},
+	"--tls-cert":  {},
+	"--tls-key":   {},
+	"--tenant":    {},
+}
+
+// isGUIOnly reports whether the invocation has no CLI subcommand and
+// should be treated as a GUI launch when a display is present.
+//
+//	quicbaas                                          → true
+//	quicbaas --log-level debug                        → true  (flag+value, no subcommand)
+//	quicbaas --log-level=debug --log-file /tmp/x.log  → true  (flag+value x2)
+//	quicbaas --fips                                   → true  (bool flag)
+//	quicbaas --help / -h / help / --version / version → false (CLI intent)
+//	quicbaas data put key value                       → false (subcommand)
+//
+// Matches the go-qrdb / go-xkms convention so all three projects behave
+// consistently when the user runs the client binary with log flags.
 func isGUIOnly() bool {
-	if len(os.Args) <= 1 {
-		return true
-	}
-	// Check if all args are flags (start with -)
-	for _, arg := range os.Args[1:] {
-		if !strings.HasPrefix(arg, "-") {
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "-h", "--help", "help", "-v", "--version", "version":
 			return false
 		}
+		// --flag=value form — always a single arg, skip.
+		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "=") {
+			continue
+		}
+		// --flag <value> form — skip the value arg.
+		if _, ok := persistentFlagsWithValues[arg]; ok {
+			i++ // consume the value
+			continue
+		}
+		// Any other long or short flag: bool flag, no value.
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		// Bare non-flag arg — it's a subcommand (or its positional arg).
+		return false
 	}
 	return true
 }
 
+// extractLogFileFlag scans os.Args for --log-file / --log-file=VALUE and
+// returns the path if present, or the empty string otherwise. The GUI
+// launch path needs the flag value before cobra parses arguments (since
+// cobra.Execute runs after the GUI check), so we do a minimal scan here.
+// This mirrors the shape cobra would have produced after parse.
+func extractLogFileFlag(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--log-file" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+			return ""
+		}
+		const prefix = "--log-file="
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix)
+		}
+	}
+	return ""
+}
+
 func main() {
-	// If no subcommand provided and display available, try GUI
-	if isGUIOnly() && hasDisplay() {
+	if isGUIOnly() {
+		// User intent: launch GUI (no subcommand, no CLI-intent flags).
+		if !hasDisplay() {
+			// Wanted GUI but no display is visible from this process.
+			// Print an actionable hint instead of cobra's generic
+			// "please specify a command" fallback.
+			fmt.Fprintln(os.Stderr, "quicbaas: cannot launch desktop GUI — no graphical display detected.")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "The GUI needs one of: $DISPLAY (X11) or $WAYLAND_DISPLAY (Wayland).")
+			fmt.Fprintln(os.Stderr, "Fixes (pick what matches your environment):")
+			fmt.Fprintln(os.Stderr, "  - Local desktop:  DISPLAY=:0 quicbaas")
+			fmt.Fprintln(os.Stderr, "  - SSH session:    ssh -X user@host     (enable X11 forwarding)")
+			fmt.Fprintln(os.Stderr, "  - Headless use:   run as CLI instead — e.g. `quicbaas --help`")
+			fmt.Fprintln(os.Stderr, "  - Web UI:         start the daemon (`quicbaasd start`) and browse /ui/")
+			os.Exit(2)
+		}
+
+		// Honour --log-file in GUI mode too so users can pipe Wails
+		// logs to a file for debugging. cobra has not yet parsed the
+		// flag at this point, so we scan os.Args directly.
+		guiLogFile := extractLogFileFlag(os.Args[1:])
+
 		// Initialize minimal logging for GUI mode
-		guiLog, logErr := logger.New(logger.LogConfig{
-			Level:  "info",
-			Format: "json",
-			Output: "stderr",
-		})
+		guiLog, logErr := logger.New(buildLoggerConfig("info", "json", guiLogFile))
 		if logErr != nil {
 			fmt.Fprintf(os.Stderr, "failed to initialize GUI logger: %v\n", logErr)
 			os.Exit(1)
 		}
 
-		if err := launchGUI(guiLog, ""); err != nil {
+		if err := launchGUI(guiLog, guiLogFile); err != nil {
 			// If GUI unavailable (no desktop build tag), fall through to CLI
 			var guiErr *GUIUnavailableError
 			if errors.As(err, &guiErr) {
-				// Fall through to CLI
-			} else {
-				fmt.Fprintf(os.Stderr, "GUI error: %v\n", err)
-				os.Exit(1)
+				fmt.Fprintln(os.Stderr, "quicbaas: this build was compiled without the desktop GUI.")
+				fmt.Fprintln(os.Stderr, "Rebuild with `make build` to get the GUI-capable binary, or run a CLI subcommand (see `quicbaas --help`).")
+				os.Exit(2)
 			}
-		} else {
-			return // GUI ran and exited normally
+			fmt.Fprintf(os.Stderr, "GUI error: %v\n", err)
+			os.Exit(1)
 		}
+		return // GUI ran and exited normally
 	}
 
 	if err := rootCmd.Execute(); err != nil {

@@ -59,16 +59,26 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
 
 	svcReq := &orchestration.SpawnSessionRequest{
-		Backend:         req.Backend,
-		ProjectID:       req.ProjectId,
-		Model:           req.Model,
-		SystemPrompt:    req.SystemPrompt,
-		MCPServers:      protoMCPServersToService(req.McpServers),
-		Env:             req.Env,
-		WorkDir:         req.WorkDir,
-		Sandboxed:       req.Sandboxed,
-		ContainerImage:  req.ContainerImage,
-		ContainerConfig: protoContainerSpecToService(req.ContainerConfig),
+		Backend:            req.Backend,
+		ProjectID:          req.ProjectId,
+		Model:              req.Model,
+		SystemPrompt:       req.SystemPrompt,
+		MCPServers:         protoMCPServersToService(req.McpServers),
+		Env:                req.Env,
+		WorkDir:            req.WorkDir,
+		SandboxMode:        orchestration.SandboxMode(req.SandboxMode),
+		Sandboxed:          req.Sandboxed,
+		ContainerImage:     req.ContainerImage,
+		ContainerConfig:    protoContainerSpecToService(req.ContainerConfig),
+		HostAffinity:       req.HostAffinity,
+		HostAffinityStrict: req.HostAffinityStrict,
+	}
+
+	// Mirror the REST handler: thread strict on context so the
+	// RemoteBackendResolver can stash a typed NoMatchingAgentError when the
+	// host is offline.
+	if req.HostAffinityStrict {
+		tenantCtx = orchestration.WithHostAffinityStrict(tenantCtx)
 	}
 
 	resp, err := s.agentSvc.SpawnSession(tenantCtx, svcReq)
@@ -220,6 +230,10 @@ func (s *OrchestratorServer) CreateTask(ctx context.Context, req *pb.CreateTaskR
 		AssignedTo:   req.AssignedTo,
 		Dependencies: req.Dependencies,
 		Metadata:     req.Metadata,
+		ProjectID:    req.GetProjectId(),
+		AutoSpawn:    req.GetAutoSpawn(),
+		Backend:      req.GetBackend(),
+		GpuRequired:  req.GetGpuRequired(),
 	}
 
 	task, err := s.agentSvc.CreateTask(tenantCtx, svcReq)
@@ -404,6 +418,7 @@ func (s *OrchestratorServer) StartJob(ctx context.Context, req *pb.OrchestratorS
 		Description:   req.Description,
 		LeadBackend:   req.LeadBackend,
 		LeadModel:     req.LeadModel,
+		LeadAgentID:   req.GetLeadAgentId(),
 		ProjectID:     req.ProjectId,
 		MaxIterations: int(req.MaxIterations),
 		PollInterval:  req.PollInterval,
@@ -939,6 +954,16 @@ func serviceTaskToProto(task *orchestration.Task) *pb.Task {
 		pbTask.CompletedAt = timestamppb.New(time.Unix(task.CompletedAt, 0))
 	}
 
+	if task.AutoSpawn {
+		pbTask.AutoSpawn = true
+	}
+	if task.SpawnedJobID != "" {
+		pbTask.SpawnedJobId = task.SpawnedJobID
+	}
+	if task.SpawnedAt != 0 {
+		pbTask.SpawnedAt = timestamppb.New(time.Unix(0, task.SpawnedAt))
+	}
+
 	return pbTask
 }
 
@@ -1176,6 +1201,209 @@ func convertOrchestratorError(err error) error {
 	default:
 		return status.Error(codes.Internal, dErr.Error())
 	}
+}
+
+// =============================================================================
+// Sub-job Spawning
+// =============================================================================
+
+// SpawnChildJob fans out a child job from a parent job's lead agent.
+// The CallerAgentID is extracted from the gRPC request field; production
+// deployments should populate it from the mTLS peer certificate CN via an
+// interceptor — the service layer enforces the lead-only invariant.
+func (s *OrchestratorServer) SpawnChildJob(ctx context.Context, req *pb.SpawnChildJobRequest) (*pb.SpawnChildJobResponse, error) {
+	s.logger.WithField("parent_job_id", req.GetParentJobId()).Debug("Processing SpawnChildJob request")
+
+	if req.GetParentJobId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "parent_job_id is required")
+	}
+
+	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+
+	svcReq := &orchestration.SpawnChildJobRequest{
+		ParentJobID:        req.GetParentJobId(),
+		WorkflowID:         req.GetWorkflowId(),
+		ProjectID:          req.GetProjectId(),
+		HostAffinity:       req.GetHostAffinity(),
+		GpuRequired:        req.GetGpuRequired(),
+		HostAffinityStrict: req.GetHostAffinityStrict(),
+	}
+
+	for _, t := range req.GetTasks() {
+		svcReq.Tasks = append(svcReq.Tasks, &orchestration.TaskSpec{
+			Title:                t.GetTitle(),
+			Description:          t.GetDescription(),
+			Dependencies:         t.GetDependencies(),
+			RequiredCapabilities: t.GetRequiredCapabilities(),
+		})
+	}
+
+	resp, err := s.agentSvc.SpawnChildJob(tenantCtx, svcReq)
+	if err != nil {
+		// NotLeadOfParentError → PermissionDenied.
+		if stderrors.Is(err, orchestration.ErrNotLeadOfParent) {
+			return nil, status.Error(codes.PermissionDenied, err.Error())
+		}
+		if stderrors.Is(err, orchestration.ErrParentJobNotFound) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+		return nil, convertOrchestratorError(err)
+	}
+
+	return &pb.SpawnChildJobResponse{ChildJobId: resp.ChildJobID}, nil
+}
+
+// =============================================================================
+// Artifact Operations
+// =============================================================================
+
+// SubmitTaskArtifacts attaches typed artifacts to a task.
+func (s *OrchestratorServer) SubmitTaskArtifacts(ctx context.Context, req *pb.SubmitTaskArtifactsRequest) (*pb.SubmitTaskArtifactsResponse, error) {
+	s.logger.WithField("task_id", req.GetTaskId()).Debug("Processing SubmitTaskArtifacts request")
+
+	if req.GetTaskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "task_id is required")
+	}
+
+	tenantID := req.GetTenantId()
+	tenantCtx := orchestration.ContextWithTenant(ctx, tenantID)
+
+	artifacts := protoArtifactsToService(req.GetArtifacts())
+
+	if err := s.agentSvc.SubmitTaskArtifacts(tenantCtx, tenantID, req.GetTaskId(), artifacts); err != nil {
+		return nil, convertArtifactError(err)
+	}
+
+	return &pb.SubmitTaskArtifactsResponse{
+		TaskId:    req.GetTaskId(),
+		Stored:    int32(len(artifacts)),
+		Timestamp: timestamppb.Now(),
+	}, nil
+}
+
+// ListTaskArtifacts returns artifact metadata for a task.
+func (s *OrchestratorServer) ListTaskArtifacts(ctx context.Context, req *pb.ListTaskArtifactsRequest) (*pb.ListTaskArtifactsResponse, error) {
+	s.logger.WithField("task_id", req.GetTaskId()).Debug("Processing ListTaskArtifacts request")
+
+	if req.GetTaskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "task_id is required")
+	}
+
+	tenantID := req.GetTenantId()
+	tenantCtx := orchestration.ContextWithTenant(ctx, tenantID)
+
+	artifacts, err := s.agentSvc.ListTaskArtifacts(tenantCtx, tenantID, req.GetTaskId())
+	if err != nil {
+		return nil, convertArtifactError(err)
+	}
+
+	return &pb.ListTaskArtifactsResponse{
+		Artifacts: serviceArtifactsToProto(artifacts),
+		Timestamp: timestamppb.Now(),
+	}, nil
+}
+
+// GetTaskArtifact retrieves a single named artifact with content resolved.
+func (s *OrchestratorServer) GetTaskArtifact(ctx context.Context, req *pb.GetTaskArtifactRequest) (*pb.GetTaskArtifactResponse, error) {
+	s.logger.WithField("task_id", req.GetTaskId()).Debug("Processing GetTaskArtifact request")
+
+	if req.GetTaskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "task_id is required")
+	}
+	if req.GetName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+
+	tenantID := req.GetTenantId()
+	tenantCtx := orchestration.ContextWithTenant(ctx, tenantID)
+
+	artifact, err := s.agentSvc.GetTaskArtifact(tenantCtx, tenantID, req.GetTaskId(), req.GetName())
+	if err != nil {
+		return nil, convertArtifactError(err)
+	}
+
+	return &pb.GetTaskArtifactResponse{
+		Artifact:  serviceArtifactToProto(artifact),
+		Timestamp: timestamppb.Now(),
+	}, nil
+}
+
+// protoArtifactsToService converts proto Artifact slices to service types.
+func protoArtifactsToService(pbArtifacts []*pb.Artifact) []orchestration.Artifact {
+	if len(pbArtifacts) == 0 {
+		return nil
+	}
+	result := make([]orchestration.Artifact, len(pbArtifacts))
+	for i, a := range pbArtifacts {
+		result[i] = orchestration.Artifact{
+			Kind:     orchestration.ArtifactKind(a.GetKind()),
+			Name:     a.GetName(),
+			MIMEType: a.GetMimeType(),
+			Size:     a.GetSize(),
+			Content:  a.GetContent(),
+			Ref: orchestration.ArtifactRef{
+				AgentID: a.GetRef().GetAgentId(),
+				Path:    a.GetRef().GetPath(),
+				SHA:     a.GetRef().GetSha(),
+				Branch:  a.GetRef().GetBranch(),
+			},
+			Metadata: a.GetMetadata(),
+		}
+	}
+	return result
+}
+
+// serviceArtifactsToProto converts a service artifact slice to proto.
+func serviceArtifactsToProto(artifacts []orchestration.Artifact) []*pb.Artifact {
+	if len(artifacts) == 0 {
+		return nil
+	}
+	result := make([]*pb.Artifact, len(artifacts))
+	for i, a := range artifacts {
+		result[i] = serviceArtifactToProto(&a)
+	}
+	return result
+}
+
+// serviceArtifactToProto converts a single service Artifact to proto.
+func serviceArtifactToProto(a *orchestration.Artifact) *pb.Artifact {
+	if a == nil {
+		return nil
+	}
+	return &pb.Artifact{
+		Kind:     string(a.Kind),
+		Name:     a.Name,
+		MimeType: a.MIMEType,
+		Size:     a.Size,
+		Content:  a.Content,
+		Ref: &pb.ArtifactRef{
+			AgentId: a.Ref.AgentID,
+			Path:    a.Ref.Path,
+			Sha:     a.Ref.SHA,
+			Branch:  a.Ref.Branch,
+		},
+		Metadata: a.Metadata,
+	}
+}
+
+// convertArtifactError maps artifact errors to gRPC status codes.
+func convertArtifactError(err error) error {
+	if stderrors.Is(err, orchestration.ErrArtifactNotFound) {
+		return status.Error(codes.NotFound, err.Error())
+	}
+	if stderrors.Is(err, orchestration.ErrArtifactKindInvalid) {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	if stderrors.Is(err, orchestration.ErrArtifactRefInvalid) {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	if stderrors.Is(err, orchestration.ErrArtifactTooLarge) {
+		return status.Error(codes.ResourceExhausted, err.Error())
+	}
+	if stderrors.Is(err, orchestration.ErrTaskNotFound) {
+		return status.Error(codes.NotFound, err.Error())
+	}
+	return status.Error(codes.Internal, err.Error())
 }
 
 // Ensure OrchestratorServer implements the interface.

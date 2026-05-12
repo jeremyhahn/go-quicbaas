@@ -258,6 +258,11 @@ const (
 	// Matches server-side OpMFA in protocol_iam.go.
 	OpMFA byte = 0xFE
 
+	// Orchestrator Operations (0x8F) - dispatch opcode with sub-operation in payload[0].
+	// Matches server-side OpOrchestrator in pkg/api/quic/protocol.go.
+	// Wire format: [0x8F][tokenLen][token][payloadLen][subOp:1][body...].
+	OpOrchestrator byte = 0x8F
+
 	// Vector Operations (0x16-0x27).
 	OpVectorCreateNamespace       byte = 0x16
 	OpVectorDeleteNamespace       byte = 0x17
@@ -291,6 +296,59 @@ const (
 	SubOpMFAVerifyBackupCode    byte = 0x08
 	SubOpMFAGetBackupCodeStatus byte = 0x09
 )
+
+// Orchestrator sub-operation codes for OpOrchestrator (0x8F).
+// These match the server-side SubOpOrchestrator* constants in pkg/api/quic/protocol.go.
+const (
+	// Session operations (0x01-0x05).
+	SubOpOrchestratorSpawn         byte = 0x01
+	SubOpOrchestratorPrompt        byte = 0x02
+	SubOpOrchestratorSessionStatus byte = 0x03
+	SubOpOrchestratorCloseSession  byte = 0x04
+	SubOpOrchestratorListSessions  byte = 0x05
+
+	// Task operations (0x06-0x0A).
+	SubOpOrchestratorCreateTask   byte = 0x06
+	SubOpOrchestratorGetTask      byte = 0x07
+	SubOpOrchestratorListTasks    byte = 0x08
+	SubOpOrchestratorClaimTask    byte = 0x09
+	SubOpOrchestratorCompleteTask byte = 0x0A
+
+	// Backend operations (0x0B).
+	SubOpOrchestratorListBackends byte = 0x0B
+
+	// Health (0x0C).
+	SubOpOrchestratorHealth byte = 0x0C
+
+	// Inference (0x0D) - stateless fleet-routed inference (aggregate response).
+	SubOpOrchestratorInference byte = 0x0D
+)
+
+// orchestratorMethodToSubOp maps Orchestrator method names to their sub-operation
+// codes for O(1) lookup. All entries use OpOrchestrator (0x8F) as the wire opcode
+// with the SubOp byte prepended to the payload.
+var orchestratorMethodToSubOp = map[string]byte{
+	"SpawnSession":   SubOpOrchestratorSpawn,
+	"PromptSession":  SubOpOrchestratorPrompt,
+	"SessionStatus":  SubOpOrchestratorSessionStatus,
+	"CloseSession":   SubOpOrchestratorCloseSession,
+	"ListSessions":   SubOpOrchestratorListSessions,
+	"CreateTask":     SubOpOrchestratorCreateTask,
+	"GetTask":        SubOpOrchestratorGetTask,
+	"ListTasks":      SubOpOrchestratorListTasks,
+	"ClaimTask":      SubOpOrchestratorClaimTask,
+	"CompleteTask":   SubOpOrchestratorCompleteTask,
+	"ListBackends":   SubOpOrchestratorListBackends,
+	"Health":         SubOpOrchestratorHealth,
+	"Inference":      SubOpOrchestratorInference,
+}
+
+// OrchestratorMethodToSubOp converts an Orchestrator method name to its sub-operation code.
+// Returns false if the method is not a known Orchestrator sub-operation.
+func OrchestratorMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := orchestratorMethodToSubOp[method]
+	return subOp, ok
+}
 
 // IAMSubRequest wraps a sub-operation code with the request payload.
 // Used by MFA and other IAM operations that use the sub-operation dispatch pattern.
@@ -1117,6 +1175,37 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.Vector/GetIndexStats":         OpVectorGetIndexStats,
 	"quicbaas.Vector/Compact":               OpVectorCompact,
 	"quicbaas.Vector/GetCompactionProgress": OpVectorGetCompactionProgress,
+
+	// Orchestrator Operations - all map to OpOrchestrator (0x8F); the SubOp byte is
+	// prepended to the payload by the transport layer before sending on the wire.
+	"quicbaas.Orchestrator/SpawnSession":   OpOrchestrator,
+	"quicbaas.Orchestrator/PromptSession":  OpOrchestrator,
+	"quicbaas.Orchestrator/SessionStatus":  OpOrchestrator,
+	"quicbaas.Orchestrator/CloseSession":   OpOrchestrator,
+	"quicbaas.Orchestrator/ListSessions":   OpOrchestrator,
+	"quicbaas.Orchestrator/CreateTask":     OpOrchestrator,
+	"quicbaas.Orchestrator/GetTask":        OpOrchestrator,
+	"quicbaas.Orchestrator/ListTasks":      OpOrchestrator,
+	"quicbaas.Orchestrator/ClaimTask":      OpOrchestrator,
+	"quicbaas.Orchestrator/CompleteTask":   OpOrchestrator,
+	"quicbaas.Orchestrator/ListBackends":   OpOrchestrator,
+	"quicbaas.Orchestrator/Health":         OpOrchestrator,
+	"quicbaas.Orchestrator/Inference":      OpOrchestrator,
+
+	// Legacy short-form Orchestrator keys (without quicbaas. prefix).
+	"Orchestrator/SpawnSession":   OpOrchestrator,
+	"Orchestrator/PromptSession":  OpOrchestrator,
+	"Orchestrator/SessionStatus":  OpOrchestrator,
+	"Orchestrator/CloseSession":   OpOrchestrator,
+	"Orchestrator/ListSessions":   OpOrchestrator,
+	"Orchestrator/CreateTask":     OpOrchestrator,
+	"Orchestrator/GetTask":        OpOrchestrator,
+	"Orchestrator/ListTasks":      OpOrchestrator,
+	"Orchestrator/ClaimTask":      OpOrchestrator,
+	"Orchestrator/CompleteTask":   OpOrchestrator,
+	"Orchestrator/ListBackends":   OpOrchestrator,
+	"Orchestrator/Health":         OpOrchestrator,
+	"Orchestrator/Inference":      OpOrchestrator,
 }
 
 // opcodeToMethod maps opcodes to service/method combinations for O(1) reverse lookup.
@@ -1323,6 +1412,9 @@ var opcodeToMethod = map[byte]string{
 
 	// IAM MFA Operations
 	OpMFA: "quicbaas.IAM.MFA/Dispatch",
+
+	// Orchestrator Operations (sub-op dispatch; reverse lookup gives the family)
+	OpOrchestrator: "quicbaas.Orchestrator/Dispatch",
 
 	// Vector Operations
 	OpVectorCreateNamespace:       "quicbaas.Vector/CreateNamespace",

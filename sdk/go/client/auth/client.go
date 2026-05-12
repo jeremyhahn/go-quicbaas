@@ -554,9 +554,8 @@ func validateLoginRequest(req *service.ExtendedLoginRequest) error {
 	if req.Username == "" {
 		return errors.NewInvalidInput("auth.Login", "username is required")
 	}
-	if req.Password == "" {
-		return errors.NewInvalidInput("auth.Login", "password is required")
-	}
+	// TODO: Password-based login was removed; auth must now flow through WebAuthn or PIV smartcard.
+	// Re-introduce a credential presence check once those flows are wired in.
 	return nil
 }
 

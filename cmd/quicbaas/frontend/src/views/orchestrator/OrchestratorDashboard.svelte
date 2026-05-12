@@ -21,6 +21,7 @@
     Bot,
     Terminal,
     ClipboardList,
+    LayoutDashboard,
   } from 'lucide-svelte';
 
   echarts.use([PieChart, BarChart, CanvasRenderer, TitleComponent, TooltipComponent, LegendComponent, GridComponent]);
@@ -30,14 +31,18 @@
   // ---------------------------------------------------------------------------
 
   const activeJobs = $derived(
-    orchestratorStore.jobs.filter((j) => j.state !== 'completed' && j.state !== 'failed').length
+    (Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : [])
+      .filter((j) => j.state !== 'completed' && j.state !== 'failed').length
   );
 
   const pendingTasks = $derived(
-    orchestratorStore.tasks.filter((t) => t.status === 'pending').length
+    (Array.isArray(orchestratorStore.tasks) ? orchestratorStore.tasks : [])
+      .filter((t) => t.status === 'pending').length
   );
 
-  const recentEvents = $derived(orchestratorStore.events.slice(-10));
+  const recentEvents = $derived(
+    (Array.isArray(orchestratorStore.events) ? orchestratorStore.events : []).slice(-10)
+  );
 
   // ---------------------------------------------------------------------------
   // Job state doughnut chart
@@ -48,7 +53,7 @@
 
   function buildPieOption(): echarts.EChartsCoreOption {
     const counts: Record<string, number> = {};
-    for (const job of orchestratorStore.jobs) {
+    for (const job of (Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : [])) {
       counts[job.state] = (counts[job.state] ?? 0) + 1;
     }
 
@@ -90,9 +95,8 @@
 
   function buildBarOption(): echarts.EChartsCoreOption {
     const statuses = ['registered', 'running', 'idle', 'offline', 'error'];
-    const values = statuses.map(
-      (s) => orchestratorStore.agents.filter((a) => a.status === s).length
-    );
+    const safeAgents = Array.isArray(orchestratorStore.agents) ? orchestratorStore.agents : [];
+    const values = statuses.map((s) => safeAgents.filter((a) => a.status === s).length);
 
     return {
       backgroundColor: 'transparent',
@@ -138,33 +142,33 @@
 </script>
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Orchestration Dashboard" subtitle="Real-time overview of jobs, agents, and tasks" />
+  <PageHeader title="Orchestration Dashboard" subtitle="Real-time overview of jobs, agents, and tasks" icon={LayoutDashboard} />
 
   <!-- Stat cards -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
     <StatCard
       label="Active Jobs"
       value={activeJobs}
-      description="{orchestratorStore.jobs.length} total"
+      description="{(Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []).length} total"
       icon={Workflow}
       variant={activeJobs > 0 ? 'primary' : 'default'}
     />
     <StatCard
       label="Agents"
-      value={orchestratorStore.agents.length}
-      description="{orchestratorStore.agents.filter((a) => a.status === 'running').length} running"
+      value={(Array.isArray(orchestratorStore.agents) ? orchestratorStore.agents : []).length}
+      description="{(Array.isArray(orchestratorStore.agents) ? orchestratorStore.agents : []).filter((a) => a.status === 'running').length} running"
       icon={Bot}
     />
     <StatCard
       label="Sessions"
-      value={orchestratorStore.sessions.length}
+      value={(Array.isArray(orchestratorStore.sessions) ? orchestratorStore.sessions : []).length}
       description="active sessions"
       icon={Terminal}
     />
     <StatCard
       label="Pending Tasks"
       value={pendingTasks}
-      description="{orchestratorStore.tasks.length} total"
+      description="{(Array.isArray(orchestratorStore.tasks) ? orchestratorStore.tasks : []).length} total"
       icon={ClipboardList}
       variant={pendingTasks > 0 ? 'warning' : 'default'}
     />
@@ -173,9 +177,9 @@
   <!-- Charts row -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <div class="card bg-base-200 rounded-box">
-      <div class="card-body p-4">
-        <h3 class="text-sm font-semibold text-base-content/70 mb-2">Job States</h3>
-        {#if orchestratorStore.jobs.length === 0}
+      <div class="card-body p-5">
+        <h3 class="text-sm font-semibold text-base-content mb-2">Job States</h3>
+        {#if (Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []).length === 0}
           <div class="flex items-center justify-center h-48 text-base-content/30 text-sm">
             No jobs
           </div>
@@ -186,9 +190,9 @@
     </div>
 
     <div class="card bg-base-200 rounded-box">
-      <div class="card-body p-4">
-        <h3 class="text-sm font-semibold text-base-content/70 mb-2">Agent Status Breakdown</h3>
-        {#if orchestratorStore.agents.length === 0}
+      <div class="card-body p-5">
+        <h3 class="text-sm font-semibold text-base-content mb-2">Agent Status Breakdown</h3>
+        {#if (Array.isArray(orchestratorStore.agents) ? orchestratorStore.agents : []).length === 0}
           <div class="flex items-center justify-center h-48 text-base-content/30 text-sm">
             No agents registered
           </div>
@@ -201,8 +205,8 @@
 
   <!-- Recent events -->
   <div class="card bg-base-200 rounded-box">
-    <div class="card-body p-4">
-      <h3 class="text-sm font-semibold text-base-content/70 mb-2">Recent Events</h3>
+    <div class="card-body p-5">
+      <h3 class="text-sm font-semibold text-base-content mb-2">Recent Events</h3>
       <EventLog events={recentEvents} maxHeight="200px" autoScroll={false} />
     </div>
   </div>

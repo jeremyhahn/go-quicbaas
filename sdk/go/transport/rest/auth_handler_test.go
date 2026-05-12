@@ -44,8 +44,10 @@ func TestAuthRESTHandler_Login(t *testing.T) {
 		if req.Username != "testuser" {
 			t.Errorf("expected username 'testuser', got %s", req.Username)
 		}
-		if req.Password != "testpass" {
-			t.Errorf("expected password 'testpass', got %s", req.Password)
+		// Password-based login was removed; the SDK now sends an empty password until
+		// WebAuthn/PIV credential evidence is wired through.
+		if req.Password != "" {
+			t.Errorf("expected empty password (login no longer carries it), got %s", req.Password)
 		}
 
 		// Send response
@@ -79,7 +81,6 @@ func TestAuthRESTHandler_Login(t *testing.T) {
 	ctx := context.Background()
 	result, err := tr.Request(ctx, "quicbaas.Auth", "Login", &service.ExtendedLoginRequest{
 		Username: "testuser",
-		Password: "testpass",
 	})
 	if err != nil {
 		t.Fatalf("login failed: %v", err)
@@ -347,7 +348,6 @@ func TestAuthRESTHandler_Login_Error(t *testing.T) {
 	ctx := context.Background()
 	_, err = tr.Request(ctx, "quicbaas.Auth", "Login", &service.ExtendedLoginRequest{
 		Username: "testuser",
-		Password: "wrongpassword",
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid credentials")

@@ -1,20 +1,23 @@
 # Authentication
 
-JWT-based authentication with OAuth 2.1 and role-based access control.
+QuicBaaS uses **passwordless, hardware-backed authentication exclusively**. Users authenticate via WebAuthn/FIDO2 or PIV smartcard. Service accounts use mTLS with bound OAuth2 tokens. See [Passwordless Authentication](../auth/passwordless.md) for complete details.
 
 > **Breaking Change (v1.1.0):** MCP token parameters (`_token`, `accessToken`) in request body are no longer supported. Use `Authorization: Bearer <token>` header. See [MCP Authorization](../api/mcp-authorization.md#migration-guide).
+>
+> **Breaking Change (v2.0.0):** Password-based authentication is removed. User passwords are no longer supported. All users must enroll a hardware authenticator (WebAuthn passkey, security key, or PIV smartcard).
 
 ## Overview
 
 QuicBaaS supports multiple authentication methods:
 
-| Method | Use Case | Protocol |
-|--------|----------|----------|
-| OAuth 2.1 + PKCE | MCP clients, web apps | OIDC/OAuth |
-| Client Credentials | M2M, service accounts | OAuth |
-| WebAuthn/FIDO2 | Passwordless users | WebAuthn |
-| Federation | External IdPs | OIDC |
-| JWT | Direct API access | Bearer tokens |
+| Method | Identity Type | Protocol | Status |
+|--------|---|----------|--------|
+| WebAuthn / FIDO2 | Human user | CTAP2 / WebAuthn | Production |
+| PIV Smartcard | Human user | PIV / PKCS#11 | Production |
+| mTLS + OAuth2 | Service account | TLS 1.3 + RFC 8705 | Production |
+| OAuth 2.1 + PKCE | Machine client | OIDC / OAuth | Production |
+| JWT (bearer token) | API-direct | Bearer token | Production |
+| Federation (OIDC) | External IdP | OIDC | Production |
 
 Authentication adapts to your storage backend:
 - Memory storage: Ephemeral auth (users lost on restart)
@@ -148,7 +151,7 @@ To migrate:
 
 ## Direct JWT Authentication
 
-For direct API access without OAuth flow:
+For API clients that need to validate or use JWT tokens directly:
 
 ```go
 import "github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -165,26 +168,22 @@ authConfig := &auth.AuthConfig{
     RefreshTokenTTL:     7 * 24 * time.Hour,
 }
 
-// Or symmetric signing (for development/testing)
-authConfig := &auth.AuthConfig{
-    Enabled:         true,
-    JWTSecret:       "your-secret-key-32-chars",
-    TokenTTL:        1 * time.Hour,
-    RefreshTokenTTL: 7 * 24 * time.Hour,
-}
-
 authManager, err := auth.NewUnifiedAuthManager(authConfig, storage, logger)
 
-// Bootstrap admin user
-result, err := auth.MustBootstrap(authManager, &auth.BootstrapConfig{
-    CreateAdminUser: true,
-    AdminUsername:   "admin",
-})
+// Validate a token and extract claims
+token := "eyJhbGciOiJSUzI1NiIs..." // Token from WebAuthn, OAuth2, etc.
+claims, err := authManager.ValidateToken(ctx, token)
+if err != nil {
+    log.Fatal(err)
+}
 
-// Authenticate
-ctx := context.Background()
-token, err := authManager.Authenticate(ctx, "admin", result.AdminPassword)
+// Inspect claims
+log.Printf("User: %s", claims.Subject)
+log.Printf("Auth Method: %v", claims.AMR) // ["webauthn","hwk"] or ["mtls","hwk"]
+log.Printf("Attestation: %s", claims.AttestationMethod)
 ```
+
+**Note:** User creation with passwords is deprecated. Users are created in `pending` status and must activate by enrolling a hardware authenticator. See [User Flow](../auth/passwordless.md#user-flow-invite--activate--login).
 
 ## Storage Modes
 
@@ -224,20 +223,27 @@ __quicbaas:tokens:revoked:{hash}          -> Revocation timestamp
 | readwrite | keys, indexes, transactions | read, write, delete | Application access |
 | readonly | keys, indexes, metrics, health | read | Read-only monitoring |
 
-## Usage
+## Usage (Passwordless)
 
-### Create Users
+### Create Users (Pending Activation)
 
 ```go
-user, err := authManager.CreateUser("alice", "password", []string{"readwrite"})
+user, err := authManager.CreateUser("alice@example.com", "", []string{"readwrite"})
+// User is created in pending status, no password
+// User must activate by enrolling a WebAuthn credential
 ```
 
-### Authenticate
+### Obtain Token After User Enrolls Authenticator
+
+Tokens are issued after the user completes WebAuthn/smartcard authentication:
 
 ```go
-token, err := authManager.Authenticate(ctx, "alice", "password")
-// token.AccessToken (1 hour TTL)
+// Via OAuth2 client credentials (service account)
+token, err := authManager.ClientCredentials(ctx, clientID)
+// token.AccessToken (1 hour TTL, bound to mTLS cert via cnf.x5t#S256)
 // token.RefreshToken (7 days TTL)
+
+// Or use a token obtained from browser WebAuthn login
 ```
 
 ### Authorize
@@ -282,26 +288,31 @@ Wildcards in roles match all resources/actions. Actions are checked by exact mat
 
 ## Security Features
 
-1. **Password Hashing**: bcrypt with configurable cost (legacy SHA-256 transparently upgraded on login)
-2. **JWT Signing**: Asymmetric ES256 via KMS (recommended) or HS256 shared secret (legacy)
-3. **Token Uniqueness**: Cryptographic nonce in every token prevents replay
-4. **Key Identification**: `kid` header in asymmetric tokens supports key rotation
-5. **Dual Validation**: Both HS256 and ES256 tokens accepted during migration
-6. **Internal Key Protection**: Prevents user data from overwriting auth data
-7. **Role Validation**: Built-in roles cannot be modified
-8. **Login Throttling**: Configurable lockout after failed attempts
+1. **Hardware Attestation**: FIDO2/WebAuthn and TPM verify authenticator identity
+2. **Phishing Resistant**: Credentials bound to origin; no replay attacks possible
+3. **Zero Shared Secrets**: No password databases; each authenticator holds its private key
+4. **JWT Signing**: Asymmetric ES256 via KMS (recommended) or HS256 shared secret (legacy)
+5. **Token Binding**: OAuth2 access tokens bound to mTLS client certificate via `cnf.x5t#S256` (RFC 8705)
+6. **Token Uniqueness**: Cryptographic nonce in every token prevents replay
+7. **Key Identification**: `kid` header in asymmetric tokens supports key rotation
+8. **Dual Validation**: Both HS256 and ES256 tokens accepted during migration
+9. **Internal Key Protection**: Prevents user data from overwriting auth data
+10. **Role Validation**: Built-in roles cannot be modified
+11. **Authenticator Tracking**: Sign count and last-used timestamp prevent cloning
 
 ## Best Practices
 
-1. Use asymmetric signing (`jwt_signing_key_id`) with KMS for production
-2. Use ES256 (ECDSA P-256) as the default signing algorithm
-3. Store signing keys in the KMS, not on disk or in environment variables
-4. For development/testing, use a strong JWT secret (32+ characters)
-5. Rotate tokens before expiry
-6. Revoke tokens on logout
-7. Use principle of least privilege
-8. Monitor failed authentication attempts
-9. Migrate from HS256 to ES256 by configuring both, then removing the secret
+1. **Passwordless-First**: Always use WebAuthn or smartcard for users; no passwords
+2. **Use mTLS + Bound Tokens**: Service accounts use TLS client auth + RFC 8705 `cnf` binding
+3. **Asymmetric Signing**: Use `jwt_signing_key_id` with KMS (ES256) for production tokens
+4. **Store Keys Securely**: Keep signing keys in KMS, not on disk or in environment variables
+5. **Rotate Credentials**: Refresh access tokens before expiry; rotate mTLS certs regularly
+6. **Revoke on Logout**: Revoke refresh tokens and close mTLS sessions on logout
+7. **Least Privilege**: Assign minimal required roles; avoid admin role when possible
+8. **Audit & Monitor**: Log all authentication events; alert on failed attempts or anomalies
+9. **Multiple Authenticators**: Recommend users enroll backup authenticators (e.g., passkey + hardware key)
+10. **AAGUID Allowlist**: Verify FIDO2 device identities via AAGUID when attestation is enabled
+11. See [Passwordless Authentication](../auth/passwordless.md) for detailed architecture
 
 ## See Also
 

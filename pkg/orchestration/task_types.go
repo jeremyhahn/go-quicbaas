@@ -60,6 +60,35 @@ type Task struct {
 	ClaimedAt    int64             `json:"claimed_at,omitempty"`
 	CompletedAt  int64             `json:"completed_at,omitempty"`
 	Version      uint64            `json:"version"`
+
+	// ProjectID scopes this task to a registered project. When non-empty,
+	// ClaimTask enforces the project's AgentRoles access matrix.
+	// Empty means the task is unscoped (legacy behaviour — allow all).
+	ProjectID string `json:"project_id,omitempty"`
+
+	// OutputArtifacts are the typed artifacts produced by this task.
+	// Small artifacts (≤ InlineLimit) are stored inline; larger ones are
+	// promoted to the KV store and tracked via ArtifactRef.
+	OutputArtifacts []Artifact `json:"output_artifacts,omitempty"`
+
+	// InputArtifacts are references to artifacts from upstream tasks that
+	// this task reads as input. Downstream agents resolve refs to bytes
+	// before execution.
+	InputArtifacts []Artifact `json:"input_artifacts,omitempty"`
+
+	// AutoSpawn indicates the task was created with immediate dispatch requested.
+	// When true, the orchestrator attempted to spawn a one-shot job immediately
+	// on task creation. False means the task entered the queue and waits for claim.
+	AutoSpawn bool `json:"auto_spawn,omitempty"`
+
+	// SpawnedJobID is populated when AutoSpawn succeeded and a job was dispatched.
+	// Empty when AutoSpawn is false or when no matching agent was available at
+	// creation time.
+	SpawnedJobID string `json:"spawned_job_id,omitempty"`
+
+	// SpawnedAt records when the auto-spawned job was dispatched.
+	// Zero when SpawnedJobID is empty.
+	SpawnedAt int64 `json:"spawned_at,omitempty"`
 }
 
 // TaskResult contains the output of a completed task.
@@ -106,6 +135,20 @@ type TaskStore interface {
 
 	// FailTask marks a task as failed with a reason.
 	FailTask(ctx context.Context, tenantID, taskID, reason string) error
+
+	// SubmitTaskArtifacts appends output artifacts to a task. Artifacts
+	// larger than the configured InlineLimit are stored in the KV store and
+	// the task record is updated with a kv_key Ref. At-most-once per name:
+	// submitting an artifact whose Name already exists overwrites the prior value.
+	SubmitTaskArtifacts(ctx context.Context, tenantID, taskID string, artifacts []Artifact) error
+
+	// GetTaskArtifact retrieves a named artifact from a task, resolving kv_key
+	// Refs to their full byte content before returning.
+	GetTaskArtifact(ctx context.Context, tenantID, taskID, name string) (*Artifact, error)
+
+	// ListTaskArtifacts returns all output artifacts for a task without
+	// resolving large Refs to their content (returns metadata + Ref only).
+	ListTaskArtifacts(ctx context.Context, tenantID, taskID string) ([]Artifact, error)
 
 	// DeleteTenantTasks deletes ALL tasks for a tenant (cascade delete).
 	DeleteTenantTasks(ctx context.Context, tenantID string) error

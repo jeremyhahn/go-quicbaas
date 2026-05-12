@@ -28,16 +28,16 @@
   };
 </script>
 
-<div class="stat bg-base-200 rounded-box">
+<div class="stat bg-base-200 rounded-box p-5 border border-base-300 shadow-sm">
   {#if icon}
     {@const Icon = icon}
-    <div class="stat-figure text-base-content/30">
-      <Icon class="h-8 w-8" strokeWidth={1.5} />
+    <div class="stat-figure text-base-content/25">
+      <Icon class="h-6 w-6" strokeWidth={1.5} />
     </div>
   {/if}
-  <div class="stat-title text-base-content/50">{label}</div>
-  <div class={valueClasses[variant] ?? 'stat-value'}>{value}</div>
+  <div class="stat-title text-xs uppercase tracking-wider text-base-content/50">{label}</div>
+  <div class={valueClasses[variant] ?? 'stat-value text-2xl'}>{value}</div>
   {#if description}
-    <div class="stat-desc text-base-content/40">{description}</div>
+    <div class="stat-desc text-base-content/40 mt-1">{description}</div>
   {/if}
 </div>

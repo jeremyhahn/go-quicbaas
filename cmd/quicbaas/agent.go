@@ -78,6 +78,8 @@ Examples:
 	cmd.AddCommand(newAgentStatusCommand())
 	cmd.AddCommand(newAgentRemoveCommand())
 	cmd.AddCommand(newAgentHeartbeatCommand())
+	cmd.AddCommand(newAgentServeCommand())
+	cmd.AddCommand(newAgentDeployCommand())
 
 	return cmd
 }

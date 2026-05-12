@@ -42,28 +42,89 @@ type orchestratorHandlerFunc func(ctx context.Context, conn *grpc.ClientConn, re
 
 // orchestratorMethodMap maps SDK method names to handler functions for O(1) dispatch.
 var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
-	"Health":         handleOrchestratorHealth,
-	"ListBackends":   handleOrchestratorListBackends,
-	"SpawnSession":   handleOrchestratorSpawnSession,
-	"PromptSession":  handleOrchestratorPromptSession,
-	"SessionStatus":  handleOrchestratorSessionStatus,
-	"CloseSession":   handleOrchestratorCloseSession,
-	"ListSessions":   handleOrchestratorListSessions,
-	"CreateTask":     handleOrchestratorCreateTask,
-	"GetTask":        handleOrchestratorGetTask,
-	"ListTasks":      handleOrchestratorListTasks,
-	"ClaimTask":      handleOrchestratorClaimTask,
-	"CompleteTask":   handleOrchestratorCompleteTask,
-	"RegisterAgent":  handleOrchestratorRegisterAgent,
-	"GetAgent":       handleOrchestratorGetAgent,
-	"ListAgents":     handleOrchestratorListAgents,
-	"RemoveAgent":    handleOrchestratorRemoveAgent,
-	"AgentHeartbeat": handleOrchestratorAgentHeartbeat,
-	"DecomposeTask":  handleOrchestratorDecomposeTask,
-	"StartJob":       handleOrchestratorStartJob,
-	"GetJobStatus":   handleOrchestratorGetJobStatus,
-	"ListJobs":       handleOrchestratorListJobs,
-	"CancelJob":      handleOrchestratorCancelJob,
+	"Health":            handleOrchestratorHealth,
+	"ListBackends":      handleOrchestratorListBackends,
+	"SpawnSession":      handleOrchestratorSpawnSession,
+	"PromptSession":     handleOrchestratorPromptSession,
+	"SessionStatus":     handleOrchestratorSessionStatus,
+	"CloseSession":      handleOrchestratorCloseSession,
+	"ListSessions":      handleOrchestratorListSessions,
+	"CreateTask":        handleOrchestratorCreateTask,
+	"GetTask":           handleOrchestratorGetTask,
+	"ListTasks":         handleOrchestratorListTasks,
+	"ClaimTask":         handleOrchestratorClaimTask,
+	"CompleteTask":      handleOrchestratorCompleteTask,
+	"RegisterAgent":     handleOrchestratorRegisterAgent,
+	"GetAgent":          handleOrchestratorGetAgent,
+	"ListAgents":        handleOrchestratorListAgents,
+	"RemoveAgent":       handleOrchestratorRemoveAgent,
+	"AgentHeartbeat":    handleOrchestratorAgentHeartbeat,
+	"DecomposeTask":     handleOrchestratorDecomposeTask,
+	"SpawnChildJob":     handleOrchestratorSpawnChildJob,
+	"StartJob":          handleOrchestratorStartJob,
+	"GetJobStatus":      handleOrchestratorGetJobStatus,
+	"ListJobs":          handleOrchestratorListJobs,
+	"CancelJob":         handleOrchestratorCancelJob,
+	"GetSessionHistory": handleOrchestratorGetSessionHistory,
+	"Inference":         handleOrchestratorInference,
+}
+
+// handleOrchestratorGetSessionHistory is the one-shot gRPC handler for a
+// page of session event history. For now we implement this by calling the
+// streaming SubscribeSessionEvents with follow=false and collecting until
+// the stream closes — spares us from introducing a second RPC while the
+// event surface is still maturing. When history pagination becomes a hot
+// path the server-side can add a dedicated non-streaming RPC.
+func handleOrchestratorGetSessionHistory(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetSessionHistoryRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.GetSessionHistory", "invalid request type")
+	}
+	tenantID := transport.TenantFromContext(ctx)
+	if sdkReq.TenantID == "" {
+		sdkReq.TenantID = tenantID
+	}
+	protoReq := &pb.SubscribeSessionRequest{
+		TenantId:     sdkReq.TenantID,
+		SessionId:    sdkReq.SessionID,
+		FromSequence: sdkReq.FromSequence,
+		Follow:       false,
+	}
+	desc := &grpc.StreamDesc{StreamName: "SubscribeSessionEvents", ServerStreams: true}
+	cs, err := conn.NewStream(ctx, desc, pb.OrchestratorService_SubscribeSessionEvents_FullMethodName)
+	if err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.GetSessionHistory")
+	}
+	if err := cs.SendMsg(protoReq); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.GetSessionHistory")
+	}
+	if err := cs.CloseSend(); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.GetSessionHistory")
+	}
+	out := &orchestrator.GetSessionHistoryResponse{}
+	limit := sdkReq.Limit
+	for {
+		var env pb.SessionEventEnvelope
+		if err := cs.RecvMsg(&env); err != nil {
+			break // EOF ends the history page
+		}
+		item := &orchestrator.SessionEventEnvelope{
+			SessionID:   env.SessionId,
+			TenantID:    env.TenantId,
+			Sequence:    env.Sequence,
+			PayloadJSON: env.PayloadJson,
+			FromReplay:  env.FromReplay,
+		}
+		if env.Timestamp != nil {
+			item.Timestamp = env.Timestamp.AsTime()
+		}
+		out.Events = append(out.Events, item)
+		if limit > 0 && len(out.Events) >= limit {
+			out.NextSeq = env.Sequence + 1
+			break
+		}
+	}
+	return out, nil
 }
 
 // orchestratorHandler handles Orchestrator service requests by converting between
@@ -155,13 +216,16 @@ func handleOrchestratorSpawnSession(ctx context.Context, conn *grpc.ClientConn, 
 	tenantID := transport.TenantFromContext(ctx)
 
 	protoReq := &pb.SpawnSessionRequest{
-		Backend:   sdkReq.Backend,
-		ProjectId: sdkReq.ProjectID,
-		Model:     sdkReq.Model,
-		WorkDir:   sdkReq.WorkDir,
-		Env:       sdkReq.Env,
-		Sandboxed: sdkReq.Sandboxed,
-		TenantId:  tenantID,
+		Backend:            sdkReq.Backend,
+		ProjectId:          sdkReq.ProjectID,
+		Model:              sdkReq.Model,
+		WorkDir:            sdkReq.WorkDir,
+		Env:                sdkReq.Env,
+		SandboxMode:        pb.SandboxMode(sdkReq.SandboxMode),
+		Sandboxed:          sdkReq.Sandboxed,
+		HostAffinity:       sdkReq.HostAffinity,
+		HostAffinityStrict: sdkReq.HostAffinityStrict,
+		TenantId:           tenantID,
 	}
 	protoResp := &pb.SpawnSessionResponse{}
 
@@ -318,6 +382,10 @@ func handleOrchestratorCreateTask(ctx context.Context, conn *grpc.ClientConn, re
 		AssignedTo:   sdkReq.AssignedTo,
 		Dependencies: sdkReq.Dependencies,
 		Metadata:     sdkReq.Metadata,
+		ProjectId:    sdkReq.ProjectID,
+		AutoSpawn:    sdkReq.AutoSpawn,
+		Backend:      sdkReq.Backend,
+		GpuRequired:  sdkReq.GpuRequired,
 	}
 	protoResp := &pb.CreateTaskResponse{}
 
@@ -634,6 +702,46 @@ func handleOrchestratorDecomposeTask(ctx context.Context, conn *grpc.ClientConn,
 // Job Operations
 // =============================================================================
 
+// handleOrchestratorSpawnChildJob converts an SDK SpawnChildJobRequest to proto,
+// invokes the gRPC SpawnChildJob RPC, and returns the child job ID.
+func handleOrchestratorSpawnChildJob(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.SpawnChildJobRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.SpawnChildJob", "invalid request type")
+	}
+
+	tenantID := transport.TenantFromContext(ctx)
+
+	var tasks []*pb.TaskSpec
+	for _, t := range sdkReq.Tasks {
+		tasks = append(tasks, &pb.TaskSpec{
+			Title:       t.Title,
+			Description: t.Description,
+		})
+	}
+
+	protoReq := &pb.SpawnChildJobRequest{
+		ParentJobId:        sdkReq.ParentJobID,
+		TenantId:           tenantID,
+		WorkflowId:         sdkReq.WorkflowID,
+		ProjectId:          sdkReq.ProjectID,
+		Tasks:              tasks,
+		HostAffinity:       sdkReq.HostAffinity,
+		GpuRequired:        sdkReq.GpuRequired,
+		HostAffinityStrict: sdkReq.HostAffinityStrict,
+	}
+	protoResp := &pb.SpawnChildJobResponse{}
+
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_SpawnChildJob_FullMethodName, protoReq, protoResp)
+	if invokeErr != nil {
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.SpawnChildJob")
+	}
+
+	return &orchestrator.SpawnChildJobResponse{
+		ChildJobID: protoResp.GetChildJobId(),
+	}, nil
+}
+
 // handleOrchestratorStartJob converts an SDK StartJobRequest to proto, invokes
 // the gRPC StartJob RPC, and converts the proto response back to the SDK type.
 func handleOrchestratorStartJob(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
@@ -649,6 +757,7 @@ func handleOrchestratorStartJob(ctx context.Context, conn *grpc.ClientConn, req 
 		Description:   sdkReq.Description,
 		LeadBackend:   sdkReq.LeadBackend,
 		LeadModel:     sdkReq.LeadModel,
+		LeadAgentId:   sdkReq.LeadAgentID,
 		ProjectId:     sdkReq.ProjectID,
 		MaxIterations: int32(sdkReq.MaxIterations), //nolint:gosec // G115: bounded count
 		PollInterval:  sdkReq.PollInterval,
@@ -917,6 +1026,51 @@ func healthStatusString(unhealthy int32) string {
 }
 
 // =============================================================================
+// Inference (unary aggregate)
+// =============================================================================
+
+// handleOrchestratorInference calls the gRPC Inference RPC and converts the
+// response to the SDK InferenceResponse type.
+func handleOrchestratorInference(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.InferenceRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.Inference", "invalid request type")
+	}
+
+	tenantID := transport.TenantFromContext(ctx)
+
+	protoReq := &pb.InferenceRequest{
+		Backend:      sdkReq.Backend,
+		Model:        sdkReq.Model,
+		Prompt:       sdkReq.Prompt,
+		SystemPrompt: sdkReq.SystemPrompt,
+		HostAffinity: sdkReq.HostAffinity,
+		TenantId:     tenantID,
+		Metadata:     sdkReq.Metadata,
+	}
+	protoResp := &pb.InferenceResponse{}
+
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_Inference_FullMethodName, protoReq, protoResp)
+	if invokeErr != nil {
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.Inference")
+	}
+
+	content := make([]orchestrator.InferenceContentBlock, 0, len(protoResp.GetContent()))
+	for _, b := range protoResp.GetContent() {
+		content = append(content, orchestrator.InferenceContentBlock{
+			Type: b.GetType(),
+			Text: b.GetText(),
+		})
+	}
+
+	return &orchestrator.InferenceResponse{
+		Content:    content,
+		Model:      protoResp.GetModel(),
+		StopReason: protoResp.GetStopReason(),
+	}, nil
+}
+
+// =============================================================================
 // Streaming Operations
 // =============================================================================
 
@@ -927,10 +1081,91 @@ func (h *orchestratorHandler) handleStream(ctx context.Context, method string, r
 	switch method {
 	case "SubscribeJobEvents":
 		return h.handleSubscribeJobEventsStream(ctx, req, t, conn)
+	case "SubscribeSessionEvents":
+		return h.handleSubscribeSessionEventsStream(ctx, req, t, conn)
+	case "InferenceStream":
+		return h.handleInferenceStream(ctx, req, t, conn)
 	default:
 		return nil, errors.NewUnimplemented("grpc.orchestrator."+method,
 			"unsupported orchestrator streaming method: "+method)
 	}
+}
+
+// handleSubscribeSessionEventsStream initiates the server-streaming RPC
+// for session events. The server streams SessionEventEnvelope messages;
+// this helper wraps the gRPC stream in a transport.Stream that converts
+// proto types to SDK types on Recv.
+func (h *orchestratorHandler) handleSubscribeSessionEventsStream(ctx context.Context, req interface{}, t *Transport, conn *grpc.ClientConn) (transport.Stream, error) {
+	sdkReq, ok := req.(*orchestrator.SubscribeSessionEventsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.SubscribeSessionEvents", "invalid request type")
+	}
+	tenantID := transport.TenantFromContext(ctx)
+	protoReq := &pb.SubscribeSessionRequest{
+		TenantId:     tenantID,
+		SessionId:    sdkReq.SessionID,
+		FromSequence: sdkReq.FromSequence,
+		Follow:       sdkReq.Follow,
+	}
+	desc := &grpc.StreamDesc{
+		StreamName:    "SubscribeSessionEvents",
+		ServerStreams: true,
+	}
+	cs, err := conn.NewStream(ctx, desc, pb.OrchestratorService_SubscribeSessionEvents_FullMethodName)
+	if err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.SubscribeSessionEvents")
+	}
+	if err := cs.SendMsg(protoReq); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.SubscribeSessionEvents")
+	}
+	if err := cs.CloseSend(); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.SubscribeSessionEvents")
+	}
+	return &sessionEventStreamAdapter{stream: cs}, nil
+}
+
+// sessionEventStreamAdapter converts proto SessionEventEnvelope to SDK
+// orchestrator.SessionEventEnvelope on each Recv. Mirrors
+// orchestratorEventStream but for the session events RPC.
+type sessionEventStreamAdapter struct {
+	stream grpc.ClientStream
+	closed atomic.Bool
+}
+
+func (s *sessionEventStreamAdapter) Send(msg interface{}) error {
+	return errors.NewUnimplemented("grpc.orchestrator.session.Send", "send not supported on server-streaming RPC")
+}
+
+func (s *sessionEventStreamAdapter) Recv() (interface{}, error) {
+	if s.closed.Load() {
+		return nil, errors.NewConnection("grpc.orchestrator.session.Recv", "stream is closed")
+	}
+	var env pb.SessionEventEnvelope
+	if err := s.stream.RecvMsg(&env); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.session.Recv")
+	}
+	out := &orchestrator.SessionEventEnvelope{
+		SessionID:   env.SessionId,
+		TenantID:    env.TenantId,
+		Sequence:    env.Sequence,
+		PayloadJSON: env.PayloadJson,
+		FromReplay:  env.FromReplay,
+	}
+	if env.Timestamp != nil {
+		out.Timestamp = env.Timestamp.AsTime()
+	}
+	return out, nil
+}
+
+func (s *sessionEventStreamAdapter) CloseSend() error {
+	// Server-streaming RPC — send side is already closed after the initial
+	// request. This call is a no-op but required to satisfy transport.Stream.
+	return nil
+}
+
+func (s *sessionEventStreamAdapter) Close() error {
+	s.closed.Store(true)
+	return nil
 }
 
 // handleSubscribeJobEventsStream initiates a server-streaming gRPC call for
@@ -972,6 +1207,101 @@ func (h *orchestratorHandler) handleSubscribeJobEventsStream(ctx context.Context
 		transport: t,
 		conn:      conn,
 	}, nil
+}
+
+// handleInferenceStream opens the InferenceStream server-streaming RPC and
+// wraps the gRPC stream in a transport.Stream that converts proto InferenceChunk
+// messages to SDK InferenceChunk types on Recv.
+func (h *orchestratorHandler) handleInferenceStream(ctx context.Context, req interface{}, t *Transport, conn *grpc.ClientConn) (transport.Stream, error) {
+	sdkReq, ok := req.(*orchestrator.InferenceRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.InferenceStream", "invalid request type")
+	}
+
+	tenantID := transport.TenantFromContext(ctx)
+
+	protoReq := &pb.InferenceRequest{
+		Backend:      sdkReq.Backend,
+		Model:        sdkReq.Model,
+		Prompt:       sdkReq.Prompt,
+		SystemPrompt: sdkReq.SystemPrompt,
+		HostAffinity: sdkReq.HostAffinity,
+		TenantId:     tenantID,
+		Metadata:     sdkReq.Metadata,
+	}
+
+	desc := &grpc.StreamDesc{
+		StreamName:    "InferenceStream",
+		ServerStreams: true,
+	}
+
+	cs, err := conn.NewStream(ctx, desc, pb.OrchestratorService_InferenceStream_FullMethodName)
+	if err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.InferenceStream")
+	}
+	if err := cs.SendMsg(protoReq); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.InferenceStream")
+	}
+	if err := cs.CloseSend(); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.InferenceStream")
+	}
+
+	return &inferenceStreamAdapter{
+		stream:    cs,
+		transport: t,
+		conn:      conn,
+	}, nil
+}
+
+// inferenceStreamAdapter converts proto InferenceChunk messages to SDK
+// InferenceChunk types on Recv. Mirrors orchestratorEventStream.
+type inferenceStreamAdapter struct {
+	stream    grpc.ClientStream
+	transport *Transport
+	conn      *grpc.ClientConn
+	closed    atomic.Bool
+}
+
+// Send is not supported; InferenceStream is server-streaming.
+func (s *inferenceStreamAdapter) Send(_ interface{}) error {
+	return errors.NewUnimplemented("grpc.orchestrator.InferenceStream.Send",
+		"send not supported on server-streaming RPC")
+}
+
+// Recv receives a proto InferenceChunk and converts it to an SDK InferenceChunk.
+func (s *inferenceStreamAdapter) Recv() (interface{}, error) {
+	if s.closed.Load() {
+		return nil, errors.NewConnection("grpc.orchestrator.InferenceStream.Recv", "stream is closed")
+	}
+	var chunk pb.InferenceChunk
+	if err := s.stream.RecvMsg(&chunk); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.InferenceStream.Recv")
+	}
+	delta := make([]orchestrator.InferenceContentBlock, 0, len(chunk.GetDelta()))
+	for _, b := range chunk.GetDelta() {
+		delta = append(delta, orchestrator.InferenceContentBlock{
+			Type: b.GetType(),
+			Text: b.GetText(),
+		})
+	}
+	return &orchestrator.InferenceChunk{
+		Delta:      delta,
+		Model:      chunk.GetModel(),
+		StopReason: chunk.GetStopReason(),
+		Final:      chunk.GetFinal(),
+	}, nil
+}
+
+// CloseSend is a no-op; the send side is already closed after the initial request.
+func (s *inferenceStreamAdapter) CloseSend() error { return nil }
+
+// Close releases the connection back to the pool.
+func (s *inferenceStreamAdapter) Close() error {
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	s.transport.returnConn(s.conn)
+	return nil
 }
 
 // orchestratorEventStream wraps a gRPC client stream and converts proto

@@ -20,7 +20,7 @@ require (
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0
 	github.com/jeremyhahn/go-signal v0.0.0
-	github.com/jeremyhahn/go-xkms v0.0.0
+	github.com/jeremyhahn/go-xkms v0.2.2-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0
 	github.com/klauspost/compress v1.18.4
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
@@ -99,6 +99,7 @@ require (
 	github.com/minio/minlz v1.1.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/samber/lo v1.53.0 // indirect
@@ -218,6 +219,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/pkg/sftp v1.13.9
 	github.com/planetscale/vtprotobuf v0.6.1-0.20250313105119-ba97887b0a25 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/pquerna/otp v1.5.0 // indirect

@@ -690,45 +690,45 @@ func Readiness(ctx context.Context) (*HealthResponse, error)
 
 ## AuthClient
 
-Provides JWT authentication, OIDC federation, and session management.
+Provides OAuth2 / OIDC authentication, WebAuthn/FIDO2 for users, and mTLS for service accounts.
 
-### Login
+**Note:** QuicBaaS is passwordless. Users authenticate via WebAuthn or smartcard (see [Passwordless Authentication](../../auth/passwordless.md)). Service accounts use OAuth2 client credentials with mTLS. Direct `Login` method is deprecated.
 
-Authenticates with username and password.
+### ClientCredentials
+
+Obtain an access token for a service account via OAuth2 client credentials flow (RFC 6749 §4.4). The client must present an mTLS certificate matching the enrolled `cnf.x5t#S256`.
 
 ```go
-func Login(ctx context.Context, req *LoginRequest) (*LoginResponse, error)
+func ClientCredentials(ctx context.Context, req *ClientCredentialsRequest) (*TokenResponse, error)
 ```
 
-**LoginRequest:**
+**ClientCredentialsRequest:**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| Username | string | User's username or email |
-| Password | string | User's password |
-| MFACode | string | Optional MFA code if MFA is required |
+| ClientID | string | Service account client ID |
+| Scope | string | Optional scopes (space-separated) |
 
-**LoginResponse:**
+**TokenResponse:**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| AccessToken | string | JWT access token |
-| RefreshToken | string | JWT refresh token |
-| ExpiresAt | time.Time | Access token expiration |
-| MFARequired | bool | Whether MFA verification is needed |
-| MFAChallenge | *MFAChallenge | MFA challenge details (if MFARequired) |
+| AccessToken | string | JWT access token (bound to mTLS certificate via `cnf.x5t#S256`) |
+| TokenType | string | Always `Bearer` |
+| ExpiresIn | int | Token expiration in seconds |
+| Scope | string | Granted scopes |
+| CNF | *CNF | Certificate binding info (`x5t#S256`) |
 
 **Example:**
 
 ```go
-resp, err := client.Auth().Login(ctx, &quicbaas.LoginRequest{
-    Username: "user@example.com",
-    Password: "password",
+resp, err := client.Auth().ClientCredentials(ctx, &quicbaas.ClientCredentialsRequest{
+    ClientID: "svc_abc123xyz",
 })
 if err != nil {
     log.Fatal(err)
 }
-fmt.Printf("Access Token: %s\n", resp.AccessToken)
+fmt.Printf("Access Token: %s (expires in %d seconds)\n", resp.AccessToken, resp.ExpiresIn)
 ```
 
 ### RefreshToken

@@ -1419,145 +1419,98 @@ func (s *Server) HandleXKMSFinishAuthentication(w http.ResponseWriter, r *http.R
 // =============================================================================
 // CA Handlers
 // =============================================================================
+//
+// These methods are thin delegates to go-xkms's production-tested
+// REST CA handlers (github.com/jeremyhahn/go-xkms/pkg/api/rest.CAHandlers).
+// The handler set is installed at server startup via
+// Server.SetCertificateAuthority, which wires an adapter around the
+// embedded TrustedCA. When the CA has not been configured (or is still
+// initializing), every CA endpoint returns 503 Service Unavailable with
+// a typed error so callers can retry once the daemon finishes startup.
+//
+// We deliberately do NOT reimplement the HTTP validation/error-mapping
+// layer here — that logic lives in go-xkms and is shared by every
+// go-xkms-backed REST server.
 
 // HandleXKMSGetCABundle handles GET /api/v1/xkms/ca/bundle.
 func (s *Server) HandleXKMSGetCABundle(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	h := s.caHandlers()
+	if h == nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, &XKMSCANotConfiguredError{})
 		return
 	}
-
-	// CA operations will be delegated to the xkms CA service
-	// once the package-level functions are available.
-	respondXKMSError(w, http.StatusNotImplemented, &XKMSOperationError{
-		Op:     "GetCABundle",
-		Detail: "CA operations not yet available",
-	})
+	h.HandleGetCABundle(w, r)
 }
 
 // HandleXKMSGetCACertificate handles GET /api/v1/xkms/ca/cert.
 func (s *Server) HandleXKMSGetCACertificate(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	h := s.caHandlers()
+	if h == nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, &XKMSCANotConfiguredError{})
 		return
 	}
-
-	respondXKMSError(w, http.StatusNotImplemented, &XKMSOperationError{
-		Op:     "GetCACertificate",
-		Detail: "CA operations not yet available",
-	})
+	h.HandleGetCACertificate(w, r)
 }
 
 // HandleXKMSSignCSR handles POST /api/v1/xkms/ca/sign.
 func (s *Server) HandleXKMSSignCSR(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	h := s.caHandlers()
+	if h == nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, &XKMSCANotConfiguredError{})
 		return
 	}
-
-	var req transportTypes.SignCSRRequest
-	if err := readXKMSBody(r, &req); err != nil {
-		respondXKMSError(w, http.StatusBadRequest, err)
-		return
-	}
-
-	if len(req.CSRPEM) == 0 {
-		respondXKMSError(w, http.StatusBadRequest, &XKMSInvalidRequestError{
-			Detail: "csr_pem is required",
-		})
-		return
-	}
-
-	respondXKMSError(w, http.StatusNotImplemented, &XKMSOperationError{
-		Op:     "SignCSR",
-		Detail: "CA operations not yet available",
-	})
+	h.HandleSignCSR(w, r)
 }
 
 // HandleXKMSIssueCertificate handles POST /api/v1/xkms/ca/issue.
 func (s *Server) HandleXKMSIssueCertificate(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	h := s.caHandlers()
+	if h == nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, &XKMSCANotConfiguredError{})
 		return
 	}
-
-	var req transportTypes.IssueCertificateRequest
-	if err := readXKMSBody(r, &req); err != nil {
-		respondXKMSError(w, http.StatusBadRequest, err)
-		return
-	}
-
-	if req.CommonName == "" {
-		respondXKMSError(w, http.StatusBadRequest, &XKMSInvalidRequestError{
-			Detail: "common_name is required",
-		})
-		return
-	}
-
-	respondXKMSError(w, http.StatusNotImplemented, &XKMSOperationError{
-		Op:     "IssueCertificate",
-		Detail: "CA operations not yet available",
-	})
+	h.HandleIssueCertificate(w, r)
 }
 
 // HandleXKMSRevokeCertificate handles POST /api/v1/xkms/ca/revoke.
 func (s *Server) HandleXKMSRevokeCertificate(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	h := s.caHandlers()
+	if h == nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, &XKMSCANotConfiguredError{})
 		return
 	}
-
-	var req transportTypes.RevokeCertificateRequest
-	if err := readXKMSBody(r, &req); err != nil {
-		respondXKMSError(w, http.StatusBadRequest, err)
-		return
-	}
-
-	if req.SerialNumber == "" {
-		respondXKMSError(w, http.StatusBadRequest, &XKMSInvalidRequestError{
-			Detail: "serial_number is required",
-		})
-		return
-	}
-
-	respondXKMSError(w, http.StatusNotImplemented, &XKMSOperationError{
-		Op:     "RevokeCertificate",
-		Detail: "CA operations not yet available",
-	})
+	h.HandleRevokeCertificate(w, r)
 }
 
 // HandleXKMSGenerateCRL handles POST /api/v1/xkms/ca/crl.
 func (s *Server) HandleXKMSGenerateCRL(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	h := s.caHandlers()
+	if h == nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, &XKMSCANotConfiguredError{})
 		return
 	}
-
-	respondXKMSError(w, http.StatusNotImplemented, &XKMSOperationError{
-		Op:     "GenerateCRL",
-		Detail: "CA operations not yet available",
-	})
+	h.HandleGenerateCRL(w, r)
 }
 
 // HandleXKMSIsRevoked handles GET /api/v1/xkms/ca/revoked/{serial}.
 func (s *Server) HandleXKMSIsRevoked(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	h := s.caHandlers()
+	if h == nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, &XKMSCANotConfiguredError{})
 		return
 	}
+	h.HandleIsRevoked(w, r)
+}
 
-	serial := chi.URLParam(r, "serial")
-	if serial == "" {
-		respondXKMSError(w, http.StatusBadRequest, &XKMSInvalidRequestError{
-			Detail: "serial number is required",
-		})
-		return
-	}
+// XKMSCANotConfiguredError is returned when a CA endpoint is hit before
+// the embedded TrustedCA has been wired to the REST server. Operators
+// see this briefly during startup; once the CA completes initialization
+// the server mounts the real go-xkms handlers.
+type XKMSCANotConfiguredError struct{}
 
-	respondXKMSError(w, http.StatusNotImplemented, &XKMSOperationError{
-		Op:     "IsRevoked",
-		Detail: "CA operations not yet available",
-	})
+// Error implements the error interface.
+func (e *XKMSCANotConfiguredError) Error() string {
+	return "xkms ca: certificate authority not configured"
 }
 
 // =============================================================================

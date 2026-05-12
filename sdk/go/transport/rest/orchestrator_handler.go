@@ -47,29 +47,37 @@ type orchestratorMethodHandler func(ctx context.Context, req interface{}) (inter
 // handleRequest routes orchestrator requests to appropriate handlers using map-based dispatch.
 func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 	handlers := map[string]orchestratorMethodHandler{
-		"Health":             h.handleHealth,
-		"ListBackends":       h.handleListBackends,
-		"SpawnSession":       h.handleSpawnSession,
-		"PromptSession":      h.handlePromptSession,
-		"SessionStatus":      h.handleSessionStatus,
-		"CloseSession":       h.handleCloseSession,
-		"ListSessions":       h.handleListSessions,
-		"CreateTask":         h.handleCreateTask,
-		"GetTask":            h.handleGetTask,
-		"ListTasks":          h.handleListTasks,
-		"ClaimTask":          h.handleClaimTask,
-		"CompleteTask":       h.handleCompleteTask,
-		"RegisterAgent":      h.handleRegisterAgent,
-		"GetAgent":           h.handleGetAgent,
-		"ListAgents":         h.handleListAgents,
-		"RemoveAgent":        h.handleRemoveAgent,
-		"AgentHeartbeat":     h.handleAgentHeartbeat,
-		"DecomposeTask":      h.handleDecomposeTask,
-		"StartJob":           h.handleStartJob,
-		"GetJobStatus":       h.handleGetJobStatus,
-		"ListJobs":           h.handleListJobs,
-		"CancelJob":          h.handleCancelJob,
-		"SubscribeJobEvents": h.handleSubscribeJobEvents,
+		"Health":               h.handleHealth,
+		"ListBackends":         h.handleListBackends,
+		"ListBackendModels":    h.handleListBackendModels,
+		"SpawnSession":         h.handleSpawnSession,
+		"PromptSession":        h.handlePromptSession,
+		"SessionStatus":        h.handleSessionStatus,
+		"CloseSession":         h.handleCloseSession,
+		"ListSessions":         h.handleListSessions,
+		"CreateTask":           h.handleCreateTask,
+		"GetTask":              h.handleGetTask,
+		"ListTasks":            h.handleListTasks,
+		"ClaimTask":            h.handleClaimTask,
+		"CompleteTask":         h.handleCompleteTask,
+		"RegisterAgent":        h.handleRegisterAgent,
+		"GetAgent":             h.handleGetAgent,
+		"ListAgents":           h.handleListAgents,
+		"RemoveAgent":          h.handleRemoveAgent,
+		"AgentHeartbeat":       h.handleAgentHeartbeat,
+		"DecomposeTask":        h.handleDecomposeTask,
+		"SpawnChildJob":        h.handleSpawnChildJob,
+		"StartJob":             h.handleStartJob,
+		"GetJobStatus":         h.handleGetJobStatus,
+		"ListJobs":             h.handleListJobs,
+		"CancelJob":            h.handleCancelJob,
+		"SubscribeJobEvents":   h.handleSubscribeJobEvents,
+		"Inference":            h.handleInference,
+		"DisableAgent":         h.handleDisableAgent,
+		"EnableAgent":          h.handleEnableAgent,
+		"SubmitTaskArtifacts":  h.handleSubmitTaskArtifacts,
+		"GetTaskArtifact":      h.handleGetTaskArtifact,
+		"ListTaskArtifacts":    h.handleListTaskArtifacts,
 	}
 
 	handler, ok := handlers[method]
@@ -94,6 +102,36 @@ func (h *orchestratorHandler) handleListBackends(ctx context.Context, req interf
 	var resp orchestrator.ListBackendsResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, "/api/v1/orchestrator/backends", nil, &resp); err != nil {
 		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleListBackendModels handles the ListBackendModels orchestrator request.
+// The REST endpoint is keyed by both agent ID and backend name; the agent
+// segment is replaced with "any" when the caller did not supply one so the
+// server-side router can skip host affinity.
+func (h *orchestratorHandler) handleListBackendModels(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ListBackendModelsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.ListBackendModels", "invalid request type")
+	}
+	if sdkReq.BackendName == "" {
+		return nil, errors.NewInvalidInput("orchestrator.ListBackendModels", "backend name is required")
+	}
+	agentID := sdkReq.AgentID
+	if agentID == "" {
+		agentID = "any"
+	}
+	url := "/api/v1/orchestrator/agents/" + agentID + "/backends/" + sdkReq.BackendName + "/models"
+	if sdkReq.TenantID != "" {
+		url += "?tenant_id=" + sdkReq.TenantID
+	}
+	var resp orchestrator.ListBackendModelsResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Models == nil {
+		resp.Models = []string{}
 	}
 	return &resp, nil
 }
@@ -353,6 +391,20 @@ func (h *orchestratorHandler) handleDecomposeTask(ctx context.Context, req inter
 // Job Operations
 // =============================================================================
 
+// handleSpawnChildJob handles the SpawnChildJob orchestrator request.
+func (h *orchestratorHandler) handleSpawnChildJob(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.SpawnChildJobRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.SpawnChildJob", "invalid request type")
+	}
+	url := "/api/v1/orchestrator/jobs/" + sdkReq.ParentJobID + "/children"
+	var resp orchestrator.SpawnChildJobResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, sdkReq, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // handleStartJob handles the StartJob orchestrator request.
 func (h *orchestratorHandler) handleStartJob(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.StartJobRequest)
@@ -414,4 +466,107 @@ func (h *orchestratorHandler) handleCancelJob(ctx context.Context, req interface
 func (h *orchestratorHandler) handleSubscribeJobEvents(ctx context.Context, req interface{}) (interface{}, error) {
 	return nil, errors.NewUnimplemented("rest.orchestrator.SubscribeJobEvents",
 		"streaming not supported over REST transport; use gRPC transport")
+}
+
+// handleDisableAgent handles POST /api/v1/agents/{id}/disable.
+func (h *orchestratorHandler) handleDisableAgent(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.DisableAgentRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "invalid request type")
+	}
+	url := "/api/v1/agents/" + sdkReq.AgentID + "/disable?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.DisableAgentResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleEnableAgent handles POST /api/v1/agents/{id}/enable.
+func (h *orchestratorHandler) handleEnableAgent(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.EnableAgentRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "invalid request type")
+	}
+	url := "/api/v1/agents/" + sdkReq.AgentID + "/enable?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.EnableAgentResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleSubmitTaskArtifacts handles POST /api/v1/orchestrator/tasks/{taskID}/artifacts.
+func (h *orchestratorHandler) handleSubmitTaskArtifacts(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.SubmitTaskArtifactsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.SubmitTaskArtifacts", "invalid request type")
+	}
+	url := "/api/v1/orchestrator/tasks/" + sdkReq.TaskID + "/artifacts?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.SubmitTaskArtifactsResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, sdkReq.Artifacts, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleGetTaskArtifact handles GET /api/v1/orchestrator/tasks/{taskID}/artifacts/{name}.
+func (h *orchestratorHandler) handleGetTaskArtifact(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetTaskArtifactRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.GetTaskArtifact", "invalid request type")
+	}
+	url := "/api/v1/orchestrator/tasks/" + sdkReq.TaskID + "/artifacts/" + sdkReq.Name + "?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.TaskArtifact
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleListTaskArtifacts handles GET /api/v1/orchestrator/tasks/{taskID}/artifacts.
+func (h *orchestratorHandler) handleListTaskArtifacts(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ListTaskArtifactsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.ListTaskArtifacts", "invalid request type")
+	}
+	url := "/api/v1/orchestrator/tasks/" + sdkReq.TaskID + "/artifacts?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.ListTaskArtifactsResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleInference handles the Inference orchestrator request — a stateless
+// fleet-routed prompt. The REST endpoint accepts {backend, model, prompt,
+// system_prompt, host_affinity, metadata, stream=false} and returns an
+// aggregated response with {content, model, stop_reason}.
+func (h *orchestratorHandler) handleInference(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.InferenceRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.Inference", "invalid request type")
+	}
+	wire := struct {
+		Backend      string            `json:"backend"`
+		Model        string            `json:"model,omitempty"`
+		Prompt       string            `json:"prompt"`
+		SystemPrompt string            `json:"system_prompt,omitempty"`
+		HostAffinity string            `json:"host_affinity,omitempty"`
+		Metadata     map[string]string `json:"metadata,omitempty"`
+		Stream       bool              `json:"stream"`
+	}{
+		Backend:      sdkReq.Backend,
+		Model:        sdkReq.Model,
+		Prompt:       sdkReq.Prompt,
+		SystemPrompt: sdkReq.SystemPrompt,
+		HostAffinity: sdkReq.HostAffinity,
+		Metadata:     sdkReq.Metadata,
+		Stream:       false,
+	}
+	var resp orchestrator.InferenceResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/orchestrator/inference", &wire, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

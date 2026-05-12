@@ -50,8 +50,9 @@ type AgentBackend interface {
 	ToolGuidance() string
 }
 
-// BackendKind classifies a backend as either an agent (ACP-compatible, persistent
-// sessions, tool use, file access) or a model server (stateless prompt/response).
+// BackendKind classifies a backend as an agent (ACP-compatible, persistent
+// sessions, tool use, file access), a stateless local model server, or an
+// API-based frontier-model inference provider.
 type BackendKind string
 
 const (
@@ -59,9 +60,16 @@ const (
 	// persistent sessions, tool use, and file access (e.g., claude, codex, opencode).
 	BackendKindAgent BackendKind = "agent"
 
-	// BackendKindModelServer indicates a stateless model server that only supports
-	// prompt/response operations (e.g., ollama).
+	// BackendKindModelServer indicates a stateless local model server that only
+	// supports prompt/response operations (e.g., ollama).
 	BackendKindModelServer BackendKind = "model_server"
+
+	// BackendKindAPIInference indicates a stateless HTTP-based frontier-model
+	// inference provider (e.g., anthropic, openai, xai). These backends are
+	// constructed from pkg/orchestration/inference.APIInferenceBackend
+	// implementations and adapted into the AgentBackend interface so the
+	// orchestrator can route to them uniformly.
+	BackendKindAPIInference BackendKind = "api_inference"
 )
 
 // BackendCapabilities describes what a backend supports.
@@ -73,6 +81,17 @@ type BackendCapabilities struct {
 	Streaming          bool        `json:"streaming"`
 	ACP                bool        `json:"acp"`
 	TeamManagement     bool        `json:"team_management"`
+}
+
+// ModelLister is an optional interface that backends may implement to report
+// their available models. Ollama implements this by querying /api/tags; ACP
+// backends return a curated static list.
+type ModelLister interface {
+	// ListModels returns the names of available models.
+	// Ollama backends enumerate locally-pulled models; ACP backends return their
+	// supported model catalog. Returns an empty slice (not an error) when the
+	// backend is reachable but has no models installed.
+	ListModels(ctx context.Context) ([]string, error)
 }
 
 // SpawnRequest contains parameters for spawning a new agent session.
@@ -92,8 +111,27 @@ type SpawnRequest struct {
 	Persistent bool `json:"persistent,omitempty"`
 
 	// Container sandbox fields.
-	Sandboxed      bool   `json:"sandboxed,omitempty"`
-	ContainerImage string `json:"container_image,omitempty"`
+	//
+	// SandboxMode is the authoritative sandbox selector for new callers. It
+	// takes precedence over Sandboxed when non-Default. Sandboxed is retained
+	// for backward compatibility with existing callers: when SandboxMode is
+	// Default and Sandboxed is true, it is treated as SandboxModeRequired.
+	SandboxMode    SandboxMode `json:"sandbox_mode,omitempty"`
+	Sandboxed      bool        `json:"sandboxed,omitempty"`
+	ContainerImage string      `json:"container_image,omitempty"`
+}
+
+// EffectiveSandboxMode returns the sandbox mode the backend should honor,
+// accounting for legacy callers that set Sandboxed=true without populating
+// SandboxMode.
+func (r *SpawnRequest) EffectiveSandboxMode() SandboxMode {
+	if r.SandboxMode != SandboxModeDefault {
+		return r.SandboxMode
+	}
+	if r.Sandboxed {
+		return SandboxModeRequired
+	}
+	return SandboxModeDefault
 }
 
 // AgentEventCallback is called by backends during prompt execution to stream

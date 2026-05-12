@@ -508,7 +508,7 @@ func TestPersistentAuthenticate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			token, err := pam.Authenticate(ctx, tt.username, tt.password)
+			token, err := pam.Authenticate(ctx, tt.username, passwordBuffer(t, tt.password))
 
 			// Password-based authentication is disabled - all attempts should fail
 			assert.Error(t, err)
@@ -533,7 +533,7 @@ func TestPersistentAuthenticateDisabled(t *testing.T) {
 	defer pam.Close()
 
 	ctx := context.Background()
-	_, err = pam.Authenticate(ctx, "testuser", "password")
+	_, err = pam.Authenticate(ctx, "testuser", passwordBuffer(t, "password"))
 	assert.Error(t, err)
 	// Authentication is not enabled when config.Enabled is false
 	assert.Contains(t, err.Error(), "authentication is not enabled")

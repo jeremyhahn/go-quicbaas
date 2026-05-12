@@ -62,13 +62,17 @@ const (
 
 // IAM API error codes.
 const (
-	ErrBadRequest    = "bad_request"
-	ErrUnauthorized  = "unauthorized"
-	ErrForbidden     = "forbidden"
-	ErrNotFound      = "not_found"
-	ErrConflict      = "conflict"
-	ErrRateLimited   = "rate_limited"
-	ErrInternalError = "internal_error"
+	ErrBadRequest         = "bad_request"
+	ErrUnauthorized       = "unauthorized"
+	ErrForbidden          = "forbidden"
+	ErrNotFound           = "not_found"
+	ErrConflict           = "conflict"
+	ErrRateLimited        = "rate_limited"
+	ErrInternalError      = "internal_error"
+	ErrPIVLoginDisabled       = "piv_login_disabled"
+	ErrClientCertRequired     = "client_cert_required"
+	ErrPIVCertIssuerRejected  = "piv_cert_issuer_rejected"
+	ErrAAGUIDNotAllowed       = "aaguid_not_allowed"
 )
 
 // Error implements the error interface.

@@ -43,6 +43,13 @@ type sealMetrics struct {
 	sealStatus            *metrics.Gauge
 }
 
+// NewSealService creates a new SealService from the given seal manager and logger.
+// This is the public constructor used by server lifecycle code to wire the seal
+// subsystem into the QuicBaaS service facade.
+func NewSealService(sealManager interfaces.SealManager, logger interfaces.Logger) SealService {
+	return newSealServiceImpl(sealManager, logger)
+}
+
 // newSealServiceImpl creates a new seal service implementation.
 func newSealServiceImpl(sealManager interfaces.SealManager, logger interfaces.Logger) *sealService {
 	svc := &sealService{
@@ -533,6 +540,34 @@ func (s *sealService) DeleteRecoveryKey(ctx context.Context, req *DeleteRecovery
 	}
 
 	return resp, nil
+}
+
+// RotateRootKey rotates the root encryption key protecting master key shares.
+func (s *sealService) RotateRootKey(ctx context.Context, req *RotateRootKeyRequest) (*RotateRootKeyResponse, error) {
+	if req == nil {
+		return nil, NewError(dberrors.ErrInvalidInput, "seal.RotateRootKey", "request cannot be nil")
+	}
+
+	if s.sealManager.IsSealed() {
+		return nil, NewError(dberrors.ErrUnavailable, "seal.RotateRootKey", "database is sealed")
+	}
+
+	if err := s.sealManager.RotateRootKey(ctx); err != nil {
+		if s.logger != nil {
+			s.logger.WithField("error", err).Error("rotate root key failed")
+		}
+		return nil, WrapError(err, dberrors.ErrInternal, "seal.RotateRootKey", "failed to rotate root key")
+	}
+
+	if s.logger != nil {
+		s.logger.Info("root key rotated successfully")
+	}
+
+	return &RotateRootKeyResponse{
+		Success:   true,
+		Message:   "root key rotated successfully",
+		Timestamp: time.Now(),
+	}, nil
 }
 
 // GenerateRootToken creates a new root token for admin access.

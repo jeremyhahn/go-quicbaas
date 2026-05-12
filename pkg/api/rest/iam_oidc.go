@@ -193,13 +193,26 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract client credentials. RFC 6749 §2.3.1 specifies HTTP Basic
+	// authentication as the recommended method for confidential clients;
+	// OAuth2 libraries (including our own agent daemon) commonly send
+	// Authorization: Basic base64(client_id:client_secret) on the
+	// token endpoint. Body fields are an alternative fallback per the
+	// same section. Basic-auth values take precedence when both are
+	// supplied because the spec forbids clients from mixing the two.
+	clientID, clientSecret, hasBasic := r.BasicAuth()
+	if !hasBasic {
+		clientID = r.FormValue("client_id")
+		clientSecret = r.FormValue("client_secret")
+	}
+
 	// Build token request
 	req := &iam.TokenRequest{
 		GrantType:    r.FormValue("grant_type"),
 		Code:         r.FormValue("code"),
 		RedirectURI:  r.FormValue("redirect_uri"),
-		ClientID:     r.FormValue("client_id"),
-		ClientSecret: r.FormValue("client_secret"),
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
 		CodeVerifier: r.FormValue("code_verifier"),
 		RefreshToken: r.FormValue("refresh_token"),
 		Resource:     r.FormValue("resource"), // RFC 8707 Resource Indicators

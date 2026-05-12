@@ -47,6 +47,12 @@ type ContainerRuntime interface {
 
 	// IsAvailable checks if the container runtime (docker/podman) is installed.
 	IsAvailable() bool
+
+	// Pull fetches a container image from the remote registry. Used by agent
+	// daemons at startup to pre-load the image map so first-spawn latency is
+	// not gated on a network round-trip. Returns ContainerImagePullError on
+	// failure; nil on success or when the image is already cached locally.
+	Pull(ctx context.Context, image string) error
 }
 
 // InteractiveProcess represents a running interactive container with stdio pipes.

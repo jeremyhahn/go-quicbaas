@@ -321,6 +321,31 @@ func (r *ExecContainerRuntime) IsAvailable() bool {
 	return detectRuntime(r.command)
 }
 
+// Pull fetches the image from the remote registry via docker/podman pull.
+// Returns nil on success (image is locally cached afterwards); returns a
+// ContainerImagePullError with the command stderr on failure.
+func (r *ExecContainerRuntime) Pull(ctx context.Context, image string) error {
+	if image == "" {
+		return &InputValidationError{Field: "image", Message: "cannot be empty"}
+	}
+
+	r.logger.Debugf("container pull: %s %s", r.command, image)
+
+	cmd := exec.CommandContext(ctx, r.command, "pull", image)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return &ContainerImagePullError{
+			Image: image,
+			Cause: &CommandError{Output: strings.TrimSpace(stderr.String())},
+		}
+	}
+
+	r.logger.Infof("container image pulled: %s", image)
+	return nil
+}
+
 // buildRunArgs constructs the argument list for a detached docker/podman run command.
 func (r *ExecContainerRuntime) buildRunArgs(spec *ContainerSpec) []string {
 	args := []string{"run", "-d"}

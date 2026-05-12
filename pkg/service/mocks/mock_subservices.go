@@ -64,6 +64,7 @@ type MockKMSService struct {
 	ClearKeySafetyFunc          func(ctx context.Context, req *service.ClearKeySafetyRequest) (*service.ClearKeySafetyResponse, error)
 	SafetyCheckFunc             func(ctx context.Context, req *service.SafetyCheckRequest) (*service.SafetyCheckResponse, error)
 	SafetyReportFunc            func(ctx context.Context, req *service.SafetyReportRequest) (*service.SafetyReportResponse, error)
+	SetDefaultKeyFunc           func(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error)
 }
 
 var _ service.KMSService = (*MockKMSService)(nil)
@@ -304,6 +305,13 @@ func (m *MockKMSService) SafetyReport(ctx context.Context, req *service.SafetyRe
 		return m.SafetyReportFunc(ctx, req)
 	}
 	return &service.SafetyReportResponse{}, nil
+}
+
+func (m *MockKMSService) SetDefaultKey(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
+	if m.SetDefaultKeyFunc != nil {
+		return m.SetDefaultKeyFunc(ctx, req)
+	}
+	return &service.SetDefaultKeyResponse{}, nil
 }
 
 // =============================================================================
@@ -939,6 +947,7 @@ type MockEmbeddingService struct {
 	SetDefaultProviderFunc      func(ctx context.Context, req *service.SetDefaultProviderRequest) (*service.SetDefaultProviderResponse, error)
 	GetCacheStatsFunc           func(ctx context.Context, req *service.GetEmbeddingCacheStatsRequest) (*service.GetEmbeddingCacheStatsResponse, error)
 	ClearCacheFunc              func(ctx context.Context, req *service.ClearEmbeddingCacheRequest) (*service.ClearEmbeddingCacheResponse, error)
+	SetProviderStatusFunc       func(ctx context.Context, req *service.SetProviderStatusRequest) (*service.SetProviderStatusResponse, error)
 }
 
 var _ service.EmbeddingService = (*MockEmbeddingService)(nil)
@@ -990,6 +999,13 @@ func (m *MockEmbeddingService) ClearCache(ctx context.Context, req *service.Clea
 		return m.ClearCacheFunc(ctx, req)
 	}
 	return &service.ClearEmbeddingCacheResponse{Timestamp: time.Now()}, nil
+}
+
+func (m *MockEmbeddingService) SetProviderStatus(ctx context.Context, req *service.SetProviderStatusRequest) (*service.SetProviderStatusResponse, error) {
+	if m.SetProviderStatusFunc != nil {
+		return m.SetProviderStatusFunc(ctx, req)
+	}
+	return &service.SetProviderStatusResponse{Name: req.Name, Enabled: req.Enabled, Timestamp: time.Now()}, nil
 }
 
 // =============================================================================
@@ -1702,4 +1718,135 @@ func (m *MockObjectTransferService) StreamFetchObjects(ctx context.Context, req 
 		return m.StreamFetchObjectsFunc(ctx, req)
 	}
 	return &service.StreamFetchObjectsResponse{}, nil
+}
+
+// =============================================================================
+// MockProjectService
+// =============================================================================
+
+// MockProjectService is a mock implementation of service.ProjectService.
+type MockProjectService struct {
+	CreateProjectFunc       func(ctx context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error)
+	GetProjectFunc          func(ctx context.Context, req *service.GetProjectRequest) (*service.GetProjectResponse, error)
+	GetProjectByNameFunc    func(ctx context.Context, req *service.GetProjectByNameRequest) (*service.GetProjectResponse, error)
+	UpdateProjectFunc       func(ctx context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error)
+	DeleteProjectFunc       func(ctx context.Context, req *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error)
+	ListProjectsFunc        func(ctx context.Context, req *service.ListProjectsRequest) (*service.ListProjectsResponse, error)
+	AuthorizeAgentFunc      func(ctx context.Context, req *service.AuthorizeAgentRequest) error
+	GrantAgentRoleFunc      func(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error)
+	RevokeAgentRoleFunc     func(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error)
+}
+
+var _ service.ProjectService = (*MockProjectService)(nil)
+
+func (m *MockProjectService) CreateProject(ctx context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error) {
+	if m.CreateProjectFunc != nil {
+		return m.CreateProjectFunc(ctx, req)
+	}
+	return &service.CreateProjectResponse{}, nil
+}
+
+func (m *MockProjectService) GetProject(ctx context.Context, req *service.GetProjectRequest) (*service.GetProjectResponse, error) {
+	if m.GetProjectFunc != nil {
+		return m.GetProjectFunc(ctx, req)
+	}
+	return &service.GetProjectResponse{}, nil
+}
+
+func (m *MockProjectService) GetProjectByName(ctx context.Context, req *service.GetProjectByNameRequest) (*service.GetProjectResponse, error) {
+	if m.GetProjectByNameFunc != nil {
+		return m.GetProjectByNameFunc(ctx, req)
+	}
+	return &service.GetProjectResponse{}, nil
+}
+
+func (m *MockProjectService) UpdateProject(ctx context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error) {
+	if m.UpdateProjectFunc != nil {
+		return m.UpdateProjectFunc(ctx, req)
+	}
+	return &service.UpdateProjectResponse{}, nil
+}
+
+func (m *MockProjectService) DeleteProject(ctx context.Context, req *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error) {
+	if m.DeleteProjectFunc != nil {
+		return m.DeleteProjectFunc(ctx, req)
+	}
+	return &service.DeleteProjectResponse{Deleted: true}, nil
+}
+
+func (m *MockProjectService) ListProjects(ctx context.Context, req *service.ListProjectsRequest) (*service.ListProjectsResponse, error) {
+	if m.ListProjectsFunc != nil {
+		return m.ListProjectsFunc(ctx, req)
+	}
+	return &service.ListProjectsResponse{}, nil
+}
+
+func (m *MockProjectService) AuthorizeAgent(ctx context.Context, req *service.AuthorizeAgentRequest) error {
+	if m.AuthorizeAgentFunc != nil {
+		return m.AuthorizeAgentFunc(ctx, req)
+	}
+	return nil
+}
+
+func (m *MockProjectService) GrantAgentRole(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+	if m.GrantAgentRoleFunc != nil {
+		return m.GrantAgentRoleFunc(ctx, req)
+	}
+	return &service.GrantAgentRoleResponse{
+		ProjectID: req.ProjectID,
+		AgentID:   req.AgentID,
+		Role:      req.Role,
+	}, nil
+}
+
+func (m *MockProjectService) RevokeAgentRole(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
+	if m.RevokeAgentRoleFunc != nil {
+		return m.RevokeAgentRoleFunc(ctx, req)
+	}
+	return &service.RevokeAgentRoleResponse{
+		ProjectID: req.ProjectID,
+		AgentID:   req.AgentID,
+	}, nil
+}
+
+// =============================================================================
+// MockAgentAdminService
+// =============================================================================
+
+// MockAgentAdminService is a test double for service.AgentAdminService.
+type MockAgentAdminService struct {
+	DisableAgentFunc           func(ctx context.Context, req *service.DisableAgentRequest) (*service.DisableAgentResponse, error)
+	EnableAgentFunc            func(ctx context.Context, req *service.EnableAgentRequest) (*service.EnableAgentResponse, error)
+	GetAgentRegistrationFunc   func(ctx context.Context, req *service.GetAgentRegistrationRequest) (*service.GetAgentRegistrationResponse, error)
+	ListAgentRegistrationsFunc func(ctx context.Context, req *service.ListAgentRegistrationsRequest) (*service.ListAgentRegistrationsResponse, error)
+}
+
+var _ service.AgentAdminService = (*MockAgentAdminService)(nil)
+
+func (m *MockAgentAdminService) DisableAgent(ctx context.Context, req *service.DisableAgentRequest) (*service.DisableAgentResponse, error) {
+	if m.DisableAgentFunc != nil {
+		return m.DisableAgentFunc(ctx, req)
+	}
+	return &service.DisableAgentResponse{AgentID: req.AgentID, Disabled: true}, nil
+}
+
+func (m *MockAgentAdminService) EnableAgent(ctx context.Context, req *service.EnableAgentRequest) (*service.EnableAgentResponse, error) {
+	if m.EnableAgentFunc != nil {
+		return m.EnableAgentFunc(ctx, req)
+	}
+	return &service.EnableAgentResponse{AgentID: req.AgentID, Enabled: true}, nil
+}
+
+func (m *MockAgentAdminService) GetAgentRegistration(ctx context.Context, req *service.GetAgentRegistrationRequest) (*service.GetAgentRegistrationResponse, error) {
+	if m.GetAgentRegistrationFunc != nil {
+		return m.GetAgentRegistrationFunc(ctx, req)
+	}
+	return &service.GetAgentRegistrationResponse{}, nil
+}
+
+func (m *MockAgentAdminService) ListAgentRegistrations(ctx context.Context, req *service.ListAgentRegistrationsRequest) (*service.ListAgentRegistrationsResponse, error) {
+	if m.ListAgentRegistrationsFunc != nil {
+		return m.ListAgentRegistrationsFunc(ctx, req)
+	}
+	return &service.ListAgentRegistrationsResponse{}, nil
 }

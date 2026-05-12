@@ -243,6 +243,14 @@ type CreateSchedulerJobRequest struct {
 	Timeout        time.Duration      `json:"timeout,omitempty"`
 	MaxRetries     int32              `json:"max_retries,omitempty"`
 	Labels         map[string]string  `json:"labels,omitempty"`
+
+	// NodeAffinity restricts execution to a specific node. Empty
+	// (default) makes the job cluster-wide — executes on the Raft
+	// leader only. Non-empty pins execution to the node whose
+	// SchedulerEngine was constructed with a matching node ID,
+	// regardless of leadership. See scheduler.Job.NodeAffinity for
+	// full semantics.
+	NodeAffinity string `json:"node_affinity,omitempty"`
 }
 
 // CreateSchedulerJobResponse contains the result of creating a job.

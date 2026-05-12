@@ -29,6 +29,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest/ui"
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -84,6 +86,11 @@ type Config struct {
 	// ExposeShardHeader controls X-QuicBaaS-Shard response header tagging.
 	ExposeShardHeader bool
 
+	// NodeID is the Raft node ID of this daemon instance. Used as the
+	// authoritative node_id in cluster status responses when the Raft
+	// topology is unavailable (e.g., standalone mode or first boot).
+	NodeID uint64
+
 	// TLS configuration
 	TLSEnabled    bool   // Enable TLS/HTTPS
 	TLSCertFile   string // Path to TLS certificate file
@@ -100,6 +107,34 @@ type Config struct {
 	// Both must be provided to enable authorization middleware
 	TokenValidator TokenValidator                  // JWT token validator
 	AuthzService   interfaces.AuthorizationService // Authorization service
+
+	// PIVClientCert controls PIV certificate-based activation (default: disabled).
+	PIVClientCert PIVClientCertConfig
+
+	// IAMSelfServiceRegistration is the per-server self-service tenant
+	// registration policy. When zero-valued the registration surface is
+	// disabled (the safe default). Embedded callers that want to enable
+	// self-service registration populate this field at server-construction
+	// time from their own config struct.
+	IAMSelfServiceRegistration config.IAMSelfServiceRegistrationConfig
+}
+
+// PIVClientCertConfig holds PIV TLS client certificate configuration.
+type PIVClientCertConfig struct {
+	// Enabled controls whether the PIV activate endpoint accepts client certs
+	// from the TLS handshake. When false, the PEM body parameter is used instead.
+	// Default: false (cert provided in POST body as PEM).
+	Enabled bool
+
+	// TrustedRootsFile is the path to a PEM-encoded file containing trusted CA
+	// certificates for PIV cert chain verification. When empty, the server-level
+	// TLSCAFile is used as a fallback. Required when Enabled is true.
+	TrustedRootsFile string
+
+	// TrustedIssuers is an optional list of issuer Subject DN strings that the
+	// certificate's issuing CA must match (case-insensitive per RFC 4514). When
+	// empty, any cert that validates against the CA pool is accepted.
+	TrustedIssuers []string
 }
 
 // DefaultConfig returns default REST API configuration.
@@ -137,6 +172,63 @@ type Server struct {
 
 	// hookTaskStore is the task store used by Claude Code hook handlers (optional)
 	hookTaskStore orchestration.TaskStore
+
+	// agentRegistrar is the fleet-registry registrar used by the mTLS
+	// register handler (handlers_agent_register.go) to publish newly
+	// registered daemons. Stored as interface{} to avoid pulling iam
+	// into the core rest package — the register handler, compiled under
+	// the iam build tag, performs the type assertion itself.
+	agentRegistrar interface{}
+
+	// eventIngestURL is the gRPC URL the agent register handler hands
+	// back to a daemon on enrollment so the daemon dials the gRPC
+	// listener (h2 ALPN) for PushEvents instead of the REST listener
+	// (http/1.1 ALPN). Format is a full URL: "https://host:port".
+	// Empty string means the server has no gRPC listener exposed; the
+	// agent then skips event forwarding rather than dialing a wrong
+	// port. Wired by pkg/server lifecycle via SetEventIngestURL.
+	eventIngestURL string
+
+	// agentHeartbeatRecoverer, when set via SetAgentHeartbeatRecoverer,
+	// performs idempotent registry recovery when a heartbeat arrives for
+	// an agent that is no longer in the in-memory registry (e.g. after
+	// the central daemon restarts). The recoverer uses the request's
+	// mTLS peer certificate to re-authenticate the agent and re-publish
+	// it into the fleet registry, so the agent never needs to re-enroll.
+	// Stored as interface{} so the core rest package does not pull pkg/iam
+	// — the iam-tagged install file performs the type assertion itself.
+	// Nil means recovery is disabled and unknown-agent heartbeats return
+	// 404 (the legacy behaviour).
+	agentHeartbeatRecoverer interface{}
+
+	// xkmsCAHandlers, when set via SetCertificateAuthority, is the go-xkms
+	// REST CAHandlers set (pkg/api/rest.CAHandlers) wired around a
+	// TrustedCA-backed servicer. The stub CA handlers in handlers_xkms.go
+	// type-assert on caHandlerSet and delegate when non-nil; otherwise
+	// they return 503 Service Unavailable. Typed as an interface so
+	// server.go does not import the go-xkms rest package directly.
+	xkmsCAHandlers caHandlerSet
+
+	// iamHandler holds the *IAMHandler created during route registration under the
+	// rest && iam build tags. Typed as interface{} so server.go does not need to
+	// import pkg/iam — lifecycle_iam_mtls.go performs the type assertion.
+	// Nil when IAM is not compiled in.
+	iamHandler interface{}
+
+	// barrierSvc serves /api/v1/barrier endpoints. Wired by lifecycle via
+	// SetBarrierService once the qrdb SDK BarrierClient is available. Nil
+	// before wiring; the handlers report 503 Service Unavailable.
+	barrierSvc service.BarrierServicer
+
+	// ceremonySvc serves /api/v1/init endpoints. Wired by lifecycle via
+	// SetCeremonyService once the qrdb SDK CeremonyClient is available.
+	// Nil before wiring; the handlers report 503 Service Unavailable.
+	ceremonySvc service.CeremonyServicer
+
+	// bootstrapSvc serves /api/v1/bootstrap endpoints. Wired by lifecycle
+	// via SetBootstrapService once the trust bootstrap subsystem is online.
+	// Nil before wiring; the handlers report 503 Service Unavailable.
+	bootstrapSvc BootstrapServicer
 
 	startTime time.Time
 	mu        sync.RWMutex
@@ -279,6 +371,7 @@ func (s *Server) setupRouter() {
 				r.Post("/keys/{name}/rotate", s.HandleRotateKey)        // Rotate key
 				r.Post("/keys/{name}/export", s.HandleExportKey)        // Export key wrapped
 				r.Put("/keys/{name}/status", s.HandleUpdateKeyStatus)   // Update key status
+				r.Put("/keys/{name}/default", s.HandleSetDefaultKey)    // Set key as system default
 				r.Put("/keys/{name}/safety", s.HandleSetKeySafety)      // Set key safety limits
 				r.Delete("/keys/{name}", s.HandleDeleteKey)             // Delete key
 				r.Delete("/keys/{name}/safety", s.HandleClearKeySafety) // Clear key safety limits
@@ -317,12 +410,15 @@ func (s *Server) setupRouter() {
 				r.Delete("/*", s.HandleDeleteSecret)     // Delete secret (use ?destroy=true for permanent)
 			})
 
-			// Secrets prefix and watch routes (separate from main secrets to avoid wildcard conflicts)
+			// Secrets prefix, watch, and versions routes (separate to avoid wildcard conflicts)
 			r.Route("/secrets-prefix", func(r chi.Router) {
 				r.Get("/*", s.HandleGetSecretsByPrefix) // Get all secrets by prefix
 			})
 			r.Route("/secrets-watch", func(r chi.Router) {
 				r.Get("/*", s.HandleWatchSecrets) // Watch secrets via SSE
+			})
+			r.Route("/secrets-versions", func(r chi.Router) {
+				r.Get("/*", s.HandleListSecretVersions) // List versions for a secret path
 			})
 
 			// Parameters routes
@@ -338,7 +434,54 @@ func (s *Server) setupRouter() {
 				r.Post("/search", s.HandleSearchParametersByTags)      // Search by tags
 			})
 
-			// Seal routes
+			// SSH routes — proxy to xkms SSH SDK via service.QuicBaaS.SSHClient().
+			// Mounted at both /api/v1/ssh (canonical) and /api/v1/xkms/v1/ssh
+			// (the path prefix the go-xkms REST SSH SDK client expects — this
+			// alias lets CLIs set XKMSD_URL to the quicbaasd base and reuse
+			// the go-xkms client unchanged).
+			r.Route("/ssh", func(r chi.Router) {
+				r.Post("/keys", s.HandleGenerateSSHKey)
+				r.Post("/keys/import", s.HandleImportSSHKey)
+				r.Get("/keys", s.HandleListSSHKeys)
+				r.Get("/keys/{scope}/{owner}/{name}", s.HandleGetSSHKey)
+				r.Delete("/keys/{scope}/{owner}/{name}", s.HandleDeleteSSHKey)
+				r.Get("/keys/{scope}/{owner}/{name}/public", s.HandleExportSSHKeyPublic)
+				r.Post("/keys/{scope}/{owner}/{name}/sign", s.HandleSignSSHDigest)
+
+				r.Post("/known-hosts", s.HandleAddKnownHost)
+				r.Get("/known-hosts", s.HandleListKnownHosts)
+				r.Delete("/known-hosts/{host}", s.HandleRemoveKnownHost)
+				r.Post("/known-hosts/{host}/verify", s.HandleVerifyKnownHost)
+
+				r.Post("/authorized", s.HandleEmitAuthorized)
+				r.Post("/authorized/verify", s.HandleVerifyAuthorized)
+			})
+
+			// Alias: /api/v1/xkms/v1/ssh/* → same handlers as /api/v1/ssh/*.
+			// Matches the xkms SDK REST client's fixed path prefix.
+			r.Route("/xkms/v1/ssh", func(r chi.Router) {
+				r.Post("/keys", s.HandleGenerateSSHKey)
+				r.Post("/keys/import", s.HandleImportSSHKey)
+				r.Get("/keys", s.HandleListSSHKeys)
+				r.Get("/keys/{scope}/{owner}/{name}", s.HandleGetSSHKey)
+				r.Delete("/keys/{scope}/{owner}/{name}", s.HandleDeleteSSHKey)
+				r.Get("/keys/{scope}/{owner}/{name}/public", s.HandleExportSSHKeyPublic)
+				r.Post("/keys/{scope}/{owner}/{name}/sign", s.HandleSignSSHDigest)
+
+				r.Post("/known-hosts", s.HandleAddKnownHost)
+				r.Get("/known-hosts", s.HandleListKnownHosts)
+				r.Delete("/known-hosts/{host}", s.HandleRemoveKnownHost)
+				r.Post("/known-hosts/{host}/verify", s.HandleVerifyKnownHost)
+
+				r.Post("/authorized", s.HandleEmitAuthorized)
+				r.Post("/authorized/verify", s.HandleVerifyAuthorized)
+			})
+
+
+			// Seal routes (LEGACY — superseded by /api/v1/barrier/*).
+			// Each handler stamps Deprecation/Sunset/Link headers per
+			// RFC 8594 + draft-ietf-httpapi-deprecation-header. See
+			// markSealDeprecated in handlers_seal.go.
 			r.Route("/seal", func(r chi.Router) {
 				r.Get("/status", s.HandleSealStatus)                      // Get seal status
 				r.Post("/init", s.HandleSealInit)                         // Initialize
@@ -348,6 +491,61 @@ func (s *Server) setupRouter() {
 				r.Post("/recovery/generate", s.HandleGenerateRecoveryKey) // Generate recovery key
 				r.Delete("/recovery", s.HandleDeleteRecoveryKey)          // Delete recovery key
 				r.Post("/root/generate", s.HandleGenerateRootToken)       // Generate root token
+				r.Post("/rotate-root", s.HandleRotateRootKey)             // Rotate root encryption key
+			})
+
+			// Barrier routes — canonical seal-lifecycle surface that
+			// supersedes /api/v1/seal. Mirrors the qrdb /v1/barrier
+			// contract so a single SDK works against both products.
+			r.Route("/barrier", func(r chi.Router) {
+				r.Get("/status", s.HandleBarrierStatus)
+				r.Post("/initialize", s.HandleBarrierInitialize)
+				r.Post("/unseal", s.HandleBarrierUnseal)
+				r.Post("/seal", s.HandleBarrierSeal)
+
+				r.Post("/shamir/initialize", s.HandleBarrierShamirInitialize)
+				r.Post("/shamir/unseal-share", s.HandleBarrierShamirUnsealShare)
+				r.Post("/shamir/unseal-shares", s.HandleBarrierShamirUnsealShares)
+				r.Get("/shamir/shares", s.HandleBarrierShamirListShares)
+				r.Delete("/shamir/shares", s.HandleBarrierShamirDeleteAllShares)
+				r.Delete("/shamir/shares/{index}", s.HandleBarrierShamirDeleteShare)
+				r.Post("/shamir/verify", s.HandleBarrierShamirVerify)
+
+				r.Post("/rekey", s.HandleBarrierRekey)
+
+				r.Post("/recovery/generate", s.HandleBarrierRecoveryGenerate)
+				r.Post("/recovery/recover", s.HandleBarrierRecoveryRecover)
+				r.Delete("/recovery", s.HandleBarrierRecoveryDelete)
+				r.Get("/recovery/status", s.HandleBarrierRecoveryStatus)
+
+				r.Post("/root-token", s.HandleBarrierRootToken)
+			})
+
+			// Ceremony routes — canonical /api/v1/init surface. The
+			// ceremony lifecycle (M-of-N officer enrollment, certificate
+			// claims, share distribution, CSR signing) lives under /init
+			// to align with the qrdb sealed-window allowlist.
+			r.Route("/init", func(r chi.Router) {
+				r.Get("/status", s.HandleCeremonyStatus)
+				r.Get("/officers", s.HandleCeremonyListOfficers)
+				r.Post("/initialize", s.HandleCeremonyInitialize)
+				r.Post("/claim-cert/begin", s.HandleCeremonyClaimCertBegin)
+				r.Post("/claim-cert/complete", s.HandleCeremonyClaimCertComplete)
+				r.Post("/claim-share", s.HandleCeremonyClaimShare)
+				r.Post("/sign-csr", s.HandleCeremonySignCSR)
+				r.Post("/enroll-external-officer", s.HandleCeremonyEnrollExternalOfficer)
+			})
+
+			// Bootstrap routes — trust-bootstrap surface for first-touch
+			// CA discovery (DANE, Noise PSK, SPKI pin). Handlers return
+			// 503 Service Unavailable until the truststrap subsystem is
+			// online, then 501 Not Implemented for methods that haven't
+			// been wired to a concrete servicer yet.
+			r.Route("/bootstrap", func(r chi.Router) {
+				r.Post("/auto", s.HandleBootstrapAuto)
+				r.Post("/dane", s.HandleBootstrapDane)
+				r.Post("/noise", s.HandleBootstrapNoise)
+				r.Post("/spki", s.HandleBootstrapSpki)
 			})
 
 			// Crypto routes
@@ -418,6 +616,9 @@ func (s *Server) setupRouter() {
 			r.Get("/health/live", s.HandleLiveness)
 			r.Get("/health/ready", s.HandleReadiness)
 
+			// Version (open — needed by the GUI dashboard).
+			r.Get("/version", s.HandleVersion)
+
 			// Metrics routes
 			r.Route("/metrics", func(r chi.Router) {
 				// Prometheus metrics
@@ -467,8 +668,15 @@ func (s *Server) setupRouter() {
 			// XKMS-compatible routes (go-xkms SDK REST transport compatibility)
 			registerXKMSRoutes(s, r)
 
+			// Project routes (tenant → project → workflow hierarchy)
+			registerProjectRoutes(s, r)
+
+			// Agent admin routes (disable/enable agents)
+			registerAgentAdminRoutes(s, r)
+
 			// Orchestrator routes (agent sessions, tasks, backends)
 			registerOrchestratorRoutes(s, r)
+
 		})
 
 		// Upload-heavy routes with larger body size limit (100 MB).
@@ -503,6 +711,10 @@ func (s *Server) setupRouter() {
 	r.Get("/docs", s.HandleDocsRedirect)
 	r.Get("/docs/", s.HandleSwaggerUI)
 	r.Get("/docs/openapi.yaml", s.HandleOpenAPISpec)
+
+	// Embedded Svelte UI — registered after all /api/v1 routes so that API
+	// paths are never shadowed. The UI is available at /ui/*.
+	ui.RegisterUI(r)
 
 	// Root redirect - now points to API documentation
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
@@ -632,6 +844,34 @@ func (s *Server) SetHookTaskStore(store orchestration.TaskStore) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.hookTaskStore = store
+}
+
+// SetBarrierService installs the barrier facade used by /api/v1/barrier
+// handlers. Lifecycle wiring calls this once the qrdb SDK BarrierClient
+// is available. Passing nil disables the surface (handlers report 503).
+func (s *Server) SetBarrierService(svc service.BarrierServicer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.barrierSvc = svc
+}
+
+// SetCeremonyService installs the ceremony facade used by /api/v1/init
+// handlers. Lifecycle wiring calls this once the qrdb SDK CeremonyClient
+// is available. Passing nil disables the surface (handlers report 503).
+func (s *Server) SetCeremonyService(svc service.CeremonyServicer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ceremonySvc = svc
+}
+
+// SetBootstrapService installs the trust-bootstrap facade used by
+// /api/v1/bootstrap handlers. Lifecycle wiring calls this once the
+// truststrap subsystem is online. Passing nil disables the surface
+// (handlers report 503).
+func (s *Server) SetBootstrapService(svc BootstrapServicer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bootstrapSvc = svc
 }
 
 // SetAuthorizationService sets the authorization service and token validator after construction.
@@ -765,27 +1005,46 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	// Configure client certificate authentication if enabled
+	// Configure client certificate authentication.
+	//
+	// Three modes are supported:
+	//   TLSClientAuth=true + TLSCAFile → RequireAndVerifyClientCert
+	//     (every TLS connection must present a CA-signed client cert)
+	//
+	//   TLSClientAuth=false + TLSCAFile → VerifyClientCertIfGiven
+	//     (browsers connect without a cert; agents can optionally
+	//     present one which per-route handlers then validate. This
+	//     is the mode quicbaasd uses so the /api/v1/agents/register
+	//     mTLS endpoint coexists with the unauthenticated UI.)
+	//
+	//   TLSClientAuth=false + no TLSCAFile → no client-auth plumbing
 	if s.config.TLSClientAuth {
 		if s.config.TLSCAFile == "" {
 			return nil, api.NewRequiredFieldError("TLSCAFile")
 		}
-
-		// Load CA certificate for client verification
 		caCert, err := os.ReadFile(s.config.TLSCAFile)
 		if err != nil {
 			return nil, api.NewOperationFailedError("read CA certificate", err)
 		}
-
 		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM(caCert) {
 			return nil, api.NewInvalidFormatError("CA certificate", nil)
 		}
-
 		tlsConfig.ClientCAs = caCertPool
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-
 		s.logger.Info("REST server configured with mTLS (client certificate required)")
+	} else if s.config.TLSCAFile != "" {
+		caCert, err := os.ReadFile(s.config.TLSCAFile)
+		if err != nil {
+			return nil, api.NewOperationFailedError("read CA certificate", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, api.NewInvalidFormatError("CA certificate", nil)
+		}
+		tlsConfig.ClientCAs = caCertPool
+		tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+		s.logger.Info("REST server configured with optional mTLS (per-route client cert validation)")
 	}
 
 	return tlsConfig, nil

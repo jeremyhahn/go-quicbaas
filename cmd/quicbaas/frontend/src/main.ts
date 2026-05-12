@@ -13,7 +13,49 @@
 
 import { mount } from 'svelte';
 import App from './App.svelte';
+import { showToast } from './stores/toast.svelte.ts';
 import './app.css';
+
+// ---------------------------------------------------------------------------
+// Global error boundary.
+//
+// Unhandled errors and promise rejections that escape component try-catch
+// blocks are caught here. Surfacing them as toasts prevents the UI from
+// silently entering a broken state and ensures the operator sees actionable
+// error messages.
+//
+// Neither handler suppresses the error — both re-surface it so browser
+// devtools still receive the full stack trace.
+// ---------------------------------------------------------------------------
+
+window.onerror = (
+  message: string | Event,
+  _source?: string,
+  _lineno?: number,
+  _colno?: number,
+  error?: Error,
+): boolean => {
+  const msg =
+    error instanceof Error
+      ? error.message
+      : typeof message === 'string'
+        ? message
+        : 'Unexpected error';
+  // Do not suppress — return false lets the browser report the error normally.
+  showToast({ type: 'error', message: msg });
+  return false;
+};
+
+window.addEventListener('unhandledrejection', (ev: PromiseRejectionEvent) => {
+  const reason = ev.reason;
+  const msg =
+    reason instanceof Error
+      ? reason.message
+      : typeof reason === 'string'
+        ? reason
+        : 'Unexpected error';
+  showToast({ type: 'error', message: msg });
+});
 
 const app = mount(App, { target: document.getElementById('app')! });
 

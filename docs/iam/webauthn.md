@@ -2,7 +2,25 @@
 
 ## Overview
 
-QuicBaaS IAM provides passwordless authentication via WebAuthn/FIDO2, supporting hardware security keys (YubiKey, etc.) and platform authenticators (Touch ID, Windows Hello, Android biometrics).
+QuicBaaS IAM provides passwordless authentication via WebAuthn/FIDO2,
+supporting hardware security keys (YubiKey, etc.) and platform
+authenticators (Touch ID, Windows Hello, Android biometrics).
+
+**Phase 5 update (2026-05-07).** The WebAuthn relying-party logic is no
+longer reimplemented inside `pkg/iam`. The canonical implementation
+lives in `go-xkms/pkg/webauthn`; quicbaas wraps it with a thin
+multi-tenant manager (`iam.XKMSWebAuthnManager`) and per-tenant
+service factory (`iam.WebAuthnServiceFactory`). User and credential
+persistence flows through xkms's qrdb adapter
+(`xkms.NewQRDBUserStoreAdapter`) so each tenant has an isolated user
+namespace inside the platform tenant's qrdb keyspace.
+
+REST surface is mounted at two paths:
+
+- Legacy: `/api/v1/tenants/{tenant_id}/webauthn/{register,login}/{begin,finish}`
+- Canonical (Phase 5): `/api/v1/iam/{tenant_id}/webauthn/{registration,login}/{begin,finish}`
+
+Both paths route to the same per-tenant xkms service via the factory.
 
 ## Features
 
@@ -17,46 +35,70 @@ QuicBaaS IAM provides passwordless authentication via WebAuthn/FIDO2, supporting
 
 ### Configuration
 
-Enable WebAuthn in your QuicBaaS IAM configuration:
+Configure the relying-party in your QuicBaaS configuration:
 
 ```yaml
 iam:
-  enabled: true
-  auth:
-    webauthn:
-      enabled: true
-      rp_id: "example.com"
-      rp_name: "Example Application"
-      rp_origins:
-        - "https://example.com"
-        - "https://app.example.com"
-      attestation: "none"        # none, indirect, direct
-      user_verification: "preferred"  # required, preferred, discouraged
-      timeout: 60s
+  webauthn:
+    rp_id: "example.com"
+    rp_display_name: "Example Application"
+    rp_origins:
+      - "https://example.com"
+      - "https://app.example.com"
+    timeout: "60s"
+    user_verification: "preferred"        # required | preferred | discouraged
+    attestation_preference: "none"        # none | indirect | direct
+    resident_key_requirement: "preferred" # discouraged | preferred | required
+    authenticator_attachment: ""          # platform | cross-platform | "" (any)
+    debug: false
+  aaguid:
+    mode: "log_only"                      # log_only | enforce
+    allowlist_file: "/etc/quicbaasd/aaguid.json"
 ```
+
+The `iam.webauthn.*` keys are validated at daemon startup
+(`config.IAMWebAuthnConfig.Validate`). Production deployments must
+provide an explicit `rp_id`, `rp_display_name`, and at least one
+`rp_origin`; the dev defaults (`localhost`, `QuicBaaS`,
+`https://localhost`) are applied only when the operator omits the
+field entirely.
 
 ### Go SDK Usage
 
 ```go
-import "github.com/jeremyhahn/go-quicbaas/pkg/iam"
+import (
+    "github.com/jeremyhahn/go-quicbaas/pkg/iam"
+    qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
 
-// Create WebAuthn manager
-config := &iam.WebAuthnConfig{
-    RPID:             "example.com",
-    RPName:           "Example Application",
-    RPOrigins:        []string{"https://example.com"},
-    Attestation:      "none",
-    UserVerification: "preferred",
-    Timeout:          60 * time.Second,
+// Build the per-tenant WebAuthn factory. The qrdb client is required:
+// each tenant's user + credential records are persisted via xkms's
+// qrdb adapter pair under the platform tenant's KV namespace.
+factory, err := iam.NewWebAuthnServiceFactory(iam.WebAuthnFactoryParams{
+    Config: iam.WebAuthnFactoryConfig{
+        RPID:          "example.com",
+        RPDisplayName: "Example Application",
+        RPOrigins:     []string{"https://example.com"},
+        Timeout:       60 * time.Second,
+    },
+    QRDB: qrdbClient,
+})
+if err != nil {
+    return err
 }
 
-deps := iam.WebAuthnDependencies{
-    CredentialStorage: credStorage,
-    IdentityStore:     identityStore,
-    SessionStorage:    sessionStore,
+// Wrap the factory in the multi-tenant manager. The manager
+// implements service.WebAuthnManager and is the surface the REST
+// handlers consume.
+manager, err := iam.NewXKMSWebAuthnManager(factory)
+if err != nil {
+    return err
 }
 
-manager, err := iam.NewWebAuthnManager(config, deps)
+// Optionally apply an AAGUID allowlist. The manager intercepts
+// FinishRegistration and rejects credentials whose AAGUID is not
+// permitted (in strict mode).
+manager.SetAAGUIDAllowlist(allowlist)
 ```
 
 ## REST API Flow
@@ -485,7 +527,19 @@ function WebAuthnManager() {
 
 ## Credential Storage
 
-### Storage Interface
+Phase 5 moves credential persistence to xkms. quicbaas no longer
+defines a `CredentialStorage` interface; the per-tenant xkms
+WebAuthn service uses `xkms.NewQRDBUserStoreAdapter` to read and
+write credentials through qrdb's KV client under the
+`__xkms:webauthn/` keyspace prefix. Operators do not need to
+configure a separate credential store — the platform's qrdb
+deployment is the single source of truth.
+
+The legacy storage interface documented in earlier revisions
+(`iam.CredentialStorage`) has been removed; this section is kept
+for historical reference only.
+
+### Storage Interface (legacy / removed)
 
 The WebAuthn manager uses a credential storage interface:
 

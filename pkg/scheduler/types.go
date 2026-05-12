@@ -12,6 +12,29 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package scheduler provides a unified job scheduling system for QuicBaaS.
+//
+// # Clustering
+//
+// In a Raft cluster, scheduler storage is replicated on the Platform
+// shard. Every node's SchedulerEngine polls the same replicated state.
+// To prevent duplicate execution of jobs, the engine consults a
+// per-job dispatch gate before firing (see shouldExecute). The gate
+// uses two engine-level settings (nodeID + LeaderChecker) and one
+// per-job field (Job.NodeAffinity) to classify each due job:
+//
+//   - NodeAffinity == ""      -> cluster-wide, fires on Raft leader only
+//   - NodeAffinity == nodeID  -> affine to this node, fires here
+//   - NodeAffinity != nodeID  -> skipped (belongs to another node)
+//
+// See docs/scheduler-clustering.md for the full behavior matrix and
+// design rationale. Constructors:
+//
+//   - New(config, storage)                  -- single-node / test mode
+//   - NewWithClustering(config, storage,
+//         nodeID, leader)                   -- cluster deployment
+//
+// Existing idempotent handlers (audit_cleanup, kms_grace,
+// db_compaction) work unchanged under both constructors.
 package scheduler
 
 import (
@@ -77,6 +100,15 @@ type Job struct {
 	Priority   int32           `json:"priority"`
 	Timeout    time.Duration   `json:"timeout"`
 	MaxRetries int32           `json:"max_retries"`
+
+	// NodeAffinity restricts execution to a specific node. When empty
+	// (default), the job is cluster-wide and executes on the Raft
+	// leader only. When non-empty, only the node whose SchedulerEngine
+	// was constructed with a matching NodeID executes the job,
+	// regardless of leadership. Node-affine jobs are the correct
+	// choice for workloads that depend on node-local state (e.g.,
+	// renewing certs whose private keys live only on the local node).
+	NodeAffinity string `json:"node_affinity,omitempty"`
 
 	// State
 	Status    JobStatus `json:"status"`
@@ -157,6 +189,24 @@ type Logger interface {
 	Warnf(format string, args ...interface{})
 	// Errorf logs an error message.
 	Errorf(format string, args ...interface{})
+}
+
+// LeaderChecker reports whether this node is currently the Raft
+// leader for the scheduler's storage shard. A nil LeaderChecker on a
+// SchedulerEngine is interpreted as "always leader" — the correct
+// behavior for single-node deployments and memory-backed tests
+// where no Raft group exists.
+//
+// Implementations must be safe for concurrent use and should return
+// quickly (the scheduler calls IsLeader once per tick per due job).
+type LeaderChecker interface {
+	// IsLeader returns true when this node is the Raft leader. The
+	// scheduler uses this to gate execution of cluster-wide jobs
+	// (Job.NodeAffinity == "") so that such jobs fire exactly once
+	// per tick across the cluster. Returning an error is equivalent
+	// to returning false; the scheduler will not execute cluster-wide
+	// jobs while leadership cannot be determined.
+	IsLeader() (bool, error)
 }
 
 // SchedulerConfig contains scheduler configuration.

@@ -78,6 +78,10 @@ var (
 
 	// ErrIAMComponentInit indicates an IAM component failed to initialize.
 	ErrIAMComponentInit = errors.New("IAM component initialization failed")
+
+	// ErrUpdateCANotReady is returned by UpdateCA when the server has not yet
+	// started or when TLS is disabled (no CA adapter was wired at startup).
+	ErrUpdateCANotReady = errors.New("server: CA adapter not ready — server may not be started or TLS is disabled")
 )
 
 // ServerCauseError wraps a server operation error with an underlying cause.
@@ -333,4 +337,46 @@ func (e *BootstrapPasswordTooShortError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *BootstrapPasswordTooShortError) Unwrap() error {
 	return ErrInsecureBootstrapPassword
+}
+
+// ErrFirstBootBootstrap is returned when the first-boot admin bootstrap fails.
+var ErrFirstBootBootstrap = errors.New("first-boot bootstrap failed")
+
+// ErrBootstrapAdminMissing is returned by BindAdminToSOCert when no
+// bootstrap admin user exists yet. Operators see this when they invoke
+// path (a) on a server that has already been initialized — the admin
+// already exists with a different binding and a fresh first-boot bootstrap
+// is required.
+var ErrBootstrapAdminMissing = errors.New("bootstrap admin user not found")
+
+// FirstBootBootstrapError captures the operation that failed during the
+// first-boot admin bootstrap flow.
+type FirstBootBootstrapError struct {
+	Op    string
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *FirstBootBootstrapError) Error() string {
+	return "first-boot bootstrap: " + e.Op + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *FirstBootBootstrapError) Unwrap() error {
+	return ErrFirstBootBootstrap
+}
+
+// UpdateCANotReadyError is returned by Server.UpdateCA when the CA adapter
+// was not initialized. This occurs when the server has not yet been started
+// or when TLS is disabled so no adapter was wired during startService().
+type UpdateCANotReadyError struct{}
+
+// Error implements the error interface.
+func (e UpdateCANotReadyError) Error() string {
+	return "server: CA adapter not ready — server may not be started or TLS is disabled"
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e UpdateCANotReadyError) Unwrap() error {
+	return ErrUpdateCANotReady
 }

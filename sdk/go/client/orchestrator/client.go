@@ -16,6 +16,7 @@ package orchestrator
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -61,6 +62,14 @@ type Client interface {
 	// ListBackends returns all available backends.
 	ListBackends(ctx context.Context) (*ListBackendsResponse, error)
 
+	// ListBackendModels returns the model names available on the named backend
+	// as seen from the specified agent. AgentID is used as a host affinity hint
+	// for the remote backend resolver; pass an empty string or "any" to skip
+	// host affinity. The agent need not be online; if the backend exposes no
+	// model lister or the agent is unknown, the response is an empty list with
+	// no error.
+	ListBackendModels(ctx context.Context, req *ListBackendModelsRequest) (*ListBackendModelsResponse, error)
+
 	// Health returns the orchestrator health check report.
 	Health(ctx context.Context) (*HealthCheckReport, error)
 
@@ -82,6 +91,10 @@ type Client interface {
 	// DecomposeTask decomposes a task into structured work items using an agent.
 	DecomposeTask(ctx context.Context, req *DecomposeTaskRequest) (*DecomposeTaskResponse, error)
 
+	// SpawnChildJob fans out a child job from a parent job's lead agent.
+	// Returns ErrPermissionDenied if the caller is not the lead agent of the parent job.
+	SpawnChildJob(ctx context.Context, req *SpawnChildJobRequest) (*SpawnChildJobResponse, error)
+
 	// StartJob starts an autonomous orchestration control loop.
 	StartJob(ctx context.Context, req *StartJobRequest) (*StartJobResponse, error)
 
@@ -95,18 +108,133 @@ type Client interface {
 	CancelJob(ctx context.Context, req *CancelJobRequest) (*CancelJobResponse, error)
 	// SubscribeJobEvents returns a channel of real-time events for a running job.
 	SubscribeJobEvents(ctx context.Context, req *SubscribeJobEventsRequest) (<-chan *JobEvent, error)
+
+	// GetSessionHistory fetches a page of historical session events. Used
+	// by the CLI `orchestrator attach` command and the web UI's scrollback
+	// pager to page backward through an in-progress session's transcript.
+	GetSessionHistory(ctx context.Context, req *GetSessionHistoryRequest) (*GetSessionHistoryResponse, error)
+
+	// SubscribeSessionEvents returns a live stream of session events. When
+	// req.FromSequence > 0 the stream begins with a historical replay
+	// from that sequence, then transitions to live tail when Follow is
+	// true. The returned channel closes when the stream is done or the
+	// context is cancelled.
+	SubscribeSessionEvents(ctx context.Context, req *SubscribeSessionEventsRequest) (<-chan *SessionEventEnvelope, error)
+
+	// Inference runs a stateless fleet-routed inference call against a named
+	// backend without requiring a prior session Spawn. Returns the aggregated
+	// response after the backend finishes.
+	Inference(ctx context.Context, req *InferenceRequest) (*InferenceResponse, error)
+
+	// InferenceStream runs a stateless fleet-routed inference call and returns
+	// a channel of InferenceChunk values streamed from the backend. The
+	// channel is closed when the backend finishes or the context is cancelled.
+	InferenceStream(ctx context.Context, req *InferenceRequest) (<-chan *InferenceChunk, error)
+
+	// CreateWorkflow registers a new named workflow definition.
+	CreateWorkflow(ctx context.Context, req *CreateWorkflowRequest) (*WorkflowDefinition, error)
+
+	// ListWorkflows returns all registered workflow definitions for a tenant.
+	ListWorkflows(ctx context.Context, req *ListWorkflowsRequest) ([]*WorkflowDefinition, error)
+
+	// GetWorkflow returns a single workflow definition by name.
+	GetWorkflow(ctx context.Context, req *GetWorkflowRequest) (*WorkflowDefinition, error)
+
+	// UpdateWorkflow replaces an existing workflow definition by name.
+	// Returns ErrNotFound if the workflow does not exist.
+	UpdateWorkflow(ctx context.Context, req *UpdateWorkflowRequest) (*WorkflowDefinition, error)
+
+	// DeleteWorkflow removes a workflow definition by name.
+	// Returns ErrNotFound if the workflow does not exist.
+	DeleteWorkflow(ctx context.Context, req *DeleteWorkflowRequest) error
+
+	// DisableAgent administratively disables an agent globally. Revokes the
+	// agent's OAuth2 credentials and mTLS pin so subsequent token requests fail.
+	DisableAgent(ctx context.Context, req *DisableAgentRequest) (*DisableAgentResponse, error)
+
+	// EnableAgent re-activates a previously disabled agent.
+	EnableAgent(ctx context.Context, req *EnableAgentRequest) (*EnableAgentResponse, error)
+
+	// SubmitTaskArtifacts stores typed output artifacts for a task.
+	SubmitTaskArtifacts(ctx context.Context, req *SubmitTaskArtifactsRequest) (*SubmitTaskArtifactsResponse, error)
+
+	// GetTaskArtifact retrieves a named artifact from a task.
+	GetTaskArtifact(ctx context.Context, req *GetTaskArtifactRequest) (*TaskArtifact, error)
+
+	// ListTaskArtifacts returns all output artifact metadata for a task.
+	ListTaskArtifacts(ctx context.Context, req *ListTaskArtifactsRequest) (*ListTaskArtifactsResponse, error)
+}
+
+// GetSessionHistoryRequest pages through historical session events.
+type GetSessionHistoryRequest struct {
+	TenantID     string `json:"tenant_id,omitempty"`
+	SessionID    string `json:"session_id"`
+	FromSequence uint64 `json:"from_sequence,omitempty"` // inclusive lower bound; 0 = from start
+	Limit        int    `json:"limit,omitempty"`         // <=0 = no limit (server enforces)
+}
+
+// GetSessionHistoryResponse carries one page of session events plus the
+// cursor for the next page.
+type GetSessionHistoryResponse struct {
+	Events  []*SessionEventEnvelope `json:"events"`
+	NextSeq uint64                  `json:"next_seq,omitempty"` // 0 when end-of-history
+}
+
+// SubscribeSessionEventsRequest opens a live stream over an existing
+// session's event log.
+type SubscribeSessionEventsRequest struct {
+	TenantID     string `json:"tenant_id,omitempty"`
+	SessionID    string `json:"session_id"`
+	FromSequence uint64 `json:"from_sequence,omitempty"` // 0 = only new events; 1+ = replay-then-tail
+	Follow       bool   `json:"follow"`                  // true = continue streaming after replay
+}
+
+// SessionEventEnvelope wraps one event delivered over a subscribe stream.
+// PayloadJSON is the raw encoded orchestration.SessionEvent — clients
+// json.Unmarshal this themselves, or use a downstream helper that dispatches
+// on Kind. Exposing the raw payload keeps the SDK stable as new event kinds
+// are added.
+type SessionEventEnvelope struct {
+	SessionID   string    `json:"session_id"`
+	TenantID    string    `json:"tenant_id,omitempty"`
+	Sequence    uint64    `json:"sequence"`
+	PayloadJSON []byte    `json:"payload_json"`
+	Timestamp   time.Time `json:"timestamp"`
+	FromReplay  bool      `json:"from_replay,omitempty"`
 }
 
 // Session management types
 
+// SandboxMode mirrors orchestration.SandboxMode for SDK callers so the SDK
+// does not force a dependency on the server-side orchestration package.
+type SandboxMode int32
+
+const (
+	// SandboxModeDefault defers to the server's configured policy.
+	SandboxModeDefault SandboxMode = 0
+	// SandboxModeRequired forces container-sandboxed execution.
+	SandboxModeRequired SandboxMode = 1
+	// SandboxModeNone forces raw process execution, subject to policy.
+	SandboxModeNone SandboxMode = 2
+)
+
 // SpawnSessionRequest is a request to create a new agent session.
 type SpawnSessionRequest struct {
-	Backend   string            `json:"backend"`
-	ProjectID string            `json:"project_id,omitempty"`
-	Model     string            `json:"model,omitempty"`
-	WorkDir   string            `json:"work_dir,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	Sandboxed bool              `json:"sandboxed,omitempty"`
+	Backend      string            `json:"backend"`
+	ProjectID    string            `json:"project_id,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	WorkDir      string            `json:"work_dir,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	SandboxMode  SandboxMode       `json:"sandbox_mode,omitempty"`
+	Sandboxed    bool              `json:"sandboxed,omitempty"`     // deprecated: use SandboxMode
+	HostAffinity string            `json:"host_affinity,omitempty"` // pin to a specific agent daemon (Name or Host)
+
+	// HostAffinityStrict, when true, forces hard host_affinity semantics:
+	// the server returns NoMatchingAgentError (HTTP 400) if the named host
+	// is offline rather than falling back to any available daemon. Defers
+	// to the operator-level orchestration.host_affinity.mode default when
+	// false.
+	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
 }
 
 // SpawnSessionResponse is the response from creating a new session.
@@ -192,6 +320,15 @@ type Task struct {
 	Version      uint64            `json:"version"`
 	Result       *TaskResult       `json:"result,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+
+	// AutoSpawn is true when the task was created with immediate dispatch.
+	AutoSpawn bool `json:"auto_spawn,omitempty"`
+
+	// SpawnedJobID is the ID of the auto-spawned job, empty when not spawned.
+	SpawnedJobID string `json:"spawned_job_id,omitempty"`
+
+	// SpawnedAt is a nanosecond Unix timestamp of when the job was dispatched.
+	SpawnedAt int64 `json:"spawned_at,omitempty"`
 }
 
 // CreateTaskRequest is a request to create a new task.
@@ -203,6 +340,25 @@ type CreateTaskRequest struct {
 	AssignedTo   string            `json:"assigned_to,omitempty"`
 	Dependencies []string          `json:"dependencies,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+
+	// ProjectID scopes the task to a registered project. When non-empty,
+	// ClaimTask enforces the project's AgentRoles access matrix against the
+	// claiming agent. Empty means the task is unscoped (legacy: allow all).
+	ProjectID string `json:"project_id,omitempty"`
+
+	// AutoSpawn, when true, dispatches a one-shot job on the best-matching
+	// agent immediately. The task is persisted regardless; if no agent matches
+	// the routing constraints, ErrNoMatchingAgent is returned with an empty
+	// SpawnedJobID on the returned task.
+	AutoSpawn bool `json:"auto_spawn,omitempty"`
+
+	// Backend restricts agent selection during auto-spawn to agents whose
+	// Backend field matches this value. Ignored when AutoSpawn is false.
+	Backend string `json:"backend,omitempty"`
+
+	// GpuRequired restricts auto-spawn dispatch to agents that advertise
+	// "gpu" in their capabilities. Ignored when AutoSpawn is false.
+	GpuRequired bool `json:"gpu_required,omitempty"`
 }
 
 // GetTaskRequest is a request to get a task by ID.
@@ -266,6 +422,27 @@ type BackendInfo struct {
 type ListBackendsResponse struct {
 	Backends []*BackendInfo `json:"backends"`
 	Count    int            `json:"count"`
+}
+
+// ListBackendModelsRequest is a request to list the models available on a
+// specific backend, as seen from a specific agent. AgentID is used as a
+// host affinity hint by the remote backend resolver; pass empty or "any"
+// to skip host affinity. TenantID defaults to "default" on the server when
+// omitted; setting it explicitly is required when the resolver dispatches
+// to a multi-tenant fleet daemon.
+type ListBackendModelsRequest struct {
+	AgentID     string `json:"agent_id,omitempty"`
+	BackendName string `json:"backend_name"`
+	TenantID    string `json:"tenant_id,omitempty"`
+}
+
+// ListBackendModelsResponse is the response from listing models for a backend.
+// Models is always non-nil; an empty slice means the backend exposes no model
+// lister or the agent has no models loaded yet.
+type ListBackendModelsResponse struct {
+	Backend string   `json:"backend"`
+	Models  []string `json:"models"`
+	Count   int      `json:"count"`
 }
 
 // HealthCheckReport represents the orchestrator health check report.
@@ -382,6 +559,161 @@ type WorkItem struct {
 	Description  string   `json:"description"`
 	Priority     int      `json:"priority"`
 	Dependencies []string `json:"dependencies,omitempty"`
+}
+
+// InferenceRequest is the SDK request for a stateless fleet-routed inference
+// call. Maps to POST /api/v1/orchestrator/inference with stream=false or
+// stream=true.
+type InferenceRequest struct {
+	// Backend is the named backend to route to (e.g., "ollama"). Required.
+	Backend string `json:"backend"`
+
+	// Model is the model to use. When empty the backend's default is used.
+	Model string `json:"model,omitempty"`
+
+	// Prompt is the user prompt text. Required.
+	Prompt string `json:"prompt"`
+
+	// SystemPrompt is an optional system message.
+	SystemPrompt string `json:"system_prompt,omitempty"`
+
+	// HostAffinity pins the call to a specific agent daemon by Name or Host.
+	HostAffinity string `json:"host_affinity,omitempty"`
+
+	// HostAffinityStrict, when true, forces hard host_affinity semantics:
+	// the server returns NoMatchingAgentError (HTTP 400) if the named host
+	// is offline. Defers to the operator-level
+	// orchestration.host_affinity.mode default when false.
+	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
+
+	// Metadata is an opaque string map forwarded to the backend unchanged.
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// InferenceContentBlock is one content fragment from a model response.
+type InferenceContentBlock struct {
+	// Type is the content type ("text", "tool_use", etc.).
+	Type string `json:"type"`
+
+	// Text holds the text content when Type is "text".
+	Text string `json:"text,omitempty"`
+}
+
+// InferenceResponse is the aggregated response from a non-streaming
+// Inference call.
+type InferenceResponse struct {
+	// Content holds all content blocks from the response.
+	Content []InferenceContentBlock `json:"content"`
+
+	// Model is the model that produced the response.
+	Model string `json:"model,omitempty"`
+
+	// StopReason is the reason the model stopped generating
+	// (e.g., "end_turn", "max_tokens").
+	StopReason string `json:"stop_reason,omitempty"`
+}
+
+// InferenceChunk is one delta frame from a streaming InferenceStream call.
+type InferenceChunk struct {
+	// Delta is the content emitted in this chunk.
+	Delta []InferenceContentBlock `json:"delta"`
+
+	// Model is set on the final chunk.
+	Model string `json:"model,omitempty"`
+
+	// StopReason is set on the final chunk.
+	StopReason string `json:"stop_reason,omitempty"`
+
+	// Final is true on the last chunk.
+	Final bool `json:"final,omitempty"`
+}
+
+// =============================================================================
+// Workflow Management Types
+// =============================================================================
+
+// WorkflowMode mirrors orchestration.WorkflowMode for SDK callers.
+type WorkflowMode string
+
+const (
+	// WorkflowModeCanned runs a fully predetermined workflow with fixed steps.
+	WorkflowModeCanned WorkflowMode = "canned"
+
+	// WorkflowModeConstrained allows the lead agent to decompose tasks but within
+	// defined agent roles and capabilities from the workflow definition.
+	WorkflowModeConstrained WorkflowMode = "constrained"
+
+	// WorkflowModeAutonomous gives the lead agent full control over task
+	// decomposition, agent spawning, and workflow execution.
+	WorkflowModeAutonomous WorkflowMode = "autonomous"
+)
+
+// AgentRoleSpec describes a single agent role within a workflow definition.
+type AgentRoleSpec struct {
+	Role         string            `json:"role"`
+	Backend      string            `json:"backend"`
+	Model        string            `json:"model,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	Instructions string            `json:"instructions,omitempty"`
+}
+
+// WorkflowSettings holds operational tuning parameters for a workflow.
+type WorkflowSettings struct {
+	MaxIterations int    `json:"max_iterations,omitempty"`
+	Topology      string `json:"topology,omitempty"`
+	Isolation     string `json:"isolation,omitempty"`
+	PeerMessaging bool   `json:"peer_messaging,omitempty"`
+	FileLocking   bool   `json:"file_locking,omitempty"`
+	VectorDB      bool   `json:"vector_db,omitempty"`
+	Verbosity     string `json:"verbosity,omitempty"`
+	GlobalNumCtx  int    `json:"global_num_ctx,omitempty"`
+}
+
+// WorkflowDefinition describes a complete orchestration workflow including
+// agent roles, capabilities, and operational settings.
+type WorkflowDefinition struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Mode        WorkflowMode     `json:"mode"`
+	Agents      []AgentRoleSpec  `json:"agents"`
+	Settings    WorkflowSettings `json:"settings,omitempty"`
+}
+
+// CreateWorkflowRequest is a request to register a new workflow definition.
+type CreateWorkflowRequest struct {
+	TenantID   string              `json:"tenant_id"`
+	Definition *WorkflowDefinition `json:"definition"`
+}
+
+// ListWorkflowsRequest is a request to list workflow definitions.
+type ListWorkflowsRequest struct {
+	TenantID string `json:"tenant_id"`
+}
+
+// ListWorkflowsResponse is the response from listing workflow definitions.
+type ListWorkflowsResponse struct {
+	Workflows []*WorkflowDefinition `json:"workflows"`
+	Count     int                   `json:"count"`
+}
+
+// GetWorkflowRequest is a request to get a workflow definition by name.
+type GetWorkflowRequest struct {
+	TenantID string `json:"tenant_id"`
+	Name     string `json:"name"`
+}
+
+// UpdateWorkflowRequest is a request to replace an existing workflow definition.
+type UpdateWorkflowRequest struct {
+	TenantID   string              `json:"tenant_id"`
+	Name       string              `json:"name"`
+	Definition *WorkflowDefinition `json:"definition"`
+}
+
+// DeleteWorkflowRequest is a request to remove a workflow definition by name.
+type DeleteWorkflowRequest struct {
+	TenantID string `json:"tenant_id"`
+	Name     string `json:"name"`
 }
 
 // Internal request types for parameterless methods.
@@ -696,6 +1028,43 @@ func (c *client) ListBackends(ctx context.Context) (*ListBackendsResponse, error
 	return result, nil
 }
 
+// ListBackendModels returns the model names available on the named backend
+// as seen from the specified agent. The transport layer translates this into
+// a REST GET against /api/v1/orchestrator/agents/{agent_id}/backends/{backend_name}/models
+// or the equivalent gRPC RPC; both paths return an empty slice (not an error)
+// when the agent is unknown or the backend exposes no model lister.
+func (c *client) ListBackendModels(ctx context.Context, req *ListBackendModelsRequest) (*ListBackendModelsResponse, error) {
+	if err := validateListBackendModelsRequest(req); err != nil {
+		return nil, err
+	}
+
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.ListBackendModels", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "ListBackendModels", req)
+	if err != nil {
+		return nil, err
+	}
+
+	// A nil response is treated as "no models" rather than an error so callers
+	// can render an empty list without special-casing missing agents/backends.
+	if resp == nil {
+		return &ListBackendModelsResponse{Backend: req.BackendName, Models: []string{}, Count: 0}, nil
+	}
+
+	result, ok := resp.(*ListBackendModelsResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.ListBackendModels", "invalid response type")
+	}
+
+	if result.Models == nil {
+		result.Models = []string{}
+	}
+
+	return result, nil
+}
+
 // Health returns the orchestrator health check report.
 func (c *client) Health(ctx context.Context) (*HealthCheckReport, error) {
 	if ctx == nil {
@@ -881,6 +1250,297 @@ func (c *client) DecomposeTask(ctx context.Context, req *DecomposeTaskRequest) (
 	return result, nil
 }
 
+// CreateWorkflow registers a new named workflow definition.
+func (c *client) CreateWorkflow(ctx context.Context, req *CreateWorkflowRequest) (*WorkflowDefinition, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.CreateWorkflow", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.CreateWorkflow", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.CreateWorkflow", "tenant ID is required")
+	}
+	if req.Definition == nil {
+		return nil, errors.NewInvalidInput("orchestrator.CreateWorkflow", "definition is required")
+	}
+	if req.Definition.Name == "" {
+		return nil, errors.NewInvalidInput("orchestrator.CreateWorkflow", "workflow name is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "CreateWorkflow", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.CreateWorkflow", "nil response from server")
+	}
+	result, ok := resp.(*WorkflowDefinition)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.CreateWorkflow", "invalid response type")
+	}
+	return result, nil
+}
+
+// ListWorkflows returns all registered workflow definitions for a tenant.
+func (c *client) ListWorkflows(ctx context.Context, req *ListWorkflowsRequest) ([]*WorkflowDefinition, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.ListWorkflows", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.ListWorkflows", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.ListWorkflows", "tenant ID is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "ListWorkflows", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return []*WorkflowDefinition{}, nil
+	}
+	result, ok := resp.(*ListWorkflowsResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.ListWorkflows", "invalid response type")
+	}
+	return result.Workflows, nil
+}
+
+// GetWorkflow returns a single workflow definition by name.
+func (c *client) GetWorkflow(ctx context.Context, req *GetWorkflowRequest) (*WorkflowDefinition, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.GetWorkflow", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.GetWorkflow", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.GetWorkflow", "tenant ID is required")
+	}
+	if req.Name == "" {
+		return nil, errors.NewInvalidInput("orchestrator.GetWorkflow", "workflow name is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GetWorkflow", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.GetWorkflow", "nil response from server")
+	}
+	result, ok := resp.(*WorkflowDefinition)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.GetWorkflow", "invalid response type")
+	}
+	return result, nil
+}
+
+// UpdateWorkflow replaces an existing workflow definition by name.
+func (c *client) UpdateWorkflow(ctx context.Context, req *UpdateWorkflowRequest) (*WorkflowDefinition, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.UpdateWorkflow", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.UpdateWorkflow", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.UpdateWorkflow", "tenant ID is required")
+	}
+	if req.Name == "" {
+		return nil, errors.NewInvalidInput("orchestrator.UpdateWorkflow", "workflow name is required")
+	}
+	if req.Definition == nil {
+		return nil, errors.NewInvalidInput("orchestrator.UpdateWorkflow", "definition is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "UpdateWorkflow", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.UpdateWorkflow", "nil response from server")
+	}
+	result, ok := resp.(*WorkflowDefinition)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.UpdateWorkflow", "invalid response type")
+	}
+	return result, nil
+}
+
+// DeleteWorkflow removes a workflow definition by name.
+func (c *client) DeleteWorkflow(ctx context.Context, req *DeleteWorkflowRequest) error {
+	if ctx == nil {
+		return errors.NewInvalidInput("orchestrator.DeleteWorkflow", "context is required")
+	}
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.DeleteWorkflow", "request is required")
+	}
+	if req.TenantID == "" {
+		return errors.NewInvalidInput("orchestrator.DeleteWorkflow", "tenant ID is required")
+	}
+	if req.Name == "" {
+		return errors.NewInvalidInput("orchestrator.DeleteWorkflow", "workflow name is required")
+	}
+
+	_, err := c.transport.Request(ctx, serviceName, "DeleteWorkflow", req)
+	return err
+}
+
+// DisableAgent administratively disables an agent globally.
+func (c *client) DisableAgent(ctx context.Context, req *DisableAgentRequest) (*DisableAgentResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "tenant ID is required")
+	}
+	if req.AgentID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "agent ID is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "DisableAgent", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.DisableAgent", "nil response from server")
+	}
+
+	result, ok := resp.(*DisableAgentResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.DisableAgent", "invalid response type")
+	}
+	return result, nil
+}
+
+// EnableAgent re-activates a previously disabled agent.
+func (c *client) EnableAgent(ctx context.Context, req *EnableAgentRequest) (*EnableAgentResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "tenant ID is required")
+	}
+	if req.AgentID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "agent ID is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "EnableAgent", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.EnableAgent", "nil response from server")
+	}
+
+	result, ok := resp.(*EnableAgentResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.EnableAgent", "invalid response type")
+	}
+	return result, nil
+}
+
+// SubmitTaskArtifacts stores typed output artifacts for a task.
+func (c *client) SubmitTaskArtifacts(ctx context.Context, req *SubmitTaskArtifactsRequest) (*SubmitTaskArtifactsResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.SubmitTaskArtifacts", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.SubmitTaskArtifacts", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.SubmitTaskArtifacts", "tenant ID is required")
+	}
+	if req.TaskID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.SubmitTaskArtifacts", "task ID is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "SubmitTaskArtifacts", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.SubmitTaskArtifacts", "nil response from server")
+	}
+
+	result, ok := resp.(*SubmitTaskArtifactsResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.SubmitTaskArtifacts", "invalid response type")
+	}
+	return result, nil
+}
+
+// GetTaskArtifact retrieves a named artifact from a task.
+func (c *client) GetTaskArtifact(ctx context.Context, req *GetTaskArtifactRequest) (*TaskArtifact, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.GetTaskArtifact", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.GetTaskArtifact", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.GetTaskArtifact", "tenant ID is required")
+	}
+	if req.TaskID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.GetTaskArtifact", "task ID is required")
+	}
+	if req.Name == "" {
+		return nil, errors.NewInvalidInput("orchestrator.GetTaskArtifact", "artifact name is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GetTaskArtifact", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.GetTaskArtifact", "nil response from server")
+	}
+
+	result, ok := resp.(*TaskArtifact)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.GetTaskArtifact", "invalid response type")
+	}
+	return result, nil
+}
+
+// ListTaskArtifacts returns all output artifact metadata for a task.
+func (c *client) ListTaskArtifacts(ctx context.Context, req *ListTaskArtifactsRequest) (*ListTaskArtifactsResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.ListTaskArtifacts", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.ListTaskArtifacts", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.ListTaskArtifacts", "tenant ID is required")
+	}
+	if req.TaskID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.ListTaskArtifacts", "task ID is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "ListTaskArtifacts", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return &ListTaskArtifactsResponse{TaskID: req.TaskID, Artifacts: []*TaskArtifact{}, Count: 0}, nil
+	}
+
+	result, ok := resp.(*ListTaskArtifactsResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.ListTaskArtifacts", "invalid response type")
+	}
+	return result, nil
+}
+
 // Validation functions
 
 func validateSpawnSessionRequest(req *SpawnSessionRequest) error {
@@ -1033,6 +1693,16 @@ func validateListAgentsRequest(req *ListAgentsRequest) error {
 	return nil
 }
 
+func validateListBackendModelsRequest(req *ListBackendModelsRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.ListBackendModels", "request is required")
+	}
+	if req.BackendName == "" {
+		return errors.NewInvalidInput("orchestrator.ListBackendModels", "backend name is required")
+	}
+	return nil
+}
+
 func validateRemoveAgentRequest(req *RemoveAgentRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("orchestrator.RemoveAgent", "request is required")
@@ -1070,6 +1740,28 @@ func validateDecomposeTaskRequest(req *DecomposeTaskRequest) error {
 }
 
 // StartJob starts an autonomous orchestration control loop.
+func (c *client) SpawnChildJob(ctx context.Context, req *SpawnChildJobRequest) (*SpawnChildJobResponse, error) {
+	if err := validateSpawnChildJobRequest(req); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.SpawnChildJob", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "SpawnChildJob", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.SpawnChildJob", "nil response from server")
+	}
+	result, ok := resp.(*SpawnChildJobResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.SpawnChildJob", "invalid response type")
+	}
+	return result, nil
+}
+
 func (c *client) StartJob(ctx context.Context, req *StartJobRequest) (*StartJobResponse, error) {
 	if err := validateStartJobRequest(req); err != nil {
 		return nil, err
@@ -1177,6 +1869,107 @@ func (c *client) CancelJob(ctx context.Context, req *CancelJobRequest) (*CancelJ
 	return result, nil
 }
 
+// Inference runs a stateless fleet-routed inference call against the named
+// backend. Waits for the full aggregated response before returning. For
+// interactive streaming use InferenceStream.
+func (c *client) Inference(ctx context.Context, req *InferenceRequest) (*InferenceResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.Inference", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.Inference", "request is required")
+	}
+	if req.Backend == "" {
+		return nil, errors.NewInvalidInput("orchestrator.Inference", "backend is required")
+	}
+	if req.Prompt == "" {
+		return nil, errors.NewInvalidInput("orchestrator.Inference", "prompt is required")
+	}
+
+	// The transport handler decorates with stream=false and POSTs to
+	// /api/v1/orchestrator/inference.
+	resp, err := c.transport.Request(ctx, serviceName, "Inference", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.Inference", "nil response from server")
+	}
+	result, ok := resp.(*InferenceResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.Inference", "invalid response type")
+	}
+	return result, nil
+}
+
+// InferenceStream runs a stateless fleet-routed inference call and returns a
+// channel of InferenceChunk values as the backend streams them. The channel
+// is closed when the backend finishes or the context is cancelled.
+func (c *client) InferenceStream(ctx context.Context, req *InferenceRequest) (<-chan *InferenceChunk, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.InferenceStream", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.InferenceStream", "request is required")
+	}
+	if req.Backend == "" {
+		return nil, errors.NewInvalidInput("orchestrator.InferenceStream", "backend is required")
+	}
+	if req.Prompt == "" {
+		return nil, errors.NewInvalidInput("orchestrator.InferenceStream", "prompt is required")
+	}
+
+	stream, err := c.transport.RequestStream(ctx, serviceName, "InferenceStream", req)
+	if err != nil {
+		return nil, err
+	}
+
+	sub := &inferenceStreamSubscription{
+		stream: stream,
+		chunks: make(chan *InferenceChunk, 64),
+	}
+	go sub.receiveLoop(ctx)
+	return sub.chunks, nil
+}
+
+// inferenceStreamSubscription manages the lifecycle of an inference stream.
+type inferenceStreamSubscription struct {
+	stream transport.Stream
+	chunks chan *InferenceChunk
+	closed atomic.Bool
+}
+
+// receiveLoop reads chunks from the transport stream and forwards them to the
+// channel. Terminates when the stream closes, errors, or the context is done.
+func (s *inferenceStreamSubscription) receiveLoop(ctx context.Context) {
+	defer func() {
+		close(s.chunks)
+		s.stream.Close()
+		s.closed.Store(true)
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			msg, err := s.stream.Recv()
+			if err != nil {
+				return
+			}
+			chunk, ok := msg.(*InferenceChunk)
+			if !ok {
+				continue
+			}
+			select {
+			case s.chunks <- chunk:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}
+
 // SubscribeJobEvents subscribes to real-time events for an orchestration job.
 func (c *client) SubscribeJobEvents(ctx context.Context, req *SubscribeJobEventsRequest) (<-chan *JobEvent, error) {
 	if err := validateSubscribeJobEventsRequest(req); err != nil {
@@ -1241,7 +2034,101 @@ func (s *jobEventSubscription) receiveLoop(ctx context.Context) {
 	}
 }
 
+// =============================================================================
+// Session Event Subscription + History (Phase 4)
+// =============================================================================
+
+// GetSessionHistory implements Client.GetSessionHistory. One-shot REST/gRPC
+// call for a page of historical session events.
+func (c *client) GetSessionHistory(ctx context.Context, req *GetSessionHistoryRequest) (*GetSessionHistoryResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.GetSessionHistory", "context is required")
+	}
+	if req == nil || req.SessionID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.GetSessionHistory", "session_id is required")
+	}
+	resp, err := c.transport.Request(ctx, serviceName, "GetSessionHistory", req)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*GetSessionHistoryResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.GetSessionHistory", "invalid response type")
+	}
+	return out, nil
+}
+
+// SubscribeSessionEvents implements Client.SubscribeSessionEvents. Opens a
+// streaming subscription (gRPC stream or SSE depending on transport) and
+// returns a buffered channel that receives each event in order.
+func (c *client) SubscribeSessionEvents(ctx context.Context, req *SubscribeSessionEventsRequest) (<-chan *SessionEventEnvelope, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.SubscribeSessionEvents", "context is required")
+	}
+	if req == nil || req.SessionID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.SubscribeSessionEvents", "session_id is required")
+	}
+	stream, err := c.transport.RequestStream(ctx, serviceName, "SubscribeSessionEvents", req)
+	if err != nil {
+		return nil, err
+	}
+	sub := &sessionEventSubscription{
+		stream: stream,
+		events: make(chan *SessionEventEnvelope, 64),
+	}
+	go sub.receiveLoop(ctx)
+	return sub.events, nil
+}
+
+// sessionEventSubscription wraps a transport.Stream and forwards each
+// received SessionEventEnvelope to its buffered channel. The channel is
+// closed when the stream errors or the context is cancelled; consumers
+// detect end-of-stream via the closed-channel signal.
+type sessionEventSubscription struct {
+	stream transport.Stream
+	events chan *SessionEventEnvelope
+	closed atomic.Bool
+}
+
+func (s *sessionEventSubscription) receiveLoop(ctx context.Context) {
+	defer func() {
+		close(s.events)
+		s.stream.Close()
+		s.closed.Store(true)
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		msg, err := s.stream.Recv()
+		if err != nil {
+			return
+		}
+		env, ok := msg.(*SessionEventEnvelope)
+		if !ok {
+			continue
+		}
+		select {
+		case s.events <- env:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // Validation functions for job operations.
+
+func validateSpawnChildJobRequest(req *SpawnChildJobRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.SpawnChildJob", "request is required")
+	}
+	if req.ParentJobID == "" {
+		return errors.NewInvalidInput("orchestrator.SpawnChildJob", "parent_job_id is required")
+	}
+	return nil
+}
 
 func validateStartJobRequest(req *StartJobRequest) error {
 	if req == nil {
@@ -1308,10 +2195,14 @@ func validateSubscribeJobEventsRequest(req *SubscribeJobEventsRequest) error {
 
 // StartJobRequest starts an autonomous orchestration job.
 type StartJobRequest struct {
-	TenantID      string `json:"tenant_id"`
-	Description   string `json:"description"`
-	LeadBackend   string `json:"lead_backend,omitempty"`
-	LeadModel     string `json:"lead_model,omitempty"`
+	TenantID    string `json:"tenant_id"`
+	Description string `json:"description"`
+	LeadBackend string `json:"lead_backend,omitempty"`
+	LeadModel   string `json:"lead_model,omitempty"`
+	// LeadAgentID pins the job's lead agent to a specific registered agent.
+	// Empty means the orchestrator selects a lead based on backend/model and
+	// the project's DefaultLeadAgent.
+	LeadAgentID   string `json:"lead_agent_id,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
 	MaxIterations int    `json:"max_iterations,omitempty"`
 	PollInterval  string `json:"poll_interval,omitempty"`
@@ -1405,4 +2296,119 @@ type JobEvent struct {
 	Iteration int               `json:"iteration"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 	Timestamp int64             `json:"timestamp"`
+}
+
+// TaskSpec is an inline task definition supplied when spawning a child job.
+type TaskSpec struct {
+	Title                string   `json:"title,omitempty"`
+	Description          string   `json:"description,omitempty"`
+	Dependencies         []string `json:"dependencies,omitempty"`
+	RequiredCapabilities []string `json:"required_capabilities,omitempty"`
+}
+
+// SpawnChildJobRequest fans out a child job from the calling lead agent.
+type SpawnChildJobRequest struct {
+	// ParentJobID is the job whose lead agent is initiating the spawn. Required.
+	ParentJobID string `json:"parent_job_id"`
+	// CallerAgentID is the fleet agent ID of the calling agent. Required.
+	CallerAgentID string `json:"caller_agent_id,omitempty"`
+	// WorkflowID optionally names an existing workflow definition.
+	WorkflowID string `json:"workflow_id,omitempty"`
+	// ProjectID scopes the child job to a registered project.
+	ProjectID string `json:"project_id,omitempty"`
+	// Tasks provides inline task specs when no workflow is referenced.
+	Tasks []*TaskSpec `json:"tasks,omitempty"`
+	// HostAffinity pins the child to a specific agent daemon.
+	HostAffinity string `json:"host_affinity,omitempty"`
+	// GpuRequired restricts dispatch to GPU-capable daemons.
+	GpuRequired bool `json:"gpu_required,omitempty"`
+	// HostAffinityStrict treats HostAffinity as a hard constraint.
+	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
+}
+
+// SpawnChildJobResponse is returned after the child job has been accepted.
+type SpawnChildJobResponse struct {
+	ChildJobID string `json:"child_job_id"`
+}
+
+// =============================================================================
+// Agent Admin Types
+// =============================================================================
+
+// DisableAgentRequest is a request to administratively disable an agent.
+type DisableAgentRequest struct {
+	TenantID string `json:"tenant_id"`
+	AgentID  string `json:"agent_id"`
+}
+
+// DisableAgentResponse is returned after an agent has been disabled.
+type DisableAgentResponse struct {
+	AgentID    string    `json:"agent_id"`
+	Disabled   bool      `json:"disabled"`
+	DisabledAt time.Time `json:"disabled_at"`
+	Timestamp  time.Time `json:"timestamp"`
+}
+
+// EnableAgentRequest is a request to re-enable a previously disabled agent.
+type EnableAgentRequest struct {
+	TenantID string `json:"tenant_id"`
+	AgentID  string `json:"agent_id"`
+}
+
+// EnableAgentResponse is returned after an agent has been re-enabled.
+type EnableAgentResponse struct {
+	AgentID   string    `json:"agent_id"`
+	Enabled   bool      `json:"enabled"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// =============================================================================
+// Task Artifact Types
+// =============================================================================
+
+// TaskArtifact represents a typed output artifact produced by a task.
+type TaskArtifact struct {
+	// Name is the unique artifact name within the task.
+	Name string `json:"name"`
+	// ContentType is the MIME type of the artifact (e.g., "text/plain").
+	ContentType string `json:"content_type,omitempty"`
+	// Data is the inline artifact payload for small artifacts.
+	Data []byte `json:"data,omitempty"`
+	// Ref is the KV store reference for large artifacts (mutually exclusive with Data).
+	Ref string `json:"ref,omitempty"`
+	// Size is the total byte length of the artifact.
+	Size int64 `json:"size,omitempty"`
+}
+
+// SubmitTaskArtifactsRequest stores typed artifacts for a task.
+type SubmitTaskArtifactsRequest struct {
+	TenantID  string          `json:"tenant_id"`
+	TaskID    string          `json:"task_id"`
+	Artifacts []*TaskArtifact `json:"artifacts"`
+}
+
+// SubmitTaskArtifactsResponse confirms how many artifacts were stored.
+type SubmitTaskArtifactsResponse struct {
+	TaskID string `json:"task_id"`
+	Stored int    `json:"stored"`
+}
+
+// GetTaskArtifactRequest retrieves a named artifact from a task.
+type GetTaskArtifactRequest struct {
+	TenantID string `json:"tenant_id"`
+	TaskID   string `json:"task_id"`
+	Name     string `json:"name"`
+}
+
+// ListTaskArtifactsRequest lists all artifacts for a task.
+type ListTaskArtifactsRequest struct {
+	TenantID string `json:"tenant_id"`
+	TaskID   string `json:"task_id"`
+}
+
+// ListTaskArtifactsResponse carries artifact metadata (no inline Data resolved).
+type ListTaskArtifactsResponse struct {
+	TaskID    string          `json:"task_id"`
+	Artifacts []*TaskArtifact `json:"artifacts"`
+	Count     int             `json:"count"`
 }

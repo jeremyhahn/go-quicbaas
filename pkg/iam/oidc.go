@@ -122,11 +122,21 @@ func (p *OIDCProvider) GetConfiguration() map[string]interface{} {
 		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{p.config.SigningAlgorithm},
-		"scopes_supported":                      []string{"openid", "profile", "email", "offline_access"},
-		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
+		"scopes_supported":                      []string{"openid", "profile", "email", "offline_access", "agent:runtime:spawn", "agent:runtime:prompt", "agent:runtime:status"},
+		"token_endpoint_auth_methods_supported": []string{
+			AuthMethodClientSecretBasic,
+			AuthMethodClientSecretPost,
+			AuthMethodTLSClientAuth,
+			AuthMethodSelfSignedTLSClientAuth,
+		},
+		"tls_client_certificate_bound_access_tokens": true,
+		"mtls_endpoint_aliases": map[string]string{
+			"token_endpoint": p.config.Issuer + "/oauth2/token-mtls",
+		},
 		"claims_supported": []string{
 			"sub", "iss", "aud", "exp", "iat", "email", "name",
 			"tenant_id", "roles", "groups", "mfa_verified",
+			"cnf", "amr", "attest_method",
 		},
 		"code_challenge_methods_supported": []string{CodeChallengeMethodS256}, // OAuth 2.1 mandates S256 only
 	}
@@ -166,6 +176,12 @@ type OAuthASMetadata struct {
 	// TokenEndpointAuthMethodsSupported is a list of client authentication methods.
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
 
+	// TLSClientCertificateBoundAccessTokens indicates RFC 8705 support.
+	TLSClientCertificateBoundAccessTokens bool `json:"tls_client_certificate_bound_access_tokens,omitempty"`
+
+	// MTLSEndpointAliases lists the mTLS-specific endpoint aliases (RFC 8705 §5).
+	MTLSEndpointAliases map[string]string `json:"mtls_endpoint_aliases,omitempty"`
+
 	// ScopesSupported is a list of OAuth 2.0 scope values.
 	ScopesSupported []string `json:"scopes_supported,omitempty"`
 
@@ -184,18 +200,27 @@ type OAuthASMetadata struct {
 // provides OAuth 2.0 specific metadata for MCP clients.
 func (p *OIDCProvider) GetOAuthASMetadata() *OAuthASMetadata {
 	return &OAuthASMetadata{
-		Issuer:                            p.config.Issuer,
-		AuthorizationEndpoint:             p.config.Issuer + "/oauth2/authorize",
-		TokenEndpoint:                     p.config.Issuer + "/oauth2/token",
-		JWKSURI:                           p.config.Issuer + "/.well-known/jwks.json",
-		RegistrationEndpoint:              p.config.Issuer + "/oauth2/register",
-		RevocationEndpoint:                p.config.Issuer + "/oauth2/revoke",
-		ResponseTypesSupported:            []string{"code"},
-		GrantTypesSupported:               []string{"authorization_code", "client_credentials", "refresh_token"},
-		TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post"},
-		ScopesSupported:                   []string{"openid", "profile", "email", "offline_access", "mcp:tools", "mcp:resources", "mcp:admin"},
-		CodeChallengeMethodsSupported:     []string{CodeChallengeMethodS256}, // OAuth 2.1 mandates S256 only
-		ResourceIndicatorsSupported:       true,                              // RFC 8707
+		Issuer:                p.config.Issuer,
+		AuthorizationEndpoint: p.config.Issuer + "/oauth2/authorize",
+		TokenEndpoint:         p.config.Issuer + "/oauth2/token",
+		JWKSURI:               p.config.Issuer + "/.well-known/jwks.json",
+		RegistrationEndpoint:  p.config.Issuer + "/oauth2/register",
+		RevocationEndpoint:    p.config.Issuer + "/oauth2/revoke",
+		ResponseTypesSupported: []string{"code"},
+		GrantTypesSupported:    []string{"authorization_code", "client_credentials", "refresh_token"},
+		TokenEndpointAuthMethodsSupported: []string{
+			AuthMethodClientSecretBasic,
+			AuthMethodClientSecretPost,
+			AuthMethodTLSClientAuth,
+			AuthMethodSelfSignedTLSClientAuth,
+		},
+		TLSClientCertificateBoundAccessTokens: true,
+		MTLSEndpointAliases: map[string]string{
+			"token_endpoint": p.config.Issuer + "/oauth2/token-mtls",
+		},
+		ScopesSupported:               []string{"openid", "profile", "email", "offline_access", "mcp:tools", "mcp:resources", "mcp:admin", "agent:runtime:spawn", "agent:runtime:prompt", "agent:runtime:status"},
+		CodeChallengeMethodsSupported: []string{CodeChallengeMethodS256}, // OAuth 2.1 mandates S256 only
+		ResourceIndicatorsSupported:   true,                              // RFC 8707
 	}
 }
 
@@ -262,6 +287,78 @@ func (p *OIDCProvider) Token(ctx context.Context, req *TokenRequest) (*TokenResp
 	default:
 		return nil, NewOAuthError(ErrOAuthUnsupportedGrantType, "unsupported grant_type")
 	}
+}
+
+// MTLSTokenRequest carries the parameters needed to issue a token for a
+// client that authenticated via mutual TLS (RFC 8705).
+type MTLSTokenRequest struct {
+	// GrantType must be "client_credentials" (other grant types use the
+	// human-user token endpoint with FIDO2/PIV, not mTLS client auth).
+	GrantType string
+
+	// ClientID is the registered OAuth2 client identifier.
+	ClientID string
+
+	// Scope is the space-separated list of requested scopes.
+	Scope string
+
+	// CertThumbprintS256 is the base64url SHA-256 thumbprint of the
+	// presenting certificate, computed by the HTTP handler from r.TLS.
+	CertThumbprintS256 string
+
+	// AttestMethod is resolved by TPMAttestationResolver before calling here.
+	// One of: AttestMethodTPM, AttestMethodXKey, AttestMethodManual.
+	AttestMethod string
+
+	// Resource is the optional target resource server URI (RFC 8707).
+	Resource string
+}
+
+// TokenMTLS processes a token request where the client already authenticated
+// via mutual TLS. The handler is responsible for verifying the cert before
+// calling this method and populating CertThumbprintS256 and AttestMethod.
+func (p *OIDCProvider) TokenMTLS(ctx context.Context, req *MTLSTokenRequest) (*TokenResponse, error) {
+	if req.GrantType != GrantTypeClientCredentials {
+		return nil, NewOAuthError(ErrOAuthUnsupportedGrantType, "mTLS token endpoint only supports client_credentials")
+	}
+	if req.ClientID == "" {
+		return nil, NewOAuthError(ErrOAuthInvalidRequest, "client_id is required")
+	}
+	if req.CertThumbprintS256 == "" {
+		return nil, NewOAuthError(ErrOAuthInvalidClient, "certificate thumbprint is required")
+	}
+
+	app, err := p.appStorage.GetApp(ctx, req.ClientID)
+	if err != nil {
+		return nil, NewOAuthError(ErrOAuthInvalidClient, "client not found")
+	}
+
+	if !contains(app.GrantTypes, GrantTypeClientCredentials) {
+		return nil, NewOAuthError(ErrOAuthUnauthorizedClient, "client_credentials grant not allowed for this client")
+	}
+
+	amr := ServiceAccountAMR(req.AttestMethod)
+
+	opts := ServiceAccountTokenOptions{
+		ClientID:           req.ClientID,
+		TenantID:           app.TenantID,
+		Scope:              req.Scope,
+		CertThumbprintS256: req.CertThumbprintS256,
+		AttestMethod:       req.AttestMethod,
+		AMR:                amr,
+	}
+
+	tokenSet, err := p.tokenService.IssueServiceAccountTokens(ctx, opts)
+	if err != nil {
+		return nil, NewOAuthError(ErrOAuthServerError, "failed to issue service account token")
+	}
+
+	return &TokenResponse{
+		AccessToken: tokenSet.AccessToken,
+		TokenType:   tokenSet.TokenType,
+		ExpiresIn:   tokenSet.ExpiresIn,
+		Scope:       req.Scope,
+	}, nil
 }
 
 // Refresh processes a token refresh request.
@@ -599,6 +696,13 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 	}
 
 	return response, nil
+}
+
+// IssueHardwareTokens mints a full token set (access + ID + refresh) for a
+// successful hardware-attested authentication (WebAuthn FIDO2 or PIV smartcard).
+// The caller is responsible for verifying the credential before calling this.
+func (p *OIDCProvider) IssueHardwareTokens(ctx context.Context, opts HardwareTokenOptions) (*HardwareTokenSet, error) {
+	return p.tokenService.IssueHardwareTokens(ctx, opts)
 }
 
 // Helper functions

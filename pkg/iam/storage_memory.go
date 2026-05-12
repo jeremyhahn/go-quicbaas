@@ -36,8 +36,9 @@ type MemoryStorage struct {
 	tenantQuotas   map[string]*TenantQuota
 
 	// User storage
-	users        map[string]*User // key: tenantID:userID
-	usersByEmail map[string]*User // key: email
+	users              map[string]*User // key: tenantID:userID
+	usersByEmail       map[string]*User // key: email
+	usersByPIVThumbprint map[string]*User // key: piv_thumbprint
 
 	// Group storage
 	groups map[string]*Group // key: tenantID:groupID
@@ -70,8 +71,9 @@ func NewMemoryStorage() *MemoryStorage {
 		tenants:        make(map[string]*Tenant),
 		tenantSettings: make(map[string]*TenantSettings),
 		tenantQuotas:   make(map[string]*TenantQuota),
-		users:          make(map[string]*User),
-		usersByEmail:   make(map[string]*User),
+		users:                make(map[string]*User),
+		usersByEmail:         make(map[string]*User),
+		usersByPIVThumbprint: make(map[string]*User),
 		groups:         make(map[string]*Group),
 		roles:          make(map[string]*Role),
 		policies:       make(map[string]*Policy),
@@ -415,6 +417,9 @@ func (m *MemoryStorage) CreateUser(ctx context.Context, user *User) error {
 	u := *user
 	m.users[key] = &u
 	m.usersByEmail[user.Email] = &u
+	if u.PIVCertThumbprint != "" {
+		m.usersByPIVThumbprint[u.PIVCertThumbprint] = &u
+	}
 
 	return nil
 }
@@ -444,6 +449,20 @@ func (m *MemoryStorage) GetUserByEmail(ctx context.Context, email string) (*User
 	}
 
 	// Return a copy
+	u := *user
+	return &u, nil
+}
+
+// GetUserByPIVThumbprint retrieves a user by PIV certificate SHA-256 thumbprint.
+func (m *MemoryStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	user, exists := m.usersByPIVThumbprint[thumbprint]
+	if !exists {
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.getbypivthumbprint"}
+	}
+
 	u := *user
 	return &u, nil
 }

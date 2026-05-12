@@ -128,82 +128,6 @@ func TestKMSToolsServiceNotAvailable(t *testing.T) {
 	}
 }
 
-// Test Seal tool execution error paths (service not available)
-func TestSealToolsServiceNotAvailable(t *testing.T) {
-	svc := &mockService{} // Mock doesn't implement Seal interfaces
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	tests := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
-		{
-			name:     "seal status - service not available",
-			toolName: "quicbaas_seal_status",
-			args:     map[string]interface{}{},
-		},
-		{
-			name:     "seal init - service not available",
-			toolName: "quicbaas_seal_init",
-			args: map[string]interface{}{
-				"secret_shares":    float64(5),
-				"secret_threshold": float64(3),
-			},
-		},
-		{
-			name:     "unseal - service not available",
-			toolName: "quicbaas_unseal",
-			args: map[string]interface{}{
-				"key": "unseal-key",
-			},
-		},
-		{
-			name:     "seal - service not available",
-			toolName: "quicbaas_seal",
-			args:     map[string]interface{}{},
-		},
-		{
-			name:     "seal rekey - service not available",
-			toolName: "quicbaas_seal_rekey",
-			args: map[string]interface{}{
-				"secret_shares":    float64(5),
-				"secret_threshold": float64(3),
-			},
-		},
-		{
-			name:     "generate recovery key - service not available",
-			toolName: "quicbaas_seal_generate_recovery_key",
-			args:     map[string]interface{}{},
-		},
-		{
-			name:     "delete recovery key - service not available",
-			toolName: "quicbaas_seal_delete_recovery_key",
-			args: map[string]interface{}{
-				"key_id": "recovery-1",
-			},
-		},
-		{
-			name:     "generate root token - service not available",
-			toolName: "quicbaas_seal_generate_root_token",
-			args: map[string]interface{}{
-				"otp": "one-time-password",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, tt.toolName, tt.args)
-			require.Error(t, err, "should error when service not available")
-			assert.Nil(t, result)
-			assert.Contains(t, err.Error(), "not available")
-		})
-	}
-}
-
 // Test Secrets tool execution error paths (service not available)
 func TestSecretsToolsServiceNotAvailable(t *testing.T) {
 	svc := &mockService{} // Mock doesn't implement Secrets interfaces
@@ -516,27 +440,6 @@ func TestToolParameterExtraction(t *testing.T) {
 		}
 
 		_, err := registry.ExecuteTool(ctx, "quicbaas_kms_set_policy", args)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not available")
-	})
-
-	t.Run("Seal init with recovery keys", func(t *testing.T) {
-		svc := &mockService{}
-		log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-		registry := NewToolRegistry(svc, log)
-		ctx := context.Background()
-
-		args := map[string]interface{}{
-			"secret_shares":      float64(5),
-			"secret_threshold":   float64(3),
-			"recovery_shares":    float64(3),
-			"recovery_threshold": float64(2),
-			"stored_shares":      float64(1),
-			"pgp_keys":           []interface{}{"key1", "key2"},
-			"recovery_pgp_keys":  []interface{}{"rkey1"},
-		}
-
-		_, err := registry.ExecuteTool(ctx, "quicbaas_seal_init", args)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not available")
 	})
@@ -1306,28 +1209,6 @@ func TestToolRegistryExecuteToolRouting(t *testing.T) {
 
 	registry := NewToolRegistry(mockSvc, log)
 	ctx := context.Background()
-
-	// Test all seal operation routes
-	sealTools := []string{
-		"quicbaas_seal_status",
-		"quicbaas_seal_init",
-		"quicbaas_unseal",
-		"quicbaas_seal",
-		"quicbaas_seal_rekey",
-		"quicbaas_seal_generate_recovery_key",
-		"quicbaas_seal_delete_recovery_key",
-		"quicbaas_seal_generate_root_token",
-	}
-
-	for _, tool := range sealTools {
-		t.Run(tool, func(t *testing.T) {
-			// All seal tools require seal service which mock doesn't have
-			result, err := registry.ExecuteTool(ctx, tool, map[string]interface{}{})
-			// These should fail because seal service is not available on mock
-			assert.Error(t, err)
-			assert.Nil(t, result)
-		})
-	}
 
 	// Test all KMS operation routes
 	kmsTools := []string{

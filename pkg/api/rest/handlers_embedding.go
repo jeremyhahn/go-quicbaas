@@ -40,6 +40,7 @@ func registerEmbeddingRoutes(s *Server, r chi.Router) {
 		r.Get("/providers", s.HandleEmbeddingListProviders)
 		r.Get("/providers/{provider}", s.HandleEmbeddingGetProviderInfo)
 		r.Put("/providers/default", s.HandleEmbeddingSetDefaultProvider)
+		r.Put("/providers/{name}/status", s.HandleEmbeddingSetProviderStatus)
 
 		// Cache management
 		r.Get("/cache/stats", s.HandleEmbeddingGetCacheStats)
@@ -458,6 +459,44 @@ func (s *Server) HandleEmbeddingSetDefaultProvider(w http.ResponseWriter, r *htt
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
+}
+
+// HandleEmbeddingSetProviderStatus enables or disables an embedding provider.
+func (s *Server) HandleEmbeddingSetProviderStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		RespondBadRequest(w, r, "provider name is required")
+		return
+	}
+
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+
+	embeddingSvc := s.service.Embedding()
+	if embeddingSvc == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, &ValidationError{
+			Message: "embedding service not configured",
+		})
+		return
+	}
+
+	svcResp, err := embeddingSvc.SetProviderStatus(ctx, &service.SetProviderStatusRequest{
+		Name:    name,
+		Enabled: body.Enabled,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, svcResp)
 }
 
 // ========================================

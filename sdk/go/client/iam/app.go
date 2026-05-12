@@ -151,6 +151,14 @@ const (
 	TokenEndpointAuthPrivateKeyJWT
 	// TokenEndpointAuthNone is for public clients.
 	TokenEndpointAuthNone
+	// TokenEndpointAuthTLSClientAuth uses PKI-validated mTLS (RFC 8705 §2.1).
+	// The client cert chain must validate against the operator CA pool and the
+	// cert's Subject DN or SAN dNSName must match the registered client metadata.
+	TokenEndpointAuthTLSClientAuth
+	// TokenEndpointAuthSelfSignedTLSClientAuth uses a pinned SHA-256 cert
+	// thumbprint for mTLS authentication (RFC 8705 §2.2). No CA chain is
+	// required; the thumbprint registered at client creation is the binding.
+	TokenEndpointAuthSelfSignedTLSClientAuth
 )
 
 // String returns the string representation of the auth method.
@@ -166,6 +174,10 @@ func (m TokenEndpointAuthMethod) String() string {
 		return "private_key_jwt"
 	case TokenEndpointAuthNone:
 		return "none"
+	case TokenEndpointAuthTLSClientAuth:
+		return "tls_client_auth"
+	case TokenEndpointAuthSelfSignedTLSClientAuth:
+		return "self_signed_tls_client_auth"
 	default:
 		return "unknown"
 	}
@@ -191,6 +203,10 @@ func (m *TokenEndpointAuthMethod) UnmarshalJSON(data []byte) error {
 			*m = TokenEndpointAuthPrivateKeyJWT
 		case "none":
 			*m = TokenEndpointAuthNone
+		case "tls_client_auth":
+			*m = TokenEndpointAuthTLSClientAuth
+		case "self_signed_tls_client_auth":
+			*m = TokenEndpointAuthSelfSignedTLSClientAuth
 		default:
 			*m = TokenEndpointAuthClientSecretBasic
 		}
@@ -327,6 +343,21 @@ type RegisterAppRequest struct {
 	// IDTokenTTL is the ID token lifetime.
 	IDTokenTTL time.Duration `json:"id_token_ttl,omitempty"`
 
+	// MTLSCertThumbprint is the SHA-256 thumbprint of the client certificate
+	// for self_signed_tls_client_auth registration (RFC 8705 §2.2).
+	// Mutually exclusive with MTLSSubjectDN and MTLSSANDNS.
+	// Set by the CLI when --cert-pem is provided; the thumbprint is computed
+	// locally and sent instead of the raw PEM.
+	MTLSCertThumbprint string `json:"mtls_cert_thumbprint,omitempty"`
+
+	// MTLSSubjectDN is the Subject Distinguished Name used to identify the
+	// client for tls_client_auth (RFC 8705 §2.1).
+	MTLSSubjectDN string `json:"mtls_subject_dn,omitempty"`
+
+	// MTLSSANDNS is the SAN dNSName used to identify the client for
+	// tls_client_auth (RFC 8705 §2.1). Alternative to MTLSSubjectDN.
+	MTLSSANDNS string `json:"mtls_san_dns,omitempty"`
+
 	// Metadata contains custom application metadata.
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
@@ -389,6 +420,11 @@ type UpdateAppRequest struct {
 
 	// Enabled controls whether the application is active.
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// MTLSCertThumbprint replaces the pinned SHA-256 cert thumbprint for
+	// self_signed_tls_client_auth or tls_client_auth clients (RFC 8705).
+	// Used by the pin-cert CLI subcommand to rotate the bound certificate.
+	MTLSCertThumbprint string `json:"mtls_cert_thumbprint,omitempty"`
 }
 
 // Application represents an OAuth2 application.
@@ -458,6 +494,18 @@ type Application struct {
 
 	// Enabled indicates if the application is active.
 	Enabled bool `json:"enabled,omitempty"`
+
+	// MTLSCertThumbprint is the SHA-256 thumbprint of the pinned client
+	// certificate for self_signed_tls_client_auth clients (RFC 8705 §2.2).
+	MTLSCertThumbprint string `json:"mtls_cert_thumbprint,omitempty"`
+
+	// MTLSSubjectDN is the registered Subject DN for tls_client_auth
+	// clients (RFC 8705 §2.1).
+	MTLSSubjectDN string `json:"mtls_subject_dn,omitempty"`
+
+	// MTLSSANDNS is the registered SAN dNSName for tls_client_auth
+	// clients (RFC 8705 §2.1).
+	MTLSSANDNS string `json:"mtls_san_dns,omitempty"`
 
 	// Metadata contains custom application metadata.
 	Metadata map[string]string `json:"metadata,omitempty"`

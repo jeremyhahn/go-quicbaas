@@ -10,5 +10,18 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
-export {};
+// =============================================================================
+// Session Spawn Types (Phase 1 additions)
+// Mirrors sdk/go/client/orchestrator/client.go SpawnSessionRequest
+// =============================================================================
+// SandboxMode mirrors orchestration.SandboxMode.
+// Use SandboxModeDefault to defer to the server's configured policy.
+export const SandboxMode = {
+    // Default defers to the server's configured sandbox policy.
+    Default: 0,
+    // Required forces container-sandboxed execution.
+    Required: 1,
+    // None forces raw process execution, subject to server policy.
+    None: 2,
+};
 //# sourceMappingURL=types.js.map

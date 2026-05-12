@@ -241,14 +241,19 @@ func (m *AppManager) validateRegisterOptions(opts RegisterAppOptions) error {
 	if opts.Name == "" {
 		return &IAMMessageError{Message: "application name is required"}
 	}
-	if len(opts.RedirectURIs) == 0 {
-		return &IAMMessageError{Message: "at least one redirect URI is required"}
-	}
 
-	// Validate redirect URIs
-	for _, uri := range opts.RedirectURIs {
-		if err := validateRedirectURI(uri); err != nil {
-			return &IAMContextError{Message: "invalid redirect URI " + uri, Cause: err}
+	// Redirect URIs are only required for interactive grants (authorization
+	// code, implicit, hybrid). A client configured exclusively for
+	// non-interactive grants (client_credentials, device, JWT bearer) does
+	// not use redirect URIs at all — per RFC 6749 §4.4 they are irrelevant.
+	if appRequiresRedirectURIs(opts.GrantTypes) {
+		if len(opts.RedirectURIs) == 0 {
+			return &IAMMessageError{Message: "at least one redirect URI is required"}
+		}
+		for _, uri := range opts.RedirectURIs {
+			if err := validateRedirectURI(uri); err != nil {
+				return &IAMContextError{Message: "invalid redirect URI " + uri, Cause: err}
+			}
 		}
 	}
 
@@ -260,6 +265,22 @@ func (m *AppManager) validateRegisterOptions(opts RegisterAppOptions) error {
 	}
 
 	return nil
+}
+
+// appRequiresRedirectURIs reports whether any of the provided grant types is
+// an interactive grant that uses redirect URIs. When the grant types list is
+// empty we return true because the defaults applied in RegisterApp include
+// authorization_code, which does require redirects.
+func appRequiresRedirectURIs(grants []string) bool {
+	if len(grants) == 0 {
+		return true
+	}
+	for _, g := range grants {
+		if g == GrantTypeAuthorizationCode {
+			return true
+		}
+	}
+	return false
 }
 
 // validateRedirectURI validates a redirect URI according to OAuth2 requirements.
@@ -291,14 +312,13 @@ func validateRedirectURI(uri string) error {
 	return nil
 }
 
-// isValidGrantType checks if a grant type is a valid OAuth2 grant type.
+// isValidGrantType checks if a grant type is a valid OAuth2.1 grant type.
+// The password and implicit grant types are excluded per OAuth 2.1 (draft-ietf-oauth-v2-1).
 func isValidGrantType(grantType string) bool {
 	validGrantTypes := map[string]bool{
 		"authorization_code": true,
 		"client_credentials": true,
 		"refresh_token":      true,
-		"implicit":           true,
-		"password":           true,
 		"urn:ietf:params:oauth:grant-type:device_code": true,
 	}
 	return validGrantTypes[grantType]

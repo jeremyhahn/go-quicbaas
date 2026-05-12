@@ -4,6 +4,7 @@
 package config
 
 import (
+	"strconv"
 	"time"
 )
 
@@ -77,6 +78,309 @@ const (
 	QRDBTransportUnix = "unix"
 )
 
+// IAMMTLSConfig holds operator-provided configuration for RFC 8705 mTLS client
+// authentication pools that are loaded at daemon startup.
+type IAMMTLSConfig struct {
+	// TLSClientAuthCAFile is the path to a PEM bundle of trusted CA certificates
+	// for tls_client_auth clients (RFC 8705 §2.1). When set, only certs that
+	// chain to this pool are accepted for PKI-based client authentication.
+	// If empty, tls_client_auth is unavailable; clients must use
+	// self_signed_tls_client_auth instead.
+	TLSClientAuthCAFile string `mapstructure:"tls_client_auth_ca_file"`
+
+	// TPMEKRootsFile is the path to a PEM bundle of trusted TPM Endorsement Key
+	// root CAs. When a client certificate chains to one of these roots the issued
+	// access_token receives amr:["mtls","hwk"] and attest_method:"tpm".
+	TPMEKRootsFile string `mapstructure:"tpm_ek_roots_file"`
+
+	// XKeyRootsFile is the path to a PEM bundle of trusted xkey-issued CA roots.
+	// When a client certificate chains to one of these roots the issued
+	// access_token receives attest_method:"xkey".
+	XKeyRootsFile string `mapstructure:"xkey_roots_file"`
+}
+
+// IAMPIVLoginConfig holds configuration for PIV smartcard TLS client-cert login.
+type IAMPIVLoginConfig struct {
+	// Enabled controls whether the POST /api/v1/auth/login/piv endpoint is active.
+	// When true the TLS listener is configured with VerifyClientCertIfGiven so the
+	// browser can present its PIV certificate during the TLS handshake.
+	// Default: false.
+	Enabled bool `mapstructure:"enabled"`
+
+	// CAFile is the path to a PEM bundle of trusted CA roots for PIV cert chain
+	// verification (e.g., government PIV-I root bundle, internal PKI). Required
+	// when Enabled is true. The pool is appended to tlsConfig.ClientCAs so that
+	// PIV-issuing CAs are trusted at the TLS layer in addition to any mTLS CA.
+	CAFile string `mapstructure:"ca_file"`
+
+	// TrustedIssuers is an optional list of Subject DN strings that the PIV cert
+	// issuer must match. When empty, any cert that chains to the configured CA pool
+	// is accepted; the deeper identity check occurs in the handler via thumbprint lookup.
+	TrustedIssuers []string `mapstructure:"trusted_issuers"`
+}
+
+// IAMAAGUIDConfig holds operator configuration for FIDO2 authenticator AAGUID enforcement.
+type IAMAAGUIDConfig struct {
+	// Mode controls how unknown AAGUIDs are handled during WebAuthn registration.
+	// "log_only" (default): unknown AAGUIDs are permitted; a warning is logged.
+	// "enforce": unknown AAGUIDs cause registration to be rejected with aaguid_not_allowed.
+	Mode string `mapstructure:"mode"`
+
+	// AllowlistFile is the path to a JSON file containing allowed AAGUID entries.
+	// Supports FIDO Alliance MDS3 format or a simple JSON array of
+	// {"aaguid": "...", "name": "...", "attestation_level": "..."} objects.
+	// When empty, the allowlist is loaded from built-in defaults (empty = permit all
+	// in log_only mode, deny all in enforce mode).
+	AllowlistFile string `mapstructure:"allowlist_file"`
+}
+
+// IAMSelfServiceRegistrationConfig holds configuration for self-service tenant
+// registration. When enabled, unauthenticated users may create a new tenant
+// and admin account via the /api/v1/auth/register/* endpoints.
+type IAMSelfServiceRegistrationConfig struct {
+	// Enabled controls whether the self-service registration endpoints are active.
+	// Default: false (registration is disabled; invite-only).
+	Enabled bool `mapstructure:"enabled"`
+
+	// RequireAdminApproval places newly registered accounts in a "pending"
+	// state until a platform admin approves them via
+	// POST /api/v1/iam/users/{user_id}/approve.
+	// Default: true (safe default — new tenants need admin sign-off).
+	RequireAdminApproval bool `mapstructure:"require_admin_approval"`
+
+	// RequireEmailVerification marks the account "unverified" after registration
+	// and blocks login until email ownership is confirmed. No SMTP wiring is
+	// performed in Phase 2; the flag gates the state transition only.
+	// Default: false.
+	RequireEmailVerification bool `mapstructure:"require_email_verification"`
+
+	// DefaultRole is the built-in role granted to the registrant inside their
+	// new tenant IN ADDITION to the always-granted Admin role on that tenant.
+	// Must be one of: Admin, Operator, User, Auditor, Custodian, SO.
+	// Default: "User".
+	DefaultRole string `mapstructure:"default_role"`
+
+	// AllowedIsolationModes lists the tenant isolation modes the operator
+	// permits registrants to choose from. Accepted values: "keyspace", "barrier".
+	// When empty, defaults to ["keyspace"].
+	AllowedIsolationModes []string `mapstructure:"allowed_isolation_modes"`
+
+	// DefaultIsolationMode is the isolation mode pre-selected for new tenants
+	// when the registrant does not specify one. Must be a member of
+	// AllowedIsolationModes.
+	// Default: "keyspace".
+	DefaultIsolationMode string `mapstructure:"default_isolation_mode"`
+
+	// TenantBarrierVolumePool is the volume pool name used when a registrant
+	// selects isolation_mode=barrier. Required (non-empty) when "barrier" is
+	// present in AllowedIsolationModes.
+	// Default: "default".
+	TenantBarrierVolumePool string `mapstructure:"tenant_barrier_volume_pool"`
+}
+
+// ValidRoleNames enumerates the six built-in FIPS 140-3 role names.
+var ValidRoleNames = map[string]struct{}{
+	"Admin":     {},
+	"Operator":  {},
+	"User":      {},
+	"Auditor":   {},
+	"Custodian": {},
+	"SO":        {},
+}
+
+// Validate returns an error if the IAMSelfServiceRegistrationConfig contains
+// an invalid combination of field values. It is called during daemon startup.
+func (c *IAMSelfServiceRegistrationConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if _, ok := ValidRoleNames[c.DefaultRole]; !ok {
+		return &ConfigValidationError{
+			Field:   "iam.self_service_registration.default_role",
+			Message: "must be one of Admin, Operator, User, Auditor, Custodian, SO; got " + c.DefaultRole,
+		}
+	}
+	modes := c.AllowedIsolationModes
+	if len(modes) == 0 {
+		modes = []string{TenantIsolationKeyspace}
+	}
+	modeSet := make(map[string]struct{}, len(modes))
+	for _, m := range modes {
+		if m != TenantIsolationKeyspace && m != TenantIsolationBarrier {
+			return &ConfigValidationError{
+				Field:   "iam.self_service_registration.allowed_isolation_modes",
+				Message: "unsupported isolation mode: " + m,
+			}
+		}
+		modeSet[m] = struct{}{}
+	}
+	defMode := c.DefaultIsolationMode
+	if defMode == "" {
+		defMode = TenantIsolationKeyspace
+	}
+	if _, ok := modeSet[defMode]; !ok {
+		return &ConfigValidationError{
+			Field:   "iam.self_service_registration.default_isolation_mode",
+			Message: "default_isolation_mode must be one of allowed_isolation_modes",
+		}
+	}
+	if _, ok := modeSet[TenantIsolationBarrier]; ok {
+		pool := c.TenantBarrierVolumePool
+		if pool == "" {
+			return &ConfigValidationError{
+				Field:   "iam.self_service_registration.tenant_barrier_volume_pool",
+				Message: "must be non-empty when barrier isolation mode is allowed",
+			}
+		}
+	}
+	return nil
+}
+
+// ConfigValidationError is a typed error for configuration validation failures.
+type ConfigValidationError struct {
+	Field   string
+	Message string
+}
+
+// Error implements the error interface.
+func (e *ConfigValidationError) Error() string {
+	return "config: " + e.Field + ": " + e.Message
+}
+
+// IAMWebAuthnConfig holds the relying-party configuration for the WebAuthn /
+// FIDO2 ceremony layer mounted from go-xkms. Production deployments must
+// supply an explicit RPID, RPDisplayName, and at least one origin; the
+// embedded webauthn library refuses to operate against the dev defaults
+// when the browser origin does not match.
+//
+// The fields mirror github.com/go-webauthn/webauthn/webauthn.Config so the
+// xkms factory can construct one directly without remapping.
+type IAMWebAuthnConfig struct {
+	// RPID is the Relying Party ID — a valid effective domain (e.g.
+	// "example.com"). Browsers require an exact match against the page
+	// origin's eTLD+1. Required.
+	RPID string `mapstructure:"rp_id"`
+
+	// RPDisplayName is the human-readable name shown by the authenticator
+	// during ceremonies. Required.
+	RPDisplayName string `mapstructure:"rp_display_name"`
+
+	// RPOrigins is the list of permitted origins. At least one entry
+	// required. Each entry must be a full origin including scheme
+	// (e.g. "https://app.example.com"). Required.
+	RPOrigins []string `mapstructure:"rp_origins"`
+
+	// Timeout is the ceremony timeout (e.g. "60s"). When empty the
+	// underlying library default applies.
+	Timeout string `mapstructure:"timeout"`
+
+	// UserVerification selects the user-verification policy:
+	// "preferred" (default), "required", or "discouraged".
+	UserVerification string `mapstructure:"user_verification"`
+
+	// AttestationPreference controls attestation conveyance:
+	// "none" (default), "indirect", or "direct".
+	AttestationPreference string `mapstructure:"attestation_preference"`
+
+	// ResidentKeyRequirement selects the resident-key policy:
+	// "discouraged", "preferred", or "required".
+	ResidentKeyRequirement string `mapstructure:"resident_key_requirement"`
+
+	// AuthenticatorAttachment optionally constrains the authenticator
+	// type: "platform", "cross-platform", or empty (no constraint).
+	AuthenticatorAttachment string `mapstructure:"authenticator_attachment"`
+
+	// Debug enables verbose webauthn logging in non-production builds.
+	Debug bool `mapstructure:"debug"`
+}
+
+// Validate ensures the WebAuthn relying-party configuration is fit for
+// production use. The required fields (RPID, RPDisplayName, RPOrigins)
+// are checked unconditionally — there is no "disabled" mode for
+// WebAuthn config because the WebAuthn surface is always wired when
+// IAM is compiled in. Operators that want to disable the surface
+// gate it at the IAMSelfServiceRegistrationConfig level instead.
+func (c *IAMWebAuthnConfig) Validate() error {
+	if c.RPID == "" {
+		return &ConfigValidationError{
+			Field:   "iam.webauthn.rp_id",
+			Message: "rp_id is required (the Relying Party effective domain)",
+		}
+	}
+	if c.RPDisplayName == "" {
+		return &ConfigValidationError{
+			Field:   "iam.webauthn.rp_display_name",
+			Message: "rp_display_name is required",
+		}
+	}
+	if len(c.RPOrigins) == 0 {
+		return &ConfigValidationError{
+			Field:   "iam.webauthn.rp_origins",
+			Message: "rp_origins must contain at least one origin",
+		}
+	}
+	for i, o := range c.RPOrigins {
+		if o == "" {
+			return &ConfigValidationError{
+				Field:   "iam.webauthn.rp_origins",
+				Message: "rp_origins entries must be non-empty (entry " + strconv.Itoa(i) + ")",
+			}
+		}
+	}
+	switch c.UserVerification {
+	case "", "preferred", "required", "discouraged":
+	default:
+		return &ConfigValidationError{
+			Field:   "iam.webauthn.user_verification",
+			Message: "must be one of preferred, required, discouraged",
+		}
+	}
+	switch c.AttestationPreference {
+	case "", "none", "indirect", "direct":
+	default:
+		return &ConfigValidationError{
+			Field:   "iam.webauthn.attestation_preference",
+			Message: "must be one of none, indirect, direct",
+		}
+	}
+	switch c.ResidentKeyRequirement {
+	case "", "discouraged", "preferred", "required":
+	default:
+		return &ConfigValidationError{
+			Field:   "iam.webauthn.resident_key_requirement",
+			Message: "must be one of discouraged, preferred, required",
+		}
+	}
+	switch c.AuthenticatorAttachment {
+	case "", "platform", "cross-platform":
+	default:
+		return &ConfigValidationError{
+			Field:   "iam.webauthn.authenticator_attachment",
+			Message: "must be one of platform, cross-platform, or empty",
+		}
+	}
+	return nil
+}
+
+// IAMConfig holds top-level IAM configuration including mTLS settings.
+type IAMConfig struct {
+	// MTLS holds operator-provided mTLS client authentication configuration.
+	MTLS IAMMTLSConfig `mapstructure:"mtls"`
+
+	// PIVLogin controls PIV smartcard TLS client-cert login.
+	PIVLogin IAMPIVLoginConfig `mapstructure:"piv_login"`
+
+	// AAGUID controls FIDO2 authenticator AAGUID allowlist enforcement.
+	AAGUID IAMAAGUIDConfig `mapstructure:"aaguid"`
+
+	// WebAuthn holds the relying-party configuration for the WebAuthn
+	// ceremony layer (RPID, origins, timeout, ceremony policy).
+	WebAuthn IAMWebAuthnConfig `mapstructure:"webauthn"`
+
+	// SelfServiceRegistration controls the self-service tenant registration surface.
+	SelfServiceRegistration IAMSelfServiceRegistrationConfig `mapstructure:"self_service_registration"`
+}
+
 // Config represents the complete QuicBaaS configuration.
 type Config struct {
 	Server        ServerConfig        `mapstructure:"server"`
@@ -85,6 +389,7 @@ type Config struct {
 	Storage       StorageConfig       `mapstructure:"storage"`
 	Security      SecurityConfig      `mapstructure:"security"`
 	Auth          AuthConfig          `mapstructure:"auth"`
+	IAM           IAMConfig           `mapstructure:"iam"`
 	Backup        BackupConfig        `mapstructure:"backup"`
 	ObjectStorage ObjectStorageConfig `mapstructure:"object_storage"`
 	Logging       LoggingConfig       `mapstructure:"logging"`
@@ -105,6 +410,7 @@ type Config struct {
 	CA            CAConfig            `mapstructure:"ca"`
 	QRDB          QRDBConfig          `mapstructure:"qrdb"`
 	Databases     DatabasesConfig     `mapstructure:"databases"`
+	XKMS          XKMSConfig          `mapstructure:"xkms"`
 }
 
 // QRDBConfig configures the qrdb SDK client transport.
@@ -276,6 +582,41 @@ type LeadAgentConfig struct {
 	SystemPrompt string `mapstructure:"system_prompt"`
 }
 
+// EmbeddedAgentConfig configures the optional in-process agent that
+// quicbaasd can boot alongside the orchestrator. When Enabled is true,
+// quicbaasd starts a full agent runtime (identical to `quicbaas agent serve`)
+// and registers it through the same fleet registry that remote agents use.
+// The runtime communicates with the orchestrator via a bufconn loopback — no
+// network round-trip — while retaining a proper mTLS identity issued by the
+// local CA.
+type EmbeddedAgentConfig struct {
+	// Enabled starts an in-process agent runtime at quicbaasd boot.
+	// Default: false. When false, quicbaasd is a pure orchestrator.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Backends lists the backend kinds the embedded agent exposes.
+	// Default: ["ollama"]
+	Backends []string `mapstructure:"backends"`
+
+	// OllamaURL is the Ollama API endpoint the embedded Ollama backend dials.
+	// Default: "http://127.0.0.1:11434"
+	OllamaURL string `mapstructure:"ollama_url"`
+
+	// HostAffinity is the self-tag this node advertises so callers can pin
+	// work to this specific machine with host_affinity hints.
+	// Default: os.Hostname()
+	HostAffinity string `mapstructure:"host_affinity"`
+
+	// GPUAvailable advertises GPU capability in the embedded agent's
+	// registration so GPU-aware routing includes this node.
+	// Default: false
+	GPUAvailable bool `mapstructure:"gpu_available"`
+
+	// DataDir is the working directory for the embedded agent's session
+	// scratch space. Defaults to <storage.data_dir>/embedded-agent.
+	DataDir string `mapstructure:"data_dir"`
+}
+
 // OrchestrationConfig configures the agent orchestration service.
 type OrchestrationConfig struct {
 	// Enabled enables the agent orchestration service.
@@ -298,6 +639,45 @@ type OrchestrationConfig struct {
 	// OllamaChatModel is the default chat model for Ollama orchestration operations.
 	// Default: "llama3"
 	OllamaChatModel string `mapstructure:"ollama_chat_model"`
+
+	// HostAffinity configures how strictly host_affinity hints on
+	// SpawnSession / Inference requests are enforced when the named host is
+	// offline. See SchedulerHostAffinityConfig.
+	HostAffinity SchedulerHostAffinityConfig `mapstructure:"host_affinity"`
+}
+
+// SchedulerHostAffinityConfig controls operator policy for the host_affinity
+// hint applied to orchestrator and scheduler requests.
+type SchedulerHostAffinityConfig struct {
+	// Mode selects the enforcement mode when a request supplies host_affinity
+	// but the named host is offline:
+	//   "soft" (default): warn and fall back to any available agent.
+	//   "hard": return a NoMatchingAgentError so callers know the request was
+	//   not satisfied.
+	// Empty defaults to "soft".
+	Mode string `mapstructure:"mode"`
+}
+
+// HostAffinityModeSoft is the default soft enforcement mode (warn + fallback).
+const HostAffinityModeSoft = "soft"
+
+// HostAffinityModeHard is the strict enforcement mode (typed-error + no fallback).
+const HostAffinityModeHard = "hard"
+
+// EffectiveMode returns Mode normalised to lowercase, defaulting to
+// HostAffinityModeSoft when empty.
+func (c SchedulerHostAffinityConfig) EffectiveMode() string {
+	switch c.Mode {
+	case "":
+		return HostAffinityModeSoft
+	default:
+		return c.Mode
+	}
+}
+
+// IsHard reports whether the operator-level default is "hard".
+func (c SchedulerHostAffinityConfig) IsHard() bool {
+	return c.EffectiveMode() == HostAffinityModeHard
 }
 
 // WatchBridgeConfig contains watch bridge specific configuration.
@@ -443,12 +823,29 @@ type ServerConfig struct {
 	Host              string `mapstructure:"host"`
 	ExposeShardHeader bool   `mapstructure:"expose_shard_header"`
 
+	// AdditionalSANDNS lists extra DNS names to include in the server's
+	// auto-generated TLS certificate SANs. Required when operators reach
+	// this server via a hostname that differs from Host (for example, a
+	// load-balancer FQDN, an internal DNS alias, or a remote GPU host
+	// that dials the central by hostname).
+	AdditionalSANDNS []string `mapstructure:"additional_san_dns"`
+
+	// AdditionalSANIPs lists extra IP addresses to include in the server's
+	// auto-generated TLS certificate SANs. Required when operators reach
+	// this server by a routable IP other than 127.0.0.1/::1 — which is
+	// always the case for remote GPU agents connecting across the LAN.
+	AdditionalSANIPs []string `mapstructure:"additional_san_ips"`
+
 	// Embedded enables embedded mode where QuicBaaS runs in-process without
 	// any network listeners (Unix socket, TCP, REST, QUIC). Use this when
 	// embedding QuicBaaS as a library and accessing the service directly via
 	// Server.Service(). Raft communication still uses TCP for inter-node consensus.
 	// Default: false.
 	Embedded bool `mapstructure:"embedded"`
+
+	// EmbeddedAgent configures the optional co-located agent runtime.
+	// See EmbeddedAgentConfig for field semantics.
+	EmbeddedAgent EmbeddedAgentConfig `mapstructure:"embedded_agent"`
 
 	// Protocol-specific configurations
 	GRPC ServerGRPCConfig `mapstructure:"grpc"`

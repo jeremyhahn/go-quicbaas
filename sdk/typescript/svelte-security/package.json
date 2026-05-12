@@ -1,0 +1,28 @@
+{
+  "name": "@quicbaas/svelte-security",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reusable Svelte 5 components for the QuicBaaS Barrier/Ceremony/Bootstrap security surfaces.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./components/*.svelte": "./src/components/*.svelte"
+  },
+  "scripts": {
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  },
+  "devDependencies": {
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

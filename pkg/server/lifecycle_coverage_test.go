@@ -287,12 +287,16 @@ func TestLC_StartKMS_Disabled(t *testing.T) {
 // lifecycle.go: startSecrets
 // =============================================================================
 
+// TestLC_StartSecrets_Disabled verifies that startSecrets is always-on: even when
+// Secrets.Enabled is false in config, the secrets manager is initialized because
+// the operator decision (2026-04-22) is "if compiled in, it's enabled".
 func TestLC_StartSecrets_Disabled(t *testing.T) {
 	t.Parallel()
 	srv := withTempServer(t)
 	srv.config.Secrets.Enabled = false
 	assert.NoError(t, srv.startSecrets())
-	assert.Nil(t, srv.secretsManager)
+	// always-on: manager is initialized regardless of the config flag
+	assert.NotNil(t, srv.secretsManager)
 }
 
 func TestLC_StartSecrets_Enabled(t *testing.T) {

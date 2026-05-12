@@ -63,6 +63,10 @@ func (m *mockUserStorage) GetUserByEmail(_ context.Context, _ string) (*iam.User
 	return nil, iam.ErrUserNotFound
 }
 
+func (m *mockUserStorage) GetUserByPIVThumbprint(_ context.Context, _ string) (*iam.User, error) {
+	return nil, iam.ErrUserNotFound
+}
+
 func (m *mockUserStorage) UpdateUser(_ context.Context, user *iam.User) error {
 	m.users[user.TenantID+"/"+user.ID] = user
 	return nil

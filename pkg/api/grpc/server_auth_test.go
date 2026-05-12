@@ -27,82 +27,14 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
+// TestServer_Login confirms that password-based login returns Unimplemented.
+// QuicBaaS uses WebAuthn (FIDO2) and PIV smartcard authentication only.
 func TestServer_Login(t *testing.T) {
-	tests := []struct {
-		name        string
-		request     *pb.LoginRequest
-		mockSetup   func(mockSvc *mock.Mock)
-		expectError bool
-		errorCode   codes.Code
-		validate    func(t *testing.T, resp *pb.LoginResponse)
-	}{
-		{
-			name: "successful_login",
-			request: &pb.LoginRequest{
-				Username: "admin",
-				Password: "secret123",
-			},
-			mockSetup: func(m *mock.Mock) {
-				m.On("Login", mock.Anything, mock.MatchedBy(func(req *service.LoginRequest) bool {
-					return req.Username == "admin" && req.Password == "secret123"
-				})).Return(&service.LoginResponse{
-					AccessToken:  "access-token-123",
-					RefreshToken: "refresh-token-456",
-					ExpiresAt:    1700000000,
-					UserID:       "user-1",
-				}, nil).Once()
-			},
-			expectError: false,
-			validate: func(t *testing.T, resp *pb.LoginResponse) {
-				assert.Equal(t, "access-token-123", resp.AccessToken)
-				assert.Equal(t, "refresh-token-456", resp.RefreshToken)
-				assert.Equal(t, int64(1700000000), resp.ExpiresAt)
-				assert.Equal(t, "Bearer", resp.TokenType)
-				assert.Equal(t, "user-1", resp.UserId)
-			},
-		},
-		{
-			name:        "nil_request",
-			request:     nil,
-			mockSetup:   func(m *mock.Mock) {},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
-		},
-		{
-			name: "service_error",
-			request: &pb.LoginRequest{
-				Username: "admin",
-				Password: "wrong",
-			},
-			mockSetup: func(m *mock.Mock) {
-				m.On("Login", mock.Anything, mock.Anything).
-					Return(nil, assert.AnError).Once()
-			},
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv, mockSvc := createTestServerWithMockService(t)
-			tt.mockSetup(&mockSvc.Mock)
-
-			resp, err := srv.Login(context.Background(), tt.request)
-			if tt.expectError {
-				require.Error(t, err)
-				if tt.errorCode != 0 {
-					assert.Equal(t, tt.errorCode, status.Code(err))
-				}
-			} else {
-				require.NoError(t, err)
-				require.NotNil(t, resp)
-				if tt.validate != nil {
-					tt.validate(t, resp)
-				}
-			}
-			mockSvc.AssertExpectations(t)
-		})
-	}
+	srv, _ := createTestServerWithMockService(t)
+	resp, err := srv.Login(context.Background(), &pb.LoginRequest{Username: "admin"})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
 }
 
 func TestServer_Logout(t *testing.T) {

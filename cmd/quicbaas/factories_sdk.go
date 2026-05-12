@@ -877,6 +877,13 @@ func (c *sdkOrchestratorClient) ListBackends(ctx context.Context) (*orchestrator
 	return c.sdk.Orchestrator().ListBackends(ctx)
 }
 
+// ListBackendModels lists the model names available on the named backend
+// as seen from the specified agent. AgentID is used as a host affinity hint
+// for the remote backend resolver; pass an empty string to skip host affinity.
+func (c *sdkOrchestratorClient) ListBackendModels(ctx context.Context, req *orchestratorSDK.ListBackendModelsRequest) (*orchestratorSDK.ListBackendModelsResponse, error) {
+	return c.sdk.Orchestrator().ListBackendModels(ctx, req)
+}
+
 // SpawnSession creates a new agent session.
 func (c *sdkOrchestratorClient) SpawnSession(ctx context.Context, req *orchestratorSDK.SpawnSessionRequest) (*orchestratorSDK.SpawnSessionResponse, error) {
 	return c.sdk.Orchestrator().SpawnSession(ctx, req)
@@ -980,6 +987,26 @@ func (c *sdkOrchestratorClient) CancelJob(ctx context.Context, req *orchestrator
 // SubscribeJobEvents returns a channel of real-time events for a running job.
 func (c *sdkOrchestratorClient) SubscribeJobEvents(ctx context.Context, req *orchestratorSDK.SubscribeJobEventsRequest) (<-chan *orchestratorSDK.JobEvent, error) {
 	return c.sdk.Orchestrator().SubscribeJobEvents(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) GetSessionHistory(ctx context.Context, req *orchestratorSDK.GetSessionHistoryRequest) (*orchestratorSDK.GetSessionHistoryResponse, error) {
+	return c.sdk.Orchestrator().GetSessionHistory(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) SubscribeSessionEvents(ctx context.Context, req *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error) {
+	return c.sdk.Orchestrator().SubscribeSessionEvents(ctx, req)
+}
+
+// Inference runs a stateless fleet-routed inference call and returns the
+// aggregated response.
+func (c *sdkOrchestratorClient) Inference(ctx context.Context, req *orchestratorSDK.InferenceRequest) (*orchestratorSDK.InferenceResponse, error) {
+	return c.sdk.Orchestrator().Inference(ctx, req)
+}
+
+// InferenceStream runs a stateless fleet-routed inference call and returns a
+// channel of InferenceChunk values streamed from the backend.
+func (c *sdkOrchestratorClient) InferenceStream(ctx context.Context, req *orchestratorSDK.InferenceRequest) (<-chan *orchestratorSDK.InferenceChunk, error) {
+	return c.sdk.Orchestrator().InferenceStream(ctx, req)
 }
 
 // Close closes the underlying SDK client.

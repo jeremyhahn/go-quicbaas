@@ -45,14 +45,14 @@ func TestIAMAdapter_Authenticate_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("successful authentication", func(t *testing.T) {
-		token, err := adapter.Authenticate(ctx, "authuser", "authpass")
+		token, err := adapter.Authenticate(ctx, "authuser", pwBuffer(t, "authpass"))
 		require.NoError(t, err)
 		require.NotNil(t, token)
 		assert.NotEmpty(t, token.AccessToken)
 	})
 
 	t.Run("invalid credentials", func(t *testing.T) {
-		token, err := adapter.Authenticate(ctx, "authuser", "wrong")
+		token, err := adapter.Authenticate(ctx, "authuser", pwBuffer(t, "wrong"))
 		require.Error(t, err)
 		assert.Nil(t, token)
 	})
@@ -66,7 +66,7 @@ func TestIAMAdapter_ValidateToken_Success(t *testing.T) {
 	_, err := mgr.CreateUser("valuser2", "valpass2", []string{"admin"})
 	require.NoError(t, err)
 
-	token, err := adapter.Authenticate(ctx, "valuser2", "valpass2")
+	token, err := adapter.Authenticate(ctx, "valuser2", pwBuffer(t, "valpass2"))
 	require.NoError(t, err)
 
 	t.Run("valid token", func(t *testing.T) {
@@ -90,7 +90,7 @@ func TestIAMAdapter_RefreshToken_Success(t *testing.T) {
 	_, err := mgr.CreateUser("refuser2", "refpass2", []string{"admin"})
 	require.NoError(t, err)
 
-	token, err := adapter.Authenticate(ctx, "refuser2", "refpass2")
+	token, err := adapter.Authenticate(ctx, "refuser2", pwBuffer(t, "refpass2"))
 	require.NoError(t, err)
 
 	t.Run("refresh with valid token", func(t *testing.T) {
@@ -114,7 +114,7 @@ func TestIAMAdapter_RevokeToken_Success(t *testing.T) {
 	_, err := mgr.CreateUser("revuser2", "revpass2", []string{"admin"})
 	require.NoError(t, err)
 
-	token, err := adapter.Authenticate(ctx, "revuser2", "revpass2")
+	token, err := adapter.Authenticate(ctx, "revuser2", pwBuffer(t, "revpass2"))
 	require.NoError(t, err)
 
 	t.Run("revoke valid token succeeds", func(t *testing.T) {
@@ -160,13 +160,13 @@ func TestIfAdapter_Authenticate_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("successful authentication returns token", func(t *testing.T) {
-		result, err := adapter.Authenticate(ctx, "ifuser2", "ifpass2")
+		result, err := adapter.Authenticate(ctx, "ifuser2", pwBuffer(t, "ifpass2"))
 		require.NoError(t, err)
 		require.NotNil(t, result)
 	})
 
 	t.Run("invalid credentials returns error", func(t *testing.T) {
-		_, err := adapter.Authenticate(ctx, "ifuser2", "wrong")
+		_, err := adapter.Authenticate(ctx, "ifuser2", pwBuffer(t, "wrong"))
 		require.Error(t, err)
 	})
 }
@@ -179,7 +179,7 @@ func TestIfAdapter_ValidateToken_Success(t *testing.T) {
 	_, err := mgr.CreateUser("vtuser2", "vtpass2", []string{"admin"})
 	require.NoError(t, err)
 
-	token, err := mgr.Authenticate(ctx, "vtuser2", "vtpass2")
+	token, err := mgr.Authenticate(ctx, "vtuser2", pwBuffer(t, "vtpass2"))
 	require.NoError(t, err)
 
 	t.Run("valid token", func(t *testing.T) {
@@ -202,7 +202,7 @@ func TestIfAdapter_RefreshToken_Success(t *testing.T) {
 	_, err := mgr.CreateUser("rtuser2", "rtpass2", []string{"admin"})
 	require.NoError(t, err)
 
-	token, err := mgr.Authenticate(ctx, "rtuser2", "rtpass2")
+	token, err := mgr.Authenticate(ctx, "rtuser2", pwBuffer(t, "rtpass2"))
 	require.NoError(t, err)
 
 	t.Run("refresh valid", func(t *testing.T) {
@@ -225,7 +225,7 @@ func TestIfAdapter_RevokeToken_Success(t *testing.T) {
 	_, err := mgr.CreateUser("rvuser2", "rvpass2", []string{"admin"})
 	require.NoError(t, err)
 
-	token, err := mgr.Authenticate(ctx, "rvuser2", "rvpass2")
+	token, err := mgr.Authenticate(ctx, "rvuser2", pwBuffer(t, "rvpass2"))
 	require.NoError(t, err)
 
 	t.Run("revoke valid token succeeds", func(t *testing.T) {
@@ -263,7 +263,7 @@ func TestIfAdapter_Authorize_Success(t *testing.T) {
 	_, err := mgr.CreateUser("authzuser2", "authzpass2", []string{"admin"})
 	require.NoError(t, err)
 
-	token, err := mgr.Authenticate(ctx, "authzuser2", "authzpass2")
+	token, err := mgr.Authenticate(ctx, "authzuser2", pwBuffer(t, "authzpass2"))
 	require.NoError(t, err)
 
 	t.Run("authorize with valid token exercises path", func(t *testing.T) {

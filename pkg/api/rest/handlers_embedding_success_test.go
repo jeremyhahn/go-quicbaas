@@ -94,6 +94,14 @@ func (m *MockEmbeddingService) ClearCache(ctx context.Context, req *service.Clea
 	return args.Get(0).(*service.ClearEmbeddingCacheResponse), args.Error(1)
 }
 
+func (m *MockEmbeddingService) SetProviderStatus(ctx context.Context, req *service.SetProviderStatusRequest) (*service.SetProviderStatusResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*service.SetProviderStatusResponse), args.Error(1)
+}
+
 // setupMockServerWithEmbedding creates a test server with mock embedding service.
 func setupMockServerWithEmbedding(t *testing.T) (*Server, *testutil.MockQuicBaaS, *MockEmbeddingService, func()) {
 	t.Helper()
@@ -699,4 +707,128 @@ func TestConvertProviderInfoToResponseWithValues(t *testing.T) {
 		assert.Equal(t, uint64(5), result.ErrorCount)
 		assert.Equal(t, "150ms", result.AvgLatency)
 	})
+}
+
+func TestHandleEmbeddingSetProviderStatus(t *testing.T) {
+	tests := []struct {
+		name           string
+		providerName   string
+		body           string
+		setupMock      func(*MockEmbeddingService)
+		expectedStatus int
+		checkEnabled   *bool
+	}{
+		{
+			name:         "enable provider successfully",
+			providerName: "openai",
+			body:         `{"enabled":true}`,
+			setupMock: func(m *MockEmbeddingService) {
+				enabled := true
+				m.On("SetProviderStatus", mock.Anything, &service.SetProviderStatusRequest{
+					Name:    "openai",
+					Enabled: true,
+				}).Return(&service.SetProviderStatusResponse{
+					Name:      "openai",
+					Enabled:   true,
+					Timestamp: time.Now(),
+				}, nil).Once()
+				_ = enabled
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:         "disable provider successfully",
+			providerName: "voyage",
+			body:         `{"enabled":false}`,
+			setupMock: func(m *MockEmbeddingService) {
+				m.On("SetProviderStatus", mock.Anything, &service.SetProviderStatusRequest{
+					Name:    "voyage",
+					Enabled: false,
+				}).Return(&service.SetProviderStatusResponse{
+					Name:      "voyage",
+					Enabled:   false,
+					Timestamp: time.Now(),
+				}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "missing provider name returns 400",
+			providerName:   "",
+			body:           `{"enabled":true}`,
+			setupMock:      func(m *MockEmbeddingService) {},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:         "invalid JSON returns 400",
+			providerName: "openai",
+			body:         `not-json`,
+			setupMock:    func(m *MockEmbeddingService) {},
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockQuicBaaS, mockEmbedding, cleanup := setupMockServerWithEmbedding(t)
+			defer cleanup()
+			tt.setupMock(mockEmbedding)
+			mockQuicBaaS.EmbeddingService = mockEmbedding
+
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/embedding/providers/"+tt.providerName+"/status",
+				strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("name", tt.providerName)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+			server.HandleEmbeddingSetProviderStatus(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			mockEmbedding.AssertExpectations(t)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests: HandleEmbeddingListProviders must return provider type
+// (Issue 3 fix — ListProviders path omitted Type field)
+// ---------------------------------------------------------------------------
+
+// TestHandleEmbeddingListProviders_ProviderTypePresent asserts that each entry
+// in the providers list includes a non-empty "type" field matching the provider
+// name. This gates the regression where the embeddingService.ListProviders
+// method built ProviderInfo without setting the Type field.
+func TestHandleEmbeddingListProviders_ProviderTypePresent(t *testing.T) {
+	server, _, mockEmbedding, cleanup := setupMockServerWithEmbedding(t)
+	defer cleanup()
+
+	mockEmbedding.On("ListProviders", mock.Anything, mock.Anything).Return(&service.ListProvidersResponse{
+		Providers: []*service.ProviderInfo{
+			{
+				Name:   "ollama",
+				Type:   service.EmbeddingProviderOllama,
+				Model:  "nomic-embed-text",
+				Status: service.EmbeddingStatusAvailable,
+			},
+		},
+		DefaultProvider: "ollama",
+		Timestamp:       time.Now(),
+	}, nil).Once()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/embedding/providers", nil)
+	w := httptest.NewRecorder()
+
+	server.HandleEmbeddingListProviders(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "unexpected HTTP status: %s", w.Body.String())
+
+	// Use the wire-format body to assert the field is present and non-empty.
+	// This avoids import dependency on encoding/json in the assertion itself.
+	respBody := w.Body.String()
+	assert.Contains(t, respBody, `"type":"ollama"`,
+		"provider list response must include type field with value 'ollama'")
+	mockEmbedding.AssertExpectations(t)
 }

@@ -71,7 +71,6 @@ func TestUserClient_Create(t *testing.T) {
 		user, err := client.Create(context.Background(), "tenant-123", &CreateUserRequest{
 			Username: "testuser",
 			Email:    "test@example.com",
-			Password: "password123",
 		})
 
 		if err != nil {
@@ -90,7 +89,6 @@ func TestUserClient_Create(t *testing.T) {
 		_, err := client.Create(nil, "tenant-123", &CreateUserRequest{
 			Username: "test",
 			Email:    "test@example.com",
-			Password: "password",
 		})
 		if err == nil {
 			t.Error("expected error for nil context")
@@ -105,7 +103,6 @@ func TestUserClient_Create(t *testing.T) {
 		_, err := client.Create(context.Background(), "", &CreateUserRequest{
 			Username: "test",
 			Email:    "test@example.com",
-			Password: "password",
 		})
 		if err == nil {
 			t.Error("expected error for empty tenant ID")
@@ -129,8 +126,7 @@ func TestUserClient_Create(t *testing.T) {
 	t.Run("empty username", func(t *testing.T) {
 		client := NewUserClient(&mockTransport{})
 		_, err := client.Create(context.Background(), "tenant-123", &CreateUserRequest{
-			Email:    "test@example.com",
-			Password: "password",
+			Email: "test@example.com",
 		})
 		if err == nil {
 			t.Error("expected error for empty username")
@@ -144,7 +140,6 @@ func TestUserClient_Create(t *testing.T) {
 		client := NewUserClient(&mockTransport{})
 		_, err := client.Create(context.Background(), "tenant-123", &CreateUserRequest{
 			Username: "test",
-			Password: "password",
 		})
 		if err == nil {
 			t.Error("expected error for empty email")
@@ -154,19 +149,6 @@ func TestUserClient_Create(t *testing.T) {
 		}
 	})
 
-	t.Run("empty password", func(t *testing.T) {
-		client := NewUserClient(&mockTransport{})
-		_, err := client.Create(context.Background(), "tenant-123", &CreateUserRequest{
-			Username: "test",
-			Email:    "test@example.com",
-		})
-		if err == nil {
-			t.Error("expected error for empty password")
-		}
-		if !errors.IsInvalidInput(err) {
-			t.Errorf("expected invalid input error, got %v", err)
-		}
-	})
 }
 
 func TestUserClient_Get(t *testing.T) {
@@ -780,4 +762,132 @@ func TestUserStatus_String(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUserClient_FindByUsername(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				if service != userServiceName {
+					t.Errorf("expected service %s, got %s", userServiceName, service)
+				}
+				if method != "FindByUsername" {
+					t.Errorf("expected method FindByUsername, got %s", method)
+				}
+				getReq, ok := req.(*getUserByUsernameRequest)
+				if !ok {
+					t.Fatalf("expected *getUserByUsernameRequest, got %T", req)
+				}
+				if getReq.TenantID != "tenant-123" {
+					t.Errorf("expected tenant ID tenant-123, got %s", getReq.TenantID)
+				}
+				if getReq.Username != "alice" {
+					t.Errorf("expected username alice, got %s", getReq.Username)
+				}
+				return &User{
+					ID:       "user-123",
+					TenantID: "tenant-123",
+					Username: "alice",
+					Email:    "alice@example.com",
+				}, nil
+			},
+		}
+
+		client := NewUserClient(mt)
+		user, err := client.FindByUsername(context.Background(), "tenant-123", "alice")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if user.ID != "user-123" {
+			t.Errorf("expected ID user-123, got %s", user.ID)
+		}
+		if user.Username != "alice" {
+			t.Errorf("expected username alice, got %s", user.Username)
+		}
+	})
+
+	t.Run("default tenant", func(t *testing.T) {
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				getReq, _ := req.(*getUserByUsernameRequest)
+				if getReq.TenantID != "" {
+					t.Errorf("expected empty tenant ID, got %q", getReq.TenantID)
+				}
+				return &User{ID: "user-1", Username: "bob"}, nil
+			},
+		}
+		client := NewUserClient(mt)
+		user, err := client.FindByUsername(context.Background(), "", "bob")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if user.Username != "bob" {
+			t.Errorf("expected username bob, got %s", user.Username)
+		}
+	})
+
+	t.Run("nil context", func(t *testing.T) {
+		client := NewUserClient(&mockTransport{})
+		_, err := client.FindByUsername(nil, "tenant-123", "alice")
+		if err == nil {
+			t.Fatal("expected error for nil context")
+		}
+		if !errors.IsInvalidInput(err) {
+			t.Errorf("expected invalid input error, got %v", err)
+		}
+	})
+
+	t.Run("empty username", func(t *testing.T) {
+		client := NewUserClient(&mockTransport{})
+		_, err := client.FindByUsername(context.Background(), "tenant-123", "")
+		if err == nil {
+			t.Fatal("expected error for empty username")
+		}
+		if !errors.IsInvalidInput(err) {
+			t.Errorf("expected invalid input error, got %v", err)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				return nil, nil
+			},
+		}
+		client := NewUserClient(mt)
+		_, err := client.FindByUsername(context.Background(), "tenant-123", "ghost")
+		if err == nil {
+			t.Fatal("expected error for missing user")
+		}
+		if !errors.IsNotFound(err) {
+			t.Errorf("expected not found error, got %v", err)
+		}
+	})
+
+	t.Run("transport error propagates", func(t *testing.T) {
+		wantErr := errors.NewInternal("transport", "boom")
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				return nil, wantErr
+			},
+		}
+		client := NewUserClient(mt)
+		_, err := client.FindByUsername(context.Background(), "tenant-123", "alice")
+		if err != wantErr {
+			t.Errorf("expected wantErr %v, got %v", wantErr, err)
+		}
+	})
+
+	t.Run("invalid response type", func(t *testing.T) {
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				return 12345, nil
+			},
+		}
+		client := NewUserClient(mt)
+		_, err := client.FindByUsername(context.Background(), "tenant-123", "alice")
+		if err == nil {
+			t.Fatal("expected error for non-user response")
+		}
+	})
 }

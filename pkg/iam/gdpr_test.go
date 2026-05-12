@@ -67,7 +67,6 @@ func createTestGDPRManager(t *testing.T) (*GDPRManager, *MockGDPRAuditLogger) {
 	auditLogger := &MockGDPRAuditLogger{}
 	userStorage := NewMemoryStorage() // MemoryStorage implements UserStorage
 	sessionStorage := NewMemorySessionStorage()
-	credentialStorage := NewMemoryCredentialStorage()
 
 	deps := GDPRManagerDependencies{
 		ConsentStorage:    NewMemoryConsentStorage(),
@@ -75,7 +74,6 @@ func createTestGDPRManager(t *testing.T) (*GDPRManager, *MockGDPRAuditLogger) {
 		DeletionStorage:   NewMemoryDeletionStorage(),
 		UserStorage:       userStorage,
 		SessionStorage:    sessionStorage,
-		CredentialStorage: credentialStorage,
 		AuditLogger:       auditLogger,
 	}
 
@@ -124,28 +122,6 @@ func createTestSession(t *testing.T, sessionStorage SessionStorage, tenantID, us
 	require.NoError(t, err)
 
 	return session
-}
-
-func createTestCredential(t *testing.T, credentialStorage CredentialStorage, tenantID, userID string) *WebAuthnCredential {
-	t.Helper()
-
-	now := time.Now()
-	credential := &WebAuthnCredential{
-		ID:         fmt.Sprintf("cred_%s", userID),
-		TenantID:   tenantID,
-		UserID:     userID,
-		CreatedAt:  now,
-		LastUsedAt: &now,
-		Name:       "Test Credential",
-		PublicKey:  []byte("test-public-key"),
-		SignCount:  0,
-		Transports: []string{"usb"},
-	}
-
-	err := credentialStorage.CreateCredential(context.Background(), credential)
-	require.NoError(t, err)
-
-	return credential
 }
 
 // ==================== GDPRManager Constructor Tests ====================
@@ -551,7 +527,6 @@ func TestGDPRManager_GenerateExport_AllCategories(t *testing.T) {
 	// Create test data
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 	createTestSession(t, manager.deps.SessionStorage, tenantID, userID)
-	createTestCredential(t, manager.deps.CredentialStorage, tenantID, userID)
 	_, err := manager.GrantConsent(ctx, tenantID, userID, ConsentPurposeMarketing, "1.0", nil, "", "")
 	require.NoError(t, err)
 
@@ -568,8 +543,9 @@ func TestGDPRManager_GenerateExport_AllCategories(t *testing.T) {
 	assert.Len(t, export.Sessions, 1)
 	assert.NotNil(t, export.Consents)
 	assert.Len(t, export.Consents, 1)
-	assert.NotNil(t, export.Credentials)
-	assert.Len(t, export.Credentials, 1)
+	// WebAuthn credentials are owned by go-xkms after Phase 5; the
+	// quicbaas-side GDPR export no longer enumerates them.
+	assert.Nil(t, export.Credentials)
 }
 
 func TestGDPRManager_GenerateExport_WithExclusions(t *testing.T) {
@@ -805,7 +781,6 @@ func TestGDPRManager_ProcessDeletion_Success(t *testing.T) {
 	// Create test data
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 	createTestSession(t, manager.deps.SessionStorage, tenantID, userID)
-	createTestCredential(t, manager.deps.CredentialStorage, tenantID, userID)
 	_, err := manager.GrantConsent(ctx, tenantID, userID, ConsentPurposeMarketing, "1.0", nil, "", "")
 	require.NoError(t, err)
 
@@ -822,7 +797,7 @@ func TestGDPRManager_ProcessDeletion_Success(t *testing.T) {
 
 	assert.True(t, summary.ProfileDeleted)
 	assert.Equal(t, 1, summary.SessionsDeleted)
-	assert.Equal(t, 1, summary.CredentialsDeleted)
+	assert.Equal(t, 0, summary.CredentialsDeleted) // Phase 5: credentials owned by xkms
 	assert.Equal(t, 1, summary.ConsentsDeleted)
 
 	// Verify deletion request updated
@@ -880,7 +855,6 @@ func TestGDPRManager_ProcessDeletion_DeleteAll(t *testing.T) {
 	// Create test data
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 	createTestSession(t, manager.deps.SessionStorage, tenantID, userID)
-	createTestCredential(t, manager.deps.CredentialStorage, tenantID, userID)
 
 	// Request complete deletion (empty delete list means delete all)
 	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 0)
@@ -892,7 +866,7 @@ func TestGDPRManager_ProcessDeletion_DeleteAll(t *testing.T) {
 
 	assert.True(t, summary.ProfileDeleted)
 	assert.Equal(t, 1, summary.SessionsDeleted)
-	assert.Equal(t, 1, summary.CredentialsDeleted)
+	assert.Equal(t, 0, summary.CredentialsDeleted) // Phase 5: credentials owned by xkms
 }
 
 func TestGDPRManager_GetDeletionStatus(t *testing.T) {
@@ -1510,7 +1484,7 @@ func TestGDPRManager_ExportWithNoOptionalDeps(t *testing.T) {
 		DataExportStorage: NewMemoryDataExportStorage(),
 		DeletionStorage:   NewMemoryDeletionStorage(),
 		UserStorage:       NewMemoryStorage(),
-		// SessionStorage, CredentialStorage omitted
+		// SessionStorage omitted; CredentialStorage was removed in Phase 5
 	}
 
 	manager, err := NewGDPRManager(deps)
@@ -1531,7 +1505,7 @@ func TestGDPRManager_ExportWithNoOptionalDeps(t *testing.T) {
 
 	assert.NotNil(t, export.Profile)
 	assert.Nil(t, export.Sessions)    // Should be nil without SessionStorage
-	assert.Nil(t, export.Credentials) // Should be nil without CredentialStorage
+	assert.Nil(t, export.Credentials) // Credentials are now sourced from xkms (Phase 5)
 }
 
 func TestGDPRManager_ProcessDeletion_NotFound(t *testing.T) {

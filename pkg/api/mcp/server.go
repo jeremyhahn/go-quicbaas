@@ -35,6 +35,7 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
@@ -146,6 +147,13 @@ type Config struct {
 
 	// HTTPAddr is the HTTP listen address (for HTTP transport)
 	HTTPAddr string
+
+	// TLSConfig, when non-nil, makes the HTTP transport listen for TLS
+	// connections (https). The CLAUDE.md security posture requires every
+	// public listener to terminate TLS; the daemon passes its in-memory
+	// tls.Config (backed by OpaqueKeys) here so MCP shares the same chain
+	// as the REST/gRPC/QUIC listeners.
+	TLSConfig *tls.Config
 
 	// RequestTimeout is the default timeout for operations
 	RequestTimeout time.Duration
@@ -393,6 +401,15 @@ func (s *Server) startHTTPTransport() error {
 		listener, err := net.Listen("tcp", s.config.HTTPAddr)
 		if err != nil {
 			s.logger.WithError(err).Error("Failed to listen on HTTP address")
+			return
+		}
+
+		if s.config.TLSConfig != nil {
+			httpSrv.TLSConfig = s.config.TLSConfig.Clone()
+			tlsListener := tls.NewListener(listener, httpSrv.TLSConfig)
+			if err := httpSrv.Serve(tlsListener); err != nil && err != http.ErrServerClosed {
+				s.logger.WithError(err).Error("HTTPS server error")
+			}
 			return
 		}
 

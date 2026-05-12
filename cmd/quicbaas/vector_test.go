@@ -1361,6 +1361,8 @@ func (m *testSDKClientForVector) CustodianGroup() (quicbaas.QRDBCustodianGroupCl
 	return nil, nil
 }
 func (m *testSDKClientForVector) Share() (quicbaas.QRDBShareClient, error)  { return nil, nil }
+func (m *testSDKClientForVector) Project() quicbaas.ProjectClient { return nil }
+
 func (m *testSDKClientForVector) Orchestrator() quicbaas.OrchestratorClient { return nil }
 
 // setupVectorMock installs a mock SDK client factory that returns the given vector client.
@@ -2646,3 +2648,5 @@ func TestFormatVectorSearchByIDResponseTable(t *testing.T) {
 	err := formatVectorSearchByIDResponse(resp)
 	assert.NoError(t, err)
 }
+
+

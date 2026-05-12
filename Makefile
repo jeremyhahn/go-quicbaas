@@ -464,7 +464,7 @@ vet: ## Run go vet
 ##@ Build
 
 .PHONY: build
-build: build-daemon build-cli ## Build both daemon and CLI binaries (dynamic, CGO_ENABLED=0)
+build: build-daemon build-cli ## Build both daemon (quicbaasd) and client (quicbaas with embedded desktop GUI)
 
 .PHONY: build-daemon
 build-daemon: ## Build the daemon (quicbaasd)
@@ -473,38 +473,107 @@ ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
 	@mkdir -p $(BIN_DIR)
-	GOFLAGS=-mod=mod GONOSUMCHECK='*' CGO_ENABLED=0 $(GOBUILD) $(BUILD_TAGS_ARG) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)d ./$(DAEMON_CMD_DIR)
+	CGO_ENABLED=0 $(GOBUILD) $(BUILD_TAGS_ARG) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)d ./$(DAEMON_CMD_DIR)
 	@echo "$(GREEN)Build successful: $(BIN_DIR)/$(APP_NAME)d$(NC)"
+
+# Frontend build configuration
+# BUILD_DIR for frontend, handling NFS EPERM issues on Node.js worker threads
+FE_BUILD_DIR ?= /tmp/fe-build-$(shell whoami)
 
 # Frontend build prerequisites (only when WITH_GUI=1)
 .PHONY: _build-sdk-typescript _build-frontend
 
 _build-sdk-typescript:
 	@echo "$(BLUE)Building TypeScript SDK...$(NC)"
-	@cd sdk/typescript && npm install --silent && npm run build
+	@cd sdk/typescript && npm install --silent && node ./node_modules/typescript/bin/tsc
 	@echo "$(GREEN)TypeScript SDK built$(NC)"
 
 _build-frontend: _build-sdk-typescript
-	@echo "$(BLUE)Building frontend...$(NC)"
-	@cd cmd/quicbaas/frontend && npm install --silent && npm run build
+	@echo "$(BLUE)Building frontend (using temporary build directory: $(FE_BUILD_DIR))...$(NC)"
+	@mkdir -p $(FE_BUILD_DIR)
+	@echo "$(YELLOW)Copying sources to $(FE_BUILD_DIR)...$(NC)"
+	@rsync -a --delete cmd/quicbaas/frontend/ $(FE_BUILD_DIR)/ --exclude node_modules --exclude package-lock.json --exclude dist || exit 1
+	@echo "$(YELLOW)Running npm install...$(NC)"
+	@cd $(FE_BUILD_DIR) && npm install 2>&1 | tail -5
+	@echo "$(YELLOW)Overriding @quicbaas/sdk with absolute symlink (post npm-install to survive)...$(NC)"
+	@mkdir -p $(FE_BUILD_DIR)/node_modules/@quicbaas
+	@rm -rf $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk
+	@ln -sfn $(abspath sdk/typescript) $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk
+	@test -e $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk/dist/index.js \
+		|| (echo "$(RED)SDK symlink broken — dist/index.js not reachable via symlink$(NC)" && exit 1)
+	@echo "$(YELLOW)Building...$(NC)"
+	@rm -rf $(FE_BUILD_DIR)/dist
+	@cd $(FE_BUILD_DIR) && set -o pipefail; npm run build 2>&1 | tail -10
+	@test -f $(FE_BUILD_DIR)/dist/index.html \
+		|| (echo "$(RED)Frontend build produced no dist/index.html — build failed silently$(NC)" && exit 1)
+	@echo "$(BLUE)Copying dist back to embed location + frontend tree...$(NC)"
+	@rm -rf pkg/api/rest/ui/dist cmd/quicbaas/frontend/dist
+	@cp -r $(FE_BUILD_DIR)/dist pkg/api/rest/ui/dist
+	@cp -r $(FE_BUILD_DIR)/dist cmd/quicbaas/frontend/dist
 	@echo "$(GREEN)Frontend built$(NC)"
 
-# Determine CLI build dependencies and CGO setting
-CLI_BUILD_DEPS :=
-CLI_CGO_ENABLED := 0
-ifeq ($(WITH_GUI),1)
-  CLI_BUILD_DEPS += _build-frontend
-  CLI_CGO_ENABLED := 1
-endif
+.PHONY: build-sdk-typescript
+build-sdk-typescript: ## Build TypeScript SDK (direct compilation)
+	@echo "$(BLUE)Building TypeScript SDK...$(NC)"
+	@cd sdk/typescript && npm install --silent && node ./node_modules/typescript/bin/tsc
+	@echo "$(GREEN)TypeScript SDK built$(NC)"
+
+.PHONY: build-frontend
+build-frontend: build-sdk-typescript ## Build frontend (handles NFS EPERM via temp dir)
+	@echo "$(BLUE)Building frontend...$(NC)"
+	@mkdir -p $(FE_BUILD_DIR)
+	@echo "$(YELLOW)Syncing sources to $(FE_BUILD_DIR)...$(NC)"
+	@rsync -a --delete cmd/quicbaas/frontend/ $(FE_BUILD_DIR)/ --exclude node_modules --exclude package-lock.json --exclude dist || exit 1
+	@echo "$(YELLOW)Running npm install...$(NC)"
+	@cd $(FE_BUILD_DIR) && npm install 2>&1 | tail -5
+	@echo "$(YELLOW)Overriding @quicbaas/sdk + @quicbaas/svelte-security with absolute symlinks (npm install would make them relative)...$(NC)"
+	@mkdir -p $(FE_BUILD_DIR)/node_modules/@quicbaas
+	@rm -rf $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk
+	@ln -sfn $(abspath sdk/typescript) $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk
+	@test -e $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk/dist/index.js \
+		|| (echo "$(RED)SDK symlink broken — dist/index.js not reachable via symlink$(NC)" && exit 1)
+	@rm -rf $(FE_BUILD_DIR)/node_modules/@quicbaas/svelte-security
+	@ln -sfn $(abspath sdk/typescript/svelte-security) $(FE_BUILD_DIR)/node_modules/@quicbaas/svelte-security
+	@test -e $(FE_BUILD_DIR)/node_modules/@quicbaas/svelte-security/src/index.ts \
+		|| (echo "$(RED)svelte-security symlink broken — src/index.ts not reachable via symlink$(NC)" && exit 1)
+	@echo "$(YELLOW)Purging vite cache + stale dist...$(NC)"
+	@rm -rf $(FE_BUILD_DIR)/node_modules/.vite $(FE_BUILD_DIR)/dist
+	@echo "$(YELLOW)Running vite build...$(NC)"
+	@cd $(FE_BUILD_DIR) && bash -c "set -o pipefail; npm run build 2>&1 | tail -10" \
+		|| (echo "$(RED)Frontend build failed — see errors above$(NC)" && exit 1)
+	@test -f $(FE_BUILD_DIR)/dist/index.html \
+		|| (echo "$(RED)Frontend build produced no dist/index.html — aborting$(NC)" && exit 1)
+	@echo "$(BLUE)Copying dist back to embed location + frontend tree...$(NC)"
+	@rm -rf pkg/api/rest/ui/dist cmd/quicbaas/frontend/dist
+	@cp -r $(FE_BUILD_DIR)/dist pkg/api/rest/ui/dist
+	@cp -r $(FE_BUILD_DIR)/dist cmd/quicbaas/frontend/dist
+	@echo "$(GREEN)Frontend built$(NC)"
+
+.PHONY: build-ui
+build-ui: build-sdk-typescript build-frontend ## Build both SDK and frontend
+
+# The client binary (quicbaas) is ALWAYS built with the desktop GUI
+# embedded — matches go-qrdb and go-xkms conventions. Launch dispatch:
+#   ./bin/quicbaas              → GUI when display is present, else CLI
+#   ./bin/quicbaas <subcommand> → CLI
+#   ./bin/quicbaas --help       → CLI (never opens a window)
+# CGO=1 + desktop build tag link Wails+GTK/WebKit. Requires:
+#   sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev
+# on Ubuntu 24.04 / Debian 13. The desktop tags (desktop, production,
+# webkit2_41) are the same Wails v2 set go-xkms's xkey target uses.
+CLI_DESKTOP_TAGS := desktop production webkit2_41
 
 .PHONY: build-cli
-build-cli: $(CLI_BUILD_DEPS) ## Build the CLI client (quicbaas)
-	@echo "$(BLUE)Building $(APP_NAME) CLI...$(NC)"
-ifneq ($(strip $(BUILD_TAGS)),)
-	@echo "$(YELLOW)Build tags: $(BUILD_TAGS)$(NC)"
-endif
+build-cli: build-ui ## Build the client (quicbaas) — single binary with embedded desktop GUI and CLI dispatch
+	@echo "$(BLUE)Building $(APP_NAME) client (CLI + embedded desktop GUI)...$(NC)"
+	@if ! pkg-config --exists webkit2gtk-4.1; then \
+		echo "$(RED)Error: libwebkit2gtk-4.1-dev not found$(NC)"; \
+		echo "$(YELLOW)Install with: sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(YELLOW)Build tags: $(BUILD_TAGS) $(CLI_DESKTOP_TAGS)$(NC)"
 	@mkdir -p $(BIN_DIR)
-	GOFLAGS=-mod=mod GONOSUMCHECK='*' CGO_ENABLED=$(CLI_CGO_ENABLED) $(GOBUILD) $(BUILD_TAGS_ARG) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME) ./$(CMD_DIR)
+	CGO_ENABLED=1 $(GOBUILD) -tags '$(BUILD_TAGS) $(CLI_DESKTOP_TAGS)' -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME) ./$(CMD_DIR)
 	@echo "$(GREEN)Build successful: $(BIN_DIR)/$(APP_NAME)$(NC)"
 	@echo "$(BLUE)Version info:$(NC)"
 	@$(BIN_DIR)/$(APP_NAME) version --short
@@ -519,7 +588,7 @@ ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
 	@mkdir -p $(BIN_DIR)
-	GOFLAGS=-mod=mod GONOSUMCHECK='*' CGO_ENABLED=0 $(GOBUILD) $(BUILD_TAGS_ARG) -ldflags "$(STATIC_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)d-static ./$(DAEMON_CMD_DIR)
+	CGO_ENABLED=0 $(GOBUILD) $(BUILD_TAGS_ARG) -ldflags "$(STATIC_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)d-static ./$(DAEMON_CMD_DIR)
 	@echo "$(GREEN)Static build successful: $(BIN_DIR)/$(APP_NAME)d-static$(NC)"
 
 .PHONY: build-static-cli
@@ -529,7 +598,7 @@ ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
 	@mkdir -p $(BIN_DIR)
-	GOFLAGS=-mod=mod GONOSUMCHECK='*' CGO_ENABLED=0 $(GOBUILD) $(BUILD_TAGS_ARG) -ldflags "$(STATIC_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-static ./$(CMD_DIR)
+	CGO_ENABLED=0 $(GOBUILD) $(BUILD_TAGS_ARG) -ldflags "$(STATIC_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-static ./$(CMD_DIR)
 	@echo "$(GREEN)Static build successful: $(BIN_DIR)/$(APP_NAME)-static$(NC)"
 
 .PHONY: build-fips
@@ -541,7 +610,7 @@ build-fips-daemon: ## Build FIPS daemon
 	@echo "$(YELLOW)Using GOFIPS140=latest (Go 1.24+)$(NC)"
 	@echo "$(YELLOW)Build tags: $(FIPS_BUILD_TAGS)$(NC)"
 	@mkdir -p $(BIN_DIR)
-	GOFLAGS=-mod=mod GONOSUMCHECK='*' CGO_ENABLED=0 GOFIPS140=latest $(GOBUILD) $(FIPS_BUILD_TAGS_ARG) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)d-fips ./$(DAEMON_CMD_DIR)
+	CGO_ENABLED=0 GOFIPS140=latest $(GOBUILD) $(FIPS_BUILD_TAGS_ARG) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)d-fips ./$(DAEMON_CMD_DIR)
 	@echo "$(GREEN)FIPS build successful: $(BIN_DIR)/$(APP_NAME)d-fips$(NC)"
 
 .PHONY: build-fips-cli
@@ -550,7 +619,7 @@ build-fips-cli: ## Build FIPS CLI
 	@echo "$(YELLOW)Using GOFIPS140=latest (Go 1.24+)$(NC)"
 	@echo "$(YELLOW)Build tags: $(FIPS_BUILD_TAGS)$(NC)"
 	@mkdir -p $(BIN_DIR)
-	GOFLAGS=-mod=mod GONOSUMCHECK='*' CGO_ENABLED=0 GOFIPS140=latest $(GOBUILD) $(FIPS_BUILD_TAGS_ARG) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-fips ./$(CMD_DIR)
+	CGO_ENABLED=0 GOFIPS140=latest $(GOBUILD) $(FIPS_BUILD_TAGS_ARG) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-fips ./$(CMD_DIR)
 	@echo "$(GREEN)FIPS build successful: $(BIN_DIR)/$(APP_NAME)-fips$(NC)"
 
 .PHONY: build-static-fips
@@ -562,7 +631,7 @@ build-static-fips-daemon: ## Build static FIPS daemon
 	@echo "$(YELLOW)Using GOFIPS140=latest (Go 1.24+)$(NC)"
 	@echo "$(YELLOW)Build tags: $(FIPS_BUILD_TAGS)$(NC)"
 	@mkdir -p $(BIN_DIR)
-	GOFLAGS=-mod=mod GONOSUMCHECK='*' CGO_ENABLED=0 GOFIPS140=latest $(GOBUILD) $(FIPS_BUILD_TAGS_ARG) -ldflags "$(STATIC_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)d-fips-static ./$(DAEMON_CMD_DIR)
+	CGO_ENABLED=0 GOFIPS140=latest $(GOBUILD) $(FIPS_BUILD_TAGS_ARG) -ldflags "$(STATIC_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)d-fips-static ./$(DAEMON_CMD_DIR)
 	@echo "$(GREEN)Static FIPS build successful: $(BIN_DIR)/$(APP_NAME)d-fips-static$(NC)"
 
 .PHONY: build-static-fips-cli
@@ -571,7 +640,7 @@ build-static-fips-cli: ## Build static FIPS CLI
 	@echo "$(YELLOW)Using GOFIPS140=latest (Go 1.24+)$(NC)"
 	@echo "$(YELLOW)Build tags: $(FIPS_BUILD_TAGS)$(NC)"
 	@mkdir -p $(BIN_DIR)
-	GOFLAGS=-mod=mod GONOSUMCHECK='*' CGO_ENABLED=0 GOFIPS140=latest $(GOBUILD) $(FIPS_BUILD_TAGS_ARG) -ldflags "$(STATIC_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-fips-static ./$(CMD_DIR)
+	CGO_ENABLED=0 GOFIPS140=latest $(GOBUILD) $(FIPS_BUILD_TAGS_ARG) -ldflags "$(STATIC_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-fips-static ./$(CMD_DIR)
 	@echo "$(GREEN)Static FIPS build successful: $(BIN_DIR)/$(APP_NAME)-fips-static$(NC)"
 
 .PHONY: build-all
@@ -699,9 +768,8 @@ test: ## Run unit tests (excludes integration tests)
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
 endif
-	@mkdir -p $(CURDIR)/.tmp
 	@START_TIME=$$(date +%s); \
-	GOTMPDIR=$(CURDIR)/.tmp $(GOTEST) -v -p 2 -tags '$(TEST_TAGS)' -timeout=5m ./pkg/... ./cmd/...; \
+	$(GOTEST) -v -p 2 -tags '$(TEST_TAGS)' -timeout=5m ./pkg/... ./cmd/...; \
 	TEST_RESULT=$$?; \
 	END_TIME=$$(date +%s); \
 	ELAPSED=$$((END_TIME - START_TIME)); \
@@ -869,6 +937,93 @@ integration-test-sdk-js: ## Run ALL JavaScript SDK integration tests
 # All SDK integration tests
 .PHONY: integration-test-sdk
 integration-test-sdk: integration-test-sdk-go integration-test-sdk-js ## Run ALL SDK integration tests (Go + JavaScript)
+
+# ==============================================================================
+# Phase 9: Session Events, GUI, and Signal Bridge Integration Tests
+# ==============================================================================
+
+.PHONY: integration-test-session-attach
+integration-test-session-attach: build-daemon ## Run session attach integration tests (wire-level SSE smoke against live daemon)
+	@echo "$(BLUE)Running session attach integration tests...$(NC)"
+	@$(MAKE) stop-local >/dev/null 2>&1 || true
+	@rm -rf /tmp/quicbaas-chrometest-data && mkdir -p /tmp/quicbaas-chrometest-data
+	@rm -f /tmp/quicbaas-chrometest.sock
+	@nohup ./bin/quicbaasd start --http-port 18080 --grpc-port 0 \
+		--unix-socket /tmp/quicbaas-chrometest.sock \
+		--data-dir /tmp/quicbaas-chrometest-data --log-level warn \
+		>/tmp/quicbaasd-itest.log 2>&1 & \
+	echo $$! > /tmp/quicbaasd-itest.pid
+	@echo "$(YELLOW)Waiting for daemon readiness (up to 75s cold boot)...$(NC)"
+	@for i in $$(seq 1 75); do \
+		if curl -sk -o /dev/null -w "%{http_code}" https://localhost:18080/api/v1/health/ready 2>/dev/null | grep -q 200; then \
+			echo "$(GREEN)daemon ready$(NC)"; break; \
+		fi; sleep 1; \
+	done
+	@QUICBAAS_URL=https://localhost:18080 $(GOTEST) -v -tags integration -timeout=2m ./test/integration/session_attach/...; \
+		TEST_RESULT=$$?; \
+		kill -9 $$(cat /tmp/quicbaasd-itest.pid 2>/dev/null) 2>/dev/null || true; \
+		$(MAKE) stop-local >/dev/null 2>&1 || true; \
+		exit $$TEST_RESULT
+
+.PHONY: integration-test-gui
+integration-test-gui: test-e2e ## Run GUI Playwright tests — alias for test-e2e
+
+.PHONY: integration-test-signalbridge
+integration-test-signalbridge: ## Run Signal Bridge integration tests (docker-compose: go-signal + quicbaasd + signalbridge)
+	@echo "$(BLUE)Running Signal Bridge integration tests...$(NC)"
+	@if [ -d "test/integration/signalbridge" ]; then \
+		if ! command -v docker-compose > /dev/null 2>&1 && ! docker compose version > /dev/null 2>&1; then \
+			echo "$(RED)Error: docker-compose not found. Install Docker Compose.$(NC)"; \
+			exit 1; \
+		fi; \
+		echo "$(YELLOW)Starting Signal Bridge stack...$(NC)"; \
+		cd test/integration/signalbridge && docker-compose up -d; \
+		echo "$(YELLOW)Waiting for services to be healthy (max 30s)...$(NC)"; \
+		WAIT_COUNT=0; \
+		while [ $$WAIT_COUNT -lt 30 ]; do \
+			if docker-compose ps 2>/dev/null | grep -q "healthy"; then \
+				break; \
+			fi; \
+			echo "  Waiting..."; \
+			sleep 1; \
+			WAIT_COUNT=$$((WAIT_COUNT + 1)); \
+		done; \
+		echo "$(YELLOW)Running smoke test...$(NC)"; \
+		go test -v -tags integration -timeout=5m ./...; \
+		TEST_RESULT=$$?; \
+		echo "$(YELLOW)Cleaning up Signal Bridge stack...$(NC)"; \
+		docker-compose down --volumes --remove-orphans; \
+		exit $$TEST_RESULT; \
+	else \
+		echo "$(YELLOW)test/integration/signalbridge/ not found - skipping$(NC)"; \
+	fi
+
+.PHONY: build-desktop
+# The `build-desktop*` targets are compatibility aliases for `build-cli`.
+# The client binary ALWAYS has the desktop GUI embedded — this matches
+# the go-qrdb (`make build-client`) and go-xkms (`make build-xkey`)
+# conventions. No WITH_GUI flag: the client is one artifact with
+# runtime dispatch between GUI and CLI modes based on args + display.
+
+.PHONY: build-desktop
+build-desktop: build-cli ## Alias for build-cli (client is always built with embedded GUI)
+
+.PHONY: build-desktop-linux
+build-desktop-linux: build-cli ## Alias for build-cli. We're already on Linux.
+
+.PHONY: build-desktop-mac
+build-desktop-mac: ## Cross-compile client for macOS — NOT YET WIRED
+	@echo "$(YELLOW)build-desktop-mac: cross-compilation from Linux is not wired yet.$(NC)"
+	@echo "$(YELLOW)Requirements: osxcross toolchain + macOS WebKit SDK.$(NC)"
+	@echo "$(YELLOW)For now: check out the repo on a macOS host and run 'make build-cli'.$(NC)"
+	@exit 1
+
+.PHONY: build-desktop-windows
+build-desktop-windows: ## Cross-compile client for Windows — NOT YET WIRED
+	@echo "$(YELLOW)build-desktop-windows: cross-compilation from Linux is not wired yet.$(NC)"
+	@echo "$(YELLOW)Requirements: mingw-w64 + Windows WebView2 runtime.$(NC)"
+	@echo "$(YELLOW)For now: check out the repo on a Windows host and run 'make build-cli'.$(NC)"
+	@exit 1
 
 # Dynamic coverage targets - use: make coverage-<package>
 # Examples: make coverage-xkms, make coverage-kms, make coverage-iam
@@ -1462,6 +1617,107 @@ test-docker: ## Run tests in Docker environment
 
 # Removed duplicate/circular integration-test alias to avoid recursion
 
+##@ Local Development Loop
+
+.PHONY: run-local
+run-local: build-daemon ## Start local daemon (quicbaasd) for development
+	@echo "$(BLUE)Starting QuicBaaS daemon...$(NC)"
+	@rm -rf /tmp/quicbaas-chrometest-data
+	@mkdir -p /tmp/quicbaas-chrometest-data
+	@rm -f /tmp/quicbaas-chrometest.sock
+	@echo "$(YELLOW)Data dir: /tmp/quicbaas-chrometest-data$(NC)"
+	@echo "$(YELLOW)Unix socket: /tmp/quicbaas-chrometest.sock$(NC)"
+	@echo "$(YELLOW)HTTP port: 18080$(NC)"
+	@echo "$(YELLOW)Web UI: http://localhost:18080/ui/$(NC)"
+	@./bin/quicbaasd start --http-port 18080 --grpc-port 0 --unix-socket /tmp/quicbaas-chrometest.sock --data-dir /tmp/quicbaas-chrometest-data --log-level info
+
+.PHONY: stop-local
+stop-local: ## Stop local daemon and clean up zombie processes
+	@echo "$(BLUE)Stopping QuicBaaS daemon...$(NC)"
+	@pkill -f 'bin/quicbaasd start' || true
+	@echo "$(YELLOW)Waiting 2s for graceful shutdown...$(NC)"
+	@sleep 2
+	@echo "$(YELLOW)Killing any zombie QUIC listener on UDP :10443...$(NC)"
+	@lsof -i :10443 2>/dev/null | awk 'NR==2{print $$2}' | xargs -r kill -9 2>/dev/null || true
+	@echo "$(GREEN)Daemon stopped$(NC)"
+
+.PHONY: test-sdk-ts
+test-sdk-ts: ## Run TypeScript SDK unit tests
+	@echo "$(BLUE)Running TypeScript SDK tests...$(NC)"
+	@cd sdk/typescript && npx vitest run
+	@echo "$(GREEN)TypeScript SDK tests passed$(NC)"
+
+.PHONY: test-frontend
+test-frontend: ## Run frontend unit tests
+	@echo "$(BLUE)Running frontend tests...$(NC)"
+	@cd cmd/quicbaas/frontend && npm test
+	@echo "$(GREEN)Frontend tests passed$(NC)"
+
+.PHONY: test-e2e
+test-e2e: build-ui build-daemon ## Run Playwright E2E tests — no ACP backend required (0 skipped, 0 failed)
+	@echo "$(BLUE)Running Playwright E2E tests (chromium-no-backend project)...$(NC)"
+	@$(MAKE) stop-local >/dev/null 2>&1 || true
+	@rm -rf /tmp/quicbaas-chrometest-data && mkdir -p /tmp/quicbaas-chrometest-data
+	@rm -f /tmp/quicbaas-chrometest.sock
+	@nohup ./bin/quicbaasd start --http-port 18080 --grpc-port 0 \
+		--unix-socket /tmp/quicbaas-chrometest.sock \
+		--data-dir /tmp/quicbaas-chrometest-data --log-level warn \
+		--embedded-agent --embedded-agent-backend ollama \
+		>/tmp/quicbaasd-e2e.log 2>&1 & \
+	echo $$! > /tmp/quicbaasd-e2e.pid
+	@echo "$(YELLOW)Waiting for daemon readiness (up to 75s cold boot)...$(NC)"
+	@for i in $$(seq 1 75); do \
+		if curl -sk -o /dev/null -w "%{http_code}" https://localhost:18080/api/v1/health/ready 2>/dev/null | grep -q 200; then \
+			echo "$(GREEN)daemon ready$(NC)"; break; \
+		fi; sleep 1; \
+	done
+	@cd cmd/quicbaas/frontend && \
+		NODE_EXTRA_CA_CERTS=/tmp/quicbaas-chrometest-data/certs/ca-chain.crt \
+		QUICBAAS_UI_URL=https://localhost:18080/ui/ \
+		npx playwright test --project=chromium-no-backend; \
+		TEST_RESULT=$$?; \
+		kill -9 $$(cat /tmp/quicbaasd-e2e.pid 2>/dev/null) 2>/dev/null || true; \
+		$(MAKE) stop-local >/dev/null 2>&1 || true; \
+		exit $$TEST_RESULT
+
+.PHONY: test-e2e-acp
+test-e2e-acp: build-ui build-daemon ## Run Playwright session lifecycle tests — requires claude/codex/opencode on PATH
+	@echo "$(BLUE)Running Playwright ACP session lifecycle tests (chromium-acp project)...$(NC)"
+	@for backend in claude codex opencode; do \
+		if command -v $$backend >/dev/null 2>&1; then \
+			ACP_BACKEND=$$backend; break; \
+		fi; \
+	done; \
+	if [ -z "$$ACP_BACKEND" ]; then \
+		echo "$(RED)Error: no ACP backend found on PATH. Install claude, codex, or opencode first.$(NC)"; \
+		exit 1; \
+	fi; \
+	echo "$(GREEN)Found ACP backend: $$ACP_BACKEND$(NC)"
+	@$(MAKE) stop-local >/dev/null 2>&1 || true
+	@rm -rf /tmp/quicbaas-chrometest-data && mkdir -p /tmp/quicbaas-chrometest-data
+	@rm -f /tmp/quicbaas-chrometest.sock
+	@nohup ./bin/quicbaasd start --http-port 18080 --grpc-port 0 \
+		--unix-socket /tmp/quicbaas-chrometest.sock \
+		--data-dir /tmp/quicbaas-chrometest-data --log-level info \
+		--embedded-agent --embedded-agent-backend claude \
+		>/tmp/quicbaasd-e2e-acp.log 2>&1 & \
+	echo $$! > /tmp/quicbaasd-e2e-acp.pid
+	@echo "$(YELLOW)Waiting for daemon readiness (up to 75s cold boot)...$(NC)"
+	@for i in $$(seq 1 75); do \
+		if curl -sk -o /dev/null -w "%{http_code}" https://localhost:18080/api/v1/health/ready 2>/dev/null | grep -q 200; then \
+			echo "$(GREEN)daemon ready$(NC)"; break; \
+		fi; sleep 1; \
+	done
+	@cd cmd/quicbaas/frontend && \
+		NODE_EXTRA_CA_CERTS=/tmp/quicbaas-chrometest-data/certs/ca-chain.crt \
+		QUICBAAS_UI_URL=https://localhost:18080/ui/ \
+		QUICBAAS_E2E_BACKEND=acp \
+		npx playwright test --project=chromium-acp; \
+		TEST_RESULT=$$?; \
+		kill -9 $$(cat /tmp/quicbaasd-e2e-acp.pid 2>/dev/null) 2>/dev/null || true; \
+		$(MAKE) stop-local >/dev/null 2>&1 || true; \
+		exit $$TEST_RESULT
+
 .PHONY: e2e-test
 e2e-test: ## Run end-to-end tests
 	@echo "$(BLUE)Running E2E tests...$(NC)"
@@ -1505,8 +1761,7 @@ lint: ## Run linters
 coverage: ## Generate coverage report (unit only; excludes generated code)
 	@printf "$(BLUE)Generating coverage report...$(NC)\n"
 	@mkdir -p $(COVERAGE_DIR)
-	@mkdir -p $(CURDIR)/.tmp
-	GOTMPDIR=$(CURDIR)/.tmp GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -p 2 -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-raw.out $$(go list -tags '$(TEST_TAGS)' ./pkg/... ./cmd/... | grep -v '/proto$$')
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -p 2 -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-raw.out $$(go list -tags '$(TEST_TAGS)' ./pkg/... ./cmd/... | grep -v '/proto$$')
 	@printf "$(BLUE)Filtering out non-production code (generated, mocks, stubs, test helpers)...$(NC)\n"
 	@head -1 $(COVERAGE_DIR)/coverage-raw.out > $(COVERAGE_DIR)/coverage.out
 	@grep -v '\.pb\.go:' $(COVERAGE_DIR)/coverage-raw.out | \
@@ -1616,8 +1871,7 @@ race: ## Run tests with race detector
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
-	@mkdir -p $(CURDIR)/.tmp
-	GOTMPDIR=$(CURDIR)/.tmp CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=10m ./pkg/... ./cmd/... || \
+	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=10m ./pkg/... ./cmd/... || \
 		(echo "$(RED)Race detector found issues$(NC)" && exit 1)
 	@echo "$(GREEN)Race detector tests passed$(NC)"
 
@@ -2129,10 +2383,10 @@ test-acp: ## Run ACP/agent backend unit tests
 	@echo "$(GREEN)ACP unit tests passed$(NC)"
 
 .PHONY: test-agent
-test-agent: ## Run agent service unit tests
-	@echo "$(BLUE)Running agent service tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' ./pkg/service/... -run "Agent"
-	@echo "$(GREEN)Agent service tests passed$(NC)"
+test-agent: ## Run agent daemon unit tests (pkg/agent/*)
+	@echo "$(BLUE)Running agent daemon tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' ./pkg/agent/...
+	@echo "$(GREEN)Agent daemon tests passed$(NC)"
 
 .PHONY: coverage-acp
 coverage-acp: ## Generate coverage report for ACP package
@@ -2141,11 +2395,19 @@ coverage-acp: ## Generate coverage report for ACP package
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-acp.out -o $(COVERAGE_DIR)/coverage-acp.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-acp.out | grep total
 
+.PHONY: bench-agent
+bench-agent: ## Run agent daemon benchmarks
+	@echo "$(BLUE)Running agent daemon benchmarks...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -run=^$$ -tags 'rag mcp $(BUILD_TAGS)' ./pkg/agent/...
+	@echo "$(GREEN)Agent daemon benchmarks completed$(NC)"
+
 .PHONY: coverage-agent
-coverage-agent: ## Generate coverage report for agent orchestration
+coverage-agent: ## Generate coverage report for agent daemon package
+	@echo "$(BLUE)Generating agent daemon coverage report...$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-agent.out -covermode=atomic ./pkg/orchestration/...
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-agent.out -covermode=atomic ./pkg/agent/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-agent.out -o $(COVERAGE_DIR)/coverage-agent.html
+	@echo "$(YELLOW)Coverage report: file://$(COVERAGE_DIR)/coverage-agent.html$(NC)"
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-agent.out | grep total
 
 # Special integration tests with custom build flags (not covered by dynamic pattern)
@@ -2195,6 +2457,40 @@ integration-test-agent: ## Run agent orchestration integration tests (requires D
 	@docker compose -f test/integration/agent/docker-compose.yml down --remove-orphans
 	@echo "$(GREEN)Agent integration tests passed$(NC)"
 
+.PHONY: integration-test-agent-runtime
+integration-test-agent-runtime: ## Run agent daemon integration tests in Docker (central + Ollama qwen3:1.7b)
+	@echo "$(BLUE)Running agent runtime integration tests...$(NC)"
+	@COMPOSE_FILE="test/integration/agent_runtime/docker-compose.yml"; \
+	if command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi > /dev/null 2>&1; then \
+		GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1); \
+		GPU_MEM=$$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1); \
+		echo "$(GREEN)  ✓ NVIDIA GPU detected: $$GPU_NAME ($$GPU_MEM)$(NC)"; \
+	else \
+		echo "$(YELLOW)  ⚠ No NVIDIA GPU detected - Ollama will use CPU inference$(NC)"; \
+	fi; \
+	echo "$(YELLOW)Starting agent runtime test environment...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE up -d --wait central ollama 2>&1 | tail -5; \
+	echo "$(YELLOW)Pulling qwen3:1.7b model (fastest for CI)...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull qwen3:1.7b 2>&1 | tail -3; \
+	echo "$(GREEN)Environment ready$(NC)"; \
+	echo "$(BLUE)Running tests...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE run --rm -T \
+		-e QUICBAAS_URL=http://central:8080 \
+		-e OLLAMA_URL=http://ollama:11434 \
+		-e OLLAMA_MODEL=qwen3:1.7b \
+		-e QUICBAAS_TEST_FILTER="$(QUICBAAS_TEST_FILTER)" \
+		integration-test \
+		go test -tags 'integration agent_runtime' -v -count=1 -timeout 5m \
+			$${QUICBAAS_TEST_FILTER:-./test/integration/agent_runtime/...} 2>&1 | while IFS= read -r line; do echo "$$line"; done; \
+	RESULT=$${PIPESTATUS[0]}; \
+	echo "$(BLUE)Stopping agent runtime test environment...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	if [ "$$RESULT" -ne 0 ]; then \
+		echo "$(RED)Agent runtime integration tests FAILED$(NC)"; \
+		exit 1; \
+	fi; \
+	echo "$(GREEN)Agent runtime integration tests passed$(NC)"
+
 .PHONY: integration-test-embedding
 integration-test-embedding: ## Run embedding integration tests in Docker (with Ollama)
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/embedding/..."
@@ -2202,6 +2498,10 @@ integration-test-embedding: ## Run embedding integration tests in Docker (with O
 .PHONY: integration-test-orchestration
 integration-test-orchestration: ## Run orchestrator E2E integration tests in Docker (with Ollama + QuicBaaS cluster)
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/orchestration/..."
+
+.PHONY: integration-test-orchestrator
+integration-test-orchestrator: ## Run multi-protocol CLI integration tests for orchestrator inference command
+	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="-run TestOrchestratorInference ./test/integration/cli/..."
 
 .PHONY: e2e-remote-agent
 e2e-remote-agent: ## Run E2E remote agent test (deploys Claude Code to remote host via SSH)
@@ -2588,3 +2888,26 @@ coverage-vector: ## Run all vector package coverage
 	@$(MAKE) coverage-vector-compaction
 	@$(MAKE) coverage-vector-distributed
 	@$(MAKE) -C .deps/go-qrdb coverage-vector-bloom
+
+# ==============================================================================
+# Cross-Project Naming + Consistency (Phase 14 of seal→barrier rename)
+# ==============================================================================
+
+.PHONY: verify-naming
+verify-naming: ## Fail if non-deprecated Seal* code paths still ship outside the documented alias surface
+	@echo "$(BLUE)verify-naming: scanning for non-aliased Seal* code paths...$(NC)"
+	@scripts/verify-naming.sh
+
+.PHONY: verify-cli-flags
+verify-cli-flags: ## Diff init/barrier/bootstrap flag sets across qrdbctl, xkmsctl, and quicbaas
+	@echo "$(BLUE)verify-cli-flags: comparing CLI flag surfaces across qrdbctl/xkmsctl/quicbaas...$(NC)"
+	@scripts/verify-cli-flags.sh
+
+.PHONY: verify-api-shapes
+verify-api-shapes: ## Diff QuicBaaS Barrier*/Ceremony*/Bootstrap* TS types against go-qrdb canonical Go types
+	@echo "$(BLUE)verify-api-shapes: comparing TypeScript types against go-qrdb canonical Go types...$(NC)"
+	@scripts/verify-api-shapes.sh
+
+.PHONY: verify
+verify: verify-naming verify-cli-flags verify-api-shapes ## Run all cross-project verifications
+	@echo "$(GREEN)All verifications OK$(NC)"

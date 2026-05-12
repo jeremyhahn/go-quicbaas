@@ -88,6 +88,17 @@ func (s *quicBaaS) GetAppManager(ctx context.Context) (*iam.AppManager, error) {
 	return provider.GetAppManager(ctx)
 }
 
+// GetAppStorage returns the underlying OAuth2 application storage backend.
+// Used by lifecycle_iam_mtls.go to wire self_signed and PKI authenticators
+// without a runtime interface assertion.
+func (s *quicBaaS) GetAppStorage(ctx context.Context) (iam.AppStorage, error) {
+	provider := s.getIAMProvider()
+	if provider == nil {
+		return nil, nil
+	}
+	return provider.GetAppStorage(ctx)
+}
+
 // GetOIDCProvider returns the OIDC provider from IAM components.
 func (s *quicBaaS) GetOIDCProvider(ctx context.Context) (*iam.OIDCProvider, error) {
 	provider := s.getIAMProvider()
@@ -172,3 +183,4 @@ func (s *quicBaaS) GetGDPRManager(ctx context.Context) (*iam.GDPRManager, error)
 	}
 	return provider.GetGDPRManager(ctx)
 }
+

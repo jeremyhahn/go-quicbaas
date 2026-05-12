@@ -105,9 +105,12 @@ func (h *authRESTHandler) handleLogin(ctx context.Context, req interface{}) (int
 
 	switch r := req.(type) {
 	case *service.ExtendedLoginRequest:
+		// TODO: Password-based login was removed from ExtendedLoginRequest; auth must now
+		// flow through WebAuthn or PIV smartcard. Pass an empty password until the REST
+		// payload schema carries the new credential evidence.
 		loginReq = authLoginRequest{
 			Username: r.Username,
-			Password: r.Password,
+			Password: "",
 			MFACode:  r.MFACode,
 			TenantID: r.TenantID,
 		}

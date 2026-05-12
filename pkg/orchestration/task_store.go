@@ -22,6 +22,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // taskEntry wraps serialized task data in a pointer-comparable struct.
@@ -36,13 +38,25 @@ type taskEntry struct {
 // concurrent access. This is the default store used when no external
 // persistence backend is configured.
 type inMemoryTaskStore struct {
-	tasks sync.Map // map[string]*taskEntry (keyed by "tenantID/taskID")
-	count atomic.Int64
+	tasks       sync.Map // map[string]*taskEntry (keyed by "tenantID/taskID")
+	count       atomic.Int64
+	kvStore     interfaces.KVStore // optional; used for large artifact storage
+	inlineLimit int64              // max artifact bytes stored inline (default InlineLimit)
 }
 
 // NewInMemoryTaskStore creates a new in-memory task store.
 func NewInMemoryTaskStore() TaskStore {
-	return &inMemoryTaskStore{}
+	return &inMemoryTaskStore{inlineLimit: InlineLimit}
+}
+
+// NewInMemoryTaskStoreWithKV creates a task store that offloads large artifacts
+// (> inlineLimit) to the provided KV store.  A limit of 0 uses the package-level
+// InlineLimit default.
+func NewInMemoryTaskStoreWithKV(kv interfaces.KVStore, limit int64) TaskStore {
+	if limit <= 0 {
+		limit = InlineLimit
+	}
+	return &inMemoryTaskStore{kvStore: kv, inlineLimit: limit}
 }
 
 // taskKey builds a composite key from tenant and task IDs.
@@ -612,6 +626,158 @@ func (s *inMemoryTaskStore) DeleteTenantTasks(ctx context.Context, tenantID stri
 
 	s.count.Add(-deleted)
 	return nil
+}
+
+// artifactKVKey returns the KV store key for a large artifact.
+func artifactKVKey(tenantID, taskID, name string) string {
+	return "artifact:" + tenantID + ":" + taskID + ":" + name
+}
+
+// SubmitTaskArtifacts appends or replaces output artifacts on a task.
+// Artifacts whose Content exceeds inlineLimit are promoted to the KV store;
+// their Kind is rewritten to kv_key and Content is cleared.
+func (s *inMemoryTaskStore) SubmitTaskArtifacts(ctx context.Context, tenantID, taskID string, artifacts []Artifact) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if tenantID == "" || taskID == "" {
+		return &TaskStoreError{Sentinel: ErrTaskStoreInvalidInput, Message: "tenant ID and task ID are required"}
+	}
+
+	// Validate all artifacts before mutating any state.
+	for i := range artifacts {
+		if err := validateArtifact(&artifacts[i]); err != nil {
+			return err
+		}
+	}
+
+	key := taskKey(tenantID, taskID)
+
+	for {
+		existing, ok := s.tasks.Load(key)
+		if !ok {
+			return &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
+		}
+
+		oldEntry, ok := existing.(*taskEntry)
+		if !ok {
+			return &TaskStoreError{Sentinel: ErrTaskStoreMarshal, Message: "task value is not *taskEntry"}
+		}
+
+		var task Task
+		if err := json.Unmarshal(oldEntry.data, &task); err != nil {
+			return &TaskStoreError{Sentinel: ErrTaskStoreMarshal, Message: "failed to unmarshal task: " + err.Error()}
+		}
+
+		// Build name → index map for the existing artifact slice so we can
+		// overwrite rather than append duplicates.
+		index := make(map[string]int, len(task.OutputArtifacts))
+		for i, a := range task.OutputArtifacts {
+			index[a.Name] = i
+		}
+
+		for _, a := range artifacts {
+			promoted := a
+
+			// Promote large inline artifacts to KV storage.
+			if promoted.Kind == ArtifactKindInline && int64(len(promoted.Content)) > s.inlineLimit {
+				if s.kvStore == nil {
+					return &ArtifactTooLargeError{
+						Name:  promoted.Name,
+						Size:  int64(len(promoted.Content)),
+						Limit: s.inlineLimit,
+					}
+				}
+				kvKey := artifactKVKey(tenantID, taskID, promoted.Name)
+				if putErr := s.kvStore.Put(ctx, kvKey, promoted.Content); putErr != nil {
+					return &TaskStoreError{Sentinel: ErrTaskStoreMarshal, Message: "failed to store artifact in KV: " + putErr.Error()}
+				}
+				promoted.Kind = ArtifactKindKVKey
+				promoted.Ref = ArtifactRef{Path: kvKey}
+				promoted.Content = nil
+			}
+
+			if idx, exists := index[promoted.Name]; exists {
+				task.OutputArtifacts[idx] = promoted
+			} else {
+				index[promoted.Name] = len(task.OutputArtifacts)
+				task.OutputArtifacts = append(task.OutputArtifacts, promoted)
+			}
+		}
+
+		task.UpdatedAt = time.Now().UnixNano()
+		task.Version++
+
+		newData, err := json.Marshal(&task)
+		if err != nil {
+			return &TaskStoreError{Sentinel: ErrTaskStoreMarshal, Message: "failed to marshal task with artifacts: " + err.Error()}
+		}
+
+		if s.tasks.CompareAndSwap(key, oldEntry, &taskEntry{data: newData}) {
+			return nil
+		}
+		// CAS failed; another writer raced — retry.
+	}
+}
+
+// GetTaskArtifact retrieves a named artifact, resolving kv_key Refs to their
+// full byte content before returning.
+func (s *inMemoryTaskStore) GetTaskArtifact(ctx context.Context, tenantID, taskID, name string) (*Artifact, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	task, err := s.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, a := range task.OutputArtifacts {
+		if a.Name != name {
+			continue
+		}
+
+		// Resolve KV-stored content on demand.
+		if a.Kind == ArtifactKindKVKey && a.Ref.Path != "" && s.kvStore != nil {
+			data, getErr := s.kvStore.Get(ctx, a.Ref.Path)
+			if getErr != nil {
+				return nil, &TaskStoreError{Sentinel: ErrTaskStoreMarshal, Message: "failed to fetch artifact from KV: " + getErr.Error()}
+			}
+			resolved := a
+			resolved.Content = data
+			resolved.Size = int64(len(data))
+			return &resolved, nil
+		}
+
+		result := a
+		return &result, nil
+	}
+
+	return nil, &ArtifactNotFoundError{TaskID: taskID, Name: name}
+}
+
+// ListTaskArtifacts returns all output artifact metadata without resolving
+// large Refs to their content (returns Kind, Name, MIMEType, Size, Ref, Metadata).
+func (s *inMemoryTaskStore) ListTaskArtifacts(ctx context.Context, tenantID, taskID string) ([]Artifact, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	task, err := s.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Return a shallow copy with Content omitted for kv_key artifacts.
+	result := make([]Artifact, len(task.OutputArtifacts))
+	for i, a := range task.OutputArtifacts {
+		stripped := a
+		if a.Kind == ArtifactKindKVKey {
+			stripped.Content = nil
+		}
+		result[i] = stripped
+	}
+	return result, nil
 }
 
 // checkDependenciesResolved verifies all dependency tasks are completed.

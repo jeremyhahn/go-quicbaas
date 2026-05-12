@@ -126,6 +126,8 @@ services:
   integration-test:
     build:
       context: ../..
+      additional_contexts:
+        workspace: ../../..
       dockerfile: test/integration/Dockerfile
       args:
         BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
@@ -202,15 +204,15 @@ services:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
     volumes:
-      - ../../:/app
+      # Project source is baked into the image at /workspace/go-quicbaas (no host bind needed)
       # Mount the pre-built CLI binary (built by Makefile before docker-compose up)
-      - ../../bin/quicbaas:/app/bin/quicbaas:ro
+      - ../../bin/quicbaas:/workspace/go-quicbaas/bin/quicbaas:ro
       - integration-test-results:/test-results
       # Mount Docker socket for container management in tests
       - /var/run/docker.sock:/var/run/docker.sock
       # Shared Unix socket directory for gRPC-over-Unix-socket testing
       - quicbaas-sockets:/var/run/quicbaas
-    working_dir: /app
+    working_dir: /workspace/go-quicbaas
     networks:
       - integration-test-network
     depends_on:
@@ -231,39 +233,33 @@ services:
     command: >
       bash -c "
         set -o pipefail;
-        echo 'Staging local dependencies for container paths...' &&
-        cp -a /app/.deps/ /deps/ 2>/dev/null || true &&
-        cp /app/go.mod /tmp/go.mod.orig &&
-        cp /app/sdk/go/go.mod /tmp/sdk-go.mod.orig &&
-        sed 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g; s|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g; s|=> [^ ]*/go-qrdb$$|=> /deps/go-qrdb|g; s|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g; s|=> [^ ]*/go-xkms$$|=> /deps/go-xkms|g; s|=> [^ ]*/go-signal|=> /deps/go-signal|g; s|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' /tmp/go.mod.orig > /app/go.mod &&
-        sed 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g; s|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g; s|=> [^ ]*/go-qrdb$$|=> /deps/go-qrdb|g; s|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g; s|=> [^ ]*/go-xkms$$|=> /deps/go-xkms|g; s|=> [^ ]*/go-signal|=> /deps/go-signal|g; s|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' /tmp/sdk-go.mod.orig > /app/sdk/go/go.mod &&
-        trap 'cp /tmp/go.mod.orig /app/go.mod; cp /tmp/sdk-go.mod.orig /app/sdk/go/go.mod' EXIT &&
+        rm -f /workspace/go-quicbaas/go.sum /workspace/go-quicbaas/sdk/go/go.sum &&
         echo 'Waiting for cluster to be fully operational...' &&
         /usr/local/bin/health_check.sh &&
         echo 'Cluster is ready.' &&
         echo '' &&
-        echo 'Using pre-built CLI binary: /app/bin/quicbaas' &&
-        ls -la /app/bin/quicbaas &&
+        echo 'Using pre-built CLI binary: /workspace/go-quicbaas/bin/quicbaas' &&
+        ls -la /workspace/go-quicbaas/bin/quicbaas &&
         echo '' &&
-        TEST_TAGS=\"integration \$$TEST_BUILD_TAGS\" &&
-        echo \"Build tags: \$$TEST_TAGS\" &&
-        if [ -n \"\$$QUICBAAS_TEST_FILTER\" ]; then
-          echo \"Running filtered integration tests: \$$QUICBAAS_TEST_FILTER\" &&
+        TEST_TAGS=\"integration $$TEST_BUILD_TAGS\" &&
+        echo \"Build tags: $$TEST_TAGS\" &&
+        if [ -n \"$$QUICBAAS_TEST_FILTER\" ]; then
+          echo \"Running filtered integration tests: $$QUICBAAS_TEST_FILTER\" &&
           echo '' &&
-          TEST_PKGS=\"\$$QUICBAAS_TEST_FILTER\";
+          TEST_PKGS=\"$$QUICBAAS_TEST_FILTER\";
         else
           echo 'Running integration tests (excluding ollama-dependent: embedding, rag)...' &&
           echo '' &&
-          TEST_PKGS=\$$(GONOSUMCHECK='*' go list -mod=mod -tags \"\$$TEST_TAGS\" ./test/integration/... | grep -v '/embedding$$' | grep -v '/rag$$');
+          TEST_PKGS=$$(go list -tags \"$$TEST_TAGS\" github.com/jeremyhahn/go-quicbaas/test/integration/... | grep -v '/embedding$$' | grep -v '/rag$$');
         fi &&
         echo 'Test configuration:' &&
         echo '  - Sequential execution (-p 1) to prevent connection storms' &&
         echo '  - Package timeout: 15 minutes' &&
         echo '  - Total timeout: 60 minutes' &&
         echo '' &&
-        GONOSUMCHECK='*' go test -mod=mod -v -p 1 -tags \"\$$TEST_TAGS\" -timeout 60m \$$TEST_PKGS 2>&1 | tee /test-results/integration-test.log;
-        TEST_EXIT=\$$?;
-        if [ \$$TEST_EXIT -eq 0 ]; then
+        go test -v -p 1 -tags \"$$TEST_TAGS\" -timeout 60m $$TEST_PKGS 2>&1 | tee /test-results/integration-test.log;
+        TEST_EXIT=$${PIPESTATUS[0]};
+        if [ $$TEST_EXIT -eq 0 ]; then
           echo '';
           echo '========================================';
           echo 'Integration tests completed successfully';
@@ -271,16 +267,18 @@ services:
         else
           echo '';
           echo '========================================';
-          echo 'Integration tests FAILED with exit code' \$$TEST_EXIT;
+          echo 'Integration tests FAILED with exit code' $$TEST_EXIT;
           echo '========================================';
         fi;
-        exit \$$TEST_EXIT
+        exit $$TEST_EXIT
       "
 
   # Test Node 1 - Primary node
   test-node1:
     build:
       context: ../..
+      additional_contexts:
+        workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
         BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
@@ -396,6 +394,8 @@ services:
   test-node2:
     build:
       context: ../..
+      additional_contexts:
+        workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
         BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
@@ -513,6 +513,8 @@ services:
   test-node3:
     build:
       context: ../..
+      additional_contexts:
+        workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
         BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
@@ -633,6 +635,8 @@ services:
   test-node4:
     build:
       context: ../..
+      additional_contexts:
+        workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
         BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
@@ -738,6 +742,8 @@ services:
   test-node5:
     build:
       context: ../..
+      additional_contexts:
+        workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
         BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"

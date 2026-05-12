@@ -29,3 +29,28 @@ docker-compose*.yml
 .dockerignore
 
 # Dependencies are fetched via go mod download (no vendor directory)
+
+# Local sibling-staging dir (legacy from .deps-based build, no longer used)
+.deps/
+
+# Test scratch dir + leftover test artifacts
+.tmp/
+
+# Build outputs (binaries are built inside the Docker image)
+bin/
+build/
+dist/
+
+# Coverage outputs
+coverage/
+
+# Local .log files (CI/test logs from prior runs)
+*.log
+
+# Frontend Node dependencies (rebuilt inside image when frontend is needed)
+cmd/quicbaas/frontend/node_modules/
+cmd/quicbaas/frontend/dist/
+
+# Loose binaries left at project root from prior dev sessions
+quicbaas
+quicbaasd

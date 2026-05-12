@@ -18,6 +18,7 @@ package secrets
 
 import (
 	"context"
+	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -559,4 +560,11 @@ func (l *testMockLogger) WithFields(fields map[string]interface{}) interfaces.Lo
 
 func (l *testMockLogger) WithError(err error) interfaces.Logger {
 	return l
+}
+
+// Signer returns a crypto.Signer for the given keyID. Tests that don't
+// exercise the signer path receive a nil signer and no error; tests
+// that do can stub this by redefining the method on a wrapped type.
+func (m *testMockKMSManager) Signer(_ context.Context, _ string) (crypto.Signer, error) {
+	return nil, nil
 }

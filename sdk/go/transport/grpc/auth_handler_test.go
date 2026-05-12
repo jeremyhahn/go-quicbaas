@@ -112,18 +112,15 @@ func TestAuthHandlerHandleValidateToken_InvalidRequestType(t *testing.T) {
 }
 
 func TestExtendedLoginRequestType(t *testing.T) {
+	// Password-based login was removed; ExtendedLoginRequest no longer carries a password.
 	req := &service.ExtendedLoginRequest{
 		Username: "testuser",
-		Password: "testpass",
 		MFACode:  "123456",
 		TenantID: "tenant1",
 	}
 
 	if req.Username != "testuser" {
 		t.Errorf("Username = %q, want %q", req.Username, "testuser")
-	}
-	if req.Password != "testpass" {
-		t.Errorf("Password = %q, want %q", req.Password, "testpass")
 	}
 	if req.MFACode != "123456" {
 		t.Errorf("MFACode = %q, want %q", req.MFACode, "123456")

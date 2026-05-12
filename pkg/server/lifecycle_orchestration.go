@@ -66,13 +66,18 @@ func (s *Server) startOrchestration() error {
 	})
 	s.logger.Info("Claude backend registered for orchestration")
 
-	// Register Codex backend (ACP over stdio).
-	backends["codex"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
-		Command:      "codex",
-		Args:         []string{},
-		DefaultModel: "o4-mini",
+	// Register Codex backend. The codex CLI does not implement ACP/JSON-RPC
+	// over stdio, so we use the dedicated CodexExecBackend that wraps
+	// `codex exec` per Prompt call. Each review/coding turn is a fresh
+	// stateless invocation, which fits the reviewer-agent pattern where
+	// every review independently evaluates the current workspace state.
+	// DefaultModel is left empty so codex uses the model configured in
+	// ~/.codex/config.toml. Hardcoding a model here would fail for users
+	// whose codex account/plan does not have access to it.
+	backends["codex"] = orchestration.NewCodexExecBackend(orchestration.CodexExecBackendConfig{
+		Command: "codex",
 	})
-	s.logger.Info("Codex backend registered for orchestration")
+	s.logger.Info("Codex backend registered for orchestration (codex exec mode)")
 
 	// Register OpenCode backend (ACP JSON-RPC over stdio).
 	// OpenCode v1.3+ supports the ACP protocol via the "acp" subcommand.
@@ -109,16 +114,62 @@ func (s *Server) startOrchestration() error {
 		SetLeadSessionID(id string)
 		SetKVStore(kv interfaces.KVStore)
 		SetWorkflowLoader(wl *orchestration.WorkflowLoader)
+		SetSessionEventLog(log orchestration.SessionEventLog)
+		SetProjectAuthz(authz *orchestration.ProjectAuthz)
 	})
 	if ok {
 		wirer.SetTaskStore(orchestration.NewInMemoryTaskStore())
 		wirer.SetTenantGuard(orchestration.NewTenantGuard(logAdapter))
-		wirer.SetAgentRegistry(orchestration.NewInMemoryAgentRegistry())
+
+		// Wire project-level authorization so ClaimTask enforces the
+		// per-project AgentRoles matrix when a task is scoped to a project.
+		// Uses the in-process project store from the QuicBaaS facade when
+		// available; falls back to a fresh in-memory store (standalone mode).
+		var projectStore orchestration.ProjectStore
+		if s.quicBaaSService != nil {
+			if psvc, storeOK := s.quicBaaSService.Project().(interface {
+				Store() orchestration.ProjectStore
+			}); storeOK {
+				projectStore = psvc.Store()
+			}
+		}
+		if projectStore == nil {
+			projectStore = orchestration.NewInMemoryProjectStore()
+		}
+		wirer.SetProjectAuthz(orchestration.NewProjectAuthz(projectStore))
+		s.logger.Info("Project authorization attached to orchestration service")
+		// Reuse the registry created during IAM init so enrollment-time
+		// registrations are immediately visible to dispatch. Falls back to
+		// a fresh in-memory registry only if IAM init never ran.
+		if s.agentRegistry == nil {
+			s.agentRegistry = orchestration.NewInMemoryAgentRegistry()
+		}
+		wirer.SetAgentRegistry(s.agentRegistry)
 		s.logger.Info("Agent fleet registry attached to orchestration service")
 
-		// Wire workflow loader. Workflows are registered per-job via
-		// --workflow-file, not auto-seeded from a directory.
+		// Wire workflow loader backed by the QuicBaaS internal KV store. Workflow
+		// definitions are persisted under workflowKeyPrefix on shard 1 via the
+		// qrdb SDK, exactly like every other orchestration entity, so they
+		// replicate across raft peers and survive daemon restarts. The loader
+		// rehydrates from KV at boot.
 		wl := orchestration.NewWorkflowLoader()
+		if s.qrdbClient != nil {
+			if kvClient, kvErr := s.qrdbClient.ForShard(1); kvErr != nil {
+				s.logger.WithFields(map[string]interface{}{
+					"error": kvErr.Error(),
+				}).Warn("Failed to obtain qrdb shard client for workflow persistor; workflows will be in-memory only")
+			} else {
+				persistor := newKVWorkflowPersistor(kvClient, 1)
+				wl.SetPersistor(persistor)
+				if n, rerr := wl.Rehydrate(context.Background()); rerr != nil {
+					s.logger.WithFields(map[string]interface{}{
+						"error": rerr.Error(),
+					}).Warn("Failed to rehydrate workflow definitions from KV; starting empty")
+				} else if n > 0 {
+					s.logger.WithFields(map[string]interface{}{"count": n}).Infof("Rehydrated %d workflow definition(s) from internal KV store", n)
+				}
+			}
+		}
 		wirer.SetWorkflowLoader(wl)
 		s.logger.Info("Workflow loader attached to orchestration service")
 
@@ -156,6 +207,25 @@ func (s *Server) startOrchestration() error {
 				}
 			}
 		}
+
+		// Wire the session event log so attachers can replay + tail
+		// session events. Backed by the same KV store used for job
+		// persistence; encrypted with the tenant DEK when available.
+		sessionLog, logErr := orchestration.NewKVSessionEventLog(orchestration.KVSessionEventLogConfig{
+			KVStore: jobKVStore,
+			DEK:     s.tenantDEKManager,
+		})
+		if logErr != nil {
+			s.logger.Warnf("Session event log disabled: %v", logErr)
+		} else {
+			wirer.SetSessionEventLog(sessionLog)
+			s.logger.Info("Session event log attached (KV-backed, per-tenant DEK-encrypted)")
+		}
+
+		// Wire the remote-backend resolver so daemon-kind registrations are
+		// dispatched over gRPC to their reachable host. Non-fatal if prereqs
+		// (shared registry + orchestrator OAuth2 client) are missing.
+		s.installRemoteBackendResolver(agentSvc)
 
 		// Wire lead agent if configured.
 		cfg := s.config.Orchestration.LeadAgent

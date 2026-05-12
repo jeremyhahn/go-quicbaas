@@ -615,7 +615,6 @@ func TestConditionParser_FieldResolution(t *testing.T) {
 	now := time.Now()
 	lastLogin := now.Add(-1 * time.Hour)
 	mfaTimestamp := now.Add(-30 * time.Minute)
-	passwordChange := now.Add(-7 * 24 * time.Hour)
 
 	tests := []struct {
 		name     string
@@ -688,12 +687,14 @@ func TestConditionParser_FieldResolution(t *testing.T) {
 			wantTrue: true,
 		},
 		{
-			name: "subject.password_changed",
+			// password_changed is no longer supported (passwordless auth only).
+			// The expression always evaluates to false/nil since the field is removed.
+			name: "subject.password_changed returns nil",
 			expr: "subject.password_changed exists",
 			ctx: &EvalContext{
-				Subject: &Subject{PasswordChange: &passwordChange},
+				Subject: &Subject{},
 			},
-			wantTrue: true,
+			wantTrue: false,
 		},
 		{
 			name: "subject.attributes (using attrs)",

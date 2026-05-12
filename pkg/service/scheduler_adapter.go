@@ -87,6 +87,7 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 		Priority:       req.Priority,
 		Timeout:        req.Timeout,
 		MaxRetries:     req.MaxRetries,
+		NodeAffinity:   req.NodeAffinity,
 		Labels:         req.Labels,
 	}
 

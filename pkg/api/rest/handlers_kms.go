@@ -36,6 +36,26 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
+// isSystemKey returns true for keys that are internal cryptographic materials
+// managed by the daemon itself (CA, TLS server certs, agent identity certs).
+// These keys are not operator-managed and are excluded from the KMS list API
+// so the response only contains keys the operator explicitly created.
+//
+// A key is classified as a system key when ANY of the following are true:
+//   - algorithm is empty (all CA/TLS/cert keys use the raw certificate store)
+//   - key_id matches a well-known system name ("QuicBaaS Root CA", "localhost", "127.0.0.1")
+//   - key_id starts with "agent-embedded-" (embedded-agent identity certs)
+func isSystemKey(keyID, algorithm string) bool {
+	if algorithm == "" {
+		return true
+	}
+	switch keyID {
+	case "QuicBaaS Root CA", "localhost", "127.0.0.1":
+		return true
+	}
+	return strings.HasPrefix(keyID, "agent-embedded-")
+}
+
 // =============================================================================
 // Request/Response Types for REST API
 // =============================================================================
@@ -603,16 +623,23 @@ func (s *Server) HandleListKeys(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		keys := make([]*KeyHandleResponse, 0, len(svcResp.Keys))
+		allKeys := make([]*KeyHandleResponse, 0, len(svcResp.Keys))
 		for _, kh := range svcResp.Keys {
-			keys = append(keys, svcKeyHandleToResponse(kh))
+			allKeys = append(allKeys, svcKeyHandleToResponse(kh))
+		}
+
+		keys := make([]*KeyHandleResponse, 0, len(allKeys))
+		for _, k := range allKeys {
+			if !isSystemKey(k.KeyID, k.Algorithm) {
+				keys = append(keys, k)
+			}
 		}
 
 		resp := &ListKeysRESTResponse{
 			Keys:       keys,
 			NextCursor: svcResp.NextCursor,
 			HasMore:    svcResp.HasMore,
-			TotalCount: svcResp.TotalCount,
+			TotalCount: len(keys),
 			Timestamp:  svcResp.Timestamp.Unix(),
 		}
 		RespondJSON(w, r, http.StatusOK, resp)
@@ -632,14 +659,22 @@ func (s *Server) HandleListKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keys := make([]*KeyHandleResponse, 0, len(results))
+	allKeys := make([]*KeyHandleResponse, 0, len(results))
 	for _, result := range results {
 		if metadata, ok := result.(*kms.KeyMetadata); ok {
-			keys = append(keys, kmsMetadataToKeyHandle(metadata))
+			allKeys = append(allKeys, kmsMetadataToKeyHandle(metadata))
+		}
+	}
+
+	keys := make([]*KeyHandleResponse, 0, len(allKeys))
+	for _, k := range allKeys {
+		if !isSystemKey(k.KeyID, k.Algorithm) {
+			keys = append(keys, k)
 		}
 	}
 
 	now := time.Now()
+	totalCount := len(keys) // capture before limit truncation
 
 	hasMore := false
 	if limit > 0 && limit < len(keys) {
@@ -651,7 +686,7 @@ func (s *Server) HandleListKeys(w http.ResponseWriter, r *http.Request) {
 		Keys:       keys,
 		NextCursor: "",
 		HasMore:    hasMore,
-		TotalCount: len(results),
+		TotalCount: totalCount,
 		Timestamp:  now.Unix(),
 	}
 
@@ -1813,6 +1848,31 @@ func svcMetadataToRESTResponse(md *service.KeyMetadata) *KeyMetadataResponse {
 		Tags:               md.Tags,
 		Owner:              md.Owner,
 	}
+}
+
+// HandleSetDefaultKey handles PUT /v1/kms/keys/{name}/default - Mark a key as the system default.
+func (s *Server) HandleSetDefaultKey(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		RespondBadRequest(w, r, "key name is required")
+		return
+	}
+
+	kmsSvc := s.service.KMS()
+	if kmsSvc == nil {
+		RespondError(w, r, http.StatusInternalServerError, ErrKMSServiceUnavailable)
+		return
+	}
+
+	resp, err := kmsSvc.SetDefaultKey(ctx, &service.SetDefaultKeyRequest{Name: name})
+	if err != nil {
+		s.handleKMSError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, resp)
 }
 
 // =============================================================================

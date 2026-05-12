@@ -2605,31 +2605,6 @@ func TestConvertDataExportStatusToProto(t *testing.T) {
 // --- Merged from coverage_extended_test.go ---
 
 // =============================================================================
-// Client Seal Mode Converter Tests
-// =============================================================================
-
-func TestConvertProtoSealModeAllCases(t *testing.T) {
-	tests := []struct {
-		name     string
-		mode     pb.SealMode
-		expected string
-	}{
-		{"manual", pb.SealMode_SEAL_MODE_MANUAL, "manual"},
-		{"auto", pb.SealMode_SEAL_MODE_AUTO, "auto"},
-		{"crypto", pb.SealMode_SEAL_MODE_CRYPTO, "crypto"},
-		{"unspecified", pb.SealMode_SEAL_MODE_UNSPECIFIED, "unspecified"},
-		{"unknown", pb.SealMode(999), "unspecified"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertProtoSealMode(tt.mode)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// =============================================================================
 // Pool Options Tests - Cover All Option Functions
 // =============================================================================
 

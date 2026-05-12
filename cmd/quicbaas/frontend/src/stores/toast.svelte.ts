@@ -38,9 +38,32 @@ const timers = new Map<number, ReturnType<typeof setTimeout>>();
 
 export const toastStore: ToastState = $state({ toasts: [] });
 
-export function showToast(type: ToastType, message: string, duration?: number): void {
+// showToast accepts either positional args (type, message, duration) or a
+// single options object { type, message, duration }. Both forms are supported
+// because view components evolved with different calling conventions.
+export function showToast(
+  typeOrOpts: ToastType | { type: ToastType; message: string; duration?: number },
+  message?: string,
+  duration?: number,
+): void {
+  let resolvedType: ToastType;
+  let resolvedMessage: string;
+  let resolvedDuration: number | undefined;
+  if (typeof typeOrOpts === 'object') {
+    resolvedType = typeOrOpts.type;
+    resolvedMessage = typeOrOpts.message;
+    resolvedDuration = typeOrOpts.duration;
+  } else {
+    resolvedType = typeOrOpts;
+    resolvedMessage = message ?? '';
+    resolvedDuration = duration;
+  }
+  return _showToast(resolvedType, resolvedMessage, resolvedDuration);
+}
+
+function _showToast(type: ToastType, message: string, duration?: number): void {
   const id = nextId++;
-  const resolvedDuration = duration ?? DEFAULT_DURATION_MS;
+  const resolvedDuration = (duration ?? DEFAULT_DURATION_MS);
 
   const toast: Toast = { id, type, message, duration: resolvedDuration };
 

@@ -154,6 +154,23 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.KMS/StartReencryption":       handleKMSStartReencryption,
 	"quicbaas.KMS/GetReencryptionProgress": handleKMSGetReencryptionProgress,
 
+	// DEK operations — the dek/Client SDK package addresses operations
+	// at quicbaas.DEK/* whereas the historical KMS service hosted them
+	// under quicbaas.KMS/*. Dispatch both to the same handlers so
+	// SDK clients constructed via dek.NewClient / kms.NewClient both
+	// resolve correctly through embedded transport.
+	"quicbaas.DEK/CreateDEK":                handleKMSCreateDEK,
+	"quicbaas.DEK/GetDEK":                   handleKMSGetDEK,
+	"quicbaas.DEK/ListDEKs":                 handleKMSListDEKs,
+	"quicbaas.DEK/RotateDEK":                handleKMSRotateDEK,
+	"quicbaas.DEK/DeleteDEK":                handleKMSDeleteDEK,
+	"quicbaas.DEK/GetDEKStatus":             handleKMSGetDEKStatus,
+	"quicbaas.DEK/SetDefaultDEK":            handleKMSSetDefaultDEK,
+	"quicbaas.DEK/SetDEKSafety":             handleKMSSetDEKSafety,
+	"quicbaas.DEK/ClearDEKSafety":           handleKMSClearDEKSafety,
+	"quicbaas.DEK/StartReencryption":        handleKMSStartReencryption,
+	"quicbaas.DEK/GetReencryptionProgress":  handleKMSGetReencryptionProgress,
+
 	// Crypto operations
 	"quicbaas.Crypto/Encrypt":                handleCryptoEncrypt,
 	"quicbaas.Crypto/Decrypt":                handleCryptoDecrypt,
@@ -180,6 +197,60 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Certificate/IsInitialized":     handleCertIsInitialized,
 	"quicbaas.Certificate/GenerateCRL":       handleCertGenerateCRL,
 	"quicbaas.Certificate/IsRevoked":         handleCertIsRevoked,
+
+	// Orchestrator — session operations
+	"quicbaas.Orchestrator/Inference":     handleOrchestratorInference,
+	"quicbaas.Orchestrator/SpawnSession":  handleOrchestratorSpawnSession,
+	"quicbaas.Orchestrator/PromptSession": handleOrchestratorPromptSession,
+	"quicbaas.Orchestrator/SessionStatus": handleOrchestratorSessionStatus,
+	"quicbaas.Orchestrator/CloseSession":  handleOrchestratorCloseSession,
+	"quicbaas.Orchestrator/ListSessions":  handleOrchestratorListSessions,
+
+	// Orchestrator — task operations
+	"quicbaas.Orchestrator/CreateTask":   handleOrchestratorCreateTask,
+	"quicbaas.Orchestrator/GetTask":      handleOrchestratorGetTask,
+	"quicbaas.Orchestrator/ListTasks":    handleOrchestratorListTasks,
+	"quicbaas.Orchestrator/ClaimTask":    handleOrchestratorClaimTask,
+	"quicbaas.Orchestrator/CompleteTask": handleOrchestratorCompleteTask,
+
+	// Orchestrator — task artifact operations
+	"quicbaas.Orchestrator/SubmitTaskArtifacts": handleOrchestratorSubmitTaskArtifacts,
+	"quicbaas.Orchestrator/GetTaskArtifact":     handleOrchestratorGetTaskArtifact,
+	"quicbaas.Orchestrator/ListTaskArtifacts":   handleOrchestratorListTaskArtifacts,
+
+	// Orchestrator — agent registry operations
+	"quicbaas.Orchestrator/RegisterAgent":  handleOrchestratorRegisterAgent,
+	"quicbaas.Orchestrator/GetAgent":       handleOrchestratorGetAgent,
+	"quicbaas.Orchestrator/ListAgents":     handleOrchestratorListAgents,
+	"quicbaas.Orchestrator/RemoveAgent":    handleOrchestratorRemoveAgent,
+	"quicbaas.Orchestrator/AgentHeartbeat": handleOrchestratorAgentHeartbeat,
+
+	// Orchestrator — agent admin operations
+	"quicbaas.Orchestrator/DisableAgent": handleOrchestratorDisableAgent,
+	"quicbaas.Orchestrator/EnableAgent":  handleOrchestratorEnableAgent,
+
+	// Orchestrator — job operations
+	"quicbaas.Orchestrator/StartJob":      handleOrchestratorStartJob,
+	"quicbaas.Orchestrator/GetJobStatus":  handleOrchestratorGetJobStatus,
+	"quicbaas.Orchestrator/ListJobs":      handleOrchestratorListJobs,
+	"quicbaas.Orchestrator/CancelJob":     handleOrchestratorCancelJob,
+	"quicbaas.Orchestrator/SpawnChildJob": handleOrchestratorSpawnChildJob,
+
+	// Orchestrator — utility operations
+	"quicbaas.Orchestrator/Health":            handleOrchestratorHealth,
+	"quicbaas.Orchestrator/ListBackends":      handleOrchestratorListBackends,
+	"quicbaas.Orchestrator/ListBackendModels": handleOrchestratorListBackendModels,
+	"quicbaas.Orchestrator/DecomposeTask":     handleOrchestratorDecomposeTask,
+
+	// Project operations
+	"quicbaas.Project/Create":          handleProjectCreate,
+	"quicbaas.Project/Get":             handleProjectGet,
+	"quicbaas.Project/GetByName":       handleProjectGetByName,
+	"quicbaas.Project/Update":          handleProjectUpdate,
+	"quicbaas.Project/Delete":          handleProjectDelete,
+	"quicbaas.Project/List":            handleProjectList,
+	"quicbaas.Project/GrantAgentRole":  handleProjectGrantAgentRole,
+	"quicbaas.Project/RevokeAgentRole": handleProjectRevokeAgentRole,
 
 	// ObjectStorage operations
 	"quicbaas.ObjectStorage/PutObject":          handleObjPutObject,
@@ -215,6 +286,7 @@ var streamHandlers = map[string]streamHandlerFunc{
 	"quicbaas.Query/ScanIndex":                 handleScanIndexStream,
 	"quicbaas.TimeSeries/Query":                handleTimeSeriesQueryStream,
 	"quicbaas.Orchestrator/SubscribeJobEvents": handleSubscribeJobEventsStream,
+	"quicbaas.Orchestrator/InferenceStream":    handleOrchestratorInferenceStream,
 }
 
 // New creates a new embedded transport with the given service.

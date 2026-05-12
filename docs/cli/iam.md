@@ -79,7 +79,7 @@ quicbaas iam tenant list
 
 ### user create
 
-Create a new user within a tenant.
+Create a new user within a tenant in `pending` status. The user must activate by enrolling a hardware authenticator (WebAuthn passkey, security key, or PIV smartcard).
 
 ```bash
 quicbaas iam user create <email>
@@ -88,16 +88,17 @@ quicbaas iam user create <email>
 #### Flags
 - `--tenant string`: Tenant ID (required)
 - `--name string`: User display name (required)
-- `--password string`: User password (required)
 - `--roles stringSlice`: Roles to assign (comma-separated)
 - `--groups stringSlice`: Groups to add user to (comma-separated)
 
 #### Examples
 
 ```bash
-quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice Smith" --password "SecureP@ss123"
-quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --password "SecureP@ss123" --roles admin,developer
+quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice Smith"
+quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --roles admin,developer
 ```
+
+**No Password Field:** QuicBaaS is passwordless. Users enroll hardware authenticators instead. See [Passwordless Authentication](../auth/passwordless.md).
 
 ### user get
 

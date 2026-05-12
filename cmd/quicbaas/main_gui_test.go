@@ -63,3 +63,70 @@ func TestIsGUIOnly_MixedFlagsAndSubcommand(t *testing.T) {
 		t.Error("expected isGUIOnly() to return false with mixed flags and subcommand")
 	}
 }
+
+// TestIsGUIOnly_GlobalFlagsWithValues — user report regression. The user
+// ran `./bin/quicbaas --log-level debug --log-file /tmp/x.log` expecting
+// the GUI, and got the cobra "no command specified" fallback because the
+// old implementation treated `debug` (value of `--log-level`) as a
+// subcommand. isGUIOnly must skip flag values so `--log-level X` counts
+// as GUI-only intent.
+func TestIsGUIOnly_GlobalFlagsWithValues(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	guiForms := [][]string{
+		{"quicbaas", "--log-level", "debug"},
+		{"quicbaas", "--log-level", "debug", "--log-file", "/tmp/x.log"},
+		{"quicbaas", "--log-level=debug"},
+		{"quicbaas", "--log-file=/tmp/x.log"},
+		{"quicbaas", "--address", "localhost:9090", "--tenant", "default"},
+		{"quicbaas", "--config", "/etc/quicbaas.yaml", "--log-level", "debug"},
+		{"quicbaas", "--fips"},                    // bool flag
+		{"quicbaas", "--tls", "--tls-skip-verify"}, // two bool flags
+		{"quicbaas", "--log-level", "debug", "--fips"}, // mixed
+	}
+	for _, args := range guiForms {
+		os.Args = args
+		if !isGUIOnly() {
+			t.Errorf("expected isGUIOnly()=true for %v (GUI launch with flags)", args)
+		}
+	}
+
+	cliForms := [][]string{
+		{"quicbaas", "data", "put", "key", "value"},
+		{"quicbaas", "--log-level", "debug", "data", "get", "mykey"}, // flag then subcommand
+		{"quicbaas", "--address", "localhost:9090", "iam", "user", "list"},
+	}
+	for _, args := range cliForms {
+		os.Args = args
+		if isGUIOnly() {
+			t.Errorf("expected isGUIOnly()=false for %v (subcommand after flags)", args)
+		}
+	}
+}
+
+// TestIsGUIOnly_HelpAndVersionFallThroughToCLI locks in the rule that
+// `quicbaas --help`, `-h`, `--version`, `-v`, `help`, `version` are CLI
+// intents, not GUI launches — even though they look like "no subcommand"
+// to a naive check. Regression for a bug where `./quicbaas --help` on a
+// machine with DISPLAY set tried to open a Wails window.
+func TestIsGUIOnly_HelpAndVersionFallThroughToCLI(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	cliIntentForms := [][]string{
+		{"quicbaas", "--help"},
+		{"quicbaas", "-h"},
+		{"quicbaas", "help"},
+		{"quicbaas", "--version"},
+		{"quicbaas", "-v"},
+		{"quicbaas", "version"},
+	}
+
+	for _, args := range cliIntentForms {
+		os.Args = args
+		if isGUIOnly() {
+			t.Errorf("expected isGUIOnly() to return false for CLI-intent args %v", args)
+		}
+	}
+}

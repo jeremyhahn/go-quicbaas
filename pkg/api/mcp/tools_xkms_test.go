@@ -1082,9 +1082,9 @@ func TestXKMSFIDO2HandlersMissingRequiredFields(t *testing.T) {
 // CA Handler Tests - xkms not initialized
 // =============================================================================
 
-// TestXKMSCAHandlersNotInitialized verifies CA handlers return errors when
+// TestTrustedCAHandlersNotInitialized verifies CA handlers return errors when
 // xkms is not initialized.
-func TestXKMSCAHandlersNotInitialized(t *testing.T) {
+func TestTrustedCAHandlersNotInitialized(t *testing.T) {
 	log := newTestLogger(t)
 	svc := newMinimalMockService()
 	registry := NewToolRegistry(svc, log)
@@ -1097,37 +1097,37 @@ func TestXKMSCAHandlersNotInitialized(t *testing.T) {
 	}{
 		{
 			name:    "CA GetBundle",
-			handler: registry.handleXKMSCAGetBundle,
+			handler: registry.handleTrustedCAGetBundle,
 			args:    map[string]interface{}{},
 		},
 		{
 			name:    "CA GetCert",
-			handler: registry.handleXKMSCAGetCert,
+			handler: registry.handleTrustedCAGetCert,
 			args:    map[string]interface{}{},
 		},
 		{
 			name:    "CA SignCSR",
-			handler: registry.handleXKMSCASignCSR,
+			handler: registry.handleTrustedCASignCSR,
 			args:    map[string]interface{}{"csr_pem": "-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"},
 		},
 		{
 			name:    "CA IssueCert",
-			handler: registry.handleXKMSCAIssueCert,
+			handler: registry.handleTrustedCAIssueCert,
 			args:    map[string]interface{}{"profile": "server", "common_name": "test.example.com"},
 		},
 		{
 			name:    "CA RevokeCert",
-			handler: registry.handleXKMSCARevokeCert,
+			handler: registry.handleTrustedCARevokeCert,
 			args:    map[string]interface{}{"serial_number": "123456"},
 		},
 		{
 			name:    "CA GenerateCRL",
-			handler: registry.handleXKMSCAGenerateCRL,
+			handler: registry.handleTrustedCAGenerateCRL,
 			args:    map[string]interface{}{},
 		},
 		{
 			name:    "CA IsRevoked",
-			handler: registry.handleXKMSCAIsRevoked,
+			handler: registry.handleTrustedCAIsRevoked,
 			args:    map[string]interface{}{"serial_number": "123456"},
 		},
 	}
@@ -1142,28 +1142,28 @@ func TestXKMSCAHandlersNotInitialized(t *testing.T) {
 	}
 }
 
-// TestXKMSCAHandlersMissingRequiredFields verifies CA handlers validate required
+// TestTrustedCAHandlersMissingRequiredFields verifies CA handlers validate required
 // parameters before attempting operations.
-func TestXKMSCAHandlersMissingRequiredFields(t *testing.T) {
+func TestTrustedCAHandlersMissingRequiredFields(t *testing.T) {
 	log := newTestLogger(t)
 	svc := newMinimalMockService()
 	registry := NewToolRegistry(svc, log)
 	ctx := context.Background()
 
 	// CA SignCSR - missing csr_pem (init error first since check happens before)
-	_, err := registry.handleXKMSCASignCSR(ctx, map[string]interface{}{})
+	_, err := registry.handleTrustedCASignCSR(ctx, map[string]interface{}{})
 	require.Error(t, err)
 
 	// CA IssueCert - missing profile and common_name
-	_, err = registry.handleXKMSCAIssueCert(ctx, map[string]interface{}{})
+	_, err = registry.handleTrustedCAIssueCert(ctx, map[string]interface{}{})
 	require.Error(t, err)
 
 	// CA RevokeCert - missing serial_number
-	_, err = registry.handleXKMSCARevokeCert(ctx, map[string]interface{}{})
+	_, err = registry.handleTrustedCARevokeCert(ctx, map[string]interface{}{})
 	require.Error(t, err)
 
 	// CA IsRevoked - missing serial_number
-	_, err = registry.handleXKMSCAIsRevoked(ctx, map[string]interface{}{})
+	_, err = registry.handleTrustedCAIsRevoked(ctx, map[string]interface{}{})
 	require.Error(t, err)
 }
 
@@ -1688,8 +1688,8 @@ func TestXKMSFIDO2ToolsRegistered(t *testing.T) {
 // CA Tool Registration Tests
 // =============================================================================
 
-// TestXKMSCAToolsRegistered verifies that all CA tools are registered.
-func TestXKMSCAToolsRegistered(t *testing.T) {
+// TestTrustedCAToolsRegistered verifies that all CA tools are registered.
+func TestTrustedCAToolsRegistered(t *testing.T) {
 	log := newTestLogger(t)
 	svc := newMinimalMockService()
 	registry := NewToolRegistry(svc, log)
@@ -2390,63 +2390,6 @@ func TestMCPCoverage91Extra_XKMSUnseal_MissingCiphertext(t *testing.T) {
 }
 
 // =============================================================================
-// Seal handler error types
-// =============================================================================
-
-func TestMCPCoverage91Extra_SealErrorType(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// executeSealStatus - the mock doesn't implement the seal interface
-	_, err := registry.executeSealStatus(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "seal")
-
-	// executeSealInit
-	_, err = registry.executeSealInit(ctx, map[string]interface{}{
-		"threshold":    float64(2),
-		"total_shares": float64(5),
-	})
-	require.Error(t, err)
-
-	// executeUnseal
-	_, err = registry.executeUnseal(ctx, map[string]interface{}{
-		"share": "test-share",
-	})
-	require.Error(t, err)
-
-	// executeSeal
-	_, err = registry.executeSeal(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// executeSealRekey
-	_, err = registry.executeSealRekey(ctx, map[string]interface{}{
-		"new_threshold":    float64(3),
-		"new_total_shares": float64(5),
-	})
-	require.Error(t, err)
-
-	// executeSealGenerateRecoveryKey
-	_, err = registry.executeSealGenerateRecoveryKey(ctx, map[string]interface{}{
-		"recovery_threshold":  float64(2),
-		"recovery_total_keys": float64(3),
-	})
-	require.Error(t, err)
-
-	// executeSealDeleteRecoveryKey
-	_, err = registry.executeSealDeleteRecoveryKey(ctx, map[string]interface{}{
-		"key_id": "recovery-key-1",
-	})
-	require.Error(t, err)
-
-	// executeSealGenerateRootToken
-	_, err = registry.executeSealGenerateRootToken(ctx, map[string]interface{}{})
-	require.Error(t, err)
-}
-
-// =============================================================================
 // Crypto handler service unavailable errors
 // =============================================================================
 
@@ -2636,31 +2579,31 @@ func TestMCPCoverage91Extra_XKMS_CA_MissingFields(t *testing.T) {
 	ctx := context.Background()
 
 	// CA GetBundle
-	_, err := registry.handleXKMSCAGetBundle(ctx, map[string]interface{}{})
+	_, err := registry.handleTrustedCAGetBundle(ctx, map[string]interface{}{})
 	require.Error(t, err)
 
 	// CA GetCert
-	_, err = registry.handleXKMSCAGetCert(ctx, map[string]interface{}{})
+	_, err = registry.handleTrustedCAGetCert(ctx, map[string]interface{}{})
 	require.Error(t, err)
 
 	// CA SignCSR - uninitialized
-	_, err = registry.handleXKMSCASignCSR(ctx, map[string]interface{}{})
+	_, err = registry.handleTrustedCASignCSR(ctx, map[string]interface{}{})
 	require.Error(t, err)
 
 	// CA IssueCert - uninitialized
-	_, err = registry.handleXKMSCAIssueCert(ctx, map[string]interface{}{})
+	_, err = registry.handleTrustedCAIssueCert(ctx, map[string]interface{}{})
 	require.Error(t, err)
 
 	// CA RevokeCert - uninitialized
-	_, err = registry.handleXKMSCARevokeCert(ctx, map[string]interface{}{})
+	_, err = registry.handleTrustedCARevokeCert(ctx, map[string]interface{}{})
 	require.Error(t, err)
 
 	// CA GenerateCRL
-	_, err = registry.handleXKMSCAGenerateCRL(ctx, map[string]interface{}{})
+	_, err = registry.handleTrustedCAGenerateCRL(ctx, map[string]interface{}{})
 	require.Error(t, err)
 
 	// CA IsRevoked
-	_, err = registry.handleXKMSCAIsRevoked(ctx, map[string]interface{}{})
+	_, err = registry.handleTrustedCAIsRevoked(ctx, map[string]interface{}{})
 	require.Error(t, err)
 }
 

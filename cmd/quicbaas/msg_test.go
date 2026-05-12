@@ -8030,42 +8030,15 @@ func TestRemaining91_CreateSDKRBACClient_Success(t *testing.T) {
 	assert.Nil(t, client)
 }
 
-func TestRemaining91_RunUserCreateCommand_ShortPassword(t *testing.T) {
-	origFactory := rbacClientFactory
-	origLog := log
-	origPassword := userPassword
-	defer func() { rbacClientFactory = origFactory; log = origLog; userPassword = origPassword }()
-	log = createTestLoggerForRemaining91(t)
-	cmd := newUserCreateCommand()
-	userPassword = "short"
-	err := runUserCreateCommand(cmd, []string{"testuser"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least 8 characters")
-}
-
-func TestRemaining91_RunUserCreateCommand_EmptyPassword(t *testing.T) {
-	origFactory := rbacClientFactory
-	origLog := log
-	origPassword := userPassword
-	defer func() { rbacClientFactory = origFactory; log = origLog; userPassword = origPassword }()
-	log = createTestLoggerForRemaining91(t)
-	cmd := newUserCreateCommand()
-	userPassword = ""
-	err := runUserCreateCommand(cmd, []string{"testuser"})
-	require.Error(t, err)
-}
-
 func TestRemaining91_RunUserCreateCommand_FactoryError(t *testing.T) {
 	origFactory := rbacClientFactory
 	origLog := log
-	origPassword := userPassword
-	defer func() { rbacClientFactory = origFactory; log = origLog; userPassword = origPassword }()
+	defer func() { rbacClientFactory = origFactory; log = origLog }()
 	log = createTestLoggerForRemaining91(t)
 	rbacClientFactory = func() (rbac.Client, error) {
 		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
 	}
 	cmd := newUserCreateCommand()
-	userPassword = "secure-password-123"
 	err := runUserCreateCommand(cmd, []string{"testuser"})
 	require.Error(t, err)
 }
@@ -8073,14 +8046,12 @@ func TestRemaining91_RunUserCreateCommand_FactoryError(t *testing.T) {
 func TestRemaining91_RunUserCreateCommand_Success(t *testing.T) {
 	origFactory := rbacClientFactory
 	origLog := log
-	origPassword := userPassword
 	origRoles := userRoles
 	origFmt := outputFormat
 	origTimeout := timeout
 	defer func() {
 		rbacClientFactory = origFactory
 		log = origLog
-		userPassword = origPassword
 		userRoles = origRoles
 		outputFormat = origFmt
 		timeout = origTimeout
@@ -8089,7 +8060,6 @@ func TestRemaining91_RunUserCreateCommand_Success(t *testing.T) {
 	timeout = 5 * time.Second
 	rbacClientFactory = func() (rbac.Client, error) { return &MockRBACClient{}, nil }
 	cmd := newUserCreateCommand()
-	userPassword = "secure-password-123"
 	userRoles = []string{"readwrite"}
 	outputFormat = "table"
 	err := runUserCreateCommand(cmd, []string{"newuser"})
@@ -8099,14 +8069,12 @@ func TestRemaining91_RunUserCreateCommand_Success(t *testing.T) {
 func TestRemaining91_RunUserCreateCommand_JSONOutput(t *testing.T) {
 	origFactory := rbacClientFactory
 	origLog := log
-	origPassword := userPassword
 	origRoles := userRoles
 	origFmt := outputFormat
 	origTimeout := timeout
 	defer func() {
 		rbacClientFactory = origFactory
 		log = origLog
-		userPassword = origPassword
 		userRoles = origRoles
 		outputFormat = origFmt
 		timeout = origTimeout
@@ -8115,7 +8083,6 @@ func TestRemaining91_RunUserCreateCommand_JSONOutput(t *testing.T) {
 	timeout = 5 * time.Second
 	rbacClientFactory = func() (rbac.Client, error) { return &MockRBACClient{}, nil }
 	cmd := newUserCreateCommand()
-	userPassword = "secure-password-123"
 	userRoles = []string{"admin"}
 	outputFormat = "json"
 	err := runUserCreateCommand(cmd, []string{"admin-user"})
@@ -8125,12 +8092,10 @@ func TestRemaining91_RunUserCreateCommand_JSONOutput(t *testing.T) {
 func TestRemaining91_RunUserCreateCommand_ServerError(t *testing.T) {
 	origFactory := rbacClientFactory
 	origLog := log
-	origPassword := userPassword
 	origTimeout := timeout
 	defer func() {
 		rbacClientFactory = origFactory
 		log = origLog
-		userPassword = origPassword
 		timeout = origTimeout
 	}()
 	log = createTestLoggerForRemaining91(t)
@@ -8143,48 +8108,31 @@ func TestRemaining91_RunUserCreateCommand_ServerError(t *testing.T) {
 		}, nil
 	}
 	cmd := newUserCreateCommand()
-	userPassword = "secure-password-123"
 	err := runUserCreateCommand(cmd, []string{"existinguser"})
 	require.Error(t, err)
 }
 
 func TestRemaining91_RunUserUpdateCommand_NoFlags(t *testing.T) {
 	origLog := log
-	origPassword := userPassword
 	origRoles := userRoles
-	defer func() { log = origLog; userPassword = origPassword; userRoles = origRoles }()
+	defer func() { log = origLog; userRoles = origRoles }()
 	log = createTestLoggerForRemaining91(t)
 	cmd := newUserUpdateCommand()
-	userPassword = ""
 	userRoles = nil
 	err := runUserUpdateCommand(cmd, []string{"testuser"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one")
-}
-
-func TestRemaining91_RunUserUpdateCommand_ShortPassword(t *testing.T) {
-	origLog := log
-	origPassword := userPassword
-	defer func() { log = origLog; userPassword = origPassword }()
-	log = createTestLoggerForRemaining91(t)
-	cmd := newUserUpdateCommand()
-	userPassword = "short"
-	err := runUserUpdateCommand(cmd, []string{"testuser"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least 8 characters")
+	assert.Contains(t, err.Error(), "--roles must be specified")
 }
 
 func TestRemaining91_RunUserUpdateCommand_RolesSuccess(t *testing.T) {
 	origFactory := rbacClientFactory
 	origLog := log
-	origPassword := userPassword
 	origRoles := userRoles
 	origFmt := outputFormat
 	origTimeout := timeout
 	defer func() {
 		rbacClientFactory = origFactory
 		log = origLog
-		userPassword = origPassword
 		userRoles = origRoles
 		outputFormat = origFmt
 		timeout = origTimeout
@@ -8203,7 +8151,6 @@ func TestRemaining91_RunUserUpdateCommand_RolesSuccess(t *testing.T) {
 		}, nil
 	}
 	cmd := newUserUpdateCommand()
-	userPassword = ""
 	cmd.SetArgs([]string{"testuser", "--roles", "admin,readwrite"})
 	err := cmd.Execute()
 	assert.NoError(t, err)

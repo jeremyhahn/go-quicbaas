@@ -174,7 +174,6 @@ func TestIAMUserCreateCommand_FactoryError(t *testing.T) {
 	cmd := newIAMUserCreateCommand()
 	globalTenantID = "test-tenant"
 	iamUserName = "Test User"
-	iamUserPassword = "SecureP@ss123"
 
 	err := runIAMUserCreateCommand(cmd, []string{"testuser@example.com"})
 	assert.Error(t, err)
@@ -187,7 +186,6 @@ func TestIAMUserCreateCommand_MissingTenant(t *testing.T) {
 	cmd := newIAMUserCreateCommand()
 	globalTenantID = ""
 	iamUserName = "Test User"
-	iamUserPassword = "SecureP@ss123"
 
 	err := runIAMUserCreateCommand(cmd, []string{"testuser@example.com"})
 	assert.Error(t, err)
@@ -479,12 +477,12 @@ func TestNewIAMUserCreateCommand_Flags(t *testing.T) {
 	require.NotNil(t, cmd)
 	assert.Contains(t, cmd.Use, "create")
 
-	// Check flags exist
+	// Check flags exist. QuicBaaS is passwordless — no --password flag.
 	assert.NotNil(t, cmd.Flags().Lookup("name"))
 	assert.NotNil(t, cmd.Flags().Lookup("roles"))
 	assert.NotNil(t, cmd.Flags().Lookup("role"))
 	assert.NotNil(t, cmd.Flags().Lookup("groups"))
-	assert.NotNil(t, cmd.Flags().Lookup("password"))
+	assert.Nil(t, cmd.Flags().Lookup("password"), "--password flag must not exist; QuicBaaS uses invite-based FIDO2/PIV activation")
 }
 
 func TestNewIAMUserUpdateCommand_Flags(t *testing.T) {

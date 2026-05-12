@@ -425,6 +425,9 @@ func TestBackwardCompatibility_DirectAccessors(t *testing.T) {
 	if c.RAG() == nil {
 		t.Error("RAG() should return non-nil client")
 	}
+	if c.Project() == nil {
+		t.Error("Project() should return non-nil client")
+	}
 }
 
 // =============================================================================
@@ -441,7 +444,7 @@ func TestXKMSReExports_TypeAliasesCompile(t *testing.T) {
 	var _ XKMSBarrierService = (xkmstransport.BarrierService)(nil)
 	var _ XKMSPIVService = (xkmstransport.PIVService)(nil)
 	var _ XKMSFIDO2Service = (xkmstransport.FIDO2Service)(nil)
-	var _ XKMSCAService = (xkmstransport.CAService)(nil)
+	var _ TrustedCAService = (xkmstransport.CAService)(nil)
 	var _ XKMSPINService = (xkmstransport.PINService)(nil)
 	var _ XKMSUserService = (xkmstransport.UserService)(nil)
 	var _ XKMSConnectionService = (xkmstransport.ConnectionService)(nil)

@@ -153,6 +153,10 @@ func (m *mockEmbeddingService) ClearCache(ctx context.Context, req *service.Clea
 	}, nil
 }
 
+func (m *mockEmbeddingService) SetProviderStatus(_ context.Context, req *service.SetProviderStatusRequest) (*service.SetProviderStatusResponse, error) {
+	return &service.SetProviderStatusResponse{Name: req.Name, Enabled: req.Enabled, Timestamp: time.Now()}, nil
+}
+
 // =============================================================================
 // Mock Service Wrapper for Embedding Tests
 // =============================================================================
@@ -196,6 +200,10 @@ func (e *errorEmbeddingService) GetCacheStats(ctx context.Context, req *service.
 
 func (e *errorEmbeddingService) ClearCache(ctx context.Context, req *service.ClearEmbeddingCacheRequest) (*service.ClearEmbeddingCacheResponse, error) {
 	return nil, errors.New("clear cache error")
+}
+
+func (e *errorEmbeddingService) SetProviderStatus(_ context.Context, _ *service.SetProviderStatusRequest) (*service.SetProviderStatusResponse, error) {
+	return nil, errors.New("set provider status error")
 }
 
 // =============================================================================

@@ -22,6 +22,22 @@ import (
 	"time"
 )
 
+// UserState represents the lifecycle state of a user account.
+type UserState string
+
+// UserState constants define the possible states of a user account.
+const (
+	// UserStatePending indicates the user has been created but has not yet activated
+	// their account via an invite flow.
+	UserStatePending UserState = "pending"
+
+	// UserStateActive indicates the user has completed activation and may authenticate.
+	UserStateActive UserState = "active"
+
+	// UserStateDisabled indicates the user account has been administratively disabled.
+	UserStateDisabled UserState = "disabled"
+)
+
 // Tenant represents a logical isolation boundary in QuicBaaS IAM.
 // All users, groups, roles, and policies belong to a specific tenant.
 type Tenant struct {
@@ -49,6 +65,16 @@ type TenantSettings struct {
 	// MaxUsers is the maximum number of users allowed in this tenant
 	MaxUsers int `json:"max_users,omitempty" yaml:"max_users,omitempty"`
 
+	// DisplayName is the human-readable tenant label shown in login UIs.
+	// When empty the tenant's Name field is used as a fallback.
+	DisplayName string `json:"display_name,omitempty" yaml:"display_name,omitempty"`
+
+	// PublicLoginHidden controls whether this tenant is hidden from the public
+	// tenant selector at /api/v1/iam/tenants/public. Default (false) means the
+	// tenant IS visible. Operators set this to true to hide a tenant from
+	// self-service login (e.g., internal service-account-only tenants).
+	PublicLoginHidden bool `json:"public_login_hidden,omitempty" yaml:"public_login_hidden,omitempty"`
+
 	// MFARequired indicates whether multi-factor authentication is mandatory
 	// Deprecated: Use MFAPolicy.Required instead
 	MFARequired bool `json:"mfa_required" yaml:"mfa_required"`
@@ -73,6 +99,17 @@ type TenantSettings struct {
 
 	// AuditPolicy defines audit logging configuration for this tenant
 	// AuditPolicy (disabled - requires iam build tag) *AuditPolicy `json:"audit_policy,omitempty" yaml:"audit_policy,omitempty"`
+
+	// SandboxPolicy overrides the orchestrator's server-level SandboxPolicy
+	// for this tenant. Allowed values: "required" (containers only; raw
+	// exec forbidden), "preferred" (containers by default but raw exec
+	// allowed when explicitly requested), "opt-in" (raw exec by default).
+	// Empty string defers to the server default.
+	//
+	// Intended for compliance-sensitive tenants (e.g., FedRAMP/HIPAA) that
+	// must force SandboxPolicyRequired regardless of the host daemon's
+	// configured policy.
+	SandboxPolicy string `json:"sandbox_policy,omitempty" yaml:"sandbox_policy,omitempty"`
 }
 
 // TenantQuotas defines resource limits for a tenant.
@@ -146,6 +183,23 @@ type User struct {
 
 	// Locked indicates whether the user account is locked
 	Locked bool `json:"locked,omitempty" yaml:"locked,omitempty"`
+
+	// State is the lifecycle state of the user account (pending, active, disabled).
+	State UserState `json:"state,omitempty" yaml:"state,omitempty"`
+
+	// AuthMethods lists the allowed authentication methods for this user (e.g. "webauthn", "piv").
+	AuthMethods []string `json:"auth_methods,omitempty" yaml:"auth_methods,omitempty"`
+
+	// PIVCertThumbprint is the SHA-256 hex thumbprint of the PIV client certificate
+	// registered during activation. Empty unless the user activated via the PIV flow.
+	PIVCertThumbprint string `json:"piv_cert_thumbprint,omitempty" yaml:"piv_cert_thumbprint,omitempty"`
+
+	// InviteToken holds the plaintext invite token shown once at creation time.
+	// It is cleared (set to empty string) after the user activates.
+	InviteToken string `json:"invite_token,omitempty" yaml:"invite_token,omitempty"`
+
+	// InviteExpiresAt is the expiry time of the invite token. Nil if no invite is pending.
+	InviteExpiresAt *time.Time `json:"invite_expires_at,omitempty" yaml:"invite_expires_at,omitempty"`
 }
 
 // Group represents a collection of users for policy targeting.
@@ -221,6 +275,25 @@ type Application struct {
 
 	// ResponseTypes is the list of allowed OAuth response types
 	ResponseTypes []string `json:"response_types" yaml:"response_types"`
+
+	// TokenEndpointAuthMethod is the client authentication method used at the
+	// token endpoint. One of: "client_secret_basic" (default),
+	// "client_secret_post", "tls_client_auth", "self_signed_tls_client_auth".
+	// RFC 8705 §2.
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty" yaml:"token_endpoint_auth_method,omitempty"`
+
+	// MTLSCertThumbprint is the base64url-encoded SHA-256 thumbprint of the
+	// pinned client certificate, used when TokenEndpointAuthMethod is
+	// "self_signed_tls_client_auth" (RFC 8705 §2.2).
+	MTLSCertThumbprint string `json:"mtls_cert_thumbprint,omitempty" yaml:"mtls_cert_thumbprint,omitempty"`
+
+	// MTLSSubjectDN is the expected certificate Subject Distinguished Name,
+	// used when TokenEndpointAuthMethod is "tls_client_auth" (RFC 8705 §2.1).
+	MTLSSubjectDN string `json:"mtls_subject_dn,omitempty" yaml:"mtls_subject_dn,omitempty"`
+
+	// MTLSSANDNS is the expected certificate SAN dNSName,
+	// used when TokenEndpointAuthMethod is "tls_client_auth" (RFC 8705 §2.1).
+	MTLSSANDNS string `json:"mtls_san_dns,omitempty" yaml:"mtls_san_dns,omitempty"`
 
 	// Created is the application creation timestamp
 	Created time.Time `json:"created" yaml:"created"`
@@ -475,9 +548,6 @@ type Subject struct {
 
 	// LastLogin is the last login timestamp
 	LastLogin *time.Time `json:"last_login,omitempty" yaml:"last_login,omitempty"`
-
-	// PasswordChange is the last password change timestamp
-	PasswordChange *time.Time `json:"password_change,omitempty" yaml:"password_change,omitempty"`
 }
 
 // CheckResponse represents an authorization check response.

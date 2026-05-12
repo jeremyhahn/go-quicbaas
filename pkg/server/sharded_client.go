@@ -128,6 +128,16 @@ func WithShareService(svc BaasShareService) ShardedClientOption {
 	}
 }
 
+// WithTenantService sets the multi-tenant lifecycle service for the sharded
+// client. When provided, the embedded transport will delegate per-tenant
+// barrier operations (Init/Unseal/Seal/Status) to this service instead of
+// returning BaasTransportNotSupportedError.
+func WithTenantService(svc BaasTenantService) ShardedClientOption {
+	return func(sc *ShardedClient) {
+		sc.tenantSvc = svc
+	}
+}
+
 // ShardedClient manages per-shard SDK clients. QuicBaaS operates as a
 // BaaS client and connects through the qrdb SDK. For embedded transport,
 // each shard gets an SDK client backed by a per-shard baasTransport
@@ -148,6 +158,7 @@ type ShardedClient struct {
 	credentialSvc     BaasCredentialService
 	custodianGroupSvc BaasCustodianGroupService
 	shareSvc          BaasShareService
+	tenantSvc         BaasTenantService
 	transportStore    *baasTransportStore // per-shard stores for embedded mode
 	clients           sync.Map            // map[uint64]*qrdbsdk.Client
 	closed            atomic.Bool
@@ -200,6 +211,9 @@ func NewShardedClient(serviceHost interface{}, opts ...ShardedClientOption) *Sha
 		}
 		if sc.shareSvc != nil {
 			sc.transportStore.shareSvc = sc.shareSvc
+		}
+		if sc.tenantSvc != nil {
+			sc.transportStore.tenantSvc = sc.tenantSvc
 		}
 	}
 

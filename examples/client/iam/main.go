@@ -194,7 +194,6 @@ func main() {
 	adminUser, err := client.IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
 		Username:    "admin.user",
 		Email:       "admin@acme-corp.com",
-		Password:    "SecureAdminP@ss123!",
 		DisplayName: "Admin User",
 		Roles:       []string{adminRole.ID},
 		Metadata: map[string]string{
@@ -211,7 +210,6 @@ func main() {
 	devUser, err := client.IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
 		Username:    "dev.user",
 		Email:       "developer@acme-corp.com",
-		Password:    "SecureDevP@ss456!",
 		DisplayName: "Developer User",
 		Groups:      []string{engineeringGroup.ID},
 		Metadata: map[string]string{
@@ -228,7 +226,6 @@ func main() {
 	viewerUser, err := client.IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
 		Username:    "viewer.user",
 		Email:       "viewer@acme-corp.com",
-		Password:    "SecureViewP@ss789!",
 		DisplayName: "Viewer User",
 		Roles:       []string{viewerRole.ID},
 		Metadata: map[string]string{

@@ -76,12 +76,10 @@ func (h *rbacHandler) handleCreateUser(ctx context.Context, client pb.QuicBaaSCl
 	}
 
 	username, _ := getString(reqMap, "Username")
-	password, _ := getString(reqMap, "Password")
 	roles, _ := getStringSlice(reqMap, "Roles")
 
 	pbReq := &pb.CreateUserRequest{
 		Username: username,
-		Password: password,
 		Roles:    roles,
 	}
 

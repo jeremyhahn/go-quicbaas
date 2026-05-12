@@ -129,6 +129,13 @@ func RespondConflict(w http.ResponseWriter, r *http.Request, message string) {
 	})
 }
 
+// RespondForbidden writes a 403 Forbidden error response.
+func RespondForbidden(w http.ResponseWriter, r *http.Request, message string) {
+	RespondError(w, r, http.StatusForbidden, &ForbiddenError{
+		Reason: message,
+	})
+}
+
 // RespondPayloadTooLarge writes a 413 Payload Too Large error response.
 // Use this when a request body exceeds the configured maximum size.
 func RespondPayloadTooLarge(w http.ResponseWriter, r *http.Request, maxBytes int64) {
@@ -172,3 +179,4 @@ type ConflictError struct {
 func (e *ConflictError) Error() string {
 	return e.Message
 }
+

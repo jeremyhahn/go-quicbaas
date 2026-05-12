@@ -90,6 +90,10 @@ func (r *ToolRegistry) registerSchedulerTools() {
 					"type":        "integer",
 					"description": "Maximum retry attempts on failure (default: 0)",
 				},
+				"node_affinity": map[string]interface{}{
+					"type":        "string",
+					"description": "Pin execution to a specific node. Empty (default) = cluster-wide (leader-only). Non-empty = fires only on the node whose SchedulerEngine was constructed with a matching node ID, regardless of Raft leadership.",
+				},
 				"labels": map[string]interface{}{
 					"type":        "object",
 					"description": "Key-value labels for job categorization and filtering",
@@ -402,6 +406,7 @@ func (r *ToolRegistry) executeSchedulerCreateJob(ctx context.Context, args map[s
 		Handler:        handler,
 		Priority:       int32(getInt(args, "priority")),
 		MaxRetries:     int32(getInt(args, "max_retries")),
+		NodeAffinity:   getString(args, "node_affinity"),
 	}
 
 	// Parse execute_at timestamp

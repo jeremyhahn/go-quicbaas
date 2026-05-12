@@ -6,17 +6,18 @@
   import PageHeader from '../../components/core/PageHeader.svelte';
   import BudgetGauge from '../../components/orchestrator/BudgetGauge.svelte';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
+  import { DollarSign } from 'lucide-svelte';
 
-  const totalIterations = $derived(
-    orchestratorStore.jobs.reduce((sum, j) => sum + j.iteration, 0)
-  );
+  const safeJobs = $derived(Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []);
+
+  const totalIterations = $derived(safeJobs.reduce((sum, j) => sum + j.iteration, 0));
 
   const activeJobs = $derived(
-    orchestratorStore.jobs.filter((j) => j.state !== 'completed' && j.state !== 'failed')
+    safeJobs.filter((j) => j.state !== 'completed' && j.state !== 'failed')
   );
 
   const maxPossibleIterations = $derived(
-    orchestratorStore.jobs.reduce((sum, j) => sum + (j.config?.max_iterations ?? 10), 0) || 1
+    safeJobs.reduce((sum, j) => sum + (j.config?.max_iterations ?? 10), 0) || 1
   );
 
   const overallPercent = $derived(
@@ -25,30 +26,33 @@
 </script>
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Cost Tracking" subtitle="Iteration usage and resource consumption" />
+  <PageHeader title="Cost Tracking" subtitle="Iteration usage and resource consumption" icon={DollarSign} />
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <!-- Overall gauge -->
     <div class="card bg-base-200 rounded-box lg:col-span-1">
-      <div class="card-body p-4 items-center">
-        <h3 class="text-sm font-semibold text-base-content/70 mb-2">Overall Usage</h3>
+      <div class="card-body p-5 items-center">
+        <h3 class="text-sm font-semibold text-base-content mb-2">Overall Usage</h3>
         <BudgetGauge percent={overallPercent} label="Iterations" />
         <div class="text-xs text-base-content/40 mt-2">
-          {totalIterations} iterations across {orchestratorStore.jobs.length} jobs
+          {totalIterations} iterations across {safeJobs.length} jobs
         </div>
       </div>
     </div>
 
     <!-- Per-job breakdown -->
     <div class="card bg-base-200 rounded-box lg:col-span-2">
-      <div class="card-body p-4">
-        <h3 class="text-sm font-semibold text-base-content/70 mb-3">Per-Job Breakdown</h3>
+      <div class="card-body p-5">
+        <h3 class="text-sm font-semibold text-base-content mb-3">Per-Job Breakdown</h3>
 
-        {#if orchestratorStore.jobs.length === 0}
-          <div class="text-center py-8 text-base-content/30 text-sm">No jobs</div>
+        {#if safeJobs.length === 0}
+          <div class="text-center py-8">
+            <p class="text-sm text-base-content/50">No jobs to break down yet</p>
+            <p class="text-xs text-base-content/40 mt-1">Cost data populates once jobs run.</p>
+          </div>
         {:else}
           <div class="space-y-3 max-h-96 overflow-y-auto">
-            {#each orchestratorStore.jobs as job (job.job_id)}
+            {#each safeJobs as job (job.job_id)}
               {@const max = job.config?.max_iterations ?? 10}
               {@const pct = Math.min(100, (job.iteration / max) * 100)}
               <div class="flex items-center gap-3">
@@ -84,8 +88,8 @@
   <!-- Active jobs summary -->
   {#if activeJobs.length > 0}
     <div class="card bg-base-200 rounded-box">
-      <div class="card-body p-4">
-        <h3 class="text-sm font-semibold text-base-content/70 mb-2">
+      <div class="card-body p-5">
+        <h3 class="text-sm font-semibold text-base-content mb-2">
           Active Jobs ({activeJobs.length})
         </h3>
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">

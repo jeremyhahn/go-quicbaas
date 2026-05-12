@@ -22,6 +22,7 @@ import (
 // OllamaBackendConfig holds configuration for the Ollama backend.
 type OllamaBackendConfig struct {
 	ChatService  *ollama.ChatService
+	ModelService *ollama.ModelService
 	DefaultModel string
 }
 
@@ -29,16 +30,19 @@ type OllamaBackendConfig struct {
 // and does not support persistent sessions.
 type OllamaBackend struct {
 	chatService  *ollama.ChatService
+	modelService *ollama.ModelService
 	defaultModel string
 }
 
-// Compile-time interface check.
+// Compile-time interface checks.
 var _ AgentBackend = (*OllamaBackend)(nil)
+var _ ModelLister = (*OllamaBackend)(nil)
 
 // NewOllamaBackend creates a new Ollama backend with the given configuration.
 func NewOllamaBackend(config OllamaBackendConfig) *OllamaBackend {
 	return &OllamaBackend{
 		chatService:  config.ChatService,
+		modelService: config.ModelService,
 		defaultModel: config.DefaultModel,
 	}
 }
@@ -131,4 +135,24 @@ func (b *OllamaBackend) Type() string {
 // so it has no tool-specific schema requirements.
 func (b *OllamaBackend) ToolGuidance() string {
 	return ""
+}
+
+// ListModels returns the names of locally-pulled Ollama models by querying
+// the agent's local /api/tags endpoint. Returns an empty slice (not an error)
+// when no model service is configured.
+func (b *OllamaBackend) ListModels(ctx context.Context) ([]string, error) {
+	if b.modelService == nil {
+		return []string{}, nil
+	}
+
+	infos, err := b.modelService.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(infos))
+	for _, m := range infos {
+		names = append(names, m.Name)
+	}
+	return names, nil
 }

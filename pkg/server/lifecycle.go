@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -33,10 +34,14 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	_ "github.com/jeremyhahn/go-qrdb/pkg/seal" // placeholder import — referenced by future seal-strategy wiring
+	quicbaasseal "github.com/jeremyhahn/go-quicbaas/pkg/seal"
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
+	_ "github.com/jeremyhahn/go-quicbaas/pkg/barrier" // placeholder import — wired by initBarrierIsolation in a follow-up
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cluster"
@@ -48,10 +53,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
-	quicbaasseal "github.com/jeremyhahn/go-quicbaas/pkg/seal"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 	qbstorage "github.com/jeremyhahn/go-quicbaas/pkg/storage"
@@ -114,7 +117,7 @@ var (
 	pushServiceStartFn = func(ps *messaging.PushService, ctx context.Context) error { return ps.Start(ctx) }
 	watchBridgeStartFn = func(b *watchbridge.WatchBridge, ctx context.Context) error { return b.Start(ctx) }
 	// Seam for CA construction.
-	newCAFn = xkmssdk.NewXKMSCA
+	newCAFn = xkmssdk.NewTrustedCA
 	// Seam for seal manager construction.
 	newSealManagerFn = defaultNewSealManager
 	// Seam for CA initialization (allows tests to bypass full CA setup).
@@ -161,11 +164,15 @@ func (s *Server) initializeCA() error {
 	}
 	certsDir := filepath.Join(dataDir, "certs")
 
-	// Create file-based storage backends
+	// Create file-based storage backends.
+	// The resulting keyStorage is also stored on the Server so that startKMS
+	// can reuse it instead of creating a parallel key store under a different
+	// directory. One storage root = one KEK universe = no wrap/unwrap mismatch.
 	keyStorage, err := xkmssdk.NewFileStorageBackend(keysDir)
 	if err != nil {
 		return api.NewOperationFailedError("create key storage", err)
 	}
+	s.xkmsKeyStorage = keyStorage
 	certFileStorage, err := xkmssdk.NewFileStorageBackend(certsDir)
 	if err != nil {
 		return api.NewOperationFailedError("create cert storage", err)
@@ -228,10 +235,10 @@ func (s *Server) initializeCA() error {
 	}
 
 	// Build CA config with unified Identity-based hierarchy
-	caConfig := &xkmssdk.XKMSCAMultiIdentityConfig{
-		Identity: []xkmssdk.XKMSCAIdentity{
+	caConfig := &xkmssdk.TrustedCAMultiIdentityConfig{
+		Identity: []xkmssdk.TrustedCAIdentity{
 			{
-				Subject: xkmssdk.XKMSCASubject{
+				Subject: xkmssdk.TrustedCASubject{
 					CommonName:   s.config.CA.RootCommonName,
 					Organization: s.config.CA.RootOrganization,
 				},
@@ -252,7 +259,7 @@ func (s *Server) initializeCA() error {
 	if err != nil {
 		return api.NewOperationFailedError("derive CA key attributes", err)
 	}
-	caCAConfig := &xkmssdk.XKMSCAConfig{
+	caCAConfig := &xkmssdk.TrustedCAConfig{
 		Identity:                issuingIdentity.Subject.CommonName,
 		Subject:                 &issuingIdentity.Subject,
 		ValidityDays:            issuingIdentity.GetValidityDays(),
@@ -261,7 +268,7 @@ func (s *Server) initializeCA() error {
 		StoreType:               issuingIdentity.KeystoreType,
 		DefaultCertValidityDays: caConfig.GetDefaultValidityDays(),
 	}
-	params := &xkmssdk.XKMSCAParams{
+	params := &xkmssdk.TrustedCAParams{
 		Config:        caCAConfig,
 		KeyAttributes: keyAttrs,
 		KeyStore:      xkmsBackend,
@@ -294,25 +301,37 @@ func (s *Server) initializeCA() error {
 
 	// Issue a server TLS certificate - CA generates the key through its keystore backend
 	dnsNames := []string{"localhost"}
+	ipStrings := []string{"127.0.0.1", "::1"}
 	certCN := s.config.Server.Host
 	if certCN == "" || certCN == "0.0.0.0" {
 		certCN = "localhost"
 	}
+	// When Host is a routable hostname or IP, include it in the SANs so
+	// remote callers can verify this server. Parse as IP to route into the
+	// correct SAN field rather than mixing IPs into the DNSNames list.
 	if s.config.Server.Host != "" && s.config.Server.Host != "0.0.0.0" {
-		dnsNames = append(dnsNames, s.config.Server.Host)
+		if ip := net.ParseIP(s.config.Server.Host); ip != nil {
+			ipStrings = append(ipStrings, s.config.Server.Host)
+		} else {
+			dnsNames = append(dnsNames, s.config.Server.Host)
+		}
 	}
 	// Include the machine hostname so peers can verify this node's certificate
 	if hostname, err := os.Hostname(); err == nil && hostname != "" && hostname != "localhost" {
 		dnsNames = append(dnsNames, hostname)
 	}
-	ipStrings := []string{"127.0.0.1", "::1"}
+	// Operator-supplied additional SANs — required when remote agents
+	// reach the central by an IP or FQDN that differs from Host (e.g.,
+	// a GPU host dialing the central across a LAN).
+	dnsNames = append(dnsNames, s.config.Server.AdditionalSANDNS...)
+	ipStrings = append(ipStrings, s.config.Server.AdditionalSANIPs...)
 
-	serverRequest := &xkmssdk.XKMSCACertificateRequest{
-		Subject: xkmssdk.XKMSCASubject{
+	serverRequest := &xkmssdk.TrustedCACertificateRequest{
+		Subject: xkmssdk.TrustedCASubject{
 			CommonName:   certCN,
 			Organization: s.config.CA.RootOrganization,
 		},
-		SANS: &xkmssdk.XKMSCASubjectAlternativeNames{
+		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{
 			DNS: dnsNames,
 			IPs: ipStrings,
 		},
@@ -332,13 +351,37 @@ func (s *Server) initializeCA() error {
 	}
 	serverKeyAttrs.CN = certCN
 
-	// Get in-memory TLS config backed by OpaqueKey
-	s.tlsConfig, err = xkmsCA.TLSConfig(serverKeyAttrs)
+	// Get in-memory TLS config backed by OpaqueKey. ServerTLSConfig
+	// (not bare TLSConfig) makes server intent explicit and silences
+	// the false-positive "ServerName not specified" WARN.
+	s.tlsConfig, err = xkmsCA.ServerTLSConfig(serverKeyAttrs, false)
 	if err != nil {
 		return api.NewOperationFailedError("create server TLS config", err)
 	}
 	// Enforce TLS 1.3 minimum
 	s.tlsConfig.MinVersion = tls.VersionTLS13
+	// Enable optional mTLS so per-route handlers (e.g. the agent
+	// register endpoint) can validate a presented client cert while
+	// browser-origin requests proceed without one. Full-mTLS clusters
+	// set TLSClientAuth=true; in that branch the REST server's own
+	// buildTLSConfig path takes over and promotes to RequireAndVerify.
+	if !s.config.Security.TLSClientAuth {
+		if caBundle, caErr := xkmsCA.CABundle(); caErr == nil && len(caBundle) > 0 {
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM(caBundle) {
+				s.tlsConfig.ClientCAs = pool
+				s.tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+				s.logger.Info("TLS configured with optional mTLS (per-route client cert validation)")
+			}
+		}
+	}
+
+	// Advertise gRPC ALPN (h2) on the in-memory TLS config so gRPC
+	// clients (e.g. the agent event forwarder's PushEvents stream)
+	// negotiate HTTP/2 cleanly. http/1.1 is appended for clients that
+	// dial the same TLS config without HTTP/2 support. The REST listener
+	// clones this config and overrides NextProtos for its own dispatch.
+	s.tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 
 	// Save server cert and CA chain to disk (skip if cert already existed)
 	if issuedCert != nil {
@@ -394,6 +437,7 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 		s.tlsConfig = &tls.Config{
 			Certificates: []tls.Certificate{*s.opts.tlsCertificate},
 			MinVersion:   tls.VersionTLS13,
+			NextProtos:   []string{"h2", "http/1.1"},
 		}
 		return nil
 	}
@@ -414,12 +458,12 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 	}
 	ipStrings := []string{"127.0.0.1", "::1"}
 
-	serverRequest := &xkmssdk.XKMSCACertificateRequest{
-		Subject: xkmssdk.XKMSCASubject{
+	serverRequest := &xkmssdk.TrustedCACertificateRequest{
+		Subject: xkmssdk.TrustedCASubject{
 			CommonName:   certCN,
 			Organization: s.config.CA.RootOrganization,
 		},
-		SANS: &xkmssdk.XKMSCASubjectAlternativeNames{
+		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{
 			DNS: dnsNames,
 			IPs: ipStrings,
 		},
@@ -465,19 +509,25 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 	}
 	serverKeyAttrs.CN = certCN
 
-	// Get in-memory TLS config backed by the external CA's OpaqueKey
-	s.tlsConfig, err = s.xkmsCA.TLSConfig(serverKeyAttrs)
+	// Get in-memory TLS config backed by the external CA's OpaqueKey.
+	// ServerTLSConfig (not bare TLSConfig) makes server intent explicit
+	// and silences the false-positive "ServerName not specified" WARN.
+	s.tlsConfig, err = s.xkmsCA.ServerTLSConfig(serverKeyAttrs, false)
 	if err != nil {
 		return api.NewOperationFailedError("create server TLS config from external CA", err)
 	}
 	s.tlsConfig.MinVersion = tls.VersionTLS13
+	// Advertise gRPC ALPN (h2) on the externally-issued TLS config so
+	// the gRPC server's TLS handshake completes for clients that
+	// negotiate HTTP/2.
+	s.tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 
 	s.logger.Info("TLS certificate issued from external CA")
 	return nil
 }
 
 // saveServerCert saves an issued certificate chain to a PEM file.
-func saveServerCert(issued *xkmssdk.XKMSCAIssuedCertificate, certPath string) error {
+func saveServerCert(issued *xkmssdk.TrustedCAIssuedCertificate, certPath string) error {
 	certDir := filepath.Dir(certPath)
 	// #nosec G301 - Certs directory needs 0750 for group access
 	if err := os.MkdirAll(certDir, 0750); err != nil {
@@ -503,11 +553,19 @@ func saveServerCert(issued *xkmssdk.XKMSCAIssuedCertificate, certPath string) er
 	return nil
 }
 
-// defaultNewSealManager constructs an in-memory seal manager that satisfies
-// interfaces.SealManager. Production deployments should inject a real
-// BarrierClient-backed seal manager via the newSealManagerFn seam.
+// defaultNewSealManager constructs a disk-persistent seal manager that
+// satisfies interfaces.SealManager. Initialization state is stored under
+// <dataDir>/barrier/seal_state.json so that initialized=true survives daemon
+// restarts. Production deployments can replace this via newSealManagerFn to
+// inject a real BarrierClient-backed manager.
 func defaultNewSealManager(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.SealManager, error) {
-	return grpcapi.NewDefaultSealManager(cfg), nil
+	barrierDir := filepath.Join(dataDir, "barrier")
+	mgr, err := grpcapi.NewPersistentDefaultSealManager(cfg, barrierDir)
+	if err != nil {
+		log.WithError(err).Warn("Failed to create persistent seal manager; falling back to in-memory (initialized state will not survive restart)")
+		return grpcapi.NewDefaultSealManager(cfg), nil
+	}
+	return mgr, nil
 }
 
 // initBarrier initializes the seal manager and encrypting KV store when seal is enabled.
@@ -635,13 +693,14 @@ func (s *Server) startIndexes() error {
 	return nil
 }
 
-// startKMS initializes the KMS infrastructure if enabled in config.
-// This includes initializing the XKMS layer and creating the KMS manager
-// with a BackendRegistry populated from go-xkms's available backends.
+// startKMS initializes the KMS infrastructure when KMS is enabled in
+// configuration. When s.config.KMS.Enabled is false, this is a no-op and
+// s.kmsManager remains nil — callers that depend on the manager must check
+// for nil before use. Build-tag gating still controls whether the KMS code
+// is compiled into the binary at all.
 func (s *Server) startKMS() error {
-	// Skip if KMS is not enabled
 	if !s.config.KMS.Enabled {
-		s.logger.Info("KMS is disabled, skipping initialization")
+		s.logger.Info("KMS service is disabled, skipping initialization")
 		return nil
 	}
 
@@ -657,10 +716,38 @@ func (s *Server) startKMS() error {
 	}
 	defaultBackendName := string(defaultBackendType)
 
-	// Create in-memory storage for keys
-	keyStorage, err := newKMSKeyStorage()
-	if err != nil {
-		return api.NewOperationFailedError("create key storage", err)
+	// Reuse the CA chain's key storage when available so that KEKs and
+	// asymmetric CA keys share a single on-disk directory and a single XKMS
+	// instance. This eliminates the two-chain problem: previously startKMS
+	// created a parallel store under $DATA_DIR/kms-keys while initializeCA
+	// had already registered $DATA_DIR/keys with the XKMS global singleton.
+	// Wrap used one chain, unwrap saw the other → "cipher: message
+	// authentication failed" on every first boot.
+	//
+	// When TLS is disabled (no CA chain) and a data directory is configured,
+	// fall back to creating a file store under $DATA_DIR/xkms-keys so that
+	// KEKs still survive restarts. Without a data directory (unit tests),
+	// use the in-memory seam.
+	var keyStorage xkmssdk.StorageBackend
+	if s.xkmsKeyStorage != nil {
+		// CA chain was initialised — reuse its storage root (canonical path).
+		keyStorage = s.xkmsKeyStorage
+		s.logger.Info("KMS key storage reusing CA chain storage (single XKMS key universe)")
+	} else if dataDir := s.config.Storage.DataDir; dataDir != "" {
+		xkmsKeysDir := filepath.Join(dataDir, "xkms-keys")
+		var ksErr error
+		keyStorage, ksErr = xkmssdk.NewFileStorageBackend(xkmsKeysDir)
+		if ksErr != nil {
+			return api.NewOperationFailedError("create KMS file key storage", ksErr)
+		}
+		s.logger.WithField("xkms_keys_dir", xkmsKeysDir).Info("KMS key storage backed by filesystem (TLS disabled)")
+	} else {
+		var ksErr error
+		keyStorage, ksErr = newKMSKeyStorage()
+		if ksErr != nil {
+			return api.NewOperationFailedError("create key storage", ksErr)
+		}
+		s.logger.Info("KMS key storage backed by memory (no data directory configured)")
 	}
 	certStorage := xkmssdk.NewStorageMemory()
 
@@ -741,14 +828,15 @@ func (s *Server) startKMS() error {
 	return nil
 }
 
-// startSecrets initializes the secrets manager if enabled in config.
+// startSecrets initializes the secrets manager unconditionally when the
+// secrets package is compiled into the binary. Per operator decision
+// (2026-04-22): "if the feature has been compiled into the binary then it's
+// enabled". The previous Enabled config gate caused platformd to FATAL on
+// App.Init for any node whose config carried kms:// URIs (TPM PINs, CA
+// passwords, ACME account keys) when QuicBaaS Secrets defaulted to disabled.
+// Build-tag gating still controls whether the secrets code is compiled into
+// the binary at all; cfg.Secrets.Enabled is no longer consulted here.
 func (s *Server) startSecrets() error {
-	// Skip if Secrets is not enabled
-	if !s.config.Secrets.Enabled {
-		s.logger.Info("Secrets service is disabled, skipping initialization")
-		return nil
-	}
-
 	s.logger.Info("Initializing Secrets manager...")
 
 	// Create memory backend for secrets storage
@@ -1214,6 +1302,8 @@ func (s *Server) startService() error {
 		SchedulerMaxConcurrentJobs: s.config.Scheduler.MaxConcurrentJobs,
 		TimeSeriesShardID:          s.config.TimeSeries.ShardID,
 		TenantIsolation:            s.config.Security.TenantIsolation,
+		XKMS:                       s.config.XKMS,
+		DataDir:                    s.config.Storage.DataDir,
 	}
 
 	// Build the QuicBaaS service using the builder pattern
@@ -1346,6 +1436,25 @@ func (s *Server) startService() error {
 	if s.timeSeriesStorage != nil && s.config.TimeSeries.ShardID > 0 {
 		scOpts = append(scOpts, WithTimeSeriesStorage(s.timeSeriesStorage, s.config.TimeSeries.ShardID))
 	}
+	// Wire the bootstrap ceremony services into the sharded client so the
+	// /api/v1/init/* REST routes (added by the Phase 9 agent) can delegate
+	// to a real CeremonyServicer instead of returning NotSupported. The
+	// bootstrap ceremony uses an in-memory software-strategy barrier that is
+	// disjoint from the data-plane barrier (which is sealed at this point).
+	// Failure here is non-fatal: the embedded transport falls back to
+	// NotSupported errors, matching today's behaviour for clusters that
+	// don't run the init flow.
+	ceremonyDataDir := filepath.Join(s.config.Storage.DataDir, "ceremony")
+	if cerSvcs, cerErr := buildBootstrapCeremonyServices(slog.Default(), ceremonyDataDir); cerErr == nil {
+		scOpts = append(scOpts,
+			WithCeremonyService(cerSvcs.Ceremony),
+			WithCredentialService(cerSvcs.Credential),
+		)
+		s.ceremonyServices = cerSvcs
+		s.logger.Info("Bootstrap ceremony services wired into sharded client")
+	} else {
+		s.logger.Warnf("Bootstrap ceremony wiring skipped: %v — /api/v1/init/* will return NotSupported", cerErr)
+	}
 	s.qrdbClient = NewShardedClient(nil, scOpts...)
 	s.logger.Info("qrdb ShardedClient pre-initialized for KVStore provider")
 
@@ -1357,6 +1466,25 @@ func (s *Server) startService() error {
 
 	builder = builder.WithQRDBClient(s.qrdbClient)
 	s.logger.Info("qrdb SDK client attached to service builder")
+
+	// Wire the Certificate Authority into the service builder so the
+	// CertificateService inside QuicBaaS can issue and revoke certificates
+	// on behalf of in-process callers (Security().Certificate().*). The CA
+	// is the same instance used for TLS bootstrap above; whether it was
+	// supplied externally via WithCA or created internally by initializeCA,
+	// it is now reachable through the service facade for callers such as
+	// platformd's provisionDaemonIdentity.
+	if s.xkmsCA != nil {
+		caAdapter, caErr := newCAServiceAdapter(s.xkmsCA)
+		if caErr != nil {
+			s.logger.Warnf("Failed to wire CA into service builder: %v", caErr)
+		} else {
+			// Keep a reference so UpdateCA() can swap the backing CA after start.
+			s.caAdapter = caAdapter
+			builder = builder.WithCAService(caAdapter)
+			s.logger.Info("CA service attached to service builder via TrustedCA adapter")
+		}
+	}
 
 	svc, err := builder.Build()
 	if err != nil {
@@ -1387,6 +1515,7 @@ func (s *Server) startService() error {
 	if err != nil {
 		s.logger.WithError(err).Warn("Failed to initialize IAM components, IAM features will be unavailable")
 	} else if iamComponents != nil {
+		s.iamComponents = iamComponents
 		svc.SetIAMProvider(iamComponents)
 		s.logger.Info("IAM components attached to service")
 	}

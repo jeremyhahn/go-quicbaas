@@ -45,3 +45,98 @@ export class APIError extends QuicBaaSError {
     this.status = status;
   }
 }
+
+
+// DeployNotSupportedError is thrown when deployAgent is invoked over a
+// transport other than Wails (desktop). Deploys orchestrate a local SSH
+// session against a remote host — only the desktop/CLI runtimes can do
+// that safely. Other transports must surface this error so callers know
+// to fall back to the CLI or GUI.
+export class DeployNotSupportedError extends QuicBaaSError {
+  constructor(transport: string) {
+    super(
+      `deploy is desktop-only — use the CLI or GUI desktop app (current transport: ${transport})`,
+    );
+    this.name = 'DeployNotSupportedError';
+  }
+}
+
+// =============================================================================
+// SSH typed errors
+// =============================================================================
+
+// SSHError is the base error class for all SSH service errors.
+export class SSHError extends QuicBaaSError {
+  /** HTTP status code from the server response. */
+  readonly status: number;
+  /** Resource family: 'ssh-keys', 'known_hosts', 'authorized_key', etc. */
+  readonly resource: string;
+
+  constructor(status: number, message: string, resource = 'ssh-keys') {
+    super(message);
+    this.name = 'SSHError';
+    this.status = status;
+    this.resource = resource;
+  }
+}
+
+// SSHNotFoundError is thrown when the server returns 404 for an SSH resource.
+export class SSHNotFoundError extends SSHError {
+  constructor(message: string, resource?: string) {
+    super(404, message, resource);
+    this.name = 'SSHNotFoundError';
+  }
+}
+
+// SSHDuplicateError is thrown when the server returns 409 for a duplicate key or pin.
+export class SSHDuplicateError extends SSHError {
+  constructor(message: string, resource?: string) {
+    super(409, message, resource);
+    this.name = 'SSHDuplicateError';
+  }
+}
+
+// SSHInvalidError is thrown when the server returns 400 for an invalid request.
+export class SSHInvalidError extends SSHError {
+  constructor(message: string, resource?: string) {
+    super(400, message, resource);
+    this.name = 'SSHInvalidError';
+  }
+}
+
+// SSHUnavailableError is thrown when the server returns 503 because xkms
+// is not configured on the QuicBaaS instance.
+export class SSHUnavailableError extends SSHError {
+  constructor(message: string) {
+    super(503, message);
+    this.name = 'SSHUnavailableError';
+  }
+}
+
+// SSHServerError is thrown when the server returns an unexpected 5xx error.
+export class SSHServerError extends SSHError {
+  constructor(status: number, message: string, resource?: string) {
+    super(status, message, resource);
+    this.name = 'SSHServerError';
+  }
+}
+
+// SSHHostMismatchError is thrown when the server returns 409 for a host-key
+// mismatch during known-host verification. The expected and received fields
+// carry the stored and presented fingerprints, respectively.
+export class SSHHostMismatchError extends SSHError {
+  /** Hostname whose key did not match the stored pin. */
+  readonly host: string;
+  /** SHA256 fingerprint stored in the pin store. */
+  readonly expected: string;
+  /** SHA256 fingerprint presented by the connecting host. */
+  readonly received: string;
+
+  constructor(host: string, expected: string, received: string, message?: string) {
+    super(409, message ?? `ssh/known_hosts: host key mismatch for ${host}`, 'known_hosts');
+    this.name = 'SSHHostMismatchError';
+    this.host = host;
+    this.expected = expected;
+    this.received = received;
+  }
+}

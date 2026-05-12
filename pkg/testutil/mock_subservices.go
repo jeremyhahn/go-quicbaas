@@ -316,6 +316,12 @@ func (m *MockQuicBaaS) SafetyReport(ctx context.Context, req *service.SafetyRepo
 	return resp, args.Error(1)
 }
 
+func (m *MockQuicBaaS) SetDefaultKey(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.SetDefaultKeyResponse)
+	return resp, args.Error(1)
+}
+
 // =============================================================================
 // Crypto Service Methods (returned by Crypto() accessor)
 // =============================================================================

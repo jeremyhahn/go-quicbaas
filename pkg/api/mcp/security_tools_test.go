@@ -63,41 +63,6 @@ func TestKMSToolsNotAvailable(t *testing.T) {
 	}
 }
 
-// TestSealToolsNotAvailable tests Seal tools when service doesn't implement them.
-func TestSealToolsNotAvailable(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	require.NoError(t, err)
-
-	svc := &mockService{}
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	tests := []struct {
-		name string
-		tool string
-		args map[string]interface{}
-	}{
-		{"status", "quicbaas_seal_status", map[string]interface{}{}},
-		{"init", "quicbaas_seal_init", map[string]interface{}{"threshold": float64(2), "total_shares": float64(3)}},
-		{"unseal", "quicbaas_unseal", map[string]interface{}{"share": "data"}},
-		{"seal", "quicbaas_seal", map[string]interface{}{}},
-		{"rekey", "quicbaas_seal_rekey", map[string]interface{}{"new_threshold": float64(2), "new_total_shares": float64(3)}},
-		{"gen recovery", "quicbaas_seal_generate_recovery_key", map[string]interface{}{"recovery_threshold": float64(2), "recovery_total_keys": float64(3)}},
-		{"del recovery", "quicbaas_seal_delete_recovery_key", map[string]interface{}{"confirm": true}},
-		{"root token", "quicbaas_seal_generate_root_token", map[string]interface{}{"strategy": "recovery_keys"}},
-		{"root token with shares", "quicbaas_seal_generate_root_token", map[string]interface{}{"strategy": "shamir_shares", "shares": []interface{}{"s1", "s2"}}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, tt.tool, tt.args)
-			assert.Error(t, err)
-			assert.Nil(t, result)
-			assert.Contains(t, err.Error(), "seal service not available")
-		})
-	}
-}
-
 // TestSecretsToolsNotAvailable tests Secrets tools when service doesn't implement them.
 func TestSecretsToolsNotAvailable(t *testing.T) {
 	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})

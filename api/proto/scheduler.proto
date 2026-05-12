@@ -144,6 +144,13 @@ message CreateJobRequest {
     int64 timeout_seconds = 13;
     int32 max_retries = 14;
     map<string, string> labels = 15;
+
+    // node_affinity restricts execution to the node whose
+    // SchedulerEngine was constructed with a matching node ID.
+    // Empty (default) makes the job cluster-wide — executes only
+    // on the Raft leader. Non-empty pins execution to the affine
+    // node regardless of leadership; see pkg/scheduler semantics.
+    string node_affinity = 16;
 }
 
 message CreateJobResponse {

@@ -21,7 +21,7 @@ import (
 // Service-Prefixed Type Aliases
 //
 // These re-export types from pkg/service with a "Service" prefix so that
-// SDK consumers (e.g. go-trusted-ca) can reference them unambiguously from
+// SDK consumers (e.g. go-xkms) can reference them unambiguously from
 // the top-level quicbaas package without colliding with identically-named
 // types from other sub-packages.
 // =============================================================================

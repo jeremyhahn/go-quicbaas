@@ -15,6 +15,7 @@ package secrets
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"errors"
 	"testing"
@@ -1360,4 +1361,11 @@ func TestEncryptAEAD_EmptyPlaintext(t *testing.T) {
 	decrypted2, err := decryptAEAD(key, nonce2, ciphertext2, tag2, aad, interfaces.AlgorithmChaCha20Poly1305)
 	require.NoError(t, err, "CHACHA20-POLY1305 decryption of empty plaintext should succeed")
 	assert.Empty(t, decrypted2, "Decrypted data should be empty")
+}
+
+// Signer returns a crypto.Signer for the given keyID. Tests that don't
+// exercise the signer path receive a nil signer and no error; tests
+// that do can stub this by redefining the method on a wrapped type.
+func (m *encryptorMockKMSManager) Signer(_ context.Context, _ string) (crypto.Signer, error) {
+	return nil, nil
 }

@@ -69,13 +69,11 @@ type MFAChallenge struct {
 // Extended Auth Request/Response Types
 // =============================================================================
 
-// ExtendedLoginRequest contains credentials for authentication with MFA support.
+// ExtendedLoginRequest contains authentication request fields.
+// Password-based login is not supported; use WebAuthn or PIV smartcard.
 type ExtendedLoginRequest struct {
 	// Username is the user's username or email.
 	Username string
-
-	// Password is the user's password.
-	Password string
 
 	// MFACode is the optional MFA code if MFA is enabled.
 	MFACode string

@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"golang.org/x/crypto/bcrypt"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -252,7 +253,15 @@ func NewInMemoryAuthManager(cfg *AuthConfig, log *logger.Logger) (*InMemoryAuthM
 // given username, the account is locked for LoginLockoutDuration. The lockout
 // automatically expires after the duration elapses. A successful login resets
 // the failure counter. Set MaxLoginAttempts=0 to disable throttling.
-func (am *InMemoryAuthManager) Authenticate(ctx context.Context, username, password string) (*Token, error) {
+func (am *InMemoryAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (*Token, error) {
+	// Destroy the caller-owned password buffer on every return path, including
+	// early-exit error paths. Destroy is idempotent and nil-safe.
+	defer func() {
+		if password != nil {
+			password.Destroy()
+		}
+	}()
+
 	if !am.config.Enabled {
 		return nil, api.NewAuthenticationDisabledError("auth.Authenticate")
 	}
@@ -531,8 +540,8 @@ func (am *InMemoryAuthManager) CreateUserWithTenant(username, password, tenantID
 
 // validateCredentials validates user credentials for password-based authentication.
 // This method is only called when AllowPasswordAuth is enabled.
-func (am *InMemoryAuthManager) validateCredentials(ctx context.Context, username, password string) (*User, error) {
-	if username == "" || password == "" {
+func (am *InMemoryAuthManager) validateCredentials(ctx context.Context, username string, password *secure.Buffer) (*User, error) {
+	if username == "" || password == nil || password.Size() == 0 {
 		return nil, api.NewCredentialsRequiredError("auth.validateCredentials")
 	}
 
@@ -550,7 +559,7 @@ func (am *InMemoryAuthManager) validateCredentials(ctx context.Context, username
 		return nil, api.NewNoPasswordSetError("auth.validateCredentials")
 	}
 
-	matched, rehashed := verifyPassword(user.password, password)
+	matched, rehashed := verifyPasswordBuffer(user.password, password)
 	if !matched {
 		return nil, api.NewInvalidCredentialsError("auth.validateCredentials")
 	}
@@ -702,6 +711,47 @@ func verifyPassword(storedHash, password string) (matched bool, rehashed string)
 		return true, ""
 	}
 	return true, upgraded
+}
+
+// verifyPasswordBuffer verifies a password supplied as an mlocked
+// *secure.Buffer against a stored hash. It mirrors verifyPassword but
+// takes raw bytes from the Buffer so the plaintext never becomes a Go
+// string. Callers still own the Buffer and are responsible for its
+// destruction.
+//
+// Returns:
+//   - matched: true if the password matches the stored hash
+//   - rehashed: non-empty bcrypt hash if a legacy SHA-256 hash was
+//     matched and needs to be upgraded in storage; empty string if
+//     already bcrypt or no match
+func verifyPasswordBuffer(storedHash string, password *secure.Buffer) (matched bool, rehashed string) {
+	if password == nil {
+		return false, ""
+	}
+	pwBytes := password.Bytes()
+
+	// Primary path: bcrypt verification (constant-time comparison built-in)
+	if isBcryptHash(storedHash) {
+		err := bcrypt.CompareHashAndPassword([]byte(storedHash), pwBytes)
+		return err == nil, ""
+	}
+
+	// Legacy fallback: SHA-256 hex hash (for pre-migration passwords)
+	hash := sha256.Sum256(pwBytes)
+	legacyHash := hex.EncodeToString(hash[:])
+	if storedHash != legacyHash {
+		return false, ""
+	}
+
+	// Password matched via legacy hash; upgrade to bcrypt directly from the
+	// mlocked bytes without copying into a string.
+	upgraded, err := bcrypt.GenerateFromPassword(pwBytes, bcrypt.DefaultCost)
+	if err != nil {
+		// Legacy hash matched but bcrypt upgrade failed; still authenticate
+		// but skip the upgrade. The hash will be upgraded on next login.
+		return true, ""
+	}
+	return true, string(upgraded)
 }
 
 // generateUserID generates a unique user ID.

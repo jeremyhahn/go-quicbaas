@@ -69,14 +69,15 @@ var iamToolMap = map[string]string{
 	"Tenant.List":   "quicbaas_iam_tenant_list",
 
 	// User Operations
-	"User.Create":     "quicbaas_iam_user_create",
-	"User.Get":        "quicbaas_iam_user_get",
-	"User.GetByEmail": "quicbaas_iam_user_get",
-	"User.Update":     "quicbaas_iam_user_update",
-	"User.Delete":     "quicbaas_iam_user_delete",
-	"User.List":       "quicbaas_iam_user_list",
-	"User.AssignRole": "quicbaas_iam_user_assign_role",
-	"User.RevokeRole": "quicbaas_iam_user_revoke_role",
+	"User.Create":         "quicbaas_iam_user_create",
+	"User.Get":            "quicbaas_iam_user_get",
+	"User.GetByEmail":     "quicbaas_iam_user_get",
+	"User.FindByUsername": "quicbaas_iam_user_get",
+	"User.Update":         "quicbaas_iam_user_update",
+	"User.Delete":         "quicbaas_iam_user_delete",
+	"User.List":           "quicbaas_iam_user_list",
+	"User.AssignRole":     "quicbaas_iam_user_assign_role",
+	"User.RevokeRole":     "quicbaas_iam_user_revoke_role",
 
 	// Group Operations
 	"Group.Create":       "quicbaas_iam_group_create",

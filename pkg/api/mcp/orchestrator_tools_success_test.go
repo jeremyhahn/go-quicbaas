@@ -697,3 +697,141 @@ func TestExecuteAgentBroadcast_WithoutMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 }
+
+// =============================================================================
+// Inference Tool Tests
+// =============================================================================
+
+func TestExecuteOrchestratorInference_Success(t *testing.T) {
+	t.Parallel()
+
+	agentSvc := &mockAgentService{
+		inferFn: func(_ context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+			assert.Equal(t, "ollama", req.Backend)
+			assert.Equal(t, "llama3", req.Model)
+			assert.Equal(t, "what is 2+2?", req.Prompt)
+			ch := make(chan *orchestration.InferChunk, 2)
+			ch <- &orchestration.InferChunk{
+				Delta: []orchestration.ContentBlock{{Type: "text", Text: "The answer is "}},
+			}
+			ch <- &orchestration.InferChunk{
+				Delta:      []orchestration.ContentBlock{{Type: "text", Text: "4."}},
+				Model:      "llama3",
+				StopReason: "end_turn",
+				Final:      true,
+			}
+			close(ch)
+			return ch, nil
+		},
+	}
+	reg := newAgentRegistry(t, agentSvc)
+
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
+		"backend": "ollama",
+		"model":   "llama3",
+		"prompt":  "what is 2+2?",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// The tool returns a JSON string.
+	raw, ok := result.(string)
+	require.True(t, ok, "expected string result, got %T", result)
+	assert.Contains(t, raw, "end_turn")
+	assert.Contains(t, raw, "llama3")
+	assert.Contains(t, raw, "4.")
+}
+
+func TestExecuteOrchestratorInference_MissingBackend(t *testing.T) {
+	t.Parallel()
+
+	reg := newAgentRegistry(t, &mockAgentService{})
+
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
+		"prompt": "hello",
+	})
+	require.Error(t, err)
+	assert.True(t, isRequiredFieldError(err, "backend"))
+}
+
+func TestExecuteOrchestratorInference_MissingPrompt(t *testing.T) {
+	t.Parallel()
+
+	reg := newAgentRegistry(t, &mockAgentService{})
+
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
+		"backend": "ollama",
+	})
+	require.Error(t, err)
+	assert.True(t, isRequiredFieldError(err, "prompt"))
+}
+
+func TestExecuteOrchestratorInference_NoAgentService(t *testing.T) {
+	t.Parallel()
+
+	// newAgentRegistry with nil agent service
+	reg := newAgentRegistry(t, nil)
+
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
+		"backend": "ollama",
+		"prompt":  "hi",
+	})
+	require.Error(t, err)
+}
+
+func TestExecuteOrchestratorInference_InferError(t *testing.T) {
+	t.Parallel()
+
+	agentSvc := &mockAgentService{
+		inferFn: func(_ context.Context, _ *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+			return nil, errors.New("backend unavailable")
+		},
+	}
+	reg := newAgentRegistry(t, agentSvc)
+
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
+		"backend": "ollama",
+		"prompt":  "hi",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "backend unavailable")
+}
+
+func TestExecuteOrchestratorInference_WithMetadata(t *testing.T) {
+	t.Parallel()
+
+	var captured *orchestration.InferRequest
+	agentSvc := &mockAgentService{
+		inferFn: func(_ context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+			captured = req
+			ch := make(chan *orchestration.InferChunk, 1)
+			ch <- &orchestration.InferChunk{
+				Delta: []orchestration.ContentBlock{{Type: "text", Text: "ok"}},
+				Final: true,
+			}
+			close(ch)
+			return ch, nil
+		},
+	}
+	reg := newAgentRegistry(t, agentSvc)
+
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
+		"backend":       "ollama",
+		"prompt":        "test",
+		"system_prompt": "you are a helper",
+		"host_affinity": "node-2",
+		"metadata":      map[string]interface{}{"key": "val"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	assert.Equal(t, "you are a helper", captured.SystemPrompt)
+	assert.Equal(t, "node-2", captured.HostAffinity)
+	assert.Equal(t, "val", captured.Metadata["key"])
+}
+
+func TestIsOrchestratorInferenceTool(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, isAgentTool("quicbaas_orchestrator_inference"),
+		"quicbaas_orchestrator_inference should be recognized as an agent/orchestrator tool")
+}

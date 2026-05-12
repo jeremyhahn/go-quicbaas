@@ -928,32 +928,6 @@ func TestClient_ObjectStorageMigrateObject_NotConnected(t *testing.T) {
 }
 
 // =============================================================================
-// Seal Functions - Not Connected Tests
-// =============================================================================
-
-func TestClient_SealStatus_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.SealStatus(ctx)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_Seal_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	// Seal returns only error, no response
-	err := client.Seal(ctx)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-// =============================================================================
 // Ollama Functions - Not Connected Tests
 // =============================================================================
 
@@ -1024,43 +998,6 @@ func TestClient_OllamaEmbedBatch_NotConnected(t *testing.T) {
 }
 
 // --- Merged from coverage_extended_additional_test.go ---
-
-// =============================================================================
-// Client Seal Functions - Nil Request Tests
-// =============================================================================
-
-func TestClientCoverage_SealInit_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SealInit(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_Unseal_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.Unseal(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_Rekey_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.Rekey(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
 
 // =============================================================================
 // Client Secrets Functions - Nil Request Tests

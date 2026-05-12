@@ -34,11 +34,14 @@ import (
 	"context"
 	"time"
 
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -134,6 +137,28 @@ type QuicBaaS interface {
 	// Scheduler provides job scheduling and execution with multi-tenant support.
 	Scheduler() SchedulerService
 
+	// SchedulerEngine returns the raw scheduler engine for in-process handler
+	// registration (returns nil if not configured). External (over-the-wire)
+	// callers should use Scheduler() instead; this accessor is intended for
+	// embedded consumers (e.g. platformd) that need to call RegisterHandler
+	// after Build() completes.
+	SchedulerEngine() *scheduler.SchedulerEngine
+
+	// SSHClient returns the SSH key, known-hosts, and authorized-keys
+	// client (xkms-backed). Transport is selected at construction time:
+	// a non-empty XKMS URL uses the REST transport, otherwise an embedded
+	// file-backed store is used. Returns nil only when SSH is explicitly
+	// disabled.
+	SSHClient() xkmsssh.Client
+
+	// Project returns the Project service for managing agentic project entities.
+	// Projects sit between Tenant and Workflow in the hierarchy.
+	Project() ProjectService
+
+	// AgentAdmin returns the Agent Admin service for global agent lifecycle management.
+	// This service handles enabling and disabling agents across all projects.
+	AgentAdmin() AgentAdminService
+
 	// Agent returns the Agent service (returns nil if not configured)
 	// Agent provides AI agent orchestration across multiple backends.
 	Agent() orchestration.AgentService
@@ -173,6 +198,15 @@ type QuicBaaS interface {
 	// This is called by the server when barrier mode is configured and the
 	// BarrierRegistry has been initialized with the system barrier.
 	SetTenantIsolationManager(m security.TenantIsolationManager)
+
+	// SetSealService wires the SealService into the facade at runtime.
+	// This is called by the server after the seal manager has been initialized
+	// so that the REST/gRPC handlers can reach the seal subsystem.
+	SetSealService(svc SealService)
+
+	// SealService operations promoted directly onto the facade so that REST
+	// handlers can reach them via a single type assertion on s.service.
+	SealService
 
 	// Close gracefully shuts down the service and all backend components
 	Close() error
@@ -1162,7 +1196,6 @@ type (
 type (
 	LoginRequest struct {
 		Username string
-		Password string
 	}
 	LoginResponse struct {
 		AccessToken  string
@@ -1505,6 +1538,19 @@ type ServiceConfig struct {
 	// TenantIsolation configures the tenant isolation strategy used when
 	// tenants are created or removed. Defaults to keyspace mode.
 	TenantIsolation config.TenantIsolationConfig
+
+	// XKMS selects the SSH-client transport. When URL is empty the
+	// service uses a file-backed embedded store rooted at SSHStoreDir
+	// (defaulting to $DataDir/xkms-ssh when empty).
+	XKMS config.XKMSConfig
+
+	// SSHStoreDir is the filesystem root for the embedded SSH store.
+	// Optional; when empty the service derives a default from DataDir.
+	SSHStoreDir string
+
+	// DataDir is the base data directory used when the service needs
+	// to derive default paths for embedded stores (e.g. xkms-ssh).
+	DataDir string
 }
 
 // =============================================================================

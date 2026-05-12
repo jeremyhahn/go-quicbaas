@@ -17,7 +17,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"path/filepath"
@@ -990,7 +989,10 @@ func TestP10_Initialize_InitVectorStorageError(t *testing.T) {
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Security.TLSEnabled = false
 	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 0 // Invalid - will fail validation
+	// HNSW.M=1 is out of the valid 2-100 range and survives ApplyDefaults
+	// (non-nil HNSW is preserved). ShardID=0 no longer works because
+	// ApplyDefaults normalizes it to defaultVectorShardID before Validate.
+	cfg.Vector.HNSW = &config.HNSWConfig{M: 1}
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
@@ -1044,81 +1046,6 @@ func TestP10_Initialize_StartGRPCError(t *testing.T) {
 	assert.Error(t, err) // No listeners configured => covers L405-407
 }
 
-// =============================================================================
-// 2. WebAuthn adapter parse functions
-// Covers iam_webauthn_adapter.go L135-146, L160-171
-// =============================================================================
-
-func TestP10_ParseCredentialCreationResponse_InvalidJSON(t *testing.T) {
-	// Empty map will fail go-webauthn parsing
-	credential := map[string]interface{}{}
-	_, err := parseCredentialCreationResponse(credential)
-	assert.Error(t, err)
-}
-
-func TestP10_ParseCredentialCreationResponse_ValidStructure(t *testing.T) {
-	// Minimal credential structure that go-webauthn expects
-	credential := map[string]interface{}{
-		"id":    "dGVzdC1pZA",
-		"rawId": "dGVzdC1pZA",
-		"type":  "public-key",
-		"response": map[string]interface{}{
-			"clientDataJSON":    "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiZEdWemRDMWphR0ZzYkdWdVoyVSIsIm9yaWdpbiI6Imh0dHBzOi8vbG9jYWxob3N0In0",
-			"attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjE",
-		},
-	}
-	_, err := parseCredentialCreationResponse(credential)
-	// Will fail on attestation parsing but exercises the code path
-	if err != nil {
-		t.Logf("parseCredentialCreationResponse error (expected): %v", err)
-	}
-}
-
-func TestP10_ParseCredentialAssertionResponse_InvalidJSON(t *testing.T) {
-	credential := map[string]interface{}{}
-	_, err := parseCredentialAssertionResponse(credential)
-	assert.Error(t, err)
-}
-
-func TestP10_ParseCredentialAssertionResponse_ValidStructure(t *testing.T) {
-	credential := map[string]interface{}{
-		"id":    "dGVzdC1pZA",
-		"rawId": "dGVzdC1pZA",
-		"type":  "public-key",
-		"response": map[string]interface{}{
-			"clientDataJSON":    "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZEdWemRDMWphR0ZzYkdWdVoyVSIsIm9yaWdpbiI6Imh0dHBzOi8vbG9jYWxob3N0In0",
-			"authenticatorData": "dGVzdC1hdXRoLWRhdGE",
-			"signature":         "dGVzdC1zaWc",
-		},
-	}
-	_, err := parseCredentialAssertionResponse(credential)
-	// Will fail on signature parsing but exercises the code path
-	if err != nil {
-		t.Logf("parseCredentialAssertionResponse error (expected): %v", err)
-	}
-}
-
-// =============================================================================
-// 3. WebAuthn adapter methods with nil manager (cover error paths)
-// Covers iam_webauthn_adapter.go L45-65, L70-81, L85-105, L109-119
-// =============================================================================
-
-func TestP10_WebAuthnServiceAdapter_BeginRegistration_MarshalUnmarshal(t *testing.T) {
-	// Test the JSON marshal/unmarshal pattern by exercising with valid data
-	data := map[string]interface{}{
-		"key": "value",
-		"nested": map[string]interface{}{
-			"inner": "data",
-		},
-	}
-	jsonBytes, err := json.Marshal(data)
-	require.NoError(t, err)
-
-	var result map[string]interface{}
-	err = json.Unmarshal(jsonBytes, &result)
-	require.NoError(t, err)
-	assert.Equal(t, "value", result["key"])
-}
 
 // =============================================================================
 // 8. Shutdown covering timeseries error path

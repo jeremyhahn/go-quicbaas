@@ -160,6 +160,7 @@ func DefaultConfig() *Config {
 			Output: "stdout",
 		},
 		Scheduler: DefaultSchedulerConfig(),
+		Messaging: DefaultMessagingConfig(),
 		Orchestration: OrchestrationConfig{
 			Enabled:          true,
 			HeartbeatTimeout: 90 * time.Second,
@@ -172,11 +173,25 @@ func DefaultConfig() *Config {
 }
 
 // DefaultSchedulerConfig returns the default scheduler configuration.
+// Scheduler is enabled by default: it uses only in-memory state backed by the
+// existing KVStore and carries no external dependencies.
 func DefaultSchedulerConfig() SchedulerConfig {
 	return SchedulerConfig{
-		Enabled:           false,
+		Enabled:           true,
 		TickInterval:      1 * time.Second,
 		MaxConcurrentJobs: 10,
+	}
+}
+
+// DefaultMessagingConfig returns the default messaging configuration.
+// Messaging is enabled by default: the hub is purely in-memory and requires no
+// external broker or configuration.
+func DefaultMessagingConfig() MessagingConfig {
+	return MessagingConfig{
+		Enabled:      true,
+		BufferSize:   4096,
+		DedupEnabled: true,
+		DedupWindow:  1 * time.Minute,
 	}
 }
 

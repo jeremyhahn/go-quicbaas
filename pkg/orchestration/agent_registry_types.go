@@ -36,7 +36,50 @@ const (
 
 	// AgentStatusError indicates an agent has encountered an error.
 	AgentStatusError AgentStatus = "error"
+
+	// AgentStatusDisabled indicates an agent has been administratively disabled.
+	// A disabled agent cannot claim work or authenticate until re-enabled.
+	AgentStatusDisabled AgentStatus = "disabled"
 )
+
+// AgentKind classifies how an agent registration is provisioned and how the
+// central orchestrator should route work to it. The field is optional for
+// backward compatibility — empty values are treated as AgentKindExternal.
+type AgentKind string
+
+const (
+	// AgentKindDaemon identifies a long-lived pkg/agent daemon process that
+	// exposes the AgentRuntime gRPC service (see api/proto/agent_runtime.proto).
+	// Registrations of this kind are routed via RemoteACPBackend.
+	AgentKindDaemon AgentKind = "daemon"
+
+	// AgentKindContainerScript identifies an agent provisioned via the
+	// deployments/agents/*/entrypoint.sh script family — a per-session
+	// container spawned by the central host's container runtime.
+	AgentKindContainerScript AgentKind = "container_script"
+
+	// AgentKindExternal identifies a manually registered agent — the legacy
+	// path for registrations created before AgentKind existed, or for
+	// operators who manage agent lifecycle out-of-band.
+	AgentKindExternal AgentKind = "external"
+
+	// AgentKindEmbedded identifies an agent that runs in-process with
+	// quicbaasd and communicates via a bufconn loopback transport rather than
+	// a real network socket. The embedded agent is a first-class registered
+	// agent with a real mTLS identity; its gRPC channel simply bypasses the
+	// network stack for zero-copy, zero-latency dispatch.
+	AgentKindEmbedded AgentKind = "embedded"
+)
+
+// EffectiveKind returns the AgentKind for a registration, defaulting to
+// AgentKindExternal when the field is unset. This preserves backward
+// compatibility with pre-Phase-4 registrations that lack the field.
+func (a *AgentRegistration) EffectiveKind() AgentKind {
+	if a == nil || a.Kind == "" {
+		return AgentKindExternal
+	}
+	return a.Kind
+}
 
 // AgentRegistration represents a registered agent in the fleet registry.
 type AgentRegistration struct {
@@ -47,12 +90,14 @@ type AgentRegistration struct {
 	Backend      string            `json:"backend"`
 	Model        string            `json:"model,omitempty"`
 	AgentType    string            `json:"agent_type"`
+	Kind         AgentKind         `json:"kind,omitempty"`
 	Status       AgentStatus       `json:"status"`
 	Capabilities []string          `json:"capabilities,omitempty"`
 	ContainerID  string            `json:"container_id,omitempty"`
 	WorkDir      string            `json:"work_dir,omitempty"`
 	LastSeen     int64             `json:"last_seen"`
 	RegisteredAt int64             `json:"registered_at"`
+	DisabledAt   int64             `json:"disabled_at,omitempty"`
 	Version      uint64            `json:"version"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
 }
@@ -198,6 +243,61 @@ func (e *AgentAlreadyExistsError) Error() string {
 func (e *AgentAlreadyExistsError) Unwrap() error {
 	return ErrAgentRegistryAlreadyExists
 }
+
+// =============================================================================
+// Agent Disable / Enable Typed Errors
+// =============================================================================
+
+// ErrAgentDisabled is the sentinel error when a disabled agent attempts an action.
+var ErrAgentDisabled = errors.New("agent: agent is disabled")
+
+// ErrAgentAlreadyDisabled is the sentinel error for disabling an already-disabled agent.
+var ErrAgentAlreadyDisabled = errors.New("agent: agent is already disabled")
+
+// ErrAgentNotDisabled is the sentinel error for enabling an agent that is not disabled.
+var ErrAgentNotDisabled = errors.New("agent: agent is not disabled")
+
+// AgentDisabledError is returned when a disabled agent attempts to perform an operation.
+type AgentDisabledError struct {
+	TenantID string
+	AgentID  string
+}
+
+// Error implements the error interface.
+func (e *AgentDisabledError) Error() string {
+	return ErrAgentDisabled.Error() + ": tenant=" + e.TenantID + " agent=" + e.AgentID
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *AgentDisabledError) Unwrap() error { return ErrAgentDisabled }
+
+// AgentAlreadyDisabledError is returned when an operator tries to disable an already-disabled agent.
+type AgentAlreadyDisabledError struct {
+	TenantID string
+	AgentID  string
+}
+
+// Error implements the error interface.
+func (e *AgentAlreadyDisabledError) Error() string {
+	return ErrAgentAlreadyDisabled.Error() + ": tenant=" + e.TenantID + " agent=" + e.AgentID
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *AgentAlreadyDisabledError) Unwrap() error { return ErrAgentAlreadyDisabled }
+
+// AgentNotDisabledError is returned when an operator tries to enable an agent that is not disabled.
+type AgentNotDisabledError struct {
+	TenantID string
+	AgentID  string
+}
+
+// Error implements the error interface.
+func (e *AgentNotDisabledError) Error() string {
+	return ErrAgentNotDisabled.Error() + ": tenant=" + e.TenantID + " agent=" + e.AgentID
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *AgentNotDisabledError) Unwrap() error { return ErrAgentNotDisabled }
 
 // AgentRegistryError wraps a sentinel error with an additional message
 // for agent registry operations.

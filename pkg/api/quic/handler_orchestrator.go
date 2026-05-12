@@ -17,6 +17,7 @@ package quic
 
 import (
 	"context"
+	"encoding/json"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -69,6 +70,15 @@ func (h *Handler) handleOrchestratorDispatch(ctx context.Context, req *Request) 
 		Payload: req.Payload[1:], // Skip sub-opcode byte
 	}
 
+	// Inject the tenant ID from the wire payload into the context so that
+	// every sub-handler and business-logic call that uses
+	// orchestration.TenantFromContext(ctx) receives the caller's tenant scope.
+	// This mirrors what the REST, gRPC, and MCP handlers do by calling
+	// orchestration.ContextWithTenant(ctx, tenantID) before invoking services.
+	if tenantID := peekTenantID(subReq.Payload); tenantID != "" {
+		ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	}
+
 	switch subOpcode {
 	// Session operations
 	case SubOpOrchestratorSpawn:
@@ -101,6 +111,10 @@ func (h *Handler) handleOrchestratorDispatch(ctx context.Context, req *Request) 
 	// Health
 	case SubOpOrchestratorHealth:
 		return h.handleOrchestratorHealth(ctx, subReq)
+
+	// Inference
+	case SubOpOrchestratorInference:
+		return h.handleOrchestratorInference(ctx, subReq)
 
 	default:
 		return h.errorResponse(api.NewUnknownSubOpcodeError(
@@ -406,6 +420,93 @@ func (h *Handler) handleOrchestratorListBackends(ctx context.Context, req *Reque
 	}
 
 	return &Response{Status: StatusOK, Payload: payload}
+}
+
+// =============================================================================
+// Inference Handler
+// =============================================================================
+
+// orchestratorInferenceRequest is the QUIC wire type for an inference call.
+type orchestratorInferenceRequest struct {
+	Backend      string            `json:"backend" msgpack:"backend"`
+	Model        string            `json:"model,omitempty" msgpack:"model,omitempty"`
+	Prompt       string            `json:"prompt" msgpack:"prompt"`
+	SystemPrompt string            `json:"system_prompt,omitempty" msgpack:"system_prompt,omitempty"`
+	HostAffinity string            `json:"host_affinity,omitempty" msgpack:"host_affinity,omitempty"`
+	GpuRequired  bool              `json:"gpu_required,omitempty" msgpack:"gpu_required,omitempty"`
+	TenantID     string            `json:"tenant_id,omitempty" msgpack:"tenant_id,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty" msgpack:"metadata,omitempty"`
+}
+
+// handleOrchestratorInference handles the stateless inference sub-opcode. It
+// calls agentSvc.Infer, accumulates the chunk channel, and encodes the
+// aggregated InferResponse as the QUIC payload.
+func (h *Handler) handleOrchestratorInference(ctx context.Context, req *Request) *Response {
+	agentSvc := h.getAgentService()
+	if agentSvc == nil {
+		return h.errorResponse(api.NewServiceUnavailableError("Orchestrator"))
+	}
+
+	var wireReq orchestratorInferenceRequest
+	if err := DecodePayload(req.Payload, &wireReq); err != nil {
+		return h.errorResponse(err)
+	}
+
+	inferReq := &orchestration.InferRequest{
+		Backend:      wireReq.Backend,
+		Model:        wireReq.Model,
+		Prompt:       wireReq.Prompt,
+		SystemPrompt: wireReq.SystemPrompt,
+		TenantID:     wireReq.TenantID,
+		HostAffinity: wireReq.HostAffinity,
+		GpuRequired:  wireReq.GpuRequired,
+		Metadata:     wireReq.Metadata,
+	}
+	if wireReq.HostAffinity != "" {
+		ctx = orchestration.WithHostAffinity(ctx, wireReq.HostAffinity)
+	}
+	if wireReq.GpuRequired {
+		ctx = orchestration.WithGpuRequired(ctx)
+	}
+
+	chunks, err := agentSvc.Infer(ctx, inferReq)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	resp, err := orchestration.AccumulateChunks(chunks)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	payload, err := EncodePayload(resp)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	return &Response{Status: StatusOK, Payload: payload}
+}
+
+// =============================================================================
+// Tenant context helper
+// =============================================================================
+
+// peekTenantID extracts the "tenant_id" field from a JSON object payload
+// without fully decoding the message. Returns an empty string if the payload
+// is not a JSON object or if the field is absent or empty.
+func peekTenantID(payload []byte) string {
+	if len(payload) == 0 {
+		return ""
+	}
+
+	var probe struct {
+		TenantID string `json:"tenant_id"`
+	}
+	if err := json.Unmarshal(payload, &probe); err != nil {
+		return ""
+	}
+
+	return probe.TenantID
 }
 
 // =============================================================================

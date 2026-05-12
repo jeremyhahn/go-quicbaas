@@ -357,7 +357,7 @@ func TestInitializeCA_CACreationError(t *testing.T) {
 
 	seamMu.Lock()
 	origFn := newCAFn
-	newCAFn = func(_ *xkmsca.Params) (xkmsca.BasicCA, error) {
+	newCAFn = func(_ *xkmsca.Params) (xkmsca.TrustedCA, error) {
 		return nil, &dberrors.MessageError{Message: "ca creation failed"}
 	}
 	seamMu.Unlock()
@@ -382,7 +382,7 @@ func TestInitializeCA_InitError_NotAlreadyInitialized(t *testing.T) {
 
 	seamMu.Lock()
 	origFn := newCAFn
-	newCAFn = func(_ *xkmsca.Params) (xkmsca.BasicCA, error) {
+	newCAFn = func(_ *xkmsca.Params) (xkmsca.TrustedCA, error) {
 		return &mockCertificateAuthority{
 			loadErr: &dberrors.MessageError{Message: "load failed"},
 			initErr: &dberrors.MessageError{Message: "some other init error"},
@@ -410,7 +410,7 @@ func TestInitializeCA_LoadError_InitAlsoFails(t *testing.T) {
 
 	seamMu.Lock()
 	origFn := newCAFn
-	newCAFn = func(_ *xkmsca.Params) (xkmsca.BasicCA, error) {
+	newCAFn = func(_ *xkmsca.Params) (xkmsca.TrustedCA, error) {
 		return &mockCertificateAuthority{
 			loadErr: &dberrors.MessageError{Message: "load failed"},
 			initErr: &dberrors.MessageError{Message: "init also failed"},
@@ -463,7 +463,7 @@ func TestInitializeCA_IssueCertificateError(t *testing.T) {
 
 	seamMu.Lock()
 	origFn := newCAFn
-	newCAFn = func(_ *xkmsca.Params) (xkmsca.BasicCA, error) {
+	newCAFn = func(_ *xkmsca.Params) (xkmsca.TrustedCA, error) {
 		return mockCA, nil
 	}
 	seamMu.Unlock()
@@ -534,8 +534,18 @@ func TestInitializeCA_Host0000_NotAddedToDNSNames(t *testing.T) {
 // Mock Types
 // =============================================================================
 
-// mockCertificateAuthority implements xkmsca.BasicCA for testing.
+// mockCertificateAuthority implements xkmsca.TrustedCA for testing.
+//
+// The xkmsca.TrustedCA interface is intentionally embedded (zero-value) so
+// that the mock satisfies the full interface without hand-stubbing every
+// method. The zero-value embedded interface panics with a nil-pointer
+// dereference if any method that is NOT explicitly overridden below gets
+// called. Tests that exercise a newly-used method MUST add a concrete
+// override on *mockCertificateAuthority; do not silently rely on the
+// panicking default.
 type mockCertificateAuthority struct {
+	xkmsca.TrustedCA // embedded interface: panics on any un-overridden call
+
 	initErr      error
 	loadErr      error
 	issuedCert   *xkmsca.IssuedCertificate
@@ -589,7 +599,7 @@ func (m *mockCertificateAuthority) CABundle() ([]byte, error) {
 	}
 	return []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n"), nil
 }
-func (m *mockCertificateAuthority) Verify(_ *x509.Certificate) ([][]*x509.Certificate, error) {
+func (m *mockCertificateAuthority) Verify(_ *x509.Certificate, _ ...crypto.Signer) ([][]*x509.Certificate, error) {
 	return nil, nil
 }
 
@@ -685,6 +695,79 @@ func (m *mockSealManager) GenerateRootToken(_ context.Context, _ string, _ [][]b
 	return "", nil
 }
 
+func (m *mockSealManager) RotateRootKey(_ context.Context) error {
+	return nil
+}
+
 func (m *mockSealManager) Close() error {
 	return nil
+}
+
+// =============================================================================
+// UpdateCA Tests
+// =============================================================================
+
+// TestUpdateCA_NilIsNoop verifies that UpdateCA(nil) returns nil without
+// touching the caAdapter field.
+func TestUpdateCA_NilIsNoop(t *testing.T) {
+	t.Parallel()
+
+	cfg := createTestConfig(t)
+	t.Cleanup(func() { cleanupTestData(t, cfg) })
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	// caAdapter is nil (server not started, TLS not set up).
+	if err := srv.UpdateCA(nil); err != nil {
+		t.Fatalf("UpdateCA(nil) should be a no-op, got error: %v", err)
+	}
+}
+
+// TestUpdateCA_ErrorsWhenAdapterNotReady verifies that UpdateCA returns a
+// typed error when the caAdapter has not been wired (server not started or
+// TLS disabled).
+func TestUpdateCA_ErrorsWhenAdapterNotReady(t *testing.T) {
+	t.Parallel()
+
+	cfg := createTestConfig(t)
+	t.Cleanup(func() { cleanupTestData(t, cfg) })
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	mockCA := &mockCertificateAuthority{}
+	err = srv.UpdateCA(mockCA)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUpdateCANotReady)
+}
+
+// TestUpdateCA_SwapsCAOnAdapter verifies that UpdateCA updates both
+// Server.xkmsCA and the live caAdapter reference.
+func TestUpdateCA_SwapsCAOnAdapter(t *testing.T) {
+	t.Parallel()
+
+	cfg := createTestConfig(t)
+	t.Cleanup(func() { cleanupTestData(t, cfg) })
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	firstCA := &mockCertificateAuthority{}
+	secondCA := &mockCertificateAuthority{}
+
+	// Simulate a wired caAdapter (as done by startService after TLS init).
+	adapter, adapterErr := newCAServiceAdapter(firstCA)
+	require.NoError(t, adapterErr)
+	srv.caAdapter = adapter
+	srv.xkmsCA = firstCA
+
+	// UpdateCA should swap to secondCA.
+	require.NoError(t, srv.UpdateCA(secondCA))
+
+	// Server-level reference should be updated.
+	assert.Equal(t, secondCA, srv.xkmsCA)
+
+	// Adapter-level reference should also be updated.
+	assert.Equal(t, secondCA, adapter.getCA())
 }

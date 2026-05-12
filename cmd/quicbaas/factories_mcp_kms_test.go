@@ -609,6 +609,7 @@ func (m *mockSDKClientForMCP) CustodianGroup() (quicbaas.QRDBCustodianGroupClien
 }
 func (m *mockSDKClientForMCP) Share() (quicbaas.QRDBShareClient, error)  { return nil, nil }
 func (m *mockSDKClientForMCP) Orchestrator() quicbaas.OrchestratorClient { return nil }
+func (m *mockSDKClientForMCP) Project() quicbaas.ProjectClient           { return nil }
 
 var _ quicbaas.Client = (*mockSDKClientForMCP)(nil)
 
@@ -1310,3 +1311,4 @@ func TestMCPSafetyClientTransportError(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+

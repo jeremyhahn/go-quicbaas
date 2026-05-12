@@ -26,7 +26,6 @@ import (
 // AuthCreateUserRequest is a request to create a new RBAC user.
 type AuthCreateUserRequest struct {
 	Username string
-	Password string
 	Roles    []string
 }
 

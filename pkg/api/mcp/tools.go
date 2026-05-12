@@ -174,6 +174,9 @@ func (r *ToolRegistry) registerTools() {
 	// Register Parameter Store tools
 	r.registerParameterTools()
 
+	// Register Project tools
+	r.registerProjectTools()
+
 	// Register Scheduler tools
 	r.registerSchedulerTools()
 
@@ -191,6 +194,9 @@ func (r *ToolRegistry) registerTools() {
 
 	// Register Agent Cache tools
 	r.registerAgentCacheTools()
+
+	// Register Agent Admin tools (global disable/enable)
+	r.registerAgentAdminTools()
 
 	// Register XKMS-compatible tools
 
@@ -537,14 +543,11 @@ func (r *ToolRegistry) registerTools() {
 	// Auth Operations
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_login",
-		Description: "Authenticate and obtain access tokens",
+		Description: "Authenticate and obtain access tokens (WebAuthn or PIV only — password-based login is not supported)",
 		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username": map[string]interface{}{"type": "string"},
-				"password": map[string]interface{}{"type": "string"},
-			},
-			"required": []string{"username", "password"},
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{},
 		},
 	})
 
@@ -568,10 +571,9 @@ func (r *ToolRegistry) registerTools() {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"username": map[string]interface{}{"type": "string"},
-				"password": map[string]interface{}{"type": "string"},
 				"roles":    map[string]interface{}{"type": "array"},
 			},
-			"required": []string{"username", "password"},
+			"required": []string{"username"},
 		},
 	})
 
@@ -1208,6 +1210,11 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 			return r.executeVectorTool(ctx, name, args)
 		}
 
+		// Check if it's a Project tool
+		if isProjectTool(name) {
+			return r.executeProjectTool(ctx, name, args)
+		}
+
 		// Check if it's a Scheduler tool
 		if isSchedulerTool(name) {
 			return r.executeSchedulerTool(ctx, name, args)
@@ -1281,6 +1288,11 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// Check if it is an Agent Cache tool
 		if isAgentCacheTool(name) {
 			return r.executeAgentCacheTool(ctx, name, args)
+		}
+
+		// Check if it is an Agent Admin tool (disable/enable globally)
+		if isAgentAdminTool(name) {
+			return r.executeAgentAdminTool(ctx, name, args)
 		}
 
 		return nil, api.NewUnknownToolError(name)
@@ -2214,16 +2226,8 @@ func (r *ToolRegistry) executeBackupVerify(ctx context.Context, args map[string]
 	return marshalResult(resp)
 }
 
-func (r *ToolRegistry) executeLogin(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	req := &service.LoginRequest{
-		Username: getString(args, "username"),
-		Password: getString(args, "password"),
-	}
-	resp, err := r.service.Login(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
+func (r *ToolRegistry) executeLogin(_ context.Context, _ map[string]interface{}) (interface{}, error) {
+	return nil, api.NewNotImplementedError("password-based login; use WebAuthn or PIV authentication")
 }
 
 func (r *ToolRegistry) executeLogout(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -2240,7 +2244,6 @@ func (r *ToolRegistry) executeLogout(ctx context.Context, args map[string]interf
 func (r *ToolRegistry) executeUserCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	req := &service.AuthCreateUserRequest{
 		Username: getString(args, "username"),
-		Password: getString(args, "password"),
 		Roles:    getStringSlice(args, "roles"),
 	}
 	resp, err := r.service.CreateUser(ctx, req)

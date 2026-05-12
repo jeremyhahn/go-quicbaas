@@ -6133,7 +6133,6 @@ func TestIAMUserCreate_Success(t *testing.T) {
 
 	cmd := newIAMUserCreateCommand()
 	iamUserName = "Test User"
-	iamUserPassword = "SecureP@ss123"
 	globalTenantID = "tenant_test"
 	iamOutputFormat = "table"
 	iamUserRoles = nil
@@ -6151,7 +6150,6 @@ func TestIAMUserCreate_SuccessJSON(t *testing.T) {
 
 	cmd := newIAMUserCreateCommand()
 	iamUserName = "Test User JSON"
-	iamUserPassword = "SecureP@ss123"
 	globalTenantID = "tenant_test"
 	iamOutputFormat = "json"
 	iamUserRoles = []string{"admin"}

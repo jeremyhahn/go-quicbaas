@@ -1,0 +1,115 @@
+/**
+ * SpawnDialog.test.ts
+ *
+ * Bug #59 regression: the Backend dropdown must pre-populate from the
+ * orchestrator's registered backends list and default to the first
+ * REGISTERED backend — never a hardcoded "claude (acp)" fallback. When zero
+ * backends are registered, the dialog renders a "No backends registered"
+ * banner and disables the submit button.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import type { AgentBackendInfo } from '@quicbaas/sdk';
+
+// ---------------------------------------------------------------------------
+// Hoisted mocks
+// ---------------------------------------------------------------------------
+
+const { mockGetSDKClient, mockListBackends } = vi.hoisted(() => ({
+  mockGetSDKClient: vi.fn(),
+  mockListBackends: vi.fn(),
+}));
+
+vi.mock('../src/stores/sdkClient.ts', () => ({
+  getSDKClient: mockGetSDKClient,
+}));
+
+vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
+  orchestratorStore: { activeTenantID: 'default' },
+}));
+
+vi.mock('../src/stores/agentStore.svelte.ts', () => ({
+  agentStore: { onlineAgents: [] },
+}));
+
+vi.mock('../src/stores/router.svelte.ts', () => ({
+  routeSessionDetail: vi.fn(),
+  routerStore: { route: { name: 'sessions', params: {}, hash: '#/sessions' } },
+}));
+
+vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
+  refreshSessions: vi.fn().mockResolvedValue(undefined),
+}));
+
+import SpawnDialog from '../src/components/orchestrator/SpawnDialog.svelte';
+
+function makeClient(backends: AgentBackendInfo[]): unknown {
+  mockListBackends.mockResolvedValue(backends);
+  return {
+    orchestrator: {
+      listBackends: mockListBackends,
+      spawnSession: vi.fn().mockResolvedValue({ session_id: 'sess-1' }),
+      promptSession: vi.fn().mockResolvedValue(undefined),
+    },
+  };
+}
+
+describe('SpawnDialog — bug #59 backend pre-population', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('defaults the Backend dropdown to the first REGISTERED backend (ollama, not claude)', async () => {
+    const backends: AgentBackendInfo[] = [
+      { name: 'ollama', type: 'native', healthy: true } as AgentBackendInfo,
+    ];
+    mockGetSDKClient.mockResolvedValue(makeClient(backends));
+
+    render(SpawnDialog, { props: { open: true } });
+
+    // Wait for the backends to load and the select to render.
+    const select = (await waitFor(() =>
+      screen.getByLabelText(/Select backend/i),
+    )) as HTMLSelectElement;
+    expect(select.value).toBe('ollama');
+    expect(select.value).not.toBe('claude');
+
+    // The select should contain only the registered options.
+    const options = Array.from(select.querySelectorAll('option')).map((o) => o.value);
+    expect(options).toEqual(['ollama']);
+  });
+
+  it('renders "No backends registered" banner and disables Spawn when zero are registered', async () => {
+    mockGetSDKClient.mockResolvedValue(makeClient([]));
+    const { container } = render(SpawnDialog, { props: { open: true } });
+
+    // Banner appears.
+    const banner = await waitFor(() => screen.getByTestId('no-backends-banner'));
+    expect(banner).toBeInTheDocument();
+    expect(banner.textContent).toMatch(/No backends registered/i);
+
+    // Spawn submit button must be disabled. Native <dialog> hides its
+    // contents from the a11y tree when not open via showModal(), so query
+    // through the rendered DOM directly.
+    const spawnBtn = container.querySelector(
+      'button[aria-label="Spawn session"]',
+    ) as HTMLButtonElement | null;
+    expect(spawnBtn).not.toBeNull();
+    expect(spawnBtn?.disabled).toBe(true);
+  });
+
+  it('uses the first backend when multiple are registered (in registration order)', async () => {
+    const backends: AgentBackendInfo[] = [
+      { name: 'ollama', type: 'native', healthy: true } as AgentBackendInfo,
+      { name: 'codex', type: 'acp', healthy: true } as AgentBackendInfo,
+    ];
+    mockGetSDKClient.mockResolvedValue(makeClient(backends));
+    render(SpawnDialog, { props: { open: true } });
+
+    const select = (await waitFor(() =>
+      screen.getByLabelText(/Select backend/i),
+    )) as HTMLSelectElement;
+    expect(select.value).toBe('ollama');
+  });
+});

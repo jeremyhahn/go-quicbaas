@@ -101,6 +101,19 @@ func (m *mockUserStorage) DeleteUser(ctx context.Context, tenantID, userID strin
 	return nil
 }
 
+func (m *mockUserStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, user := range m.users {
+		if user.PIVCertThumbprint == thumbprint {
+			u := *user
+			return &u, nil
+		}
+	}
+	return nil, ErrUserNotFound
+}
+
 func (m *mockUserStorage) ListUsers(ctx context.Context, tenantID string, opts ListOptions) ([]*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -3524,4 +3537,64 @@ func (m *mockRoleStorageWithFailure) ListRoles(ctx context.Context, tenantID str
 		return nil, &dberrors.MessageError{Message: "simulated list failure"}
 	}
 	return m.mockRoleStorage.ListRoles(ctx, tenantID, opts)
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests: CreateUser must honour opts.Roles (Issue 1 fix)
+// ---------------------------------------------------------------------------
+
+// TestCreateUser_WithRoles ensures that roles specified in CreateUserOptions are
+// persisted to the created user and surfaced in the GET response. This is the
+// direct regression gate for the bootstrap-admin-empty-ROLES-column bug.
+func TestCreateUser_WithRoles(t *testing.T) {
+	store := newTestIdentityStore()
+	ctx := context.Background()
+
+	opts := CreateUserOptions{
+		Email:    "admin@quicbaas.local",
+		Username: "admin",
+		Name:     "Bootstrap Admin",
+		Roles:    []string{"admin"},
+	}
+
+	user, err := store.CreateUser(ctx, "default", opts)
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	if len(user.Roles) != 1 || user.Roles[0] != "admin" {
+		t.Errorf("expected Roles=[admin], got %v", user.Roles)
+	}
+
+	// Re-fetch to confirm the store persisted the roles.
+	fetched, err := store.GetUser(ctx, "default", user.ID)
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if len(fetched.Roles) != 1 || fetched.Roles[0] != "admin" {
+		t.Errorf("persisted Roles mismatch: expected [admin], got %v", fetched.Roles)
+	}
+}
+
+// TestCreateUser_WithNoRoles ensures that a user created without Roles in opts
+// receives an empty (non-nil) Roles slice rather than nil, keeping JSON
+// serialisation consistent across callers.
+func TestCreateUser_WithNoRoles(t *testing.T) {
+	store := newTestIdentityStore()
+	ctx := context.Background()
+
+	opts := CreateUserOptions{
+		Email:    "noroles@example.com",
+		Username: "noroles",
+	}
+
+	user, err := store.CreateUser(ctx, "tenant1", opts)
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	if user.Roles == nil {
+		t.Error("expected non-nil empty Roles slice, got nil")
+	}
+	if len(user.Roles) != 0 {
+		t.Errorf("expected empty Roles, got %v", user.Roles)
+	}
 }

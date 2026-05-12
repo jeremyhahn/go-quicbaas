@@ -25,8 +25,39 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
+// Legacy seal-endpoint deprecation header values. These advertise the
+// deprecation timeline per RFC 8594 (Sunset) and the IETF Deprecation
+// header draft (draft-ietf-httpapi-deprecation-header). Both are set by
+// every handler in this file so callers see the migration window in any
+// response from the legacy /api/v1/seal surface.
+const (
+	// sealDeprecatedHeader marks the date the /api/v1/seal endpoints were
+	// deprecated. RFC 9745 / draft-ietf-httpapi-deprecation-header §2.
+	sealDeprecatedHeader = "Sun, 01 May 2026 00:00:00 GMT"
+
+	// sealSunsetHeader marks the date the /api/v1/seal endpoints will be
+	// removed. RFC 8594 §3.
+	sealSunsetHeader = "Wed, 01 Jul 2026 00:00:00 GMT"
+
+	// sealDeprecationLink describes the canonical replacement surface.
+	sealDeprecationLink = `</api/v1/barrier>; rel="successor-version"`
+)
+
+// markSealDeprecated stamps the standard deprecation/sunset headers on
+// every response from a legacy /api/v1/seal endpoint. Calling this from
+// each handler (rather than from middleware) keeps the legacy surface
+// self-contained: when the seal handlers are deleted the headers go with
+// them, with no extra cleanup in middleware-land.
+func markSealDeprecated(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Deprecation", sealDeprecatedHeader)
+	h.Set("Sunset", sealSunsetHeader)
+	h.Set("Link", sealDeprecationLink)
+}
+
 // HandleSealStatus handles GET /v1/seal/status - Get seal status.
 func (s *Server) HandleSealStatus(w http.ResponseWriter, r *http.Request) {
+	markSealDeprecated(w)
 	ctx := r.Context()
 
 	sealService, ok := s.service.(interface {
@@ -48,6 +79,7 @@ func (s *Server) HandleSealStatus(w http.ResponseWriter, r *http.Request) {
 
 // HandleSealInit handles POST /v1/seal/init - Initialize seal.
 func (s *Server) HandleSealInit(w http.ResponseWriter, r *http.Request) {
+	markSealDeprecated(w)
 	ctx := r.Context()
 
 	body, err := io.ReadAll(r.Body)
@@ -97,6 +129,7 @@ func (s *Server) HandleSealInit(w http.ResponseWriter, r *http.Request) {
 
 // HandleUnseal handles POST /v1/seal/unseal - Unseal with key share.
 func (s *Server) HandleUnseal(w http.ResponseWriter, r *http.Request) {
+	markSealDeprecated(w)
 	ctx := r.Context()
 
 	body, err := io.ReadAll(r.Body)
@@ -136,6 +169,7 @@ func (s *Server) HandleUnseal(w http.ResponseWriter, r *http.Request) {
 
 // HandleSeal handles POST /v1/seal/seal - Seal database.
 func (s *Server) HandleSeal(w http.ResponseWriter, r *http.Request) {
+	markSealDeprecated(w)
 	ctx := r.Context()
 
 	sealService, ok := s.service.(interface {
@@ -162,6 +196,7 @@ func (s *Server) HandleSeal(w http.ResponseWriter, r *http.Request) {
 
 // HandleRekey handles POST /v1/seal/rekey - Rekey master key.
 func (s *Server) HandleRekey(w http.ResponseWriter, r *http.Request) {
+	markSealDeprecated(w)
 	ctx := r.Context()
 
 	body, err := io.ReadAll(r.Body)
@@ -211,6 +246,7 @@ func (s *Server) HandleRekey(w http.ResponseWriter, r *http.Request) {
 
 // HandleGenerateRecoveryKey handles POST /v1/seal/recovery/generate - Generate recovery key.
 func (s *Server) HandleGenerateRecoveryKey(w http.ResponseWriter, r *http.Request) {
+	markSealDeprecated(w)
 	ctx := r.Context()
 
 	body, err := io.ReadAll(r.Body)
@@ -260,6 +296,7 @@ func (s *Server) HandleGenerateRecoveryKey(w http.ResponseWriter, r *http.Reques
 
 // HandleDeleteRecoveryKey handles DELETE /v1/seal/recovery - Delete recovery key.
 func (s *Server) HandleDeleteRecoveryKey(w http.ResponseWriter, r *http.Request) {
+	markSealDeprecated(w)
 	ctx := r.Context()
 
 	body, err := io.ReadAll(r.Body)
@@ -299,8 +336,46 @@ func (s *Server) HandleDeleteRecoveryKey(w http.ResponseWriter, r *http.Request)
 	RespondJSON(w, r, http.StatusOK, resp)
 }
 
+// HandleRotateRootKey handles POST /v1/seal/rotate-root - Rotate root encryption key.
+func (s *Server) HandleRotateRootKey(w http.ResponseWriter, r *http.Request) {
+	markSealDeprecated(w)
+	ctx := r.Context()
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondBadRequest(w, r, "failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req service.RotateRootKeyRequest
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			RespondBadRequest(w, r, "invalid JSON body")
+			return
+		}
+	}
+
+	sealService, ok := s.service.(interface {
+		RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error)
+	})
+	if !ok {
+		RespondError(w, r, http.StatusInternalServerError, ErrSealServiceUnavailable)
+		return
+	}
+
+	resp, err := sealService.RotateRootKey(ctx, &req)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, resp)
+}
+
 // HandleGenerateRootToken handles POST /v1/seal/root/generate - Generate root token.
 func (s *Server) HandleGenerateRootToken(w http.ResponseWriter, r *http.Request) {
+	markSealDeprecated(w)
 	ctx := r.Context()
 
 	body, err := io.ReadAll(r.Body)

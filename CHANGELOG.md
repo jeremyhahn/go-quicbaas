@@ -5,6 +5,81 @@ All notable changes to QuicBaaS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed — `seal` → `barrier` rename (cross-project)
+
+- **Encryption-at-rest unified with go-qrdb / go-xkms.** The barrier
+  subsystem now wraps every Pebble-backed data-plane store via the
+  encrypting `vfs.FS` from `go-qrdb/pkg/seal/encfs`; sealed-window
+  middleware enforces a canonical allowlist of `/v1/health` +
+  `/v1/barrier/*` + `/v1/init/*` + `/v1/bootstrap/*` while the barrier
+  is sealed. See `docs/architecture/barrier.md`.
+- **REST surface renamed** `/api/v1/seal/*` → `/api/v1/barrier/*` (16
+  endpoints) plus 7 new `/api/v1/init/*` and 4 new `/api/v1/bootstrap/*`
+  endpoints. Legacy `/seal/*` paths retained for one release with
+  `Deprecation:` and `Sunset:` headers. Migration table at
+  `docs/migrations/seal-to-barrier.md`.
+- **CLI surface split**: `quicbaas seal …` → `quicbaas barrier …` /
+  `quicbaas init …` / `quicbaas bootstrap …`, mirroring `xkmsctl`
+  verb-for-verb. `quicbaas seal …` retained for one release as a
+  deprecation alias that warns to stderr.
+- **TypeScript SDK** ships `BarrierClient`, `CeremonyClient`,
+  `BootstrapClient` interfaces with REST + stub grpc-web/quic/mcp
+  transports. `SealClient` retained as a deprecation alias that
+  `console.warn`s on construction.
+- **`defaultSealManager` deleted** in favour of the SDK-backed
+  `pkg/barrier/manager.go` adapter. `pkg/interfaces/managers.go`
+  exposes both `SealManager` (alias) and `BarrierManager` for one
+  release.
+- **`cmd/quicbaasd/init.go`** added — daemon-side init command mirroring
+  `xkmsd init` (`--barrier-strategy`, `--shares`, `--threshold`,
+  `--so name:KIND:path`, `--trusted-ca`).
+- **Frontend** `BarrierView.svelte`, `CeremonyView.svelte`, and
+  `BootstrapView.svelte` replace `SealView.svelte`. Sidebar label
+  "Seal" → "Barrier" with "Ceremony"/"Bootstrap" sub-items under
+  SECURITY.
+- **`make verify-naming`, `make verify-cli-flags`, `make verify-api-shapes`**
+  added — CI watchdogs that catch operator/SDK drift across QuicBaaS,
+  go-qrdb, and go-xkms.
+
+### Breaking
+
+- **No in-place upgrade from pre-encfs data directories.** A new
+  format-version sentinel at `<data-dir>/seal/__sys/barrier_format_version`
+  is checked at startup; daemons refuse to start on a non-empty data
+  dir without the sentinel. Operators must export and re-import. See
+  `docs/migrations/seal-to-barrier.md`.
+
+### Changed
+
+- **Agent identity is now mTLS-based.** The one-shot enrollment-token
+  bootstrap was removed. `quicbaas agent deploy` issues an X.509 client
+  certificate for each deployed daemon via the server-embedded CA and
+  uploads it to `$DATA_DIR/agent.crt`, `$DATA_DIR/agent.key`, and
+  `$DATA_DIR/server-ca.crt`. The daemon presents the cert on the TLS
+  handshake when calling `POST /api/v1/agents/register`; the server
+  returns OAuth2 client credentials the daemon uses for heartbeat and
+  event streams thereafter.
+- **Renamed `--central` → `--server` everywhere.** The central
+  orchestrator terminology on the agent wire protocol, CLI, GUI, and
+  SDK DTOs is now uniformly "server". `agent.Config.CentralAddr` is
+  now `agent.Config.ServerAddr`, `deploy.Spec.Central` is now
+  `deploy.Spec.Server`, and the Svelte deploy dialog input is now
+  labelled "Server URL".
+- **`agent serve` requires `--agent-cert`, `--agent-key`, `--server-ca`.**
+  The `--enrollment-token` and `--device-cert` flags have been removed.
+
+### Removed
+
+- `iam role grant agent-runtime` CLI command.
+- `iam enrollment-token issue` CLI command.
+- `POST /api/v1/agents/enroll` REST endpoint.
+- `POST /api/v1/agents/enrollment-tokens` REST endpoint.
+- `iam.AgentEnrollmentService` and `iam.MemoryEnrollmentTokenStore`.
+- `sdk/go/client/iam.IssueEnrollmentToken` and `IssueEnrollmentTokenRequest/Response`.
+- The `enrollment_token` field on the `EnrollRequest` proto message.
+
 ## [1.0.0] - 2026-02-03
 
 ### First Public Release

@@ -312,3 +312,716 @@ func TestCancelJobValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), "job ID is required")
 	})
 }
+
+// =============================================================================
+// Workflow CRUD Tests
+// =============================================================================
+
+func TestCreateWorkflowValidation(t *testing.T) {
+	c := NewClient(&mockTransport{})
+
+	t.Run("NilRequest", func(t *testing.T) {
+		wf, err := c.CreateWorkflow(context.Background(), nil)
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "request is required")
+	})
+
+	t.Run("EmptyTenantID", func(t *testing.T) {
+		wf, err := c.CreateWorkflow(context.Background(), &CreateWorkflowRequest{
+			Definition: &WorkflowDefinition{Name: "wf1"},
+		})
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "tenant ID is required")
+	})
+
+	t.Run("NilDefinition", func(t *testing.T) {
+		wf, err := c.CreateWorkflow(context.Background(), &CreateWorkflowRequest{
+			TenantID: "t1",
+		})
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "definition is required")
+	})
+
+	t.Run("EmptyWorkflowName", func(t *testing.T) {
+		wf, err := c.CreateWorkflow(context.Background(), &CreateWorkflowRequest{
+			TenantID:   "t1",
+			Definition: &WorkflowDefinition{},
+		})
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "workflow name is required")
+	})
+
+	t.Run("NilContext", func(t *testing.T) {
+		wf, err := c.CreateWorkflow(nil, &CreateWorkflowRequest{ //nolint:staticcheck
+			TenantID:   "t1",
+			Definition: &WorkflowDefinition{Name: "wf1"},
+		})
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "context is required")
+	})
+}
+
+func TestCreateWorkflowSuccess(t *testing.T) {
+	want := &WorkflowDefinition{
+		Name: "my-workflow",
+		Mode: WorkflowModeConstrained,
+		Agents: []AgentRoleSpec{
+			{Role: "lead", Backend: "claude"},
+		},
+	}
+
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, serviceName, service)
+			assert.Equal(t, "CreateWorkflow", method)
+			r, ok := req.(*CreateWorkflowRequest)
+			require.True(t, ok)
+			assert.Equal(t, "t1", r.TenantID)
+			assert.Equal(t, "my-workflow", r.Definition.Name)
+			return want, nil
+		},
+	}
+	c := NewClient(mt)
+
+	got, err := c.CreateWorkflow(context.Background(), &CreateWorkflowRequest{
+		TenantID:   "t1",
+		Definition: want,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, want.Name, got.Name)
+	assert.Equal(t, want.Mode, got.Mode)
+}
+
+func TestListWorkflowsValidation(t *testing.T) {
+	c := NewClient(&mockTransport{})
+
+	t.Run("NilRequest", func(t *testing.T) {
+		wfs, err := c.ListWorkflows(context.Background(), nil)
+		require.Error(t, err)
+		assert.Nil(t, wfs)
+		assert.Contains(t, err.Error(), "request is required")
+	})
+
+	t.Run("EmptyTenantID", func(t *testing.T) {
+		wfs, err := c.ListWorkflows(context.Background(), &ListWorkflowsRequest{})
+		require.Error(t, err)
+		assert.Nil(t, wfs)
+		assert.Contains(t, err.Error(), "tenant ID is required")
+	})
+}
+
+func TestListWorkflowsSuccess(t *testing.T) {
+	resp := &ListWorkflowsResponse{
+		Workflows: []*WorkflowDefinition{
+			{Name: "wf-a", Mode: WorkflowModeAutonomous},
+			{Name: "wf-b", Mode: WorkflowModeCanned},
+		},
+		Count: 2,
+	}
+
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "ListWorkflows", method)
+			return resp, nil
+		},
+	}
+	c := NewClient(mt)
+
+	wfs, err := c.ListWorkflows(context.Background(), &ListWorkflowsRequest{TenantID: "t1"})
+	require.NoError(t, err)
+	assert.Len(t, wfs, 2)
+	assert.Equal(t, "wf-a", wfs[0].Name)
+}
+
+func TestListWorkflowsNilResponse(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return nil, nil
+		},
+	}
+	c := NewClient(mt)
+
+	wfs, err := c.ListWorkflows(context.Background(), &ListWorkflowsRequest{TenantID: "t1"})
+	require.NoError(t, err)
+	assert.Empty(t, wfs)
+}
+
+func TestGetWorkflowValidation(t *testing.T) {
+	c := NewClient(&mockTransport{})
+
+	t.Run("NilRequest", func(t *testing.T) {
+		wf, err := c.GetWorkflow(context.Background(), nil)
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "request is required")
+	})
+
+	t.Run("EmptyTenantID", func(t *testing.T) {
+		wf, err := c.GetWorkflow(context.Background(), &GetWorkflowRequest{Name: "wf1"})
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "tenant ID is required")
+	})
+
+	t.Run("EmptyName", func(t *testing.T) {
+		wf, err := c.GetWorkflow(context.Background(), &GetWorkflowRequest{TenantID: "t1"})
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "workflow name is required")
+	})
+}
+
+func TestGetWorkflowSuccess(t *testing.T) {
+	want := &WorkflowDefinition{Name: "wf1", Mode: WorkflowModeAutonomous}
+
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "GetWorkflow", method)
+			r, ok := req.(*GetWorkflowRequest)
+			require.True(t, ok)
+			assert.Equal(t, "wf1", r.Name)
+			return want, nil
+		},
+	}
+	c := NewClient(mt)
+
+	got, err := c.GetWorkflow(context.Background(), &GetWorkflowRequest{TenantID: "t1", Name: "wf1"})
+	require.NoError(t, err)
+	assert.Equal(t, "wf1", got.Name)
+}
+
+func TestUpdateWorkflowValidation(t *testing.T) {
+	c := NewClient(&mockTransport{})
+
+	t.Run("NilRequest", func(t *testing.T) {
+		wf, err := c.UpdateWorkflow(context.Background(), nil)
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "request is required")
+	})
+
+	t.Run("EmptyTenantID", func(t *testing.T) {
+		wf, err := c.UpdateWorkflow(context.Background(), &UpdateWorkflowRequest{
+			Name:       "wf1",
+			Definition: &WorkflowDefinition{Name: "wf1"},
+		})
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "tenant ID is required")
+	})
+
+	t.Run("EmptyName", func(t *testing.T) {
+		wf, err := c.UpdateWorkflow(context.Background(), &UpdateWorkflowRequest{
+			TenantID:   "t1",
+			Definition: &WorkflowDefinition{Name: "wf1"},
+		})
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "workflow name is required")
+	})
+
+	t.Run("NilDefinition", func(t *testing.T) {
+		wf, err := c.UpdateWorkflow(context.Background(), &UpdateWorkflowRequest{
+			TenantID: "t1",
+			Name:     "wf1",
+		})
+		require.Error(t, err)
+		assert.Nil(t, wf)
+		assert.Contains(t, err.Error(), "definition is required")
+	})
+}
+
+func TestUpdateWorkflowSuccess(t *testing.T) {
+	updated := &WorkflowDefinition{Name: "wf1", Mode: WorkflowModeCanned, Description: "updated"}
+
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "UpdateWorkflow", method)
+			r, ok := req.(*UpdateWorkflowRequest)
+			require.True(t, ok)
+			assert.Equal(t, "wf1", r.Name)
+			return updated, nil
+		},
+	}
+	c := NewClient(mt)
+
+	got, err := c.UpdateWorkflow(context.Background(), &UpdateWorkflowRequest{
+		TenantID:   "t1",
+		Name:       "wf1",
+		Definition: updated,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "updated", got.Description)
+}
+
+func TestDeleteWorkflowValidation(t *testing.T) {
+	c := NewClient(&mockTransport{})
+
+	t.Run("NilRequest", func(t *testing.T) {
+		err := c.DeleteWorkflow(context.Background(), nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "request is required")
+	})
+
+	t.Run("EmptyTenantID", func(t *testing.T) {
+		err := c.DeleteWorkflow(context.Background(), &DeleteWorkflowRequest{Name: "wf1"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "tenant ID is required")
+	})
+
+	t.Run("EmptyName", func(t *testing.T) {
+		err := c.DeleteWorkflow(context.Background(), &DeleteWorkflowRequest{TenantID: "t1"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "workflow name is required")
+	})
+
+	t.Run("NilContext", func(t *testing.T) {
+		err := c.DeleteWorkflow(nil, &DeleteWorkflowRequest{TenantID: "t1", Name: "wf1"}) //nolint:staticcheck
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "context is required")
+	})
+}
+
+func TestDeleteWorkflowSuccess(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "DeleteWorkflow", method)
+			r, ok := req.(*DeleteWorkflowRequest)
+			require.True(t, ok)
+			assert.Equal(t, "wf1", r.Name)
+			return nil, nil
+		},
+	}
+	c := NewClient(mt)
+
+	err := c.DeleteWorkflow(context.Background(), &DeleteWorkflowRequest{TenantID: "t1", Name: "wf1"})
+	require.NoError(t, err)
+}
+
+func TestDeleteWorkflowTransportError(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return nil, errors.NewNotFound("orchestrator.DeleteWorkflow", "workflow not found")
+		},
+	}
+	c := NewClient(mt)
+
+	err := c.DeleteWorkflow(context.Background(), &DeleteWorkflowRequest{TenantID: "t1", Name: "no-such-wf"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// =============================================================================
+// ListBackendModels
+// =============================================================================
+
+func TestListBackendModelsValidation(t *testing.T) {
+	c := NewClient(&mockTransport{})
+
+	t.Run("NilRequest", func(t *testing.T) {
+		resp, err := c.ListBackendModels(context.Background(), nil)
+		require.Error(t, err)
+		assert.Nil(t, resp)
+		assert.Contains(t, err.Error(), "request is required")
+	})
+
+	t.Run("EmptyBackendName", func(t *testing.T) {
+		resp, err := c.ListBackendModels(context.Background(), &ListBackendModelsRequest{AgentID: "a"})
+		require.Error(t, err)
+		assert.Nil(t, resp)
+		assert.Contains(t, err.Error(), "backend name is required")
+	})
+
+	t.Run("NilContext", func(t *testing.T) {
+		resp, err := c.ListBackendModels(nil, &ListBackendModelsRequest{BackendName: "ollama"}) //nolint:staticcheck
+		require.Error(t, err)
+		assert.Nil(t, resp)
+		assert.Contains(t, err.Error(), "context is required")
+	})
+}
+
+func TestListBackendModelsSuccess(t *testing.T) {
+	want := &ListBackendModelsResponse{
+		Backend: "ollama",
+		Models:  []string{"llama3:latest", "mistral:7b"},
+		Count:   2,
+	}
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, serviceName, service)
+			assert.Equal(t, "ListBackendModels", method)
+			r, ok := req.(*ListBackendModelsRequest)
+			require.True(t, ok)
+			assert.Equal(t, "agent-1", r.AgentID)
+			assert.Equal(t, "ollama", r.BackendName)
+			return want, nil
+		},
+	}
+	c := NewClient(mt)
+
+	resp, err := c.ListBackendModels(context.Background(), &ListBackendModelsRequest{
+		AgentID:     "agent-1",
+		BackendName: "ollama",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, want.Models, resp.Models)
+	assert.Equal(t, 2, resp.Count)
+}
+
+// TestListBackendModelsNilResponse verifies the SDK normalises a nil
+// transport response into an empty model list rather than an error.
+func TestListBackendModelsNilResponse(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return nil, nil
+		},
+	}
+	c := NewClient(mt)
+
+	resp, err := c.ListBackendModels(context.Background(), &ListBackendModelsRequest{
+		BackendName: "ollama",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "ollama", resp.Backend)
+	assert.NotNil(t, resp.Models)
+	assert.Empty(t, resp.Models)
+}
+
+// TestListBackendModelsNilModelsNormalised verifies the SDK normalises a
+// nil Models slice (which the wire format permits) into an empty slice so
+// JSON callers always see a JSON array, never null.
+func TestListBackendModelsNilModelsNormalised(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &ListBackendModelsResponse{Backend: "static", Models: nil, Count: 0}, nil
+		},
+	}
+	c := NewClient(mt)
+
+	resp, err := c.ListBackendModels(context.Background(), &ListBackendModelsRequest{
+		BackendName: "static",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Models)
+	assert.Empty(t, resp.Models)
+}
+
+// TestListBackendModelsTransportError verifies that a non-nil transport
+// error propagates unchanged so callers can pattern-match on it.
+func TestListBackendModelsTransportError(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return nil, errors.NewInternal("test", "backend resolver unavailable")
+		},
+	}
+	c := NewClient(mt)
+
+	resp, err := c.ListBackendModels(context.Background(), &ListBackendModelsRequest{
+		BackendName: "ollama",
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "backend resolver unavailable")
+}
+
+// TestListBackendModelsInvalidResponseType verifies that an unexpected
+// response type from the transport is converted to a typed Internal error.
+func TestListBackendModelsInvalidResponseType(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return "not-a-response", nil
+		},
+	}
+	c := NewClient(mt)
+
+	resp, err := c.ListBackendModels(context.Background(), &ListBackendModelsRequest{
+		BackendName: "ollama",
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "invalid response type")
+}
+
+// =============================================================================
+// DisableAgent (Gap 4)
+// =============================================================================
+
+func TestDisableAgent_Success(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "DisableAgent", method)
+			r := req.(*DisableAgentRequest)
+			return &DisableAgentResponse{
+				AgentID:  r.AgentID,
+				Disabled: true,
+			}, nil
+		},
+	}
+	c := NewClient(mt)
+	resp, err := c.DisableAgent(context.Background(), &DisableAgentRequest{
+		TenantID: "t1",
+		AgentID:  "agent-1",
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.Disabled)
+	assert.Equal(t, "agent-1", resp.AgentID)
+}
+
+func TestDisableAgent_MissingTenantID(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.DisableAgent(context.Background(), &DisableAgentRequest{AgentID: "agent-1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tenant ID")
+}
+
+func TestDisableAgent_MissingAgentID(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.DisableAgent(context.Background(), &DisableAgentRequest{TenantID: "t1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "agent ID")
+}
+
+func TestDisableAgent_NilRequest(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.DisableAgent(context.Background(), nil)
+	require.Error(t, err)
+}
+
+func TestDisableAgent_TransportError(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(_ context.Context, _, _ string, _ interface{}) (interface{}, error) {
+			return nil, errors.NewInternal("test", "transport error")
+		},
+	}
+	c := NewClient(mt)
+	_, err := c.DisableAgent(context.Background(), &DisableAgentRequest{TenantID: "t1", AgentID: "a1"})
+	require.Error(t, err)
+}
+
+// =============================================================================
+// EnableAgent (Gap 4)
+// =============================================================================
+
+func TestEnableAgent_Success(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "EnableAgent", method)
+			r := req.(*EnableAgentRequest)
+			return &EnableAgentResponse{
+				AgentID: r.AgentID,
+				Enabled: true,
+			}, nil
+		},
+	}
+	c := NewClient(mt)
+	resp, err := c.EnableAgent(context.Background(), &EnableAgentRequest{
+		TenantID: "t1",
+		AgentID:  "agent-1",
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.Enabled)
+}
+
+func TestEnableAgent_MissingTenantID(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.EnableAgent(context.Background(), &EnableAgentRequest{AgentID: "agent-1"})
+	require.Error(t, err)
+}
+
+func TestEnableAgent_NilRequest(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.EnableAgent(context.Background(), nil)
+	require.Error(t, err)
+}
+
+// =============================================================================
+// SubmitTaskArtifacts / GetTaskArtifact / ListTaskArtifacts (Gap 4)
+// =============================================================================
+
+func TestSubmitTaskArtifacts_Success(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "SubmitTaskArtifacts", method)
+			r := req.(*SubmitTaskArtifactsRequest)
+			return &SubmitTaskArtifactsResponse{
+				TaskID: r.TaskID,
+				Stored: len(r.Artifacts),
+			}, nil
+		},
+	}
+	c := NewClient(mt)
+	resp, err := c.SubmitTaskArtifacts(context.Background(), &SubmitTaskArtifactsRequest{
+		TenantID: "t1",
+		TaskID:   "task-1",
+		Artifacts: []*TaskArtifact{
+			{Name: "output.txt", ContentType: "text/plain", Data: []byte("hello")},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "task-1", resp.TaskID)
+	assert.Equal(t, 1, resp.Stored)
+}
+
+func TestSubmitTaskArtifacts_MissingTaskID(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.SubmitTaskArtifacts(context.Background(), &SubmitTaskArtifactsRequest{
+		TenantID:  "t1",
+		Artifacts: []*TaskArtifact{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "task ID")
+}
+
+func TestSubmitTaskArtifacts_NilRequest(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.SubmitTaskArtifacts(context.Background(), nil)
+	require.Error(t, err)
+}
+
+func TestSubmitTaskArtifacts_TransportError(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(_ context.Context, _, _ string, _ interface{}) (interface{}, error) {
+			return nil, errors.NewInternal("test", "store failed")
+		},
+	}
+	c := NewClient(mt)
+	_, err := c.SubmitTaskArtifacts(context.Background(), &SubmitTaskArtifactsRequest{
+		TenantID:  "t1",
+		TaskID:    "task-1",
+		Artifacts: []*TaskArtifact{},
+	})
+	require.Error(t, err)
+}
+
+func TestGetTaskArtifact_Success(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "GetTaskArtifact", method)
+			return &TaskArtifact{
+				Name:        "output.txt",
+				ContentType: "text/plain",
+				Data:        []byte("result"),
+			}, nil
+		},
+	}
+	c := NewClient(mt)
+	artifact, err := c.GetTaskArtifact(context.Background(), &GetTaskArtifactRequest{
+		TenantID: "t1",
+		TaskID:   "task-1",
+		Name:     "output.txt",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "output.txt", artifact.Name)
+	assert.Equal(t, []byte("result"), artifact.Data)
+}
+
+func TestGetTaskArtifact_MissingName(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.GetTaskArtifact(context.Background(), &GetTaskArtifactRequest{
+		TenantID: "t1",
+		TaskID:   "task-1",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "artifact name")
+}
+
+func TestGetTaskArtifact_NilRequest(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.GetTaskArtifact(context.Background(), nil)
+	require.Error(t, err)
+}
+
+func TestListTaskArtifacts_Success(t *testing.T) {
+	mt := &mockTransport{
+		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "ListTaskArtifacts", method)
+			return &ListTaskArtifactsResponse{
+				TaskID: "task-1",
+				Artifacts: []*TaskArtifact{
+					{Name: "a.txt"},
+					{Name: "b.json"},
+				},
+				Count: 2,
+			}, nil
+		},
+	}
+	c := NewClient(mt)
+	resp, err := c.ListTaskArtifacts(context.Background(), &ListTaskArtifactsRequest{
+		TenantID: "t1",
+		TaskID:   "task-1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, resp.Count)
+	assert.Len(t, resp.Artifacts, 2)
+}
+
+func TestListTaskArtifacts_MissingTaskID(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.ListTaskArtifacts(context.Background(), &ListTaskArtifactsRequest{TenantID: "t1"})
+	require.Error(t, err)
+}
+
+func TestListTaskArtifacts_NilRequest(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.ListTaskArtifacts(context.Background(), nil)
+	require.Error(t, err)
+}
+
+// =============================================================================
+// CreateTaskRequest.ProjectID and StartJobRequest.LeadAgentID propagation
+// =============================================================================
+
+// TestCreateTask_ForwardsProjectID asserts the new ProjectID field on
+// CreateTaskRequest reaches the transport layer unchanged. Without this,
+// project-scoped task creation through the SDK silently drops project
+// access enforcement.
+func TestCreateTask_ForwardsProjectID(t *testing.T) {
+	var captured *CreateTaskRequest
+	tr := &mockTransport{
+		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "CreateTask", method)
+			captured = req.(*CreateTaskRequest)
+			return &Task{ID: "task-1"}, nil
+		},
+	}
+	c := NewClient(tr)
+
+	_, err := c.CreateTask(context.Background(), &CreateTaskRequest{
+		TenantID:  "tenant-a",
+		Subject:   "fix bug",
+		ProjectID: "proj-xyz",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	assert.Equal(t, "proj-xyz", captured.ProjectID)
+}
+
+// TestStartJob_ForwardsLeadAgentID asserts the new LeadAgentID field on
+// StartJobRequest reaches the transport layer unchanged.
+func TestStartJob_ForwardsLeadAgentID(t *testing.T) {
+	var captured *StartJobRequest
+	tr := &mockTransport{
+		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+			assert.Equal(t, "StartJob", method)
+			captured = req.(*StartJobRequest)
+			return &StartJobResponse{JobID: "job-1"}, nil
+		},
+	}
+	c := NewClient(tr)
+
+	_, err := c.StartJob(context.Background(), &StartJobRequest{
+		TenantID:    "tenant-a",
+		Description: "do the thing",
+		LeadAgentID: "agent-lead-1",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	assert.Equal(t, "agent-lead-1", captured.LeadAgentID)
+}

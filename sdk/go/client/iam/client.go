@@ -82,6 +82,9 @@ type Client interface {
 	// Admin returns the delegated administration client.
 	Admin() AdminClient
 
+	// Invite returns the invite-based passwordless activation client.
+	Invite() InviteClient
+
 	// Federation methods for identity provider management
 
 	// CreateProvider creates a new external identity provider.
@@ -130,6 +133,7 @@ type Client interface {
 	// GenerateBackupCodes generates new backup codes for a user.
 	GenerateBackupCodes(ctx context.Context, tenantID, userID string) ([]string, error)
 
+
 	// Close closes the client and releases any resources.
 	Close() error
 }
@@ -148,6 +152,7 @@ type client struct {
 	audit     AuditClient
 	gdpr      GDPRClient
 	admin     AdminClient
+	invite    InviteClient
 }
 
 // NewClient creates a new IAM client.
@@ -180,6 +185,7 @@ func NewClient(t transport.Transport) Client {
 		audit:     NewAuditClient(t),
 		gdpr:      NewGDPRClient(t),
 		admin:     NewAdminClient(t),
+		invite:    newInviteClient(t),
 	}
 }
 
@@ -236,6 +242,11 @@ func (c *client) GDPR() GDPRClient {
 // Admin returns the delegated administration client.
 func (c *client) Admin() AdminClient {
 	return c.admin
+}
+
+// Invite returns the invite-based passwordless activation client.
+func (c *client) Invite() InviteClient {
+	return c.invite
 }
 
 const federationServiceName = "quicbaas.IAM.Federation"

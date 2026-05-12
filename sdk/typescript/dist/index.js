@@ -10,8 +10,22 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
-// Factory and environment detection.
-export { getClient, isDesktop, isWailsRuntime } from './factory.js';
+// Factory, transport detection, and environment helpers.
+export { createClient, getClient, isDesktop, isWailsRuntime, createBarrierClient, createCeremonyClient, createBootstrapClient, } from './factory.js';
+// SandboxMode const object (not a type — must be a named export, not type-only).
+export { SandboxMode } from './types.js';
 // Typed errors.
-export { QuicBaaSError, ConnectionError, NotConnectedError, APIError } from './errors.js';
+export { QuicBaaSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
+// SSH REST client classes — exported so callers can construct them directly
+// or use the top-level RestClient.ssh namespace.
+export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } from './rest.js';
+// Barrier / Ceremony / Bootstrap REST clients — exported so callers can
+// construct each sub-client directly without going through the full
+// RestClient. The convenience factory functions in factory.ts wrap these.
+export { RestBarrierClient, RestCeremonyClient, RestBootstrapClient } from './rest.js';
+// Stub transport error types — exported so callers can catch them explicitly.
+export { GrpcWebNotImplementedError } from './grpc_web.js';
+export { UnixNotImplementedError } from './unix.js';
+export { McpNotImplementedError } from './mcp.js';
+export { QuicNotImplementedError } from './quic.js';
 //# sourceMappingURL=index.js.map

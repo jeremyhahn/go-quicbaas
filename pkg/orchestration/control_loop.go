@@ -68,6 +68,9 @@ type ControlLoop struct {
 	workItems           []*WorkItem
 	taskIDs             []string
 	leadSessionID       string
+	reviewerSessionID   string // optional persistent session for the dedicated reviewer role
+	reviewerBackend     string // backend name for the reviewer session, captured from workflow
+	reviewerModel       string // model name for the reviewer session
 	config              *JobConfig
 	jobID               string
 	iteration           int
@@ -91,6 +94,21 @@ type ControlLoop struct {
 	reindexFn           func(context.Context) error                 // nil if indexing not configured
 	peerDeliverFn       func(context.Context, string, *PeerMessage) // nil if no delivery configured
 	peerDeliveryCancels []func()                                    // cancel functions for peer delivery goroutines
+
+	// hostAffinityStrictDefault is the operator-level default applied to
+	// host_affinity hints when the per-WorkItem HostAffinityStrict bit is
+	// not set. When true, an offline host_affinity causes scheduling to
+	// fail with NoMatchingAgentError; when false the loop falls back to any
+	// eligible agent. Wired via SetHostAffinityStrictDefault.
+	hostAffinityStrictDefault bool
+}
+
+// SetHostAffinityStrictDefault sets the operator-level enforcement default
+// for host_affinity. Per-WorkItem HostAffinityStrict still wins; this is the
+// fall-through default. Typically wired from
+// config.OrchestrationConfig.HostAffinity.IsHard().
+func (cl *ControlLoop) SetHostAffinityStrictDefault(strict bool) {
+	cl.hostAffinityStrictDefault = strict
 }
 
 // NewControlLoop creates a new ControlLoop with the given agent service and logger.
@@ -253,6 +271,15 @@ func (cl *ControlLoop) handleInitialize(ctx context.Context) (JobState, error) {
 	leadSessionErr := cl.trySpawnLeadSession(ctx)
 	if leadSessionErr != nil {
 		cl.logger.Warnf("control loop: failed to spawn lead session, using stateless mode: %s", leadSessionErr.Error())
+	}
+
+	// Spawn a dedicated reviewer session if the workflow defines a reviewer
+	// role with persistent_sessions capability. handleReview will route the
+	// approve/reject prompt to this session instead of the lead, so the
+	// reviewer is the one judging requirements and emitting NewWorkItems.
+	reviewerSessionErr := cl.trySpawnReviewerSession(ctx)
+	if reviewerSessionErr != nil {
+		cl.logger.Warnf("control loop: failed to spawn reviewer session, falling back to lead-as-reviewer: %s", reviewerSessionErr.Error())
 	}
 
 	cl.emitEvent(JobStateDecomposing, "initialization complete, correlation_id="+cl.correlationID)
@@ -419,11 +446,12 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 				mcpServers := cl.buildMCPConfig(cl.resolveScopes(role))
 				agentSpec := cl.resolveAgentSpec(role)
 				spawnReq := &SpawnSessionRequest{
-					Backend:    backendName,
-					Model:      cl.resolveModelForRole(role),
-					ProjectID:  cl.config.ProjectID,
-					MCPServers: mcpServers,
-					Persistent: cl.roleHasCapability(role, "persistent_sessions"),
+					Backend:     backendName,
+					Model:       cl.resolveModelForRole(role),
+					ProjectID:   cl.config.ProjectID,
+					MCPServers:  mcpServers,
+					Persistent:  cl.roleHasCapability(role, "persistent_sessions"),
+					GpuRequired: workItemRequiresGPU(item),
 				}
 
 				// Apply sandbox configuration from workflow agent spec.
@@ -447,6 +475,13 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 					if agentSpec.Sandboxed {
 						spawnReq.Sandboxed = true
 						spawnReq.ContainerImage = agentSpec.ContainerImage
+					}
+					// Host affinity: pin this session to a specific daemon.
+					if agentSpec.HostAffinity != "" {
+						spawnReq.HostAffinity = agentSpec.HostAffinity
+						// Copy onto the work item so matchAgentForTask can
+						// filter fleet candidates by the same affinity.
+						item.HostAffinity = agentSpec.HostAffinity
 					}
 				}
 
@@ -480,7 +515,10 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 		}
 
 		// Match an agent for task assignment.
-		agentID, _ := cl.matchAgentForTask(item, agents, backends)
+		agentID, _, matchErr := cl.matchAgentForTask(item, agents, backends)
+		if matchErr != nil {
+			return JobStateFailed, matchErr
+		}
 		if agentID == "" {
 			return JobStateFailed, &NoAgentsAvailableError{
 				TaskTitle:            item.Title,
@@ -774,23 +812,54 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 		reviewPrompt = reviewPrompt + "\n\n" + buildValidationSummary(cl.validationResults)
 	}
 
-	// Send review to the lead agent.
+	// Route the review prompt to the dedicated reviewer session when one was
+	// spawned for this job (workflow defines a "reviewer" role with the
+	// persistent_sessions capability). Falls back to the lead session for
+	// backward compatibility when no reviewer is configured, then to a
+	// stateless DecomposeTask prompt as a last resort.
+	reviewerSessionID := cl.reviewerSessionID
+	reviewerBackend := cl.reviewerBackend
+	reviewerModel := cl.reviewerModel
+	systemPrompt := "You are a quality reviewer evaluating whether ALL requirements in the original job description have been met. " +
+		"Respond ONLY with a single JSON object: {\"approved\":bool, \"feedback\":string, \"new_work_items\":[{\"title\":string,\"description\":string}]}. " +
+		"Set approved=true only when every requirement is verified to be working; otherwise set approved=false and list concrete new_work_items the coder should perform to reach correctness. " +
+		"Do not wrap the JSON in prose or code fences."
+
 	var responseText string
-	if cl.leadSessionID != "" {
+	switch {
+	case reviewerSessionID != "":
+		cl.audit("reviewer:review_prompt", "session="+reviewerSessionID)
 		resp, promptErr := cl.agentService.PromptSession(ctx, &PromptSessionRequest{
-			SessionID:    cl.leadSessionID,
+			SessionID:    reviewerSessionID,
 			Prompt:       reviewPrompt,
-			SystemPrompt: "You are a quality reviewer. Respond ONLY with valid JSON.",
+			SystemPrompt: systemPrompt,
 		})
 		if promptErr != nil {
 			return JobStateFailed, promptErr
 		}
 		responseText = extractPromptSessionText(resp)
-	} else {
-		// Stateless path: use DecomposeTask as a general prompt mechanism.
+	case cl.leadSessionID != "":
+		resp, promptErr := cl.agentService.PromptSession(ctx, &PromptSessionRequest{
+			SessionID:    cl.leadSessionID,
+			Prompt:       reviewPrompt,
+			SystemPrompt: systemPrompt,
+		})
+		if promptErr != nil {
+			return JobStateFailed, promptErr
+		}
+		responseText = extractPromptSessionText(resp)
+	default:
+		backend := reviewerBackend
+		if backend == "" {
+			backend = cl.config.LeadBackend
+		}
+		model := reviewerModel
+		if model == "" {
+			model = cl.config.LeadModel
+		}
 		resp, promptErr := cl.agentService.DecomposeTask(ctx, &DecomposeTaskRequest{
-			Backend: cl.config.LeadBackend,
-			Model:   cl.config.LeadModel,
+			Backend: backend,
+			Model:   model,
 			Task:    reviewPrompt,
 		})
 		if promptErr != nil {
@@ -948,6 +1017,7 @@ func (cl *ControlLoop) cleanupAllSessions(ctx context.Context) {
 	cl.workerSessions = make(map[string]string)
 
 	cl.closeLeadSession(ctx)
+	cl.closeReviewerSession(ctx)
 }
 
 // resolveBackendForMode resolves the backend for a work item based on the workflow mode.
@@ -1253,20 +1323,64 @@ func (cl *ControlLoop) pollTaskCompletion(ctx context.Context) (bool, error) {
 }
 
 // matchAgentForTask finds the best agent for a work item based on capabilities.
+// Filtering is applied in priority order: backend → GPU requirement → host
+// affinity → persistent sessions → best available.
+//
+// matchErr is non-nil only when host_affinity is strict (per-item override or
+// operator-level default) AND no online agent matches the named host. In
+// that case the caller must surface the typed error rather than substitute
+// a generic NoAgentsAvailableError, so operators see "host X is offline"
+// instead of "no agents".
 func (cl *ControlLoop) matchAgentForTask(
 	item *WorkItem,
 	agents []*AgentRegistration,
 	backends []*AgentBackendInfo,
-) (agentID string, backendName string) {
+) (agentID string, backendName string, matchErr error) {
 	// Build a backend capabilities lookup map.
 	backendCaps := make(map[string]BackendCapabilities, len(backends))
 	for _, b := range backends {
 		backendCaps[b.Name] = b.Capabilities
 	}
 
+	// Apply GPU filter when the work item requires GPU acceleration.
+	// This narrows the candidate set before any other filtering so that
+	// subsequent selectors only consider GPU-capable agents.
+	gpuRequired := workItemRequiresGPU(item)
+	candidates := agents
+	if gpuRequired {
+		candidates = filterAgentsByCapability(agents, "gpu")
+	}
+
+	// Apply host-affinity filter: restrict candidates to agents whose Name
+	// or Host field matches the requested affinity. When strict (per-item
+	// override OR operator default), an empty result becomes a typed
+	// NoMatchingAgentError so the loop can fail loudly rather than silently
+	// fall back to any eligible agent.
+	if item.HostAffinity != "" {
+		strict := item.HostAffinityStrict || cl.hostAffinityStrictDefault
+		filtered, ok := filterAgentsByHostAffinity(candidates, item.HostAffinity, strict)
+		if !ok {
+			return "", "", &NoMatchingAgentError{
+				Constraint: "host_affinity",
+				Detail:     "host " + item.HostAffinity + " is offline",
+			}
+		}
+		candidates = filtered
+	}
+
 	// If the work item specifies a backend, find an agent using that backend.
+	// When a backend is requested and no candidate agent uses it, return a
+	// typed NoMatchingAgentError so callers can surface a meaningful diagnostic
+	// instead of silently dispatching to an incompatible agent.
 	if item.Backend != "" {
-		return cl.findAgentByBackend(item.Backend, agents)
+		id, name := cl.findAgentByBackend(item.Backend, candidates)
+		if id == "" {
+			return "", "", &NoMatchingAgentError{
+				Constraint: "backend",
+				Detail:     "no online agent uses backend " + item.Backend,
+			}
+		}
+		return id, name, nil
 	}
 
 	// If persistent sessions are required, filter to backends that support them.
@@ -1279,34 +1393,115 @@ func (cl *ControlLoop) matchAgentForTask(
 	}
 
 	if requiresPersistent {
-		return cl.findAgentWithPersistentSessions(agents, backendCaps)
+		id, name := cl.findAgentWithPersistentSessions(candidates, backendCaps)
+		return id, name, nil
 	}
 
 	// Default: prefer idle agents, then any available.
-	return cl.findBestAvailableAgent(agents)
+	id, name := cl.findBestAvailableAgent(candidates)
+	return id, name, nil
+}
+
+// workItemRequiresGPU reports whether the work item's RequiredCapabilities
+// slice contains "gpu".
+func workItemRequiresGPU(item *WorkItem) bool {
+	if item == nil {
+		return false
+	}
+	for _, cap := range item.RequiredCapabilities {
+		if cap == "gpu" {
+			return true
+		}
+	}
+	return false
+}
+
+// filterAgentsByHostAffinity returns agents whose Name or Host field matches
+// the requested affinity string. The comparison is case-sensitive and exact.
+//
+// The ok return distinguishes the two failure modes:
+//   - strict=false, no match: returns (agents, true) — soft fallback to the
+//     full candidate list, preserving existing behavior.
+//   - strict=true, no match: returns (nil, false) — caller MUST surface a
+//     typed NoMatchingAgentError instead of dispatching to a random agent.
+//
+// When at least one agent matches, returns (filtered, true) regardless of
+// strictness; strictness only changes the empty-set behavior.
+func filterAgentsByHostAffinity(agents []*AgentRegistration, affinity string, strict bool) (out []*AgentRegistration, ok bool) {
+	out = make([]*AgentRegistration, 0, len(agents))
+	for _, a := range agents {
+		if a == nil {
+			continue
+		}
+		if a.Name == affinity || a.Host == affinity {
+			out = append(out, a)
+		}
+	}
+	if len(out) == 0 {
+		if strict {
+			return nil, false
+		}
+		return agents, true
+	}
+	return out, true
+}
+
+// filterAgentsByCapability returns the subset of agents whose Capabilities
+// slice contains the named capability.
+func filterAgentsByCapability(agents []*AgentRegistration, capability string) []*AgentRegistration {
+	out := make([]*AgentRegistration, 0, len(agents))
+	for _, a := range agents {
+		if a == nil {
+			continue
+		}
+		for _, c := range a.Capabilities {
+			if c == capability {
+				out = append(out, a)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // findAgentByBackend finds the best agent that uses the specified backend.
+// Matches against either agent.Backend (primary) or agent.Capabilities (all
+// registered backend kinds), since the embedded agent and remote daemons can
+// expose multiple backends (e.g. ollama + claude + codex).
 func (cl *ControlLoop) findAgentByBackend(
 	backend string,
 	agents []*AgentRegistration,
 ) (agentID string, backendName string) {
 	var fallback *AgentRegistration
 	for _, agent := range agents {
-		if agent.Backend != backend {
+		if !agentExposesBackend(agent, backend) {
 			continue
 		}
 		if agent.Status == AgentStatusIdle {
-			return agent.ID, agent.Backend
+			return agent.ID, backend
 		}
 		if fallback == nil {
 			fallback = agent
 		}
 	}
 	if fallback != nil {
-		return fallback.ID, fallback.Backend
+		return fallback.ID, backend
 	}
 	return "", ""
+}
+
+// agentExposesBackend reports whether the agent advertises the requested
+// backend either as its primary Backend or as one of its Capabilities.
+func agentExposesBackend(agent *AgentRegistration, backend string) bool {
+	if agent.Backend == backend {
+		return true
+	}
+	for _, cap := range agent.Capabilities {
+		if cap == backend {
+			return true
+		}
+	}
+	return false
 }
 
 // findAgentWithPersistentSessions finds an agent whose backend supports persistent sessions.
@@ -1426,6 +1621,74 @@ func (cl *ControlLoop) closeLeadSession(ctx context.Context) {
 		cl.logger.Warnf("control loop: failed to close lead session: %s", err.Error())
 	}
 	cl.leadSessionID = ""
+}
+
+// trySpawnReviewerSession attempts to spawn a persistent reviewer session if
+// the workflow defines a "reviewer" role with the persistent_sessions
+// capability. The reviewer session receives the approve/reject prompt in
+// handleReview, so the reviewer (typically a codex agent) is the de facto
+// judge of whether all job requirements have been met. Returns nil when the
+// workflow does not configure a reviewer; the lead is then used as fallback
+// reviewer for backward compatibility.
+func (cl *ControlLoop) trySpawnReviewerSession(ctx context.Context) error {
+	if !cl.roleHasCapability("reviewer", "persistent_sessions") {
+		return nil
+	}
+
+	agentSpec := cl.resolveAgentSpec("reviewer")
+	if agentSpec == nil {
+		return nil
+	}
+
+	cl.reviewerBackend = agentSpec.Backend
+	cl.reviewerModel = agentSpec.Model
+
+	req := &SpawnSessionRequest{
+		Backend:    agentSpec.Backend,
+		Model:      agentSpec.Model,
+		Persistent: true,
+	}
+
+	if agentSpec.WorkspacePath != "" {
+		req.WorkDir = agentSpec.WorkspacePath
+	}
+	if agentSpec.SkipPermissions {
+		req.ExtraArgs = append(req.ExtraArgs, "--dangerously-skip-permissions")
+	}
+	if agentSpec.PermissionMode != "" {
+		req.ExtraArgs = append(req.ExtraArgs, "--permission-mode", agentSpec.PermissionMode)
+	}
+	req.Env = agentSpec.Env
+	if agentSpec.Sandboxed {
+		req.Sandboxed = true
+		req.ContainerImage = agentSpec.ContainerImage
+	}
+
+	cl.audit("reviewer:session_spawn", "backend="+agentSpec.Backend+" model="+agentSpec.Model)
+
+	resp, spawnErr := cl.agentService.SpawnSession(ctx, req)
+	if spawnErr != nil {
+		cl.audit("reviewer:session_spawn_failed", "error="+spawnErr.Error())
+		return spawnErr
+	}
+
+	cl.reviewerSessionID = resp.SessionID
+	cl.audit("reviewer:session_spawned", "session="+resp.SessionID)
+	return nil
+}
+
+// closeReviewerSession terminates the reviewer session if one was spawned.
+func (cl *ControlLoop) closeReviewerSession(ctx context.Context) {
+	if cl.reviewerSessionID == "" {
+		return
+	}
+	_, err := cl.agentService.CloseSession(ctx, &CloseSessionRequest{
+		SessionID: cl.reviewerSessionID,
+	})
+	if err != nil {
+		cl.logger.Warnf("control loop: failed to close reviewer session: %s", err.Error())
+	}
+	cl.reviewerSessionID = ""
 }
 
 // emitEvent sends a job event to the events channel.

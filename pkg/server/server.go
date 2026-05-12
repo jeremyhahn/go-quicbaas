@@ -43,8 +43,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server/devcluster"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/version"
@@ -59,7 +61,7 @@ type serverOptions struct {
 	// initializeCA() skips internal CA bootstrap and uses this CA for TLS
 	// certificate issuance. The caller is responsible for having completed
 	// Load() or Init() on the CA before passing it here.
-	externalCA xkmssdk.XKMSCA
+	externalCA xkmssdk.TrustedCA
 
 	// tlsCertificate is a pre-issued TLS certificate. When set alongside
 	// externalCA, the server skips TLS certificate issuance and uses this
@@ -74,7 +76,7 @@ type ServerOption func(*serverOptions)
 // When provided, the server skips its internal CA bootstrap during initialization
 // and uses the given CA for TLS certificate operations. The CA must have already
 // been initialized (Load or Init called) before being passed here.
-func WithCA(ca xkmssdk.XKMSCA) ServerOption {
+func WithCA(ca xkmssdk.TrustedCA) ServerOption {
 	return func(o *serverOptions) { o.externalCA = ca }
 }
 
@@ -134,7 +136,48 @@ type Server struct {
 	workerManager  *catalog.WorkerManager
 
 	// Certificate Authority - manages TLS certificate issuance
-	xkmsCA xkmssdk.BasicCA
+	xkmsCA xkmssdk.TrustedCA
+
+	// caAdapter is the live CA service adapter wired into the QuicBaaS service
+	// at startService() time. Keeping a reference allows UpdateCA() to swap
+	// the backing CA post-start without rebuilding the service.
+	caAdapter *caServiceAdapter
+
+	// xkmsKeyStorage is the file-backed XKMS key store created by
+	// initializeCA. startKMS reuses this same storage root so that the CA
+	// chain and the KMS symmetric-key chain share a SINGLE on-disk key
+	// universe. This eliminates the two-chain KEK mismatch that caused
+	// "cipher: message authentication failed" on every fresh boot.
+	// When TLS is disabled (no CA chain), startKMS falls back to an
+	// in-memory or freshly-created file-backed store.
+	xkmsKeyStorage xkmssdk.StorageBackend
+
+	// Agent fleet registry - shared between IAM enrollment (publisher on
+	// redeem) and orchestration (publisher on heartbeat + consumer for
+	// dispatch). Constructed during IAM init so the enrollment service can
+	// publish on redemption; the orchestration layer receives the same
+	// instance via SetAgentRegistry so dispatch sees enrollment-time
+	// registrations immediately.
+	agentRegistry orchestration.AgentRegistry
+
+	// iamComponents holds the initialized IAM subsystem components.
+	// Set by lifecycle.go after initializeIAMComponents succeeds and used by
+	// wireIAMMTLSAuthenticators to obtain the AppStorage without a runtime
+	// type assertion on quicBaaSService.
+	iamComponents service.IAMComponents
+
+	// orchestratorDaemonClient holds the OAuth2 credentials the central uses
+	// to authenticate its outbound calls to remote agent daemons. Populated
+	// by ensureOrchestratorDaemonClient during IAM init; consumed by the
+	// orchestration layer's RemoteBackendResolver to mint JWTs for daemon
+	// RPCs. See pkg/server/iam_init.go for bootstrap details.
+	orchestratorDaemonClient *OrchestratorDaemonClient
+
+	// tenantDEKManager provides per-tenant Data Encryption Keys for
+	// at-rest encryption of session events and other tenant-scoped state.
+	// Populated during IAM init when KMS is available; nil on restricted
+	// deployments that run without a KMS backend.
+	tenantDEKManager security.TenantDEKManager
 
 	// tlsConfig holds the in-memory TLS configuration backed by OpaqueKeys.
 	// Created by initializeCA() and used by all transport layers.
@@ -143,6 +186,23 @@ type Server struct {
 	// Seal management - uses the interfaces.SealManager abstraction backed
 	// by qrdb's StorageBarrier via the BarrierSealManager adapter.
 	sealManager interfaces.SealManager
+
+	// ceremonyServices holds the bootstrap ceremony service stack
+	// (credential, ceremony, and the underlying core ceremony.CeremonyService).
+	// Populated during startService() via buildBootstrapCeremonyServices and
+	// consumed by the firstBootBootstrap path to bind the SO certificate
+	// SPKI thumbprint to the bootstrap admin once an officer completes the
+	// ceremony. Nil when ceremony wiring is unavailable for the current
+	// transport (network-only modes that don't run the init flow).
+	ceremonyServices *CeremonyServices
+
+	// bootstrapAdminUserID and bootstrapAdminTenantID identify the pending
+	// admin user created by firstBootBootstrap. BindAdminToSOCert reads these
+	// to pin the SO certificate's SPKI thumbprint against the right user
+	// without re-querying the identity store. Empty before the first-boot
+	// path runs, or on subsequent boots where the admin already exists.
+	bootstrapAdminUserID   string
+	bootstrapAdminTenantID string
 
 	// Raft node - standalone no-op implementation for BaaS client mode.
 	// Satisfies interfaces.RaftNode for the service builder without
@@ -174,6 +234,20 @@ type Server struct {
 	// QRDB sharded client - manages per-shard SDK clients for multi-shard routing.
 	// Each shard gets its own embedded-transport SDK client on first access.
 	qrdbClient *ShardedClient
+
+	// Embedded agent state — non-nil when the in-process agent runtime is
+	// running. Initialized by startEmbeddedAgent; cleaned up by
+	// stopEmbeddedAgent during graceful shutdown.
+	embeddedAgentState *embeddedAgent
+
+	// embeddedDialerRegistry maps AgentRegistration.Host → bufconn dialer
+	// for embedded agents. The remote backend pool consults this registry
+	// before attempting a real TCP dial.
+	embeddedDialerRegistry *EmbeddedDialerRegistry
+
+	// embeddedBackendDialers caches per-agent ConnDialer closures keyed by
+	// agentID. Used internally by installEmbeddedBackendDialer.
+	embeddedBackendDialers map[string]func(context.Context, string) (*ggrpc.ClientConn, error)
 
 	// Shutdown coordination
 	shutdownChan chan struct{}
@@ -429,6 +503,14 @@ func (s *Server) initialize() error {
 		}
 	}
 
+	// Initialize embedded agent runtime if enabled. Must start after
+	// orchestration so the fleet registry and agent service are available.
+	if s.config.Server.EmbeddedAgent.Enabled {
+		if err := s.startEmbeddedAgent(); err != nil {
+			return err
+		}
+	}
+
 	if err := s.startGRPCServer(); err != nil {
 		return err
 	}
@@ -573,6 +655,16 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			} else {
 				s.logger.Info("RAG system shutdown complete")
 			}
+		}
+
+		// Shutdown embedded agent before external-facing components.
+		// The embedded agent must drain in-flight sessions before the
+		// transport servers shut down so the orchestrator's session state
+		// remains intact during teardown.
+		if s.embeddedAgentState != nil {
+			s.logger.Info("Shutting down embedded agent...")
+			s.stopEmbeddedAgent(ctx)
+			s.logger.Info("Embedded agent shutdown complete")
 		}
 
 		// Shutdown watch bridge (before messaging service)
@@ -816,13 +908,30 @@ func (s *Server) GetBackupManager() *backup.BackupManager {
 }
 
 // CA returns the Certificate Authority (nil if TLS is disabled).
-func (s *Server) CA() xkmssdk.XKMSCA {
+func (s *Server) CA() xkmssdk.TrustedCA {
 	return s.xkmsCA
 }
 
 // GetCertificateAuthority returns the CA (nil if TLS is disabled).
-func (s *Server) GetCertificateAuthority() xkmssdk.BasicCA {
+func (s *Server) GetCertificateAuthority() xkmssdk.TrustedCA {
 	return s.xkmsCA
+}
+
+// UpdateCA replaces the Certificate Authority used by the QuicBaaS
+// CertificateService with the supplied ca. The swap is atomic: in-flight
+// certificate operations complete against the previous CA before the new one
+// takes effect. Returns an error when the server has not yet been started or
+// when the CA adapter was not wired (TLS disabled). Passing nil is a no-op.
+func (s *Server) UpdateCA(ca xkmssdk.TrustedCA) error {
+	if ca == nil {
+		return nil
+	}
+	if s.caAdapter == nil {
+		return UpdateCANotReadyError{}
+	}
+	s.xkmsCA = ca
+	s.caAdapter.SetCA(ca)
+	return nil
 }
 
 // GetSealManager returns the seal manager (nil if seal is not enabled).

@@ -85,6 +85,8 @@ func (m *mockClient) Close() error {
 	return nil
 }
 
+func (m *mockClient) Project() quicbaas.ProjectClient { return nil }
+
 func (m *mockClient) Orchestrator() quicbaas.OrchestratorClient { return nil }
 
 func TestBuildSDKClientOptions_GRPCDefault(t *testing.T) {
@@ -662,3 +664,4 @@ func TestMemoryStorageReaderAdapter_NewIterator_ClosedStorage(t *testing.T) {
 		assert.False(t, ok)
 	}
 }
+

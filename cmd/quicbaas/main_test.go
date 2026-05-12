@@ -442,3 +442,103 @@ func BenchmarkInitLogger(b *testing.B) {
 		_ = initLogger()
 	}
 }
+
+// TestLogFileFlag asserts --log-file is registered on the root command and a
+// value parsed via cobra flows into the global logFile variable. Regression
+// for Bug #48 (persistent --log-file flag on the root command).
+func TestLogFileFlag(t *testing.T) {
+	// Verify flag registration.
+	flag := rootCmd.PersistentFlags().Lookup("log-file")
+	require.NotNil(t, flag, "--log-file flag must be registered on root command")
+	assert.Equal(t, "", flag.DefValue, "default value must be empty (stderr)")
+
+	// Verify parsing flows through to the global variable.
+	prev := logFile
+	defer func() { logFile = prev }()
+	logFile = ""
+
+	args := []string{"--log-file", "/tmp/quicbaas-test.log"}
+	require.NoError(t, rootCmd.ParseFlags(args))
+	assert.Equal(t, "/tmp/quicbaas-test.log", logFile)
+}
+
+// TestLogFileFlag_InitLoggerRedirectsToFile asserts initLogger writes to the
+// configured file when --log-file is set, rather than stderr. This is the
+// behavioural contract the flag must deliver — the config must carry an
+// "Output: file" destination with the flag value.
+func TestLogFileFlag_InitLoggerRedirectsToFile(t *testing.T) {
+	prevCfg := cfg
+	prevFile := logFile
+	defer func() {
+		cfg = prevCfg
+		logFile = prevFile
+	}()
+
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "quicbaas.log")
+
+	cfg = config.Default()
+	cfg.Logging.Level = "info"
+	cfg.Logging.Format = "json"
+	logFile = logPath
+
+	require.NoError(t, initLogger())
+	require.NotNil(t, log)
+
+	// Logger construction succeeds; writing a line should materialise the
+	// file on disk. We do not assert exact contents (the logger framework
+	// controls the format) — only that the file is created.
+	log.Info("hello from test")
+
+	info, err := os.Stat(logPath)
+	require.NoError(t, err, "log file must exist after initLogger + log write")
+	assert.True(t, info.Size() > 0, "log file must contain at least one record")
+}
+
+// TestBuildLoggerConfig_LogFile covers the helper that both the CLI and
+// GUI paths use to translate --log-file into a logger.LogConfig. The
+// helper is the single point-of-change for log destination; a unit test
+// here locks in its contract so future refactors cannot silently regress
+// the output destination.
+func TestBuildLoggerConfig_LogFile(t *testing.T) {
+	t.Run("no file routes to stderr", func(t *testing.T) {
+		lc := buildLoggerConfig("info", "json", "")
+		assert.Equal(t, "stderr", lc.Output)
+		assert.Empty(t, lc.File)
+	})
+
+	t.Run("file path switches output to file", func(t *testing.T) {
+		lc := buildLoggerConfig("info", "json", "/var/log/q.log")
+		assert.Equal(t, "file", lc.Output)
+		assert.Equal(t, "/var/log/q.log", lc.File)
+	})
+
+	t.Run("defaults applied when level/format empty", func(t *testing.T) {
+		lc := buildLoggerConfig("", "", "")
+		assert.Equal(t, "info", lc.Level)
+		assert.Equal(t, "json", lc.Format)
+	})
+}
+
+// TestExtractLogFileFlag covers the early-boot os.Args scanner used by the
+// GUI launch path (which runs before cobra parses arguments).
+func TestExtractLogFileFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"absent", []string{"--log-level", "info"}, ""},
+		{"space form", []string{"--log-file", "/tmp/x.log"}, "/tmp/x.log"},
+		{"equals form", []string{"--log-file=/tmp/y.log"}, "/tmp/y.log"},
+		{"trailing flag without value", []string{"--log-file"}, ""},
+		{"mixed with other flags", []string{"--tenant", "default", "--log-file", "/tmp/z.log", "--address", "x"}, "/tmp/z.log"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractLogFileFlag(tt.args)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

@@ -17,9 +17,12 @@ package mocks
 import (
 	"context"
 
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
@@ -126,6 +129,9 @@ type MockQuicBaaS struct {
 	ParameterStoreServiceFunc     func() service.ParameterStoreService
 	ObjectTransferServiceFunc     func() service.ObjectTransferService
 	SchedulerServiceFunc          func() service.SchedulerService
+	ProjectServiceFunc            func() service.ProjectService
+	AgentAdminServiceFunc         func() service.AgentAdminService
+	SSHClientFunc                 func() xkmsssh.Client
 	MessagingServiceFunc          func() messaging.Service
 	WatchManagerFunc              func() *watch.Manager
 
@@ -149,7 +155,14 @@ type MockQuicBaaS struct {
 	MockParameterStoreService     *MockParameterStoreService
 	MockObjectTransferService     *MockObjectTransferService
 	MockSchedulerService          *MockSchedulerService
+	MockProjectService            *MockProjectService
+	MockAgentAdminService         *MockAgentAdminService
 	MockMessagingService          *MockMessagingService
+	// MockSSHClient is a caller-supplied xkmsssh.Client implementation
+	// returned by SSHClient when SSHClientFunc is nil. Tests that don't
+	// exercise SSH leave this nil; SSHClient returns nil and that is
+	// the documented "SSH not configured" behavior.
+	MockSSHClient xkmsssh.Client
 }
 
 // Ensure MockQuicBaaS implements service.QuicBaaS at compile time.
@@ -753,6 +766,42 @@ func (m *MockQuicBaaS) Scheduler() service.SchedulerService {
 	return nil
 }
 
+func (m *MockQuicBaaS) SchedulerEngine() *scheduler.SchedulerEngine {
+	return nil
+}
+
+// Project returns the configured project service mock.
+func (m *MockQuicBaaS) Project() service.ProjectService {
+	if m.ProjectServiceFunc != nil {
+		return m.ProjectServiceFunc()
+	}
+	if m.MockProjectService != nil {
+		return m.MockProjectService
+	}
+	return nil
+}
+
+// AgentAdmin returns the configured agent admin service mock.
+func (m *MockQuicBaaS) AgentAdmin() service.AgentAdminService {
+	if m.AgentAdminServiceFunc != nil {
+		return m.AgentAdminServiceFunc()
+	}
+	if m.MockAgentAdminService != nil {
+		return m.MockAgentAdminService
+	}
+	return nil
+}
+
+// SSHClient returns a configurable xkmsssh.Client. When neither the
+// SSHClientFunc field nor the MockSSHClient field are set the method
+// returns nil so callers can test the "SSH not configured" path.
+func (m *MockQuicBaaS) SSHClient() xkmsssh.Client {
+	if m.SSHClientFunc != nil {
+		return m.SSHClientFunc()
+	}
+	return m.MockSSHClient
+}
+
 func (m *MockQuicBaaS) Agent() orchestration.AgentService {
 	return nil
 }
@@ -773,6 +822,59 @@ func (m *MockQuicBaaS) WatchManager() *watch.Manager {
 	}
 	return nil
 }
+
+// =============================================================================
+// Seal Service Methods (SealService promoted onto QuicBaaS facade)
+// =============================================================================
+
+// Status returns a default sealed=false response.
+// Tests that need specific behavior should set StatusFunc.
+func (m *MockQuicBaaS) Status(ctx context.Context) (*service.SealStatusResponse, error) {
+	return &service.SealStatusResponse{Sealed: false, Initialized: true, Mode: "manual"}, nil
+}
+
+// Initialize returns a default SealInitResponse.
+func (m *MockQuicBaaS) Initialize(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
+	return &service.SealInitResponse{}, nil
+}
+
+// Unseal returns a default UnsealResponse.
+func (m *MockQuicBaaS) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
+	return &service.UnsealResponse{Sealed: false}, nil
+}
+
+// Seal returns nil (success).
+func (m *MockQuicBaaS) Seal(ctx context.Context) error {
+	return nil
+}
+
+// Rekey returns a default RekeyResponse.
+func (m *MockQuicBaaS) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
+	return &service.RekeyResponse{}, nil
+}
+
+// GenerateRecoveryKey returns a default GenerateRecoveryKeyResponse.
+func (m *MockQuicBaaS) GenerateRecoveryKey(ctx context.Context, req *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
+	return &service.GenerateRecoveryKeyResponse{}, nil
+}
+
+// DeleteRecoveryKey returns a default DeleteRecoveryKeyResponse.
+func (m *MockQuicBaaS) DeleteRecoveryKey(ctx context.Context, req *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
+	return &service.DeleteRecoveryKeyResponse{Deleted: true}, nil
+}
+
+// RotateRootKey returns a default RotateRootKeyResponse.
+func (m *MockQuicBaaS) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
+	return &service.RotateRootKeyResponse{Success: true}, nil
+}
+
+// GenerateRootToken returns a default GenerateRootTokenResponse.
+func (m *MockQuicBaaS) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
+	return &service.GenerateRootTokenResponse{}, nil
+}
+
+// SetSealService is a no-op for the mock.
+func (m *MockQuicBaaS) SetSealService(_ service.SealService) {}
 
 // =============================================================================
 // Lifecycle Methods
@@ -842,6 +944,8 @@ func NewMockQuicBaaSWithAllSubservices() *MockQuicBaaS {
 		MockParameterStoreService:     &MockParameterStoreService{},
 		MockObjectTransferService:     &MockObjectTransferService{},
 		MockSchedulerService:          &MockSchedulerService{},
+		MockProjectService:            &MockProjectService{},
+		MockAgentAdminService:         &MockAgentAdminService{},
 		MockMessagingService:          &MockMessagingService{},
 	}
 }

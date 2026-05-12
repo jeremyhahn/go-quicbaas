@@ -15,10 +15,30 @@
 package config
 
 import (
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+)
+
+// Default values applied by VectorConfig.ApplyDefaults when the operator has
+// enabled the vector subsystem but supplied no HNSW block. These match the
+// canonical values used by the in-tree lifecycle tests (see
+// pkg/server/lifecycle_seams_test.go) so that exercising the env-var fast path
+// (QUICBAAS_VECTOR_ENABLED=true) yields the same boot behavior as the tests.
+//
+// MaxElements is intentionally a conservative 10k: it is sized for first-run
+// experimentation, not production. Operators with real workloads should supply
+// an HNSW block in their config file with sizing tuned to their corpus.
+const (
+	defaultHNSWM              = 16
+	defaultHNSWEfConstruction = 200
+	defaultHNSWMaxElements    = 10000
+	defaultHNSWMl             = 1.0
+	defaultVectorShardID      = 200
+	defaultVectorIndexType    = "hnsw"
+	defaultVectorSubdir       = "vector"
 )
 
 // VectorConfig contains complete Vector Database configuration.
@@ -145,14 +165,14 @@ var validScalarIndexTypes = map[string]bool{
 func DefaultVectorConfig() *VectorConfig {
 	return &VectorConfig{
 		Enabled:          false, // Disabled by default
-		ShardID:          200,   // Dedicated vector shard
-		StoragePath:      "./data/vector",
-		DefaultIndexType: "hnsw",
+		ShardID:          defaultVectorShardID,
+		StoragePath:      "./data/" + defaultVectorSubdir,
+		DefaultIndexType: defaultVectorIndexType,
 		HNSW: &HNSWConfig{
-			M:              16,      // Standard HNSW parameter
-			EfConstruction: 200,     // Build-time search quality
-			MaxElements:    1000000, // 1M vectors default
-			Ml:             1.0,     // Standard layer multiplier
+			M:              defaultHNSWM,
+			EfConstruction: defaultHNSWEfConstruction,
+			MaxElements:    1000000, // 1M vectors when explicitly requesting full defaults
+			Ml:             defaultHNSWMl,
 		},
 		Flat: &FlatConfig{
 			MaxElements: 100000, // 100K vectors default for flat
@@ -172,6 +192,50 @@ func DefaultVectorConfig() *VectorConfig {
 		CacheTTL:        5 * time.Minute,
 		CacheMaxSize:    1 * 1024 * 1024 * 1024, // 1GB
 		FilterCacheSize: 1024,
+	}
+}
+
+// ApplyDefaults populates missing required fields on an enabled VectorConfig
+// so that the documented one-env-var enable path
+// (QUICBAAS_VECTOR_ENABLED=true) produces a config that passes Validate.
+//
+// It only fills fields that are zero / nil — any operator-supplied values are
+// preserved. When Enabled is false, ApplyDefaults is a no-op so disabled
+// configs stay untouched. The function is idempotent and safe to call multiple
+// times.
+//
+// storageDataDir is the daemon's storage data directory; if non-empty and
+// StoragePath is unset, the vector subsystem is rooted at
+// <storageDataDir>/vector so all on-disk state lives under the same root the
+// operator pointed --data-dir at.
+func (c *VectorConfig) ApplyDefaults(storageDataDir string) {
+	if !c.Enabled {
+		return
+	}
+
+	if c.ShardID == 0 {
+		c.ShardID = defaultVectorShardID
+	}
+
+	if c.DefaultIndexType == "" {
+		c.DefaultIndexType = defaultVectorIndexType
+	}
+
+	if c.StoragePath == "" {
+		if storageDataDir != "" {
+			c.StoragePath = filepath.Join(storageDataDir, defaultVectorSubdir)
+		} else {
+			c.StoragePath = "./data/" + defaultVectorSubdir
+		}
+	}
+
+	if c.HNSW == nil {
+		c.HNSW = &HNSWConfig{
+			M:              defaultHNSWM,
+			EfConstruction: defaultHNSWEfConstruction,
+			MaxElements:    defaultHNSWMaxElements,
+			Ml:             defaultHNSWMl,
+		}
 	}
 }
 

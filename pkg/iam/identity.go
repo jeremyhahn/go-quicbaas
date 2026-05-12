@@ -156,6 +156,10 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 	if displayName == "" {
 		displayName = strings.TrimSpace(opts.Username)
 	}
+	roles := make([]string, 0)
+	if len(opts.Roles) > 0 {
+		roles = append(roles, opts.Roles...)
+	}
 	user := &User{
 		ID:         userID,
 		TenantID:   tenantID,
@@ -163,7 +167,7 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 		Name:       displayName,
 		Attributes: opts.Attributes,
 		Groups:     []string{},
-		Roles:      []string{},
+		Roles:      roles,
 		Created:    now,
 		Updated:    now,
 	}
@@ -205,6 +209,14 @@ func (s *IdentityStore) GetUserByEmail(ctx context.Context, email string) (*User
 	}
 
 	return user, nil
+}
+
+// GetUserByPIVThumbprint retrieves a user by their registered PIV certificate thumbprint.
+func (s *IdentityStore) GetUserByPIVThumbprint(ctx context.Context, thumbprint string) (*User, error) {
+	if thumbprint == "" {
+		return nil, NewIAMError(ErrUserInvalid, "iam.identity.get_user_by_piv_thumbprint", "thumbprint is required", nil)
+	}
+	return s.userStorage.GetUserByPIVThumbprint(ctx, thumbprint)
 }
 
 // UpdateUser updates an existing user.
@@ -270,6 +282,26 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 
 	if opts.Groups != nil {
 		user.Groups = *opts.Groups
+	}
+
+	if opts.State != nil {
+		user.State = *opts.State
+	}
+
+	if opts.AuthMethods != nil {
+		user.AuthMethods = *opts.AuthMethods
+	}
+
+	if opts.PIVCertThumbprint != nil {
+		user.PIVCertThumbprint = *opts.PIVCertThumbprint
+	}
+
+	if opts.InviteToken != nil {
+		user.InviteToken = *opts.InviteToken
+	}
+
+	if opts.InviteExpiresAt != nil {
+		user.InviteExpiresAt = *opts.InviteExpiresAt
 	}
 
 	user.Updated = time.Now().UTC()

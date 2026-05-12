@@ -785,44 +785,6 @@ func (m *adapter91MockDeletionStorage) ListDeletionRequests(ctx context.Context,
 }
 
 // =============================================================================
-// Mock: CredentialStorage (WebAuthn)
-// =============================================================================
-
-type adapter91MockCredentialStorage struct{}
-
-func (m *adapter91MockCredentialStorage) CreateCredential(ctx context.Context, cred *iam.WebAuthnCredential) error {
-	return nil
-}
-
-func (m *adapter91MockCredentialStorage) GetCredential(ctx context.Context, tenantID, credentialID string) (*iam.WebAuthnCredential, error) {
-	return nil, errors.New("not found")
-}
-
-func (m *adapter91MockCredentialStorage) GetCredentialsByUser(ctx context.Context, tenantID, userID string) ([]*iam.WebAuthnCredential, error) {
-	return []*iam.WebAuthnCredential{}, nil
-}
-
-func (m *adapter91MockCredentialStorage) UpdateCredential(ctx context.Context, cred *iam.WebAuthnCredential) error {
-	return nil
-}
-
-func (m *adapter91MockCredentialStorage) DeleteCredential(ctx context.Context, tenantID, credentialID string) error {
-	return nil
-}
-
-func (m *adapter91MockCredentialStorage) StoreChallenge(ctx context.Context, challenge *iam.WebAuthnChallenge) error {
-	return nil
-}
-
-func (m *adapter91MockCredentialStorage) GetChallenge(ctx context.Context, challengeID string) (*iam.WebAuthnChallenge, error) {
-	return nil, errors.New("not found")
-}
-
-func (m *adapter91MockCredentialStorage) DeleteChallenge(ctx context.Context, challengeID string) error {
-	return nil
-}
-
-// =============================================================================
 // Mock: SessionStorage (for GDPR deps)
 // =============================================================================
 
@@ -911,7 +873,6 @@ func createTestIAMAdapter91(t *testing.T) *IAMServiceAdapter {
 		DeletionStorage:   &adapter91MockDeletionStorage{},
 		UserStorage:       storage,
 		SessionStorage:    newAdapter91MockSessionStorage(),
-		CredentialStorage: &adapter91MockCredentialStorage{},
 		GroupStorage:      storage,
 		RoleStorage:       storage,
 	})

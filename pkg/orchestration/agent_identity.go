@@ -30,6 +30,43 @@ var (
 	ErrAgentIdentityInvalidScope = errors.New("orchestration: agent identity invalid scope format")
 )
 
+// Agent runtime scope constants define the OAuth2 scopes that a remote agent
+// daemon (pkg/agent) is authorized to exercise against the central
+// orchestrator's AgentRuntime gRPC service. They follow the three-segment
+// "resource:subresource:action" naming convention so they slot into the
+// same HasScope / wildcard rules as existing scopes.
+const (
+	// AgentScopeRuntimeSpawn authorizes the caller to start a sandboxed agent
+	// session (ACP/Ollama/container spawn) on a remote agent host.
+	AgentScopeRuntimeSpawn = "agent:runtime:spawn"
+
+	// AgentScopeRuntimePrompt authorizes the caller to send a prompt to an
+	// already-spawned session on a remote agent host.
+	AgentScopeRuntimePrompt = "agent:runtime:prompt"
+
+	// AgentScopeRuntimeStatus authorizes the caller to poll session status
+	// and retrieve heartbeat/telemetry from a remote agent host.
+	AgentScopeRuntimeStatus = "agent:runtime:status"
+
+	// AgentScopeRuntimeInfer authorizes the caller to run a stateless
+	// inference call against a backend that does not require a prior Spawn
+	// (e.g., Ollama). Separate from AgentScopeRuntimePrompt so operators can
+	// grant fine-grained access to the sessionless inference path.
+	AgentScopeRuntimeInfer = "agent:runtime:infer"
+)
+
+// AgentRuntimeScopes returns the full set of scopes a freshly enrolled agent
+// daemon is expected to receive. Callers can compare against this list when
+// validating token issuance or documenting bootstrap expectations.
+func AgentRuntimeScopes() []string {
+	return []string{
+		AgentScopeRuntimeSpawn,
+		AgentScopeRuntimePrompt,
+		AgentScopeRuntimeStatus,
+		AgentScopeRuntimeInfer,
+	}
+}
+
 // scopeFormatRegex validates that a scope follows the resource:action pattern.
 // Accepts formats like "kms:read", "secrets:write", "orchestrator:*", or "a:b:c".
 var scopeFormatRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*:[a-zA-Z*][a-zA-Z0-9_*-]*(?::[a-zA-Z*][a-zA-Z0-9_*-]*)?$`)

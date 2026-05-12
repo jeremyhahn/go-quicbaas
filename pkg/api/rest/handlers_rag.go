@@ -39,6 +39,12 @@ func registerRAGRoutes(s *Server, r chi.Router) {
 
 		// Context building from user-provided results
 		r.Post("/context", s.HandleRAGBuildContext)
+
+		// Document CRUD
+		r.Get("/documents", s.HandleRAGListDocuments)
+		r.Get("/documents/{id}", s.HandleRAGGetDocument)
+		r.Delete("/documents/{id}", s.HandleRAGDeleteDocument)
+		r.Post("/documents/{id}/reindex", s.HandleRAGReindexDocument)
 	})
 }
 
@@ -415,4 +421,280 @@ func getIntFromStringMetadata(m map[string]string, key string) int {
 		}
 	}
 	return 0
+}
+
+// ========================================
+// RAG Document CRUD Handlers
+// ========================================
+
+// RAGDocumentResponse represents a RAG document (vector with content metadata).
+type RAGDocumentResponse struct {
+	ID        uint64                 `json:"id"`
+	Namespace string                 `json:"namespace"`
+	Content   string                 `json:"content,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	Timestamp int64                  `json:"timestamp"`
+}
+
+// RAGListDocumentsResponse contains a page of RAG documents.
+type RAGListDocumentsResponse struct {
+	Documents  []*RAGDocumentResponse `json:"documents"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
+	Total      uint64                 `json:"total"`
+}
+
+// HandleRAGListDocuments handles GET /v1/rag/documents?namespace=X - List documents in a namespace.
+func (s *Server) HandleRAGListDocuments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	namespace := r.URL.Query().Get("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	limit := 100
+	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= 1000 {
+		limit = l
+	}
+	cursor := r.URL.Query().Get("cursor")
+
+	vectorSvc := s.service.Vector()
+	if vectorSvc == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, &ValidationError{
+			Message: "vector service not configured",
+		})
+		return
+	}
+
+	resp, err := vectorSvc.ListVectors(ctx, &service.ListVectorsRequest{
+		Namespace:       namespace,
+		Limit:           limit,
+		Cursor:          cursor,
+		IncludeMetadata: true,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	docs := make([]*RAGDocumentResponse, 0, len(resp.Vectors))
+	for _, v := range resp.Vectors {
+		content := getStringFromInterfaceMap(v.Metadata, "content")
+		docs = append(docs, &RAGDocumentResponse{
+			ID:        v.ID,
+			Namespace: namespace,
+			Content:   content,
+			Metadata:  v.Metadata,
+			Timestamp: v.UpdatedAt,
+		})
+	}
+
+	RespondJSON(w, r, http.StatusOK, &RAGListDocumentsResponse{
+		Documents:  docs,
+		NextCursor: resp.NextCursor,
+		Total:      resp.TotalCount,
+	})
+}
+
+// HandleRAGGetDocument handles GET /v1/rag/documents/{id} - Get a document by ID.
+func (s *Server) HandleRAGGetDocument(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		RespondBadRequest(w, r, "document ID is required")
+		return
+	}
+
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		RespondBadRequest(w, r, "document ID must be a positive integer")
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	vectorSvc := s.service.Vector()
+	if vectorSvc == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, &ValidationError{
+			Message: "vector service not configured",
+		})
+		return
+	}
+
+	resp, err := vectorSvc.GetVector(ctx, &service.GetVectorRequest{
+		Namespace:       namespace,
+		ID:              id,
+		IncludeMetadata: true,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	doc := &RAGDocumentResponse{
+		ID:        resp.ID,
+		Namespace: namespace,
+		Content:   getStringFromInterfaceMap(resp.Metadata, "content"),
+		Metadata:  resp.Metadata,
+		Timestamp: resp.UpdatedAt,
+	}
+
+	RespondJSON(w, r, http.StatusOK, doc)
+}
+
+// HandleRAGDeleteDocument handles DELETE /v1/rag/documents/{id} - Delete a document by ID.
+func (s *Server) HandleRAGDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		RespondBadRequest(w, r, "document ID is required")
+		return
+	}
+
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		RespondBadRequest(w, r, "document ID must be a positive integer")
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	vectorSvc := s.service.Vector()
+	if vectorSvc == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, &ValidationError{
+			Message: "vector service not configured",
+		})
+		return
+	}
+
+	if _, err := vectorSvc.DeleteVector(ctx, &service.DeleteVectorRequest{
+		Namespace: namespace,
+		ID:        id,
+	}); err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
+		"id":      id,
+		"deleted": true,
+	})
+}
+
+// RAGReindexRequest is the optional body for reindex.
+type RAGReindexRequest struct {
+	// Content overrides the stored content for reindexing (optional)
+	Content string `json:"content,omitempty"`
+}
+
+// HandleRAGReindexDocument handles POST /v1/rag/documents/{id}/reindex - Re-embed a document.
+func (s *Server) HandleRAGReindexDocument(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		RespondBadRequest(w, r, "document ID is required")
+		return
+	}
+
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		RespondBadRequest(w, r, "document ID must be a positive integer")
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	var body RAGReindexRequest
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			RespondBadRequest(w, r, "invalid JSON body")
+			return
+		}
+	}
+
+	vectorSvc := s.service.Vector()
+	if vectorSvc == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, &ValidationError{
+			Message: "vector service not configured",
+		})
+		return
+	}
+
+	// Fetch existing document
+	existing, err := vectorSvc.GetVector(ctx, &service.GetVectorRequest{
+		Namespace:       namespace,
+		ID:              id,
+		IncludeMetadata: true,
+		IncludeVector:   false,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	content := body.Content
+	if content == "" {
+		content = getStringFromInterfaceMap(existing.Metadata, "content")
+	}
+	if content == "" {
+		RespondBadRequest(w, r, "document has no content to reindex")
+		return
+	}
+
+	// Generate new embedding
+	embeddingSvc := s.service.Embedding()
+	if embeddingSvc == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, &ValidationError{
+			Message: "embedding service not configured",
+		})
+		return
+	}
+
+	embedResp, err := embeddingSvc.GenerateEmbedding(ctx, &service.GenerateEmbeddingRequest{
+		Text: content,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	// Update metadata with new content if overridden
+	meta := existing.Metadata
+	if meta == nil {
+		meta = make(map[string]interface{})
+	}
+	if body.Content != "" {
+		meta["content"] = body.Content
+	}
+
+	// Re-upsert with fresh embedding
+	upsertResp, err := vectorSvc.UpsertVector(ctx, &service.UpsertVectorRequest{
+		Namespace: namespace,
+		ID:        id,
+		Vector:    embedResp.Embedding,
+		Metadata:  meta,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
+		"id":        id,
+		"namespace": namespace,
+		"reindexed": upsertResp.Success,
+		"version":   upsertResp.Version,
+	})
 }

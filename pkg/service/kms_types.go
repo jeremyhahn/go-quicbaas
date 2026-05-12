@@ -1724,6 +1724,24 @@ type GenerateRootTokenResponse struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// RotateRootKeyRequest requests rotation of the root encryption key.
+type RotateRootKeyRequest struct {
+	// Force bypasses safety checks if true
+	Force bool `json:"force,omitempty"`
+}
+
+// RotateRootKeyResponse confirms root key rotation.
+type RotateRootKeyResponse struct {
+	// Success indicates the rotation completed successfully
+	Success bool `json:"success"`
+
+	// Message provides a human-readable status message
+	Message string `json:"message"`
+
+	// Timestamp is when the rotation occurred
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // =============================================================================
 // DEK (Data Encryption Key) Request/Response Types
 // =============================================================================
@@ -2464,5 +2482,26 @@ type SecretChange struct {
 	Version int64 `json:"version"`
 
 	// Timestamp is when the change occurred
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// SetDefaultKeyRequest requests setting a key as the system default.
+type SetDefaultKeyRequest struct {
+	// Name is the key name to set as default
+	Name string `json:"name"`
+}
+
+// SetDefaultKeyResponse confirms a key was set as the system default.
+type SetDefaultKeyResponse struct {
+	// Name is the key name
+	Name string `json:"name"`
+
+	// IsDefault is always true on success
+	IsDefault bool `json:"is_default"`
+
+	// PreviousDefault is the name of the previous default key (if any)
+	PreviousDefault string `json:"previous_default,omitempty"`
+
+	// Timestamp is when the default was set
 	Timestamp time.Time `json:"timestamp"`
 }

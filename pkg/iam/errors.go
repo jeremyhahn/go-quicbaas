@@ -606,6 +606,121 @@ var (
 		Op:   "iam.gdpr.deletion",
 		Err:  &IAMMessageError{Message: "grace period still active"},
 	}
+
+	// Invite / passwordless activation errors.
+
+	// ErrInviteNotFound is returned when an invite token cannot be found.
+	ErrInviteNotFound = &dberrors.QBError{
+		Code: dberrors.ErrNotFound,
+		Op:   "iam.invite",
+		Err:  &IAMMessageError{Message: "invite not found"},
+	}
+
+	// ErrInviteExpired is returned when an invite token has passed its expiry time.
+	ErrInviteExpired = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.invite",
+		Err:  &IAMMessageError{Message: "invite has expired"},
+	}
+
+	// ErrInviteUsed is returned when an invite token has already been consumed.
+	ErrInviteUsed = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.invite",
+		Err:  &IAMMessageError{Message: "invite has already been used"},
+	}
+
+	// ErrUserNotPending is returned when an activation is attempted on a user that
+	// is not in the pending state.
+	ErrUserNotPending = &dberrors.QBError{
+		Code: dberrors.ErrConflict,
+		Op:   "iam.invite.activate",
+		Err:  &IAMMessageError{Message: "user is not in pending state"},
+	}
+
+	// ErrPIVCertRejected is returned when the presented PIV certificate fails
+	// chain verification or does not satisfy the required key usage.
+	ErrPIVCertRejected = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.invite.activate.piv",
+		Err:  &IAMMessageError{Message: "PIV certificate rejected"},
+	}
+
+	// ErrAAGUIDNotAllowedSentinel is the base typed sentinel for AAGUID rejections.
+	ErrAAGUIDNotAllowedSentinel = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.webauthn.aaguid",
+		Err:  &IAMMessageError{Message: "authenticator AAGUID not in allowlist"},
+	}
+
+	// ErrPasswordRejected is returned when a request body contains a password field,
+	// which is not permitted in the passwordless IAM flow.
+	ErrPasswordRejected = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.user.create",
+		Err:  &IAMMessageError{Message: "password-based authentication is not allowed; use webauthn or piv"},
+	}
+
+	// mTLS / OAuth2 RFC 8705 errors.
+
+	// ErrMTLSNoCertificate is returned when no client certificate was presented.
+	ErrMTLSNoCertificate = &dberrors.QBError{
+		Code: dberrors.ErrUnauthorized,
+		Op:   "iam.oauth2.mtls",
+		Err:  &IAMMessageError{Message: "client certificate required"},
+	}
+
+	// ErrMTLSClientNotFound is returned when the client_id is not registered.
+	ErrMTLSClientNotFound = &dberrors.QBError{
+		Code: dberrors.ErrNotFound,
+		Op:   "iam.oauth2.mtls",
+		Err:  &IAMMessageError{Message: "oauth2 client not found"},
+	}
+
+	// ErrMTLSAuthMethodMismatch is returned when the client's registered auth
+	// method does not match the mTLS path being used.
+	ErrMTLSAuthMethodMismatch = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.oauth2.mtls",
+		Err:  &IAMMessageError{Message: "token_endpoint_auth_method mismatch"},
+	}
+
+	// ErrMTLSCertMismatch is returned when the presented certificate does not
+	// match the client's registered Subject DN or SAN dNSName.
+	ErrMTLSCertMismatch = &dberrors.QBError{
+		Code: dberrors.ErrUnauthorized,
+		Op:   "iam.oauth2.mtls.pki",
+		Err:  &IAMMessageError{Message: "certificate subject/SAN does not match registered client"},
+	}
+
+	// ErrMTLSThumbprintNotPinned is returned when the client has no thumbprint pinned.
+	ErrMTLSThumbprintNotPinned = &dberrors.QBError{
+		Code: dberrors.ErrValidation,
+		Op:   "iam.oauth2.mtls.self_signed",
+		Err:  &IAMMessageError{Message: "no mtls certificate thumbprint registered for client"},
+	}
+
+	// ErrMTLSThumbprintMismatch is returned when the cert thumbprint does not
+	// match the pinned value.
+	ErrMTLSThumbprintMismatch = &dberrors.QBError{
+		Code: dberrors.ErrUnauthorized,
+		Op:   "iam.oauth2.mtls.self_signed",
+		Err:  &IAMMessageError{Message: "certificate thumbprint does not match registered client"},
+	}
+
+	// ErrMTLSInvalidCertPEM is returned when the provided PEM cannot be decoded.
+	ErrMTLSInvalidCertPEM = &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.oauth2.mtls",
+		Err:  &IAMMessageError{Message: "invalid certificate PEM encoding"},
+	}
+
+	// ErrMTLSMissingCNFClaim is returned when the access token has no cnf claim.
+	ErrMTLSMissingCNFClaim = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.oauth2.mtls.verify",
+		Err:  &IAMMessageError{Message: "token missing cnf/x5t#S256 binding claim"},
+	}
 )
 
 // CompilationFailedError is returned when policy compilation fails.
@@ -1732,4 +1847,94 @@ type BatchCannotCancelError struct{}
 // Error implements the error interface.
 func (e *BatchCannotCancelError) Error() string {
 	return "operation cannot be cancelled"
+}
+
+// MTLSCertVerificationError is returned when a client cert fails chain verification.
+type MTLSCertVerificationError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *MTLSCertVerificationError) Error() string {
+	return "mtls certificate chain verification failed: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *MTLSCertVerificationError) Unwrap() error {
+	return e.Cause
+}
+
+// MTLSCertParseError is returned when a PEM certificate cannot be parsed.
+type MTLSCertParseError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *MTLSCertParseError) Error() string {
+	return "failed to parse mtls certificate: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *MTLSCertParseError) Unwrap() error {
+	return e.Cause
+}
+
+// PIVCertIssuerRejectedError is returned when the PIV certificate's issuer DN is
+// not in the operator-configured TrustedIssuers list. This is a second-gate check
+// that fires after successful chain verification.
+type PIVCertIssuerRejectedError struct {
+	// Issuer is the Subject DN of the certificate's issuing CA.
+	Issuer string
+
+	// AllowedIssuers is the operator-configured allowlist of permitted DNs.
+	AllowedIssuers []string
+}
+
+// Error implements the error interface.
+func (e *PIVCertIssuerRejectedError) Error() string {
+	return "piv certificate issuer DN \"" + e.Issuer + "\" is not in the trusted issuers list"
+}
+
+// NewPIVCertIssuerRejectedError creates a QBError wrapping PIVCertIssuerRejectedError.
+func NewPIVCertIssuerRejectedError(issuer string, allowed []string) error {
+	return &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.piv.issuer",
+		Err:  &PIVCertIssuerRejectedError{Issuer: issuer, AllowedIssuers: allowed},
+		Context: map[string]interface{}{
+			"issuer":          issuer,
+			"allowed_issuers": allowed,
+		},
+	}
+}
+
+// ErrAAGUIDNotAllowedError is returned when a FIDO2 authenticator AAGUID is not
+// in the operator-configured allowlist and the policy is strict enforcement.
+type ErrAAGUIDNotAllowedError struct {
+	// AAGUID is the hex-encoded AAGUID that was rejected.
+	AAGUID string
+
+	// AuthenticatorName is the human-readable name when known from MDS3.
+	// Empty when the AAGUID is unknown.
+	AuthenticatorName string
+}
+
+// Error implements the error interface.
+func (e *ErrAAGUIDNotAllowedError) Error() string {
+	if e.AuthenticatorName != "" {
+		return "authenticator AAGUID " + e.AAGUID + " (" + e.AuthenticatorName + ") is not in the allowlist"
+	}
+	return "authenticator AAGUID " + e.AAGUID + " is not in the allowlist"
+}
+
+// NewErrAAGUIDNotAllowed creates a QBError wrapping ErrAAGUIDNotAllowedError.
+func NewErrAAGUIDNotAllowed(aaguid, authenticatorName string) error {
+	return &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.webauthn.aaguid",
+		Err:  &ErrAAGUIDNotAllowedError{AAGUID: aaguid, AuthenticatorName: authenticatorName},
+		Context: map[string]interface{}{
+			"aaguid": aaguid,
+		},
+	}
 }

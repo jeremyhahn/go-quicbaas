@@ -20,11 +20,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -33,9 +31,8 @@ import (
 
 var (
 	// User command flags.
-	userRoles    []string
-	userPassword string
-	userForce    bool
+	userRoles []string
+	userForce bool
 )
 
 // RBACClientFactory is a function type for creating RBAC clients.
@@ -84,8 +81,10 @@ func newUserCreateCommand() *cobra.Command {
 		Short: "Create new user",
 		Long: `Create a new user in the QuicBaaS authentication system.
 
+Authentication is performed via WebAuthn (FIDO2) or PIV smartcard.
+No password is required or accepted.
+
 You can specify one or more roles for the user using the --roles flag.
-If no roles are specified, the user will have no permissions until roles are assigned.
 
 Built-in roles:
   - admin: Full administrative access to all resources
@@ -93,26 +92,19 @@ Built-in roles:
   - readonly: Read-only access to database operations
 
 Examples:
-  # Create user with interactive password prompt
+  # Create user with readonly role
   quicbaas user create john --roles readwrite
 
   # Create admin user
   quicbaas user create admin --roles admin
 
   # Create user with multiple roles
-  quicbaas user create jane --roles readonly,readwrite
-
-  # Create user with password from environment
-  QUICBAAS_PASSWORD=secret quicbaas user create john --roles readwrite
-
-  # Create user on specific server with TLS
-  quicbaas user create john --roles readwrite --server quicbaas.example.com:50051 --tls`,
+  quicbaas user create jane --roles readonly,readwrite`,
 		Args: cobra.ExactArgs(1),
 		RunE: runUserCreateCommand,
 	}
 
 	cmd.Flags().StringSliceVar(&userRoles, "roles", []string{"readonly"}, "Roles to assign to user (comma-separated)")
-	cmd.Flags().StringVar(&userPassword, "password", "", "Password (not recommended, use interactive prompt instead)")
 
 	return cmd
 }
@@ -124,42 +116,6 @@ func runUserCreateCommand(cmd *cobra.Command, args []string) error {
 	// Validate username
 	if username == "" {
 		return errors.Newf(errors.ErrInvalidInput, "user.create", "username is required")
-	}
-
-	// Get password from flag, environment, or interactive prompt
-	password := userPassword
-	if password == "" {
-		password = os.Getenv("QUICBAAS_PASSWORD")
-	}
-	if password == "" {
-		fmt.Printf("Password for new user %s: ", username)
-		passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
-		fmt.Println()
-		if err != nil {
-			return errors.Wrapf(err, errors.ErrInvalidInput, "user.create", "failed to read password")
-		}
-		password = string(passwordBytes)
-
-		// Confirm password
-		fmt.Printf("Confirm password: ")
-		confirmBytes, err := term.ReadPassword(int(syscall.Stdin))
-		fmt.Println()
-		if err != nil {
-			return errors.Wrapf(err, errors.ErrInvalidInput, "user.create", "failed to read password confirmation")
-		}
-
-		if password != string(confirmBytes) {
-			return errors.Newf(errors.ErrInvalidInput, "user.create", "passwords do not match")
-		}
-	}
-
-	if password == "" {
-		return errors.Newf(errors.ErrInvalidInput, "user.create", "password is required")
-	}
-
-	// Validate password strength (basic check)
-	if len(password) < 8 {
-		return errors.Newf(errors.ErrInvalidInput, "user.create", "password must be at least 8 characters")
 	}
 
 	// Create RBAC client
@@ -176,7 +132,6 @@ func runUserCreateCommand(cmd *cobra.Command, args []string) error {
 	log.Debugf("Creating user: %s with roles: %v", username, userRoles)
 	resp, err := rbacClient.CreateUser(ctx, &rbac.CreateUserRequest{
 		Username: username,
-		Password: password,
 		Roles:    userRoles,
 	})
 	if err != nil {
@@ -457,27 +412,20 @@ func runUserShowCommand(cmd *cobra.Command, args []string) error {
 func newUserUpdateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <username>",
-		Short: "Update user roles or password",
-		Long: `Update user roles or password in the QuicBaaS authentication system.
+		Short: "Update user roles",
+		Long: `Update user roles in the QuicBaaS authentication system.
 
-You can update the user's roles using the --roles flag, and/or update the password
-using the --password flag or interactive prompt.
+Authentication is performed via WebAuthn (FIDO2) or PIV smartcard.
+Passwords are not used or accepted.
 
 Examples:
   # Update user roles
-  quicbaas user update john --roles admin,readwrite
-
-  # Update user password (interactive)
-  quicbaas user update john --password
-
-  # Update both roles and password
-  quicbaas user update john --roles admin --password`,
+  quicbaas user update john --roles admin,readwrite`,
 		Args: cobra.ExactArgs(1),
 		RunE: runUserUpdateCommand,
 	}
 
 	cmd.Flags().StringSliceVar(&userRoles, "roles", nil, "New roles for user (comma-separated)")
-	cmd.Flags().StringVar(&userPassword, "password", "", "New password (leave empty for interactive prompt)")
 
 	return cmd
 }
@@ -488,43 +436,9 @@ func runUserUpdateCommand(cmd *cobra.Command, args []string) error {
 
 	// Check if at least one update flag is provided
 	updateRoles := cmd.Flags().Changed("roles")
-	updatePassword := cmd.Flags().Changed("password") || userPassword != ""
 
-	if !updateRoles && !updatePassword {
-		return errors.Newf(errors.ErrInvalidInput, "user.update", "at least one of --roles or --password must be specified")
-	}
-
-	// Get new password if updating
-	var newPassword string
-	if updatePassword {
-		if userPassword == "" {
-			fmt.Printf("New password for user %s: ", username)
-			passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
-			fmt.Println()
-			if err != nil {
-				return errors.Wrapf(err, errors.ErrInvalidInput, "user.update", "failed to read password")
-			}
-			newPassword = string(passwordBytes)
-
-			// Confirm password
-			fmt.Printf("Confirm password: ")
-			confirmBytes, err := term.ReadPassword(int(syscall.Stdin))
-			fmt.Println()
-			if err != nil {
-				return errors.Wrapf(err, errors.ErrInvalidInput, "user.update", "failed to read password confirmation")
-			}
-
-			if newPassword != string(confirmBytes) {
-				return errors.Newf(errors.ErrInvalidInput, "user.update", "passwords do not match")
-			}
-		} else {
-			newPassword = userPassword
-		}
-
-		// Validate password strength
-		if len(newPassword) < 8 {
-			return errors.Newf(errors.ErrInvalidInput, "user.update", "password must be at least 8 characters")
-		}
+	if !updateRoles {
+		return errors.Newf(errors.ErrInvalidInput, "user.update", "--roles must be specified")
 	}
 
 	// Create RBAC client
@@ -605,9 +519,6 @@ func runUserUpdateCommand(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Username: %s\n", username)
 	if updateRoles {
 		fmt.Printf("  Roles: %s\n", strings.Join(userRoles, ", "))
-	}
-	if updatePassword {
-		fmt.Println("  Password: Updated")
 	}
 
 	return nil

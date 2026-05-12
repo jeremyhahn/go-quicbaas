@@ -171,6 +171,18 @@ func (m *mockTaskStore) DeleteTenantTasks(ctx context.Context, tenantID string) 
 	return nil
 }
 
+func (m *mockTaskStore) SubmitTaskArtifacts(_ context.Context, _, _ string, _ []orchestration.Artifact) error {
+	return nil
+}
+
+func (m *mockTaskStore) GetTaskArtifact(_ context.Context, _, _, _ string) (*orchestration.Artifact, error) {
+	return nil, nil
+}
+
+func (m *mockTaskStore) ListTaskArtifacts(_ context.Context, _, _ string) ([]orchestration.Artifact, error) {
+	return nil, nil
+}
+
 // =============================================================================
 // Mock Messaging Service for Hooks
 // =============================================================================

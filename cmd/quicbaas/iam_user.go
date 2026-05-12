@@ -32,12 +32,12 @@ import (
 
 var (
 	// User command flags.
-	iamUserName     string
-	iamUserRoles    []string
-	iamUserGroups   []string
-	iamUserRole     string
-	iamUserGroup    string
-	iamUserPassword string
+	iamUserName         string
+	iamUserRoles        []string
+	iamUserGroups       []string
+	iamUserRole         string
+	iamUserGroup        string
+	iamUserRejectReason string
 )
 
 // newIAMUserCommand creates the user command group.
@@ -60,6 +60,8 @@ All user commands require the --tenant flag to specify the tenant context.`,
 	cmd.AddCommand(newIAMUserDeleteCommand())
 	cmd.AddCommand(newIAMUserListCommand())
 	cmd.AddCommand(newIAMUserRoleCommand())
+	cmd.AddCommand(newIAMUserApproveCommand())
+	cmd.AddCommand(newIAMUserRejectCommand())
 
 	return cmd
 }
@@ -180,17 +182,19 @@ func newIAMUserCreateCommand() *cobra.Command {
 		Long: `Create a new user within a tenant.
 
 The email address serves as the unique identifier for the user within the tenant.
+QuicBaaS is passwordless — the new user is created in the pending state and
+must complete invite-based activation (FIDO2 / PIV) before they can sign in.
 You can optionally assign roles and groups during creation.
 
 Examples:
   # Create basic user
-  quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice Smith" --password "SecureP@ss123"
+  quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice Smith"
 
   # Create user with roles
-  quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --password "SecureP@ss123" --roles admin,developer
+  quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --roles admin,developer
 
   # Create user with roles and groups
-  quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --password "SecureP@ss123" --roles developer --groups engineering,team-west`,
+  quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --roles developer --groups engineering,team-west`,
 		Args: cobra.ExactArgs(1),
 		RunE: runIAMUserCreateCommand,
 	}
@@ -199,9 +203,7 @@ Examples:
 	cmd.Flags().StringSliceVar(&iamUserRoles, "roles", []string{}, "Roles to assign (comma-separated)")
 	cmd.Flags().StringVar(&iamUserRole, "role", "", "Single role to assign (alternative to --roles)")
 	cmd.Flags().StringSliceVar(&iamUserGroups, "groups", []string{}, "Groups to add user to (comma-separated)")
-	cmd.Flags().StringVar(&iamUserPassword, "password", "", "User password (required)")
 	cmd.MarkFlagRequired("name")
-	cmd.MarkFlagRequired("password")
 
 	return cmd
 }
@@ -233,11 +235,14 @@ func runIAMUserCreateCommand(cmd *cobra.Command, args []string) error {
 
 	// Create user using SDK sub-client
 	log.Debugf("Creating user: %s in tenant: %s", email, globalTenantID)
+	// QuicBaaS is passwordless — auth is FIDO2 / PIV via the invite flow.
+	// CreateUser puts the user in `pending` state; the operator shares the
+	// returned invite URL out-of-band so the user can register their hardware
+	// authenticator.
 	user, err := iamClient.User().Create(ctx, globalTenantID, &iam.CreateUserRequest{
-		Username:    email, // Use email as username
+		Username:    email,
 		Email:       email,
 		DisplayName: iamUserName,
-		Password:    iamUserPassword,
 		Roles:       roles,
 		Groups:      iamUserGroups,
 	})
@@ -580,5 +585,93 @@ func runIAMUserListCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nTotal: %d users\n", len(users))
 	}
 
+	return nil
+}
+
+// newIAMUserApproveCommand creates the user approve command.
+func newIAMUserApproveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "approve <user-id>",
+		Short: "Approve a pending self-registered user",
+		Long: `Approve a self-registered user who is awaiting admin approval.
+
+The user's state transitions from pending to active. They can then sign in
+with their registered hardware authenticator.
+
+Examples:
+  quicbaas iam user approve user_abc123 --tenant acme-corp`,
+		Args: cobra.ExactArgs(1),
+		RunE: runIAMUserApproveCommand,
+	}
+}
+
+// runIAMUserApproveCommand executes the user approve command.
+func runIAMUserApproveCommand(_ *cobra.Command, args []string) error {
+	userID := args[0]
+
+	if globalTenantID == "" {
+		return errors.Newf(errors.ErrInvalidInput, "iam.user.approve", "--tenant flag is required")
+	}
+
+	iamClient, err := createIAMClient()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	log.Infof("Approving user %s in tenant %s", userID, globalTenantID)
+	if err := iamClient.User().Approve(ctx, globalTenantID, userID); err != nil {
+		return formatError(err)
+	}
+
+	fmt.Printf("User '%s' approved successfully\n", userID)
+	return nil
+}
+
+// newIAMUserRejectCommand creates the user reject command.
+func newIAMUserRejectCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "reject <user-id>",
+		Short: "Reject a pending self-registered user",
+		Long: `Reject a self-registered user who is awaiting admin approval.
+
+The user's state transitions to disabled. The account is soft-deleted and
+retained for the configured audit retention period.
+
+Examples:
+  quicbaas iam user reject user_abc123 --tenant acme-corp
+  quicbaas iam user reject user_abc123 --tenant acme-corp --reason "Policy violation"`,
+		Args: cobra.ExactArgs(1),
+		RunE: runIAMUserRejectCommand,
+	}
+
+	cmd.Flags().StringVar(&iamUserRejectReason, "reason", "", "Optional rejection reason for audit log")
+	return cmd
+}
+
+// runIAMUserRejectCommand executes the user reject command.
+func runIAMUserRejectCommand(_ *cobra.Command, args []string) error {
+	userID := args[0]
+
+	if globalTenantID == "" {
+		return errors.Newf(errors.ErrInvalidInput, "iam.user.reject", "--tenant flag is required")
+	}
+
+	iamClient, err := createIAMClient()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	log.Infof("Rejecting user %s in tenant %s", userID, globalTenantID)
+	if err := iamClient.User().Reject(ctx, globalTenantID, userID, iamUserRejectReason); err != nil {
+		return formatError(err)
+	}
+
+	fmt.Printf("User '%s' rejected successfully\n", userID)
 	return nil
 }

@@ -14,6 +14,8 @@
 package quicbaas
 
 import (
+	"sync"
+
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -41,18 +43,37 @@ type ClusterManagementService interface {
 
 // SecurityService provides security and encryption operations including
 // authentication, sealing, key management, secrets, and certificates.
+//
+// Auth() returns an AuthService composed of the existing AuthClient plus
+// the M10 factor-typed sub-services (FIDO2, WebAuthn, PIV, Factors). Code
+// that previously called Security().Auth().Login(...) keeps working
+// because AuthService embeds AuthClient.
+//
+// ACME(), Trust(), and CertificateExt() expose M10 primitives sourced
+// from go-xkms (ACME, TrustedCA, TCG identity issuance) and re-published
+// through the QuicBaaS SDK so consumers never need to import go-xkms
+// directly.
 type SecurityService interface {
-	Auth() AuthClient
+	Auth() AuthService
 	Seal() SealClient
 	KMS() KMSClient
 	Secrets() SecretsClient
 	Crypto() CryptoClient
 	Certificate() CertificateClient
+	CertificateExt() CertificateExtensions
 	ClusterDEK() ClusterDEKClient
 	DEK() DEKClient
 	DynamicSecrets() DynamicSecretsClient
 	RBAC() RBACClient
 	SealStore() (QRDBSealStoreClient, error)
+
+	// ACME exposes server-side challenge verifiers and the ACME protocol
+	// client (RFC 8555 + ARI + cross-sign + TPM enrollment).
+	ACME() ACMEService
+
+	// Trust exposes DANE TLSA publication, cross-signed root pools, and
+	// AIA-driven root import.
+	Trust() TrustService
 }
 
 // IdentityService provides identity and access management operations.
@@ -142,11 +163,29 @@ func (s *clusterManagementService) Operations() OperationsClient { return s.c.Op
 func (s *clusterManagementService) Cache() CacheClient           { return s.c.Cache() }
 
 // securityService delegates SecurityService methods to the underlying client.
+// The new Auth() returns an AuthService that composes the existing AuthClient
+// plus FIDO2/WebAuthn/PIV/Factors sub-services. ACME(), Trust(), and
+// CertificateExt() expose new M10 primitives.
 type securityService struct {
 	c *client
+
+	authOnce    sync.Once
+	authSvc     AuthService
+	acmeOnce    sync.Once
+	acmeSvc     ACMEService
+	trustOnce   sync.Once
+	trustSvc    TrustService
+	certExtOnce sync.Once
+	certExt     CertificateExtensions
 }
 
-func (s *securityService) Auth() AuthClient                     { return s.c.Auth() }
+func (s *securityService) Auth() AuthService {
+	s.authOnce.Do(func() {
+		s.authSvc = newAuthService(s.c)
+	})
+	return s.authSvc
+}
+
 func (s *securityService) Seal() SealClient                     { return s.c.Seal() }
 func (s *securityService) KMS() KMSClient                       { return s.c.KMS() }
 func (s *securityService) Secrets() SecretsClient               { return s.c.Secrets() }
@@ -159,6 +198,27 @@ func (s *securityService) RBAC() RBACClient                     { return s.c.RBA
 
 func (s *securityService) SealStore() (QRDBSealStoreClient, error) {
 	return s.c.SealStore()
+}
+
+func (s *securityService) ACME() ACMEService {
+	s.acmeOnce.Do(func() {
+		s.acmeSvc = newACMEService(s.c.transport)
+	})
+	return s.acmeSvc
+}
+
+func (s *securityService) Trust() TrustService {
+	s.trustOnce.Do(func() {
+		s.trustSvc = newTrustService(s.c.transport)
+	})
+	return s.trustSvc
+}
+
+func (s *securityService) CertificateExt() CertificateExtensions {
+	s.certExtOnce.Do(func() {
+		s.certExt = newCertificateExtensions(s.c.transport)
+	})
+	return s.certExt
 }
 
 // identityService delegates IdentityService methods to the underlying client.
@@ -251,9 +311,19 @@ func (c *client) ClusterMgmt() ClusterManagementService {
 
 // Security returns the SecurityService sub-interface providing organized
 // access to Auth, Seal, KMS, Secrets, Crypto, Certificate, ClusterDEK,
-// DynamicSecrets, RBAC, and SealStore operations.
+// DynamicSecrets, RBAC, SealStore, ACME, Trust, and CertificateExt operations.
 func (c *client) Security() SecurityService {
-	return &securityService{c: c}
+	return c.securitySvc()
+}
+
+// securitySvc returns a lazily-initialized securityService bound to this
+// client. Initialization is per-client so the sub-services are stable
+// across multiple Security() calls.
+func (c *client) securitySvc() *securityService {
+	c.securityOnce.Do(func() {
+		c.security = &securityService{c: c}
+	})
+	return c.security
 }
 
 // Identity returns the IdentityService sub-interface providing organized
@@ -400,9 +470,9 @@ type XKMSPIVService = xkmstransport.PIVService
 // for FIDO2/WebAuthn operations.
 type XKMSFIDO2Service = xkmstransport.FIDO2Service
 
-// XKMSCAService is a re-export of the go-xkms CAService interface
+// TrustedCAService is a re-export of the go-xkms CAService interface
 // for Certificate Authority operations.
-type XKMSCAService = xkmstransport.CAService
+type TrustedCAService = xkmstransport.CAService
 
 // XKMSPINService is a re-export of the go-xkms PINService interface
 // for PIN management operations.

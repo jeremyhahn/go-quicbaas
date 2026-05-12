@@ -112,6 +112,18 @@ func (m *mockTaskStore) FailTask(_ context.Context, _, _, _ string) error {
 	return nil
 }
 
+func (m *mockTaskStore) SubmitTaskArtifacts(_ context.Context, _, _ string, _ []Artifact) error {
+	return nil
+}
+
+func (m *mockTaskStore) GetTaskArtifact(_ context.Context, _, _, _ string) (*Artifact, error) {
+	return nil, nil
+}
+
+func (m *mockTaskStore) ListTaskArtifacts(_ context.Context, _, _ string) ([]Artifact, error) {
+	return nil, nil
+}
+
 func (m *mockTaskStore) DeleteTenantTasks(_ context.Context, _ string) error {
 	return nil
 }
@@ -152,6 +164,7 @@ type mockContainerRuntime struct {
 	runCalls            []mockContainerCall
 	runInteractiveCalls []mockContainerCall
 	stopCalls           []mockContainerCall
+	pullCalls           []mockContainerCall
 	mu                  sync.Mutex
 
 	available          bool
@@ -163,6 +176,7 @@ type mockContainerRuntime struct {
 	isRunning          bool
 	isRunErr           error
 	removeErr          error
+	pullErr            error
 }
 
 type mockContainerCall struct {
@@ -211,6 +225,13 @@ func (m *mockContainerRuntime) IsRunning(_ context.Context, _ string) (bool, err
 
 func (m *mockContainerRuntime) IsAvailable() bool {
 	return m.available
+}
+
+func (m *mockContainerRuntime) Pull(_ context.Context, image string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pullCalls = append(m.pullCalls, mockContainerCall{Spec: &ContainerSpec{Image: image}})
+	return m.pullErr
 }
 
 // Compile-time interface check.
@@ -972,7 +993,11 @@ func TestOrchestrator_SpawnSession_Sandboxed_WithContainerConfig(t *testing.T) {
 func TestOrchestrator_SpawnSession_Sandboxed_RuntimeUnavailable(t *testing.T) {
 	t.Parallel()
 
-	// Runtime is not available - should fall back to standard spawn
+	// Under sandbox-first semantics (Phase 1), an explicit sandboxed=true
+	// request (SandboxModeRequired) MUST be rejected when no container
+	// runtime is available. Legacy silent fallback to raw exec is removed
+	// by design — callers wanting fallback should use SandboxModeDefault
+	// under SandboxPolicyPreferred.
 	rt := &mockContainerRuntime{available: false}
 	backends := map[string]AgentBackend{
 		"mock": &mockAgentBackend{},
@@ -984,16 +1009,49 @@ func TestOrchestrator_SpawnSession_Sandboxed_RuntimeUnavailable(t *testing.T) {
 	impl := svc.(*agentServiceImpl)
 	impl.SetContainerRuntime(rt)
 
-	resp, spawnErr := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
+	_, spawnErr := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
 		Backend:        "mock",
 		Sandboxed:      true,
 		ContainerImage: "quicbaas/agent:latest",
 	})
+	var violation *SandboxModeViolationError
+	if !errors.As(spawnErr, &violation) {
+		t.Fatalf("expected SandboxModeViolationError, got %T: %v", spawnErr, spawnErr)
+	}
+	if violation.Requested != SandboxModeRequired {
+		t.Errorf("violation.Requested = %v, want SandboxModeRequired", violation.Requested)
+	}
+}
+
+// TestOrchestrator_SpawnSession_DefaultPreferred_FallsBack verifies the
+// fallback path that the legacy test above used to exercise: a caller with
+// SandboxModeDefault under SandboxPolicyPreferred degrades to raw exec when
+// no runtime is available. This is how operators opt into "try container,
+// but don't fail if impossible" behavior.
+func TestOrchestrator_SpawnSession_DefaultPreferred_FallsBack(t *testing.T) {
+	t.Parallel()
+
+	rt := &mockContainerRuntime{available: false}
+	backends := map[string]AgentBackend{
+		"mock": &mockAgentBackend{},
+	}
+	svc, err := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("failed to create service: %v", err)
+	}
+	impl := svc.(*agentServiceImpl)
+	impl.SetContainerRuntime(rt)
+	impl.SetSandboxPolicy(SandboxPolicyPreferred)
+
+	resp, spawnErr := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
+		Backend:        "mock",
+		ContainerImage: "quicbaas/agent:latest",
+	})
 	if spawnErr != nil {
-		t.Fatalf("expected no error (should fall back), got %v", spawnErr)
+		t.Fatalf("expected no error (preferred policy should fall back), got %v", spawnErr)
 	}
 	if resp.ContainerID != "" {
-		t.Errorf("expected empty container ID (standard spawn), got %q", resp.ContainerID)
+		t.Errorf("expected empty container ID (raw exec fallback), got %q", resp.ContainerID)
 	}
 }
 

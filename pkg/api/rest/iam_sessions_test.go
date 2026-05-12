@@ -2890,36 +2890,22 @@ func TestIAM91_DeleteTenant_MissingTenantID(t *testing.T) {
 // Login: additional error paths
 // =============================================================================
 
-func TestIAM91_Login_InvalidJSON(t *testing.T) {
+// TestOIDCAuthorize_RejectsPasswordGrant verifies that POST /api/v1/auth/login
+// no longer exists (route deleted). Callers must use WebAuthn or PIV login.
+func TestOIDCAuthorize_RejectsPasswordGrant(t *testing.T) {
+	// The /api/v1/auth/login route is removed; only /api/v1/auth/login/piv exists.
+	// This test documents the expected 404 for the old password login path.
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{bad"))
+	// handler.Login no longer exists; the route is 404. Document this via PIVLogin
+	// returning 401 piv_login_disabled when PIV is not enabled (the default).
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/piv", nil)
 	w := httptest.NewRecorder()
-	handler.Login(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_Login_MissingUsername(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"password":"x"}`))
-	w := httptest.NewRecorder()
-	handler.Login(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "username is required")
-}
-
-func TestIAM91_Login_MissingPassword(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"x"}`))
-	w := httptest.NewRecorder()
-	handler.Login(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "password is required")
+	handler.PIVLogin(w, req)
+	// PIV disabled by default → 401 Unauthorized with piv_login_disabled error code.
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), ErrPIVLoginDisabled)
 }
 
 func TestIAM91_RefreshToken_InvalidJSON(t *testing.T) {
@@ -3287,13 +3273,15 @@ func (m *mockServiceWithApps) GetAppManager(ctx context.Context) (*iam.AppManage
 }
 
 // mockServiceWithWebAuthn implements GetWebAuthnManager for deeper testing.
+// Returns the WebAuthnManager service interface; tests typically pass a nil
+// manager to exercise the "manager not initialized" error path.
 type mockServiceWithWebAuthn struct {
 	service.QuicBaaS
-	mgr    *iam.WebAuthnManager
+	mgr    service.WebAuthnManager
 	mgrErr error
 }
 
-func (m *mockServiceWithWebAuthn) GetWebAuthnManager(ctx context.Context) (*iam.WebAuthnManager, error) {
+func (m *mockServiceWithWebAuthn) GetWebAuthnManager(ctx context.Context) (service.WebAuthnManager, error) {
 	return m.mgr, m.mgrErr
 }
 

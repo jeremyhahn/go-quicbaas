@@ -18,6 +18,8 @@ package service
 import (
 	"context"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -148,7 +150,7 @@ type SessionManager interface {
 type AuthManagerInterface interface {
 	// Authenticate validates credentials and issues authentication tokens.
 	// Only works when AllowPasswordAuth is enabled.
-	Authenticate(ctx context.Context, username, password string) (*auth.Token, error)
+	Authenticate(ctx context.Context, username string, password *secure.Buffer) (*auth.Token, error)
 
 	// ValidateToken validates a token and returns validation information.
 	ValidateToken(ctx context.Context, token string) (*auth.TokenValidationResult, error)
@@ -177,6 +179,10 @@ type IAMComponents interface {
 	GetPolicyEngine() *iam.PolicyEngine
 	// GetAppManager returns the app manager.
 	GetAppManager() *iam.AppManager
+	// GetAppStorage returns the underlying OAuth2 application storage backend.
+	// This is used by mTLS authenticators that need direct storage access,
+	// for example iam.NewSelfSignedClientAuth and iam.NewPKIClientAuth.
+	GetAppStorage() iam.AppStorage
 	// GetOIDCProvider returns the OIDC provider.
 	GetOIDCProvider() *iam.OIDCProvider
 	// GetFederationManager returns the federation manager for external identity providers.
@@ -216,6 +222,8 @@ type IAMServiceProvider interface {
 	GetPolicyEngine(ctx context.Context) (*iam.PolicyEngine, error)
 	// GetAppManager returns the app manager.
 	GetAppManager(ctx context.Context) (*iam.AppManager, error)
+	// GetAppStorage returns the underlying OAuth2 application storage backend.
+	GetAppStorage(ctx context.Context) (iam.AppStorage, error)
 	// GetOIDCProvider returns the OIDC provider.
 	GetOIDCProvider(ctx context.Context) (*iam.OIDCProvider, error)
 	// GetFederationManager returns the federation manager.

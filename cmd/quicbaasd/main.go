@@ -26,6 +26,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -37,16 +39,26 @@ var (
 	// Global flags.
 	cfgFile  string
 	logLevel string
+	logFile  string
 	fipsMode bool
 	dataDir  string
 
 	// Server flags.
 	httpPort    int
+	httpAddress string
 	grpcPort    int
 	raftPort    int
 	raftAddress string
 	nodeID      uint64
 	unixSocket  string
+
+	// Embedded agent flags.
+	embeddedAgentEnabled      bool
+	embeddedAgentBackends     []string
+	embeddedAgentOllamaURL    string
+	embeddedAgentHostAffinity string
+	embeddedAgentGPU          bool
+	embeddedAgentDataDir      string
 
 	// Discovery flags for node command.
 	discoveryType string
@@ -176,6 +188,7 @@ func init() {
 	// Global persistent flags.
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (optional, defaults to built-in defaults)")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (trace|debug|info|warn|error|fatal|panic)")
+	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "log file path (default: stdout; appends to the file when set so you can tail -f it)")
 	rootCmd.PersistentFlags().BoolVar(&fipsMode, "fips", false, "enable FIPS 140-3 mode")
 	rootCmd.PersistentFlags().StringVar(&dataDir, "data-dir", "./data", "data directory path")
 
@@ -194,6 +207,7 @@ func init() {
 
 	// Bind flags to viper.
 	_ = viper.BindPFlag("logging.level", rootCmd.PersistentFlags().Lookup("log-level"))
+	_ = viper.BindPFlag("logging.file", rootCmd.PersistentFlags().Lookup("log-file"))
 	_ = viper.BindPFlag("security.fips_mode", rootCmd.PersistentFlags().Lookup("fips"))
 	_ = viper.BindPFlag("storage.data_dir", rootCmd.PersistentFlags().Lookup("data-dir"))
 
@@ -201,13 +215,26 @@ func init() {
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(nodeCmd)
 	rootCmd.AddCommand(clusterCmd)
+
+	// Wire the locked canonical CLI surface per
+	// docs/08-bootstrap-auth-architecture.md §6.
+	configureCanonicalSurface()
 }
 
 // addServerFlags adds common server flags to a command.
 func addServerFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&unixSocket, "unix-socket", config.DefaultUnixSocket, "Unix socket path for local gRPC communication")
 	cmd.Flags().IntVar(&httpPort, "http-port", 0, "HTTP REST API port (0 = disabled)")
+	cmd.Flags().StringVar(&httpAddress, "http-address", "", "Bind address for the HTTP REST API (default: config or 127.0.0.1). Use 0.0.0.0 to listen on all interfaces.")
 	cmd.Flags().IntVar(&grpcPort, "grpc-port", 0, "gRPC TCP port (0 = Unix socket only)")
+
+	// Embedded agent flags.
+	cmd.Flags().BoolVar(&embeddedAgentEnabled, "embedded-agent", false, "Start an in-process agent runtime alongside the orchestrator (default: false)")
+	cmd.Flags().StringArrayVar(&embeddedAgentBackends, "embedded-agent-backend", []string{"ollama"}, "Backend(s) the embedded agent exposes (repeatable)")
+	cmd.Flags().StringVar(&embeddedAgentOllamaURL, "embedded-agent-ollama-url", "http://127.0.0.1:11434", "Ollama API endpoint for the embedded agent")
+	cmd.Flags().StringVar(&embeddedAgentHostAffinity, "embedded-agent-host-affinity", "", "Host-affinity tag for the embedded agent (default: hostname)")
+	cmd.Flags().BoolVar(&embeddedAgentGPU, "embedded-agent-gpu", false, "Advertise GPU capability for the embedded agent")
+	cmd.Flags().StringVar(&embeddedAgentDataDir, "embedded-agent-data-dir", "", "Working directory for embedded agent session state (default: <data-dir>/embedded-agent)")
 }
 
 // addRaftFlags adds Raft-specific flags to a command.
@@ -299,6 +326,12 @@ func initConfig() {
 	if logConfig.Output == "" {
 		logConfig.Output = "stdout"
 	}
+	// --log-file flag overrides Output — redirect to file so the user can
+	// tail -f it in realtime. Matches go-qrdb / go-xkms convention.
+	if logFile != "" {
+		logConfig.Output = "file"
+		logConfig.File = logFile
+	}
 
 	var err error
 	log, err = logger.New(logConfig)
@@ -386,6 +419,14 @@ func bindEnvVars() {
 
 	// Orchestration configuration.
 	_ = viper.BindEnv("orchestration.enabled")
+
+	// Embedded agent configuration.
+	_ = viper.BindEnv("server.embedded_agent.enabled")
+	_ = viper.BindEnv("server.embedded_agent.backends")
+	_ = viper.BindEnv("server.embedded_agent.ollama_url")
+	_ = viper.BindEnv("server.embedded_agent.host_affinity")
+	_ = viper.BindEnv("server.embedded_agent.gpu_available")
+	_ = viper.BindEnv("server.embedded_agent.data_dir")
 }
 
 // parseSpecialEnvVars parses environment variables that viper doesn't handle automatically.
@@ -520,12 +561,38 @@ func applyServerFlags(cmd *cobra.Command) {
 		cfg.Server.REST.Port = httpPort
 		cfg.Server.REST.Enabled = httpPort > 0
 	}
+	if cmd.Flags().Changed("http-address") {
+		cfg.Server.Host = httpAddress
+	}
 	if cmd.Flags().Changed("grpc-port") {
 		cfg.Server.GRPC.Port = grpcPort
 		cfg.Server.GRPC.Enabled = grpcPort > 0
 	}
 	if cmd.Flags().Changed("data-dir") {
 		cfg.Storage.DataDir = dataDir
+	}
+
+	// Apply embedded agent flags.
+	if cmd.Flags().Changed("embedded-agent") {
+		cfg.Server.EmbeddedAgent.Enabled = embeddedAgentEnabled
+	}
+	if cmd.Flags().Changed("embedded-agent-backend") {
+		cfg.Server.EmbeddedAgent.Backends = embeddedAgentBackends
+	}
+	if cmd.Flags().Changed("embedded-agent-ollama-url") {
+		cfg.Server.EmbeddedAgent.OllamaURL = embeddedAgentOllamaURL
+	}
+	if cmd.Flags().Changed("embedded-agent-host-affinity") {
+		cfg.Server.EmbeddedAgent.HostAffinity = embeddedAgentHostAffinity
+	}
+	if cmd.Flags().Changed("embedded-agent-gpu") {
+		cfg.Server.EmbeddedAgent.GPUAvailable = embeddedAgentGPU
+	}
+	if cmd.Flags().Changed("embedded-agent-data-dir") {
+		cfg.Server.EmbeddedAgent.DataDir = embeddedAgentDataDir
+	} else if cfg.Server.EmbeddedAgent.DataDir == "" {
+		// Default data dir for embedded agent: <storage.data_dir>/embedded-agent
+		cfg.Server.EmbeddedAgent.DataDir = cfg.Storage.DataDir + "/embedded-agent"
 	}
 }
 
@@ -694,6 +761,18 @@ func getSocketDir(socketPath string) string {
 }
 
 func main() {
+	// Wire the process-wide signal handler so SIGINT/SIGTERM purge all
+	// mlocked memory before exit, and arrange for a graceful Purge on
+	// any orderly shutdown path. Mirrors the xkmsd / qrdbd pattern so
+	// every Automate The Things daemon leaves no plaintext key
+	// material resident across exit.
+	secure.CatchInterrupt()
+	defer func() {
+		if err := secure.Purge(); err != nil {
+			fmt.Fprintf(os.Stderr, "quicbaasd: secure.Purge: %v\n", err)
+		}
+	}()
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

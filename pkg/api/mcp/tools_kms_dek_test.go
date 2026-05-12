@@ -379,6 +379,10 @@ func (m *mockKMSServiceWithDEK) SafetyReport(_ context.Context, _ *service.Safet
 	return nil, nil
 }
 
+func (m *mockKMSServiceWithDEK) SetDefaultKey(_ context.Context, _ *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
+	return nil, nil
+}
+
 func (m *mockKMSServiceWithDEK) GetPublicKey(_ context.Context, _ *service.GetPublicKeyRequest) (*service.GetPublicKeyResponse, error) {
 	return nil, nil
 }

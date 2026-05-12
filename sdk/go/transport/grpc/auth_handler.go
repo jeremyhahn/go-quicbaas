@@ -67,12 +67,14 @@ func (h *authHandler) handleRequest(ctx context.Context, svc, method string, req
 // handleLogin handles Login requests.
 func (h *authHandler) handleLogin(ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error) {
 	// Handle the ExtendedLoginRequest type from the service package.
-	var username, password string
+	// TODO: Password-based login was removed from ExtendedLoginRequest; auth must now flow
+	// through WebAuthn or PIV smartcard. We send an empty password until proto LoginRequest
+	// is updated to carry the new credential evidence.
+	var username string
 
 	switch r := req.(type) {
 	case *service.ExtendedLoginRequest:
 		username = r.Username
-		password = r.Password
 	default:
 		return nil, errors.NewInvalidInput("authHandler.handleLogin",
 			"invalid request type, expected *service.ExtendedLoginRequest")
@@ -81,7 +83,7 @@ func (h *authHandler) handleLogin(ctx context.Context, client pb.QuicBaaSClient,
 	// Convert SDK request to protobuf request.
 	pbReq := &pb.LoginRequest{
 		Username: username,
-		Password: password,
+		Password: "",
 	}
 
 	// Call gRPC.

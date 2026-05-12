@@ -149,7 +149,7 @@ func TestE2E_TenantIsolation_MessagingIsolated(t *testing.T) {
 // super admin context is blocked from accessing orchestration data.
 func TestE2E_TenantIsolation_SuperAdminBlocked(t *testing.T) {
 	svc := newAgentService(t)
-	tenantID := "tenant-superadmin-blocked"
+	tenantID := "tenant-platform-admin-blocked"
 
 	// Create a task normally.
 	createTestTask(t, svc, tenantID, "Super admin test task", "security-team")

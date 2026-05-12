@@ -23,6 +23,7 @@ import (
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
@@ -169,7 +170,7 @@ type AuthBackend interface {
 
 	// Authenticate validates credentials and issues tokens.
 	// Returns access and refresh tokens on success.
-	Authenticate(ctx context.Context, username, password string) (*AuthToken, error)
+	Authenticate(ctx context.Context, username string, password *secure.Buffer) (*AuthToken, error)
 
 	// RefreshToken generates new access token from refresh token.
 	// Extends session without requiring credentials.

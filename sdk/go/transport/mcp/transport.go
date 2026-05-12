@@ -319,6 +319,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	isCluster := isMCPClusterService(service)
 	isEmbedding := isMCPEmbeddingService(service)
 	isIAM := isMCPIAMService(service)
+	isOrchestrator := isMCPOrchestratorService(service)
 	var arguments map[string]interface{}
 	var err error
 
@@ -416,6 +417,13 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	if isIAM {
 		ih := newIAMHandler(t)
 		return ih.transformResponse(service, method, result)
+	}
+
+	// Transform response for Orchestrator Inference so the client receives
+	// the strongly-typed *orchestrator.InferenceResponse.
+	if isOrchestrator {
+		oh := newOrchestratorMCPHandler()
+		return oh.transformResponse(method, result)
 	}
 
 	return result, nil

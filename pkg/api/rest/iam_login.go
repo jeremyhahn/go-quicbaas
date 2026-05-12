@@ -26,13 +26,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// LoginRequest represents the request body for password-based login.
-type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-// LoginResponse represents the response from a successful login.
+// LoginResponse represents the response from a successful WebAuthn or PIV login.
 type LoginResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -49,75 +43,6 @@ type RefreshTokenRequest struct {
 // LogoutRequest represents the request body for logout.
 type LogoutRequest struct {
 	AccessToken string `json:"access_token,omitempty"`
-}
-
-// Login handles POST /api/v1/auth/login - Authenticate with username/password.
-// This endpoint is only available when AllowPasswordAuth is enabled.
-func (h *IAMHandler) Login(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Read request body
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "failed to read request body"))
-		return
-	}
-	defer r.Body.Close()
-
-	var req LoginRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "invalid request body"))
-		return
-	}
-
-	// Validate required fields
-	if req.Username == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "username is required"))
-		return
-	}
-	if req.Password == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "password is required"))
-		return
-	}
-
-	// Use service layer for authentication (like gRPC does)
-	serviceReq := &service.LoginRequest{
-		Username: req.Username,
-		Password: req.Password,
-	}
-
-	resp, err := h.server.service.Login(ctx, serviceReq)
-	if err != nil {
-		// Check for configuration error
-		if qbErr, ok := err.(*errors.QBError); ok && qbErr.Code == errors.ErrConfiguration {
-			RespondIAMError(w, r, http.StatusServiceUnavailable,
-				NewIAMAPIError(ErrInternalError, "authentication service not configured"))
-			return
-		}
-		// Don't expose details about why authentication failed
-		RespondIAMError(w, r, http.StatusUnauthorized,
-			NewIAMAPIError(ErrUnauthorized, "invalid credentials"))
-		return
-	}
-
-	// Build response
-	expiresIn := resp.ExpiresAt - time.Now().Unix()
-	if expiresIn < 0 {
-		expiresIn = 0
-	}
-
-	response := &LoginResponse{
-		AccessToken:  resp.AccessToken,
-		RefreshToken: resp.RefreshToken,
-		TokenType:    "Bearer",
-		ExpiresIn:    expiresIn,
-		ExpiresAt:    time.Unix(resp.ExpiresAt, 0).Format(time.RFC3339),
-	}
-	RespondJSON(w, r, http.StatusOK, response)
 }
 
 // RefreshToken handles POST /api/v1/auth/refresh - Refresh access token.

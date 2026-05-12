@@ -115,6 +115,11 @@ type WorkflowDefinition struct {
 	Mode        WorkflowMode     `yaml:"mode" json:"mode"`
 	Agents      []AgentRoleSpec  `yaml:"agents" json:"agents"`
 	Settings    WorkflowSettings `yaml:"settings" json:"settings"`
+
+	// ProjectID scopes this workflow to a specific project within the tenant.
+	// Empty means the workflow is legacy/unscoped — not a "default project".
+	// Keep empty for backward compatibility; use as nil-check for migration.
+	ProjectID string `yaml:"project_id,omitempty" json:"project_id,omitempty"`
 }
 
 // Validate checks that the WorkflowDefinition is well-formed.
@@ -188,6 +193,13 @@ type AgentRoleSpec struct {
 	// runs inside an OCI container with the workspace bind-mounted.
 	Sandboxed      bool   `yaml:"sandboxed,omitempty" json:"sandboxed,omitempty"`             // Run in container
 	ContainerImage string `yaml:"container_image,omitempty" json:"container_image,omitempty"` // Container image name
+
+	// HostAffinity optionally pins this agent role to a specific daemon
+	// hostname. When set, the orchestrator requires an AgentRegistration
+	// with a matching Host and AgentKindDaemon kind before scheduling the
+	// role; if no such registration exists the workflow fails fast.
+	// Leaving this empty allows the orchestrator to pick any eligible host.
+	HostAffinity string `yaml:"host_affinity,omitempty" json:"host_affinity,omitempty"`
 
 	// NumCtx specifies the Ollama context window size for this agent
 	// (e.g., 32768). The model name in the workflow should already

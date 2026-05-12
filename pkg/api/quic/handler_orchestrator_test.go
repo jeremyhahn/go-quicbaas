@@ -42,6 +42,7 @@ type testAgentService struct {
 	listTasksFunc     func(ctx context.Context, tenantID string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error)
 	claimTaskFunc     func(ctx context.Context, tenantID, taskID, agentID string) error
 	completeTaskFunc  func(ctx context.Context, tenantID, taskID string, result *orchestration.TaskResult) error
+	inferFunc         func(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error)
 }
 
 func (m *testAgentService) DiscoverProjects(ctx context.Context, req *orchestration.DiscoverProjectsRequest) (*orchestration.DiscoverProjectsResponse, error) {
@@ -118,6 +119,10 @@ func (m *testAgentService) ListBackends(ctx context.Context) ([]*orchestration.A
 }
 
 func (m *testAgentService) RegisterBackend(ctx context.Context, req *orchestration.RegisterBackendRequest) error {
+	return nil
+}
+
+func (m *testAgentService) RegisterAPIInferenceBackend(_ context.Context, _ *orchestration.RegisterAPIInferenceBackendRequest) error {
 	return nil
 }
 
@@ -224,6 +229,56 @@ func (m *testAgentService) SubscribeJobEvents(ctx context.Context, tenantID, job
 
 func (m *testAgentService) BackendToolGuidance(_ string) string {
 	return ""
+}
+
+func (m *testAgentService) ListBackendModels(_ context.Context, _ string) ([]string, error) {
+	return []string{}, nil
+}
+
+func (m *testAgentService) ListWorkflows(_ context.Context) ([]*orchestration.WorkflowDefinition, error) {
+	return []*orchestration.WorkflowDefinition{}, nil
+}
+
+func (m *testAgentService) GetWorkflow(_ context.Context, name string) (*orchestration.WorkflowDefinition, error) {
+	return nil, &orchestration.WorkflowNotFoundError{Name: name}
+}
+
+func (m *testAgentService) RegisterWorkflow(_ context.Context, def *orchestration.WorkflowDefinition) error {
+	return nil
+}
+
+func (m *testAgentService) UpdateWorkflow(_ context.Context, def *orchestration.WorkflowDefinition) error {
+	return nil
+}
+
+func (m *testAgentService) DeleteWorkflow(_ context.Context, name string) error {
+	return nil
+}
+
+func (m *testAgentService) SpawnChildJob(_ context.Context, _ *orchestration.SpawnChildJobRequest) (*orchestration.SpawnChildJobResponse, error) {
+	return &orchestration.SpawnChildJobResponse{}, nil
+}
+
+func (m *testAgentService) SubmitTaskArtifacts(_ context.Context, _, _ string, _ []orchestration.Artifact) error {
+	return nil
+}
+
+func (m *testAgentService) GetTaskArtifact(_ context.Context, _, _, _ string) (*orchestration.Artifact, error) {
+	return nil, nil
+}
+
+func (m *testAgentService) ListTaskArtifacts(_ context.Context, _, _ string) ([]orchestration.Artifact, error) {
+	return nil, nil
+}
+
+// Infer delegates to inferFunc when set; otherwise returns an empty closed channel.
+func (m *testAgentService) Infer(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+	if m.inferFunc != nil {
+		return m.inferFunc(ctx, req)
+	}
+	ch := make(chan *orchestration.InferChunk)
+	close(ch)
+	return ch, nil
 }
 
 // =============================================================================
@@ -951,5 +1006,152 @@ func TestHandleOrchestratorListSessions_Success(t *testing.T) {
 
 	if resp.Status != StatusOK {
 		t.Errorf("expected StatusOK, got %d: %s", resp.Status, string(resp.Payload))
+	}
+}
+
+// =============================================================================
+// Inference Tests
+// =============================================================================
+
+func TestHandleOrchestratorInference_Success(t *testing.T) {
+	agentSvc := &testAgentService{
+		inferFunc: func(_ context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+			ch := make(chan *orchestration.InferChunk, 1)
+			ch <- &orchestration.InferChunk{
+				Delta:      []orchestration.ContentBlock{{Type: "text", Text: "hello"}},
+				Model:      req.Model,
+				StopReason: "end_turn",
+				Final:      true,
+			}
+			close(ch)
+			return ch, nil
+		},
+	}
+	handler := createOrchestratorHandler(agentSvc)
+
+	payload, err := EncodePayload(&orchestratorInferenceRequest{
+		Backend: "ollama",
+		Model:   "llama3",
+		Prompt:  "say hello",
+	})
+	if err != nil {
+		t.Fatalf("EncodePayload: %v", err)
+	}
+
+	req := buildOrchestratorRequest(SubOpOrchestratorInference, payload)
+	resp := handler.HandleRequest(context.Background(), req)
+
+	if resp.Status != StatusOK {
+		t.Errorf("expected StatusOK, got %d: %s", resp.Status, string(resp.Payload))
+	}
+
+	var result orchestration.InferResponse
+	if err := DecodePayload(resp.Payload, &result); err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	if result.StopReason != "end_turn" {
+		t.Errorf("expected stop_reason=end_turn, got %q", result.StopReason)
+	}
+	if len(result.Content) == 0 || result.Content[0].Text != "hello" {
+		t.Errorf("unexpected content: %+v", result.Content)
+	}
+}
+
+func TestHandleOrchestratorInference_InvalidPayload(t *testing.T) {
+	agentSvc := &testAgentService{}
+	handler := createOrchestratorHandler(agentSvc)
+
+	// Build a request with a garbage payload (not valid msgpack).
+	fullPayload := []byte{SubOpOrchestratorInference, 0xFF, 0xFE}
+	req := &Request{Opcode: OpOrchestrator, Payload: fullPayload}
+	resp := handler.HandleRequest(context.Background(), req)
+
+	if resp.Status == StatusOK {
+		t.Error("expected error for invalid payload")
+	}
+}
+
+func TestHandleOrchestratorInference_NoAgentService(t *testing.T) {
+	// Handler with no agent service.
+	svc := &mockService{}
+	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	handler := NewHandler(svc, nil, nil, nil, nil, log)
+
+	payload, err := EncodePayload(&orchestratorInferenceRequest{
+		Backend: "ollama",
+		Prompt:  "hi",
+	})
+	if err != nil {
+		t.Fatalf("EncodePayload: %v", err)
+	}
+
+	req := buildOrchestratorRequest(SubOpOrchestratorInference, payload)
+	resp := handler.HandleRequest(context.Background(), req)
+
+	if resp.Status == StatusOK {
+		t.Error("expected error when agent service is nil")
+	}
+}
+
+func TestHandleOrchestratorInference_InferError(t *testing.T) {
+	agentSvc := &testAgentService{
+		inferFunc: func(_ context.Context, _ *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+			return nil, &orchestration.InferUnsupportedError{Backend: "acp"}
+		},
+	}
+	handler := createOrchestratorHandler(agentSvc)
+
+	payload, err := EncodePayload(&orchestratorInferenceRequest{
+		Backend: "acp",
+		Prompt:  "hi",
+	})
+	if err != nil {
+		t.Fatalf("EncodePayload: %v", err)
+	}
+
+	req := buildOrchestratorRequest(SubOpOrchestratorInference, payload)
+	resp := handler.HandleRequest(context.Background(), req)
+
+	if resp.Status == StatusOK {
+		t.Error("expected error for unsupported backend")
+	}
+}
+
+func TestHandleOrchestratorInference_WithHostAffinity(t *testing.T) {
+	var capturedCtx context.Context
+	agentSvc := &testAgentService{
+		inferFunc: func(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+			capturedCtx = ctx
+			ch := make(chan *orchestration.InferChunk, 1)
+			ch <- &orchestration.InferChunk{
+				Delta: []orchestration.ContentBlock{{Type: "text", Text: "ok"}},
+				Final: true,
+			}
+			close(ch)
+			return ch, nil
+		},
+	}
+	handler := createOrchestratorHandler(agentSvc)
+
+	payload, err := EncodePayload(&orchestratorInferenceRequest{
+		Backend:      "ollama",
+		Prompt:       "hi",
+		HostAffinity: "node-1",
+	})
+	if err != nil {
+		t.Fatalf("EncodePayload: %v", err)
+	}
+
+	req := buildOrchestratorRequest(SubOpOrchestratorInference, payload)
+	resp := handler.HandleRequest(context.Background(), req)
+
+	if resp.Status != StatusOK {
+		t.Errorf("expected StatusOK, got %d: %s", resp.Status, string(resp.Payload))
+	}
+
+	// The host affinity should have been set in the context.
+	affinity := orchestration.HostAffinityFromContext(capturedCtx)
+	if affinity != "node-1" {
+		t.Errorf("expected host affinity=node-1, got %q", affinity)
 	}
 }

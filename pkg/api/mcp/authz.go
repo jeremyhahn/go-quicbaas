@@ -168,6 +168,19 @@ var toolResourceMapping = map[string]resourceAction{
 	"quicbaas_orchestrator_decompose": {interfaces.ResourceOrchestrator, interfaces.ActionWrite},
 	"quicbaas_orchestrator_broadcast": {interfaces.ResourceOrchestrator, interfaces.ActionWrite},
 	"quicbaas_orchestrator_cache_put": {interfaces.ResourceOrchestrator, interfaces.ActionWrite},
+
+	// Project Operations - Read
+	"project_create":       {interfaces.ResourceOrchestrator, interfaces.ActionWrite},
+	"project_get":          {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"project_list":         {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"project_update":       {interfaces.ResourceOrchestrator, interfaces.ActionWrite},
+	"project_delete":       {interfaces.ResourceOrchestrator, interfaces.ActionAdmin},
+	"project_grant_agent":  {interfaces.ResourceOrchestrator, interfaces.ActionAdmin},
+	"project_revoke_agent": {interfaces.ResourceOrchestrator, interfaces.ActionAdmin},
+
+	// Agent Admin Operations - require admin
+	"agent_disable": {interfaces.ResourceOrchestrator, interfaces.ActionAdmin},
+	"agent_enable":  {interfaces.ResourceOrchestrator, interfaces.ActionAdmin},
 }
 
 // toolPrefixMapping contains prefix-based mappings for tool groups.

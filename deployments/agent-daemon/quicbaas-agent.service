@@ -1,0 +1,109 @@
+# QuicBaaS Agent Daemon systemd Unit
+#
+# Install to /etc/systemd/system/quicbaas-agent.service
+#
+# Setup steps:
+#   1. Create user:
+#      sudo useradd -r -s /bin/false -d /var/lib/quicbaas-agent -m quicbaas-agent
+#   2. Copy unit file:
+#      sudo cp quicbaas-agent.service /etc/systemd/system/
+#   3. Copy config:
+#      sudo mkdir -p /etc/quicbaas
+#      sudo cp sample-config.yaml /etc/quicbaas/agent.yaml
+#      (edit /etc/quicbaas/agent.yaml with enrollment token, central addr, etc.)
+#   4. Enable and start:
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable quicbaas-agent
+#      sudo systemctl start quicbaas-agent
+#   5. Verify:
+#      sudo systemctl status quicbaas-agent
+#      sudo journalctl -u quicbaas-agent -f
+
+[Unit]
+Description=QuicBaaS Remote Agent Daemon
+Documentation=https://quicbaas.dev/docs/agents/daemon
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quicbaas-agent
+Group=quicbaas-agent
+
+# Work directory for session state, credentials, logs
+WorkingDirectory=/var/lib/quicbaas-agent
+
+# SystemD creates and owns this directory with mode 0700
+StateDirectory=quicbaas-agent
+
+# Load configuration from environment file
+# File format: KEY=value (one per line)
+# Example:
+#   QUICBAAS_CENTRAL=https://198.51.100.51:8443
+#   QUICBAAS_TENANT=acme
+#   QUICBAAS_ENROLLMENT_TOKEN=eyJhbGciOiJFUzI1NiI...
+#   QUICBAAS_BIND_ADDR=0.0.0.0:9091
+#   QUICBAAS_SANDBOX_POLICY=required
+#   QUICBAAS_CONTAINER_RUNTIME=auto
+#   QUICBAAS_AUTO_PULL=true
+#   QUICBAAS_HEARTBEAT_INTERVAL=30s
+EnvironmentFile=/etc/quicbaas/agent.env
+
+# Daemon command line: use env vars for config
+# (env var interpolation requires shell, so we use sh -c)
+ExecStart=/bin/sh -c '/usr/local/bin/quicbaas agent serve \
+  --central "${QUICBAAS_CENTRAL}" \
+  --tenant "${QUICBAAS_TENANT}" \
+  --bind "${QUICBAAS_BIND_ADDR:-0.0.0.0:9091}" \
+  --sandbox-policy "${QUICBAAS_SANDBOX_POLICY:-required}" \
+  --container-runtime "${QUICBAAS_CONTAINER_RUNTIME:-auto}" \
+  --work-dir /var/lib/quicbaas-agent \
+  ${QUICBAAS_ENROLLMENT_TOKEN:+--enrollment-token "${QUICBAAS_ENROLLMENT_TOKEN}"} \
+  ${QUICBAAS_DEVICE_CERT:+--device-cert "${QUICBAAS_DEVICE_CERT}"} \
+  ${QUICBAAS_AUTO_PULL:+--auto-pull} \
+  ${QUICBAAS_IMAGE_MAP:+--image-map "${QUICBAAS_IMAGE_MAP}"} \
+  ${QUICBAAS_HEARTBEAT_INTERVAL:+--heartbeat-interval "${QUICBAAS_HEARTBEAT_INTERVAL}"}'
+
+# Restart policy: automatic restart on failure (not after clean exit)
+Restart=on-failure
+RestartSec=10s
+StartLimitInterval=60s
+StartLimitBurst=5
+
+# Graceful shutdown: give sessions 30 seconds to drain
+TimeoutStopSec=60s
+
+# Standard output and error to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quicbaas-agent
+
+# Security hardening
+NoNewPrivileges=yes
+
+# Mount /var/run/docker.sock (for nested container spawn)
+# CAUTION: This grants the daemon permission to spawn containers.
+# Only use with trusted host configurations.
+BindPaths=/var/run/docker.sock:/var/run/docker.sock:rw
+
+# Filesystem: strict read-only except state directory
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/quicbaas-agent
+
+# Restrict network to localhost and specified central (not enforced by systemd)
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+# Lock down capabilities: drop all, grant none
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Memory and CPU limits (optional; adjust per host specs)
+# MemoryMax=1G
+# CPUQuota=100%
+
+[Install]
+WantedBy=multi-user.target

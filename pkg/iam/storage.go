@@ -17,6 +17,7 @@ package iam
 
 import (
 	"context"
+	"time"
 )
 
 // TenantStorage defines the interface for tenant persistence operations.
@@ -81,6 +82,10 @@ type UserStorage interface {
 
 	// GetUserByEmail retrieves a user by email (global lookup).
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
+
+	// GetUserByPIVThumbprint retrieves a user by their registered PIV certificate
+	// SHA-256 thumbprint. Returns ErrNotFound when no user owns that thumbprint.
+	GetUserByPIVThumbprint(ctx context.Context, thumbprint string) (*User, error)
 
 	// UpdateUser updates an existing user.
 	UpdateUser(ctx context.Context, user *User) error
@@ -288,6 +293,17 @@ type CreateUserOptions struct {
 
 	// Enabled indicates if the user is enabled
 	Enabled bool
+
+	// AuthMethods lists the allowed authentication methods (e.g. "webauthn", "piv").
+	// Defaults to ["webauthn"] when empty.
+	AuthMethods []string
+
+	// Roles is the list of role IDs to assign to the new user.
+	Roles []string
+
+	// InviteExpiry is the duration until the invite token expires.
+	// Defaults to 24 hours when zero.
+	InviteExpiry time.Duration
 }
 
 // UpdateUserOptions contains options for updating a user.
@@ -312,6 +328,21 @@ type UpdateUserOptions struct {
 
 	// Groups is the list of group IDs the user belongs to
 	Groups *[]string
+
+	// State, when non-empty, overrides the user lifecycle state.
+	State *UserState
+
+	// AuthMethods, when non-nil, replaces the allowed authentication methods.
+	AuthMethods *[]string
+
+	// PIVCertThumbprint, when non-nil, sets or clears the PIV certificate thumbprint.
+	PIVCertThumbprint *string
+
+	// InviteToken, when non-nil, sets or clears the pending invite token.
+	InviteToken *string
+
+	// InviteExpiresAt, when non-nil, sets or clears the invite expiry timestamp.
+	InviteExpiresAt **time.Time
 }
 
 // CreateGroupOptions contains options for creating a group.

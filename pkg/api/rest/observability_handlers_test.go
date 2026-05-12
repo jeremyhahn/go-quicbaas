@@ -105,8 +105,9 @@ func TestPhase4HandlerDeleteBackup(t *testing.T) {
 }
 
 // TestPhase4HandlerLogin tests the Phase4Handler.HandleLogin handler.
+// Password-based login is removed in OAuth 2.1; the handler returns 410 Gone for all requests.
 func TestPhase4HandlerLogin(t *testing.T) {
-	t.Run("wrong method returns 405", func(t *testing.T) {
+	t.Run("GET returns 410 Gone", func(t *testing.T) {
 		handler := &Phase4Handler{}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/login", nil)
@@ -114,10 +115,10 @@ func TestPhase4HandlerLogin(t *testing.T) {
 
 		handler.HandleLogin(w, req)
 
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Equal(t, http.StatusGone, w.Code)
 	})
 
-	t.Run("invalid JSON body returns 400", func(t *testing.T) {
+	t.Run("POST returns 410 Gone", func(t *testing.T) {
 		handler := &Phase4Handler{}
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{invalid"))
@@ -126,7 +127,7 @@ func TestPhase4HandlerLogin(t *testing.T) {
 
 		handler.HandleLogin(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, http.StatusGone, w.Code)
 	})
 }
 

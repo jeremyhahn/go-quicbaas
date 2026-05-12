@@ -1619,27 +1619,8 @@ func (h *Handler) handleVerifyBackup(ctx context.Context, req *Request) *Respons
 // Auth Operations Handlers
 // =============================================================================
 
-func (h *Handler) handleLogin(ctx context.Context, req *Request) *Response {
-	if h.service == nil {
-		return h.errorResponse(api.NewServiceUnavailableError("QuicBaaS"))
-	}
-
-	var loginReq service.LoginRequest
-	if err := DecodePayload(req.Payload, &loginReq); err != nil {
-		return h.errorResponse(err)
-	}
-
-	resp, err := h.service.Login(ctx, &loginReq)
-	if err != nil {
-		return h.errorResponse(err)
-	}
-
-	payload, err := EncodePayload(resp)
-	if err != nil {
-		return h.errorResponse(err)
-	}
-
-	return &Response{Status: StatusOK, Payload: payload}
+func (h *Handler) handleLogin(_ context.Context, _ *Request) *Response {
+	return h.errorResponse(api.NewNotImplementedError("password-based login; use WebAuthn or PIV authentication"))
 }
 
 func (h *Handler) handleLogout(ctx context.Context, req *Request) *Response {

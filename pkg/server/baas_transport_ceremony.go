@@ -139,6 +139,31 @@ func (t *baasTransport) CeremonySignCSR(ctx context.Context, req *transport.Sign
 	}, nil
 }
 
+// CeremonyEnrollExternalOfficer enrols an officer whose key material lives
+// outside go-qrdb by delegating to the injected BasCeremonyService. Either
+// CertPEM (validated against the configured CA pools) or PubKeyPEM
+// (admin-asserted trust) MUST be supplied, but not both. Returns
+// BaasTransportNotSupportedError when no service has been configured.
+func (t *baasTransport) CeremonyEnrollExternalOfficer(ctx context.Context, req *transport.EnrollExternalOfficerRequest) (*transport.EnrollExternalOfficerResponse, error) {
+	if t.ceremonySvc == nil {
+		return nil, &BaasTransportNotSupportedError{Operation: "CeremonyEnrollExternalOfficer"}
+	}
+	result, err := t.ceremonySvc.CeremonyEnrollExternalOfficer(ctx, &qrdbsdk.CeremonyEnrollExternalOfficerRequest{
+		Username:   req.Username,
+		CertPEM:    req.CertPEM,
+		PubKeyPEM:  req.PubKeyPEM,
+		ShareIndex: req.ShareIndex,
+		AuthFactor: req.AuthFactor,
+		ShareBytes: req.ShareBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.EnrollExternalOfficerResponse{
+		SealedShare: result.SealedShare,
+	}, nil
+}
+
 // ---------------------------------------------------------------------------
 // transport.CredentialClient — delegates to BaasCredentialService when available
 // ---------------------------------------------------------------------------

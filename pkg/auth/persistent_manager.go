@@ -18,6 +18,8 @@ import (
 	"context"
 	"time"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -142,7 +144,13 @@ func NewPersistentAuthManager(cfg *AuthConfig, storage interfaces.Storage, log *
 // given username, the account is locked for LoginLockoutDuration. The lockout
 // automatically expires after the duration elapses. A successful login resets
 // the failure counter.
-func (pam *PersistentAuthManager) Authenticate(ctx context.Context, username, password string) (*Token, error) {
+func (pam *PersistentAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (*Token, error) {
+	defer func() {
+		if password != nil {
+			password.Destroy()
+		}
+	}()
+
 	if !pam.config.Enabled {
 		return nil, api.NewAuthenticationDisabledError("auth.Authenticate")
 	}
@@ -410,8 +418,8 @@ func (pam *PersistentAuthManager) GetTokenStore() TokenStoreInterface {
 
 // validateCredentials validates user credentials for password-based authentication.
 // This method is only called when AllowPasswordAuth is enabled.
-func (pam *PersistentAuthManager) validateCredentials(ctx context.Context, username, password string) (*User, error) {
-	if username == "" || password == "" {
+func (pam *PersistentAuthManager) validateCredentials(ctx context.Context, username string, password *secure.Buffer) (*User, error) {
+	if username == "" || password == nil || password.Size() == 0 {
 		return nil, api.NewCredentialsRequiredError("auth.validateCredentials")
 	}
 
@@ -424,7 +432,7 @@ func (pam *PersistentAuthManager) validateCredentials(ctx context.Context, usern
 		return nil, api.NewNoPasswordSetError("auth.validateCredentials")
 	}
 
-	matched, rehashed := verifyPassword(user.password, password)
+	matched, rehashed := verifyPasswordBuffer(user.password, password)
 	if !matched {
 		return nil, api.NewInvalidCredentialsError("auth.validateCredentials")
 	}

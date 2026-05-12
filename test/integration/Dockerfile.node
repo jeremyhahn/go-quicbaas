@@ -1,17 +1,16 @@
 # QuicBaaS Integration Test Node Dockerfile
-# Used for running QuicBaaS cluster nodes in integration tests
+# Used for running QuicBaaS cluster nodes in integration tests.
 #
-# This Dockerfile provides a consistent node environment based on the
-# devcontainer tooling. Each node runs the quicbaasd server with
-# Raft consensus enabled.
+# Build model: a Go workspace (go.work) is reconstructed inside the image
+# from sibling repos supplied via Docker BuildKit's `workspace` named
+# context (see docker-compose.integration.yml). go.work is then the single
+# source of truth for cross-module resolution — same model as local dev.
+# No `.deps/` staging or replace-directive rewriting required.
 
-# Build arguments
-# BUILD_TAGS: Feature flags (iam, etc.) + codec tags (codec_json, codec_msgpack, etc.)
-# Default includes all codecs for full integration test coverage
 ARG BUILD_TAGS="local quic raft rest rag timeseries vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio"
 
 # ============================================================================
-# Stage 1: Build binaries
+# Stage 1: Build binaries inside a Go workspace mirroring the host layout.
 # ============================================================================
 FROM golang:1.26-alpine AS builder
 
@@ -24,42 +23,75 @@ RUN apk add --no-cache \
     bash \
     ca-certificates
 
-WORKDIR /build
+WORKDIR /workspace
 
-# Copy module files first for caching
-COPY go.mod go.sum ./
-COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+# Pull each sibling go-quicbaas needs from the workspace named context.
+# The host go.work also references unrelated Layer 0 modules (go-frost,
+# go-luks2, go-trusted-platform — the latter is 21GB) that we deliberately
+# do not bring into Docker; the pruned go.work below covers what's used.
+COPY --from=workspace go-libsignal  ./go-libsignal
+COPY --from=workspace go-objstore   ./go-objstore
+COPY --from=workspace go-qrdb       ./go-qrdb
+COPY --from=workspace go-quicraft   ./go-quicraft
+COPY --from=workspace go-signal     ./go-signal
+COPY --from=workspace go-truststrap ./go-truststrap
+COPY --from=workspace go-xkms       ./go-xkms
 
-# Copy local dependencies (staged by Makefile into .deps/)
-COPY .deps/ /deps/
+# go-quicbaas itself comes from the default context (project root).
+COPY . ./go-quicbaas
 
-# Rewrite local replace directives to point to staged deps
-RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod
+# Pruned go.work — same shape as /mnt/vm-host-1/go.work on the host,
+# trimmed to the modules we actually copy. Replace directives mirror the
+# workspace-only v0.0.0 entries from the host file. Keeping go.work as the
+# single source of truth means individual go.mod files do not need any
+# Docker-specific replace shimming.
+RUN { \
+        echo 'go 1.26.3'; \
+        echo ''; \
+        echo 'use ('; \
+        echo '	./go-libsignal'; \
+        echo '	./go-objstore'; \
+        echo '	./go-objstore/api/sdks/go'; \
+        echo '	./go-qrdb'; \
+        echo '	./go-qrdb/sdk/go'; \
+        echo '	./go-quicbaas'; \
+        echo '	./go-quicbaas/sdk/go'; \
+        echo '	./go-quicraft'; \
+        echo '	./go-signal'; \
+        echo '	./go-xkms'; \
+        echo '	./go-xkms/sdk/go'; \
+        echo '	./go-xkms/xkey'; \
+        echo ')'; \
+        echo ''; \
+        echo 'replace ('; \
+        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
+        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
+        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
+        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
+        echo ')'; \
+    } > go.work
 
-# Download remaining dependencies
-RUN rm -f go.sum sdk/go/go.sum && GONOSUMCHECK='*' GONOSUMDB='*' go mod download
+WORKDIR /workspace/go-quicbaas
 
-# Copy source code
-COPY . .
+# Drop go.sum: workspace `use` directives resolve sibling modules locally,
+# but go.sum still gets consulted and may be out of sync with workspace
+# versions (e.g. an in-flight sibling change). Letting Go regenerate sums
+# under workspace mode is the correct behavior here.
+RUN rm -f go.sum sdk/go/go.sum
 
-# Rewrite replace directives again (COPY . . overwrites go.mod)
-RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod && \
-    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod
-
-# Build binaries
-RUN CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd && \
-    CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
+# Build node + CLI. go.work at /workspace/go.work resolves every sibling.
+RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    go build -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd && \
+    CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    go build -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
 
 # ============================================================================
 # Stage 2: Minimal runtime for cluster nodes
@@ -70,8 +102,6 @@ LABEL maintainer="QuicBaaS Team"
 LABEL description="QuicBaaS integration test node"
 LABEL version="1.0.0"
 
-# Install minimal runtime dependencies
-# netcat-openbsd is needed for port health checks from Makefile
 RUN apk add --no-cache \
     bash \
     curl \
@@ -79,22 +109,18 @@ RUN apk add --no-cache \
     tzdata \
     netcat-openbsd
 
-# Create quicbaas user
 RUN addgroup -g 1000 quicbaas && \
     adduser -D -u 1000 -G quicbaas -s /bin/bash quicbaas
 
-# Create required directories
 RUN mkdir -p /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas && \
     chown -R quicbaas:quicbaas /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas
 
-# Copy built binaries
-COPY --from=builder /build/bin/quicbaasd /usr/local/bin/quicbaasd
-COPY --from=builder /build/bin/quicbaas /usr/local/bin/quicbaas
+# Copy built binaries from the workspace builder stage
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaas  /usr/local/bin/quicbaas
 
-# Make binaries executable
 RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas
 
-# Environment variables
 ENV QUICBAAS_LOG_LEVEL=info \
     QUICBAAS_LOG_FORMAT=json \
     QUICBAAS_DATA_DIR=/data \
@@ -108,12 +134,9 @@ ENV QUICBAAS_LOG_LEVEL=info \
 # 63001-63010: Raft cluster communication
 EXPOSE 8080 9090 50051 4433 63001-63010
 
-# Data volume
 VOLUME ["/data", "/var/log/quicbaas"]
 
-# Health check
 HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=10 \
     CMD curl -sf http://localhost:8080/api/v1/health/live >/dev/null || exit 1
 
-# Default command
 CMD ["/usr/local/bin/quicbaasd", "node"]

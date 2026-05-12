@@ -53,6 +53,46 @@ service OrchestratorService {
     rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
     rpc RemoveAgent(RemoveAgentRequest) returns (RemoveAgentResponse);
     rpc AgentHeartbeat(AgentHeartbeatRequest) returns (AgentHeartbeatResponse);
+
+    // Session event ingest (Phase 3). Daemon-side agents open a bidi stream
+    // and push each session event as PushEventRequest; the control plane acks
+    // with EventAck carrying the accepted sequence. At-least-once delivery:
+    // daemon re-sends events the control plane hasn't ack'd after reconnect.
+    rpc PushEvents(stream PushEventRequest) returns (stream PushEventAck);
+
+    // Session event subscription (Phase 4). Operators attach to a session
+    // to see prompts, assistant output, tool calls, file ops in real time.
+    // When from_sequence > 0 the stream begins with the historical replay
+    // from that sequence, then transitions to live tail when follow is true.
+    rpc SubscribeSessionEvents(SubscribeSessionRequest) returns (stream SessionEventEnvelope);
+
+    // Inference runs a stateless prompt against a named backend without
+    // requiring a prior session. The response is aggregated and returned
+    // as a single InferenceResponse. For streaming use InferenceStream.
+    rpc Inference(InferenceRequest) returns (InferenceResponse);
+
+    // InferenceStream runs a stateless prompt against a named backend and
+    // streams InferenceChunk frames until the backend signals completion.
+    // The final frame carries final=true and the aggregated stop_reason.
+    rpc InferenceStream(InferenceRequest) returns (stream InferenceChunk);
+
+    // SpawnChildJob fans out a child job from a parent job's lead agent.
+    // The calling agent MUST be the registered lead of parent_job_id; any
+    // other caller receives PERMISSION_DENIED (not_lead_of_parent).
+    rpc SpawnChildJob(SpawnChildJobRequest) returns (SpawnChildJobResponse);
+
+    // SubmitTaskArtifacts attaches typed artifacts to a completed task.
+    // Artifacts exceeding the server-side InlineLimit are stored in the
+    // QuicBaaS KV store; the task record carries only the Ref.
+    rpc SubmitTaskArtifacts(SubmitTaskArtifactsRequest) returns (SubmitTaskArtifactsResponse);
+
+    // ListTaskArtifacts returns artifact metadata for a task without resolving
+    // large Refs to their content.
+    rpc ListTaskArtifacts(ListTaskArtifactsRequest) returns (ListTaskArtifactsResponse);
+
+    // GetTaskArtifact retrieves a single named artifact, resolving kv_key Refs
+    // to their full byte content.
+    rpc GetTaskArtifact(GetTaskArtifactRequest) returns (GetTaskArtifactResponse);
 }
 
 // =============================================================================
@@ -84,6 +124,18 @@ enum SessionState {
     SESSION_STATE_IDLE = 2;
     SESSION_STATE_CLOSED = 3;
     SESSION_STATE_ERROR = 4;
+}
+
+// SandboxMode selects the execution sandboxing strategy for an agent
+// session. The server resolves SANDBOX_MODE_DEFAULT per its active
+// SandboxPolicy (and any tenant override). SANDBOX_MODE_REQUIRED forces
+// container execution; SANDBOX_MODE_NONE forces raw exec. Both are
+// subject to the server's policy — REQUIRED is rejected if no container
+// runtime is available; NONE is rejected if the policy forbids raw exec.
+enum SandboxMode {
+    SANDBOX_MODE_DEFAULT = 0;
+    SANDBOX_MODE_REQUIRED = 1;
+    SANDBOX_MODE_NONE = 2;
 }
 
 // =============================================================================
@@ -144,6 +196,9 @@ message Task {
     google.protobuf.Timestamp claimed_at = 15;
     google.protobuf.Timestamp completed_at = 16;
     uint64 version = 17;
+    bool auto_spawn = 18;
+    string spawned_job_id = 19;
+    google.protobuf.Timestamp spawned_at = 20;
 }
 
 // TaskResult contains the output of a completed task.
@@ -251,10 +306,13 @@ message SpawnSessionRequest {
     repeated MCPServerConfig mcp_servers = 5;
     map<string, string> env = 6;
     string work_dir = 7;
-    bool sandboxed = 8;
+    bool sandboxed = 8;                // deprecated: use sandbox_mode
     string container_image = 9;
     ContainerSpec container_config = 10;
     string tenant_id = 11;
+    SandboxMode sandbox_mode = 12;
+    string host_affinity = 13;         // pin to a specific agent daemon (Name or Host)
+    bool host_affinity_strict = 14;    // when true, fail with NoMatchingAgentError if host_affinity is offline (overrides operator soft default)
 }
 
 message SpawnSessionResponse {
@@ -334,6 +392,10 @@ message CreateTaskRequest {
     string assigned_to = 5;
     repeated string dependencies = 6;
     map<string, string> metadata = 7;
+    bool auto_spawn = 8;
+    string backend = 9;
+    bool gpu_required = 10;
+    string project_id = 11;
 }
 
 message CreateTaskResponse {
@@ -421,6 +483,7 @@ message OrchestratorStartJobRequest {
     string poll_interval = 7;
     string workflow_name = 8;
     string workflow_file = 9;
+    string lead_agent_id = 10;
 }
 
 // OrchestratorStartJobResponse contains the result of starting an orchestration job.
@@ -608,4 +671,229 @@ message AgentHeartbeatResponse {
     string agent_id = 1;
     bool acknowledged = 2;
     google.protobuf.Timestamp timestamp = 3;
+}
+
+// =============================================================================
+// Session Event Stream (Phase 3+4)
+// =============================================================================
+
+// PushEventRequest carries one event from a daemon to the control plane. The
+// payload is opaque JSON (encoded pkg/orchestration.SessionEvent) so the
+// full union of event kinds passes through without requiring a proto
+// oneof — trading a small wire overhead for a stable surface as new event
+// kinds are added.
+message PushEventRequest {
+    string session_id = 1;
+    string tenant_id = 2;
+    uint64 sequence = 3;
+    bytes payload_json = 4;
+    google.protobuf.Timestamp emitted_at = 5;
+}
+
+// PushEventAck is returned per accepted event. sequence echoes the event
+// sequence; status is one of "ok", "gap" (caller must re-send from
+// accepted_seq+1), "rejected" (permanent failure, operator must
+// investigate).
+message PushEventAck {
+    string session_id = 1;
+    uint64 sequence = 2;
+    string status = 3;
+    string detail = 4;
+    uint64 accepted_seq = 5;
+}
+
+// SubscribeSessionRequest opens an event stream to a single session. When
+// from_sequence > 0 the stream begins with the historical replay starting
+// at that sequence and transitions to live tail once history is drained.
+// When follow is false, the stream closes once history is exhausted.
+message SubscribeSessionRequest {
+    string tenant_id = 1;
+    string session_id = 2;
+    uint64 from_sequence = 3;
+    bool follow = 4;
+}
+
+// SessionEventEnvelope delivers one event + metadata over the subscribe
+// stream. Same opaque-JSON approach as PushEventRequest for the payload.
+message SessionEventEnvelope {
+    string session_id = 1;
+    string tenant_id = 2;
+    uint64 sequence = 3;
+    bytes payload_json = 4;
+    google.protobuf.Timestamp timestamp = 5;
+    bool from_replay = 6; // true while draining history, false once tailing live
+}
+
+// =============================================================================
+// Inference Requests and Responses (CLIENT → CENTRAL leg)
+// =============================================================================
+
+// InferenceRequest carries the parameters for a stateless inference call
+// from an operator client to the control plane quicbaasd. The control plane routes the
+// call to a fleet-resident daemon that hosts the named backend.
+message InferenceRequest {
+    // backend is the named backend to route to (e.g., "ollama"). Required.
+    string backend = 1;
+
+    // model is the model to use. When empty the backend's default is used.
+    string model = 2;
+
+    // prompt is the user prompt text. Required.
+    string prompt = 3;
+
+    // system_prompt is an optional system message prepended to the context.
+    string system_prompt = 4;
+
+    // host_affinity pins the call to a specific agent daemon by Name or Host.
+    string host_affinity = 5;
+
+    // tenant_id is the calling tenant for multi-tenant enforcement.
+    string tenant_id = 6;
+
+    // metadata is an opaque string-to-string map forwarded to the backend.
+    map<string, string> metadata = 7;
+
+    // gpu_required restricts dispatch to daemons that advertise "gpu" in
+    // their Capabilities slice.
+    bool gpu_required = 8;
+
+    // host_affinity_strict, when true, forces hard host_affinity semantics for
+    // this request: if the requested host is offline the request fails with
+    // NoMatchingAgentError instead of falling back to any available daemon.
+    // Overrides the operator-level orchestration.host_affinity.mode default.
+    bool host_affinity_strict = 9;
+}
+
+// InferenceResponse is the aggregated response returned by the unary
+// Inference RPC. Content holds all content blocks from the backend.
+message InferenceResponse {
+    // content holds the full concatenated content blocks from all chunks.
+    repeated ContentBlock content = 1;
+
+    // model is the model that produced the response.
+    string model = 2;
+
+    // stop_reason is the reason the model stopped generating.
+    string stop_reason = 3;
+}
+
+// InferenceChunk is one delta frame from the InferenceStream server-streaming
+// RPC. Callers accumulate blocks across frames; the final frame has final=true.
+message InferenceChunk {
+    // delta carries the content blocks emitted by the backend for this frame.
+    repeated ContentBlock delta = 1;
+
+    // model is the model that produced this frame; set on the final frame.
+    string model = 2;
+
+    // stop_reason is set on the final frame. Empty on intermediate frames.
+    string stop_reason = 3;
+
+    // final is true on the last frame. Callers must not request further frames
+    // after receiving a frame with final=true.
+    bool final = 4;
+}
+
+// =============================================================================
+// Sub-job Spawning Messages
+// =============================================================================
+
+// TaskSpec is an inline task definition supplied when spawning a child job
+// without an existing workflow definition.
+message TaskSpec {
+    string title = 1;
+    string description = 2;
+    repeated string dependencies = 3;
+    repeated string required_capabilities = 4;
+}
+
+// SpawnChildJobRequest fans out a child job from the calling lead agent.
+message SpawnChildJobRequest {
+    // parent_job_id is the parent whose lead agent is spawning this child.
+    string parent_job_id = 1;
+
+    // tenant_id scopes the operation (required).
+    string tenant_id = 2;
+
+    // workflow_id optionally names an existing workflow definition.
+    string workflow_id = 3;
+
+    // project_id scopes the child job to a registered project.
+    string project_id = 4;
+
+    // tasks provides inline task specs when no workflow is referenced.
+    repeated TaskSpec tasks = 5;
+
+    // host_affinity pins the child to a specific agent daemon.
+    string host_affinity = 6;
+
+    // gpu_required restricts dispatch to GPU-capable daemons.
+    bool gpu_required = 7;
+
+    // host_affinity_strict treats host_affinity as a hard constraint.
+    bool host_affinity_strict = 8;
+}
+
+// SpawnChildJobResponse is returned after the child job has been accepted.
+message SpawnChildJobResponse {
+    string child_job_id = 1;
+}
+
+// =============================================================================
+// Artifact Messages
+// =============================================================================
+
+// ArtifactRef locates large or external artifact content.
+message ArtifactRef {
+    string agent_id = 1;
+    string path = 2;
+    string sha = 3;
+    string branch = 4;
+}
+
+// Artifact is a typed, named task output or input.
+message Artifact {
+    string kind = 1;
+    string name = 2;
+    string mime_type = 3;
+    int64 size = 4;
+    bytes content = 5;
+    ArtifactRef ref = 6;
+    map<string, string> metadata = 7;
+}
+
+// SubmitTaskArtifacts
+message SubmitTaskArtifactsRequest {
+    string tenant_id = 1;
+    string task_id = 2;
+    repeated Artifact artifacts = 3;
+}
+
+message SubmitTaskArtifactsResponse {
+    string task_id = 1;
+    int32 stored = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// ListTaskArtifacts
+message ListTaskArtifactsRequest {
+    string tenant_id = 1;
+    string task_id = 2;
+}
+
+message ListTaskArtifactsResponse {
+    repeated Artifact artifacts = 1;
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// GetTaskArtifact
+message GetTaskArtifactRequest {
+    string tenant_id = 1;
+    string task_id = 2;
+    string name = 3;
+}
+
+message GetTaskArtifactResponse {
+    Artifact artifact = 1;
+    google.protobuf.Timestamp timestamp = 2;
 }

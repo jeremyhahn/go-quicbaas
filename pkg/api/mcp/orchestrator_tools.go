@@ -489,6 +489,120 @@ func (r *ToolRegistry) registerAgentTools() {
 			"properties": map[string]interface{}{},
 		},
 	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_task_create",
+		Description: "Create an orchestration task, optionally dispatching it immediately as a one-shot job on the best-matching agent",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"subject": map[string]interface{}{
+					"type":        "string",
+					"description": "Short description of the work to be done. Required.",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Detailed task description. Optional.",
+				},
+				"team_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Team to assign the task to. Optional.",
+				},
+				"assigned_to": map[string]interface{}{
+					"type":        "string",
+					"description": "Agent ID to assign the task to. Optional.",
+				},
+				"auto_spawn": map[string]interface{}{
+					"type":        "boolean",
+					"description": "When true, immediately dispatch a one-shot job on the best-matching agent. Optional.",
+				},
+				"backend": map[string]interface{}{
+					"type":        "string",
+					"description": "Restrict auto-spawn agent selection to this backend (e.g. ollama, acp). Ignored when auto_spawn is false. Optional.",
+				},
+				"gpu_required": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Restrict auto-spawn to agents advertising GPU capability. Ignored when auto_spawn is false. Optional.",
+				},
+			},
+			"required": []string{"subject"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_task_get_artifact",
+		Description: "Retrieve a named output artifact from a task. For kv_key artifacts the content is resolved from the KV store.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the task. Required.",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Artifact name. Required.",
+				},
+			},
+			"required": []string{"task_id", "name"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_task_list_artifacts",
+		Description: "List output artifact metadata for a task. Content is omitted for kv_key artifacts; use quicbaas_task_get_artifact to fetch content.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the task. Required.",
+				},
+			},
+			"required": []string{"task_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name: "quicbaas_orchestrator_inference",
+		Description: "Run a stateless inference call against a fleet-resident agent daemon. " +
+			"Routes the prompt to the named backend without requiring a prior session. " +
+			"Returns the aggregated text response.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"backend": map[string]interface{}{
+					"type":        "string",
+					"description": "Named backend to route to (e.g., 'ollama', 'claude'). Required.",
+				},
+				"prompt": map[string]interface{}{
+					"type":        "string",
+					"description": "User prompt text. Required.",
+				},
+				"model": map[string]interface{}{
+					"type":        "string",
+					"description": "Model to use. When empty the backend's default is used. Optional.",
+				},
+				"system_prompt": map[string]interface{}{
+					"type":        "string",
+					"description": "System message prepended to the conversation context. Optional.",
+				},
+				"host_affinity": map[string]interface{}{
+					"type":        "string",
+					"description": "Pin the call to a specific agent daemon by Name or Host. Optional.",
+				},
+				"gpu_required": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Restrict dispatch to daemons that advertise GPU capability. Optional.",
+				},
+				"metadata": map[string]interface{}{
+					"type":        "object",
+					"description": "Opaque string-to-string map forwarded to the backend unchanged. Optional.",
+				},
+			},
+			"required": []string{"backend", "prompt"},
+		},
+	})
 }
 
 // =============================================================================
@@ -611,6 +725,16 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 		ProjectID:    projectID,
 		Model:        getString(args, "model"),
 		SystemPrompt: getString(args, "system_prompt"),
+	}
+
+	// sandbox_mode: "default" | "required" | "none". Empty/missing defers
+	// to the server-side SandboxPolicy.
+	if raw := getString(args, "sandbox_mode"); raw != "" {
+		mode, parseErr := orchestration.ParseSandboxMode(raw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		req.SandboxMode = mode
 	}
 
 	// Parse MCP servers
@@ -1187,6 +1311,125 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 	})
 }
 
+// executeOrchestratorTaskCreate creates an orchestration task, optionally
+// dispatching it as a one-shot job via auto-spawn.
+func (r *ToolRegistry) executeOrchestratorTaskCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	subject := getString(args, "subject")
+	if subject == "" {
+		return nil, api.NewRequiredFieldError("subject")
+	}
+
+	tenantID := orchestration.TenantFromContext(ctx)
+
+	req := &orchestration.CreateTaskRequest{
+		TenantID:    tenantID,
+		Subject:     subject,
+		Description: getString(args, "description"),
+		TeamName:    getString(args, "team_name"),
+		AssignedTo:  getString(args, "assigned_to"),
+		AutoSpawn:   getBool(args, "auto_spawn"),
+		Backend:     getString(args, "backend"),
+		GpuRequired: getBool(args, "gpu_required"),
+	}
+
+	task, createErr := agentSvc.CreateTask(ctx, req)
+
+	// Always return the task; createErr surfaces no-matching-agent.
+	result := map[string]interface{}{
+		"task_id":    "",
+		"subject":    subject,
+		"status":     "",
+		"auto_spawn": req.AutoSpawn,
+		"timestamp":  time.Now().Format(time.RFC3339Nano),
+	}
+	if task != nil {
+		result["task_id"] = task.ID
+		result["status"] = string(task.Status)
+		result["spawned_job_id"] = task.SpawnedJobID
+	}
+	if createErr != nil {
+		result["error"] = createErr.Error()
+	}
+
+	return marshalResult(result)
+}
+
+// executeTaskGetArtifact handles the quicbaas_task_get_artifact MCP tool.
+func (r *ToolRegistry) executeTaskGetArtifact(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+	name := getString(args, "name")
+	if name == "" {
+		return nil, api.NewRequiredFieldError("name")
+	}
+
+	tenantID := orchestration.TenantFromContext(ctx)
+	artifact, getErr := agentSvc.GetTaskArtifact(ctx, tenantID, taskID, name)
+	if getErr != nil {
+		return nil, getErr
+	}
+
+	return marshalResult(map[string]interface{}{
+		"task_id":   taskID,
+		"name":      artifact.Name,
+		"kind":      string(artifact.Kind),
+		"mime_type": artifact.MIMEType,
+		"size":      artifact.Size,
+		"content":   string(artifact.Content),
+		"ref":       artifact.Ref,
+		"metadata":  artifact.Metadata,
+	})
+}
+
+// executeTaskListArtifacts handles the quicbaas_task_list_artifacts MCP tool.
+func (r *ToolRegistry) executeTaskListArtifacts(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+
+	tenantID := orchestration.TenantFromContext(ctx)
+	artifacts, listErr := agentSvc.ListTaskArtifacts(ctx, tenantID, taskID)
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	items := make([]map[string]interface{}, len(artifacts))
+	for i, a := range artifacts {
+		items[i] = map[string]interface{}{
+			"name":      a.Name,
+			"kind":      string(a.Kind),
+			"mime_type": a.MIMEType,
+			"size":      a.Size,
+			"ref":       a.Ref,
+			"metadata":  a.Metadata,
+		}
+	}
+
+	return marshalResult(map[string]interface{}{
+		"task_id":   taskID,
+		"artifacts": items,
+		"count":     len(items),
+	})
+}
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -1223,7 +1466,11 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_start_job",
 		"quicbaas_orchestrator_get_job_status",
 		"quicbaas_orchestrator_cancel_job",
-		"quicbaas_orchestrator_list_jobs":
+		"quicbaas_orchestrator_list_jobs",
+		"quicbaas_orchestrator_task_create",
+		"quicbaas_task_get_artifact",
+		"quicbaas_task_list_artifacts",
+		"quicbaas_orchestrator_inference":
 		return true
 	default:
 		return false
@@ -1275,7 +1522,107 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeOrchestratorCancelJob(ctx, args)
 	case "quicbaas_orchestrator_list_jobs":
 		return r.executeOrchestratorListJobs(ctx, args)
+	case "quicbaas_orchestrator_task_create":
+		return r.executeOrchestratorTaskCreate(ctx, args)
+	case "quicbaas_task_get_artifact":
+		return r.executeTaskGetArtifact(ctx, args)
+	case "quicbaas_task_list_artifacts":
+		return r.executeTaskListArtifacts(ctx, args)
+	case "quicbaas_orchestrator_inference":
+		return r.executeOrchestratorInference(ctx, args)
 	default:
 		return nil, api.NewUnknownToolError(name)
 	}
+}
+
+// executeOrchestratorInference handles the quicbaas_orchestrator_inference MCP
+// tool. It calls agentSvc.Infer, accumulates all chunks, and returns the
+// aggregated text content as a JSON result.
+func (r *ToolRegistry) executeOrchestratorInference(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	backend := getString(args, "backend")
+	if backend == "" {
+		return nil, api.NewRequiredFieldError("backend")
+	}
+
+	prompt := getString(args, "prompt")
+	if prompt == "" {
+		return nil, api.NewRequiredFieldError("prompt")
+	}
+
+	var metadata map[string]string
+	if raw, ok := args["metadata"].(map[string]interface{}); ok {
+		metadata = make(map[string]string, len(raw))
+		for k, v := range raw {
+			if s, isStr := v.(string); isStr {
+				metadata[k] = s
+			}
+		}
+	}
+
+	hostAffinity := getString(args, "host_affinity")
+	if hostAffinity != "" {
+		ctx = orchestration.WithHostAffinity(ctx, hostAffinity)
+	}
+
+	gpuRequired := getBool(args, "gpu_required")
+	if gpuRequired {
+		ctx = orchestration.WithGpuRequired(ctx)
+	}
+
+	// MCP tool invocations arrive with a bare context. Propagate the
+	// caller's tenant so the orchestrator's RemoteBackendResolver can
+	// scope its fleet lookup correctly.
+	tenantID := getString(args, "tenant_id")
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+
+	inferReq := &orchestration.InferRequest{
+		Backend:      backend,
+		Model:        getString(args, "model"),
+		Prompt:       prompt,
+		SystemPrompt: getString(args, "system_prompt"),
+		HostAffinity: hostAffinity,
+		GpuRequired:  gpuRequired,
+		TenantID:     tenantID,
+		Metadata:     metadata,
+	}
+
+	chunks, err := agentSvc.Infer(ctx, inferReq)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := orchestration.AccumulateChunks(chunks)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build a human-readable text summary alongside the structured content.
+	var textContent string
+	for _, block := range resp.Content {
+		if block.Type == "text" {
+			textContent += block.Text
+		}
+	}
+
+	result := map[string]interface{}{
+		"content":     resp.Content,
+		"text":        textContent,
+		"model":       resp.Model,
+		"stop_reason": resp.StopReason,
+		"timestamp":   time.Now().Format(time.RFC3339),
+	}
+
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+	return string(raw), nil
 }

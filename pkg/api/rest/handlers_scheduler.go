@@ -73,6 +73,10 @@ type CreateSchedulerJobRESTRequest struct {
 	TimeoutSeconds int64             `json:"timeout_seconds,omitempty"`
 	Timeout        time.Duration     `json:"timeout,omitempty"` // Alternative: accepts time.Duration directly
 	MaxRetries     int32             `json:"max_retries,omitempty"`
+	// NodeAffinity pins job execution to a specific node. Empty =
+	// cluster-wide (leader-only). Non-empty = only fires on the node
+	// whose SchedulerEngine was constructed with a matching node ID.
+	NodeAffinity   string            `json:"node_affinity,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 }
 
@@ -306,6 +310,7 @@ func (s *Server) HandleCreateSchedulerJob(w http.ResponseWriter, r *http.Request
 		Priority:       req.Priority,
 		Timeout:        timeout,
 		MaxRetries:     req.MaxRetries,
+		NodeAffinity:   req.NodeAffinity,
 		Labels:         req.Labels,
 	}
 

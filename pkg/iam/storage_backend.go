@@ -64,6 +64,7 @@ const (
 	KeyPrefixEmailIndex    = "__iam:idx:email:"
 	KeyPrefixUsernameIndex = "__iam:idx:username:"
 	KeyPrefixAppIndex      = "__iam:idx:app:"
+	KeyPrefixPIVIndex      = "__iam:idx:piv:"
 )
 
 // BackendStorage implements all IAM storage interfaces using interfaces.KVStore.
@@ -159,6 +160,11 @@ func authCodeKey(code string) string {
 // emailIndexKey returns the key for email->user lookup.
 func emailIndexKey(email string) string {
 	return KeyPrefixEmailIndex + strings.ToLower(email)
+}
+
+// pivIndexKey returns the key for PIV thumbprint->user lookup.
+func pivIndexKey(thumbprint string) string {
+	return KeyPrefixPIVIndex + strings.ToLower(thumbprint)
 }
 
 // sessionKey returns the key for a session record.
@@ -625,6 +631,14 @@ func (s *BackendStorage) CreateUser(ctx context.Context, user *User) error {
 		}
 	}
 
+	// Create PIV thumbprint index (only when a thumbprint is registered)
+	if user.PIVCertThumbprint != "" {
+		indexData := []byte(user.TenantID + ":" + user.ID)
+		if err := s.put(ctx, pivIndexKey(user.PIVCertThumbprint), indexData); err != nil {
+			return &dberrors.QBError{Code: dberrors.ErrStorage, Op: "iam.user.create", Err: err}
+		}
+	}
+
 	return nil
 }
 
@@ -655,6 +669,21 @@ func (s *BackendStorage) GetUserByEmail(ctx context.Context, email string) (*Use
 	parts := strings.SplitN(string(indexData), ":", 2)
 	if len(parts) != 2 {
 		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.getbyemail", Err: &InvalidIndexEntryError{}}
+	}
+
+	return s.GetUser(ctx, parts[0], parts[1])
+}
+
+// GetUserByPIVThumbprint retrieves a user by PIV certificate SHA-256 thumbprint.
+func (s *BackendStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint string) (*User, error) {
+	indexData, err := s.get(ctx, pivIndexKey(thumbprint))
+	if err != nil {
+		return nil, err
+	}
+
+	parts := strings.SplitN(string(indexData), ":", 2)
+	if len(parts) != 2 {
+		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.getbypivthumbprint", Err: &InvalidIndexEntryError{}}
 	}
 
 	return s.GetUser(ctx, parts[0], parts[1])

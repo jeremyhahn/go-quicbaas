@@ -123,6 +123,17 @@ type SealService interface {
 	//   - GenerateRootTokenResponse: Contains root token when complete
 	//   - error: ErrUnauthorized, ErrInvalidInput, ErrTimeout
 	GenerateRootToken(ctx context.Context, req *GenerateRootTokenRequest) (*GenerateRootTokenResponse, error)
+
+	// RotateRootKey rotates the root encryption key used to protect master key shares.
+	// This re-encrypts all protected data under a newly generated root key.
+	// Requires admin authorization (root token or equivalent).
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Rotate root key request with optional force flag
+	// Returns:
+	//   - RotateRootKeyResponse: Confirms rotation success
+	//   - error: ErrUnauthorized, ErrTimeout, ErrUnavailable
+	RotateRootKey(ctx context.Context, req *RotateRootKeyRequest) (*RotateRootKeyResponse, error)
 }
 
 // =============================================================================

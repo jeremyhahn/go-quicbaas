@@ -55,6 +55,19 @@ var (
 	// ErrSealServiceUnavailable indicates the seal service is not available.
 	ErrSealServiceUnavailable = errors.New("seal service not available")
 
+	// ErrBarrierServiceUnavailable indicates the barrier facade is not yet
+	// wired (e.g. before lifecycle setup completes). The handlers return
+	// 503 Service Unavailable so callers can retry once the barrier is up.
+	ErrBarrierServiceUnavailable = errors.New("barrier service not available")
+
+	// ErrCeremonyServiceUnavailable indicates the ceremony facade is not
+	// yet wired. The handlers return 503 Service Unavailable.
+	ErrCeremonyServiceUnavailable = errors.New("ceremony service not available")
+
+	// ErrBootstrapServiceUnavailable indicates the trust-bootstrap facade
+	// is not yet wired. The handlers return 503 Service Unavailable.
+	ErrBootstrapServiceUnavailable = errors.New("bootstrap service not available")
+
 	// ErrTimeseriesServiceUnavailable indicates the timeseries service is not available.
 	ErrTimeseriesServiceUnavailable = errors.New("timeseries service not available")
 

@@ -359,6 +359,7 @@ type testMockUserClient struct {
 	CreateFunc          func(ctx context.Context, tenantID string, req *iam.CreateUserRequest) (*iam.User, error)
 	GetFunc             func(ctx context.Context, tenantID, userID string) (*iam.User, error)
 	GetByEmailFunc      func(ctx context.Context, tenantID, email string) (*iam.User, error)
+	FindByUsernameFunc  func(ctx context.Context, tenantID, username string) (*iam.User, error)
 	UpdateFunc          func(ctx context.Context, tenantID, userID string, req *iam.UpdateUserRequest) (*iam.User, error)
 	DeleteFunc          func(ctx context.Context, tenantID, userID string) error
 	ListFunc            func(ctx context.Context, tenantID string, req *iam.ListUsersRequest) (*iam.ListUsersResponse, error)
@@ -368,6 +369,8 @@ type testMockUserClient struct {
 	RemoveFromGroupFunc func(ctx context.Context, tenantID, userID, groupID string) error
 	SuspendFunc         func(ctx context.Context, tenantID, userID string) error
 	UnsuspendFunc       func(ctx context.Context, tenantID, userID string) error
+	ApproveFunc         func(ctx context.Context, tenantID, userID string) error
+	RejectFunc          func(ctx context.Context, tenantID, userID, reason string) error
 }
 
 func (m *testMockUserClient) Create(ctx context.Context, tenantID string, req *iam.CreateUserRequest) (*iam.User, error) {
@@ -389,6 +392,13 @@ func (m *testMockUserClient) GetByEmail(ctx context.Context, tenantID, email str
 		return m.GetByEmailFunc(ctx, tenantID, email)
 	}
 	return &iam.User{ID: "user_001", Username: "testuser", Email: email, TenantID: tenantID, Status: iam.UserStatusActive, CreatedAt: time.Now()}, nil
+}
+
+func (m *testMockUserClient) FindByUsername(ctx context.Context, tenantID, username string) (*iam.User, error) {
+	if m.FindByUsernameFunc != nil {
+		return m.FindByUsernameFunc(ctx, tenantID, username)
+	}
+	return &iam.User{ID: "user_001", Username: username, Email: username + "@example.com", TenantID: tenantID, Status: iam.UserStatusActive, CreatedAt: time.Now()}, nil
 }
 
 func (m *testMockUserClient) Update(ctx context.Context, tenantID, userID string, req *iam.UpdateUserRequest) (*iam.User, error) {
@@ -453,6 +463,20 @@ func (m *testMockUserClient) Suspend(ctx context.Context, tenantID, userID strin
 func (m *testMockUserClient) Unsuspend(ctx context.Context, tenantID, userID string) error {
 	if m.UnsuspendFunc != nil {
 		return m.UnsuspendFunc(ctx, tenantID, userID)
+	}
+	return nil
+}
+
+func (m *testMockUserClient) Approve(ctx context.Context, tenantID, userID string) error {
+	if m.ApproveFunc != nil {
+		return m.ApproveFunc(ctx, tenantID, userID)
+	}
+	return nil
+}
+
+func (m *testMockUserClient) Reject(ctx context.Context, tenantID, userID, reason string) error {
+	if m.RejectFunc != nil {
+		return m.RejectFunc(ctx, tenantID, userID, reason)
 	}
 	return nil
 }
@@ -836,6 +860,42 @@ func (m *testMockPolicyClient) GetEffectivePermissions(ctx context.Context, tena
 	}, nil
 }
 
+// testMockInviteClient implements iam.InviteClient for testing.
+type testMockInviteClient struct {
+	GetInviteFunc            func(ctx context.Context, token string) (*iam.InviteMetadata, error)
+	ActivateFIDO2BeginFunc   func(ctx context.Context, token string) (map[string]interface{}, error)
+	ActivateFIDO2FinishFunc  func(ctx context.Context, token string, credential map[string]interface{}) (*iam.ActivationResponse, error)
+	ActivatePIVFunc          func(ctx context.Context, token, certPEM string) (*iam.ActivationResponse, error)
+}
+
+func (m *testMockInviteClient) GetInvite(ctx context.Context, token string) (*iam.InviteMetadata, error) {
+	if m.GetInviteFunc != nil {
+		return m.GetInviteFunc(ctx, token)
+	}
+	return &iam.InviteMetadata{UserID: "user_001", Email: "invitee@example.com", AuthMethods: []string{"fido2", "piv"}, ExpiresAt: time.Now().Add(24 * time.Hour)}, nil
+}
+
+func (m *testMockInviteClient) ActivateFIDO2Begin(ctx context.Context, token string) (map[string]interface{}, error) {
+	if m.ActivateFIDO2BeginFunc != nil {
+		return m.ActivateFIDO2BeginFunc(ctx, token)
+	}
+	return map[string]interface{}{"publicKey": map[string]interface{}{}}, nil
+}
+
+func (m *testMockInviteClient) ActivateFIDO2Finish(ctx context.Context, token string, credential map[string]interface{}) (*iam.ActivationResponse, error) {
+	if m.ActivateFIDO2FinishFunc != nil {
+		return m.ActivateFIDO2FinishFunc(ctx, token, credential)
+	}
+	return &iam.ActivationResponse{UserID: "user_001", Message: "activated"}, nil
+}
+
+func (m *testMockInviteClient) ActivatePIV(ctx context.Context, token, certPEM string) (*iam.ActivationResponse, error) {
+	if m.ActivatePIVFunc != nil {
+		return m.ActivatePIVFunc(ctx, token, certPEM)
+	}
+	return &iam.ActivationResponse{UserID: "user_001", Message: "activated"}, nil
+}
+
 // testMockIAMClient implements iam.Client for testing.
 type testMockIAMClient struct {
 	adminClient   *testMockAdminClient
@@ -849,6 +909,7 @@ type testMockIAMClient struct {
 	gdprClient    *testMockGDPRClient
 	pepClient     *testMockPEPClient
 	policyClient  *testMockPolicyClient
+	inviteClient  *testMockInviteClient
 
 	// Federation methods
 	CreateProviderFunc     func(ctx context.Context, opts *cli.CreateProviderOptions) (*cli.Provider, error)
@@ -867,6 +928,7 @@ type testMockIAMClient struct {
 	DisableMFAFunc            func(ctx context.Context, tenantID, userID string) error
 	GetBackupCodeStatusFunc   func(ctx context.Context, tenantID, userID string) (*cli.BackupCodeStatus, error)
 	GenerateBackupCodesFunc   func(ctx context.Context, tenantID, userID string) ([]string, error)
+
 }
 
 func (m *testMockIAMClient) Tenant() iam.TenantClient   { return m.tenantClient }
@@ -880,6 +942,7 @@ func (m *testMockIAMClient) Session() iam.SessionClient { return m.sessionClient
 func (m *testMockIAMClient) Audit() iam.AuditClient     { return m.auditClient }
 func (m *testMockIAMClient) GDPR() iam.GDPRClient       { return m.gdprClient }
 func (m *testMockIAMClient) Admin() iam.AdminClient     { return m.adminClient }
+func (m *testMockIAMClient) Invite() iam.InviteClient   { return m.inviteClient }
 func (m *testMockIAMClient) Close() error               { return nil }
 
 func (m *testMockIAMClient) CreateProvider(ctx context.Context, opts *cli.CreateProviderOptions) (*cli.Provider, error) {
@@ -994,5 +1057,6 @@ func newTestMockIAMClient() *testMockIAMClient {
 		gdprClient:    &testMockGDPRClient{},
 		pepClient:     &testMockPEPClient{},
 		policyClient:  &testMockPolicyClient{},
+		inviteClient:  &testMockInviteClient{},
 	}
 }

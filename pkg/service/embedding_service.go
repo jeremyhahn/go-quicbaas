@@ -100,6 +100,16 @@ type EmbeddingService interface {
 	//   - ClearEmbeddingCacheResponse: Contains number of entries cleared
 	//   - error: ErrTimeout
 	ClearCache(ctx context.Context, req *ClearEmbeddingCacheRequest) (*ClearEmbeddingCacheResponse, error)
+
+	// SetProviderStatus enables or disables an embedding provider.
+	// Disabled providers are excluded from request routing and fallback chains.
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Set provider status request with provider name and enabled flag
+	// Returns:
+	//   - SetProviderStatusResponse: Contains confirmation and updated provider status
+	//   - error: ErrProviderNotFound, ErrTimeout
+	SetProviderStatus(ctx context.Context, req *SetProviderStatusRequest) (*SetProviderStatusResponse, error)
 }
 
 // =============================================================================
@@ -488,5 +498,30 @@ type ClearEmbeddingCacheResponse struct {
 	Provider EmbeddingProvider `json:"provider,omitempty"`
 
 	// Timestamp is when the cache was cleared
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// =============================================================================
+// Provider Status Management Request/Response
+// =============================================================================
+
+// SetProviderStatusRequest enables or disables an embedding provider.
+type SetProviderStatusRequest struct {
+	// Name is the provider name to update
+	Name string `json:"name"`
+
+	// Enabled controls whether the provider is active
+	Enabled bool `json:"enabled"`
+}
+
+// SetProviderStatusResponse confirms the provider status change.
+type SetProviderStatusResponse struct {
+	// Name is the provider that was updated
+	Name string `json:"name"`
+
+	// Enabled reflects the new status
+	Enabled bool `json:"enabled"`
+
+	// Timestamp is when the change was applied
 	Timestamp time.Time `json:"timestamp"`
 }

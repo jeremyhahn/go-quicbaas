@@ -34,6 +34,12 @@ func (s *Server) initVectorStorage() error {
 
 	s.logger.Info("Initializing vector storage...")
 
+	// Backfill defaults so the documented one-env-var enable path
+	// (QUICBAAS_VECTOR_ENABLED=true) produces a config that passes Validate
+	// without requiring the operator to hand-author an HNSW block. Any fields
+	// the operator has supplied are preserved by ApplyDefaults.
+	s.config.Vector.ApplyDefaults(s.config.Storage.DataDir)
+
 	// Validate vector configuration
 	if err := s.config.Vector.Validate(); err != nil {
 		return &qberrors.QBError{

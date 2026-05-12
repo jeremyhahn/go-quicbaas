@@ -5,18 +5,55 @@ High-performance distributed key-value database with vector similarity search bu
 ## Quick Start
 
 ```bash
-# Start server
-quicbaas server start
+# Start server (REST :18080, gRPC :19090, MCP :11443, QUIC :10443, Unix socket)
+quicbaasd start --http-port 18080 --grpc-port 19090 \
+  --unix-socket /tmp/quicbaas.sock --data-dir ./data
 
-# Basic operations
-quicbaas data put users user1 '{"name": "Alice"}'
-quicbaas data get users user1
+# Basic operations (transport auto-selected from --address scheme)
+quicbaas --address https://localhost:18080 data put users user1 '{"name": "Alice"}'
+quicbaas --address https://localhost:18080 data get users user1
 
 # Vector search
 quicbaas vector namespace create embeddings --dimension 384
 quicbaas vector upsert embeddings --id doc1 --vector "0.1,0.2,..." --metadata '{"title":"Doc"}'
 quicbaas vector search similar embeddings --vector "0.1,0.2,..." --k 10
 ```
+
+### Deploy a fleet agent and run inference
+
+```bash
+# 1. Stage an SSH key in the xkms-backed key store (private key never leaves the server).
+quicbaas ssh keys generate --name fleet-deploy --type ed25519 --scope user
+quicbaas ssh keys export-public --name fleet-deploy --scope user --owner $USER
+# → copy the printed public key into ~/.ssh/authorized_keys on the target host.
+
+# 2. Deploy an agent that exposes the local Ollama instance to the fleet.
+quicbaas agent deploy \
+  --ssh user@target-host \
+  --ssh-key-name fleet-deploy \
+  --server https://<server-ip>:18080 \
+  --backend ollama \
+  --binary bin/quicbaas-static \
+  --wait-online 2m
+
+# 3. Run a stateless prompt — routed transparently to the agent's local Ollama.
+quicbaas orchestrator inference \
+  --backend ollama \
+  --model qwen3:1.7b \
+  --prompt "explain QUIC in three sentences"
+
+# Streaming variant (NDJSON over the same SDK call):
+quicbaas orchestrator inference \
+  --backend ollama --model qwen3:1.7b \
+  --prompt "explain QUIC" --stream
+```
+
+The same flow is available in the **web/desktop GUI** at `Orchestration > Inference`
+(see [GUI: Desktop & Web](gui/desktop-and-web.md) and the
+[Inference view section](agents/inference.md#using-the-gui)). All five
+transports — REST, gRPC, QUIC, MCP, Unix socket — accept the same
+`orchestrator inference` command via the SDK transport abstraction
+(see [API](api/) for protocol details).
 
 ## Documentation Index
 
@@ -26,6 +63,9 @@ quicbaas vector search similar embeddings --vector "0.1,0.2,..." --k 10
 | [Architecture](architecture/) | System design, components, data flow |
 | [CLI Reference](cli/) | Complete command-line interface reference |
 | [API](api/) | REST, gRPC, QUIC, and MCP protocol documentation |
+| [Agents & Fleet Inference](agents/) | Fleet deploy, mTLS bootstrap, sessionless inference |
+| [GUI Walkthroughs](gui/README.md) | Interactive walkthroughs for all 22+ web and desktop views |
+| [GUI Quick Start](gui/desktop-and-web.md) | Wails desktop app and embedded web UI overview |
 | [Deployment](deployment/) | Production deployment guides and checklists |
 | [Signal](signal/README.md) | Signal service documentation |
 
@@ -47,6 +87,7 @@ quicbaas vector search similar embeddings --vector "0.1,0.2,..." --k 10
 | [Time Series](timeseries/) | Metrics storage, retention policies, Raft consensus |
 | [RAG Pipeline](rag/) | Retrieval-Augmented Generation, hybrid search, context building |
 | [Embedding Providers](embedding/) | Ollama, LMStudio, OpenAI, Voyage AI |
+| [Passwordless Authentication](auth/passwordless.md) | Hardware-backed FIDO2/WebAuthn, PIV smartcard, mTLS |
 | [IAM](iam/) | Identity and access management, ABAC policies, OAuth2/OIDC |
 | [Security](security/) | KMS, secrets engine, seal/unseal, encryption |
 | [Multi-Tenant Service Isolation](security/multi-tenancy.md) | Tenant isolation, resource boundaries, security policies |

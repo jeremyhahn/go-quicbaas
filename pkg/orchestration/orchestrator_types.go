@@ -107,6 +107,21 @@ type AgentService interface {
 	//   - error: ErrAgentServiceUnavailable, ErrUnauthorized
 	ListSessions(ctx context.Context, req *ListSessionsRequest) (*ListSessionsResponse, error)
 
+	// Infer runs a stateless fleet-routed inference call against a named
+	// backend without requiring a prior session Spawn. Intended for backends
+	// like Ollama where each prompt is self-contained. The returned channel
+	// streams InferChunk values; the channel is closed when the backend
+	// finishes or an error occurs. Use AccumulateChunks to get a single
+	// aggregated response.
+	// Requires permission: agent:prompt
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Inference request with backend, model, prompt, and routing hints
+	// Returns:
+	//   - <-chan *InferChunk: stream of response fragments
+	//   - error: ErrBackendRequired, ErrPromptRequired, ErrInferUnsupported, ErrUnauthorized
+	Infer(ctx context.Context, req *InferRequest) (<-chan *InferChunk, error)
+
 	// DecomposeTask uses an agent to decompose a task into work items.
 	// Requires permission: agent:decompose
 	// Parameters:
@@ -126,6 +141,14 @@ type AgentService interface {
 	//   - error: ErrAgentServiceUnavailable, ErrUnauthorized
 	ListBackends(ctx context.Context) ([]*AgentBackendInfo, error)
 
+	// ListBackendModels returns the model names available on the named backend.
+	// For Ollama it queries /api/tags on the agent's local instance; for ACP
+	// backends it returns a curated catalog. The agent_id parameter is optional;
+	// when non-empty and host affinity routing is active, the call is forwarded
+	// to the matching remote daemon. Returns ErrBackendNotFound when the backend
+	// is unknown.
+	ListBackendModels(ctx context.Context, backendName string) ([]string, error)
+
 	// BackendToolGuidance returns backend-specific tool usage instructions
 	// for the named backend. Returns empty string if the backend has no
 	// special requirements or is not found.
@@ -139,6 +162,13 @@ type AgentService interface {
 	// Returns:
 	//   - error: ErrBackendRequired, ErrUnauthorized
 	RegisterBackend(ctx context.Context, req *RegisterBackendRequest) error
+
+	// RegisterAPIInferenceBackend adds an API-based frontier-model inference
+	// backend (Anthropic, OpenAI, xAI, ...) to the service. The backend is
+	// adapted into the AgentBackend interface internally so it routes through
+	// the same dispatch path as ACP and model-server backends.
+	// Requires permission: agent:admin
+	RegisterAPIInferenceBackend(ctx context.Context, req *RegisterAPIInferenceBackendRequest) error
 
 	// HealthCheck performs a health check on all active agent sessions.
 	// Requires permission: agent:admin
@@ -275,6 +305,49 @@ type AgentService interface {
 	//   - <-chan *JobEvent: Read-only channel of job events
 	//   - error: ErrJobNotFound, ErrTenantIDRequired
 	SubscribeJobEvents(ctx context.Context, tenantID, jobID string) (<-chan *JobEvent, error)
+
+	// SpawnChildJob spawns a child job on behalf of a lead agent. The calling
+	// agent MUST be the registered lead of the parent job; any other caller
+	// receives NotLeadOfParentError. The child inherits the parent's tenant.
+	// Requires permission: agent:job
+	SpawnChildJob(ctx context.Context, req *SpawnChildJobRequest) (*SpawnChildJobResponse, error)
+
+	// SubmitTaskArtifacts appends typed artifacts to a task's output.
+	// Artifacts exceeding InlineLimit are offloaded to the KV store.
+	// Requires permission: agent:task
+	SubmitTaskArtifacts(ctx context.Context, tenantID, taskID string, artifacts []Artifact) error
+
+	// GetTaskArtifact retrieves a named artifact, resolving KV refs to bytes.
+	// Requires permission: agent:task
+	GetTaskArtifact(ctx context.Context, tenantID, taskID, name string) (*Artifact, error)
+
+	// ListTaskArtifacts returns all output artifact metadata for a task.
+	// Requires permission: agent:task
+	ListTaskArtifacts(ctx context.Context, tenantID, taskID string) ([]Artifact, error)
+
+	// ListWorkflows returns all registered workflow definitions, sorted by name.
+	// Requires permission: agent:discover
+	ListWorkflows(ctx context.Context) ([]*WorkflowDefinition, error)
+
+	// GetWorkflow returns a workflow definition by name.
+	// Requires permission: agent:discover
+	// Returns ErrWorkflowNotFound if the workflow does not exist.
+	GetWorkflow(ctx context.Context, name string) (*WorkflowDefinition, error)
+
+	// RegisterWorkflow validates and registers a workflow definition.
+	// Requires permission: agent:admin
+	// Returns ErrWorkflowAlreadyExists if a workflow with the same name is already registered.
+	RegisterWorkflow(ctx context.Context, def *WorkflowDefinition) error
+
+	// UpdateWorkflow replaces an existing workflow definition by name.
+	// Requires permission: agent:admin
+	// Returns ErrWorkflowNotFound if the workflow does not exist.
+	UpdateWorkflow(ctx context.Context, def *WorkflowDefinition) error
+
+	// DeleteWorkflow removes a workflow definition by name.
+	// Requires permission: agent:admin
+	// Returns ErrWorkflowNotFound if the workflow does not exist.
+	DeleteWorkflow(ctx context.Context, name string) error
 }
 
 // =============================================================================
@@ -511,11 +584,44 @@ type SpawnSessionRequest struct {
 	MCPServers      []MCPServerConfig `json:"mcp_servers,omitempty"`
 	Env             map[string]string `json:"env,omitempty"`              // env vars for agent
 	WorkDir         string            `json:"work_dir,omitempty"`         // explicit work directory
-	Sandboxed       bool              `json:"sandboxed,omitempty"`        // run in container
+	SandboxMode     SandboxMode       `json:"sandbox_mode,omitempty"`     // sandbox-first policy selector; takes precedence over Sandboxed
+	Sandboxed       bool              `json:"sandboxed,omitempty"`        // deprecated: use SandboxMode. true = SandboxModeRequired
 	ContainerImage  string            `json:"container_image,omitempty"`  // container image override
 	ContainerConfig *ContainerSpec    `json:"container_config,omitempty"` // full container spec override
 	Persistent      bool              `json:"persistent,omitempty"`       // persistent session with context across prompts
 	ExtraArgs       []string          `json:"extra_args,omitempty"`       // Additional CLI args for the agent command
+
+	// HostAffinity pins the session to a specific daemon host (Name or Host
+	// field on the AgentRegistration). Empty means "any available daemon"
+	// — the dispatcher picks the first online daemon serving the requested
+	// backend. Required for GPU-bound workloads that must run on a
+	// specific machine.
+	HostAffinity string `json:"host_affinity,omitempty"`
+
+	// GpuRequired restricts dispatch to daemons that advertise "gpu" in
+	// their Capabilities slice. Use for sessions that require GPU
+	// acceleration (e.g. local LLM inference via Ollama on a CUDA host).
+	GpuRequired bool `json:"gpu_required,omitempty"`
+
+	// HostAffinityStrict, when true, forces hard host_affinity semantics for
+	// this request: if HostAffinity names a host that is offline the resolver
+	// returns NoMatchingAgentError instead of falling back to any available
+	// agent. When false the operator-level orchestration.host_affinity.mode
+	// default applies (soft = warn-and-fallback by default).
+	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
+}
+
+// EffectiveSandboxMode returns the sandbox mode to be resolved against the
+// active SandboxPolicy. Legacy callers that set Sandboxed=true without a
+// SandboxMode are mapped to SandboxModeRequired.
+func (r *SpawnSessionRequest) EffectiveSandboxMode() SandboxMode {
+	if r.SandboxMode != SandboxModeDefault {
+		return r.SandboxMode
+	}
+	if r.Sandboxed {
+		return SandboxModeRequired
+	}
+	return SandboxModeDefault
 }
 
 // SpawnSessionResponse contains the result of spawning a session.
@@ -625,6 +731,19 @@ type WorkItem struct {
 	MaxRetries           int      `json:"max_retries,omitempty"`
 	Parallelizable       bool     `json:"parallelizable,omitempty"`
 	FallbackBackend      string   `json:"fallback_backend,omitempty"`
+
+	// HostAffinity optionally pins this work item to a specific daemon by
+	// Name or Host. When non-empty the control loop restricts agent
+	// candidates to those whose Name or Host field matches this value.
+	// Empty means any eligible agent may be selected.
+	HostAffinity string `json:"host_affinity,omitempty"`
+
+	// HostAffinityStrict, when true, forces hard host_affinity semantics for
+	// this work item: control loop scheduling fails if the named host is
+	// offline rather than silently falling back to any eligible agent. When
+	// false the operator-level orchestration.host_affinity.mode default
+	// applies (soft by default).
+	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
 }
 
 // AgentBackendInfo contains information about a registered agent backend.
@@ -650,6 +769,33 @@ type CreateTaskRequest struct {
 	AssignedTo   string            `json:"assigned_to,omitempty"`
 	Dependencies []string          `json:"dependencies,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+
+	// ProjectID scopes the task to a registered project. When non-empty,
+	// ClaimTask enforces the project's AgentRoles access matrix against
+	// the claiming agent. Empty means the task is unscoped (legacy — allow all).
+	ProjectID string `json:"project_id,omitempty"`
+
+	// HostAffinity pins the task to a specific agent name or hostname. When set,
+	// the task scheduler restricts assignment to agents whose Name or Host field
+	// matches this value. Empty means "any available agent".
+	HostAffinity string `json:"host_affinity,omitempty"`
+
+	// GpuRequired indicates the task must execute on an agent that advertises
+	// "gpu" in its Capabilities slice. The scheduler skips non-GPU agents when
+	// this flag is true.
+	GpuRequired bool `json:"gpu_required,omitempty"`
+
+	// AutoSpawn, when true, instructs the orchestrator to immediately spawn a
+	// one-shot job on the best-matching agent instead of queuing the task for
+	// manual claim. HostAffinity, GpuRequired, and Backend act as routing hints.
+	// If no matching agent is online, the task is persisted with empty SpawnedJobID
+	// and ErrNoMatchingAgent is returned.
+	AutoSpawn bool `json:"auto_spawn,omitempty"`
+
+	// Backend filters agent selection during auto-spawn. Only agents whose
+	// Backend field matches this value are considered. Empty means any backend.
+	// Ignored when AutoSpawn is false.
+	Backend string `json:"backend,omitempty"`
 }
 
 // =============================================================================
@@ -710,6 +856,12 @@ type JobConfig struct {
 	PollInterval  time.Duration `json:"poll_interval,omitempty"`
 	MaxIterations int           `json:"max_iterations,omitempty"`
 	WorkflowName  string        `json:"workflow_name,omitempty"`
+
+	// LeadAgentID is the registered fleet agent ID that leads this job.
+	// Set when the job is started via SpawnChildJob or when an agent
+	// authenticates via SpawnChildJob on behalf of a parent. Used to
+	// authorize SpawnChildJob calls: only the lead may fan out children.
+	LeadAgentID string `json:"lead_agent_id,omitempty"`
 }
 
 // JobAuditEvent records a single event in the job's complete audit trail.
@@ -740,6 +892,13 @@ type JobStatus struct {
 	Config       *JobConfig  `json:"config,omitempty"`
 	Memory       *JobMemory  `json:"memory,omitempty"`
 	WorkflowName string      `json:"workflow_name,omitempty"`
+
+	// Sub-job fan-out. ParentJobID is empty for root jobs.
+	// ChildJobIDs is appended atomically as child jobs are spawned.
+	ParentJobID string   `json:"parent_job_id,omitempty"`
+	ChildJobIDs []string `json:"child_job_ids,omitempty"`
+	SpawnedBy   string   `json:"spawned_by,omitempty"` // agent_id that spawned this child
+	SpawnedAt   int64    `json:"spawned_at,omitempty"` // Unix nanos
 }
 
 // JobEvent represents a real-time event from a running orchestration job.
@@ -759,6 +918,7 @@ type StartJobRequest struct {
 	Description   string `json:"description"`
 	LeadBackend   string `json:"lead_backend,omitempty"`
 	LeadModel     string `json:"lead_model,omitempty"`
+	LeadAgentID   string `json:"lead_agent_id,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
 	MaxIterations int    `json:"max_iterations,omitempty"`
 	PollInterval  string `json:"poll_interval,omitempty"`
@@ -783,6 +943,71 @@ type ReviewResponse struct {
 // (completed or failed). Terminal states indicate the job is no longer running.
 func IsTerminalJobState(state JobState) bool {
 	return state == JobStateCompleted || state == JobStateFailed
+}
+
+// =============================================================================
+// Sub-job Spawning Types
+// =============================================================================
+
+// TaskSpec is an inline task definition supplied when spawning a child job
+// without an existing workflow definition. Each spec becomes a WorkItem in
+// the child job's execution plan.
+type TaskSpec struct {
+	// Title is a short human-readable label for the work item.
+	Title string `json:"title"`
+
+	// Description is the full instruction for the agent executing this task.
+	Description string `json:"description"`
+
+	// Dependencies lists TaskSpec Titles that must complete before this one.
+	Dependencies []string `json:"dependencies,omitempty"`
+
+	// RequiredCapabilities constrains dispatch to agents advertising all listed
+	// capability strings (e.g., "gpu", "code", "docker").
+	RequiredCapabilities []string `json:"required_capabilities,omitempty"`
+}
+
+// SpawnChildJobRequest is sent by a lead agent to fan out child jobs to other
+// agents on other hosts. The calling agent must be the registered lead of the
+// parent job; any other caller receives NotLeadOfParentError.
+type SpawnChildJobRequest struct {
+	// ParentJobID is the job whose lead agent is spawning this child. Required.
+	ParentJobID string `json:"parent_job_id"`
+
+	// CallerAgentID is the agent ID extracted from the mTLS auth context on
+	// the server side. Clients do not set this field directly; the gRPC
+	// handler populates it from the peer certificate.
+	CallerAgentID string `json:"caller_agent_id,omitempty"`
+
+	// WorkflowID optionally names an existing workflow definition to use for
+	// the child job's task plan. Mutually exclusive with Tasks.
+	WorkflowID string `json:"workflow_id,omitempty"`
+
+	// ProjectID scopes the child job to a registered project.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// Tasks provides inline task specs when no workflow is referenced.
+	Tasks []*TaskSpec `json:"tasks,omitempty"`
+
+	// HostAffinity is a routing hint to pin the child to a specific agent
+	// daemon (Name or Host). Empty means "any available daemon".
+	HostAffinity string `json:"host_affinity,omitempty"`
+
+	// GpuRequired restricts dispatch to daemons that advertise "gpu" in
+	// their Capabilities slice.
+	GpuRequired bool `json:"gpu_required,omitempty"`
+
+	// HostAffinityStrict, when true, treats HostAffinity as a hard constraint:
+	// if the named host is offline the request fails with NoMatchingAgentError
+	// rather than falling back to any available agent.
+	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
+}
+
+// SpawnChildJobResponse is returned after a child job has been accepted and
+// queued. The ChildJobID can be polled via GetJobStatus.
+type SpawnChildJobResponse struct {
+	// ChildJobID is the generated ID of the newly spawned child job.
+	ChildJobID string `json:"child_job_id"`
 }
 
 // jobPersistenceKey builds the KV store key for a persisted job status.

@@ -37,6 +37,7 @@ import (
 type mockOrchestratorClient struct {
 	healthFn             func(ctx context.Context) (*orchestratorSDK.HealthCheckReport, error)
 	listBackendsFn       func(ctx context.Context) (*orchestratorSDK.ListBackendsResponse, error)
+	listBackendModelsFn  func(ctx context.Context, req *orchestratorSDK.ListBackendModelsRequest) (*orchestratorSDK.ListBackendModelsResponse, error)
 	spawnSessionFn       func(ctx context.Context, req *orchestratorSDK.SpawnSessionRequest) (*orchestratorSDK.SpawnSessionResponse, error)
 	promptSessionFn      func(ctx context.Context, req *orchestratorSDK.PromptSessionRequest) (*orchestratorSDK.PromptSessionResponse, error)
 	sessionStatusFn      func(ctx context.Context, req *orchestratorSDK.SessionStatusRequest) (*orchestratorSDK.SessionStatusResponse, error)
@@ -57,6 +58,8 @@ type mockOrchestratorClient struct {
 	getJobStatusFn       func(ctx context.Context, req *orchestratorSDK.GetJobStatusRequest) (*orchestratorSDK.JobStatus, error)
 	cancelJobFn          func(ctx context.Context, req *orchestratorSDK.CancelJobRequest) (*orchestratorSDK.CancelJobResponse, error)
 	subscribeJobEventsFn func(ctx context.Context, req *orchestratorSDK.SubscribeJobEventsRequest) (<-chan *orchestratorSDK.JobEvent, error)
+	inferenceFn          func(ctx context.Context, req *orchestratorSDK.InferenceRequest) (*orchestratorSDK.InferenceResponse, error)
+	inferenceStreamFn    func(ctx context.Context, req *orchestratorSDK.InferenceRequest) (<-chan *orchestratorSDK.InferenceChunk, error)
 	closeFn              func() error
 }
 
@@ -72,6 +75,17 @@ func (m *mockOrchestratorClient) ListBackends(ctx context.Context) (*orchestrato
 		return m.listBackendsFn(ctx)
 	}
 	return &orchestratorSDK.ListBackendsResponse{Backends: []*orchestratorSDK.BackendInfo{}, Count: 0}, nil
+}
+
+func (m *mockOrchestratorClient) ListBackendModels(ctx context.Context, req *orchestratorSDK.ListBackendModelsRequest) (*orchestratorSDK.ListBackendModelsResponse, error) {
+	if m.listBackendModelsFn != nil {
+		return m.listBackendModelsFn(ctx, req)
+	}
+	backend := ""
+	if req != nil {
+		backend = req.BackendName
+	}
+	return &orchestratorSDK.ListBackendModelsResponse{Backend: backend, Models: []string{}, Count: 0}, nil
 }
 
 func (m *mockOrchestratorClient) SpawnSession(ctx context.Context, req *orchestratorSDK.SpawnSessionRequest) (*orchestratorSDK.SpawnSessionResponse, error) {

@@ -26,7 +26,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+
+	schedulerpkg "github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // =============================================================================
@@ -597,7 +600,22 @@ func (m *mockService) Scheduler() service.SchedulerService {
 	return nil
 }
 
+// SchedulerEngine is a no-op for the quic mock.
+func (m *mockService) SchedulerEngine() *schedulerpkg.SchedulerEngine { return nil }
+
+// SSHClient is a no-op for the quic mock; tests that exercise SSH
+// routing wire a real xkmsssh.Client directly.
+func (m *mockService) SSHClient() xkmsssh.Client { return nil }
+
 func (m *mockService) Agent() orchestration.AgentService {
+	return nil
+}
+
+func (m *mockService) Project() service.ProjectService {
+	return nil
+}
+
+func (m *mockService) AgentAdmin() service.AgentAdminService {
 	return nil
 }
 
@@ -641,6 +659,46 @@ func (m *mockService) ListEntityTypes(ctx context.Context, req *service.ListEnti
 
 // SetTenantIsolationManager is a no-op for the mock.
 func (m *mockService) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
+
+// SetSealService is a no-op for the mock.
+func (m *mockService) SetSealService(_ service.SealService) {}
+
+// SealService default stubs to satisfy the QuicBaaS interface.
+// Tests that exercise seal behavior compose e2eMockService or supply
+// a dedicated SealService implementation.
+func (m *mockService) Status(_ context.Context) (*service.SealStatusResponse, error) {
+	return &service.SealStatusResponse{}, nil
+}
+
+func (m *mockService) Initialize(_ context.Context, _ *service.SealInitRequest) (*service.SealInitResponse, error) {
+	return &service.SealInitResponse{}, nil
+}
+
+func (m *mockService) Unseal(_ context.Context, _ *service.UnsealRequest) (*service.UnsealResponse, error) {
+	return &service.UnsealResponse{}, nil
+}
+
+func (m *mockService) Seal(_ context.Context) error { return nil }
+
+func (m *mockService) Rekey(_ context.Context, _ *service.RekeyRequest) (*service.RekeyResponse, error) {
+	return &service.RekeyResponse{}, nil
+}
+
+func (m *mockService) GenerateRecoveryKey(_ context.Context, _ *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
+	return &service.GenerateRecoveryKeyResponse{}, nil
+}
+
+func (m *mockService) DeleteRecoveryKey(_ context.Context, _ *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
+	return &service.DeleteRecoveryKeyResponse{Deleted: true}, nil
+}
+
+func (m *mockService) GenerateRootToken(_ context.Context, _ *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
+	return &service.GenerateRootTokenResponse{}, nil
+}
+
+func (m *mockService) RotateRootKey(_ context.Context, _ *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
+	return &service.RotateRootKeyResponse{Success: true}, nil
+}
 
 // =============================================================================
 // Helper Functions

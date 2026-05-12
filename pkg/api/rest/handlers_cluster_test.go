@@ -645,9 +645,9 @@ func TestHandleGetClusterLeader(t *testing.T) {
 					Timestamp: 12345,
 				}, nil).Once()
 			},
-			// Note: The timeout middleware rewrites 503 to 408 for all responses
-			// that go through the full router (see TimeoutMiddleware in middleware.go)
-			expectedStatus: http.StatusRequestTimeout,
+			// Handler emits 503 ("no leader available"); TimeoutMiddleware no
+			// longer rewrites status codes, so 503 reaches the wire intact.
+			expectedStatus: http.StatusServiceUnavailable,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp ErrorResponse
 				err := json.NewDecoder(w.Body).Decode(&resp)

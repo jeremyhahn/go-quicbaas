@@ -29,7 +29,28 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/version"
 )
+
+// VersionResponse is the JSON shape of GET /api/v1/version.
+type VersionResponse struct {
+	Version    string `json:"version"`
+	BuildTime  string `json:"build_time,omitempty"`
+	GitCommit  string `json:"git_commit,omitempty"`
+	GoVersion  string `json:"go_version,omitempty"`
+}
+
+// HandleVersion returns the daemon's build info. Open endpoint — no
+// authentication required so the GUI dashboard can populate the
+// version field on the unauthenticated probe path.
+func (s *Server) HandleVersion(w http.ResponseWriter, r *http.Request) {
+	RespondJSON(w, r, http.StatusOK, &VersionResponse{
+		Version:   version.Version,
+		BuildTime: version.BuildTime,
+		GitCommit: version.GitCommit,
+		GoVersion: version.GoVersion,
+	})
+}
 
 // HandleBatchPut handles atomic batch put operations.
 func (s *Server) HandleBatchPut(w http.ResponseWriter, r *http.Request) {
@@ -969,11 +990,13 @@ func (s *Server) HandleClusterStatus(w http.ResponseWriter, r *http.Request) {
 		shards = append(shards, shard)
 	}
 
-	// Extract info from first node
+	// Extract info from first node. In standalone mode the topology call
+	// returns an empty Nodes slice; fall back to the daemon's own node ID
+	// from the REST server config so the UI always sees a non-zero value.
 	var leaderIDStr string
 	var totalNodes int
 	var members []uint64
-	var nodeID uint64
+	nodeID := s.config.NodeID // daemon-configured fallback
 	if len(serviceResp.Nodes) > 0 {
 		nodeID = serviceResp.Nodes[0].NodeID
 		totalNodes = len(serviceResp.Nodes)

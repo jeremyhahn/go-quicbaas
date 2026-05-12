@@ -429,8 +429,11 @@ func TestStartKMS_Enabled(t *testing.T) {
 // Secrets Lifecycle Tests
 // =============================================================================
 
-func TestStartSecrets_DisabledMock(t *testing.T) {
-	t.Run("skips initialization when disabled", func(t *testing.T) {
+// Per operator decision (2026-04-22), Secrets is always-on when compiled into
+// the binary; cfg.Secrets.Enabled is no longer consulted by startSecrets.
+// startSecrets initializes secretsManager regardless of the flag.
+func TestStartSecrets_AlwaysOn(t *testing.T) {
+	t.Run("initializes secrets manager regardless of Enabled flag", func(t *testing.T) {
 		srv, cleanup := createTestServerWithConfig(t, func(cfg *config.Config) {
 			cfg.Secrets.Enabled = false
 		})
@@ -438,12 +441,10 @@ func TestStartSecrets_DisabledMock(t *testing.T) {
 
 		err := srv.startSecrets()
 		require.NoError(t, err)
-		assert.Nil(t, srv.secretsManager, "secretsManager should be nil when Secrets is disabled")
+		assert.NotNil(t, srv.secretsManager, "secretsManager should be initialized even when Secrets.Enabled=false (always-on policy)")
 	})
-}
 
-func TestStartSecrets_Enabled(t *testing.T) {
-	t.Run("initializes secrets manager when enabled", func(t *testing.T) {
+	t.Run("initializes secrets manager when Enabled flag is true", func(t *testing.T) {
 		srv, cleanup := createTestServerWithConfig(t, func(cfg *config.Config) {
 			cfg.Secrets.Enabled = true
 		})
@@ -451,7 +452,7 @@ func TestStartSecrets_Enabled(t *testing.T) {
 
 		err := srv.startSecrets()
 		require.NoError(t, err)
-		assert.NotNil(t, srv.secretsManager, "secretsManager should be initialized when Secrets is enabled")
+		assert.NotNil(t, srv.secretsManager, "secretsManager should be initialized when Secrets.Enabled=true")
 	})
 }
 

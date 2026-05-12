@@ -31,13 +31,13 @@ import (
 
 type agentTestLogger struct{}
 
-func (l *agentTestLogger) Debug(msg string, args ...any)                                           {}
+func (l *agentTestLogger) Debug(msg string, args ...any)                              {}
 func (l *agentTestLogger) Debugf(format string, args ...interface{})                  {}
-func (l *agentTestLogger) Info(msg string, args ...any)                                            {}
+func (l *agentTestLogger) Info(msg string, args ...any)                               {}
 func (l *agentTestLogger) Infof(format string, args ...interface{})                   {}
-func (l *agentTestLogger) Warn(msg string, args ...any)                                            {}
+func (l *agentTestLogger) Warn(msg string, args ...any)                               {}
 func (l *agentTestLogger) Warnf(format string, args ...interface{})                   {}
-func (l *agentTestLogger) Error(msg string, args ...any)                                           {}
+func (l *agentTestLogger) Error(msg string, args ...any)                              {}
 func (l *agentTestLogger) Errorf(format string, args ...interface{})                  {}
 func (l *agentTestLogger) Fatal(msg string)                                           {}
 func (l *agentTestLogger) Fatalf(format string, args ...interface{})                  {}
@@ -1920,5 +1920,247 @@ func TestBackendToolGuidance_OllamaBackend(t *testing.T) {
 	guidance := svc.BackendToolGuidance("ollama")
 	if guidance != "" {
 		t.Errorf("expected empty guidance for ollama backend, got %q", guidance)
+	}
+}
+
+// =============================================================================
+// BackendDispatcher remote-routing tests (Phase 4)
+// =============================================================================
+
+func TestBackendDispatcher_RoutesToRemoteBackendWhenResolverMatches(t *testing.T) {
+	t.Parallel()
+
+	local := &mockAgentBackend{backendType: "local"}
+	remote := &mockAgentBackend{backendType: "remote"}
+
+	svc, err := NewAgentService(NewInMemoryAgentStore(), map[string]AgentBackend{
+		"acp": local,
+	}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	svcImpl, ok := svc.(*agentServiceImpl)
+	if !ok {
+		t.Fatalf("expected *agentServiceImpl, got %T", svc)
+	}
+
+	var resolverCalls int32
+	svcImpl.SetRemoteBackendResolver(func(ctx context.Context, name, projectID string) (AgentBackend, bool) {
+		resolverCalls++
+		if name == "acp" {
+			return remote, true
+		}
+		return nil, false
+	})
+
+	got, err := svcImpl.lookupBackendCtx(context.Background(), "acp", "proj-1")
+	if err != nil {
+		t.Fatalf("lookupBackendCtx: %v", err)
+	}
+	if got != remote {
+		t.Fatalf("expected remote backend, got %T (type=%q)", got, got.Type())
+	}
+	if resolverCalls != 1 {
+		t.Fatalf("expected resolver called once, got %d", resolverCalls)
+	}
+}
+
+func TestBackendDispatcher_FallsBackToLocalWhenResolverDeclines(t *testing.T) {
+	t.Parallel()
+
+	local := &mockAgentBackend{backendType: "local"}
+
+	svc, err := NewAgentService(NewInMemoryAgentStore(), map[string]AgentBackend{
+		"acp": local,
+	}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	svcImpl := svc.(*agentServiceImpl)
+
+	svcImpl.SetRemoteBackendResolver(func(ctx context.Context, name, projectID string) (AgentBackend, bool) {
+		return nil, false
+	})
+
+	got, err := svcImpl.lookupBackendCtx(context.Background(), "acp", "")
+	if err != nil {
+		t.Fatalf("lookupBackendCtx: %v", err)
+	}
+	if got != local {
+		t.Fatalf("expected local backend, got %T", got)
+	}
+}
+
+func TestBackendDispatcher_NilResolverUsesLocalLookup(t *testing.T) {
+	t.Parallel()
+
+	local := &mockAgentBackend{backendType: "local"}
+	svc, err := NewAgentService(NewInMemoryAgentStore(), map[string]AgentBackend{
+		"acp": local,
+	}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	svcImpl := svc.(*agentServiceImpl)
+
+	got, err := svcImpl.lookupBackendCtx(context.Background(), "acp", "")
+	if err != nil {
+		t.Fatalf("lookupBackendCtx: %v", err)
+	}
+	if got != local {
+		t.Fatalf("expected local, got %T", got)
+	}
+
+	// Unknown backend with nil resolver should still surface BackendNotFoundError.
+	if _, err := svcImpl.lookupBackendCtx(context.Background(), "missing", ""); err == nil {
+		t.Fatal("expected not-found error for missing backend")
+	} else {
+		var nfe *BackendNotFoundError
+		if !errors.As(err, &nfe) {
+			t.Fatalf("expected *BackendNotFoundError, got %T", err)
+		}
+	}
+}
+
+func TestBackendDispatcher_SpawnSessionRoutesThroughResolver(t *testing.T) {
+	t.Parallel()
+
+	local := &mockAgentBackend{backendType: "local"}
+
+	var remoteCalls int32
+	remote := &mockAgentBackend{
+		backendType: "remote",
+		spawnFn: func(ctx context.Context, req *SpawnRequest) (*Session, error) {
+			remoteCalls++
+			return &Session{
+				ID:        "remote-sess",
+				ProjectID: req.ProjectID,
+				Backend:   "acp",
+				Status:    SessionStateActive,
+				CreatedAt: time.Now().UnixNano(),
+			}, nil
+		},
+	}
+
+	svc, err := NewAgentService(NewInMemoryAgentStore(), map[string]AgentBackend{
+		"acp": local,
+	}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	svcImpl := svc.(*agentServiceImpl)
+
+	// Register a daemon-kind registration and point the resolver at the
+	// remote backend when the names match. This mirrors the production
+	// wiring: the orchestrator inspects the AgentRegistry and routes
+	// daemon-kind entries through RemoteACPBackend.
+	reg := &AgentRegistration{
+		ID:       "agent-1",
+		TenantID: "tenant-a",
+		Backend:  "acp",
+		Kind:     AgentKindDaemon,
+		Host:     "daemon:9091",
+	}
+	svcImpl.SetRemoteBackendResolver(func(ctx context.Context, name, projectID string) (AgentBackend, bool) {
+		if reg.Backend == name && reg.EffectiveKind() == AgentKindDaemon {
+			return remote, true
+		}
+		return nil, false
+	})
+
+	ctx := ContextWithTenant(context.Background(), "tenant-a")
+	resp, err := svcImpl.SpawnSession(ctx, &SpawnSessionRequest{
+		Backend:   "acp",
+		ProjectID: "proj-1",
+	})
+	if err != nil {
+		t.Fatalf("SpawnSession: %v", err)
+	}
+	if resp.SessionID != "remote-sess" {
+		t.Fatalf("session_id: got %q want remote-sess", resp.SessionID)
+	}
+	if remoteCalls != 1 {
+		t.Fatalf("expected remote backend Spawn called once, got %d", remoteCalls)
+	}
+}
+
+// =============================================================================
+// ListBackendModels — remote resolver dispatch and local fallback
+// =============================================================================
+
+// modelListerBackend is a test AgentBackend that also implements ModelLister.
+type modelListerBackend struct {
+	mockAgentBackend
+	models    []string
+	modelsErr error
+}
+
+func (b *modelListerBackend) ListModels(_ context.Context) ([]string, error) {
+	if b.modelsErr != nil {
+		return nil, b.modelsErr
+	}
+	return b.models, nil
+}
+
+// TestListBackendModels_ProxiesToAgentViaRemoteResolver verifies that when a
+// remote backend resolver returns a ModelLister-capable backend,
+// ListBackendModels calls ListModels on it and returns the result.
+func TestListBackendModels_ProxiesToAgentViaRemoteResolver(t *testing.T) {
+	t.Parallel()
+
+	remoteBackend := &modelListerBackend{
+		mockAgentBackend: mockAgentBackend{backendType: "remote-ollama"},
+		models:           []string{"qwen3:1.7b", "llama3.2:1b"},
+	}
+
+	svc, err := NewAgentService(NewInMemoryAgentStore(), map[string]AgentBackend{
+		"local-dummy": &mockAgentBackend{},
+	}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	svcImpl := svc.(*agentServiceImpl)
+	svcImpl.SetRemoteBackendResolver(func(ctx context.Context, name, projectID string) (AgentBackend, bool) {
+		if name == "ollama" {
+			return remoteBackend, true
+		}
+		return nil, false
+	})
+
+	ctx := WithHostAffinity(ContextWithTenant(context.Background(), "tenant-a"), "agent-default-agent-198.51.100.91")
+	models, err := svc.ListBackendModels(ctx, "ollama")
+	if err != nil {
+		t.Fatalf("ListBackendModels error: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("model count: got %d, want 2", len(models))
+	}
+	if models[0] != "qwen3:1.7b" {
+		t.Errorf("models[0]: got %q, want %q", models[0], "qwen3:1.7b")
+	}
+}
+
+// TestListBackendModels_LocalFallbackForNonListerBackend verifies that when the
+// resolved backend does not implement ModelLister, an empty slice is returned
+// without error (non-lister backends are valid; they just don't have a catalog).
+func TestListBackendModels_LocalFallbackForNonListerBackend(t *testing.T) {
+	t.Parallel()
+
+	// mockAgentBackend does NOT implement ModelLister.
+	local := &mockAgentBackend{backendType: "claude"}
+	svc, err := NewAgentService(NewInMemoryAgentStore(), map[string]AgentBackend{
+		"claude": local,
+	}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+
+	// No remote resolver — falls back to local lookup.
+	models, err := svc.ListBackendModels(context.Background(), "claude")
+	if err != nil {
+		t.Fatalf("ListBackendModels error: %v", err)
+	}
+	if len(models) != 0 {
+		t.Errorf("expected empty slice for non-lister backend, got %v", models)
 	}
 }

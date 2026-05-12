@@ -275,4 +275,13 @@ type KMSService interface {
 	//   - SafetyReportResponse: Complete safety report
 	//   - error: ErrTimeout
 	SafetyReport(ctx context.Context, req *SafetyReportRequest) (*SafetyReportResponse, error)
+
+	// SetDefaultKey marks the named key as the system default.
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Set default key request with key name
+	// Returns:
+	//   - SetDefaultKeyResponse: Contains name and is_default flag
+	//   - error: ErrNotFound if key does not exist, ErrInvalidInput for empty name
+	SetDefaultKey(ctx context.Context, req *SetDefaultKeyRequest) (*SetDefaultKeyResponse, error)
 }

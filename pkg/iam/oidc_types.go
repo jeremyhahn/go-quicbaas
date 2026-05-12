@@ -301,6 +301,14 @@ type Claims struct {
 
 	// AuthMethod is the authentication method used
 	AuthMethod string `json:"auth_method,omitempty"`
+
+	// AMR is the Authentication Methods References (RFC 8176).
+	// Examples: ["webauthn","hwk"], ["smartcard","mfa"]
+	AMR []string `json:"amr,omitempty"`
+
+	// ACR is the Authentication Context Class Reference.
+	// For hardware-attested logins: "urn:quicbaas:auth:hardware-attested"
+	ACR string `json:"acr,omitempty"`
 }
 
 // IDTokenClaims represents OpenID Connect ID token claims.
@@ -349,6 +357,20 @@ type IDTokenClaims struct {
 
 	// AuthMethod is the authentication method
 	AuthMethod string `json:"auth_method,omitempty"`
+
+	// AMR is the Authentication Methods References (RFC 8176).
+	// Examples: ["webauthn","hwk"], ["smartcard","mfa"]
+	AMR []string `json:"amr,omitempty"`
+
+	// ACR is the Authentication Context Class Reference.
+	// For hardware-attested logins: "urn:quicbaas:auth:hardware-attested"
+	ACR string `json:"acr,omitempty"`
+
+	// AttestAAGUID is the FIDO2 authenticator AAGUID in hex string form (WebAuthn logins only).
+	AttestAAGUID string `json:"attest_aaguid,omitempty"`
+
+	// AttestLevel is a human-readable attestation level (e.g. "hardware", "software", "none").
+	AttestLevel string `json:"attest_level,omitempty"`
 }
 
 // AuthCodeData represents stored authorization code data.

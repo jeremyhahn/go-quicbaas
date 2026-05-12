@@ -42,6 +42,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/parameterstore"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/query"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rag"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
@@ -123,6 +124,9 @@ type Client interface {
 	Embedding() EmbeddingClient
 	Ollama() OllamaClient
 	RAG() RAGClient
+
+	// Project operations (agentic project management)
+	Project() ProjectClient
 
 	// Orchestrator operations (agent fleet management)
 	Orchestrator() OrchestratorClient
@@ -1542,6 +1546,56 @@ type (
 // OrchestratorClient is an alias for the orchestrator.Client interface.
 type OrchestratorClient = orchestrator.Client
 
+// =============================================================================
+// Project Client Type Aliases
+// =============================================================================
+
+// ProjectClient is an alias for the project.Client interface.
+type ProjectClient = project.Client
+
+type (
+	// ProjectInfo is an alias for project.ProjectInfo.
+	ProjectInfo = project.ProjectInfo
+
+	// ProjectWorkspace is an alias for project.ProjectWorkspace.
+	ProjectWorkspace = project.ProjectWorkspace
+
+	// ProjectGit is an alias for project.ProjectGit.
+	ProjectGit = project.ProjectGit
+
+	// ProjectPermissions is an alias for project.ProjectPermissions.
+	ProjectPermissions = project.ProjectPermissions
+
+	// ProjectQuotas is an alias for project.ProjectQuotas.
+	ProjectQuotas = project.ProjectQuotas
+
+	// ProjectRole is an alias for project.ProjectRole.
+	ProjectRole = project.ProjectRole
+
+	// CreateProjectRequest is an alias for project.CreateProjectRequest.
+	CreateProjectRequest = project.CreateProjectRequest
+
+	// UpdateProjectRequest is an alias for project.UpdateProjectRequest.
+	UpdateProjectRequest = project.UpdateProjectRequest
+
+	// ListProjectsResponse is an alias for project.ListProjectsResponse.
+	ListProjectsResponse = project.ListProjectsResponse
+)
+
+const (
+	// ProjectRoleLead gives full control over the project.
+	ProjectRoleLead = project.ProjectRoleLead
+
+	// ProjectRoleWorker can execute tasks within the project.
+	ProjectRoleWorker = project.ProjectRoleWorker
+
+	// ProjectRoleObserver has read-only access to the project.
+	ProjectRoleObserver = project.ProjectRoleObserver
+
+	// ProjectRoleDenied explicitly prohibits access.
+	ProjectRoleDenied = project.ProjectRoleDenied
+)
+
 // client implements the Client interface.
 type client struct {
 	transport Transport
@@ -1581,8 +1635,13 @@ type client struct {
 	ollamaClient             OllamaClient
 	ragClient                RAGClient
 	orchestratorClient       OrchestratorClient
+	projectClient            ProjectClient
 	qrdb                     qrdbState
 	address                  string
+
+	// M10 — extended security service (lazily initialized).
+	securityOnce sync.Once
+	security     *securityService
 }
 
 // NewClient creates a new QuicBaaS client connected to the specified address.
@@ -2392,6 +2451,24 @@ func (c *client) Orchestrator() OrchestratorClient {
 	return c.orchestratorClient
 }
 
+// Project returns the Project client for managing agentic project entities.
+func (c *client) Project() ProjectClient {
+	c.mu.RLock()
+	if c.projectClient != nil {
+		c.mu.RUnlock()
+		return c.projectClient
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.projectClient == nil {
+		c.projectClient = newProjectClient(c.transport)
+	}
+	return c.projectClient
+}
+
 // Client constructors - wire up all client implementations
 func newKVClient(t Transport) KVClient                         { return kv.NewClient(t) }
 func newBatchClient(t Transport) BatchClient                   { return batch.NewClient(t) }
@@ -2427,3 +2504,4 @@ func newEmbeddingClient(t Transport) EmbeddingClient           { return embeddin
 func newOllamaClient(t Transport) OllamaClient                 { return ollama.NewClient(t) }
 func newRAGClient(t Transport) RAGClient                       { return rag.NewClient(t) }
 func newOrchestratorClient(t Transport) OrchestratorClient     { return orchestrator.NewClient(t) }
+func newProjectClient(t Transport) ProjectClient               { return project.NewClient(t) }

@@ -44,14 +44,11 @@ func TestServer_CreateUser(t *testing.T) {
 			name: "successful_create_user",
 			request: &pb.CreateUserRequest{
 				Username: "newuser",
-				Password: "securePassword123",
 				Roles:    []string{"reader", "writer"},
 			},
 			mockSetup: func(m *mock.Mock) {
 				m.On("CreateUser", mock.Anything, mock.MatchedBy(func(req *service.AuthCreateUserRequest) bool {
-					return req.Username == "newuser" &&
-						req.Password == "securePassword123" &&
-						len(req.Roles) == 2
+					return req.Username == "newuser" && len(req.Roles) == 2
 				})).Return(&service.AuthCreateUserResponse{
 					UserID:    "user-abc-123",
 					Timestamp: 1700000000,
@@ -75,17 +72,6 @@ func TestServer_CreateUser(t *testing.T) {
 			name: "empty_username",
 			request: &pb.CreateUserRequest{
 				Username: "",
-				Password: "securePassword123",
-			},
-			mockSetup:   func(m *mock.Mock) {},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
-		},
-		{
-			name: "empty_password",
-			request: &pb.CreateUserRequest{
-				Username: "newuser",
-				Password: "",
 			},
 			mockSetup:   func(m *mock.Mock) {},
 			expectError: true,
@@ -95,7 +81,6 @@ func TestServer_CreateUser(t *testing.T) {
 			name: "service_error",
 			request: &pb.CreateUserRequest{
 				Username: "existing",
-				Password: "password123",
 			},
 			mockSetup: func(m *mock.Mock) {
 				m.On("CreateUser", mock.Anything, mock.Anything).

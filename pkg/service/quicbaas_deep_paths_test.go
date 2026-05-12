@@ -371,7 +371,6 @@ func TestCreateUser_NilAuthManager(t *testing.T) {
 
 	resp, err := rbacSvc.CreateUser(context.Background(), &AuthCreateUserRequest{
 		Username: "alice",
-		Password: "password123",
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -388,24 +387,6 @@ func TestCreateUser_EmptyUsername(t *testing.T) {
 
 	resp, err := rbacSvc.CreateUser(context.Background(), &AuthCreateUserRequest{
 		Username: "",
-		Password: "password123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestCreateUser_EmptyPassword(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, authManager: &mockAuthManager{}}
-	rbacSvc := &rbacService{svc: svc}
-
-	resp, err := rbacSvc.CreateUser(context.Background(), &AuthCreateUserRequest{
-		Username: "alice",
-		Password: "",
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -426,7 +407,6 @@ func TestCreateUser_AuthManagerError(t *testing.T) {
 
 	resp, err := rbacSvc.CreateUser(context.Background(), &AuthCreateUserRequest{
 		Username: "alice",
-		Password: "password123",
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -444,7 +424,6 @@ func TestCreateUser_TypeAssertionFailure(t *testing.T) {
 
 	resp, err := rbacSvc.CreateUser(context.Background(), &AuthCreateUserRequest{
 		Username: "alice",
-		Password: "password123",
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -469,7 +448,6 @@ func TestCreateUser_Success(t *testing.T) {
 
 	resp, err := rbacSvc.CreateUser(context.Background(), &AuthCreateUserRequest{
 		Username: "alice",
-		Password: "password123",
 		Roles:    []string{"admin"},
 	})
 	require.NoError(t, err)

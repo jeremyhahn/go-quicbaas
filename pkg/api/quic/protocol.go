@@ -474,6 +474,9 @@ const (
 
 	// Health (0x0C).
 	SubOpOrchestratorHealth byte = 0x0C
+
+	// Inference (0x0D) - stateless fleet-routed inference (aggregate response).
+	SubOpOrchestratorInference byte = 0x0D
 )
 
 // Request represents a QUIC protocol request.

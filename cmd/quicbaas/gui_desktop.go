@@ -29,11 +29,18 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// launchGUI starts the Wails desktop application with connection and
-// orchestrator bindings exposed to the frontend via IPC.
+// launchGUI starts the Wails desktop application with the full set of
+// bindings the Svelte frontend drives: connection management,
+// orchestrator ops, session event history + subscriptions, agent
+// registry queries, and embedded-server control for standalone mode.
 func launchGUI(log *logger.Logger, logFile string) error {
 	conn := NewConnectionBinding(log)
 	orch := NewOrchestratorBinding(log, conn)
+	sessions := NewSessionBinding(log, conn)
+	agents := NewAgentBinding(log, conn)
+	embedded := NewEmbeddedServerBinding(log)
+	agentDeploy := NewAgentDeployBinding(log, conn)
+	sshKeys := NewSSHKeysBinding(log)
 
 	return wails.Run(&options.App{
 		Title:  "QuicBaaS",
@@ -45,11 +52,21 @@ func launchGUI(log *logger.Logger, logFile string) error {
 		OnStartup: func(ctx context.Context) {
 			conn.startup(ctx)
 			orch.startup(ctx)
+			sessions.startup(ctx)
+			agents.startup(ctx)
+			embedded.startup(ctx)
+			agentDeploy.startup(ctx)
+			sshKeys.startup(ctx)
 		},
 		OnShutdown: func(ctx context.Context) {
+			sshKeys.shutdown(ctx)
+			agentDeploy.shutdown(ctx)
+			embedded.shutdown(ctx)
+			agents.shutdown(ctx)
+			sessions.shutdown(ctx)
 			orch.shutdown(ctx)
 			conn.shutdown(ctx)
 		},
-		Bind: []interface{}{conn, orch},
+		Bind: []interface{}{conn, orch, sessions, agents, embedded, agentDeploy, sshKeys},
 	})
 }

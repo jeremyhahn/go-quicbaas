@@ -1,83 +1,98 @@
 # QuicBaaS Integration Test Runner Dockerfile
-# Uses the devcontainer as base to ensure consistent environment
+# Runs the integration test binary with the cluster.
 #
-# Usage:
-#   docker build -t quicbaas-integration-test -f test/integration/Dockerfile .
-#
-# The devcontainer provides all development dependencies including:
-# - Go 1.26 with all tools (golangci-lint, gotestsum, delve, etc.)
-# - Docker CLI and docker-compose for container management
-# - Networking tools (curl, netcat, bind-tools)
-# - Build tools (make, git)
+# Build model: a Go workspace (go.work) is reconstructed inside the image
+# from sibling repos supplied via Docker BuildKit's `workspace` named
+# context (see docker-compose.integration.yml). go.work is then the single
+# source of truth for cross-module resolution — same model as local dev.
+# No `.deps/` staging or replace-directive rewriting required.
 
-# Build arguments
-# BUILD_TAGS: Feature flags (iam, etc.) + codec tags (codec_json, codec_msgpack, etc.)
-# Default includes all codecs for full integration test coverage
 ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio"
 
 # ============================================================================
-# Stage 1: Build binaries (lightweight Alpine builder)
+# Stage 1: Build server binary inside a Go workspace mirroring host layout
 # ============================================================================
 FROM golang:1.26-alpine AS builder
 
 ARG BUILD_TAGS
 
-# Install minimal build dependencies
 RUN apk add --no-cache git make bash ca-certificates
 
-WORKDIR /build
+WORKDIR /workspace
 
-# Copy module files first for caching
-COPY go.mod go.sum ./
-COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+# Pull each sibling go-quicbaas needs from the workspace named context.
+COPY --from=workspace go-libsignal  ./go-libsignal
+COPY --from=workspace go-objstore   ./go-objstore
+COPY --from=workspace go-qrdb       ./go-qrdb
+COPY --from=workspace go-quicraft   ./go-quicraft
+COPY --from=workspace go-signal     ./go-signal
+COPY --from=workspace go-truststrap ./go-truststrap
+COPY --from=workspace go-xkms       ./go-xkms
 
-# Copy local dependencies (staged by Makefile into .deps/)
-COPY .deps/ /deps/
+# go-quicbaas itself comes from the default context (project root).
+COPY . ./go-quicbaas
 
-# Rewrite local replace directives to point to staged deps (root and sdk/go)
-RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod sdk/go/go.mod
+# Pruned go.work — see Dockerfile.node for rationale.
+RUN { \
+        echo 'go 1.26.3'; \
+        echo ''; \
+        echo 'use ('; \
+        echo '	./go-libsignal'; \
+        echo '	./go-objstore'; \
+        echo '	./go-objstore/api/sdks/go'; \
+        echo '	./go-qrdb'; \
+        echo '	./go-qrdb/sdk/go'; \
+        echo '	./go-quicbaas'; \
+        echo '	./go-quicbaas/sdk/go'; \
+        echo '	./go-quicraft'; \
+        echo '	./go-signal'; \
+        echo '	./go-xkms'; \
+        echo '	./go-xkms/sdk/go'; \
+        echo '	./go-xkms/xkey'; \
+        echo ')'; \
+        echo ''; \
+        echo 'replace ('; \
+        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
+        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
+        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
+        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
+        echo ')'; \
+    } > go.work
 
-# Download remaining dependencies (remove go.sum to avoid checksum mismatch
-# between local and Docker module proxy; COPY . . restores it for the build)
-RUN rm -f go.sum sdk/go/go.sum && GONOSUMCHECK='*' GONOSUMDB='*' go mod download
-
-# Copy source code
-COPY . .
-
-# Rewrite replace directives again (COPY . . overwrites go.mod and sdk/go/go.mod)
-RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod sdk/go/go.mod
+WORKDIR /workspace/go-quicbaas
 
 # Remove any stale debug files
 RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
 
-# Build server binary only (CLI is built by Makefile and mounted)
-RUN CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
+# Drop go.sum: workspace `use` directives resolve sibling modules locally,
+# but go.sum still gets consulted and may be out of sync with workspace
+# versions (e.g. an in-flight sibling change). Letting Go regenerate sums
+# under workspace mode is the correct behavior here.
+RUN rm -f go.sum sdk/go/go.sum
+
+# Build server binary
+RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
 
 # ============================================================================
-# Stage 2: Integration test runtime (based on devcontainer)
+# Stage 2: Test runtime — full Go toolchain, workspace, built server binary
 # ============================================================================
 FROM golang:1.26-alpine
 
-# Re-declare ARG to make it available in this stage
 ARG BUILD_TAGS
 
 LABEL maintainer="Jeremy Hahn"
 LABEL description="QuicBaaS integration test runner"
 LABEL version="2.0.0"
 
-# Install runtime dependencies matching devcontainer
 RUN apk add --no-cache \
     bash \
     coreutils \
@@ -93,50 +108,79 @@ RUN apk add --no-cache \
     docker-cli \
     docker-cli-compose
 
-# Install Go development tools needed for testing
 RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
     go install gotest.tools/gotestsum@latest
 
-WORKDIR /app
+WORKDIR /workspace
 
-# Copy source code for test execution
-COPY . .
+# Reconstruct the same workspace layout for the test runtime so `go test`
+# resolves all sibling modules. (Same COPY shape as the builder stage; the
+# stages cannot share filesystem, so each lays out its own workspace.)
+COPY --from=workspace go-libsignal  ./go-libsignal
+COPY --from=workspace go-objstore   ./go-objstore
+COPY --from=workspace go-qrdb       ./go-qrdb
+COPY --from=workspace go-quicraft   ./go-quicraft
+COPY --from=workspace go-signal     ./go-signal
+COPY --from=workspace go-truststrap ./go-truststrap
+COPY --from=workspace go-xkms       ./go-xkms
+COPY . ./go-quicbaas
 
-# Copy local dependencies (staged by Makefile into .deps/)
-COPY .deps/ /deps/
+RUN { \
+        echo 'go 1.26.3'; \
+        echo ''; \
+        echo 'use ('; \
+        echo '	./go-libsignal'; \
+        echo '	./go-objstore'; \
+        echo '	./go-objstore/api/sdks/go'; \
+        echo '	./go-qrdb'; \
+        echo '	./go-qrdb/sdk/go'; \
+        echo '	./go-quicbaas'; \
+        echo '	./go-quicbaas/sdk/go'; \
+        echo '	./go-quicraft'; \
+        echo '	./go-signal'; \
+        echo '	./go-xkms'; \
+        echo '	./go-xkms/sdk/go'; \
+        echo '	./go-xkms/xkey'; \
+        echo ')'; \
+        echo ''; \
+        echo 'replace ('; \
+        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
+        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
+        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
+        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
+        echo ')'; \
+    } > go.work
 
-# Rewrite local replace directives to point to staged deps (root and sdk/go)
-RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod sdk/go/go.mod
+# Server binary built in stage 1
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd
 
-# Download dependencies for test execution (remove go.sum to avoid checksum
-# mismatch between local and Docker module proxy environments)
-RUN rm -f go.sum sdk/go/go.sum && GONOSUMCHECK='*' GONOSUMDB='*' go mod download
-
-# Copy built server binary from builder stage
-COPY --from=builder /build/bin/quicbaasd /usr/local/bin/quicbaasd
-
-# Copy health check script and set permissions
+# Health check script comes from the project context
 COPY test/integration/health_check.sh /usr/local/bin/health_check.sh
 RUN chmod +x /usr/local/bin/health_check.sh /usr/local/bin/quicbaasd
 
-# Create bin directory for mounted CLI binary
-RUN mkdir -p /app/bin
+# CLI binary directory is mounted at runtime (built by Makefile)
+RUN mkdir -p /workspace/go-quicbaas/bin
 
-# Environment variables for testing
-# TEST_BUILD_TAGS: Persists BUILD_TAGS ARG to runtime for test execution
+WORKDIR /workspace/go-quicbaas
+
+# TEST_BUILD_TAGS persists BUILD_TAGS ARG to runtime for test execution
 ENV QUICBAAS_TEST_MODE=integration \
     QUICBAAS_LOG_LEVEL=debug \
     QUICBAAS_LOG_FORMAT=text \
     CGO_ENABLED=0 \
     GO111MODULE=on \
-    PATH="/app/bin:/usr/local/bin:${PATH}" \
+    GOSUMDB=off \
+    GOINSECURE=github.com/jeremyhahn/* \
+    PATH="/workspace/go-quicbaas/bin:/usr/local/bin:${PATH}" \
     TEST_BUILD_TAGS="${BUILD_TAGS}"
 
-# Default command: wait for cluster readiness, then run integration tests
-CMD ["sh", "-c", "echo 'Waiting for cluster to be fully operational...' && /usr/local/bin/health_check.sh && echo 'Starting integration tests...' && echo \"Build tags: integration ${TEST_BUILD_TAGS}\" && go test -v -tags \"integration ${TEST_BUILD_TAGS}\" -timeout 30m ./test/integration/..."]
+# Default command: wait for cluster readiness, then run integration tests.
+CMD ["sh", "-c", "rm -f go.sum sdk/go/go.sum && echo 'Waiting for cluster to be fully operational...' && /usr/local/bin/health_check.sh && echo 'Starting integration tests...' && echo \"Build tags: integration ${TEST_BUILD_TAGS}\" && go test -v -tags \"integration ${TEST_BUILD_TAGS}\" -timeout 30m ./test/integration/..."]

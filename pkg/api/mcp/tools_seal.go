@@ -18,7 +18,6 @@ package mcp
 import (
 	"context"
 
-	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -181,14 +180,7 @@ func (r *ToolRegistry) registerSealTools() {
 }
 
 func (r *ToolRegistry) executeSealStatus(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	sealSvc, ok := r.service.(interface {
-		Status(context.Context) (*service.SealStatusResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("seal")
-	}
-
-	resp, err := sealSvc.Status(ctx)
+	resp, err := r.service.Status(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -196,13 +188,6 @@ func (r *ToolRegistry) executeSealStatus(ctx context.Context, args map[string]in
 }
 
 func (r *ToolRegistry) executeSealInit(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	sealSvc, ok := r.service.(interface {
-		Initialize(context.Context, *service.SealInitRequest) (*service.SealInitResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("seal")
-	}
-
 	req := &service.SealInitRequest{
 		Threshold:           int(getUint64(args, "threshold")),    //nolint:gosec // G115: Threshold is small value (typically < 10)
 		TotalShares:         int(getUint64(args, "total_shares")), //nolint:gosec // G115: small value
@@ -211,7 +196,7 @@ func (r *ToolRegistry) executeSealInit(ctx context.Context, args map[string]inte
 		RecoveryTotalKeys:   int(getUint64(args, "recovery_total_keys")), //nolint:gosec // G115: small value
 	}
 
-	resp, err := sealSvc.Initialize(ctx, req)
+	resp, err := r.service.Initialize(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -219,20 +204,13 @@ func (r *ToolRegistry) executeSealInit(ctx context.Context, args map[string]inte
 }
 
 func (r *ToolRegistry) executeUnseal(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	sealSvc, ok := r.service.(interface {
-		Unseal(context.Context, *service.UnsealRequest) (*service.UnsealResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("seal")
-	}
-
 	req := &service.UnsealRequest{
 		Share:     []byte(getString(args, "share")),
 		NodeID:    getUint64(args, "node_id"),
 		Signature: []byte(getString(args, "signature")),
 	}
 
-	resp, err := sealSvc.Unseal(ctx, req)
+	resp, err := r.service.Unseal(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -240,15 +218,7 @@ func (r *ToolRegistry) executeUnseal(ctx context.Context, args map[string]interf
 }
 
 func (r *ToolRegistry) executeSeal(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	sealSvc, ok := r.service.(interface {
-		Seal(context.Context) error
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("seal")
-	}
-
-	err := sealSvc.Seal(ctx)
-	if err != nil {
+	if err := r.service.Seal(ctx); err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{
@@ -258,13 +228,6 @@ func (r *ToolRegistry) executeSeal(ctx context.Context, args map[string]interfac
 }
 
 func (r *ToolRegistry) executeSealRekey(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	sealSvc, ok := r.service.(interface {
-		Rekey(context.Context, *service.RekeyRequest) (*service.RekeyResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("seal")
-	}
-
 	req := &service.RekeyRequest{
 		//nolint:gosec // G115: Threshold and shares are small values (typically < 100)
 		NewThreshold: int(getUint64(args, "new_threshold")),
@@ -272,7 +235,7 @@ func (r *ToolRegistry) executeSealRekey(ctx context.Context, args map[string]int
 		NewTotalShares: int(getUint64(args, "new_total_shares")),
 	}
 
-	resp, err := sealSvc.Rekey(ctx, req)
+	resp, err := r.service.Rekey(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -280,13 +243,6 @@ func (r *ToolRegistry) executeSealRekey(ctx context.Context, args map[string]int
 }
 
 func (r *ToolRegistry) executeSealGenerateRecoveryKey(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	sealSvc, ok := r.service.(interface {
-		GenerateRecoveryKey(context.Context, *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("seal")
-	}
-
 	req := &service.GenerateRecoveryKeyRequest{
 		//nolint:gosec // G115: Recovery key count is small value (typically < 100)
 		RecoveryThreshold: int(getUint64(args, "recovery_threshold")),
@@ -294,7 +250,7 @@ func (r *ToolRegistry) executeSealGenerateRecoveryKey(ctx context.Context, args 
 		RecoveryTotalKeys: int(getUint64(args, "recovery_total_keys")),
 	}
 
-	resp, err := sealSvc.GenerateRecoveryKey(ctx, req)
+	resp, err := r.service.GenerateRecoveryKey(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -302,18 +258,11 @@ func (r *ToolRegistry) executeSealGenerateRecoveryKey(ctx context.Context, args 
 }
 
 func (r *ToolRegistry) executeSealDeleteRecoveryKey(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	sealSvc, ok := r.service.(interface {
-		DeleteRecoveryKey(context.Context, *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("seal")
-	}
-
 	req := &service.DeleteRecoveryKeyRequest{
 		Confirm: getBool(args, "confirm"),
 	}
 
-	resp, err := sealSvc.DeleteRecoveryKey(ctx, req)
+	resp, err := r.service.DeleteRecoveryKey(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -321,13 +270,6 @@ func (r *ToolRegistry) executeSealDeleteRecoveryKey(ctx context.Context, args ma
 }
 
 func (r *ToolRegistry) executeSealGenerateRootToken(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	sealSvc, ok := r.service.(interface {
-		GenerateRootToken(context.Context, *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error)
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("seal")
-	}
-
 	var shares [][]byte
 	if sharesRaw, ok := args["shares"].([]interface{}); ok {
 		shares = make([][]byte, len(sharesRaw))
@@ -343,7 +285,7 @@ func (r *ToolRegistry) executeSealGenerateRootToken(ctx context.Context, args ma
 		Shares:   shares,
 	}
 
-	resp, err := sealSvc.GenerateRootToken(ctx, req)
+	resp, err := r.service.GenerateRootToken(ctx, req)
 	if err != nil {
 		return nil, err
 	}

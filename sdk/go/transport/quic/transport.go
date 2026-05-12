@@ -211,6 +211,7 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	var isRAG bool
 	var isCluster bool
 	var isEmbedding bool
+	var isOrchestrator bool
 
 	// Transform Vector requests to server-side format
 	if isVectorService(svc) {
@@ -254,10 +255,37 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 		isEmbedding = true
 	}
 
+	// Check if this is an Orchestrator service request
+	if isOrchestratorService(svc) {
+		isOrchestrator = true
+	}
+
 	// Encode request payload
 	payload, err := EncodePayload(transformedReq)
 	if err != nil {
 		return nil, err
+	}
+
+	// For Orchestrator operations the server uses OpOrchestrator (0x8F) as the
+	// top-level opcode with the sub-operation code in payload[0], followed by
+	// the JSON-encoded request body. We prepend the SubOp byte here so the wire
+	// format matches what handleOrchestratorDispatch expects.
+	if isOrchestrator {
+		// Inject tenant_id from context into the JSON body before SubOp prepend.
+		// The orchestration service validates tenant_id at the business logic layer,
+		// and the SDK request structs deliberately do not expose a TenantID field
+		// (it is resolved from context by every transport, matching gRPC behaviour).
+		payload = injectTenantID(ctx, payload)
+
+		subOp, ok := OrchestratorMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown orchestrator method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
 	}
 
 	// Get auth token
@@ -266,7 +294,6 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 		token = v.(string)
 	}
 
-	// Build protocol request
 	protoReq := &Request{
 		Opcode:  opcode,
 		Token:   token,
@@ -332,6 +359,13 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	// Decode response payload
 	if len(resp.Payload) == 0 {
 		return nil, nil
+	}
+
+	// Orchestrator responses may be JSON arrays (e.g., ListBackends returns
+	// []*AgentBackendInfo directly). We decode the raw bytes instead of going
+	// through the generic map[string]interface{} path to handle both shapes.
+	if isOrchestrator {
+		return decodeOrchestratorResponse(method, resp.Payload)
 	}
 
 	var decoded map[string]interface{}

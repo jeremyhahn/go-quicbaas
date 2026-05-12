@@ -19,6 +19,8 @@ import (
 	"context"
 	"testing"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -32,7 +34,10 @@ type mockAuthManager struct {
 	validateTokenFunc func(ctx context.Context, token string) (interface{}, error)
 }
 
-func (m *mockAuthManager) Authenticate(ctx context.Context, username, password string) (interface{}, error) {
+func (m *mockAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
+	if password != nil {
+		password.Destroy()
+	}
 	return nil, nil
 }
 

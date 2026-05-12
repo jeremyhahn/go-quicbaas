@@ -1,0 +1,32 @@
+import type { AuthClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
+import type { ClientConfig } from './types.js';
+import { QuicBaaSError } from './errors.js';
+export declare class UnixNotImplementedError extends QuicBaaSError {
+    constructor(method: string);
+}
+export declare class UnixClient implements Client {
+    readonly connection: ConnectionClient;
+    readonly orchestrator: OrchestratorClient;
+    readonly auth: AuthClient;
+    readonly data: any;
+    readonly vectors: any;
+    readonly timeseries: any;
+    readonly objects: any;
+    readonly rag: any;
+    readonly embeddings: any;
+    readonly messaging: any;
+    readonly scheduler: any;
+    readonly projects: any;
+    readonly iam: any;
+    readonly kms: any;
+    readonly secrets: any;
+    readonly barrier: any;
+    readonly ceremony: any;
+    readonly bootstrap: any;
+    readonly seal: any;
+    readonly sshKeys: any;
+    readonly ssh: any;
+    constructor(socketPath: string, _config?: ClientConfig);
+    logout(_token?: string): Promise<void>;
+}
+//# sourceMappingURL=unix.d.ts.map

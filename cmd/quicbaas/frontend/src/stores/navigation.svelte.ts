@@ -14,15 +14,21 @@
 /**
  * Navigation state store.
  *
- * Tracks the active view and sidebar collapse state.
+ * Sidebar collapse state lives here. The active view is derived from the
+ * hash router (router.svelte.ts) so that the URL is always the source of
+ * truth and deep-links work correctly.
  */
+
+import { navigateTo, routerStore, type RouteName } from './router.svelte.ts';
 
 export type ViewID =
   | 'dashboard'
+  | 'orchestration'
   | 'jobs'
   | 'agents'
   | 'sessions'
   | 'tasks'
+  | 'workflows'
   | 'events'
   | 'costs'
   | 'kv'
@@ -36,28 +42,120 @@ export type ViewID =
   | 'iam'
   | 'kms'
   | 'secrets'
-  | 'seal'
+  | 'barrier'
+  | 'ceremony'
+  | 'bootstrap'
+  | 'ssh-keys'
   | 'cluster'
   | 'nodes'
   | 'backup'
   | 'connection'
-  | 'theme';
+  | 'theme'
+  | 'inference'
+  | 'projects';
+
+/** Map each sidebar ViewID to its canonical hash path. */
+const viewHashPaths: Partial<Record<ViewID, string>> = {
+  dashboard:     '/dashboard',
+  orchestration: '/orchestration',
+  jobs:          '/jobs',
+  agents:        '/fleet',
+  sessions:      '/sessions',
+  tasks:         '/tasks',
+  workflows:     '/workflows',
+  events:        '/events',
+  costs:         '/cost',
+  kv:            '/kv',
+  vectors:       '/vectors',
+  timeseries:    '/timeseries',
+  objects:       '/objects',
+  // AI/ML
+  rag:           '/rag',
+  embeddings:    '/embeddings',
+  // ASYNC
+  messaging:     '/messaging',
+  scheduler:     '/scheduler',
+  // SECURITY
+  iam:           '/iam',
+  kms:           '/kms',
+  secrets:       '/secrets',
+  barrier:       '/barrier',
+  ceremony:      '/ceremony',
+  bootstrap:     '/bootstrap',
+  'ssh-keys':    '/ssh-keys',
+  // ORCHESTRATION — inference
+  inference:     '/inference',
+  // ORCHESTRATION — projects
+  projects:      '/projects',
+  // CLUSTER
+  cluster:       '/cluster',
+};
+
+/**
+ * Map each RouteName back to the ViewID it represents in the sidebar so the
+ * active highlight stays in sync when the hash changes externally.
+ */
+const routeToViewID: Partial<Record<RouteName, ViewID>> = {
+  dashboard:        'dashboard',
+  orchestration:    'orchestration',
+  jobs:             'jobs',
+  fleet:            'agents',
+  sessions:         'sessions',
+  'session-detail': 'sessions',
+  tasks:            'tasks',
+  workflows:        'workflows',
+  events:           'events',
+  cost:             'costs',
+  kv:               'kv',
+  vectors:          'vectors',
+  timeseries:       'timeseries',
+  objects:          'objects',
+  // AI/ML
+  rag:              'rag',
+  embeddings:       'embeddings',
+  // ASYNC
+  messaging:        'messaging',
+  scheduler:        'scheduler',
+  // SECURITY
+  iam:              'iam',
+  kms:              'kms',
+  secrets:          'secrets',
+  barrier:          'barrier',
+  ceremony:         'ceremony',
+  bootstrap:        'bootstrap',
+  'ssh-keys':       'ssh-keys',
+  // ORCHESTRATION — inference
+  inference:        'inference',
+  // ORCHESTRATION — projects
+  projects:         'projects',
+  // CLUSTER
+  cluster:          'cluster',
+};
 
 export interface NavState {
-  activeView: ViewID;
-  sidebarCollapsed: boolean;
+  readonly activeView: ViewID;
+  readonly sidebarCollapsed: boolean;
 }
 
-let activeView: ViewID = $state('dashboard');
 let sidebarCollapsed = $state(false);
 
-export const navStore = {
-  get activeView() { return activeView; },
+export const navStore: NavState = {
+  /** Active view derived from the router — URL is always the source of truth. */
+  get activeView(): ViewID {
+    return routeToViewID[routerStore.name] ?? 'dashboard';
+  },
   get sidebarCollapsed() { return sidebarCollapsed; },
 };
 
+/**
+ * Navigate to a view by setting window.location.hash. Views that don't have
+ * a hash route yet fall through gracefully.
+ */
 export function navigate(view: ViewID): void {
-  activeView = view;
+  const path = viewHashPaths[view];
+  if (path !== undefined) {
+    navigateTo(path);
+  }
 }
 
 export function toggleSidebar(): void {
