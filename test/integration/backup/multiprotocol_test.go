@@ -537,34 +537,19 @@ func (c *quicBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	return nil
 }
 
-// authenticate logs in via the QUIC protocol to obtain an access token.
+// authenticate obtains a bearer token via the cluster's PIV login endpoint
+// and stores it for subsequent QUIC requests. mTLS-cert-based login is the
+// only path the cluster exposes; password authentication has been removed.
 func (c *quicBackupClient) authenticate(ctx context.Context) error {
-	loginReq := &service.LoginRequest{
-		Username: "admin",
-		Password: "admin",
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
 	}
-
-	payload, err := quic.EncodePayload(loginReq)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to encode login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
 	}
-
-	// Login is a public operation, no token required
-	resp, err := c.sendRequest(ctx, quic.OpLogin, "", payload)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "login request failed", Cause: err}
-	}
-
-	var loginResp service.LoginResponse
-	if err := quic.DecodePayload(resp.Payload, &loginResp); err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to decode login response", Cause: err}
-	}
-
-	if loginResp.AccessToken == "" {
-		return &qberrors.MessageError{Message: "login response missing access token"}
-	}
-
-	c.authToken = loginResp.AccessToken
+	c.authToken = bearer
 	return nil
 }
 

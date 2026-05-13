@@ -190,7 +190,6 @@ func TestQUICPublicOperationsNoAuth(t *testing.T) {
 		opcode byte
 		name   string
 	}{
-		{quic.OpLogin, "Login"},
 		{quic.OpHealth, "Health"},
 		{quic.OpLiveness, "Liveness"},
 		{quic.OpReadiness, "Readiness"},
