@@ -39,8 +39,8 @@ import (
 // Test environment configuration
 var (
 	testNode1URL    = getEnv("QUICBAAS_NODE1_URL", "https://test-node1:8080")
-	testNode1MCP    = getEnv("QUICBAAS_NODE1_MCP", "http://test-node1:8888")
-	testMCPEndpoint = getEnv("QUICBAAS_MCP_ENDPOINT", "http://test-node1:8888/mcp")
+	testNode1MCP    = getEnv("QUICBAAS_NODE1_MCP", "https://test-node1:8888")
+	testMCPEndpoint = getEnv("QUICBAAS_MCP_ENDPOINT", "https://test-node1:8888/mcp")
 	testTimeout     = 60 * time.Second
 	httpClient      = &http.Client{
 		Timeout: testTimeout,

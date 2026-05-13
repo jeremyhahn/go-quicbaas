@@ -117,7 +117,7 @@ func getQUICEndpoint() string {
 func getMCPEndpoint() string {
 	endpoint := os.Getenv("QUICBAAS_NODE1_MCP")
 	if endpoint == "" {
-		endpoint = "http://test-node1:8888/mcp"
+		endpoint = "https://test-node1:8888/mcp"
 	}
 	return endpoint
 }

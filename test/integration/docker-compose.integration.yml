@@ -163,10 +163,10 @@ services:
       - QUICBAAS_NODE1_QUIC=test-node1:4433
       - QUICBAAS_NODE2_QUIC=test-node2:4433
       - QUICBAAS_NODE3_QUIC=test-node3:4433
-      - QUICBAAS_NODE1_MCP=http://test-node1:8888/mcp
-      - QUICBAAS_NODE2_MCP=http://test-node2:8888/mcp
-      - QUICBAAS_NODE3_MCP=http://test-node3:8888/mcp
-      - QUICBAAS_MCP_ENDPOINT=http://test-node1:8888/mcp
+      - QUICBAAS_NODE1_MCP=https://test-node1:8888/mcp
+      - QUICBAAS_NODE2_MCP=https://test-node2:8888/mcp
+      - QUICBAAS_NODE3_MCP=https://test-node3:8888/mcp
+      - QUICBAAS_MCP_ENDPOINT=https://test-node1:8888/mcp
       - QUICBAAS_NODE1_UNIX=/var/run/quicbaas/node1.sock
       - QUICBAAS_NODE2_UNIX=/var/run/quicbaas/node2.sock
       - QUICBAAS_NODE3_UNIX=/var/run/quicbaas/node3.sock

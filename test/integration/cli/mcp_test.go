@@ -31,7 +31,7 @@ func getMCPAddress() string {
 	if addr := os.Getenv("QUICBAAS_MCP_ADDRESS"); addr != "" {
 		return addr
 	}
-	return "http://test-node1:8888/mcp"
+	return "https://test-node1:8888/mcp"
 }
 
 // requireMCPEnabled fails the test if MCP testing is explicitly disabled

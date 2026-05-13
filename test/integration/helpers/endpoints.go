@@ -189,21 +189,25 @@ func GetQUICEndpoints() []string {
 	return []string{node1, node2, node3}
 }
 
-// GetMCPEndpoints returns all MCP endpoints for testing
+// GetMCPEndpoints returns all MCP endpoints for testing. The cluster's MCP
+// listener terminates TLS using the same chain as the REST/gRPC/QUIC listeners
+// (see pkg/api/mcp/server.go Config.TLSConfig), so endpoints are https://
+// against the self-signed integration CA. Test clients must skip cert
+// verification (TLSClientConfig{InsecureSkipVerify: true}) when dialing.
 func GetMCPEndpoints() []string {
 	node1 := os.Getenv("QUICBAAS_NODE1_MCP")
 	if node1 == "" {
-		node1 = "http://test-node1:8888/mcp"
+		node1 = "https://test-node1:8888/mcp"
 	}
 
 	node2 := os.Getenv("QUICBAAS_NODE2_MCP")
 	if node2 == "" {
-		node2 = "http://test-node2:8888/mcp"
+		node2 = "https://test-node2:8888/mcp"
 	}
 
 	node3 := os.Getenv("QUICBAAS_NODE3_MCP")
 	if node3 == "" {
-		node3 = "http://test-node3:8888/mcp"
+		node3 = "https://test-node3:8888/mcp"
 	}
 
 	return []string{node1, node2, node3}

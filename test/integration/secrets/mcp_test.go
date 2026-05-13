@@ -272,7 +272,7 @@ func (c *MCPClient) call(ctx context.Context, req JSONRPCRequest) (json.RawMessa
 func getMCPEndpoint() string {
 	endpoint := os.Getenv("QUICBAAS_MCP_ENDPOINT")
 	if endpoint == "" {
-		endpoint = "http://test-node1:8888/mcp"
+		endpoint = "https://test-node1:8888/mcp"
 	}
 	return endpoint
 }

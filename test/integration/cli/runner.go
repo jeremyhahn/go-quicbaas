@@ -388,8 +388,12 @@ func GetTransportConfigs() []TransportConfig {
 		},
 		{
 			Transport: TransportMCP,
-			// MCP transport uses the HTTP server's /mcp endpoint
-			Address: getEnvOrDefault("QUICBAAS_MCP_ADDRESS", "http://test-node1:8888/mcp"),
+			// MCP transport uses the HTTPS server's /mcp endpoint. The MCP
+			// listener in the integration cluster terminates TLS with the
+			// shared chain (see pkg/api/mcp/server.go Config.TLSConfig), so
+			// dialers must speak HTTPS and either use the integration CA or
+			// pass --tls-skip-verify.
+			Address: getEnvOrDefault("QUICBAAS_MCP_ADDRESS", "https://test-node1:8888/mcp"),
 			Enabled: true,
 		},
 		{
