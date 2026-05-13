@@ -1083,63 +1083,20 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 		return nil
 	}
 
-	// Ensure initialized first
-	if err := c.ensureInitialized(ctx); err != nil {
-		return err
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return fmt.Errorf("no REST endpoints available for PIV login")
 	}
-
-	// Login with bootstrap admin credentials
-	loginParams := mcpToolCallParams{
-		Name: "quicbaas_login",
-		Arguments: map[string]interface{}{
-			"username": "admin",
-			"password": "admin",
-		},
-	}
-
-	result, err := c.sendRPC(ctx, "tools/call", loginParams)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "MCP login failed", Cause: err}
+		return fmt.Errorf("PIV login failed: %w", err)
 	}
 
-	// Parse login response to get access token
-	var toolResult mcpToolCallResult
-	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to unmarshal login result", Cause: err}
-	}
-
-	if toolResult.IsError {
-		if len(toolResult.Content) > 0 {
-			return &qberrors.MessageError{Message: "MCP login error: " + toolResult.Content[0].Text}
-		}
-		return &qberrors.MessageError{Message: "MCP login error: unknown error"}
-	}
-
-	// Extract access token from response
-	// Check both snake_case (access_token) and PascalCase (AccessToken) keys
-	for _, content := range toolResult.Content {
-		// Check for text content (type may be "text" or empty depending on MCP server)
-		if content.Text != "" {
-			var loginResp map[string]interface{}
-			if err := json.Unmarshal([]byte(content.Text), &loginResp); err != nil {
-				return &qberrors.WrappedMessageError{Message: "failed to unmarshal login response", Cause: err}
-			}
-			// Try snake_case first (access_token), then PascalCase (AccessToken)
-			var token string
-			var ok bool
-			if token, ok = loginResp["access_token"].(string); !ok {
-				token, ok = loginResp["AccessToken"].(string)
-			}
-			if ok && token != "" {
-				c.accessToken = token
-				c.authenticated.Store(true)
-				return nil
-			}
-		}
-	}
-
-	return &qberrors.MessageError{Message: "no access token in login response"}
+	c.accessToken = bearer
+	c.authenticated.Store(true)
+	return nil
 }
+
 
 // sendRPC sends a JSON-RPC request to the MCP endpoint.
 func (c *MCPClient) sendRPC(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {

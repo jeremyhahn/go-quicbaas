@@ -34,6 +34,7 @@ import (
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // =============================================================================
@@ -128,74 +129,24 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 		return nil
 	}
 
-	// Ensure initialized first
 	if err := c.Initialize(ctx); err != nil {
 		return err
 	}
 
-	// Login with bootstrap admin credentials
-	req := JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      c.nextID,
-		Method:  "tools/call",
-		Params: map[string]interface{}{
-			"name": "quicbaas_login",
-			"arguments": map[string]interface{}{
-				"username": "admin",
-				"password": "admin",
-			},
-		},
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return fmt.Errorf("no REST endpoints available for PIV login")
 	}
-	c.nextID++
-
-	result, err := c.call(ctx, req)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "MCP login failed", Cause: err}
+		return fmt.Errorf("PIV login failed: %w", err)
 	}
 
-	// Parse login response to get access token
-	var toolResult struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-		IsError bool `json:"isError"`
-	}
-	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to unmarshal login result", Cause: err}
-	}
-
-	if toolResult.IsError {
-		if len(toolResult.Content) > 0 {
-			return &qberrors.MessageError{Message: "MCP login error: " + toolResult.Content[0].Text}
-		}
-		return &qberrors.MessageError{Message: "MCP login error: unknown error"}
-	}
-
-	// Extract access token from response
-	// Check both snake_case (access_token) and PascalCase (AccessToken) keys
-	for _, content := range toolResult.Content {
-		if content.Type == "text" && content.Text != "" {
-			var loginResp map[string]interface{}
-			if err := json.Unmarshal([]byte(content.Text), &loginResp); err != nil {
-				return &qberrors.WrappedMessageError{Message: "failed to unmarshal login response", Cause: err}
-			}
-			// Try snake_case first (access_token), then PascalCase (AccessToken)
-			var token string
-			var ok bool
-			if token, ok = loginResp["access_token"].(string); !ok {
-				token, ok = loginResp["AccessToken"].(string)
-			}
-			if ok && token != "" {
-				c.accessToken = token
-				c.authenticated = true
-				return nil
-			}
-		}
-	}
-
-	return &qberrors.MessageError{Message: "no access token in login response"}
+	c.accessToken = bearer
+	c.authenticated = true
+	return nil
 }
+
 
 // ListTools lists available MCP tools.
 func (c *MCPClient) ListTools(ctx context.Context) ([]map[string]interface{}, error) {

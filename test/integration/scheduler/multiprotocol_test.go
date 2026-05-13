@@ -2476,27 +2476,22 @@ func (c *SchedulerMCPClient) Initialize(ctx context.Context) error {
 }
 
 func (c *SchedulerMCPClient) authenticate(ctx context.Context) error {
-	args := map[string]interface{}{
-		"username": "admin",
-		"password": "admin",
+	// Acquire a bearer through the cluster's PIV mTLS login endpoint.
+	// Password-based login has been removed across all transports; tests
+	// mint a bearer via REST PIV and present it on the protocol under test.
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return errors.New("no REST endpoints available for PIV login")
 	}
-
-	result, err := c.callTool(ctx, "quicbaas_login", args)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return fmt.Errorf("failed to authenticate: %w", err)
+		return fmt.Errorf("PIV login failed: %w", err)
 	}
-
-	var loginResp struct {
-		AccessToken string `json:"AccessToken"`
-	}
-	if err := json.Unmarshal(result, &loginResp); err != nil {
-		return fmt.Errorf("failed to parse login response: %w", err)
-	}
-
-	c.accessToken = loginResp.AccessToken
+	c.accessToken = bearer
 	c.authenticated = true
 	return nil
 }
+
 
 func (c *SchedulerMCPClient) call(ctx context.Context, req JSONRPCRequest) (json.RawMessage, error) {
 	bodyBytes, err := json.Marshal(req)

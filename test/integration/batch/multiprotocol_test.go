@@ -1439,87 +1439,22 @@ func (c *mcpBatchClient) Setup(t *testing.T, ctx context.Context) error {
 
 // authenticate calls the quicbaas_login tool to obtain an access token.
 func (c *mcpBatchClient) authenticate(ctx context.Context) error {
-	mcpReq := mcpJSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "tools/call",
-		Params: map[string]interface{}{
-			"name": "quicbaas_login",
-			"arguments": map[string]interface{}{
-				"username": "admin",
-				"password": "admin",
-			},
-		},
-		ID: 1,
+	// Acquire a bearer through the cluster's PIV mTLS login endpoint.
+	// Password-based login has been removed across all transports; tests
+	// mint a bearer via REST PIV and present it on the protocol under test.
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
 	}
-
-	body, err := json.Marshal(mcpReq)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return ErrMCPAuthenticationFailed{Message: "failed to marshal login request: " + err.Error()}
+		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
 	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL, bytes.NewReader(body))
-	if err != nil {
-		return ErrMCPAuthenticationFailed{Message: "failed to create login request: " + err.Error()}
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return ErrMCPAuthenticationFailed{Message: "login request failed: " + err.Error()}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return ErrMCPAuthenticationFailed{Message: "failed to read login response: " + err.Error()}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return ErrMCPAuthenticationFailed{Message: "login failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
-	}
-
-	var mcpResp mcpJSONRPCResponse
-	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return ErrMCPAuthenticationFailed{Message: "failed to parse login response: " + err.Error()}
-	}
-
-	if mcpResp.Error != nil {
-		return ErrMCPAuthenticationFailed{Message: mcpResp.Error.Message}
-	}
-
-	if mcpResp.Result.IsError {
-		if len(mcpResp.Result.Content) > 0 {
-			return ErrMCPAuthenticationFailed{Message: mcpResp.Result.Content[0].Text}
-		}
-		return ErrMCPAuthenticationFailed{Message: "login tool execution failed"}
-	}
-
-	if len(mcpResp.Result.Content) == 0 {
-		return ErrMCPAuthenticationFailed{Message: "login returned empty content"}
-	}
-
-	// Parse the login response content.
-	// Service types don't have JSON tags, so they marshal with Go field names (PascalCase).
-	type mcpLoginResponse struct {
-		AccessToken  string `json:"AccessToken"`
-		RefreshToken string `json:"RefreshToken"`
-		ExpiresIn    int64  `json:"ExpiresIn"`
-	}
-
-	var loginResp mcpLoginResponse
-	if err := json.Unmarshal([]byte(mcpResp.Result.Content[0].Text), &loginResp); err != nil {
-		return ErrMCPAuthenticationFailed{Message: "failed to parse login content: " + err.Error()}
-	}
-
-	if loginResp.AccessToken == "" {
-		return ErrMCPAuthenticationFailed{Message: "login returned empty access token"}
-	}
-
-	c.accessToken = loginResp.AccessToken
+	c.accessToken = bearer
 	c.authenticated = true
-
 	return nil
 }
+
 
 func (c *mcpBatchClient) Teardown(t *testing.T) error {
 	return nil

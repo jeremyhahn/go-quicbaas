@@ -1731,8 +1731,10 @@ func (c *MCPClient) Initialize(ctx context.Context) error {
 	return nil
 }
 
-// ensureAuthenticated performs login if not already authenticated.
-// Uses the bootstrap admin credentials from the test configuration.
+// ensureAuthenticated obtains a bearer token via the cluster's PIV mTLS
+// login endpoint when not already authenticated. Password-based login has
+// been removed across all transports; tests mint a bearer through the
+// REST PIV endpoint and reuse it for MCP requests.
 func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 	if c.authenticated {
 		return nil
@@ -1743,68 +1745,18 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 		return err
 	}
 
-	// Login with bootstrap admin credentials
-	req := JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      c.nextID,
-		Method:  "tools/call",
-		Params: map[string]interface{}{
-			"name": "quicbaas_login",
-			"arguments": map[string]interface{}{
-				"username": "admin",
-				"password": "admin",
-			},
-		},
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return fmt.Errorf("no REST endpoints available for PIV login")
 	}
-	c.nextID++
-
-	result, err := c.call(ctx, req)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return fmt.Errorf("MCP login failed: %w", err)
+		return fmt.Errorf("PIV login failed: %w", err)
 	}
 
-	// Parse login response to get access token
-	var toolResult struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-		IsError bool `json:"isError"`
-	}
-	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return fmt.Errorf("failed to unmarshal login result: %w", err)
-	}
-
-	if toolResult.IsError {
-		if len(toolResult.Content) > 0 {
-			return fmt.Errorf("MCP login error: %s", toolResult.Content[0].Text)
-		}
-		return fmt.Errorf("MCP login error: unknown error")
-	}
-
-	// Extract access token from response
-	// Check both snake_case (access_token) and PascalCase (AccessToken) keys
-	for _, content := range toolResult.Content {
-		if content.Type == "text" && content.Text != "" {
-			var loginResp map[string]interface{}
-			if err := json.Unmarshal([]byte(content.Text), &loginResp); err != nil {
-				return fmt.Errorf("failed to unmarshal login response: %w", err)
-			}
-			// Try snake_case first (access_token), then PascalCase (AccessToken)
-			var token string
-			var ok bool
-			if token, ok = loginResp["access_token"].(string); !ok {
-				token, ok = loginResp["AccessToken"].(string)
-			}
-			if ok && token != "" {
-				c.accessToken = token
-				c.authenticated = true
-				return nil
-			}
-		}
-	}
-
-	return fmt.Errorf("no access token in login response")
+	c.accessToken = bearer
+	c.authenticated = true
+	return nil
 }
 
 // ListTools lists available MCP tools.

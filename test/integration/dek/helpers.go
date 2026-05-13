@@ -737,7 +737,10 @@ func (c *MCPDEKClient) Initialize(ctx context.Context) error {
 	return nil
 }
 
-// ensureAuthenticated performs login if not already authenticated.
+// ensureAuthenticated obtains a bearer token via the cluster's PIV mTLS
+// login endpoint when not already authenticated. Password-based login has
+// been removed across all transports; tests mint a bearer through the
+// REST PIV endpoint and reuse it for MCP requests.
 func (c *MCPDEKClient) ensureAuthenticated(ctx context.Context) error {
 	if c.authenticated {
 		return nil
@@ -748,66 +751,16 @@ func (c *MCPDEKClient) ensureAuthenticated(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize: %w", err)
 	}
 
-	// Login with bootstrap admin credentials
-	requestID := c.requestID.Add(1)
-	req := MCPJSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      requestID,
-		Method:  "tools/call",
-		Params: map[string]interface{}{
-			"name": "quicbaas_login",
-			"arguments": map[string]interface{}{
-				"username": "admin",
-				"password": "admin",
-			},
-		},
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return fmt.Errorf("no REST endpoints available for PIV login")
 	}
-
-	result, err := c.sendRequest(ctx, req)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return fmt.Errorf("login failed: %w", err)
+		return fmt.Errorf("PIV login failed: %w", err)
 	}
 
-	// Parse login response
-	var wrappedResult map[string]interface{}
-	if err := json.Unmarshal(result, &wrappedResult); err != nil {
-		return fmt.Errorf("failed to unmarshal login result: %w", err)
-	}
-
-	// Extract content from MCP format
-	content, ok := wrappedResult["content"].([]interface{})
-	if !ok || len(content) == 0 {
-		return fmt.Errorf("invalid login response: missing content")
-	}
-
-	firstContent, ok := content[0].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid login response: content not an object")
-	}
-
-	textContent, ok := firstContent["text"].(string)
-	if !ok {
-		return fmt.Errorf("invalid login response: missing text")
-	}
-
-	var loginResp map[string]interface{}
-	if err := json.Unmarshal([]byte(textContent), &loginResp); err != nil {
-		return fmt.Errorf("failed to unmarshal login response: %w", err)
-	}
-
-	// Try both snake_case and PascalCase keys
-	var token string
-	if t, ok := loginResp["access_token"].(string); ok && t != "" {
-		token = t
-	} else if t, ok := loginResp["AccessToken"].(string); ok && t != "" {
-		token = t
-	}
-
-	if token == "" {
-		return fmt.Errorf("no access token in login response")
-	}
-
-	c.accessToken = token
+	c.accessToken = bearer
 	c.authenticated = true
 	return nil
 }

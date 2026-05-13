@@ -1427,34 +1427,22 @@ func (c *mcpTransactionClient) Teardown(t *testing.T) error {
 
 // authenticate calls quicbaas_login to obtain an access token.
 func (c *mcpTransactionClient) authenticate(ctx context.Context) error {
-	result, err := c.callMCPTool(ctx, "quicbaas_login", map[string]interface{}{
-		"username": "admin",
-		"password": "admin",
-	})
+	// Acquire a bearer through the cluster's PIV mTLS login endpoint.
+	// Password-based login has been removed across all transports; tests
+	// mint a bearer via REST PIV and present it on the protocol under test.
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
+	}
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return ErrMCPAuthenticationFailed{Detail: err.Error()}
+		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
 	}
-
-	if result == nil {
-		return ErrMCPAuthenticationFailed{Detail: "nil response from server"}
-	}
-
-	// Parse the login response - the service types use PascalCase in JSON
-	var loginResp struct {
-		AccessToken string `json:"AccessToken"`
-	}
-	if err := json.Unmarshal(result, &loginResp); err != nil {
-		return ErrMCPAuthenticationFailed{Detail: "failed to parse response: " + err.Error()}
-	}
-
-	if loginResp.AccessToken == "" {
-		return ErrMCPAuthenticationFailed{Detail: "empty access token in response"}
-	}
-
-	c.accessToken = loginResp.AccessToken
+	c.accessToken = bearer
 	c.authenticated = true
 	return nil
 }
+
 
 // callMCPTool is the internal method that sends MCP tool requests without authentication.
 // Used by authenticate() to avoid circular dependency.

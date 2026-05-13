@@ -1318,98 +1318,20 @@ func (c *mcpProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 }
 
 func (c *mcpProtocolClient) authenticate(ctx context.Context) error {
-	// Create a JSON-RPC request to call the quicbaas_login tool
-	// This is a public tool that doesn't require authentication
-	mcpReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name": "quicbaas_login",
-			"arguments": map[string]interface{}{
-				"username": "admin",
-				"password": "admin",
-			},
-		},
-		"id": c.nextID,
+	// Acquire a bearer through the cluster's PIV mTLS login endpoint. The
+	// MCP transport itself no longer exposes a login tool — password auth
+	// is removed across all protocols; tests use the REST PIV endpoint to
+	// mint a bearer and then present it on MCP requests.
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
 	}
-	c.nextID++
-
-	body, err := json.Marshal(mcpReq)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "marshaling login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "creating login request", Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-	// Do NOT set Authorization header since we're not authenticated yet
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "executing login request", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "reading login response", Cause: err}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return &qberrors.MessageError{Message: "login failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
-	}
-
-	var mcpResp struct {
-		Result struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-			IsError bool `json:"isError"`
-		} `json:"result"`
-		Error *struct {
-			Message string `json:"message"`
-			Code    int    `json:"code"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return &qberrors.WrappedMessageError{Message: "unmarshaling login response", Cause: err}
-	}
-
-	if mcpResp.Error != nil {
-		return &qberrors.MessageError{Message: "login error: " + mcpResp.Error.Message}
-	}
-
-	if mcpResp.Result.IsError {
-		if len(mcpResp.Result.Content) > 0 {
-			return &qberrors.MessageError{Message: "login tool error: " + mcpResp.Result.Content[0].Text}
-		}
-		return &qberrors.MessageError{Message: "login tool returned error"}
-	}
-
-	if len(mcpResp.Result.Content) == 0 {
-		return &qberrors.MessageError{Message: "login response has no content"}
-	}
-
-	// Parse the login response content which contains JSON with AccessToken (PascalCase)
-	// Service types don't have JSON tags, so they marshal with Go field names
-	var loginResult struct {
-		AccessToken string `json:"AccessToken"`
-	}
-	if err := json.Unmarshal([]byte(mcpResp.Result.Content[0].Text), &loginResult); err != nil {
-		return &qberrors.WrappedMessageError{Message: "parsing login result", Cause: err}
-	}
-
-	if loginResult.AccessToken == "" {
-		return &qberrors.MessageError{Message: "login response missing access token"}
-	}
-
-	c.accessToken = loginResult.AccessToken
+	c.accessToken = bearer
 	c.authenticated = true
-
 	return nil
 }
 

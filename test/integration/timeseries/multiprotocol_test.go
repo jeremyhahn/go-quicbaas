@@ -1556,33 +1556,23 @@ type mcpTimeseriesProtocol struct {
 
 func (m *mcpTimeseriesProtocol) Name() string { return "MCP" }
 
-func (m *mcpTimeseriesProtocol) authenticate(ctx context.Context) error {
-	args := map[string]interface{}{
-		"username": "admin",
-		"password": "admin",
+func (c *mcpTimeseriesProtocol) authenticate(ctx context.Context) error {
+	// Acquire a bearer through the cluster's PIV mTLS login endpoint.
+	// Password-based login has been removed across all transports; tests
+	// mint a bearer via REST PIV and present it on the protocol under test.
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
 	}
-
-	result, err := m.callMCPToolUnauthenticated(ctx, "quicbaas_login", args)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "authentication failed", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
 	}
-
-	// Parse the response - the service uses PascalCase for JSON fields
-	var loginResp struct {
-		AccessToken string `json:"AccessToken"`
-	}
-	if err := json.Unmarshal(result, &loginResp); err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to parse login response", Cause: err}
-	}
-
-	if loginResp.AccessToken == "" {
-		return &qberrors.MessageError{Message: "no access token in login response"}
-	}
-
-	m.accessToken = loginResp.AccessToken
-	m.authenticated = true
+	c.accessToken = bearer
+	c.authenticated = true
 	return nil
 }
+
 
 func (m *mcpTimeseriesProtocol) callMCPToolUnauthenticated(ctx context.Context, toolName string, args map[string]interface{}) (json.RawMessage, error) {
 	mcpReq := map[string]interface{}{

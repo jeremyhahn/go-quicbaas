@@ -1378,90 +1378,22 @@ func (c *mcpVectorClient) Setup(t *testing.T, ctx context.Context) error {
 }
 
 func (c *mcpVectorClient) authenticate(ctx context.Context) error {
-	loginReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name": "quicbaas_login",
-			"arguments": map[string]interface{}{
-				"username": "admin",
-				"password": "admin",
-			},
-		},
-		"id": c.nextID,
+	// Acquire a bearer through the cluster's PIV mTLS login endpoint.
+	// Password-based login has been removed across all transports; tests
+	// mint a bearer via REST PIV and present it on the protocol under test.
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
 	}
-	c.nextID++
-
-	body, err := json.Marshal(loginReq)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to marshal login request", Cause: err}
+		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
 	}
+	c.accessToken = bearer
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to create login request", Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "login request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to read login response", Cause: err}
-	}
-
-	var loginResp struct {
-		Result struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-			IsError bool `json:"isError"`
-		} `json:"result"`
-		Error *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(respBody, &loginResp); err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to parse login response", Cause: err}
-	}
-
-	if loginResp.Error != nil {
-		return &qberrors.MessageError{Message: "login error: " + loginResp.Error.Message}
-	}
-
-	if loginResp.Result.IsError {
-		if len(loginResp.Result.Content) > 0 {
-			return &qberrors.MessageError{Message: "login failed: " + loginResp.Result.Content[0].Text}
-		}
-		return &qberrors.MessageError{Message: "login failed with unknown error"}
-	}
-
-	// Parse the token from the response
-	// Service types don't have JSON tags, so the response uses PascalCase
-	if len(loginResp.Result.Content) > 0 {
-		var tokenData struct {
-			AccessToken  string `json:"AccessToken"`  // Service types use PascalCase
-			Token        string `json:"access_token"` // Alternative snake_case
-			RefreshToken string `json:"RefreshToken"`
-		}
-		if err := json.Unmarshal([]byte(loginResp.Result.Content[0].Text), &tokenData); err == nil {
-			if tokenData.AccessToken != "" {
-				c.accessToken = tokenData.AccessToken
-			} else if tokenData.Token != "" {
-				c.accessToken = tokenData.Token
-			}
-		}
-	}
-
-	c.authenticated = true
 	return nil
 }
+
 
 func (c *mcpVectorClient) Teardown(t *testing.T) error {
 	c.httpClient = nil

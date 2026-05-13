@@ -1989,96 +1989,24 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 		return nil
 	}
 
-	// Initialize first if not already done
 	if err := c.Initialize(ctx); err != nil {
-		return &qberrors.WrappedMessageError{Message: "initialize failed", Cause: err}
+		return err
 	}
 
-	// Call the login tool to authenticate
-	loginReq := JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      c.nextID,
-		Method:  "tools/call",
-		Params: map[string]interface{}{
-			"name": "quicbaas_login",
-			"arguments": map[string]interface{}{
-				"username": "admin",
-				"password": "admin",
-			},
-		},
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return fmt.Errorf("no REST endpoints available for PIV login")
 	}
-	c.nextID++
-
-	bodyBytes, err := json.Marshal(loginReq)
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "marshaling login request", Cause: err}
+		return fmt.Errorf("PIV login failed: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "creating login request", Cause: err}
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "login request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "reading login response", Cause: err}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return &qberrors.MessageError{Message: "login failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
-	}
-
-	// Parse response to extract access token
-	var loginResp struct {
-		Result struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"result"`
-		Error *struct {
-			Message string `json:"message"`
-			Code    int    `json:"code"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(respBody, &loginResp); err != nil {
-		return &qberrors.WrappedMessageError{Message: "parsing login response", Cause: err}
-	}
-
-	if loginResp.Error != nil {
-		return &qberrors.MessageError{Message: "login error: " + loginResp.Error.Message}
-	}
-
-	if len(loginResp.Result.Content) == 0 {
-		return &qberrors.MessageError{Message: "no content in login response"}
-	}
-
-	// Parse the inner JSON to get the access token
-	var tokenResp map[string]interface{}
-	if err := json.Unmarshal([]byte(loginResp.Result.Content[0].Text), &tokenResp); err != nil {
-		return &qberrors.WrappedMessageError{Message: "parsing token response", Cause: err}
-	}
-
-	// Try both snake_case and PascalCase for access_token
-	if token, ok := tokenResp["access_token"].(string); ok {
-		c.accessToken = token
-	} else if token, ok := tokenResp["AccessToken"].(string); ok {
-		c.accessToken = token
-	} else {
-		return &qberrors.MessageError{Message: "no access_token in login response"}
-	}
-
+	c.accessToken = bearer
 	c.authenticated = true
 	return nil
 }
+
 
 // CallTool calls an MCP tool with arguments.
 func (c *MCPClient) CallTool(ctx context.Context, name string, args map[string]interface{}) (json.RawMessage, error) {
