@@ -18,6 +18,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,51 +141,95 @@ func NewTestRunner(t *testing.T, transport Transport, address string) *TestRunne
 	}
 }
 
-// Authenticate performs authentication for transports that require it (MCP).
-// This must be called before running commands that require authentication.
-// For MCP transport, this logs in with the default admin credentials.
+// Authenticate provisions a bearer token for transports that require one (MCP).
+// It must be called before running commands that require authentication.
+//
+// Password authentication has been removed from the project; tests acquire a
+// bearer by performing a PIV (mTLS client cert) login against the cluster's
+// REST endpoint. The token is written to the CLI's default token path so
+// subsequent `quicbaas --transport mcp ...` invocations pick it up via
+// loadMCPAuthToken() in cmd/quicbaas/client.go.
 func (r *TestRunner) Authenticate() error {
 	if r.authenticated {
 		return nil
 	}
 
-	// Only MCP requires explicit authentication before commands
+	// Only MCP needs an explicit bearer set up ahead of time. Other transports
+	// either use mTLS directly (gRPC/QUIC/Unix) or transparently fall back to
+	// the same default token file (REST), so the same setup helps them too —
+	// but if no REST endpoint is reachable we skip rather than fail.
 	if r.transport != TransportMCP {
 		r.authenticated = true
 		return nil
 	}
 
-	// Get test credentials
-	username := os.Getenv("QUICBAAS_TEST_USERNAME")
-	if username == "" {
-		username = "admin"
-	}
-	password := os.Getenv("QUICBAAS_TEST_PASSWORD")
-	if password == "" {
-		password = "admin"
-	}
-
-	// Build login command arguments
-	args := append(r.baseArgs, "auth", "login", username, "--password", password)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, r.binary, args...)
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		r.t.Logf("[%s] no REST endpoints available for PIV login; MCP commands will be unauthenticated", r.transport)
+		return &MCPAuthEnvError{Reason: "no REST endpoints configured"}
+	}
 
-	err := cmd.Run()
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
-		r.t.Logf("[%s] MCP authentication failed: stdout=%s stderr=%s err=%v",
-			r.transport, outBuf.String(), errBuf.String(), err)
+		r.t.Logf("[%s] PIV login for MCP bearer failed: %v", r.transport, err)
 		return err
 	}
 
-	r.t.Logf("[%s] MCP authentication successful", r.transport)
+	if err := writeMCPSessionToken(bearer); err != nil {
+		r.t.Logf("[%s] failed to persist MCP session token: %v", r.transport, err)
+		return err
+	}
+
+	r.t.Logf("[%s] MCP authentication successful (PIV)", r.transport)
 	r.authenticated = true
 	return nil
+}
+
+// MCPAuthEnvError indicates the MCP-auth helper was invoked but the
+// integration test environment isn't configured to support it.
+type MCPAuthEnvError struct {
+	Reason string
+}
+
+// Error returns a human-readable description.
+func (e *MCPAuthEnvError) Error() string {
+	return "mcp auth: " + e.Reason
+}
+
+// writeMCPSessionToken serializes a bearer token in the format the CLI's
+// loadMCPAuthToken() helper expects, at the default path (~/.quicbaas/token
+// when QUICBAAS_TEST_TOKEN_PATH is unset). The CLI's MCP transport client
+// automatically picks the token up via loadMCPAuthToken().
+func writeMCPSessionToken(bearer string) error {
+	path := os.Getenv("QUICBAAS_TEST_TOKEN_PATH")
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		path = filepath.Join(home, ".quicbaas", "token")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	payload := struct {
+		AccessToken  string    `json:"access_token"`
+		RefreshToken string    `json:"refresh_token"`
+		ExpiresAt    time.Time `json:"expires_at"`
+		TokenType    string    `json:"token_type"`
+	}{
+		AccessToken: bearer,
+		ExpiresAt:   time.Now().Add(45 * time.Minute),
+		TokenType:   "Bearer",
+	}
+	data, err := json.Marshal(&payload)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 // IsSkipped returns true if the command should be skipped for this transport.
