@@ -212,6 +212,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Shared Unix socket directory for gRPC-over-Unix-socket testing
       - quicbaas-sockets:/var/run/quicbaas
+      # mTLS / PIV cert bundle so helpers.AuthPIV can present the admin client
+      # cert against the cluster's /api/v1/auth/login/piv endpoint.
+      - ./certs:/etc/quicbaas/certs:ro
     working_dir: /workspace/go-quicbaas
     networks:
       - integration-test-network
@@ -329,6 +332,8 @@ services:
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service
@@ -443,6 +448,8 @@ services:
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service
@@ -559,6 +566,8 @@ services:
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service
@@ -680,6 +689,8 @@ services:
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service
@@ -784,6 +795,8 @@ services:
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service
