@@ -173,7 +173,6 @@ func TestMCPPublicToolsNoAuth(t *testing.T) {
 
 	publicTools := []string{
 		"quicbaas_health",
-		"quicbaas_login",
 		"quicbaas_version",
 		"quicbaas_liveness",
 	}
@@ -521,7 +520,6 @@ func TestMCPMultipleRolesAuthorization(t *testing.T) {
 func TestMCPIsPublicTool(t *testing.T) {
 	publicTools := []string{
 		"quicbaas_health",
-		"quicbaas_login",
 		"quicbaas_version",
 		"quicbaas_liveness",
 	}

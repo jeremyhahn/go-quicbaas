@@ -144,7 +144,7 @@ func TestRESTPublicEndpointsNoAuth(t *testing.T) {
 	handler := tc.authzMiddleware.Authorize(mockHandler())
 
 	publicEndpoints := []string{
-		"/api/v1/auth/login",
+		"/api/v1/auth/login/piv",
 		"/api/v1/health",
 		"/api/v1/health/liveness",
 		"/api/v1/health/readiness",
