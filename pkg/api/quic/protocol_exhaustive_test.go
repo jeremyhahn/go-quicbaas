@@ -168,7 +168,6 @@ func TestOpcodeToString_Exhaustive(t *testing.T) {
 		{"OpOSBatchDeleteObjects", OpOSBatchDeleteObjects, "OSBatchDeleteObjects"},
 
 		// Auth Operations
-		{"OpLogin", OpLogin, "Login"},
 		{"OpLogout", OpLogout, "Logout"},
 		{"OpRefreshToken", OpRefreshToken, "RefreshToken"},
 		{"OpValidateToken", OpValidateToken, "ValidateToken"},

@@ -148,7 +148,6 @@ func TestIsPublicTool(t *testing.T) {
 		expected bool
 	}{
 		{"health tool is public", "quicbaas_health", true},
-		{"login tool is public", "quicbaas_login", true},
 		{"version tool is public", "quicbaas_version", true},
 		{"liveness tool is public", "quicbaas_liveness", true},
 		{"get tool is not public", "quicbaas_get", false},
@@ -242,7 +241,7 @@ func TestAuthorizationChecker_PublicToolBypass(t *testing.T) {
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
 	// Public tools should bypass auth completely
-	publicToolNames := []string{"quicbaas_health", "quicbaas_login", "quicbaas_version", "quicbaas_liveness"}
+	publicToolNames := []string{"quicbaas_health", "quicbaas_version", "quicbaas_liveness"}
 
 	for _, toolName := range publicToolNames {
 		t.Run(toolName, func(t *testing.T) {
@@ -284,8 +283,8 @@ func TestAuthorizationChecker_OnlyAuthManagerConfigured(t *testing.T) {
 	assert.Equal(t, "authentication required", err.Message)
 
 	// Public tools should still bypass auth
-	err = checker.CheckToolAuthorization(context.Background(), "quicbaas_login", "")
-	assert.Nil(t, err, "quicbaas_login should be public even with authManager configured")
+	err = checker.CheckToolAuthorization(context.Background(), "quicbaas_health", "")
+	assert.Nil(t, err, "quicbaas_health should be public even with authManager configured")
 
 	// With a valid token, authManager should be called for validation
 	mockAuthManager.On("ValidateToken", mock.Anything, "valid-token").

@@ -210,13 +210,10 @@ func (h *Phase4Handler) HandleDeleteBackup(w http.ResponseWriter, r *http.Reques
 
 // =============================================================================
 // Authentication Operations
+// (Password-based login is intentionally not exposed. Use the per-factor
+// endpoints under /api/v1/tenants/{tid}/webauthn/login/{begin,finish} and
+// /api/v1/auth/login/piv to obtain access tokens.)
 // =============================================================================
-
-// HandleLogin is not supported. QuicBaaS uses WebAuthn (FIDO2) and PIV smartcard authentication.
-// POST /api/v1/auth/login returns 410 Gone.
-func (h *Phase4Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "password-based login is not supported; use WebAuthn or PIV authentication", http.StatusGone)
-}
 
 // HandleLogout revokes user tokens
 // POST /api/v1/auth/logout.

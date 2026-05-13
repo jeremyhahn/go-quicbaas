@@ -118,7 +118,7 @@ func NewHandler(svc service.QuicBaaS, kms service.KMSService, secrets service.Se
 // isPublicOperation returns true if the operation does not require authentication.
 func isPublicOperation(opcode byte) bool {
 	switch opcode {
-	case OpLogin, OpHealth, OpLiveness, OpReadiness:
+	case OpHealth, OpLiveness, OpReadiness:
 		return true
 	default:
 		return false
@@ -562,9 +562,7 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 	case OpVerifyBackup:
 		return h.handleVerifyBackup(ctx, req)
 
-	// Auth Operations
-	case OpLogin:
-		return h.handleLogin(ctx, req)
+	// Auth Operations (password login removed — use REST WebAuthn/PIV endpoints)
 	case OpLogout:
 		return h.handleLogout(ctx, req)
 	case OpRefreshToken:
@@ -1618,10 +1616,6 @@ func (h *Handler) handleVerifyBackup(ctx context.Context, req *Request) *Respons
 // =============================================================================
 // Auth Operations Handlers
 // =============================================================================
-
-func (h *Handler) handleLogin(_ context.Context, _ *Request) *Response {
-	return h.errorResponse(api.NewNotImplementedError("password-based login; use WebAuthn or PIV authentication"))
-}
 
 func (h *Handler) handleLogout(ctx context.Context, req *Request) *Response {
 	if h.service == nil {

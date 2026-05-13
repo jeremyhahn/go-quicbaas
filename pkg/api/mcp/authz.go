@@ -53,7 +53,6 @@ func (e *AuthorizationError) Error() string {
 // These tools can be called by anyone without a valid token.
 var publicTools = map[string]bool{
 	"quicbaas_health":    true,
-	"quicbaas_login":     true,
 	"quicbaas_version":   true,
 	"quicbaas_liveness":  true,
 	"quicbaas_readiness": true,
@@ -148,7 +147,7 @@ var toolResourceMapping = map[string]resourceAction{
 	// Aggregate/Time-Series
 	"quicbaas_aggregate": {interfaces.ResourceTimeseries, interfaces.ActionRead},
 
-	// Auth Operations (login is public, logout requires auth)
+	// Auth Operations (logout requires auth)
 	"quicbaas_logout": {interfaces.ResourceUsers, interfaces.ActionWrite},
 
 	// Orchestrator Operations - Read
@@ -306,7 +305,7 @@ func (ac *AuthorizationChecker) SetMCPAuthConfig(config *MCPAuthConfig) {
 // 2. Fall back to AuthManager if OIDC validation fails or is not configured.
 func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, toolName, token string) *AuthorizationError {
 	// Check if tool is public (no auth required)
-	// Public tools like quicbaas_login, quicbaas_health, etc. bypass all auth checks.
+	// Public tools like quicbaas_health, quicbaas_version, etc. bypass all auth checks.
 	if IsPublicTool(toolName) {
 		return nil
 	}

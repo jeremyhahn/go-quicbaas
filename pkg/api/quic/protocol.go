@@ -193,8 +193,7 @@ const (
 	OpOSBatchGetObjects    byte = 0xFB
 	OpOSBatchDeleteObjects byte = 0xFC
 
-	// Auth Operations (0x60-0x63).
-	OpLogin         byte = 0x60
+	// Auth Operations (0x60-0x63). 0x60 (former password login) is reserved.
 	OpLogout        byte = 0x61
 	OpRefreshToken  byte = 0x62
 	OpValidateToken byte = 0x63
@@ -863,8 +862,6 @@ func OpcodeToString(opcode byte) string {
 		return "VerifyBackup"
 
 	// Auth Operations
-	case OpLogin:
-		return "Login"
 	case OpLogout:
 		return "Logout"
 	case OpRefreshToken:

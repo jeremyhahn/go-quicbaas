@@ -2349,7 +2349,7 @@ func TestToolRegistry_ListTools(t *testing.T) {
 	assert.True(t, toolNames["quicbaas_put"])
 	assert.True(t, toolNames["quicbaas_get"])
 	assert.True(t, toolNames["quicbaas_delete"])
-	assert.True(t, toolNames["quicbaas_login"])
+	assert.True(t, toolNames["quicbaas_logout"])
 }
 
 // TestResourceRegistry_ListResources tests the ListResources function.

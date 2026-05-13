@@ -717,7 +717,7 @@ func TestComprehensive_handleToolsList(t *testing.T) {
 		"quicbaas_batch_put", "quicbaas_batch_get", "quicbaas_batch_delete",
 		"quicbaas_transaction", "quicbaas_query", "quicbaas_scan_index",
 		"quicbaas_cluster_status", "quicbaas_get_leader", "quicbaas_add_node",
-		"quicbaas_backup_create", "quicbaas_login", "quicbaas_user_create",
+		"quicbaas_backup_create", "quicbaas_user_create",
 		"quicbaas_health", "quicbaas_cache_stats",
 	}
 

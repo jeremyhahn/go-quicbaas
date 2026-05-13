@@ -23,12 +23,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// Login is not supported. QuicBaaS uses WebAuthn (FIDO2) and PIV smartcard authentication.
-// Use the WebAuthn login endpoints under /api/v1/tenants/{tenant_id}/webauthn/login/*.
-func (s *Server) Login(_ context.Context, _ *pb.LoginRequest) (*pb.LoginResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "password-based login is not supported; use WebAuthn or PIV authentication")
-}
-
 // Logout invalidates the current session and tokens.
 func (s *Server) Logout(ctx context.Context, req *pb.LogoutRequest) (*pb.LogoutResponse, error) {
 	if req == nil {

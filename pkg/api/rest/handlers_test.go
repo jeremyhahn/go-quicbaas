@@ -2426,36 +2426,6 @@ func newTestCacheManager(t *testing.T) *cache.CacheManager {
 	return mgr
 }
 
-// TestPhase4HandlerLogin_ReturnsGone verifies that the password-based login endpoint returns
-// 410 Gone for all requests. Password authentication is removed in OAuth 2.1;
-// use WebAuthn (/api/v1/auth/webauthn/login/finish) or PIV (/api/v1/auth/login/piv) instead.
-func TestPhase4HandlerLogin_ReturnsGone(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil, nil)
-
-	body := `{"username":"testuser","password":"testpass12345"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.HandleLogin(w, req)
-
-	assert.Equal(t, http.StatusGone, w.Code)
-	assert.Contains(t, w.Body.String(), "WebAuthn")
-}
-
-// TestPhase4HandlerLogin_GoneForAnyMethod verifies that HandleLogin returns 410 Gone
-// regardless of the HTTP method used, since the endpoint is permanently removed.
-func TestPhase4HandlerLogin_GoneForAnyMethod(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/login", nil)
-	w := httptest.NewRecorder()
-
-	handler.HandleLogin(w, req)
-
-	assert.Equal(t, http.StatusGone, w.Code)
-}
-
 func TestPhase4HandlerLogout_RevokeTokenSuccess(t *testing.T) {
 	authMgr := newTestAuthManager(t)
 	handler := NewPhase4Handler(nil, authMgr, nil)
@@ -3001,16 +2971,6 @@ func TestPhase4HandlerMethodNotAllowed(t *testing.T) {
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	})
 
-	t.Run("login with GET method", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/login", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleLogin(w, req)
-
-		// Password login is permanently removed (OAuth 2.1); always returns 410 Gone.
-		assert.Equal(t, http.StatusGone, w.Code)
-	})
-
 	t.Run("logout with GET method", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/logout", nil)
 		w := httptest.NewRecorder()
@@ -3087,17 +3047,6 @@ func TestPhase4HandlerInvalidJSON(t *testing.T) {
 		handler.HandleRestoreBackup(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("login with invalid JSON", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{invalid"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.HandleLogin(w, req)
-
-		// Password login is permanently removed (OAuth 2.1); always returns 410 Gone.
-		assert.Equal(t, http.StatusGone, w.Code)
 	})
 
 	t.Run("logout with invalid JSON", func(t *testing.T) {
@@ -4853,8 +4802,6 @@ func TestIsAuthzPublicEndpointFunction_Coverage(t *testing.T) {
 		path     string
 		expected bool
 	}{
-		{"/api/v1/auth/login", true},
-		{"/api/v1/auth/login/extra", true},
 		{"/api/v1/health", true},
 		{"/api/v1/health/ready", true},
 		{"/metrics", true},

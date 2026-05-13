@@ -541,16 +541,9 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	// Auth Operations
-	r.addTool(ToolDefinition{
-		Name:        "quicbaas_login",
-		Description: "Authenticate and obtain access tokens (WebAuthn or PIV only — password-based login is not supported)",
-		InputSchema: map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-			"required":   []string{},
-		},
-	})
-
+	// Password-based login is intentionally not exposed. Use the REST
+	// endpoints under /api/v1/tenants/{tid}/webauthn/login/{begin,finish}
+	// or /api/v1/auth/login/piv to obtain access tokens.
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_logout",
 		Description: "Invalidate current session",
@@ -1068,8 +1061,6 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeBackupVerify(ctx, args)
 
 	// Auth Operations
-	case "quicbaas_login":
-		return r.executeLogin(ctx, args)
 	case "quicbaas_logout":
 		return r.executeLogout(ctx, args)
 
@@ -2224,10 +2215,6 @@ func (r *ToolRegistry) executeBackupVerify(ctx context.Context, args map[string]
 		return nil, err
 	}
 	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeLogin(_ context.Context, _ map[string]interface{}) (interface{}, error) {
-	return nil, api.NewNotImplementedError("password-based login; use WebAuthn or PIV authentication")
 }
 
 func (r *ToolRegistry) executeLogout(ctx context.Context, args map[string]interface{}) (interface{}, error) {

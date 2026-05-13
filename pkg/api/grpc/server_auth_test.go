@@ -27,16 +27,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// TestServer_Login confirms that password-based login returns Unimplemented.
-// QuicBaaS uses WebAuthn (FIDO2) and PIV smartcard authentication only.
-func TestServer_Login(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	resp, err := srv.Login(context.Background(), &pb.LoginRequest{Username: "admin"})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
 func TestServer_Logout(t *testing.T) {
 	tests := []struct {
 		name        string

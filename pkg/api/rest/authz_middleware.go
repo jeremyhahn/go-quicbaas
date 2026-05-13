@@ -187,10 +187,6 @@ func GetUsername(ctx context.Context) string {
 
 // publicEndpoints defines endpoints that bypass authorization.
 var publicEndpoints = []string{
-	// Password login is permanently removed (OAuth 2.1 / WebAuthn / PIV only).
-	// The route returns 410 Gone; keep it public so unauthenticated callers receive the clear error
-	// rather than a 401 that might suggest re-trying with credentials.
-	"/api/v1/auth/login",
 	// Token management endpoints
 	"/api/v1/auth/refresh",
 	// Hardware-attested login endpoints (WebAuthn + PIV) — tokens are not yet available here.

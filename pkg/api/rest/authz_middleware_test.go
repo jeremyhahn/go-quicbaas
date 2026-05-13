@@ -101,7 +101,6 @@ func TestAuthzMiddleware_PublicEndpoints(t *testing.T) {
 		name string
 		path string
 	}{
-		{"login endpoint", "/api/v1/auth/login"},
 		{"health endpoint", "/api/v1/health"},
 		{"liveness probe", "/api/v1/health/liveness"},
 		{"readiness probe", "/api/v1/health/readiness"},
@@ -614,8 +613,6 @@ func TestAuthzMiddleware_PublicEndpointChecking(t *testing.T) {
 		path     string
 		isPublic bool
 	}{
-		{"/api/v1/auth/login", true},
-		{"/api/v1/auth/login/", true},
 		{"/api/v1/health", true},
 		{"/api/v1/health/", true},
 		{"/api/v1/health/liveness", true},

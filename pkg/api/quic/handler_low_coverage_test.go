@@ -177,31 +177,9 @@ func TestHandleVerifyBackup_ServiceError(t *testing.T) {
 }
 
 // =============================================================================
-// Auth Handler Success + Service Error Tests (33.3% -> ~91%)
+// Auth Handler Tests
+// (Password-based login has been removed; use REST WebAuthn/PIV endpoints.)
 // =============================================================================
-
-func TestHandleLogin_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
-	payload, _ := EncodePayload(&service.LoginRequest{})
-	resp := handler.handleLogin(context.Background(), &Request{Payload: payload})
-	if resp.Status == StatusOK {
-		t.Error("expected error with nil service")
-	}
-}
-
-func TestHandleLogin_ServiceError(t *testing.T) {
-	svc := &mockService{
-		loginFn: func(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error) {
-			return nil, errors.New("login failed")
-		},
-	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
-	payload, _ := EncodePayload(&service.LoginRequest{})
-	resp := handler.handleLogin(context.Background(), &Request{Payload: payload})
-	if resp.Status == StatusOK {
-		t.Error("expected error from service")
-	}
-}
 
 func TestHandleLogout_Success(t *testing.T) {
 	svc := &mockService{

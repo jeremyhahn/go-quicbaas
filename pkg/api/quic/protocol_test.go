@@ -1071,7 +1071,6 @@ func TestOpcodeToString(t *testing.T) {
 		{OpVerifyBackup, "VerifyBackup"},
 
 		// Auth Operations
-		{OpLogin, "Login"},
 		{OpLogout, "Logout"},
 		{OpRefreshToken, "RefreshToken"},
 		{OpValidateToken, "ValidateToken"},

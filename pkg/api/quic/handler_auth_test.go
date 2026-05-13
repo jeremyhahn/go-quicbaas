@@ -117,7 +117,6 @@ func TestIsPublicOperation(t *testing.T) {
 		opcode   byte
 		expected bool
 	}{
-		{"Login is public", OpLogin, true},
 		{"Health is public", OpHealth, true},
 		{"Liveness is public", OpLiveness, true},
 		{"Readiness is public", OpReadiness, true},
@@ -238,7 +237,7 @@ func TestHandlerAuthorize_PublicOperationsBypass(t *testing.T) {
 	)
 
 	// Public operations should bypass auth even without token
-	publicOps := []byte{OpLogin, OpHealth, OpLiveness, OpReadiness}
+	publicOps := []byte{OpHealth, OpLiveness, OpReadiness}
 	for _, op := range publicOps {
 		req := &Request{Opcode: op, Token: ""} // No token
 		result := handler.authorize(context.Background(), req)

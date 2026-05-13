@@ -62,7 +62,6 @@ func TestHandler_AuthOperations_InvalidPayload(t *testing.T) {
 		name   string
 		opcode byte
 	}{
-		{"Login", OpLogin},
 		{"Logout", OpLogout},
 		{"RefreshToken", OpRefreshToken},
 		{"ValidateToken", OpValidateToken},
