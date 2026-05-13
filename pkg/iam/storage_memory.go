@@ -491,6 +491,19 @@ func (m *MemoryStorage) UpdateUser(ctx context.Context, user *User) error {
 	m.users[key] = &u
 	m.usersByEmail[user.Email] = &u
 
+	// Maintain PIV thumbprint index when the cert binding changes.
+	if oldUser.PIVCertThumbprint != u.PIVCertThumbprint {
+		if oldUser.PIVCertThumbprint != "" {
+			delete(m.usersByPIVThumbprint, oldUser.PIVCertThumbprint)
+		}
+		if u.PIVCertThumbprint != "" {
+			m.usersByPIVThumbprint[u.PIVCertThumbprint] = &u
+		}
+	} else if u.PIVCertThumbprint != "" {
+		// Refresh the pointer so the index returns the latest user state.
+		m.usersByPIVThumbprint[u.PIVCertThumbprint] = &u
+	}
+
 	return nil
 }
 
@@ -506,6 +519,9 @@ func (m *MemoryStorage) DeleteUser(ctx context.Context, tenantID, userID string)
 
 	delete(m.users, key)
 	delete(m.usersByEmail, user.Email)
+	if user.PIVCertThumbprint != "" {
+		delete(m.usersByPIVThumbprint, user.PIVCertThumbprint)
+	}
 
 	return nil
 }

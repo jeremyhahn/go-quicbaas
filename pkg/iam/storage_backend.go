@@ -719,6 +719,21 @@ func (s *BackendStorage) UpdateUser(ctx context.Context, user *User) error {
 		}
 	}
 
+	// Update PIV thumbprint index if the cert binding changed. The bootstrap
+	// admin flow rebinds via UpdateUser; without this the lookup index never
+	// gets written and login fails with "no user found".
+	if existing.PIVCertThumbprint != user.PIVCertThumbprint {
+		if existing.PIVCertThumbprint != "" {
+			_ = s.delete(ctx, pivIndexKey(existing.PIVCertThumbprint))
+		}
+		if user.PIVCertThumbprint != "" {
+			indexData := []byte(user.TenantID + ":" + user.ID)
+			if err := s.put(ctx, pivIndexKey(user.PIVCertThumbprint), indexData); err != nil {
+				return &dberrors.QBError{Code: dberrors.ErrStorage, Op: "iam.user.update", Err: err}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -737,6 +752,10 @@ func (s *BackendStorage) DeleteUser(ctx context.Context, tenantID, userID string
 	// Clean up email index
 	if user.Email != "" {
 		_ = s.delete(ctx, emailIndexKey(user.Email))
+	}
+	// Clean up PIV thumbprint index
+	if user.PIVCertThumbprint != "" {
+		_ = s.delete(ctx, pivIndexKey(user.PIVCertThumbprint))
 	}
 
 	return nil

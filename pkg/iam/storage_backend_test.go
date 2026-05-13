@@ -2703,6 +2703,96 @@ func TestBackendStorage_UpdateUser_EmailChange(t *testing.T) {
 	}
 }
 
+// TestBackendStorage_UpdateUser_PIVThumbprintIndex exercises the same bug as the
+// memory-storage regression test: UpdateUser must propagate the PIV thumbprint
+// to its lookup index so the bootstrap-admin rebind path can resolve the user
+// through GetUserByPIVThumbprint after the binding is added, rotated, or cleared.
+func TestBackendStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore91()
+	storage := NewBackendStorage(kv)
+
+	tenantID := "piv-thumb-update-tenant"
+	user := &User{
+		ID:       "u-piv-1",
+		TenantID: tenantID,
+		Email:    "admin@example.com",
+		Name:     "Admin",
+		Created:  time.Now(),
+		Updated:  time.Now(),
+	}
+	if err := storage.CreateUser(ctx, user); err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	// Bind via UpdateUser (the bootstrap-admin path).
+	user.PIVCertThumbprint = "thumb-A"
+	user.Updated = time.Now()
+	if err := storage.UpdateUser(ctx, user); err != nil {
+		t.Fatalf("UpdateUser bind failed: %v", err)
+	}
+	got, err := storage.GetUserByPIVThumbprint(ctx, "thumb-A")
+	if err != nil {
+		t.Fatalf("GetUserByPIVThumbprint after bind: %v", err)
+	}
+	if got.ID != user.ID {
+		t.Fatalf("expected user %s, got %s", user.ID, got.ID)
+	}
+
+	// Rotate: old binding must be removed.
+	user.PIVCertThumbprint = "thumb-B"
+	user.Updated = time.Now()
+	if err := storage.UpdateUser(ctx, user); err != nil {
+		t.Fatalf("UpdateUser rotate failed: %v", err)
+	}
+	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-A"); err == nil {
+		t.Fatal("expected old thumbprint to be unbound after rotate")
+	}
+	got, err = storage.GetUserByPIVThumbprint(ctx, "thumb-B")
+	if err != nil {
+		t.Fatalf("GetUserByPIVThumbprint after rotate: %v", err)
+	}
+	if got.ID != user.ID {
+		t.Fatalf("expected user %s after rotate, got %s", user.ID, got.ID)
+	}
+
+	// Clear: lookup must fail.
+	user.PIVCertThumbprint = ""
+	user.Updated = time.Now()
+	if err := storage.UpdateUser(ctx, user); err != nil {
+		t.Fatalf("UpdateUser clear failed: %v", err)
+	}
+	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-B"); err == nil {
+		t.Fatal("expected cleared thumbprint to be unbound")
+	}
+}
+
+// TestBackendStorage_DeleteUser_PIVThumbprintCleanup ensures the persisted PIV
+// index entry is removed when the user is deleted.
+func TestBackendStorage_DeleteUser_PIVThumbprintCleanup(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore91()
+	storage := NewBackendStorage(kv)
+
+	user := &User{
+		ID:                "u-piv-del",
+		TenantID:          "piv-thumb-delete-tenant",
+		Email:             "del@example.com",
+		PIVCertThumbprint: "thumb-del",
+		Created:           time.Now(),
+		Updated:           time.Now(),
+	}
+	if err := storage.CreateUser(ctx, user); err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	if err := storage.DeleteUser(ctx, user.TenantID, user.ID); err != nil {
+		t.Fatalf("DeleteUser failed: %v", err)
+	}
+	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-del"); err == nil {
+		t.Fatal("expected PIV index to be cleared after DeleteUser")
+	}
+}
+
 func TestBackendStorage_UpdateUser_ClearEmail(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore91()
