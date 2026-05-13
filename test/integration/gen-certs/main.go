@@ -125,6 +125,30 @@ func main() {
 		generated = append(generated, nodeCertPath, nodeKeyPath)
 	}
 
+	// Generate an admin client certificate that integration tests use to
+	// authenticate via mTLS / PIV against the test cluster. The CN is the
+	// bootstrap admin's email; the cluster's bootstrap path computes the
+	// SHA-256 thumbprint and registers it on the admin user so the PIV login
+	// endpoint can resolve the bearer.
+	adminCertDER, adminKeyDER, err := generateClientCert(caKey, caCert, "admin@integration.test", "admin")
+	if err != nil {
+		log.Fatalf("Failed to generate admin client certificate: %v", err)
+	}
+
+	adminCertPath := filepath.Join(outDir, "admin.crt")
+	adminKeyPath := filepath.Join(outDir, "admin.key")
+
+	if err := writePEM(adminCertPath, "CERTIFICATE", adminCertDER, 0o644); err != nil {
+		log.Fatalf("Failed to write admin cert: %v", err)
+	}
+	if err := writePEM(adminKeyPath, "EC PRIVATE KEY", adminKeyDER, 0o600); err != nil {
+		log.Fatalf("Failed to write admin key: %v", err)
+	}
+
+	fmt.Printf("Generated admin client certificate: %s\n", adminCertPath) //nolint:forbidigo // CLI tool output
+	fmt.Printf("Generated admin client private key: %s\n", adminKeyPath)  //nolint:forbidigo // CLI tool output
+	generated = append(generated, adminCertPath, adminKeyPath)
+
 	// Print summary.
 	fmt.Println()                                        //nolint:forbidigo // CLI tool output
 	fmt.Println("--- Summary ---")                       //nolint:forbidigo // CLI tool output
@@ -244,6 +268,63 @@ func generateNodeCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, hostnam
 		return nil, nil, &CertGenerationError{
 			Operation: "marshal node key",
 			Detail:    fmt.Sprintf("x509.MarshalECPrivateKey failed for %s", hostname),
+			Cause:     err,
+		}
+	}
+
+	return certDER, keyDER, nil
+}
+
+// generateClientCert creates a leaf certificate signed by the CA for a
+// client identity (e.g. integration-test admin). The cert is suitable for
+// TLS client auth and PIV login: ClientAuth ExtKeyUsage, the principal's
+// email/UPN in Subject CommonName, and the email also placed in the SAN
+// EmailAddresses list so server-side identity resolvers can read it.
+func generateClientCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, email, friendlyName string) ([]byte, []byte, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, &CertGenerationError{
+			Operation: "generate client key",
+			Detail:    fmt.Sprintf("ecdsa.GenerateKey failed for %s", friendlyName),
+			Cause:     err,
+		}
+	}
+
+	serialNumber, err := randomSerialNumber()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"QuicBaaS Integration Tests"},
+			CommonName:   email,
+		},
+		NotBefore: now,
+		NotAfter:  now.AddDate(0, 0, nodeValidDays),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth,
+		},
+		EmailAddresses: []string{email},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, &CertGenerationError{
+			Operation: "create client certificate",
+			Detail:    fmt.Sprintf("x509.CreateCertificate failed for %s", friendlyName),
+			Cause:     err,
+		}
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, nil, &CertGenerationError{
+			Operation: "marshal client key",
+			Detail:    fmt.Sprintf("x509.MarshalECPrivateKey failed for %s", friendlyName),
 			Cause:     err,
 		}
 	}

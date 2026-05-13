@@ -19,7 +19,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -709,12 +713,75 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	s.bootstrapAdminUserID = user.ID
 	s.bootstrapAdminTenantID = "default"
 
+	// Non-interactive PIV binding (path d, integration test convenience).
+	// When BootstrapAdminPIVCertPath is configured, read the cert, compute
+	// its SHA-256 thumbprint, store it on the user, and transition to active.
+	// This skips the invite-token activation flow entirely — only suitable
+	// for test clusters or pre-provisioned deployments where the cert is
+	// generated alongside the cluster.
+	if path := s.config.Auth.BootstrapAdminPIVCertPath; path != "" {
+		if err := bindAdminPIVCert(ctx, c.identityStore, "default", user.ID, path); err != nil {
+			return &FirstBootBootstrapError{Op: "bind bootstrap admin PIV cert", Cause: err}
+		}
+		s.logger.Infof("Bootstrap admin %s bound to PIV cert at %s", user.ID, path)
+		return nil
+	}
+
 	// Print the three-option banner to stderr. Use os.Stderr directly —
 	// NOT the structured logger — so operators see it regardless of log level.
 	printFirstBootBannerFn(os.Stderr, activationURL)
 
 	return nil
 }
+
+// bindAdminPIVCert reads a PEM-encoded client certificate from path, computes
+// its SHA-256 thumbprint, stores it on the bootstrap admin user, and transitions
+// the user to active. Used by the non-interactive integration-test bootstrap.
+func bindAdminPIVCert(ctx context.Context, identityStore *iam.IdentityStore, tenantID, userID, path string) error {
+	certPEM, err := os.ReadFile(path) //nolint:gosec // path comes from operator config
+	if err != nil {
+		return &PIVBootstrapError{Op: "read PIV cert", Path: path, Cause: err}
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return &PIVBootstrapError{Op: "decode PIV cert PEM", Path: path}
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return &PIVBootstrapError{Op: "parse PIV cert", Path: path, Cause: err}
+	}
+	digest := sha256.Sum256(cert.Raw)
+	thumbprint := hex.EncodeToString(digest[:])
+
+	active := iam.UserStateActive
+	emptyInvite := ""
+	_, err = identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
+		State:             &active,
+		PIVCertThumbprint: &thumbprint,
+		InviteToken:       &emptyInvite,
+	})
+	if err != nil {
+		return &PIVBootstrapError{Op: "update bootstrap admin with PIV thumbprint", Path: path, Cause: err}
+	}
+	return nil
+}
+
+// PIVBootstrapError reports failures binding a PIV certificate to the
+// bootstrap admin during non-interactive cluster initialization.
+type PIVBootstrapError struct {
+	Op    string
+	Path  string
+	Cause error
+}
+
+func (e *PIVBootstrapError) Error() string {
+	if e.Cause != nil {
+		return e.Op + " " + e.Path + ": " + e.Cause.Error()
+	}
+	return e.Op + " " + e.Path
+}
+
+func (e *PIVBootstrapError) Unwrap() error { return e.Cause }
 
 // BindAdminToSOCert pins the bootstrap admin user to an SO certificate's
 // SubjectPublicKeyInfo (SPKI) SHA-256 thumbprint. Once bound, an mTLS

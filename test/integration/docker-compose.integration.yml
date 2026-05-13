@@ -328,12 +328,9 @@ services:
       - QUICBAAS_ORCHESTRATION_ENABLED=true
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
-      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
-      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service
@@ -445,12 +442,9 @@ services:
       - QUICBAAS_ORCHESTRATION_ENABLED=true
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
-      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
-      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service
@@ -564,12 +558,9 @@ services:
       - QUICBAAS_ORCHESTRATION_ENABLED=true
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
-      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
-      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service
@@ -688,12 +679,9 @@ services:
       - QUICBAAS_ORCHESTRATION_ENABLED=true
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
-      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
-      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service
@@ -795,12 +783,9 @@ services:
       - QUICBAAS_ORCHESTRATION_ENABLED=true
       # Enable password authentication for auth integration tests
       - QUICBAAS_AUTH_ENABLED=true
-      - QUICBAAS_AUTH_ALLOW_PASSWORD_AUTH=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
-      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PASSWORD=admin
-      - QUICBAAS_AUTH_INSECURE_DEV_MODE=true
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service

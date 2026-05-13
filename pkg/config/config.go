@@ -510,6 +510,19 @@ type AuthConfig struct {
 	// Default: "admin"
 	BootstrapAdminPassword string `mapstructure:"bootstrap_admin_password"`
 
+	// BootstrapAdminPIVCertPath is the path to a PEM-encoded X.509 client
+	// certificate that, when present at startup, is bound to the bootstrap
+	// admin user as its PIV factor. The SHA-256 thumbprint of the cert's
+	// DER bytes is computed and stored on user.PIVCertThumbprint, and the
+	// user is transitioned to active. After binding, a TLS client presenting
+	// the matching key can authenticate via POST /api/v1/auth/login/piv.
+	//
+	// Primary use case: integration test clusters that need a deterministic
+	// admin identity without going through the interactive activation flow.
+	// In production the activation banner path (paths a/b/c in
+	// firstBootBootstrap) should be used instead.
+	BootstrapAdminPIVCertPath string `mapstructure:"bootstrap_admin_piv_cert_path"`
+
 	// InsecureDevMode allows insecure default credentials (e.g., admin/admin)
 	// for development and testing. When false (default), the server rejects
 	// weak bootstrap passwords and requires a minimum of 12 characters.
