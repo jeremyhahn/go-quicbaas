@@ -582,9 +582,16 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// Operators who later enable the encrypted barrier flip the gate
 	// open by setting seal.enabled=true; the next boot will print the
 	// banner and run the ceremony exactly as before.
-	skipBootstrap := s.config.Auth.AllowPasswordAuth ||
+	// The first-boot bootstrap is normally gated on the seal barrier being
+	// enabled (so the SO ceremony has something encrypted to gate). The
+	// non-interactive PIV bootstrap path (BootstrapAdminPIVCertPath) is
+	// independent of the seal barrier — when that path is configured the
+	// operator has explicitly pre-provisioned an admin identity, so run the
+	// bootstrap unconditionally.
+	pivBootstrap := s.config.Auth.BootstrapAdminPIVCertPath != ""
+	skipBootstrap := (s.config.Auth.AllowPasswordAuth ||
 		s.config.Auth.InsecureDevMode ||
-		!s.config.Seal.Enabled
+		!s.config.Seal.Enabled) && !pivBootstrap
 	if !skipBootstrap {
 		if bootstrapErr := s.firstBootBootstrap(context.Background(), components); bootstrapErr != nil {
 			// Non-fatal: log the error but do not abort the server. The operator
