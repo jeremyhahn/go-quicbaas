@@ -104,8 +104,19 @@ func AuthPIV(t *testing.T, baseURL string) string {
 
 // AuthPIVContext is the context-aware variant of AuthPIV. It returns the
 // bearer and the error rather than calling t.Fatal so callers can implement
-// custom retry / error policies.
+// custom retry / error policies. Empty certPath / keyPath / caPath fall back
+// to the standard integration-test locations under /etc/quicbaas/certs (and
+// honor the QUICBAAS_TEST_PIV_CERT / _KEY / _CA env vars).
 func AuthPIVContext(ctx context.Context, baseURL, certPath, keyPath, caPath string) (string, error) {
+	if certPath == "" {
+		certPath = pivCertPath()
+	}
+	if keyPath == "" {
+		keyPath = pivKeyPath()
+	}
+	if caPath == "" {
+		caPath = pivCAFile()
+	}
 	return authPIV(ctx, baseURL, certPath, keyPath, caPath)
 }
 
