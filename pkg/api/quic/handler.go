@@ -391,6 +391,14 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 	case OpCertRevoke:
 		return interfaces.ResourceCertificate, interfaces.ActionDelete
 
+	// Trust Operations - Read (cross-sign root pool)
+	case OpTrustCrossSignedRootPool:
+		return interfaces.ResourceCertificate, interfaces.ActionRead
+
+	// Trust Operations - Write (AIA import mutates the trust store)
+	case OpTrustAutoImportAIA:
+		return interfaces.ResourceCertificate, interfaces.ActionWrite
+
 	// Parameter Store Operations - Read
 	case OpParameterGet, OpParameterList, OpParameterBatchGet, OpParameterSearch:
 		return interfaces.ResourceParameters, interfaces.ActionRead
@@ -1075,6 +1083,12 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 		return h.handleCertGetCA(ctx, req)
 	case OpCertGetTLSConfig:
 		return h.handleCertGetTLSConfig(ctx, req)
+
+	// Trust Operations
+	case OpTrustCrossSignedRootPool:
+		return h.handleTrustCrossSignedRootPool(ctx, req)
+	case OpTrustAutoImportAIA:
+		return h.handleTrustAutoImportAIA(ctx, req)
 
 	// Dynamic Secrets Operations
 	case OpDynamicSecretsCreateRole:

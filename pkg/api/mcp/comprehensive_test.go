@@ -41,6 +41,9 @@ import (
 // =============================================================================
 
 type mockService struct {
+	// Trust composition (cross-sign / AIA)
+	trustSvc service.TrustService
+
 	// KV Operations
 	putFunc    func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	getFunc    func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
@@ -490,6 +493,10 @@ func (m *mockService) ObjectStorageAdminService() service.ObjectStorageAdminServ
 
 func (m *mockService) Certificate() service.CertificateService {
 	return nil
+}
+
+func (m *mockService) Trust() service.TrustService {
+	return m.trustSvc
 }
 
 func (m *mockService) DynamicSecrets() service.DynamicSecretsService {

@@ -122,6 +122,7 @@ type MockQuicBaaS struct {
 	EmbeddingServiceFunc          func() service.EmbeddingService
 	OllamaServiceFunc             func() service.OllamaService
 	CertificateServiceFunc        func() service.CertificateService
+	TrustServiceFunc              func() service.TrustService
 	DynamicSecretsServiceFunc     func() service.DynamicSecretsService
 	ObjectStorageServiceFunc      func() service.ObjectStorageService
 	ObjectStorageAdminServiceFunc func() service.ObjectStorageAdminService
@@ -690,6 +691,13 @@ func (m *MockQuicBaaS) Certificate() service.CertificateService {
 	}
 	if m.MockCertificateService != nil {
 		return m.MockCertificateService
+	}
+	return nil
+}
+
+func (m *MockQuicBaaS) Trust() service.TrustService {
+	if m.TrustServiceFunc != nil {
+		return m.TrustServiceFunc()
 	}
 	return nil
 }

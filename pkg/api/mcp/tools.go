@@ -185,6 +185,7 @@ func (r *ToolRegistry) registerTools() {
 
 	// Register Certificate tools
 	r.registerCertificateTools()
+	r.registerTrustTools()
 
 	// Register Dynamic Secrets tools
 	r.registerDynamicSecretsTools()
@@ -1284,6 +1285,11 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// Check if it's a Certificate tool
 		if isCertificateTool(name) {
 			return r.executeCertificateTool(ctx, name, args)
+		}
+
+		// Check if it's a Trust tool (cross-sign / AIA composition)
+		if isTrustTool(name) {
+			return r.executeTrustTool(ctx, name, args)
 		}
 
 		// Check if it's a Dynamic Secrets tool

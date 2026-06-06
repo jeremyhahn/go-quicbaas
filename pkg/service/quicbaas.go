@@ -161,6 +161,7 @@ type quicBaaS struct {
 	embeddingService          EmbeddingService
 	ollamaService             OllamaService
 	certificateService        CertificateService
+	trustService              TrustService
 	dynamicSecretsService     DynamicSecretsService
 	objectStorageService      ObjectStorageService
 	objectStorageAdminService ObjectStorageAdminService
@@ -573,6 +574,14 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	if b.caService != nil {
 		if caService, ok := b.caService.(xkmstransport.Client); ok {
 			svc.certificateService = NewCertificateService(caService)
+		}
+		// Wire the Trust composition service when the CA adapter exposes
+		// the cross-sign / AIA capability. The adapter (pkg/server) is the
+		// same instance handed to WithCAService; it satisfies TrustCA by
+		// delegating to the embedded xkms TrustedCA. Backends that do not
+		// expose cross-sign/AIA (TrustCA) leave Trust unconfigured.
+		if trustCA, ok := b.caService.(TrustCA); ok {
+			svc.trustService = NewTrustService(trustCA)
 		}
 	}
 
@@ -5031,6 +5040,13 @@ func (s *quicBaaS) Ollama() OllamaService {
 // Certificate returns the Certificate service (returns nil if not configured).
 func (s *quicBaaS) Certificate() CertificateService {
 	return s.certificateService
+}
+
+// Trust returns the Trust composition service (returns nil if not
+// configured). It exposes the cross-sign / AIA verbs surfaced under
+// Security().Trust(), backed by the xkms TrustedCA via the CA adapter.
+func (s *quicBaaS) Trust() TrustService {
+	return s.trustService
 }
 
 // DynamicSecrets returns the Dynamic Secrets service (returns nil if not configured).

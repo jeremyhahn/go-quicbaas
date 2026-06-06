@@ -33,3 +33,18 @@ func (s *Server) registerCertificateService(grpcServer *ggrpc.Server, quicbaasSe
 	grpcapi.RegisterCertificateServiceServer(grpcServer, quicbaasService)
 	s.logger.Info("Registered CertificateService gRPC service")
 }
+
+// registerTrustService registers the TrustService handlers on the gRPC
+// listener when the QuicBaaS service exposes a Trust sub-service. The
+// handlers are implemented on the same grpcapi.Server that backs the
+// QuicBaaS facade and delegate to the xkms-composed TrustedCA via
+// service.Trust(). Wiring this keeps the gRPC trust surface symmetric with
+// the REST /api/v1/trust routes and the QUIC/MCP/Unix/embedded transports.
+func (s *Server) registerTrustService(grpcServer *ggrpc.Server, quicbaasService *grpcapi.Server) {
+	if s.quicBaaSService == nil || s.quicBaaSService.Trust() == nil {
+		s.logger.Info("Trust service not available, skipping TrustService gRPC registration")
+		return
+	}
+	grpcapi.RegisterTrustServiceServer(grpcServer, quicbaasService)
+	s.logger.Info("Registered TrustService gRPC service")
+}

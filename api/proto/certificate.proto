@@ -358,3 +358,51 @@ message GetTLSConfigResponse {
   // Timestamp is when the configuration was generated.
   google.protobuf.Timestamp timestamp = 8;
 }
+
+// =============================================================================
+// Trust Service
+// =============================================================================
+
+// TrustService composes the cross-sign / AIA verbs of the underlying CA,
+// surfaced via Security().Trust(). DANE publication is intentionally NOT
+// part of this service (pending a separate DNS-provider hook design).
+service TrustService {
+  // CrossSignedRootPool returns the active CA's cross-sign-aware root set
+  // (native root plus any cross-signed roots) as PEM-encoded certificates.
+  rpc CrossSignedRootPool(CrossSignedRootPoolRequest) returns (CrossSignedRootPoolResponse);
+
+  // AutoImportAIA walks the AIA extension of each supplied DER-encoded
+  // certificate and imports the referenced issuing CA certificates.
+  rpc AutoImportAIA(AutoImportAIARequest) returns (AutoImportAIAResponse);
+}
+
+// CrossSignedRootPoolRequest carries no parameters.
+message CrossSignedRootPoolRequest {
+  // No parameters needed.
+}
+
+// CrossSignedRootPoolResponse returns the cross-signed root set.
+message CrossSignedRootPoolResponse {
+  // RootPEMs are the PEM-encoded root certificates.
+  repeated bytes root_pems = 1;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// AutoImportAIARequest carries the DER-encoded chain whose AIA extensions
+// are walked and imported.
+message AutoImportAIARequest {
+  // ChainDER are the DER-encoded certificates whose AIA chains are walked.
+  repeated bytes chain_der = 1;
+}
+
+// AutoImportAIAResponse reports how many chain certificates had their AIA
+// processed.
+message AutoImportAIAResponse {
+  // Imported is the count of chain certificates whose AIA was processed.
+  int32 imported = 1;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 2;
+}

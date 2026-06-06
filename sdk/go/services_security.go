@@ -36,6 +36,7 @@ import (
 	trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	trustclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/trust"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 	trustbootstrap "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/bootstrap"
@@ -1056,16 +1057,16 @@ func (s *trustServiceImpl) PublishDANE(ctx context.Context, name string, port in
 
 // TrustCrossSignedRootPoolResponse is the wire-level response payload
 // for TrustService.CrossSignedRootPool. Each element is either a
-// PEM-encoded or DER-encoded certificate.
-type TrustCrossSignedRootPoolResponse struct {
-	RootPEMs [][]byte `json:"root_pems"`
-}
+// PEM-encoded or DER-encoded certificate. It aliases the leaf
+// client/trust type so transport handlers (which cannot import this
+// package without a cycle) and SDK callers share one definition.
+type TrustCrossSignedRootPoolResponse = trustclient.CrossSignedRootPoolResponse
 
 func (s *trustServiceImpl) CrossSignedRootPool(ctx context.Context) (*x509.CertPool, error) {
 	if ctx == nil {
 		return nil, sdkerrors.NewInvalidInput("trust.CrossSignedRootPool", "context is required")
 	}
-	resp, err := s.t.Request(ctx, trustServiceName, "CrossSignedRootPool", struct{}{})
+	resp, err := s.t.Request(ctx, trustServiceName, "CrossSignedRootPool", &trustclient.CrossSignedRootPoolRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -1100,9 +1101,9 @@ func (s *trustServiceImpl) CrossSignedRootPool(ctx context.Context) (*x509.CertP
 	return pool, nil
 }
 
-type trustAutoImportAIARequest struct {
-	ChainDER [][]byte `json:"chain_der"`
-}
+// trustAutoImportAIARequest aliases the leaf client/trust request type
+// so the SDK and transport handlers share one wire definition.
+type trustAutoImportAIARequest = trustclient.AutoImportAIARequest
 
 func (s *trustServiceImpl) AutoImportAIA(ctx context.Context, certChain []*x509.Certificate) error {
 	if len(certChain) == 0 {

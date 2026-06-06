@@ -291,6 +291,15 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// Check if this is a Trust service request and route through the trust
+	// handler. The SDK trust surface uses plain Go structs that don't
+	// implement proto.Message, so they must be converted to the generated
+	// TrustService proto types before calling gRPC.
+	if isTrustService(service) {
+		handler := newTrustHandler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
 	// Check if this is an Operations service request and route through the
 	// operations handler. The SDK operations client uses plain Go structs which
 	// don't implement proto.Message, so we need to convert them to the generated

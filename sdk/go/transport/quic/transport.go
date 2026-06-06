@@ -289,6 +289,7 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	// into the bespoke SDK types so callers get the same shape every other
 	// transport returns.
 	isCertificate := isCertificateService(svc)
+	isTrust := isTrustService(svc)
 	isObjectStorage := isObjectStorageService(svc)
 
 	// Detect the unified login ceremony (quicbaas.Auth/BeginLogin |
@@ -557,6 +558,9 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	}
 	if isCertificate {
 		return decodeCertificateResponse(method, resp.Payload)
+	}
+	if isTrust {
+		return decodeTrustResponse(method, resp.Payload)
 	}
 	if isObjectStorage {
 		return decodeObjectStorageResponse(method, resp.Payload)

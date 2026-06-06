@@ -110,6 +110,11 @@ type QuicBaaS interface {
 	// Certificate returns the Certificate service (returns nil if not configured)
 	Certificate() CertificateService
 
+	// Trust returns the Trust composition service (returns nil if not
+	// configured). It exposes the cross-sign / AIA verbs surfaced under
+	// Security().Trust(), backed by the xkms TrustedCA via the CA adapter.
+	Trust() TrustService
+
 	// DynamicSecrets returns the Dynamic Secrets service (returns nil if not configured)
 	// Dynamic secrets handle credential generation with lease-based TTL management.
 	DynamicSecrets() DynamicSecretsService

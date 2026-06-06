@@ -48,6 +48,7 @@ type MockQuicBaaS struct {
 	// Sub-service fields for interfaces with conflicting method signatures.
 	// These are returned by the corresponding accessor methods.
 	CertificateSvc   service.CertificateService
+	TrustSvc         service.TrustService
 	EmbeddingService service.EmbeddingService
 	OllamaService    service.OllamaService
 
@@ -519,6 +520,11 @@ func (m *MockQuicBaaS) Ollama() service.OllamaService {
 // Certificate returns the CertificateSvc field (may be nil).
 func (m *MockQuicBaaS) Certificate() service.CertificateService {
 	return m.CertificateSvc
+}
+
+// Trust returns the TrustSvc field (may be nil).
+func (m *MockQuicBaaS) Trust() service.TrustService {
+	return m.TrustSvc
 }
 
 // DynamicSecrets returns DynamicSecretsSvc when set, otherwise nil.

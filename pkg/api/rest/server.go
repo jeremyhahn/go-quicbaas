@@ -681,6 +681,9 @@ func (s *Server) setupRouter() {
 			// Certificate service routes
 			registerCertificateRoutes(s, r)
 
+			// Trust composition routes (cross-sign / AIA)
+			registerTrustRoutes(s, r)
+
 			// Dynamic secrets service routes
 			registerDynamicSecretsRoutes(s, r)
 

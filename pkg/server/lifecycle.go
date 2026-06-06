@@ -1817,6 +1817,12 @@ func (s *Server) startGRPCServer() error {
 	// symmetric with the REST /api/v1/ca routes and the QUIC/MCP/Unix transports.
 	s.registerCertificateService(grpcServer, quicbaasService)
 
+	// Register TrustService (cross-sign / AIA) gRPC handlers. They live on
+	// the same *grpcapi.Server and delegate to service.Trust(), keeping the
+	// gRPC trust surface symmetric with REST /api/v1/trust and the QUIC/MCP/
+	// Unix transports.
+	s.registerTrustService(grpcServer, quicbaasService)
+
 	// Register Barrier and Ceremony gRPC services. The handlers delegate to
 	// the embedded go-qrdb instance via the QuicBaaS service facade, keeping
 	// the gRPC surface symmetric with /api/v1/barrier and /api/v1/init REST.

@@ -70,4 +70,8 @@ var (
 
 	// ErrCertificateServiceUnavailable indicates the certificate service is not available.
 	ErrCertificateServiceUnavailable = errors.New("certificate service not available")
+
+	// ErrTrustServiceUnavailable indicates the trust composition service
+	// is not available (the server has no cross-sign / AIA capable CA).
+	ErrTrustServiceUnavailable = errors.New("trust service not available")
 )

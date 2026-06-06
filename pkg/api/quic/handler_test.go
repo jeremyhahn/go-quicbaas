@@ -572,6 +572,10 @@ func (m *mockService) Certificate() service.CertificateService {
 	return nil
 }
 
+func (m *mockService) Trust() service.TrustService {
+	return nil
+}
+
 func (m *mockService) DynamicSecrets() service.DynamicSecretsService {
 	return nil
 }

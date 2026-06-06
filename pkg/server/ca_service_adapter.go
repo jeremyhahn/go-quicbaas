@@ -62,6 +62,10 @@ var (
 	// ErrCAServiceAdapterUnsupportedAlgorithm is returned when an IssueCertificate
 	// request names a key algorithm the adapter cannot generate.
 	ErrCAServiceAdapterUnsupportedAlgorithm = errors.New("server: ca service adapter received an unsupported key algorithm")
+
+	// ErrCAServiceAdapterNoRoot is returned when the cross-signed root pool
+	// cannot be resolved because the CA has no materialised root certificate.
+	ErrCAServiceAdapterNoRoot = errors.New("server: ca service adapter has no root certificate")
 )
 
 // caServiceAdapter wraps an xkmssdk.TrustedCA so it satisfies the
@@ -94,6 +98,11 @@ type caServiceAdapter struct {
 // newCAServiceAdapter constructs an adapter that exposes a TrustedCA via
 // the xkmstransport CAService method set. Returns ErrCAServiceAdapterNilCA
 // when ca is nil.
+// Compile-time assertion that the adapter satisfies the service-layer
+// TrustCA capability, so the QuicBaaS builder can wire Security().Trust()
+// off the same CA instance used for certificate operations.
+var _ service.TrustCA = (*caServiceAdapter)(nil)
+
 func newCAServiceAdapter(ca xkmssdk.TrustedCA) (*caServiceAdapter, error) {
 	if ca == nil {
 		return nil, ErrCAServiceAdapterNilCA
@@ -449,6 +458,67 @@ func (a *caServiceAdapter) ListStoredCertificates(_ context.Context) ([]*x509.Ce
 		return nil, ErrCAServiceAdapterCertStoreUnavailable
 	}
 	return store.ListCertificates()
+}
+
+// CrossSignedRootPEMs returns the cross-sign-aware root set for the active
+// CA as PEM-encoded certificates, satisfying service.TrustCA. The set is
+// the native root anchor followed by every cross-signed root recorded for
+// that root's subject CN. This mirrors the membership of the pool returned
+// by TrustedCA.TrustedRootCertPoolWithXSigner without depending on
+// x509.CertPool internals (which expose no enumeration of their members).
+//
+// A missing cross-signed set is NOT an error: a CA that has never been
+// cross-signed legitimately returns just its native root.
+func (a *caServiceAdapter) CrossSignedRootPEMs() ([][]byte, error) {
+	ca := a.getCA()
+	if ca == nil {
+		return nil, ErrCAServiceAdapterNilCA
+	}
+
+	// Resolve the root anchor. Prefer the explicit TrustedRoot; fall back
+	// to the issuing CA leaf when the hierarchy is single-tier (the CA is
+	// its own root).
+	root, err := ca.TrustedRoot()
+	if err != nil || root == nil {
+		root, err = ca.CACertificate()
+		if err != nil {
+			return nil, ErrCAServiceAdapterNoRoot
+		}
+	}
+
+	out := make([][]byte, 0, 2)
+	out = append(out, pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: root.Raw,
+	}))
+
+	// Append any cross-signed roots recorded for the root's subject CN.
+	// CrossSignedPEM returns a not-found error when none exist; that is a
+	// normal "no cross-signature" condition, not a failure, so it is
+	// folded into the native-root-only result.
+	xsignedPEM, xerr := ca.CrossSignedPEM(&xkmssdk.KeyAttributes{CN: root.Subject.CommonName})
+	if xerr == nil && len(xsignedPEM) > 0 {
+		for _, der := range splitPEMCertificates(xsignedPEM) {
+			out = append(out, pem.EncodeToMemory(&pem.Block{
+				Type:  "CERTIFICATE",
+				Bytes: der,
+			}))
+		}
+	}
+
+	return out, nil
+}
+
+// ImportIssuingCAs recursively imports the issuing CA certificates
+// referenced by cert's AIA extension into the certificate store,
+// satisfying service.TrustCA. It delegates directly to the wrapped
+// TrustedCA, which owns the canonical AIA-walk implementation.
+func (a *caServiceAdapter) ImportIssuingCAs(cert *x509.Certificate) error {
+	ca := a.getCA()
+	if ca == nil {
+		return ErrCAServiceAdapterNilCA
+	}
+	return ca.ImportIssuingCAs(cert)
 }
 
 // parseTransportSANs converts the prefixed-string SAN format used by

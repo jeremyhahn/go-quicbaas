@@ -402,6 +402,7 @@ func (m *mockQuicBaaS) Vector() service.VectorService                 { return n
 func (m *mockQuicBaaS) Embedding() service.EmbeddingService           { return nil }
 func (m *mockQuicBaaS) Ollama() service.OllamaService                 { return nil }
 func (m *mockQuicBaaS) Certificate() service.CertificateService       { return nil }
+func (m *mockQuicBaaS) Trust() service.TrustService                   { return nil }
 func (m *mockQuicBaaS) DynamicSecrets() service.DynamicSecretsService { return nil }
 func (m *mockQuicBaaS) ObjectStorageService() service.ObjectStorageService {
 	return m.objectStorageService

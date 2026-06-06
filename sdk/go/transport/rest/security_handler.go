@@ -108,8 +108,7 @@ func (h *securityRESTHandler) handleRequest(ctx context.Context, service, method
 		return nil, errors.NewUnimplemented("rest.security.ACME."+method,
 			"ACME operations have no REST server surface on quicbaasd")
 	case "Trust":
-		return nil, errors.NewUnimplemented("rest.security.Trust."+method,
-			"Trust (DANE/cross-sign/AIA) operations have no REST server surface on quicbaasd")
+		return h.handleTrust(ctx, method, req)
 	default:
 		return nil, errors.NewUnimplemented("rest.security.handleRequest",
 			"unsupported security service: "+service)
