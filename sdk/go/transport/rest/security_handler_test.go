@@ -305,7 +305,6 @@ func TestSecurity_UnsupportedVerbs_TypedUnimplemented(t *testing.T) {
 		service string
 		method  string
 	}{
-		{securityServiceFIDO2, "ListDevices"},
 		{securityServicePIV, "ListReaders"},
 		{securityServiceACME, "NewOrder"},
 		{securityServiceTrust, "PublishDANE"},

@@ -138,38 +138,6 @@ func (e *AmbiguousAutoDiscoveryError) Error() string {
 		strings.Join(e.Methods, ", ") + "); pass --method to pick one"
 }
 
-// NoFIDO2DeviceError is returned when --method fido2 has no
-// authenticator connected.
-type NoFIDO2DeviceError struct{}
-
-// Error returns a human-readable description.
-func (e *NoFIDO2DeviceError) Error() string {
-	return "auth login: no FIDO2 authenticator connected"
-}
-
-// AmbiguousFIDO2DeviceError is returned when --method fido2 sees more
-// than one authenticator and the operator did not pass --device.
-type AmbiguousFIDO2DeviceError struct {
-	Devices []string
-}
-
-// Error returns a human-readable description.
-func (e *AmbiguousFIDO2DeviceError) Error() string {
-	return "auth login --method fido2: multiple authenticators connected (" +
-		strings.Join(e.Devices, ", ") + "); pass --device <id>"
-}
-
-// FIDO2DeviceNotFoundError is returned when --device matches no
-// authenticator.
-type FIDO2DeviceNotFoundError struct {
-	DeviceID string
-}
-
-// Error returns a human-readable description.
-func (e *FIDO2DeviceNotFoundError) Error() string {
-	return "auth login --method fido2: device " + e.DeviceID + " not found"
-}
-
 // AmbiguousPIVReaderError is returned when --method piv sees more than
 // one reader and the operator did not pass --reader.
 type AmbiguousPIVReaderError struct {
@@ -465,8 +433,10 @@ func autoDiscoverCanonicalAuthMethod(ctx context.Context, opts *canonicalAuthLog
 
 	hasFIDO2, hasPIV := false, false
 	if !hasMTLS {
-		if fido, err := canonicalAuthFIDO2("auth login auto-discovery"); err == nil && fido != nil {
-			if devs, derr := fido.ListDevices(ctx); derr == nil && devs != nil && len(devs.Devices) > 0 {
+		if dev, err := canonicalAuthDevices("auth login auto-discovery"); err == nil && dev != nil {
+			// FIDO2 authenticators are discovered LOCALLY (USB-HID); a server
+			// cannot see the keys attached to this client.
+			if present, derr := dev.Present(); derr == nil && present {
 				hasFIDO2 = true
 			}
 		}
@@ -705,25 +675,23 @@ func canonicalFIDO2CredentialID(assertion []byte) (string, error) {
 // Selection helpers
 // ---------------------------------------------------------------------------
 
-// selectCanonicalFIDO2Device picks the device matching deviceID, or
-// returns an ambiguity / not-found error.
-func selectCanonicalFIDO2Device(devices []quicbaas.FIDO2Device, deviceID string) (*quicbaas.FIDO2Device, error) {
-	if deviceID != "" {
-		for i := range devices {
-			if devices[i].DeviceID == deviceID {
-				return &devices[i], nil
-			}
-		}
-		return nil, &FIDO2DeviceNotFoundError{DeviceID: deviceID}
+// canonicalAuthDevices resolves the client-LOCAL CTAP2 authenticator helper.
+// Device discovery is intrinsically local: a server cannot enumerate the
+// USB-HID authenticators attached to this client.
+func canonicalAuthDevices(op string) (quicbaas.LocalDevices, error) {
+	cl, err := sdkClientFactory()
+	if err != nil {
+		return nil, err
 	}
-	if len(devices) == 1 {
-		return &devices[0], nil
+	auth := cl.Security().Auth()
+	if auth == nil {
+		return nil, &SecuritySurfaceUnavailableError{Op: op}
 	}
-	ids := make([]string, 0, len(devices))
-	for i := range devices {
-		ids = append(ids, devices[i].DeviceID)
+	d := auth.Devices()
+	if d == nil {
+		return nil, &SecuritySurfaceUnavailableError{Op: op}
 	}
-	return nil, &AmbiguousFIDO2DeviceError{Devices: ids}
+	return d, nil
 }
 
 // selectCanonicalPIVReader picks the reader matching name, or returns

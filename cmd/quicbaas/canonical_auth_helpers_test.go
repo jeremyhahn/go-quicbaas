@@ -35,7 +35,7 @@ import (
 )
 
 // =============================================================================
-// canonicalAuthFactors / canonicalAuthFIDO2 / canonicalAuthPIV
+// canonicalAuthFactors / canonicalAuthDevices / canonicalAuthPIV
 // =============================================================================
 
 // withFakeSDKClientForCanonicalAuth installs a sdkClientFactory that
@@ -57,11 +57,12 @@ func TestCanonicalAuthFactors_FactoryError(t *testing.T) {
 	assert.ErrorIs(t, err, want)
 }
 
-// TestCanonicalAuthFIDO2_FactoryError surfaces the SDK factory error.
-func TestCanonicalAuthFIDO2_FactoryError(t *testing.T) {
+// TestCanonicalAuthDevices_FactoryError surfaces the SDK factory error from
+// the client-LOCAL CTAP2 device-helper resolver.
+func TestCanonicalAuthDevices_FactoryError(t *testing.T) {
 	want := stderrors.New("factory boom")
 	withFakeSDKClientForCanonicalAuth(t, nil, want)
-	_, err := canonicalAuthFIDO2("test")
+	_, err := canonicalAuthDevices("test")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, want)
 }

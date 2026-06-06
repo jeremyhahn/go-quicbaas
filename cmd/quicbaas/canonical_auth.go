@@ -317,23 +317,6 @@ func canonicalAuthService(op string) (quicbaas.AuthService, error) {
 	return auth, nil
 }
 
-// canonicalAuthFIDO2 resolves the FIDO2 sub-client.
-func canonicalAuthFIDO2(op string) (quicbaas.FIDO2Client, error) {
-	cl, err := sdkClientFactory()
-	if err != nil {
-		return nil, err
-	}
-	auth := cl.Security().Auth()
-	if auth == nil {
-		return nil, &SecuritySurfaceUnavailableError{Op: op}
-	}
-	f := auth.FIDO2()
-	if f == nil {
-		return nil, &SecuritySurfaceUnavailableError{Op: op}
-	}
-	return f, nil
-}
-
 // canonicalAuthWebAuthn resolves the WebAuthn relying-party sub-client used to
 // complete the server-side registration ceremony (FinishRegistration).
 func canonicalAuthWebAuthn(op string) (quicbaas.WebAuthnClient, error) {
@@ -700,27 +683,23 @@ type canonicalFIDO2Registerer func(ctx context.Context, optionsJSON []byte, devi
 var canonicalFIDO2EnrollFunc = canonicalFIDO2Enroll
 
 // canonicalFIDO2Enroll is the production implementation behind
-// canonicalFIDO2EnrollFunc. It resolves the FIDO2 device client (server-side
-// BeginRegistration) and the WebAuthn relying-party client (FinishRegistration)
-// from the configured SDK client and drives the ceremony via enrollCanonicalFIDO2.
+// canonicalFIDO2EnrollFunc. It resolves the WebAuthn relying-party client (the
+// single canonical ceremony surface) and drives the registration ceremony via
+// enrollCanonicalFIDO2.
 func canonicalFIDO2Enroll(ctx context.Context, f *canonicalAuthFactorAddFlags) (string, error) {
-	fido2, err := canonicalAuthFIDO2("auth factor add --type fido2")
-	if err != nil {
-		return "", err
-	}
 	webauthn, err := canonicalAuthWebAuthn("auth factor add --type fido2")
 	if err != nil {
 		return "", err
 	}
-	return enrollCanonicalFIDO2(ctx, f, fido2, webauthn, canonicalFIDO2RegisterFunc)
+	return enrollCanonicalFIDO2(ctx, f, webauthn, canonicalFIDO2RegisterFunc)
 }
 
 // enrollCanonicalFIDO2 drives the full WebAuthn registration ceremony for a
 // FIDO2 factor enrollment and returns the base64url credential id used as the
 // login lookup key:
 //
-//  1. fido2.Register issues the server-side creation options + session id
-//     (BeginRegistration).
+//  1. webauthn.BeginRegistration issues the server-side creation options +
+//     session id.
 //  2. register drives the connected authenticator over CTAP2 with those options
 //     to obtain the navigator.credentials.create() attestation JSON.
 //  3. webauthn.FinishRegistration completes the server-side ceremony with the
@@ -731,16 +710,15 @@ func canonicalFIDO2Enroll(ctx context.Context, f *canonicalAuthFactorAddFlags) (
 func enrollCanonicalFIDO2(
 	ctx context.Context,
 	f *canonicalAuthFactorAddFlags,
-	fido2 quicbaas.FIDO2Client,
 	webauthn quicbaas.WebAuthnClient,
 	register canonicalFIDO2Registerer,
 ) (string, error) {
-	beginResp, err := fido2.Register(ctx, &quicbaas.FIDO2BeginRegistrationRequest{
+	beginResp, err := webauthn.BeginRegistration(ctx, &quicbaas.WebAuthnUser{
 		Username:    f.user,
 		DisplayName: f.label,
 	})
 	if err != nil {
-		return "", fmt.Errorf("fido2.Register: %w", err)
+		return "", fmt.Errorf("webauthn.BeginRegistration: %w", err)
 	}
 	if beginResp == nil || beginResp.OptionsJSON == "" {
 		return "", &MissingFIDO2RegistrationOptionsError{}

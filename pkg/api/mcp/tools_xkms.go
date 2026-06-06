@@ -82,12 +82,6 @@ func (r *ToolRegistry) initXKMSHandlers() map[string]XKMSToolHandler {
 		"xkms.piv.generateKey": r.handleXKMSPIVGenerateKey,
 		"xkms.piv.generateCSR": r.handleXKMSPIVGenerateCSR,
 
-		// FIDO2 operations
-		"xkms.fido2.beginRegistration":    r.handleXKMSFIDO2BeginRegistration,
-		"xkms.fido2.finishRegistration":   r.handleXKMSFIDO2FinishRegistration,
-		"xkms.fido2.beginAuthentication":  r.handleXKMSFIDO2BeginAuthentication,
-		"xkms.fido2.finishAuthentication": r.handleXKMSFIDO2FinishAuthentication,
-
 		// CA operations
 		"xkms.ca.getBundle":   r.handleTrustedCAGetBundle,
 		"xkms.ca.getCert":     r.handleTrustedCAGetCert,
@@ -132,7 +126,6 @@ func (r *ToolRegistry) executeXKMSTool(ctx context.Context, name string, args ma
 func (r *ToolRegistry) registerXKMSTools() {
 	r.registerXKMSCoreTools()
 	r.registerXKMSPIVTools()
-	r.registerXKMSFIDO2Tools()
 	r.registerTrustedCATools()
 	r.registerXKMSPINTools()
 }
@@ -498,69 +491,6 @@ func (r *ToolRegistry) registerXKMSPIVTools() {
 				"subject": map[string]interface{}{"type": "string", "description": "CSR subject common name"},
 			},
 			"required": []string{"backend", "slot"},
-		},
-	})
-}
-
-// registerXKMSFIDO2Tools registers FIDO2/WebAuthn tool definitions.
-func (r *ToolRegistry) registerXKMSFIDO2Tools() {
-	r.addTool(ToolDefinition{
-		Name:        "xkms.fido2.beginRegistration",
-		Description: "Begin WebAuthn registration ceremony",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username":     map[string]interface{}{"type": "string", "description": "Username for registration"},
-				"display_name": map[string]interface{}{"type": "string", "description": "Display name for the user"},
-				"rp_id":        map[string]interface{}{"type": "string", "description": "Relying Party identifier"},
-				"rp_name":      map[string]interface{}{"type": "string", "description": "Relying Party display name"},
-			},
-			"required": []string{"username"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "xkms.fido2.finishRegistration",
-		Description: "Complete WebAuthn registration ceremony",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username":         map[string]interface{}{"type": "string", "description": "Username for registration"},
-				"credential_id":    map[string]interface{}{"type": "string", "description": "Base64-encoded credential ID"},
-				"public_key":       map[string]interface{}{"type": "string", "description": "Base64-encoded COSE public key"},
-				"attestation_data": map[string]interface{}{"type": "string", "description": "Base64-encoded attestation data"},
-				"client_data_json": map[string]interface{}{"type": "string", "description": "Base64-encoded client data JSON"},
-			},
-			"required": []string{"username", "credential_id", "public_key", "attestation_data", "client_data_json"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "xkms.fido2.beginAuthentication",
-		Description: "Begin WebAuthn authentication ceremony",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username": map[string]interface{}{"type": "string", "description": "Username for authentication"},
-				"rp_id":    map[string]interface{}{"type": "string", "description": "Relying Party identifier"},
-			},
-			"required": []string{"username"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "xkms.fido2.finishAuthentication",
-		Description: "Complete WebAuthn authentication ceremony",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username":           map[string]interface{}{"type": "string", "description": "Username for authentication"},
-				"credential_id":      map[string]interface{}{"type": "string", "description": "Base64-encoded credential ID"},
-				"signature":          map[string]interface{}{"type": "string", "description": "Base64-encoded signature"},
-				"authenticator_data": map[string]interface{}{"type": "string", "description": "Base64-encoded authenticator data"},
-				"client_data_json":   map[string]interface{}{"type": "string", "description": "Base64-encoded client data JSON"},
-			},
-			"required": []string{"username", "credential_id", "signature", "authenticator_data", "client_data_json"},
 		},
 	})
 }
@@ -1659,108 +1589,6 @@ func (r *ToolRegistry) handleXKMSPIVGenerateCSR(ctx context.Context, args map[st
 		"slot": resp.Slot,
 		"csr":  base64.StdEncoding.EncodeToString(resp.CSR),
 	})
-}
-
-// =============================================================================
-// FIDO2 Tool Handlers
-// =============================================================================
-
-// handleXKMSFIDO2BeginRegistration begins a WebAuthn registration ceremony.
-func (r *ToolRegistry) handleXKMSFIDO2BeginRegistration(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
-		return nil, err
-	}
-
-	username := getString(args, "username")
-	if username == "" {
-		return nil, api.NewRequiredFieldError("username")
-	}
-
-	// FIDO2 operations are not yet implemented as top-level xkms functions.
-	// Return a structured error indicating the operation is not available.
-	return nil, &XKMSOperationError{Operation: "fido2.beginRegistration", Cause: xkmssdk.ServiceErrOperationNotSupported}
-}
-
-// handleXKMSFIDO2FinishRegistration completes a WebAuthn registration ceremony.
-func (r *ToolRegistry) handleXKMSFIDO2FinishRegistration(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
-		return nil, err
-	}
-
-	username := getString(args, "username")
-	if username == "" {
-		return nil, api.NewRequiredFieldError("username")
-	}
-
-	credentialID := getString(args, "credential_id")
-	if credentialID == "" {
-		return nil, api.NewRequiredFieldError("credential_id")
-	}
-
-	publicKey := getString(args, "public_key")
-	if publicKey == "" {
-		return nil, api.NewRequiredFieldError("public_key")
-	}
-
-	attestationData := getString(args, "attestation_data")
-	if attestationData == "" {
-		return nil, api.NewRequiredFieldError("attestation_data")
-	}
-
-	clientDataJSON := getString(args, "client_data_json")
-	if clientDataJSON == "" {
-		return nil, api.NewRequiredFieldError("client_data_json")
-	}
-
-	return nil, &XKMSOperationError{Operation: "fido2.finishRegistration", Cause: xkmssdk.ServiceErrOperationNotSupported}
-}
-
-// handleXKMSFIDO2BeginAuthentication begins a WebAuthn authentication ceremony.
-func (r *ToolRegistry) handleXKMSFIDO2BeginAuthentication(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
-		return nil, err
-	}
-
-	username := getString(args, "username")
-	if username == "" {
-		return nil, api.NewRequiredFieldError("username")
-	}
-
-	return nil, &XKMSOperationError{Operation: "fido2.beginAuthentication", Cause: xkmssdk.ServiceErrOperationNotSupported}
-}
-
-// handleXKMSFIDO2FinishAuthentication completes a WebAuthn authentication ceremony.
-func (r *ToolRegistry) handleXKMSFIDO2FinishAuthentication(_ context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
-		return nil, err
-	}
-
-	username := getString(args, "username")
-	if username == "" {
-		return nil, api.NewRequiredFieldError("username")
-	}
-
-	credentialID := getString(args, "credential_id")
-	if credentialID == "" {
-		return nil, api.NewRequiredFieldError("credential_id")
-	}
-
-	sig := getString(args, "signature")
-	if sig == "" {
-		return nil, api.NewRequiredFieldError("signature")
-	}
-
-	authData := getString(args, "authenticator_data")
-	if authData == "" {
-		return nil, api.NewRequiredFieldError("authenticator_data")
-	}
-
-	clientDataJSON := getString(args, "client_data_json")
-	if clientDataJSON == "" {
-		return nil, api.NewRequiredFieldError("client_data_json")
-	}
-
-	return nil, &XKMSOperationError{Operation: "fido2.finishAuthentication", Cause: xkmssdk.ServiceErrOperationNotSupported}
 }
 
 // =============================================================================

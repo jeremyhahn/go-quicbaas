@@ -70,12 +70,6 @@ func registerXKMSRoutes(s *Server, r chi.Router) {
 		r.Post("/piv/slots/{slot}/key", s.HandleXKMSGeneratePIVKey)
 		r.Post("/piv/slots/{slot}/csr", s.HandleXKMSGeneratePIVCSR)
 
-		// FIDO2 routes
-		r.Post("/fido2/register/begin", s.HandleXKMSBeginRegistration)
-		r.Post("/fido2/register/finish", s.HandleXKMSFinishRegistration)
-		r.Post("/fido2/authenticate/begin", s.HandleXKMSBeginAuthentication)
-		r.Post("/fido2/authenticate/finish", s.HandleXKMSFinishAuthentication)
-
 		// CA routes
 		r.Get("/ca/bundle", s.HandleXKMSGetCABundle)
 		r.Get("/ca/cert", s.HandleXKMSGetCACertificate)

@@ -43,25 +43,6 @@ func TestAmbiguousAutoDiscoveryError_Message(t *testing.T) {
 	assert.Contains(t, got, "--method")
 }
 
-func TestNoFIDO2DeviceError_Message(t *testing.T) {
-	e := &NoFIDO2DeviceError{}
-	assert.Contains(t, e.Error(), "FIDO2")
-}
-
-func TestAmbiguousFIDO2DeviceError_Message(t *testing.T) {
-	e := &AmbiguousFIDO2DeviceError{Devices: []string{"yk1", "yk2"}}
-	got := e.Error()
-	assert.Contains(t, got, "yk1")
-	assert.Contains(t, got, "yk2")
-	assert.Contains(t, got, "--device")
-}
-
-func TestFIDO2DeviceNotFoundError_Message(t *testing.T) {
-	e := &FIDO2DeviceNotFoundError{DeviceID: "yk-007"}
-	assert.Contains(t, e.Error(), "yk-007")
-	assert.Contains(t, e.Error(), "not found")
-}
-
 func TestAmbiguousPIVReaderError_Message(t *testing.T) {
 	e := &AmbiguousPIVReaderError{Readers: []string{"r1", "r2"}}
 	got := e.Error()

@@ -89,7 +89,7 @@ func TestSDK_M10_Surface_Reachable(t *testing.T) {
 		_ quicbaas.ACMEClientAPI         = nil
 		_ quicbaas.TrustService          = nil
 		_ quicbaas.CertificateExtensions = nil
-		_ quicbaas.FIDO2Client           = nil
+		_ quicbaas.LocalDevices          = nil
 		_ quicbaas.WebAuthnClient        = nil
 		_ quicbaas.PIVClient             = nil
 		_ quicbaas.AuthFactorsClient     = nil
@@ -184,8 +184,8 @@ func TestSDK_M10_SecurityAccessors(t *testing.T) {
 	if auth == nil {
 		t.Fatal("Security().Auth() returned nil")
 	}
-	if auth.FIDO2() == nil {
-		t.Error("Auth().FIDO2() returned nil")
+	if auth.Devices() == nil {
+		t.Error("Auth().Devices() returned nil")
 	}
 	if auth.WebAuthn() == nil {
 		t.Error("Auth().WebAuthn() returned nil")
@@ -485,69 +485,32 @@ func TestSDK_CertExt_Chain_HappyPath(t *testing.T) {
 }
 
 // =============================================================================
-// FIDO2
+// CTAP2 local-device helper
+//
+// The former FIDO2 transport surface (ListDevices/DeviceInfo/Register/Assert)
+// was collapsed: Register/Assert are redundant with the WebAuthn ceremony
+// (see below) and ListDevices/DeviceInfo are client-LOCAL CTAP2 operations
+// exposed via Security().Auth().Devices() (covered by devices_local_test.go).
+// This smoke test asserts the local accessor is reachable and performs no
+// transport request.
 // =============================================================================
 
-func TestSDK_FIDO2_ListDevices_VendorAgnostic(t *testing.T) {
-	c, rt := newClientWithMockTransport(t)
-	defer c.Close()
-
-	rt.setResponse("quicbaas.FIDO2", "ListDevices",
-		&quicbaas.FIDO2ListDevicesResponse{
-			Devices: []quicbaas.FIDO2Device{
-				{DeviceID: "yk-1", Manufacturer: "Yubico", AAGUID: "ee882879-..."},
-				{DeviceID: "sk-1", Manufacturer: "SoloKeys", AAGUID: "8876631b-..."},
-			},
-		}, nil)
-
-	out, err := c.Security().Auth().FIDO2().ListDevices(context.Background())
-	if err != nil {
-		t.Fatalf("ListDevices: %v", err)
-	}
-	if len(out.Devices) != 2 {
-		t.Fatalf("expected 2 devices, got %d", len(out.Devices))
-	}
-	// Vendor-agnostic: assert distinct vendors are accepted.
-	if out.Devices[0].Manufacturer == out.Devices[1].Manufacturer {
-		t.Error("expected distinct vendors")
-	}
-}
-
-func TestSDK_FIDO2_DeviceInfo_Validation(t *testing.T) {
+func TestSDK_Devices_LocalAccessorReachable(t *testing.T) {
 	c, _ := newClientWithMockTransport(t)
 	defer c.Close()
-	cli := c.Security().Auth().FIDO2()
 
-	if _, err := cli.DeviceInfo(context.Background(), ""); !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput, got %v", err)
+	dev := c.Security().Auth().Devices()
+	if dev == nil {
+		t.Fatal("Devices() should return the local CTAP2 helper")
 	}
-	if _, err := cli.DeviceInfo(nil, "x"); !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput, got %v", err)
-	}
-}
-
-func TestSDK_FIDO2_RegisterAssert_HappyPath(t *testing.T) {
-	c, rt := newClientWithMockTransport(t)
-	defer c.Close()
-
-	rt.setResponse("quicbaas.FIDO2", "Register", &quicbaas.FIDO2BeginRegistrationResponse{SessionID: "abc"}, nil)
-	rt.setResponse("quicbaas.FIDO2", "Assert", &quicbaas.FIDO2BeginAuthenticationResponse{SessionID: "def"}, nil)
-
-	cli := c.Security().Auth().FIDO2()
-	reg, err := cli.Register(context.Background(), &quicbaas.FIDO2BeginRegistrationRequest{Username: "alice"})
+	// List is a local USB-HID probe; in a headless CI host it returns an
+	// empty slice (not an error) and never touches the transport.
+	got, err := dev.List()
 	if err != nil {
-		t.Fatalf("Register: %v", err)
+		t.Fatalf("Devices().List: %v", err)
 	}
-	if reg.SessionID != "abc" {
-		t.Errorf("unexpected session id %q", reg.SessionID)
-	}
-
-	asrt, err := cli.Assert(context.Background(), &quicbaas.FIDO2BeginAuthenticationRequest{Username: "alice"})
-	if err != nil {
-		t.Fatalf("Assert: %v", err)
-	}
-	if asrt.SessionID != "def" {
-		t.Errorf("unexpected session id %q", asrt.SessionID)
+	if got == nil {
+		t.Fatal("expected non-nil device slice")
 	}
 }
 

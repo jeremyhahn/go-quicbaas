@@ -158,11 +158,6 @@ func TestExecuteXKMSToolDispatchesCorrectly(t *testing.T) {
 		"xkms.piv.deleteCert",
 		"xkms.piv.generateKey",
 		"xkms.piv.generateCSR",
-		// FIDO2 operations
-		"xkms.fido2.beginRegistration",
-		"xkms.fido2.finishRegistration",
-		"xkms.fido2.beginAuthentication",
-		"xkms.fido2.finishAuthentication",
 		// CA operations
 		"xkms.ca.getBundle",
 		"xkms.ca.getCert",
@@ -993,92 +988,6 @@ func TestXKMSPIVHandlersMissingRequiredFields(t *testing.T) {
 }
 
 // =============================================================================
-// FIDO2 Handler Tests - xkms not initialized
-// =============================================================================
-
-// TestXKMSFIDO2HandlersNotInitialized verifies FIDO2 handlers return errors
-// when xkms is not initialized.
-func TestXKMSFIDO2HandlersNotInitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	tests := []struct {
-		name    string
-		handler func(ctx context.Context, args map[string]interface{}) (interface{}, error)
-		args    map[string]interface{}
-	}{
-		{
-			name:    "FIDO2 BeginRegistration",
-			handler: registry.handleXKMSFIDO2BeginRegistration,
-			args:    map[string]interface{}{"username": "testuser"},
-		},
-		{
-			name:    "FIDO2 FinishRegistration",
-			handler: registry.handleXKMSFIDO2FinishRegistration,
-			args: map[string]interface{}{
-				"username":         "testuser",
-				"credential_id":    "cred-123",
-				"public_key":       "pk-data",
-				"attestation_data": "att-data",
-				"client_data_json": "cdj-data",
-			},
-		},
-		{
-			name:    "FIDO2 BeginAuthentication",
-			handler: registry.handleXKMSFIDO2BeginAuthentication,
-			args:    map[string]interface{}{"username": "testuser"},
-		},
-		{
-			name:    "FIDO2 FinishAuthentication",
-			handler: registry.handleXKMSFIDO2FinishAuthentication,
-			args: map[string]interface{}{
-				"username":           "testuser",
-				"credential_id":      "cred-123",
-				"signature":          "sig-data",
-				"authenticator_data": "auth-data",
-				"client_data_json":   "cdj-data",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.handler(ctx, tt.args)
-			require.Error(t, err)
-			var initErr *XKMSNotInitializedError
-			assert.ErrorAs(t, err, &initErr)
-		})
-	}
-}
-
-// TestXKMSFIDO2HandlersMissingRequiredFields verifies FIDO2 handlers validate
-// required fields when xkms is not initialized.
-func TestXKMSFIDO2HandlersMissingRequiredFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// BeginRegistration - missing username (init error first)
-	_, err := registry.handleXKMSFIDO2BeginRegistration(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// BeginAuthentication - missing username (init error first)
-	_, err = registry.handleXKMSFIDO2BeginAuthentication(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// FinishRegistration - missing fields (init error first)
-	_, err = registry.handleXKMSFIDO2FinishRegistration(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// FinishAuthentication - missing fields (init error first)
-	_, err = registry.handleXKMSFIDO2FinishAuthentication(ctx, map[string]interface{}{})
-	require.Error(t, err)
-}
-
-// =============================================================================
 // CA Handler Tests - xkms not initialized
 // =============================================================================
 
@@ -1653,34 +1562,6 @@ func TestXKMSPIVToolsRegistered(t *testing.T) {
 
 	for _, name := range expectedPIVTools {
 		assert.True(t, toolNames[name], "expected PIV tool %q to be registered", name)
-	}
-}
-
-// =============================================================================
-// FIDO2 Tool Registration Tests
-// =============================================================================
-
-// TestXKMSFIDO2ToolsRegistered verifies that all FIDO2 tools are registered.
-func TestXKMSFIDO2ToolsRegistered(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	expectedFIDO2Tools := []string{
-		"xkms.fido2.beginRegistration",
-		"xkms.fido2.finishRegistration",
-		"xkms.fido2.beginAuthentication",
-		"xkms.fido2.finishAuthentication",
-	}
-
-	tools := registry.ListTools()
-	toolNames := make(map[string]bool, len(tools))
-	for _, tool := range tools {
-		toolNames[tool.Name] = true
-	}
-
-	for _, name := range expectedFIDO2Tools {
-		assert.True(t, toolNames[name], "expected FIDO2 tool %q to be registered", name)
 	}
 }
 
@@ -2538,33 +2419,6 @@ func TestMCPCoverage91Extra_XKMS_PIV_MissingFields(t *testing.T) {
 
 	// PIV GenerateCSR - missing slot
 	_, err = registry.handleXKMSPIVGenerateCSR(ctx, map[string]interface{}{})
-	require.Error(t, err)
-}
-
-// =============================================================================
-// XKMS FIDO2 missing fields
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMS_FIDO2_MissingFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// FIDO2 BeginRegistration - uninitialized
-	_, err := registry.handleXKMSFIDO2BeginRegistration(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// FIDO2 FinishRegistration - missing fields
-	_, err = registry.handleXKMSFIDO2FinishRegistration(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// FIDO2 BeginAuthentication - uninitialized
-	_, err = registry.handleXKMSFIDO2BeginAuthentication(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// FIDO2 FinishAuthentication - missing fields
-	_, err = registry.handleXKMSFIDO2FinishAuthentication(ctx, map[string]interface{}{})
 	require.Error(t, err)
 }
 

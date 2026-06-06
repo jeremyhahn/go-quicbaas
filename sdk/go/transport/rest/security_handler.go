@@ -53,7 +53,6 @@ import (
 const (
 	securityServiceACME     = "quicbaas.ACME"
 	securityServiceTrust    = "quicbaas.Trust"
-	securityServiceFIDO2    = "quicbaas.FIDO2"
 	securityServiceWebAuthn = "quicbaas.WebAuthn"
 	securityServicePIV      = "quicbaas.PIV"
 )
@@ -70,7 +69,7 @@ const (
 // one of the Security() surface services routed through this handler.
 func isSecurityService(service string) bool {
 	switch trimRESTServicePrefix(service) {
-	case "ACME", "Trust", "FIDO2", "WebAuthn", "PIV":
+	case "ACME", "Trust", "WebAuthn", "PIV":
 		return true
 	default:
 		return false
@@ -97,10 +96,6 @@ func (h *securityRESTHandler) handleRequest(ctx context.Context, service, method
 	switch trimRESTServicePrefix(service) {
 	case "WebAuthn":
 		return h.handleWebAuthn(ctx, method, req)
-	case "FIDO2":
-		return nil, errors.NewUnimplemented("rest.security.FIDO2."+method,
-			"FIDO2 device operations have no REST server surface on quicbaasd; "+
-				"use Security().Auth().WebAuthn() for the tenant-scoped ceremony")
 	case "PIV":
 		return nil, errors.NewUnimplemented("rest.security.PIV."+method,
 			"vendor-agnostic PIV reader/slot operations have no REST server surface on quicbaasd")

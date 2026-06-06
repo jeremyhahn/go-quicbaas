@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package quicbaas — services_security.go provides the M10 SDK extensions
-// for security-domain primitives sourced from go-xkms (ACME, TrustedCA, FIDO2,
+// for security-domain primitives sourced from go-xkms (ACME, TrustedCA,
 // WebAuthn, PIV) and go-qrdb (auth factors). These primitives are exposed
 // exclusively through the QuicBaaS SDK so that downstream consumers
 // (e.g., go-trusted-platform) never need to import go-xkms or go-qrdb
@@ -49,7 +49,6 @@ import (
 const (
 	acmeServiceName        = "quicbaas.ACME"
 	trustServiceName       = "quicbaas.Trust"
-	fido2ServiceName       = "quicbaas.FIDO2"
 	webauthnServiceName    = "quicbaas.WebAuthn"
 	pivServiceName         = "quicbaas.PIV"
 	authFactorsServiceName = "quicbaas.AuthFactors"
@@ -507,65 +506,6 @@ type DeviceIdentityResponse struct {
 }
 
 // =============================================================================
-// FIDO2 Sub-Interface (vendor-agnostic CTAP2)
-// =============================================================================
-
-// FIDO2Client is the SDK surface for vendor-agnostic FIDO2/CTAP2 device
-// operations. Devices are discovered via USB-HID, PC/SC, and BLE; no vendor
-// hard-coding is permitted at this layer.
-type FIDO2Client interface {
-	// ListDevices discovers all attached FIDO2 authenticators.
-	ListDevices(ctx context.Context) (*FIDO2ListDevicesResponse, error)
-
-	// DeviceInfo returns the AAGUID, capability set, and firmware info
-	// for a specific device.
-	DeviceInfo(ctx context.Context, deviceID string) (*FIDO2DeviceInfo, error)
-
-	// Register performs a CTAP2 makeCredential operation against the
-	// selected authenticator.
-	Register(ctx context.Context, opts *FIDO2BeginRegistrationRequest) (*FIDO2BeginRegistrationResponse, error)
-
-	// Assert performs a CTAP2 getAssertion operation against the selected
-	// authenticator.
-	Assert(ctx context.Context, opts *FIDO2BeginAuthenticationRequest) (*FIDO2BeginAuthenticationResponse, error)
-}
-
-// FIDO2ListDevicesResponse is the response payload for FIDO2.ListDevices.
-type FIDO2ListDevicesResponse struct {
-	Devices []FIDO2Device `json:"devices"`
-}
-
-// FIDO2Device summarises a single discovered authenticator.
-type FIDO2Device struct {
-	// DeviceID is an opaque per-server identifier for this authenticator.
-	DeviceID string `json:"device_id"`
-
-	// Manufacturer is the device vendor name.
-	Manufacturer string `json:"manufacturer"`
-
-	// Product is the device product string.
-	Product string `json:"product"`
-
-	// Transport is the discovery transport ("usb-hid", "pcsc", "ble").
-	Transport string `json:"transport"`
-
-	// AAGUID is the authenticator's AAGUID (16 bytes hex-encoded).
-	AAGUID string `json:"aaguid"`
-}
-
-// FIDO2DeviceInfo describes a single authenticator's capability set.
-type FIDO2DeviceInfo struct {
-	DeviceID        string   `json:"device_id"`
-	AAGUID          string   `json:"aaguid"`
-	Manufacturer    string   `json:"manufacturer"`
-	Product         string   `json:"product"`
-	FirmwareVersion string   `json:"firmware_version"`
-	Capabilities    []string `json:"capabilities"`
-	PINProtocols    []int    `json:"pin_protocols"`
-	Algorithms      []int    `json:"algorithms"`
-}
-
-// =============================================================================
 // WebAuthn Sub-Interface (relying party)
 // =============================================================================
 
@@ -771,14 +711,19 @@ type AuthFactorLoginResponse struct {
 type AuthService interface {
 	AuthClient
 
-	// FIDO2 returns the vendor-agnostic FIDO2/CTAP2 device client.
-	FIDO2() FIDO2Client
-
-	// WebAuthn returns the WebAuthn relying-party client.
+	// WebAuthn returns the WebAuthn relying-party client. It is the single
+	// canonical ceremony accessor (registration + login) for the stack;
+	// CTAP2 local-device discovery is exposed separately via Devices().
 	WebAuthn() WebAuthnClient
 
 	// PIV returns the vendor-agnostic PIV smartcard client.
 	PIV() PIVClient
+
+	// Devices returns the client-LOCAL CTAP2 authenticator helper. Unlike
+	// the WebAuthn ceremony (which is a server round-trip), Devices()
+	// enumerates USB-HID authenticators physically attached to THIS client;
+	// it performs no transport request. See LocalDevices.
+	Devices() LocalDevices
 
 	// Factors returns the multi-factor enrollment + login client.
 	Factors() AuthFactorsClient
@@ -1243,96 +1188,6 @@ func (c *certExtImpl) IssueDeviceIdentity(ctx context.Context, req *DeviceIdenti
 
 func newCertificateExtensions(t transport.Transport) CertificateExtensions {
 	return &certExtImpl{t: t}
-}
-
-// fido2Impl implements FIDO2Client.
-type fido2Impl struct {
-	t transport.Transport
-}
-
-type fido2DeviceInfoRequest struct {
-	DeviceID string `json:"device_id"`
-}
-
-func (c *fido2Impl) ListDevices(ctx context.Context) (*FIDO2ListDevicesResponse, error) {
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("fido2.ListDevices", "context is required")
-	}
-	resp, err := c.t.Request(ctx, fido2ServiceName, "ListDevices", struct{}{})
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return &FIDO2ListDevicesResponse{}, nil
-	}
-	out, ok := resp.(*FIDO2ListDevicesResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("fido2.ListDevices", "invalid response type")
-	}
-	return out, nil
-}
-
-func (c *fido2Impl) DeviceInfo(ctx context.Context, deviceID string) (*FIDO2DeviceInfo, error) {
-	if deviceID == "" {
-		return nil, sdkerrors.NewInvalidInput("fido2.DeviceInfo", "device ID is required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("fido2.DeviceInfo", "context is required")
-	}
-	resp, err := c.t.Request(ctx, fido2ServiceName, "DeviceInfo", &fido2DeviceInfoRequest{DeviceID: deviceID})
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, sdkerrors.NewNotFound("fido2.DeviceInfo", "device not found")
-	}
-	out, ok := resp.(*FIDO2DeviceInfo)
-	if !ok {
-		return nil, sdkerrors.NewInternal("fido2.DeviceInfo", "invalid response type")
-	}
-	return out, nil
-}
-
-func (c *fido2Impl) Register(ctx context.Context, opts *FIDO2BeginRegistrationRequest) (*FIDO2BeginRegistrationResponse, error) {
-	if opts == nil {
-		return nil, sdkerrors.NewInvalidInput("fido2.Register", "options are required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("fido2.Register", "context is required")
-	}
-	resp, err := c.t.Request(ctx, fido2ServiceName, "Register", opts)
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, sdkerrors.NewInternal("fido2.Register", "nil response from server")
-	}
-	out, ok := resp.(*FIDO2BeginRegistrationResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("fido2.Register", "invalid response type")
-	}
-	return out, nil
-}
-
-func (c *fido2Impl) Assert(ctx context.Context, opts *FIDO2BeginAuthenticationRequest) (*FIDO2BeginAuthenticationResponse, error) {
-	if opts == nil {
-		return nil, sdkerrors.NewInvalidInput("fido2.Assert", "options are required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("fido2.Assert", "context is required")
-	}
-	resp, err := c.t.Request(ctx, fido2ServiceName, "Assert", opts)
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, sdkerrors.NewInternal("fido2.Assert", "nil response from server")
-	}
-	out, ok := resp.(*FIDO2BeginAuthenticationResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("fido2.Assert", "invalid response type")
-	}
-	return out, nil
 }
 
 // webauthnImpl implements WebAuthnClient.
@@ -2005,9 +1860,9 @@ type authServiceImpl struct {
 	AuthClient
 	c        *client
 	t        transport.Transport
-	fido2    FIDO2Client
 	webauthn WebAuthnClient
 	piv      PIVClient
+	devices  LocalDevices
 	factors  AuthFactorsClient
 }
 
@@ -2017,16 +1872,16 @@ func newAuthService(c *client) AuthService {
 		AuthClient: c.Auth(),
 		c:          c,
 		t:          t,
-		fido2:      &fido2Impl{t: t},
 		webauthn:   &webauthnImpl{t: t},
 		piv:        &pivImpl{t: t},
+		devices:    newLocalDevices(),
 		factors:    &authFactorsImpl{c: c, t: t},
 	}
 }
 
-func (s *authServiceImpl) FIDO2() FIDO2Client         { return s.fido2 }
 func (s *authServiceImpl) WebAuthn() WebAuthnClient   { return s.webauthn }
 func (s *authServiceImpl) PIV() PIVClient             { return s.piv }
+func (s *authServiceImpl) Devices() LocalDevices      { return s.devices }
 func (s *authServiceImpl) Factors() AuthFactorsClient { return s.factors }
 
 // BeginLogin routes the unified login ceremony to qrdb's LoginClient — the

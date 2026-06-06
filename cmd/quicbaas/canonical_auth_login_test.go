@@ -74,34 +74,6 @@ func TestResolveCanonicalDefaultClientCert_ExplicitMissing(t *testing.T) {
 	}
 }
 
-// TestSelectCanonicalFIDO2Device covers all branches.
-func TestSelectCanonicalFIDO2Device(t *testing.T) {
-	devices := []quicbaas.FIDO2Device{{DeviceID: "alpha"}, {DeviceID: "beta"}}
-	if _, err := selectCanonicalFIDO2Device(devices, ""); err == nil {
-		t.Error("expected ambiguity error")
-	} else {
-		var ae *AmbiguousFIDO2DeviceError
-		if !errors.As(err, &ae) {
-			t.Errorf("expected *AmbiguousFIDO2DeviceError, got %T", err)
-		}
-	}
-	if _, err := selectCanonicalFIDO2Device(devices, "missing"); err == nil {
-		t.Error("expected not-found error")
-	} else {
-		var nf *FIDO2DeviceNotFoundError
-		if !errors.As(err, &nf) {
-			t.Errorf("expected *FIDO2DeviceNotFoundError, got %T", err)
-		}
-	}
-	got, err := selectCanonicalFIDO2Device(devices, "beta")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.DeviceID != "beta" {
-		t.Errorf("expected beta, got %q", got.DeviceID)
-	}
-}
-
 // TestSelectCanonicalPIVReader covers all branches.
 func TestSelectCanonicalPIVReader(t *testing.T) {
 	readers := []quicbaas.PIVReader{{Name: "A"}, {Name: "B"}}
@@ -120,18 +92,6 @@ func TestSelectCanonicalPIVReader(t *testing.T) {
 		if !errors.As(err, &nf) {
 			t.Errorf("expected *PIVReaderNotFoundError, got %T", err)
 		}
-	}
-}
-
-// TestSelectCanonicalFIDO2Device_Single auto-picks a single device.
-func TestSelectCanonicalFIDO2Device_Single(t *testing.T) {
-	devices := []quicbaas.FIDO2Device{{DeviceID: "only"}}
-	got, err := selectCanonicalFIDO2Device(devices, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.DeviceID != "only" {
-		t.Errorf("expected only, got %q", got.DeviceID)
 	}
 }
 
