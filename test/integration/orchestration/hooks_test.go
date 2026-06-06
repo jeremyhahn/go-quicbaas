@@ -17,7 +17,6 @@ package orchestration
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -27,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestE2E_HookReceiver_TaskCreated verifies that a hook event for task creation
@@ -179,12 +179,7 @@ func TestE2E_HookReceiver_InvalidPayload(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // integration test only
-		},
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	require.NoError(t, err, "POST with empty body should complete")
 	defer resp.Body.Close()

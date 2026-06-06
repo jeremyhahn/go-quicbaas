@@ -25,9 +25,11 @@ import (
 	"errors"
 	"io"
 	"math/big"
+	"net/url"
 	"testing"
 	"time"
 
+	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -49,6 +51,22 @@ type fakeTrustedCA struct {
 	caCertErr   error
 	crlErr      error
 	isRevokeErr error
+
+	// certStore, when non-nil, is returned by CertStore() so the adapter's
+	// ListStoredCertificates path can be exercised. A nil value mimics a CA
+	// constructed without a certificate store backend.
+	certStore xkmssdk.CertStore
+
+	// lastSignOpts records the SignOptions passed to the most recent SignCSR
+	// call so tests can assert the adapter propagated tenant / trust-domain /
+	// kind correctly.
+	lastSignOpts *xkmssdk.TrustedCASignOptions
+}
+
+// CertStore returns the configured certificate store (possibly nil). The
+// adapter treats a nil store as "no store available".
+func (f *fakeTrustedCA) CertStore() xkmssdk.CertStore {
+	return f.certStore
 }
 
 func (f *fakeTrustedCA) IssueCertificateWithProfile(
@@ -91,7 +109,17 @@ func (f *fakeTrustedCA) IssueCertificateWithProfile(
 	}, nil
 }
 
-func (f *fakeTrustedCA) SignCSR(csrPEM []byte, _ *xkmssdk.TrustedCASignOptions) (*x509.Certificate, error) {
+// IssueCertificate issues a certificate without a profile by delegating to the
+// profile-aware path. Lets the fake satisfy callers (e.g. the agent cert
+// issuer) that invoke the no-profile signature.
+func (f *fakeTrustedCA) IssueCertificate(
+	req *xkmssdk.TrustedCACertificateRequest,
+) (*xkmssdk.TrustedCAIssuedCertificate, error) {
+	return f.IssueCertificateWithProfile(req, "")
+}
+
+func (f *fakeTrustedCA) SignCSR(csrPEM []byte, opts *xkmssdk.TrustedCASignOptions) (*x509.Certificate, error) {
+	f.lastSignOpts = opts
 	if f.signErr != nil {
 		return nil, f.signErr
 	}
@@ -108,6 +136,24 @@ func (f *fakeTrustedCA) SignCSR(csrPEM []byte, _ *xkmssdk.TrustedCASignOptions) 
 		Subject:      csr.Subject,
 		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(time.Hour),
+	}
+	// Mirror the real CA: synthesize the tenant-scoped SPIFFE URI SAN from the
+	// supplied options so end-to-end SAN assertions exercise the real path.
+	if opts != nil && opts.SPIFFETrustDomain != "" && opts.TenantID != "" {
+		kind := opts.SPIFFEKind
+		if kind == "" {
+			kind = qrdbspiffe.KindUser
+		}
+		name := opts.SPIFFEName
+		if name == "" {
+			name = csr.Subject.CommonName
+		}
+		id := qrdbspiffe.ID{TrustDomain: opts.SPIFFETrustDomain, TenantID: opts.TenantID, Kind: kind, Name: name}
+		u, perr := url.Parse(id.String())
+		if perr != nil {
+			return nil, perr
+		}
+		template.URIs = append(template.URIs, u)
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, f.caCert, csr.PublicKey, f.caKey)
 	if err != nil {
@@ -263,6 +309,47 @@ func TestCAServiceAdapter_IssueCertificate(t *testing.T) {
 		if resp.SerialNumber == "" {
 			t.Fatalf("expected non-empty serial")
 		}
+		// The adapter generates the leaf keypair in-process and must return
+		// the PEM-encoded private key alongside the signed certificate. An
+		// empty private key here is the regression that surfaced as an empty
+		// private_key_pem field on the REST "ca issue" response.
+		if len(resp.PrivateKeyPEM) == 0 {
+			t.Fatalf("expected non-empty private key PEM")
+		}
+		if block, _ := pem.Decode(resp.PrivateKeyPEM); block == nil {
+			t.Fatalf("private key PEM is not decodable: %q", resp.PrivateKeyPEM)
+		}
+		if _, err := x509.ParsePKCS8PrivateKey(decodePEM(t, resp.PrivateKeyPEM)); err != nil {
+			t.Fatalf("private key is not a valid PKCS#8 key: %v", err)
+		}
+	})
+
+	t.Run("issues certificate for each supported key algorithm", func(t *testing.T) {
+		for _, algo := range []string{"ecdsa", "ecdsa-p256", "ecdsa-p384", "rsa", "rsa2048", "ed25519"} {
+			algo := algo
+			t.Run(algo, func(t *testing.T) {
+				resp, err := adapter.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+					CommonName: algo + ".example.com",
+					Algorithm:  algo,
+				})
+				if err != nil {
+					t.Fatalf("IssueCertificate(%s): %v", algo, err)
+				}
+				if len(resp.CertificatePEM) == 0 || len(resp.PrivateKeyPEM) == 0 {
+					t.Fatalf("IssueCertificate(%s): expected cert and key PEM", algo)
+				}
+			})
+		}
+	})
+
+	t.Run("unsupported key algorithm returns typed error", func(t *testing.T) {
+		_, err := adapter.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+			CommonName: "bad-algo.example.com",
+			Algorithm:  "dilithium",
+		})
+		if !errors.Is(err, ErrCAServiceAdapterUnsupportedAlgorithm) {
+			t.Fatalf("want ErrCAServiceAdapterUnsupportedAlgorithm, got %v", err)
+		}
 	})
 
 	t.Run("nil request returns typed error", func(t *testing.T) {
@@ -274,7 +361,7 @@ func TestCAServiceAdapter_IssueCertificate(t *testing.T) {
 
 	t.Run("CA error propagates", func(t *testing.T) {
 		failing := newFakeTrustedCA(t)
-		failing.issueErr = errors.New("ca offline")
+		failing.signErr = errors.New("ca offline")
 		failingAdapter, _ := newCAServiceAdapter(failing)
 		_, err := failingAdapter.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
 			CommonName: "x",
@@ -283,6 +370,17 @@ func TestCAServiceAdapter_IssueCertificate(t *testing.T) {
 			t.Fatalf("expected propagated error, got %v", err)
 		}
 	})
+}
+
+// decodePEM decodes a single PEM block and returns its DER bytes, failing the
+// test if the input is not valid PEM.
+func decodePEM(t *testing.T, data []byte) []byte {
+	t.Helper()
+	block, _ := pem.Decode(data)
+	if block == nil {
+		t.Fatalf("not PEM: %q", data)
+	}
+	return block.Bytes
 }
 
 func TestCAServiceAdapter_SignCSR(t *testing.T) {
@@ -654,5 +752,42 @@ func TestCAServiceAdapter_SetCA_NilIsNoop(t *testing.T) {
 
 	if adapter.getCA() == nil {
 		t.Fatal("SetCA(nil) cleared the CA reference, expected no-op")
+	}
+}
+
+// TestSplitPEMCertificates_SkipsNonCertificateBlocks covers the
+// non-CERTIFICATE-block skip branch: a bundle that interleaves a non-cert PEM
+// block (e.g. a public key) with a real certificate must yield only the
+// certificate, with the foreign block silently skipped.
+func TestSplitPEMCertificates_SkipsNonCertificateBlocks(t *testing.T) {
+	ca := newFakeTrustedCA(t)
+
+	// Prepend a non-CERTIFICATE PEM block to a valid certificate bundle.
+	foreign := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: []byte("not-a-certificate"),
+	})
+	bundle := append(append([]byte(nil), foreign...), ca.bundlePEM...)
+
+	got := splitPEMCertificates(bundle)
+	if len(got) != 1 {
+		t.Fatalf("expected the foreign block to be skipped and 1 cert returned, got %d", len(got))
+	}
+	// The returned DER must parse as a real X.509 certificate.
+	if _, err := x509.ParseCertificate(got[0]); err != nil {
+		t.Fatalf("returned block is not a valid certificate: %v", err)
+	}
+}
+
+// TestCAServiceAdapter_RevokeCertificate_NilRequest covers the nil-request guard
+// of RevokeCertificate: a nil request must surface ErrCAServiceAdapterNilRequest
+// rather than panicking.
+func TestCAServiceAdapter_RevokeCertificate_NilRequest(t *testing.T) {
+	ca := newFakeTrustedCA(t)
+	adapter, _ := newCAServiceAdapter(ca)
+
+	_, err := adapter.RevokeCertificate(context.Background(), nil)
+	if !errors.Is(err, ErrCAServiceAdapterNilRequest) {
+		t.Fatalf("want ErrCAServiceAdapterNilRequest, got %v", err)
 	}
 }

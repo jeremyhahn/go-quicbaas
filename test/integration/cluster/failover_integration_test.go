@@ -17,7 +17,6 @@ package cluster
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"testing"
 	"time"
@@ -70,8 +69,9 @@ func TestFailoverScenarios(t *testing.T) {
 		ctx, span := tracer.StartSpan(ctx, "leader_failover_test")
 		defer span.End()
 
+		tlsCfg := requireTLSConfig(t)
 		conn, err := grpc.DialContext(ctx, endpoints[0],
-			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 			grpc.WithBlock(),
 		)
 		require.NoError(t, err)
@@ -151,8 +151,9 @@ func TestFailoverScenarios(t *testing.T) {
 		ctx, span := tracer.StartSpan(ctx, "network_partition_test")
 		defer span.End()
 
+		tlsCfg := requireTLSConfig(t)
 		conn, err := grpc.DialContext(ctx, endpoints[0],
-			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 			grpc.WithBlock(),
 		)
 		require.NoError(t, err)

@@ -1166,6 +1166,132 @@ export class KMSClient {
     };
   }
 
+  // ===========================================================================
+  // Rotation Policy Methods
+  // ===========================================================================
+
+  /**
+   * Set or replace the automatic cryptoperiod rotation policy for a key.
+   *
+   * When autoRotate is true, intervalSeconds must be positive. The server
+   * computes nextRotationAt as now + intervalSeconds if not supplied.
+   *
+   * @param {string} keyId - Unique key identifier
+   * @param {Object} policy - Rotation policy configuration
+   * @param {boolean} policy.autoRotate - Enable automatic rotation
+   * @param {number} policy.intervalSeconds - Rotation interval in seconds (required when autoRotate=true)
+   * @param {number} [policy.retainVersions=0] - Number of old versions to retain
+   * @param {boolean} [policy.enabled=true] - Mark the policy as enabled
+   * @returns {Promise<KeyRotationPolicyResponse>} The stored policy with computed nextRotationAt
+   * @throws {ValidationError} If keyId is empty or autoRotate=true with intervalSeconds <= 0
+   * @throws {NotFoundError} If key does not exist
+   *
+   * @example
+   * const policy = await kms.setKeyRotationPolicy('key-12345', {
+   *   autoRotate: true,
+   *   intervalSeconds: 90 * 24 * 60 * 60, // 90 days
+   *   retainVersions: 2,
+   * });
+   * console.log('Next rotation at:', new Date(policy.nextRotationAt * 1000));
+   */
+  async setKeyRotationPolicy(keyId, policy = {}) {
+    requiredString(keyId, 'keyId');
+    if (policy.autoRotate && !(policy.intervalSeconds > 0)) {
+      throw new Error('intervalSeconds must be positive when autoRotate is true');
+    }
+
+    const requestBody = {
+      enabled: policy.enabled !== undefined ? policy.enabled : true,
+      auto_rotate: Boolean(policy.autoRotate),
+      interval_seconds: policy.intervalSeconds || 0,
+      retain_versions: policy.retainVersions || 0,
+    };
+
+    const response = await this.#transport.put(
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/rotation-policy`,
+      requestBody
+    );
+
+    return this.#transformRotationPolicyResponse(response, keyId);
+  }
+
+  /**
+   * Retrieve the current automatic rotation policy for a key.
+   *
+   * @param {string} keyId - Unique key identifier
+   * @returns {Promise<KeyRotationPolicyResponse|null>} The current policy, or null when none is configured
+   * @throws {ValidationError} If keyId is empty
+   * @throws {NotFoundError} If key does not exist
+   *
+   * @example
+   * const policy = await kms.getKeyRotationPolicy('key-12345');
+   * if (policy) {
+   *   console.log('Auto-rotate:', policy.autoRotate);
+   *   console.log('Interval:', policy.intervalSeconds, 'seconds');
+   * }
+   */
+  async getKeyRotationPolicy(keyId) {
+    requiredString(keyId, 'keyId');
+
+    const response = await this.#transport.get(
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/rotation-policy`
+    );
+
+    if (!response || !response.policy) {
+      return null;
+    }
+
+    return this.#transformRotationPolicyResponse(response, keyId);
+  }
+
+  /**
+   * Remove the automatic rotation policy for a key, disabling auto-rotation.
+   *
+   * @param {string} keyId - Unique key identifier
+   * @returns {Promise<{keyId: string, timestamp: number}>} Confirmation with timestamp
+   * @throws {ValidationError} If keyId is empty
+   * @throws {NotFoundError} If key does not exist
+   *
+   * @example
+   * await kms.deleteKeyRotationPolicy('key-12345');
+   * console.log('Auto-rotation disabled');
+   */
+  async deleteKeyRotationPolicy(keyId) {
+    requiredString(keyId, 'keyId');
+
+    const response = await this.#transport.delete(
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/rotation-policy`
+    );
+
+    return {
+      keyId: response?.key_id || response?.keyId || keyId,
+      timestamp: response?.timestamp || 0,
+    };
+  }
+
+  /**
+   * Transform a rotation policy response.
+   *
+   * @param {Object} response - Raw server response
+   * @param {string} keyId - Key identifier for fallback
+   * @returns {KeyRotationPolicyResponse}
+   * @private
+   */
+  #transformRotationPolicyResponse(response, keyId) {
+    const p = response?.policy || response;
+    return {
+      keyId: response?.key_id || response?.keyId || keyId,
+      policy: p ? {
+        enabled: Boolean(p.enabled),
+        autoRotate: Boolean(p.auto_rotate),
+        intervalSeconds: p.interval_seconds || 0,
+        nextRotationAt: p.next_rotation_unix || 0,
+        retainVersions: p.retain_versions || 0,
+      } : null,
+      timestamp: response?.timestamp || 0,
+    };
+  }
+
   /**
    * Transform supported algorithms response.
    *

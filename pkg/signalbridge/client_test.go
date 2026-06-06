@@ -111,8 +111,8 @@ func (f *fakeServerTransport) AckInbound(ctx context.Context, account SignalAcco
 // Produces deterministic envelopes so SignalClient plumbing can be
 // tested end-to-end.
 type fakeProtocolAdapter struct {
-	genIDCalls atomic.Int32
-	genPreCalls atomic.Int32
+	genIDCalls   atomic.Int32
+	genPreCalls  atomic.Int32
 	encryptCalls atomic.Int32
 	decryptCalls atomic.Int32
 	resetCalls   atomic.Int32

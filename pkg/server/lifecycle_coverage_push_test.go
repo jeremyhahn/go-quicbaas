@@ -1192,4 +1192,3 @@ func TestCovPush_InitializeIAMComponents_NilQRDBClient(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Nil(t, components)
 }
-

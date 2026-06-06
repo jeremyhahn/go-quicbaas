@@ -65,15 +65,15 @@ type SignalClientConfig struct {
 // present a simple Signal-client API (register, login, send, receive)
 // to higher layers. It is safe for concurrent use.
 type SignalClient struct {
-	cfg      SignalClientConfig
+	cfg       SignalClientConfig
 	transport ServerTransport
-	protocol ProtocolAdapter
-	logger   interfaces.Logger
+	protocol  ProtocolAdapter
+	logger    interfaces.Logger
 
-	mu        sync.RWMutex
-	account   SignalAccount
-	incoming  chan InboundMessage
-	closeFn   func() error
+	mu       sync.RWMutex
+	account  SignalAccount
+	incoming chan InboundMessage
+	closeFn  func() error
 
 	// rollingTS supplies monotonically increasing millisecond timestamps
 	// for outbound messages even when many are sent in the same

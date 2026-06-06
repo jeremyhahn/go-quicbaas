@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/auth"
+	operationsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
@@ -106,6 +107,17 @@ type OrchestratorClientFactory func() (OrchestratorClient, error)
 
 // orchestratorClientFactory creates orchestrator clients. Defaults to createOrchestratorSDKClient.
 var orchestratorClientFactory OrchestratorClientFactory = createOrchestratorSDKClient
+
+// OperationsClientFactory is a function type for creating cluster
+// operations clients (data migration, node replacement, rolling
+// upgrade). The returned client routes through the active SDK transport
+// so the operations verbs work across rest / grpc / quic / mcp / unix /
+// embedded rather than being pinned to a hardcoded gRPC connection.
+type OperationsClientFactory func() (OperationsClient, error)
+
+// operationsClientFactory creates cluster operations clients. Defaults to
+// createSDKOperationsClient.
+var operationsClientFactory OperationsClientFactory = createSDKOperationsClient
 
 // =============================================================================
 // Interface Definitions
@@ -240,6 +252,18 @@ type OrchestratorClient interface {
 	Close() error
 }
 
+// OperationsClient defines the cluster operations surface used by the
+// `migrate`, `node`, and `upgrade` CLI verb trees. It delegates to the
+// SDK Operations() client, which routes every call through the active
+// transport (rest / grpc / quic / mcp / unix / embedded).
+type OperationsClient interface {
+	MigrateData(ctx context.Context, req *operationsSDK.MigrateDataRequest) (*operationsSDK.MigrateDataResponse, error)
+	GetMigrationProgress(ctx context.Context, req *operationsSDK.GetMigrationProgressRequest) (*operationsSDK.GetMigrationProgressResponse, error)
+	ReplaceNode(ctx context.Context, req *operationsSDK.ReplaceNodeRequest) (*operationsSDK.ReplaceNodeResponse, error)
+	UpgradeNode(ctx context.Context, req *operationsSDK.UpgradeNodeRequest) (*operationsSDK.UpgradeNodeResponse, error)
+	GetUpgradeStatus(ctx context.Context, req *operationsSDK.GetUpgradeStatusRequest) (*operationsSDK.GetUpgradeStatusResponse, error)
+}
+
 // =============================================================================
 // Backup Request Types
 // =============================================================================
@@ -312,20 +336,19 @@ func createGRPCClient() (*grpc.Client, error) {
 // grpcTLSOption returns the appropriate TLS client option based on global TLS flags.
 // When TLS certificate and key files are provided, full mTLS is configured.
 // When only a CA certificate is provided, server-only TLS verification is configured.
-// When --tls-skip-verify is set, certificate verification is disabled.
+// QuicBaaS bans insecure TLS — there is no skip-verify fallback.
 // Otherwise, a default TLS configuration with TLS 1.3 minimum is used.
 func grpcTLSOption() []grpc.ClientOption {
 	if tlsCert != "" && tlsKey != "" {
 		return []grpc.ClientOption{grpc.WithTLS(tlsCert, tlsKey, tlsCA)}
 	}
 	if tlsCA != "" {
-		return []grpc.ClientOption{grpc.WithTLS("", "", tlsCA)}
-	}
-	if tlsSkipVerify {
-		return []grpc.ClientOption{grpc.WithTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // G402: user explicitly requested --tls-skip-verify
-			MinVersion:         tls.VersionTLS13,
-		})}
+		opt, err := grpcCAOnlyTLSOption(tlsCA)
+		if err != nil {
+			log.Warnf("grpc.tls: %v — falling back to system roots", err)
+			return []grpc.ClientOption{grpc.WithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS13})}
+		}
+		return []grpc.ClientOption{opt}
 	}
 	return []grpc.ClientOption{grpc.WithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS13})}
 }

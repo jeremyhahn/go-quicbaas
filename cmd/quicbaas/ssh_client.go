@@ -91,11 +91,11 @@ func buildCLISSHClient() (xkmsssh.Client, error) {
 }
 
 // buildCLISSHHTTPClient returns an HTTP client for the xkms SSH REST
-// SDK that honours the global --tls-ca / --tls-skip-verify / --tls-cert
-// / --tls-key flags, so remote calls against a private-CA quicbaasd
-// succeed without env-var gymnastics.
+// SDK that honours the global --tls-ca / --tls-cert / --tls-key flags,
+// so remote calls against a private-CA quicbaasd succeed without env-var
+// gymnastics. QuicBaaS bans insecure TLS — a CA is required.
 func buildCLISSHHTTPClient() (*http.Client, error) {
-	tlsCfg := &tls.Config{InsecureSkipVerify: tlsSkipVerify} //nolint:gosec // operator opt-in
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS13}
 	if tlsCA != "" {
 		pem, err := os.ReadFile(tlsCA)
 		if err != nil {

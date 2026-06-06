@@ -18,7 +18,11 @@ package iam
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
+
+	"github.com/go-webauthn/webauthn/protocol"
 )
 
 // TestXKMSWebAuthnManager_FinishRegistration_NoSession verifies that
@@ -139,11 +143,12 @@ func TestXKMSWebAuthnManager_FinishLogin_NoSession(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	// Validation error from go-webauthn parse OR session-not-found.
-	// Either is acceptable evidence the call short-circuited.
-	var cfgErr *WebAuthnFactoryConfigError
-	if errors.As(err, &cfgErr) && cfgErr.Field != "login session not found" {
-		t.Fatalf("unexpected typed error field: %q", cfgErr.Field)
+	// Validation error from go-webauthn parse OR a typed
+	// WebAuthnLoginSessionError. Either is acceptable evidence the call
+	// short-circuited before dispatching to xkms.
+	var sessErr *WebAuthnLoginSessionError
+	if errors.As(err, &sessErr) && sessErr.Reason == "" {
+		t.Fatalf("login session error must carry a reason")
 	}
 }
 
@@ -157,5 +162,112 @@ func TestXKMSWebAuthnManager_RegKey(t *testing.T) {
 	got := m.regKey("tenant-a", "user@x.com")
 	if got != "tenant-a:user@x.com" {
 		t.Fatalf("regKey unexpected format: %q", got)
+	}
+}
+
+// assertionWithChallenge builds a minimal parsed assertion carrying the given
+// WebAuthn challenge in its collected client data — the value FinishLogin uses
+// to recover the originating ceremony session.
+func assertionWithChallenge(challenge string) *protocol.ParsedCredentialAssertionData {
+	parsed := &protocol.ParsedCredentialAssertionData{}
+	parsed.Response.CollectedClientData.Type = protocol.AssertCeremony
+	parsed.Response.CollectedClientData.Challenge = challenge
+	return parsed
+}
+
+// TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution proves the H7 fix:
+// concurrent same-tenant login ceremonies resolve to their own distinct xkms
+// session by the per-ceremony challenge, never cross-wiring onto another
+// in-flight session, and an unknown/temp challenge fails closed with the typed
+// WebAuthnLoginSessionError. Sessions are keyed exactly as BeginLogin stores
+// them and resolved exactly as FinishLogin reads them.
+func TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution(t *testing.T) {
+	m := &XKMSWebAuthnManager{}
+	const tenant = "tenant-1"
+
+	// Two concurrent same-tenant ceremonies, each with its own challenge and
+	// session id — exactly what BeginLogin records.
+	type ceremony struct {
+		challenge string
+		sessionID string
+	}
+	ceremonies := []ceremony{
+		{challenge: "challenge-alice", sessionID: "xkms-session-alice"},
+		{challenge: "challenge-bob", sessionID: "xkms-session-bob"},
+	}
+	for _, c := range ceremonies {
+		m.loginSessions.Store(m.loginKey(tenant, c.challenge), c.sessionID)
+	}
+
+	// Each ceremony's assertion must resolve to its own session, never the
+	// other's. Drive many concurrent resolutions to surface any cross-wiring.
+	const workers = 64
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers*len(ceremonies))
+	for i := 0; i < workers; i++ {
+		for _, c := range ceremonies {
+			c := c
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sessionID, key, err := m.resolveLoginSession(tenant, assertionWithChallenge(c.challenge))
+				if err != nil {
+					errCh <- fmt.Errorf("challenge %q: unexpected error: %w", c.challenge, err)
+					return
+				}
+				if sessionID != c.sessionID {
+					errCh <- fmt.Errorf("challenge %q resolved to session %q, want %q (cross-wired)", c.challenge, sessionID, c.sessionID)
+					return
+				}
+				if key != m.loginKey(tenant, c.challenge) {
+					errCh <- fmt.Errorf("challenge %q resolved to key %q, want %q", c.challenge, key, m.loginKey(tenant, c.challenge))
+				}
+			}()
+		}
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+
+	// Unknown challenge must fail closed with the typed error.
+	if _, _, err := m.resolveLoginSession(tenant, assertionWithChallenge("challenge-unknown")); err == nil {
+		t.Fatal("expected WebAuthnLoginSessionError for unknown challenge, got nil")
+	} else {
+		var sessErr *WebAuthnLoginSessionError
+		if !errors.As(err, &sessErr) {
+			t.Fatalf("expected *WebAuthnLoginSessionError, got %T: %v", err, err)
+		}
+	}
+
+	// Same challenge under a different tenant must not match — the tenant is
+	// part of the composite key.
+	if _, _, err := m.resolveLoginSession("tenant-2", assertionWithChallenge("challenge-alice")); err == nil {
+		t.Fatal("expected fail-closed for cross-tenant challenge reuse, got nil")
+	}
+
+	// Empty / temp challenge must fail closed, never falling through to a scan.
+	if _, _, err := m.resolveLoginSession(tenant, assertionWithChallenge("")); err == nil {
+		t.Fatal("expected WebAuthnLoginSessionError for empty challenge, got nil")
+	}
+	if _, _, err := m.resolveLoginSession(tenant, nil); err == nil {
+		t.Fatal("expected WebAuthnLoginSessionError for nil assertion, got nil")
+	}
+}
+
+// TestXKMSWebAuthnManager_LoginKey verifies the login session key derivation
+// composes (tenant, challenge) deterministically. BeginLogin writes under this
+// key and FinishLogin reads it back; a drift here would silently fail every
+// login.
+func TestXKMSWebAuthnManager_LoginKey(t *testing.T) {
+	m := &XKMSWebAuthnManager{}
+	if got := m.loginKey("tenant-a", "chal-123"); got != "tenant-a:chal-123" {
+		t.Fatalf("loginKey unexpected format: %q", got)
+	}
+	// Distinct challenges must produce distinct keys so concurrent ceremonies
+	// never collide.
+	if m.loginKey("t", "a") == m.loginKey("t", "b") {
+		t.Fatal("distinct challenges must yield distinct login keys")
 	}
 }

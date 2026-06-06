@@ -760,10 +760,10 @@ func TestHandleEmbeddingSetProviderStatus(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:         "invalid JSON returns 400",
-			providerName: "openai",
-			body:         `not-json`,
-			setupMock:    func(m *MockEmbeddingService) {},
+			name:           "invalid JSON returns 400",
+			providerName:   "openai",
+			body:           `not-json`,
+			setupMock:      func(m *MockEmbeddingService) {},
 			expectedStatus: http.StatusBadRequest,
 		},
 	}

@@ -222,6 +222,33 @@ Each DEK is stored as a JSON-encoded `DEKEntry`:
 - **Version retention**: Old DEK versions are retained for decrypting
   historical data (default: 3 versions)
 
+## Agent Session Logs and Session State
+
+Agent session logs (stored in `pkg/orchestration/KVSessionEventLog`) and
+persisted agent session state (stored by `pkg/agent/Runtime`) are written as
+**plaintext JSON into qrdb**. At-rest confidentiality is provided entirely by
+**qrdb's `StorageBarrier`**, which transparently encrypts every value written
+to the underlying PebbleDB store before it reaches disk.
+
+There is **no application-level envelope DEK** wrapping these payloads:
+
+- A per-tenant application-layer DEK (`security.TenantDEKManager`) was
+  previously applied as a second encryption pass before qrdb ingested the data.
+  A compliance audit established that this was a redundant envelope: it was
+  ineffective against the online-insider threat model (the same process unwraps
+  it) and fully superseded by qrdb's at-rest barrier for the disk-level threat.
+  It was removed in the Phase 3 security hardening.
+
+- **Tenant-level cryptographic isolation** (crypto-shred on tenant deletion,
+  operator key isolation) is achieved by configuring a dedicated per-tenant
+  qrdb barrier sealed by any `go-xkms` hardware or cloud strategy. This is an
+  operator configuration choice — the data plane barrier routing is not
+  hardcoded. See [qrdb barrier documentation](../architecture/barrier.md).
+
+- **Per-key KMS authorization** for finer-grained access control is enforced
+  by the KMS authorization layer (Phase 3 control). This is orthogonal to
+  at-rest encryption.
+
 ## Cross-References
 
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md)

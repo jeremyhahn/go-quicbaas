@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
@@ -37,10 +38,11 @@ func TestWithStorageConfig(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWithVectorStorage(t *testing.T) {
-	t.Run("sets vector storage and shard ID", func(t *testing.T) {
+	t.Run("sets vector shard ID", func(t *testing.T) {
 		sc := NewShardedClient(nil, WithVectorStorage(nil, 42))
 		defer sc.Close()
-		assert.Nil(t, sc.vectorStorage)
+		// vectorStorage field removed in Phase E (node owns vector storage).
+		// Only the shard ID is tracked for config routing.
 		assert.Equal(t, uint64(42), sc.vectorShardID)
 	})
 }
@@ -50,10 +52,11 @@ func TestWithVectorStorage(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWithTimeSeriesStorage(t *testing.T) {
-	t.Run("sets timeseries storage and shard ID", func(t *testing.T) {
+	t.Run("sets timeseries shard ID", func(t *testing.T) {
 		sc := NewShardedClient(nil, WithTimeSeriesStorage(nil, 7))
 		defer sc.Close()
-		assert.Nil(t, sc.timeSeriesStorage)
+		// timeSeriesStorage field removed in Phase E (node owns TS storage).
+		// Only the shard ID is tracked for config routing.
 		assert.Equal(t, uint64(7), sc.timeSeriesShardID)
 	})
 }
@@ -63,10 +66,13 @@ func TestWithTimeSeriesStorage(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWithDatabaseService(t *testing.T) {
-	t.Run("sets database service", func(t *testing.T) {
+	t.Run("no-op option accepted without error", func(t *testing.T) {
+		// WithDatabaseService is a no-op retained for call-site compatibility.
+		// The dbService field was removed in Phase E; the qrdb node owns DB
+		// management for both modes.
 		sc := NewShardedClient(nil, WithDatabaseService(nil))
 		defer sc.Close()
-		assert.Nil(t, sc.dbService)
+		require.NotNil(t, sc)
 	})
 }
 

@@ -33,7 +33,7 @@ func TestHandleListBackups_Success(t *testing.T) {
 			return &service.ListBackupsResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.ListBackupsRequest{})
 	resp := handler.handleListBackups(context.Background(), &Request{Payload: payload})
@@ -43,7 +43,7 @@ func TestHandleListBackups_Success(t *testing.T) {
 }
 
 func TestHandleListBackups_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.ListBackupsRequest{})
 	resp := handler.handleListBackups(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -57,7 +57,7 @@ func TestHandleListBackups_ServiceError(t *testing.T) {
 			return nil, errors.New("list failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.ListBackupsRequest{})
 	resp := handler.handleListBackups(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -71,7 +71,7 @@ func TestHandleRestoreBackup_Success(t *testing.T) {
 			return &service.RestoreBackupResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.RestoreBackupRequest{})
 	resp := handler.handleRestoreBackup(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -80,7 +80,7 @@ func TestHandleRestoreBackup_Success(t *testing.T) {
 }
 
 func TestHandleRestoreBackup_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.RestoreBackupRequest{})
 	resp := handler.handleRestoreBackup(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -94,7 +94,7 @@ func TestHandleRestoreBackup_ServiceError(t *testing.T) {
 			return nil, errors.New("restore failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.RestoreBackupRequest{})
 	resp := handler.handleRestoreBackup(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -108,7 +108,7 @@ func TestHandleDeleteBackup_Success(t *testing.T) {
 			return &service.DeleteBackupResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.DeleteBackupRequest{})
 	resp := handler.handleDeleteBackup(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -117,7 +117,7 @@ func TestHandleDeleteBackup_Success(t *testing.T) {
 }
 
 func TestHandleDeleteBackup_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.DeleteBackupRequest{})
 	resp := handler.handleDeleteBackup(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -131,7 +131,7 @@ func TestHandleDeleteBackup_ServiceError(t *testing.T) {
 			return nil, errors.New("delete failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.DeleteBackupRequest{})
 	resp := handler.handleDeleteBackup(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -145,7 +145,7 @@ func TestHandleVerifyBackup_Success(t *testing.T) {
 			return &service.VerifyBackupResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.VerifyBackupRequest{})
 	resp := handler.handleVerifyBackup(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -154,7 +154,7 @@ func TestHandleVerifyBackup_Success(t *testing.T) {
 }
 
 func TestHandleVerifyBackup_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.VerifyBackupRequest{})
 	resp := handler.handleVerifyBackup(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -168,7 +168,7 @@ func TestHandleVerifyBackup_ServiceError(t *testing.T) {
 			return nil, errors.New("verify failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.VerifyBackupRequest{})
 	resp := handler.handleVerifyBackup(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -187,7 +187,7 @@ func TestHandleLogout_Success(t *testing.T) {
 			return &service.LogoutResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.LogoutRequest{})
 	resp := handler.handleLogout(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -196,7 +196,7 @@ func TestHandleLogout_Success(t *testing.T) {
 }
 
 func TestHandleLogout_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.LogoutRequest{})
 	resp := handler.handleLogout(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -210,7 +210,7 @@ func TestHandleLogout_ServiceError(t *testing.T) {
 			return nil, errors.New("logout failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.LogoutRequest{})
 	resp := handler.handleLogout(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -224,7 +224,7 @@ func TestHandleRefreshToken_Success(t *testing.T) {
 			return &service.RefreshTokenResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.RefreshTokenRequest{})
 	resp := handler.handleRefreshToken(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -233,7 +233,7 @@ func TestHandleRefreshToken_Success(t *testing.T) {
 }
 
 func TestHandleRefreshToken_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.RefreshTokenRequest{})
 	resp := handler.handleRefreshToken(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -247,7 +247,7 @@ func TestHandleRefreshToken_ServiceError(t *testing.T) {
 			return nil, errors.New("refresh failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.RefreshTokenRequest{})
 	resp := handler.handleRefreshToken(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -261,7 +261,7 @@ func TestHandleValidateToken_Success(t *testing.T) {
 			return &service.ValidateTokenResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.ValidateTokenRequest{})
 	resp := handler.handleValidateToken(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -270,7 +270,7 @@ func TestHandleValidateToken_Success(t *testing.T) {
 }
 
 func TestHandleValidateToken_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.ValidateTokenRequest{})
 	resp := handler.handleValidateToken(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -284,7 +284,7 @@ func TestHandleValidateToken_ServiceError(t *testing.T) {
 			return nil, errors.New("validate failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.ValidateTokenRequest{})
 	resp := handler.handleValidateToken(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -302,7 +302,7 @@ func TestHandleCreateUser_Success(t *testing.T) {
 			return &service.AuthCreateUserResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthCreateUserRequest{})
 	resp := handler.handleCreateUser(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -311,7 +311,7 @@ func TestHandleCreateUser_Success(t *testing.T) {
 }
 
 func TestHandleCreateUser_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthCreateUserRequest{})
 	resp := handler.handleCreateUser(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -325,7 +325,7 @@ func TestHandleCreateUser_ServiceError(t *testing.T) {
 			return nil, errors.New("create user failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthCreateUserRequest{})
 	resp := handler.handleCreateUser(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -339,7 +339,7 @@ func TestHandleDeleteUser_Success(t *testing.T) {
 			return &service.AuthDeleteUserResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthDeleteUserRequest{})
 	resp := handler.handleDeleteUser(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -348,7 +348,7 @@ func TestHandleDeleteUser_Success(t *testing.T) {
 }
 
 func TestHandleDeleteUser_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthDeleteUserRequest{})
 	resp := handler.handleDeleteUser(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -362,7 +362,7 @@ func TestHandleListUsers_Success(t *testing.T) {
 			return &service.AuthListUsersResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthListUsersRequest{})
 	resp := handler.handleListUsers(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -371,7 +371,7 @@ func TestHandleListUsers_Success(t *testing.T) {
 }
 
 func TestHandleListUsers_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthListUsersRequest{})
 	resp := handler.handleListUsers(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -385,7 +385,7 @@ func TestHandleCreateRole_Success(t *testing.T) {
 			return &service.AuthCreateRoleResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthCreateRoleRequest{})
 	resp := handler.handleCreateRole(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -394,7 +394,7 @@ func TestHandleCreateRole_Success(t *testing.T) {
 }
 
 func TestHandleCreateRole_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthCreateRoleRequest{})
 	resp := handler.handleCreateRole(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -408,7 +408,7 @@ func TestHandleDeleteRole_Success(t *testing.T) {
 			return &service.AuthDeleteRoleResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthDeleteRoleRequest{})
 	resp := handler.handleDeleteRole(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -417,7 +417,7 @@ func TestHandleDeleteRole_Success(t *testing.T) {
 }
 
 func TestHandleDeleteRole_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthDeleteRoleRequest{})
 	resp := handler.handleDeleteRole(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -431,7 +431,7 @@ func TestHandleListRoles_Success(t *testing.T) {
 			return &service.AuthListRolesResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthListRolesRequest{})
 	resp := handler.handleListRoles(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -440,7 +440,7 @@ func TestHandleListRoles_Success(t *testing.T) {
 }
 
 func TestHandleListRoles_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AuthListRolesRequest{})
 	resp := handler.handleListRoles(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -454,7 +454,7 @@ func TestHandleAssignRole_Success(t *testing.T) {
 			return &service.AssignRoleResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AssignRoleRequest{})
 	resp := handler.handleAssignRole(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -463,7 +463,7 @@ func TestHandleAssignRole_Success(t *testing.T) {
 }
 
 func TestHandleAssignRole_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AssignRoleRequest{})
 	resp := handler.handleAssignRole(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -477,7 +477,7 @@ func TestHandleRevokeRole_Success(t *testing.T) {
 			return &service.RevokeRoleResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.RevokeRoleRequest{})
 	resp := handler.handleRevokeRole(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -486,7 +486,7 @@ func TestHandleRevokeRole_Success(t *testing.T) {
 }
 
 func TestHandleRevokeRole_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.RevokeRoleRequest{})
 	resp := handler.handleRevokeRole(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -504,7 +504,7 @@ func TestHandleGetCacheStats_Success(t *testing.T) {
 			return &service.GetCacheStatsResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.GetCacheStatsRequest{})
 	resp := handler.handleGetCacheStats(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -513,7 +513,7 @@ func TestHandleGetCacheStats_Success(t *testing.T) {
 }
 
 func TestHandleGetCacheStats_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.GetCacheStatsRequest{})
 	resp := handler.handleGetCacheStats(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -527,7 +527,7 @@ func TestHandleClearCache_Success(t *testing.T) {
 			return &service.ClearCacheResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.ClearCacheRequest{})
 	resp := handler.handleClearCache(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -536,7 +536,7 @@ func TestHandleClearCache_Success(t *testing.T) {
 }
 
 func TestHandleClearCache_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.ClearCacheRequest{})
 	resp := handler.handleClearCache(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -550,7 +550,7 @@ func TestHandleGetCacheConfig_Success(t *testing.T) {
 			return &service.GetCacheConfigResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.GetCacheConfigRequest{})
 	resp := handler.handleGetCacheConfig(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -559,7 +559,7 @@ func TestHandleGetCacheConfig_Success(t *testing.T) {
 }
 
 func TestHandleGetCacheConfig_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.GetCacheConfigRequest{})
 	resp := handler.handleGetCacheConfig(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -573,7 +573,7 @@ func TestHandleUpdateCacheConfig_Success(t *testing.T) {
 			return &service.UpdateCacheConfigResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.UpdateCacheConfigRequest{})
 	resp := handler.handleUpdateCacheConfig(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -582,7 +582,7 @@ func TestHandleUpdateCacheConfig_Success(t *testing.T) {
 }
 
 func TestHandleUpdateCacheConfig_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.UpdateCacheConfigRequest{})
 	resp := handler.handleUpdateCacheConfig(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -600,7 +600,7 @@ func TestHandleHealth_Success(t *testing.T) {
 			return &service.HealthResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.HealthRequest{})
 	resp := handler.handleHealth(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -609,7 +609,7 @@ func TestHandleHealth_Success(t *testing.T) {
 }
 
 func TestHandleHealth_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.HealthRequest{})
 	resp := handler.handleHealth(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -623,7 +623,7 @@ func TestHandleLiveness_Success(t *testing.T) {
 			return &service.LivenessResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.LivenessRequest{})
 	resp := handler.handleLiveness(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -632,7 +632,7 @@ func TestHandleLiveness_Success(t *testing.T) {
 }
 
 func TestHandleLiveness_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.LivenessRequest{})
 	resp := handler.handleLiveness(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -646,7 +646,7 @@ func TestHandleReadiness_Success(t *testing.T) {
 			return &service.ReadinessResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.ReadinessRequest{})
 	resp := handler.handleReadiness(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -655,7 +655,7 @@ func TestHandleReadiness_Success(t *testing.T) {
 }
 
 func TestHandleReadiness_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.ReadinessRequest{})
 	resp := handler.handleReadiness(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -673,7 +673,7 @@ func TestHandleAggregate_Success(t *testing.T) {
 			return &service.AggregateResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AggregateRequest{})
 	resp := handler.handleAggregate(context.Background(), &Request{Payload: payload})
 	if resp.Status != StatusOK {
@@ -682,7 +682,7 @@ func TestHandleAggregate_Success(t *testing.T) {
 }
 
 func TestHandleAggregate_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AggregateRequest{})
 	resp := handler.handleAggregate(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {
@@ -696,7 +696,7 @@ func TestHandleAggregate_ServiceError(t *testing.T) {
 			return nil, errors.New("aggregate failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 	payload, _ := EncodePayload(&service.AggregateRequest{})
 	resp := handler.handleAggregate(context.Background(), &Request{Payload: payload})
 	if resp.Status == StatusOK {

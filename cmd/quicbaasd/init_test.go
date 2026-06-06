@@ -388,20 +388,49 @@ func TestInit_RunInlineHappyPath(t *testing.T) {
 	writeTestPubKeyFile(t, pubPath, "carol")
 	writeTestCertFile(t, caPath, "external-ca")
 
+	initDir := filepath.Join(tmp, "datadir")
 	f := &inlineInitFlags{
 		soPin:              "so-pin-1234",
 		userPin:            "user-pin-1234",
-		barrierStrategy:    "software",
+		barrierStrategy:    "passphrase",
+		secret:             "test-barrier-secret-12345",
 		hostname:           "test.example",
 		credentialStrategy: "barrier",
 		adminBundle:        "-",
 		officers:           []string{"alice:csr:" + csrPath, "bob:cert:" + certPath, "carol:pubkey:" + pubPath},
 		trustedCAs:         []string{caPath},
+		dataDir:            initDir,
 	}
 	cmd := &cobra.Command{Use: "init"}
 	if err := runInlineInit(cmd, f); err != nil {
 		t.Fatalf("runInlineInit error: %v", err)
 	}
+}
+
+// TestValidateInlineInitFlags_SoftwareRequiresSecret verifies the passphrase
+// (software) barrier requires an admin passphrase at init: software without
+// --secret is rejected with ErrSecretRequiredForSoftware (no deployment-derived
+// default), while software WITH a secret — and "none", which needs none — pass.
+func TestValidateInlineInitFlags_SoftwareRequiresSecret(t *testing.T) {
+	t.Run("software without secret is rejected", func(t *testing.T) {
+		f := &inlineInitFlags{barrierStrategy: "passphrase", credentialStrategy: "barrier"}
+		err := validateInlineInitFlags(f)
+		if err == nil || !errors.Is(err, ErrSecretRequiredForSoftware) {
+			t.Fatalf("expected ErrSecretRequiredForSoftware, got %v", err)
+		}
+	})
+	t.Run("software with secret passes", func(t *testing.T) {
+		f := &inlineInitFlags{barrierStrategy: "passphrase", secret: "pp", credentialStrategy: "barrier"}
+		if err := validateInlineInitFlags(f); err != nil {
+			t.Fatalf("software with secret must validate, got %v", err)
+		}
+	})
+	t.Run("none needs no secret", func(t *testing.T) {
+		f := &inlineInitFlags{barrierStrategy: "none", credentialStrategy: "barrier"}
+		if err := validateInlineInitFlags(f); err != nil {
+			t.Fatalf("none must validate without a secret, got %v", err)
+		}
+	})
 }
 
 // TestInit_RunInlineRejectsBadCredentialStrategy ensures the credential
@@ -410,7 +439,7 @@ func TestInit_RunInlineRejectsBadCredentialStrategy(t *testing.T) {
 	f := &inlineInitFlags{
 		soPin:              "so",
 		userPin:            "user",
-		barrierStrategy:    "software",
+		barrierStrategy:    "passphrase",
 		credentialStrategy: "tpm2", // not in the canonical {manual, barrier}
 	}
 	cmd := &cobra.Command{Use: "init"}
@@ -490,12 +519,12 @@ func writeTestCertFile(t *testing.T, path, commonName string) {
 		t.Fatalf("generate ec key: %v", err)
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: commonName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		IsCA:         true,
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		IsCA:                  true,
 		BasicConstraintsValid: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)

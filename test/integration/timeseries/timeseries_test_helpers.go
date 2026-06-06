@@ -17,9 +17,7 @@ package timeseries
 
 import (
 	"context"
-	"crypto/tls"
 	"io"
-	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -38,17 +36,7 @@ func requireTimeseriesAvailableREST(t *testing.T) {
 
 	endpoints := helpers.GetRESTEndpoints()
 	endpoint := endpoints[0]
-	probeClient := &http.Client{
-		Timeout: 15 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	probeClient := helpers.NewHTTPClient(15 * time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

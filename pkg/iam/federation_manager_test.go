@@ -1744,9 +1744,8 @@ func TestExtractClaim(t *testing.T) {
 	}
 }
 
-// TestParseIDToken tests the parseIDToken helper method.
-func TestParseIDToken(t *testing.T) {
-	manager, _, _, _, _, _ := setupTestFederationManager(t)
+// TestDecodeJWTPayload tests the post-verification payload decoder.
+func TestDecodeJWTPayload(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		// Create a valid JWT structure (header.payload.signature)
@@ -1760,7 +1759,7 @@ func TestParseIDToken(t *testing.T) {
 
 		idToken := fmt.Sprintf("eyJhbGciOiJSUzI1NiJ9.%s.signature", encodedPayload)
 
-		result, err := manager.parseIDToken(idToken)
+		result, err := decodeJWTPayload(idToken)
 		if err != nil {
 			t.Fatalf("expected no error, got: %v", err)
 		}
@@ -1770,14 +1769,14 @@ func TestParseIDToken(t *testing.T) {
 	})
 
 	t.Run("error invalid format", func(t *testing.T) {
-		_, err := manager.parseIDToken("invalid-token")
+		_, err := decodeJWTPayload("invalid-token")
 		if err == nil {
 			t.Fatal("expected error for invalid token format")
 		}
 	})
 
 	t.Run("error invalid base64", func(t *testing.T) {
-		_, err := manager.parseIDToken("header.!!!invalid-base64!!!.signature")
+		_, err := decodeJWTPayload("header.!!!invalid-base64!!!.signature")
 		if err == nil {
 			t.Fatal("expected error for invalid base64")
 		}
@@ -1785,7 +1784,7 @@ func TestParseIDToken(t *testing.T) {
 
 	t.Run("error invalid JSON", func(t *testing.T) {
 		invalidPayload := base64.RawURLEncoding.EncodeToString([]byte("not json"))
-		_, err := manager.parseIDToken(fmt.Sprintf("header.%s.signature", invalidPayload))
+		_, err := decodeJWTPayload(fmt.Sprintf("header.%s.signature", invalidPayload))
 		if err == nil {
 			t.Fatal("expected error for invalid JSON")
 		}
@@ -2573,13 +2572,19 @@ func makeOAuth2Token(accessToken, idToken string) *oauth2.Token {
 	return token
 }
 
-func TestExtractClaims_WithIDToken(t *testing.T) {
+func TestExtractClaims_UnsignedIDTokenRejected(t *testing.T) {
+	// Regression: the legacy parseIDToken base64-decoded the ID-token payload
+	// WITHOUT verifying the signature. extractClaims must now fail closed when
+	// the ID token cannot be verified against the provider JWKS — there is no
+	// fall-through to an unverified payload.
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
 	provider := createTestProvider("tenant1", "okta")
 	provider.ApplyDefaults()
 	provider.ID = "provider-1"
+	// No JWKS server is reachable, so any id_token must be rejected.
+	provider.JWKSURL = "http://127.0.0.1:0/jwks"
 
 	claims := map[string]interface{}{
 		"sub":   "user-123",
@@ -2589,11 +2594,8 @@ func TestExtractClaims_WithIDToken(t *testing.T) {
 	idToken := makeIDToken(t, claims)
 	token := makeOAuth2Token("test-access-token", idToken)
 
-	result, err := manager.extractClaims(ctx, provider, token)
-	require.NoError(t, err)
-	assert.Equal(t, "user-123", result["sub"])
-	assert.Equal(t, "user@example.com", result["email"])
-	assert.Equal(t, "Test User", result["name"])
+	_, err := manager.extractClaims(ctx, provider, token, nil)
+	require.Error(t, err, "unverified ID token must be rejected (fail closed)")
 }
 
 func TestExtractClaims_NoIDToken_FetchesUserInfo(t *testing.T) {
@@ -2625,7 +2627,7 @@ func TestExtractClaims_NoIDToken_FetchesUserInfo(t *testing.T) {
 
 	token := makeOAuth2Token("test-access-token", "")
 
-	result, err := manager.extractClaims(ctx, provider, token)
+	result, err := manager.extractClaims(ctx, provider, token, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "ext-user-456", result["sub"])
 	assert.Equal(t, "ext@example.com", result["email"])
@@ -2642,7 +2644,7 @@ func TestExtractClaims_NoUserInfoURL_Error(t *testing.T) {
 
 	token := makeOAuth2Token("test-access-token", "")
 
-	_, err := manager.extractClaims(ctx, provider, token)
+	_, err := manager.extractClaims(ctx, provider, token, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no userinfo endpoint available")
 }
@@ -2664,7 +2666,7 @@ func TestExtractClaims_UserInfoBadStatus(t *testing.T) {
 
 	token := makeOAuth2Token("test-access-token", "")
 
-	_, err := manager.extractClaims(ctx, provider, token)
+	_, err := manager.extractClaims(ctx, provider, token, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "userinfo returned status")
 }
@@ -2689,7 +2691,7 @@ func TestExtractClaims_UserInfoInvalidJSON(t *testing.T) {
 
 	token := makeOAuth2Token("test-access-token", "")
 
-	_, err := manager.extractClaims(ctx, provider, token)
+	_, err := manager.extractClaims(ctx, provider, token, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse userinfo response")
 }
@@ -2726,9 +2728,10 @@ func TestProcessAuthentication_ExistingLink(t *testing.T) {
 	require.NoError(t, err)
 
 	claims := map[string]interface{}{
-		"sub":   "ext-user-1",
-		"email": "existing@example.com",
-		"name":  "Existing User",
+		"sub":            "ext-user-1",
+		"email":          "existing@example.com",
+		"email_verified": true,
+		"name":           "Existing User",
 	}
 
 	state := &FederationCallbackState{
@@ -2762,9 +2765,10 @@ func TestProcessAuthentication_LinkByEmail(t *testing.T) {
 	provider.AllowLinking = true
 
 	claims := map[string]interface{}{
-		"sub":   "new-ext-id",
-		"email": "linkable@example.com",
-		"name":  "Linkable User",
+		"sub":            "new-ext-id",
+		"email":          "linkable@example.com",
+		"email_verified": true,
+		"name":           "Linkable User",
 	}
 
 	state := &FederationCallbackState{
@@ -2791,9 +2795,10 @@ func TestProcessAuthentication_JITProvision(t *testing.T) {
 	provider.AllowLinking = false
 
 	claims := map[string]interface{}{
-		"sub":   "brand-new-user",
-		"email": "newuser@example.com",
-		"name":  "New User",
+		"sub":            "brand-new-user",
+		"email":          "newuser@example.com",
+		"email_verified": true,
+		"name":           "New User",
 	}
 
 	state := &FederationCallbackState{

@@ -60,13 +60,11 @@ func (m *mockTenantStorage) CreateTenant(ctx context.Context, tenant *Tenant) er
 	settings := tenant.Settings
 	m.settings[tenant.ID] = &settings
 
+	// BaaS-layer IAM quotas only (users/roles/storage are owned by qrdb TenantServicer)
 	quota := &TenantQuota{
-		MaxUsers:        int64(tenant.Quotas.MaxUsers),
-		MaxGroups:       int64(tenant.Quotas.MaxGroups),
-		MaxRoles:        int64(tenant.Quotas.MaxRoles),
-		MaxPolicies:     int64(tenant.Quotas.MaxPolicies),
-		MaxApps:         int64(tenant.Quotas.MaxApps),
-		MaxStorageBytes: 1073741824, // 1GB default
+		MaxGroups:   int64(tenant.Quotas.MaxGroups),
+		MaxPolicies: int64(tenant.Quotas.MaxPolicies),
+		MaxApps:     int64(tenant.Quotas.MaxApps),
 	}
 	m.quotas[tenant.ID] = quota
 
@@ -111,13 +109,11 @@ func (m *mockTenantStorage) UpdateTenant(ctx context.Context, tenant *Tenant) er
 	settings := tenant.Settings
 	m.settings[tenant.ID] = &settings
 
+	// BaaS-layer IAM quotas only (users/roles/storage are owned by qrdb TenantServicer)
 	quota := &TenantQuota{
-		MaxUsers:        int64(tenant.Quotas.MaxUsers),
-		MaxGroups:       int64(tenant.Quotas.MaxGroups),
-		MaxRoles:        int64(tenant.Quotas.MaxRoles),
-		MaxPolicies:     int64(tenant.Quotas.MaxPolicies),
-		MaxApps:         int64(tenant.Quotas.MaxApps),
-		MaxStorageBytes: 1073741824, // 1GB default
+		MaxGroups:   int64(tenant.Quotas.MaxGroups),
+		MaxPolicies: int64(tenant.Quotas.MaxPolicies),
+		MaxApps:     int64(tenant.Quotas.MaxApps),
 	}
 	m.quotas[tenant.ID] = quota
 
@@ -262,17 +258,14 @@ func (m *mockTenantStorage) IncrementQuotaUsage(ctx context.Context, tenantID st
 		}
 	}
 
+	// BaaS-layer IAM quotas only; users/roles/storage are engine-level (qrdb-owned).
 	switch resource {
-	case QuotaResourceUsers:
-		quota.CurrentUsers += delta
 	case QuotaResourceGroups:
 		quota.CurrentGroups += delta
-	case QuotaResourceRoles:
-		quota.CurrentRoles += delta
 	case QuotaResourcePolicies:
 		quota.CurrentPolicies += delta
-	case QuotaResourceStorage:
-		quota.CurrentStorageBytes += delta
+	case QuotaResourceApps:
+		quota.CurrentApps += delta
 	}
 
 	return nil
@@ -451,10 +444,9 @@ func TestCreateTenant_WithQuotas(t *testing.T) {
 	mgr := newTestTenantManager()
 	ctx := context.Background()
 
+	// BaaS-layer IAM quotas only; MaxUsers/MaxRoles are engine-level (qrdb-owned).
 	customQuotas := &TenantQuotas{
-		MaxUsers:    5000,
 		MaxGroups:   500,
-		MaxRoles:    50,
 		MaxPolicies: 500,
 		MaxApps:     50,
 	}
@@ -469,9 +461,6 @@ func TestCreateTenant_WithQuotas(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	if tenant.Quotas.MaxUsers != 5000 {
-		t.Errorf("Expected MaxUsers 5000, got %d", tenant.Quotas.MaxUsers)
-	}
 	if tenant.Quotas.MaxGroups != 500 {
 		t.Errorf("Expected MaxGroups 500, got %d", tenant.Quotas.MaxGroups)
 	}
@@ -490,15 +479,9 @@ func TestCreateTenant_DefaultQuotas(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	// Verify default quotas are set
-	if tenant.Quotas.MaxUsers != 10000 {
-		t.Errorf("Expected default MaxUsers 10000, got %d", tenant.Quotas.MaxUsers)
-	}
+	// Verify default BaaS-layer IAM quotas (users/roles are engine-level, owned by qrdb)
 	if tenant.Quotas.MaxGroups != 1000 {
 		t.Errorf("Expected default MaxGroups 1000, got %d", tenant.Quotas.MaxGroups)
-	}
-	if tenant.Quotas.MaxRoles != 100 {
-		t.Errorf("Expected default MaxRoles 100, got %d", tenant.Quotas.MaxRoles)
 	}
 	if tenant.Quotas.MaxPolicies != 1000 {
 		t.Errorf("Expected default MaxPolicies 1000, got %d", tenant.Quotas.MaxPolicies)
@@ -706,11 +689,9 @@ func TestUpdateTenant_Quotas(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	// Update quotas
+	// Update BaaS-layer IAM quotas (MaxUsers/MaxRoles are engine-level, owned by qrdb)
 	newQuotas := &TenantQuotas{
-		MaxUsers:    2000,
 		MaxGroups:   200,
-		MaxRoles:    20,
 		MaxPolicies: 200,
 		MaxApps:     20,
 	}
@@ -722,9 +703,6 @@ func TestUpdateTenant_Quotas(t *testing.T) {
 		t.Fatalf("UpdateTenant failed: %v", err)
 	}
 
-	if updated.Quotas.MaxUsers != 2000 {
-		t.Errorf("Expected MaxUsers 2000, got %d", updated.Quotas.MaxUsers)
-	}
 	if updated.Quotas.MaxGroups != 200 {
 		t.Errorf("Expected MaxGroups 200, got %d", updated.Quotas.MaxGroups)
 	}
@@ -912,15 +890,15 @@ func TestCheckQuota_Success(t *testing.T) {
 		ID:   "quota-test",
 		Name: "Quota Test",
 		Quotas: &TenantQuotas{
-			MaxUsers: 100,
+			MaxGroups: 100, // users/roles are engine-level, owned by qrdb
 		},
 	})
 	if err != nil {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	// Check quota (should pass since current is 0)
-	err = mgr.CheckQuota(ctx, "quota-test", QuotaResourceUsers)
+	// Check BaaS-layer quota (should pass since current is 0)
+	err = mgr.CheckQuota(ctx, "quota-test", QuotaResourceGroups)
 	if err != nil {
 		t.Errorf("CheckQuota failed: %v", err)
 	}
@@ -933,12 +911,12 @@ func TestCheckQuota_Exceeded(t *testing.T) {
 	storage := newMockTenantStorage()
 	mgr = NewDefaultTenantManager(storage)
 
-	// Create a tenant
+	// Create a tenant with BaaS-layer IAM quotas
 	tenant, err := mgr.CreateTenant(ctx, CreateTenantOptions{
 		ID:   "quota-test",
 		Name: "Quota Test",
 		Quotas: &TenantQuotas{
-			MaxUsers: 100,
+			MaxGroups: 100, // users/roles are engine-level, owned by qrdb
 		},
 	})
 	if err != nil {
@@ -947,11 +925,11 @@ func TestCheckQuota_Exceeded(t *testing.T) {
 
 	// Manually set current usage to limit
 	quota, _ := storage.GetQuota(ctx, tenant.ID)
-	quota.CurrentUsers = quota.MaxUsers
+	quota.CurrentGroups = quota.MaxGroups
 	storage.UpdateQuota(ctx, tenant.ID, quota)
 
 	// Check quota (should fail since at limit)
-	err = mgr.CheckQuota(ctx, tenant.ID, QuotaResourceUsers)
+	err = mgr.CheckQuota(ctx, tenant.ID, QuotaResourceGroups)
 	if err == nil {
 		t.Fatal("Expected quota exceeded error")
 	}
@@ -978,18 +956,12 @@ func TestCheckQuota_UnknownResource(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	// Check quota with unknown resource
+	// Unknown resource types (including engine-level resources like "users", "roles",
+	// "storage") return nil. Engine-level quota enforcement is owned by qrdb's
+	// TenantServicer; BaaS IAM only enforces groups/policies/apps.
 	err = mgr.CheckQuota(ctx, "quota-test", "unknown_resource")
-	if err == nil {
-		t.Fatal("Expected error for unknown resource")
-	}
-
-	var dbErr *dberrors.QBError
-	if !dberrors.As(err, &dbErr) {
-		t.Fatalf("Expected QBError, got %T", err)
-	}
-	if dbErr.Code != dberrors.ErrInvalidInput {
-		t.Errorf("Expected ErrInvalidInput, got %v", dbErr.Code)
+	if err != nil {
+		t.Fatalf("expected nil for unknown/engine-level resource, got: %v", err)
 	}
 }
 

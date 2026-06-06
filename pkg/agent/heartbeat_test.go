@@ -101,10 +101,10 @@ func TestHTTPHeartbeatSender_SuccessfulPost(t *testing.T) {
 
 	sender, err := NewHTTPHeartbeatSender(HTTPHeartbeatConfig{
 		ServerAddr: srv.URL,
-		TenantID:    "tenant-a",
-		HTTPClient:  tlsClientFromServer(srv),
-		Tokens:      &staticToken{tokens: []string{"tok-1"}},
-		Logger:      &testLogger{t: t},
+		TenantID:   "tenant-a",
+		HTTPClient: tlsClientFromServer(srv),
+		Tokens:     &staticToken{tokens: []string{"tok-1"}},
+		Logger:     &testLogger{t: t},
 	})
 	if err != nil {
 		t.Fatalf("NewHTTPHeartbeatSender: %v", err)
@@ -160,10 +160,10 @@ func TestHTTPHeartbeatSender_401RefreshesAndRetries(t *testing.T) {
 	tokens := &staticToken{tokens: []string{"tok-stale", "tok-fresh"}}
 	sender, _ := NewHTTPHeartbeatSender(HTTPHeartbeatConfig{
 		ServerAddr: srv.URL,
-		TenantID:    "tenant-a",
-		HTTPClient:  tlsClientFromServer(srv),
-		Tokens:      tokens,
-		Logger:      &testLogger{t: t},
+		TenantID:   "tenant-a",
+		HTTPClient: tlsClientFromServer(srv),
+		Tokens:     tokens,
+		Logger:     &testLogger{t: t},
 	})
 
 	if err := sender.SendHeartbeat(context.Background(), captureIdentity("agent-1", "tenant-a"), HeartbeatStatus{}); err != nil {
@@ -187,10 +187,10 @@ func TestHTTPHeartbeatSender_Persistent401Surfaces(t *testing.T) {
 	tokens := &staticToken{tokens: []string{"tok-1", "tok-2"}}
 	sender, _ := NewHTTPHeartbeatSender(HTTPHeartbeatConfig{
 		ServerAddr: srv.URL,
-		TenantID:    "tenant-a",
-		HTTPClient:  tlsClientFromServer(srv),
-		Tokens:      tokens,
-		Logger:      &testLogger{t: t},
+		TenantID:   "tenant-a",
+		HTTPClient: tlsClientFromServer(srv),
+		Tokens:     tokens,
+		Logger:     &testLogger{t: t},
 	})
 
 	err := sender.SendHeartbeat(context.Background(), captureIdentity("agent-1", "tenant-a"), HeartbeatStatus{})
@@ -212,10 +212,10 @@ func TestHTTPHeartbeatSender_5xxReturnsSendError(t *testing.T) {
 
 	sender, _ := NewHTTPHeartbeatSender(HTTPHeartbeatConfig{
 		ServerAddr: srv.URL,
-		TenantID:    "tenant-a",
-		HTTPClient:  tlsClientFromServer(srv),
-		Tokens:      &staticToken{tokens: []string{"tok-1"}},
-		Logger:      &testLogger{t: t},
+		TenantID:   "tenant-a",
+		HTTPClient: tlsClientFromServer(srv),
+		Tokens:     &staticToken{tokens: []string{"tok-1"}},
+		Logger:     &testLogger{t: t},
 	})
 
 	err := sender.SendHeartbeat(context.Background(), captureIdentity("agent-1", "tenant-a"), HeartbeatStatus{})
@@ -233,10 +233,10 @@ func TestHTTPHeartbeatSender_TransportError(t *testing.T) {
 
 	sender, _ := NewHTTPHeartbeatSender(HTTPHeartbeatConfig{
 		ServerAddr: srv.URL,
-		TenantID:    "tenant-a",
-		HTTPClient:  tlsClientFromServer(srv),
-		Tokens:      &staticToken{tokens: []string{"tok-1"}},
-		Logger:      &testLogger{t: t},
+		TenantID:   "tenant-a",
+		HTTPClient: tlsClientFromServer(srv),
+		Tokens:     &staticToken{tokens: []string{"tok-1"}},
+		Logger:     &testLogger{t: t},
 	})
 	err := sender.SendHeartbeat(context.Background(), captureIdentity("agent-1", "tenant-a"), HeartbeatStatus{})
 	var se *HeartbeatSendError
@@ -249,10 +249,10 @@ func TestHTTPHeartbeatSender_ConstructorValidation(t *testing.T) {
 	t.Parallel()
 	valid := HTTPHeartbeatConfig{
 		ServerAddr: "https://x",
-		TenantID:    "t",
-		HTTPClient:  &http.Client{},
-		Tokens:      &staticToken{tokens: []string{"t"}},
-		Logger:      &testLogger{t: t},
+		TenantID:   "t",
+		HTTPClient: &http.Client{},
+		Tokens:     &staticToken{tokens: []string{"t"}},
+		Logger:     &testLogger{t: t},
 	}
 	cases := []struct {
 		name   string
@@ -280,10 +280,10 @@ func TestHTTPHeartbeatSender_EmptyIdentity(t *testing.T) {
 	t.Parallel()
 	sender, _ := NewHTTPHeartbeatSender(HTTPHeartbeatConfig{
 		ServerAddr: "https://x",
-		TenantID:    "t",
-		HTTPClient:  &http.Client{},
-		Tokens:      &staticToken{tokens: []string{"t"}},
-		Logger:      &testLogger{t: t},
+		TenantID:   "t",
+		HTTPClient: &http.Client{},
+		Tokens:     &staticToken{tokens: []string{"t"}},
+		Logger:     &testLogger{t: t},
 	})
 	if err := sender.SendHeartbeat(context.Background(), nil, HeartbeatStatus{}); !errors.Is(err, ErrHeartbeatNoIdentity) {
 		t.Errorf("got %v", err)
@@ -344,7 +344,6 @@ func TestCachingTokenSource_MissingRefreshErrors(t *testing.T) {
 		t.Error("expected error with no refresh fn")
 	}
 }
-
 
 // staticReregisterer is a TokenSource-style fake that records every
 // Reregister call and returns the configured error sequence. Used to
@@ -536,7 +535,6 @@ func TestHTTPHeartbeatSender_404ReregisterFailureCounterResets(t *testing.T) {
 		}
 	}
 }
-
 
 // TestHTTPHeartbeatSender_BodyIncludesBindAddr asserts the heartbeat
 // POST body carries the BindAddr field from HeartbeatStatus verbatim

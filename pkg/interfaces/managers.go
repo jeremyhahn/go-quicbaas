@@ -480,56 +480,6 @@ type BarrierManager interface {
 // Deprecated: use BarrierManager.
 type SealManager = BarrierManager
 
-// ClusterDEKManager defines the interface for cluster-wide Data Encryption Key management.
-// The cluster DEK is distributed via Raft and used for encrypting data at rest.
-//
-// Key Hierarchy:
-//  1. Master Key (per node) - from seal, in-memory only
-//  2. Cluster DEK (shared) - distributed via Raft, wrapped per-node
-//  3. Data Keys (per entity) - wrapped by cluster DEK
-type ClusterDEKManager interface {
-	// Initialize generates and distributes the initial cluster DEK.
-	// Must be called on the leader after the cluster is formed.
-	Initialize(ctx context.Context, algorithm string, keyBytes int) error
-
-	// GetStatus returns the current cluster DEK status.
-	GetStatus(ctx context.Context) (interface{}, error)
-
-	// Rotate generates a new cluster DEK version and initiates re-encryption.
-	// The old version remains available for decryption during cryptoion.
-	Rotate(ctx context.Context) error
-
-	// GetCurrentDEK returns the current cluster DEK (for local encryption).
-	// Returns nil if not initialized or node is out of sync.
-	GetCurrentDEK() ([]byte, error)
-
-	// GetDEKVersion returns the current DEK version number.
-	GetDEKVersion() uint64
-
-	// SyncToNode synchronizes the DEK to a specific node.
-	// Used for new nodes joining the cluster.
-	SyncToNode(ctx context.Context, nodeID uint64) error
-
-	// IsNodeSynced returns true if the specified node has the current DEK.
-	IsNodeSynced(nodeID uint64) bool
-
-	// StartReencryption begins background re-encryption of all data.
-	// Called after DEK rotation to re-encrypt with the new key.
-	StartReencryption(ctx context.Context) error
-
-	// GetReencryptionStatus returns progress of the re-encryption process.
-	GetReencryptionStatus(ctx context.Context) (interface{}, error)
-
-	// CancelReencryption stops the re-encryption process.
-	CancelReencryption(ctx context.Context) error
-
-	// RecoverDEK recovers the cluster DEK using recovery keys or backup.
-	RecoverDEK(ctx context.Context, recoveryData interface{}) error
-
-	// Close releases any resources held by the cluster DEK manager.
-	Close() error
-}
-
 // ParameterManager defines the interface for parameter storage operations.
 // Parameters are tenant-scoped key-value pairs with optional encryption, TTL, and tagging.
 // This interface provides low-level storage operations used by the ParameterStoreService.

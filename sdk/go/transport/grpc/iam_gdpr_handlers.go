@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -252,14 +253,47 @@ func (h *iamHandler) handleRequestDeletion(ctx context.Context, client iampb.IAM
 
 	tenantID, _ := getString(reqMap, "tenant_id")
 	userID, _ := getString(reqMap, "user_id")
-	requestedBy, _ := getString(reqMap, "requested_by")
-	if requestedBy == "" {
-		requestedBy = userID
-	}
+
+	// The typed SDK sends fields nested under "deletion"; older callers
+	// send them at the top level. Probe the nested map and let it
+	// override empty top-level values so both wire shapes work.
 	reason, _ := getString(reqMap, "reason")
+	requestedBy, _ := getString(reqMap, "requested_by")
 	deleteCategories, _ := getStringSlice(reqMap, "delete_categories")
 	preserveCategories, _ := getStringSlice(reqMap, "preserve_categories")
 	gracePeriodDays, _ := getInt(reqMap, "grace_period_days")
+	if deletion, ok := reqMap["deletion"].(map[string]interface{}); ok {
+		if v, _ := getString(deletion, "reason"); reason == "" {
+			reason = v
+		}
+		if v, _ := getString(deletion, "requested_by"); requestedBy == "" {
+			requestedBy = v
+		}
+		if v, _ := getStringSlice(deletion, "delete_categories"); len(deleteCategories) == 0 {
+			deleteCategories = v
+		}
+		// SDK calls this field RetainCategories on the wire.
+		if v, _ := getStringSlice(deletion, "retain_categories"); len(preserveCategories) == 0 {
+			preserveCategories = v
+		}
+		if v, _ := getStringSlice(deletion, "preserve_categories"); len(preserveCategories) == 0 {
+			preserveCategories = v
+		}
+		// Translate ScheduledFor (absolute time) into grace_period_days
+		// (relative days) so the server can apply its grace-window logic.
+		if gracePeriodDays == 0 {
+			if scheduledStr, _ := getString(deletion, "scheduled_for"); scheduledStr != "" {
+				if t, perr := time.Parse(time.RFC3339Nano, scheduledStr); perr == nil {
+					if days := int(time.Until(t).Hours() / 24); days > 0 {
+						gracePeriodDays = days
+					}
+				}
+			}
+		}
+	}
+	if requestedBy == "" {
+		requestedBy = userID
+	}
 
 	pbReq := &iampb.RequestDeletionRequest{
 		TenantId:           tenantID,

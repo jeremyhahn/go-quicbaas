@@ -2530,6 +2530,60 @@ func TestHandleListKeys_ExcludesSystemKeys(t *testing.T) {
 	assert.Equal(t, "AES-256-GCM", resp.Keys[0].Algorithm)
 }
 
+// TestHandleListKeys_LimitDoesNotTruncateBeforeSystemKeyFilter is a regression
+// test for the bug where ?limit=N would truncate the service-layer response
+// before the REST handler stripped system keys, producing 0 operator-visible
+// keys when system keys sorted first. The handler must fetch unbounded from
+// the service, filter system keys, then apply the caller's limit.
+func TestHandleListKeys_LimitDoesNotTruncateBeforeSystemKeyFilter(t *testing.T) {
+	server, mockService, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	epoch := time.Unix(-62135596800, 0)
+	now := time.Now()
+
+	// Two system keys sort first, followed by three operator keys.
+	svcKeys := []*service.KeyHandle{
+		{KeyID: "QuicBaaS Root CA", Algorithm: service.KeyAlgorithm(""), Status: service.KeyStatusEnabled, CreatedAt: epoch},
+		{KeyID: "localhost", Algorithm: service.KeyAlgorithm(""), Status: service.KeyStatusEnabled, CreatedAt: epoch},
+		{KeyID: "user-key-a", Algorithm: service.KeyAlgorithm("AES-256-GCM"), Status: service.KeyStatusEnabled, CreatedAt: now},
+		{KeyID: "user-key-b", Algorithm: service.KeyAlgorithm("AES-256-GCM"), Status: service.KeyStatusEnabled, CreatedAt: now},
+		{KeyID: "user-key-c", Algorithm: service.KeyAlgorithm("AES-256-GCM"), Status: service.KeyStatusEnabled, CreatedAt: now},
+	}
+
+	// Capture the request the handler sends to the service so we can assert it
+	// did NOT forward the caller's limit (which would re-introduce the bug).
+	var capturedReq *service.ListKeysRequest
+	mockService.On("ListKeys", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			capturedReq = args.Get(1).(*service.ListKeysRequest)
+		}).
+		Return(&service.ListKeysResponse{
+			Keys:       svcKeys,
+			TotalCount: len(svcKeys),
+			Timestamp:  now,
+		}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/kms/keys?limit=2", nil)
+	w := httptest.NewRecorder()
+	server.HandleListKeys(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp ListKeysRESTResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	require.Len(t, resp.Keys, 2, "limit=2 must return 2 operator keys, not 0 after system-key filter")
+	assert.Equal(t, "user-key-a", resp.Keys[0].KeyID)
+	assert.Equal(t, "user-key-b", resp.Keys[1].KeyID)
+	assert.True(t, resp.HasMore, "third operator key exists; HasMore must be true")
+	assert.Equal(t, 3, resp.TotalCount, "TotalCount reflects operator-visible total")
+
+	require.NotNil(t, capturedReq, "service.ListKeys must be invoked")
+	assert.NotEqual(t, 2, capturedReq.Limit,
+		"handler must not forward caller's limit=2 to the service (filter happens after)")
+}
+
 // TestHandleListKeyVersions_NonZeroCreatedAt asserts that every version entry in
 // the response carries a non-zero created_at Unix timestamp (bug #88).  A zero
 // value would cause the frontend to display "1/21/1970" instead of the actual

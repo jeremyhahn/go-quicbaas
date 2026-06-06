@@ -15,16 +15,12 @@ package grpc
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -76,89 +72,6 @@ func TestStreamInterceptors_Basics(t *testing.T) {
 	e := StreamErrorHandlerInterceptor()(nil, stream, info, func(s interface{}, ss grpc.ServerStream) error { return errBoom })
 	_, ok := status.FromError(e)
 	assert.True(t, ok)
-	// FIPS disabled - should pass without TLS
-	err = StreamFIPSInterceptor(false, log)(nil, stream, info, handler)
-	assert.NoError(t, err)
-	// FIPS enabled without TLS - should fail
-	err = StreamFIPSInterceptor(true, log)(nil, stream, info, handler)
-	assert.Error(t, err)
-	st, ok := status.FromError(err)
-	assert.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-}
-
-func TestStreamFIPSInterceptor_WithFIPSCompliantTLS(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-
-	// Create a FIPS-compliant TLS context
-	tlsInfo := credentials.TLSInfo{
-		State: tls.ConnectionState{
-			Version:     tls.VersionTLS13,
-			CipherSuite: tls.TLS_AES_256_GCM_SHA384,
-		},
-	}
-	p := &peer.Peer{AuthInfo: tlsInfo}
-	ctx := peer.NewContext(context.Background(), p)
-
-	stream := &dummyStream{ctx: ctx}
-	info := &grpc.StreamServerInfo{FullMethod: "/test.Stream"}
-	handler := func(s interface{}, ss grpc.ServerStream) error { return nil }
-
-	// FIPS enabled with compliant TLS - should pass
-	err := StreamFIPSInterceptor(true, log)(nil, stream, info, handler)
-	assert.NoError(t, err)
-}
-
-func TestStreamFIPSInterceptor_WithNonFIPSCipher(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-
-	// Create a TLS context with non-FIPS cipher
-	tlsInfo := credentials.TLSInfo{
-		State: tls.ConnectionState{
-			Version:     tls.VersionTLS13,
-			CipherSuite: tls.TLS_CHACHA20_POLY1305_SHA256, // Not FIPS-approved
-		},
-	}
-	p := &peer.Peer{AuthInfo: tlsInfo}
-	ctx := peer.NewContext(context.Background(), p)
-
-	stream := &dummyStream{ctx: ctx}
-	info := &grpc.StreamServerInfo{FullMethod: "/test.Stream"}
-	handler := func(s interface{}, ss grpc.ServerStream) error { return nil }
-
-	// FIPS enabled with non-compliant cipher - should fail
-	err := StreamFIPSInterceptor(true, log)(nil, stream, info, handler)
-	assert.Error(t, err)
-	st, ok := status.FromError(err)
-	assert.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-	assert.Contains(t, st.Message(), "non-FIPS cipher suite")
-}
-
-func TestStreamFIPSInterceptor_WithOldTLSVersion(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-
-	// Create a TLS context with old TLS version
-	tlsInfo := credentials.TLSInfo{
-		State: tls.ConnectionState{
-			Version:     tls.VersionTLS12,
-			CipherSuite: tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		},
-	}
-	p := &peer.Peer{AuthInfo: tlsInfo}
-	ctx := peer.NewContext(context.Background(), p)
-
-	stream := &dummyStream{ctx: ctx}
-	info := &grpc.StreamServerInfo{FullMethod: "/test.Stream"}
-	handler := func(s interface{}, ss grpc.ServerStream) error { return nil }
-
-	// FIPS enabled with old TLS version - should fail
-	err := StreamFIPSInterceptor(true, log)(nil, stream, info, handler)
-	assert.Error(t, err)
-	st, ok := status.FromError(err)
-	assert.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-	assert.Contains(t, st.Message(), "insufficient TLS version")
 }
 
 func TestWrapServerStream_Context(t *testing.T) {

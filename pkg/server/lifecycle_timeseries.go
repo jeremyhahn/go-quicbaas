@@ -17,57 +17,40 @@ package server
 
 import (
 	"context"
-	"path/filepath"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
-// initTimeSeriesStorage initializes the PebbleDB-backed time series storage engine.
-// The storage directory is derived from the main storage data directory with a
-// "timeseries" subdirectory. This must be called before startTimeSeries so that
-// timeSeriesStorage is available for the service builder.
+// initTimeSeriesStorage is a no-op. The qrdb node always owns time-series
+// storage; startTimeSeries wires the node's SDK transport directly.
 func (s *Server) initTimeSeriesStorage() error {
-	s.logger.Info("Initializing time series storage...")
-
-	dataDir := s.config.TimeSeries.StoragePath
-	if dataDir == "" {
-		dataDir = filepath.Join(s.config.Storage.DataDir, "timeseries")
-	}
-
-	// Create PebbleDB-backed time series storage
-	storage, err := xkmssdk.QRDBNewTimeSeriesStorageWithDir(dataDir)
-	if err != nil {
-		return &qberrors.QBError{
-			Code: qberrors.ErrInternal,
-			Op:   "server.initTimeSeriesStorage",
-			Err:  &ServerCauseError{Message: "failed to open time series storage", Cause: err},
-		}
-	}
-
-	// Wrap the qrdb storage with the quicbaas interface adapter
-	s.timeSeriesStorage = newTimeSeriesStorageAdapter(storage)
-	s.logger.WithFields(map[string]interface{}{
-		"storage_path": dataDir,
-	}).Info("Time series storage initialized successfully")
-
+	// The qrdb engine node owns the time series storage and at-rest encryption.
+	// Building a separate PebbleDB store here would create a disconnected
+	// duplicate. startTimeSeries wires the node-backed adapter.
+	s.logger.Info("Time series storage owned by qrdb node, skipping standalone storage init")
 	return nil
 }
 
-// startTimeSeries verifies the time series storage is ready for use by the
-// service builder. If time series is disabled (storage is nil), this is a no-op.
+// startTimeSeries wires the time-series storage adapter that delegates through
+// the qrdb node's SDK client embedded transport to the node's in-process time
+// series engine. The node's lifecycle owns the underlying store.
 func (s *Server) startTimeSeries() error {
-	if s.timeSeriesStorage == nil {
+	if !s.config.TimeSeries.Enabled {
+		s.logger.Info("Time series service is disabled, skipping initialization")
 		return nil
 	}
 
-	s.logger.Info("Time series service ready")
+	s.timeSeriesStorage = newNodeTimeSeriesStorage(s.qrdbNode.Client())
+	s.logger.Info("Time series storage wired via qrdb node SDK transport")
 	return nil
 }
 
 // stopTimeSeries closes the time series storage and releases all resources.
+// On the node path timeSeriesStorage is a nodeTimeSeriesStorage whose Close
+// is a no-op — the qrdb node owns the underlying store lifecycle.
 func (s *Server) stopTimeSeries() error {
 	if s.timeSeriesStorage == nil {
 		return nil
@@ -97,11 +80,11 @@ func (s *Server) stopTimeSeries() error {
 // quicbaas interfaces.TimeSeriesStorage interface. It converts between the
 // qrdb time series types and the quicbaas time series types.
 type timeSeriesStorageAdapter struct {
-	storage *xkmssdk.QRDBTimeSeriesStorage
+	storage *qrdbsdk.TimeSeriesStorage
 }
 
 // newTimeSeriesStorageAdapter creates a new adapter around the qrdb storage.
-func newTimeSeriesStorageAdapter(storage *xkmssdk.QRDBTimeSeriesStorage) interfaces.TimeSeriesStorage {
+func newTimeSeriesStorageAdapter(storage *qrdbsdk.TimeSeriesStorage) interfaces.TimeSeriesStorage {
 	return &timeSeriesStorageAdapter{storage: storage}
 }
 
@@ -113,9 +96,9 @@ func (a *timeSeriesStorageAdapter) WritePoint(ctx context.Context, point *interf
 
 // WriteBatch writes multiple data points atomically.
 func (a *timeSeriesStorageAdapter) WriteBatch(points []interfaces.DataPoint) error {
-	qrdbPoints := make([]xkmssdk.QRDBTimeSeriesDataPoint, len(points))
+	qrdbPoints := make([]qrdbsdk.TimeSeriesDataPoint, len(points))
 	for i := range points {
-		qrdbPoints[i] = xkmssdk.QRDBTimeSeriesDataPoint{
+		qrdbPoints[i] = qrdbsdk.TimeSeriesDataPoint{
 			Metric:    points[i].Metric,
 			Value:     points[i].Value,
 			Timestamp: points[i].Timestamp,
@@ -137,7 +120,7 @@ func (a *timeSeriesStorageAdapter) QueryRich(ctx context.Context, req *interface
 
 // DeleteSeries deletes data points matching the request criteria.
 func (a *timeSeriesStorageAdapter) DeleteSeries(ctx context.Context, req *interfaces.DeleteRequest) error {
-	qrdbReq := &xkmssdk.QRDBTimeSeriesDeleteRequest{
+	qrdbReq := &qrdbsdk.TimeSeriesDeleteRequest{
 		Metric:    req.Metric,
 		Tags:      req.Tags,
 		StartTime: req.StartTime,
@@ -161,10 +144,10 @@ func (a *timeSeriesStorageAdapter) GetRetentionPolicy(metric string) (*interface
 
 // SetRetentionPolicy sets the retention policy for a metric.
 func (a *timeSeriesStorageAdapter) SetRetentionPolicy(metric string, policy *interfaces.RetentionPolicy) error {
-	qrdbPolicy := &xkmssdk.QRDBTimeSeriesRetentionPolicy{
+	qrdbPolicy := &qrdbsdk.TimeSeriesRetentionPolicy{
 		Duration:    policy.Duration,
 		Resolution:  policy.Resolution,
-		Aggregation: xkmssdk.QRDBTimeSeriesAggFunc(policy.Aggregation),
+		Aggregation: qrdbsdk.TimeSeriesAggFunc(policy.Aggregation),
 	}
 	return a.storage.SetRetentionPolicy(metric, qrdbPolicy)
 }
@@ -175,8 +158,8 @@ func (a *timeSeriesStorageAdapter) ListMetrics(prefix string, limit int) ([]stri
 }
 
 // convertToQRDBDataPoint converts an interfaces.DataPoint to a qrdb DataPoint.
-func convertToQRDBDataPoint(point *interfaces.DataPoint) *xkmssdk.QRDBTimeSeriesDataPoint {
-	return &xkmssdk.QRDBTimeSeriesDataPoint{
+func convertToQRDBDataPoint(point *interfaces.DataPoint) *qrdbsdk.TimeSeriesDataPoint {
+	return &qrdbsdk.TimeSeriesDataPoint{
 		Metric:    point.Metric,
 		Value:     point.Value,
 		Timestamp: point.Timestamp,
@@ -185,13 +168,13 @@ func convertToQRDBDataPoint(point *interfaces.DataPoint) *xkmssdk.QRDBTimeSeries
 }
 
 // convertToQRDBQueryRequest converts an interfaces.QueryRequest to a qrdb QueryRequest.
-func convertToQRDBQueryRequest(req *interfaces.QueryRequest) *xkmssdk.QRDBTimeSeriesQueryRequest {
-	return &xkmssdk.QRDBTimeSeriesQueryRequest{
+func convertToQRDBQueryRequest(req *interfaces.QueryRequest) *qrdbsdk.TimeSeriesQueryRequest {
+	return &qrdbsdk.TimeSeriesQueryRequest{
 		Metric:      req.Metric,
 		Tags:        req.Tags,
 		StartTime:   req.StartTime,
 		EndTime:     req.EndTime,
-		Aggregation: xkmssdk.QRDBTimeSeriesAggFunc(req.Aggregation),
+		Aggregation: qrdbsdk.TimeSeriesAggFunc(req.Aggregation),
 		Interval:    req.Interval,
 		GroupBy:     req.GroupBy,
 		Limit:       req.Limit,
@@ -200,7 +183,7 @@ func convertToQRDBQueryRequest(req *interfaces.QueryRequest) *xkmssdk.QRDBTimeSe
 }
 
 // convertFromQRDBQueryResult converts a qrdb QueryResult to an interfaces.QueryResult.
-func convertFromQRDBQueryResult(result *xkmssdk.QRDBTimeSeriesQueryResult) *interfaces.QueryResult {
+func convertFromQRDBQueryResult(result *qrdbsdk.TimeSeriesQueryResult) *interfaces.QueryResult {
 	ifResult := &interfaces.QueryResult{
 		Metric:          result.Metric,
 		Tags:            result.Tags,

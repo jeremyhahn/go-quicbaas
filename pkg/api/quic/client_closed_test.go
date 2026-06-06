@@ -291,42 +291,89 @@ func TestClient_ClosedClient_BackendOperations(t *testing.T) {
 	})
 }
 
-// TestClient_ClosedClient_SealOperations verifies seal methods on a closed client.
-func TestClient_ClosedClient_SealOperations(t *testing.T) {
+// TestClient_ClosedClient_BarrierOperations verifies barrier methods on a
+// closed client. Replaces the legacy ClosedClient_SealOperations test
+// removed when the seal-tree handlers were deleted in Phase 8c.
+func TestClient_ClosedClient_BarrierOperations(t *testing.T) {
 	client := createClosedClient(t)
 	defer client.Close()
 	ctx := context.Background()
 
-	t.Run("SealStatus", func(t *testing.T) {
-		_, err := client.SealStatus(ctx)
+	t.Run("BarrierStatus", func(t *testing.T) {
+		_, err := client.BarrierStatus(ctx)
 		if err == nil {
 			t.Fatal("expected error from closed client")
 		}
 	})
 
-	t.Run("SealInit", func(t *testing.T) {
-		_, err := client.SealInit(ctx, &service.SealInitRequest{Threshold: 3, TotalShares: 5})
+	t.Run("BarrierInitialize", func(t *testing.T) {
+		err := client.BarrierInitialize(ctx, &BarrierInitializeRequest{Secret: "pw"})
 		if err == nil {
 			t.Fatal("expected error from closed client")
 		}
 	})
 
-	t.Run("Unseal", func(t *testing.T) {
-		_, err := client.Unseal(ctx, &service.UnsealRequest{Share: []byte("share1")})
+	t.Run("BarrierShamirInitialize", func(t *testing.T) {
+		_, err := client.BarrierShamirInitialize(ctx, &BarrierShamirInitializeRequest{
+			Secret: "pw", Threshold: 3, TotalShares: 5,
+		})
 		if err == nil {
 			t.Fatal("expected error from closed client")
 		}
 	})
 
-	t.Run("Seal", func(t *testing.T) {
-		err := client.Seal(ctx)
+	t.Run("BarrierUnseal", func(t *testing.T) {
+		err := client.BarrierUnseal(ctx, &BarrierUnsealRequest{Secret: "pw"})
 		if err == nil {
 			t.Fatal("expected error from closed client")
 		}
 	})
 
-	t.Run("Rekey", func(t *testing.T) {
-		_, err := client.Rekey(ctx, &service.RekeyRequest{NewThreshold: 3, NewTotalShares: 5})
+	t.Run("BarrierSeal", func(t *testing.T) {
+		err := client.BarrierSeal(ctx)
+		if err == nil {
+			t.Fatal("expected error from closed client")
+		}
+	})
+
+	t.Run("BarrierRekey", func(t *testing.T) {
+		_, err := client.BarrierRekey(ctx, &BarrierRekeyRequest{Threshold: 3, Total: 5})
+		if err == nil {
+			t.Fatal("expected error from closed client")
+		}
+	})
+}
+
+// TestClient_ClosedClient_CeremonyOperations verifies ceremony methods on a
+// closed client.
+func TestClient_ClosedClient_CeremonyOperations(t *testing.T) {
+	client := createClosedClient(t)
+	defer client.Close()
+	ctx := context.Background()
+
+	t.Run("CeremonyStatus", func(t *testing.T) {
+		_, err := client.CeremonyStatus(ctx)
+		if err == nil {
+			t.Fatal("expected error from closed client")
+		}
+	})
+
+	t.Run("CeremonyInitialize", func(t *testing.T) {
+		_, err := client.CeremonyInitialize(ctx, &CeremonyInitializeRequest{SOPin: "x"})
+		if err == nil {
+			t.Fatal("expected error from closed client")
+		}
+	})
+
+	t.Run("CeremonyClaimCertBegin", func(t *testing.T) {
+		_, err := client.CeremonyClaimCertBegin(ctx, &CeremonyClaimCertBeginRequest{Username: "alice"})
+		if err == nil {
+			t.Fatal("expected error from closed client")
+		}
+	})
+
+	t.Run("CeremonyListOfficers", func(t *testing.T) {
+		_, err := client.CeremonyListOfficers(ctx)
 		if err == nil {
 			t.Fatal("expected error from closed client")
 		}

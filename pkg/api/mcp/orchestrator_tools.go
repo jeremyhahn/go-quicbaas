@@ -1380,6 +1380,9 @@ func (r *ToolRegistry) executeTaskGetArtifact(ctx context.Context, args map[stri
 	if getErr != nil {
 		return nil, getErr
 	}
+	if artifact == nil {
+		return nil, api.NewNotFoundByNameError("mcp.executeTaskGetArtifact", "artifact", name)
+	}
 
 	return marshalResult(map[string]interface{}{
 		"task_id":   taskID,

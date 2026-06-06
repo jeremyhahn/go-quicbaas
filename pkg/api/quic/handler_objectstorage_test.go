@@ -490,7 +490,7 @@ func createOSEnabledHandler(osSvc service.ObjectStorageService) *Handler {
 	mockSvc := &mockOSEnabledService{
 		osSvc: osSvc,
 	}
-	return NewHandler(mockSvc, nil, nil, nil, nil, createOSTestLogger())
+	return NewHandler(mockSvc, nil, nil, nil, createOSTestLogger())
 }
 
 // =============================================================================

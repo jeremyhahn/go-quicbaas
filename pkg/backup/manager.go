@@ -95,9 +95,13 @@ func NewBackupManager(
 	if storage == nil {
 		return nil, &InvalidConfigError{Field: "storage", Message: "storage is required"}
 	}
-	if raft == nil {
-		return nil, &InvalidConfigError{Field: "raft", Message: "raft node is required"}
-	}
+	// raft may be nil when the caller has a real qrdb engine node
+	// providing consensus (s.qrdbNode path). Backup snapshots degrade
+	// gracefully: GetNodeHostInfo returns an empty info so no shard
+	// snapshots are captured; GetShardRaftState returns (0, 0) via
+	// the nil-safe guard in createShardSnapshot. A nil raft is therefore
+	// accepted so the backup manager can still manage metadata, scheduling,
+	// and restore without requiring a standalone no-op raft node.
 	if log == nil {
 		return nil, &InvalidConfigError{Field: "logger", Message: "logger is required"}
 	}
@@ -273,11 +277,16 @@ func (m *BackupManager) CreateBackup(ctx context.Context, backupType BackupType)
 		},
 	}
 
-	// Create Raft snapshots for each shard
-	nodeInfo := m.raft.GetNodeHostInfo(interfaces.NodeHostInfoOption{})
+	// Create Raft snapshots for each shard. When raft is nil the engine
+	// is backed by a real qrdb node whose shard topology is not
+	// accessible via this interface; treat it as zero shards so the
+	// backup still persists KV metadata and scheduling state.
+	var nodeInfo *interfaces.NodeHostInfo
+	if m.raft != nil {
+		nodeInfo = m.raft.GetNodeHostInfo(interfaces.NodeHostInfoOption{})
+	}
 	if nodeInfo == nil {
-		m.metrics.backupErrors.Inc()
-		return nil, api.NewOperationFailedError("get node host info", &api.ComponentNotInitializedError{Component: "node host"})
+		nodeInfo = &interfaces.NodeHostInfo{}
 	}
 
 	backup.Metadata.NumShards = len(nodeInfo.ShardInfoList)
@@ -367,9 +376,14 @@ func (m *BackupManager) CreateBackup(ctx context.Context, backupType BackupType)
 
 // createShardSnapshot creates a snapshot for a single shard.
 func (m *BackupManager) createShardSnapshot(ctx context.Context, shardID uint64) (*ShardSnapshot, error) {
-	// Get the current Raft state (index and term) for this shard
-	// This provides a consistency reference point for the backup
-	raftIndex, raftTerm, err := m.raft.GetShardRaftState(shardID)
+	// Get the current Raft state (index and term) for this shard.
+	// When raft is nil (qrdb node path) or the call fails, fall back
+	// to zero values — the backup is still valid without Raft metadata.
+	var raftIndex, raftTerm uint64
+	var err error
+	if m.raft != nil {
+		raftIndex, raftTerm, err = m.raft.GetShardRaftState(shardID)
+	}
 	if err != nil {
 		// Log warning but continue - we can still create the backup with zero values
 		m.logger.WithFields(map[string]interface{}{

@@ -5,6 +5,11 @@ services:
   quicbaas:
     build:
       context: ../../../..
+      additional_contexts:
+        # ~/sources — parent dir containing all sibling repos. The
+        # Dockerfile.dev workspace build stage pulls go-qrdb, go-xkms, etc.
+        # from this named context (5 levels up from this compose file).
+        workspace: ../../../../..
       dockerfile: test/integration/Dockerfile.dev
       args:
         BUILD_TAGS: "iam raft rest rag"
@@ -33,7 +38,10 @@ services:
       - QUICBAAS_KMS_ENABLED=true
       - QUICBAAS_KMS_BACKEND=software
       - QUICBAAS_SECRETS_ENABLED=true
-      - QUICBAAS_SECURITY_INSECURE=true
+      # The SDK suite talks plain HTTP/gRPC (http://localhost:58080, nc TCP
+      # checks). Disable TLS so the REST/gRPC listeners serve cleartext;
+      # Security.TLSEnabled defaults to true otherwise.
+      - QUICBAAS_SECURITY_TLS_ENABLED=false
       - QUICBAAS_SERVER_MCP_ENABLED=false
     volumes:
       - quicbaas-data:/data

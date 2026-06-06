@@ -16,7 +16,6 @@ package grpc
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -168,27 +167,6 @@ func TestLoadServerTLSCredentials_Success(t *testing.T) {
 	assert.Equal(t, "tls", info.SecurityProtocol)
 }
 
-func TestLoadServerTLSCredentials_FIPSMode(t *testing.T) {
-	certFile, keyFile, _ := generateTestCertificates(t)
-
-	config := &TLSConfig{
-		Enabled:  true,
-		CertFile: certFile,
-		KeyFile:  keyFile,
-		FIPSMode: true,
-	}
-
-	creds, err := LoadServerTLSCredentials(config)
-	assert.NoError(t, err)
-	assert.NotNil(t, creds)
-
-	// In FIPS mode, TLS 1.3 should be enforced
-	// We can't directly inspect the TLS config from credentials,
-	// but we verified it's created successfully
-	info := creds.Info()
-	assert.Equal(t, "tls", info.SecurityProtocol)
-}
-
 func TestLoadServerTLSCredentials_ClientAuthMissingCA(t *testing.T) {
 	certFile, keyFile, _ := generateTestCertificates(t)
 
@@ -286,17 +264,6 @@ func TestLoadClientTLSCredentials_NoCA(t *testing.T) {
 	assert.NotNil(t, creds)
 }
 
-func TestLoadClientTLSCredentials_FIPSMode(t *testing.T) {
-	config := &TLSConfig{
-		Enabled:  true,
-		FIPSMode: true,
-	}
-
-	creds, err := LoadClientTLSCredentials(config)
-	assert.NoError(t, err)
-	assert.NotNil(t, creds)
-}
-
 func TestLoadClientTLSCredentials_InvalidCA(t *testing.T) {
 	config := &TLSConfig{
 		Enabled: true,
@@ -382,43 +349,4 @@ func TestTLSConfig_ErrorTypes(t *testing.T) {
 	require.True(t, ok, "error should be QBError type")
 	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 	assert.Equal(t, "grpc.LoadServerTLSCredentials", qbErr.Op)
-}
-
-func TestTLSMinVersions(t *testing.T) {
-	certFile, keyFile, _ := generateTestCertificates(t)
-
-	tests := []struct {
-		name         string
-		fipsMode     bool
-		expectedMin  uint16
-		expectedName string
-	}{
-		{
-			name:         "Standard TLS 1.3",
-			fipsMode:     false,
-			expectedMin:  tls.VersionTLS13,
-			expectedName: "TLS 1.3",
-		},
-		{
-			name:         "FIPS TLS 1.3",
-			fipsMode:     true,
-			expectedMin:  tls.VersionTLS13,
-			expectedName: "TLS 1.3",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &TLSConfig{
-				Enabled:  true,
-				CertFile: certFile,
-				KeyFile:  keyFile,
-				FIPSMode: tt.fipsMode,
-			}
-
-			creds, err := LoadServerTLSCredentials(config)
-			assert.NoError(t, err)
-			assert.NotNil(t, creds)
-		})
-	}
 }

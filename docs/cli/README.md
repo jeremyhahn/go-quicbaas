@@ -44,10 +44,16 @@ quicbaas data delete user john --yes
 
 | Command | Description | Documentation |
 |---------|-------------|---------------|
-| [auth](auth.md) | Authentication (login, logout, status) | Session management, token handling |
+| [auth](auth.md) | Authentication + N-factor management | Passwordless login, factor list/add/remove/rotate/relabel |
+| [barrier](barrier.md) | Cryptographic barrier management (canonical) | status / init / init-shamir / unseal / unseal-shares / seal / rekey |
+| [ceremony](ceremony.md) | Initialisation ceremony state machine | status / claim-cert / claim-share / sign-csr / enroll-external-officer |
+| [bootstrap](bootstrap.md) | Trust-bootstrap the CA bundle | auto / dane / noise / spki / direct |
+| [ca](ca.md) | Certificate Authority operations | info / bundle / list / issue / revoke / export-bundle |
+| [credential](credential.md) | Named credential service (versioned rotation) | submit / list / rotate / retrieve / versions / delete / gc |
+| [init](init.md) | `quicbaasd init` daemon-side ceremony | First-boot bootstrap with persisted state |
+| [seal](seal.md) | _Deprecated alias_ — forwards to `barrier` | Migration guide only |
 | [user](user.md) | User management | Create, delete, list, update users |
 | [role](role.md) | RBAC role management | Roles, permissions, assignments |
-| [seal](seal.md) | Seal/unseal operations | Shamir's Secret Sharing |
 
 ### Cryptography & Secrets
 

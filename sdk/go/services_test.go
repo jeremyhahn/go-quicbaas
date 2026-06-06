@@ -144,8 +144,16 @@ func TestSecurityService_DelegatesToClient(t *testing.T) {
 	svc := c.Security()
 
 	t.Run("Auth", func(t *testing.T) {
-		if svc.Auth() != c.Auth() {
-			t.Error("Security().Auth() should delegate to client.Auth()")
+		// Security().Auth() returns the extended AuthService (embeds
+		// AuthClient + adds FIDO2/WebAuthn/PIV/Factors sub-services).
+		// It does not return the same instance as c.Auth() (the
+		// narrower AuthClient): the extended service is constructed
+		// lazily by securityService and wraps the client. The
+		// contract is that the extended surface satisfies AuthClient,
+		// which the type system enforces via interface embedding —
+		// here we just assert non-nil construction.
+		if svc.Auth() == nil {
+			t.Error("Security().Auth() must return a non-nil AuthService")
 		}
 	})
 
@@ -176,12 +184,6 @@ func TestSecurityService_DelegatesToClient(t *testing.T) {
 	t.Run("Certificate", func(t *testing.T) {
 		if svc.Certificate() != c.Certificate() {
 			t.Error("Security().Certificate() should delegate to client.Certificate()")
-		}
-	})
-
-	t.Run("ClusterDEK", func(t *testing.T) {
-		if svc.ClusterDEK() != c.ClusterDEK() {
-			t.Error("Security().ClusterDEK() should delegate to client.ClusterDEK()")
 		}
 	})
 
@@ -394,9 +396,6 @@ func TestBackwardCompatibility_DirectAccessors(t *testing.T) {
 	}
 	if c.Certificate() == nil {
 		t.Error("Certificate() should return non-nil client")
-	}
-	if c.ClusterDEK() == nil {
-		t.Error("ClusterDEK() should return non-nil client")
 	}
 	if c.ObjectStorage() == nil {
 		t.Error("ObjectStorage() should return non-nil client")

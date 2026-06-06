@@ -153,20 +153,22 @@ func createSchedulerQUICClientFactory() (SchedulerClient, error) {
 		quic.WithMaxIdleTimeout(5 * time.Minute),
 	}
 
-	// TLS is required for QUIC connections
-	if !tlsEnabled && !tlsSkipVerify {
+	// QUIC always uses TLS — QuicBaaS bans insecure TLS so the operator must
+	// supply a CA via --tls-ca (or set --tls-cert/--tls-key for mTLS).
+	tlsCfg, tlsErr := buildTLSConfig()
+	if tlsErr != nil {
+		return nil, tlsErr
+	}
+	if tlsCfg == nil {
 		return nil, errors.Newf(
 			errors.ErrConfiguration,
 			"createSchedulerQUICClientFactory",
-			"TLS is required for QUIC connections",
+			"TLS configuration is required for QUIC connections (use --tls-ca)",
 		)
 	}
-
-	if tlsSkipVerify {
-		opts = append(opts, quic.WithTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // G402: user explicitly requested --tls-skip-verify
-			MinVersion:         tls.VersionTLS13,
-		}))
+	if tlsCfg != nil {
+		tlsCfg.MinVersion = tls.VersionTLS13
+		opts = append(opts, quic.WithTLSConfig(tlsCfg))
 	}
 
 	// Create QUIC client

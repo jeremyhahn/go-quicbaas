@@ -1,0 +1,183 @@
+// QuicBaaS Ceremony Protocol Buffer Definitions v1
+// M-of-N initialization ceremony exposed by the QuicBaaS daemon.
+//
+// QuicBaaS itself does not own the ceremony; the embedded go-qrdb
+// instance does. These RPCs are a thin gRPC facade that QuicBaaS exposes
+// so that gRPC-only clients connecting to the QuicBaaS endpoint can drive
+// ceremony operations against the composed stack. The shape mirrors the
+// REST surface served from /api/v1/init and the underlying go-qrdb
+// Ceremony gRPC service.
+//
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+
+syntax = "proto3";
+
+package quicbaas.ceremony.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// Ceremony Service
+// =============================================================================
+
+// Ceremony exposes the M-of-N initialization ceremony lifecycle through
+// gRPC. All RPCs delegate to the embedded go-qrdb CeremonyClient at the
+// QuicBaaS service-layer facade.
+service Ceremony {
+  // CeremonyInitialize starts the initialization ceremony, issuing the CA,
+  // server TLS certificate, optional SO certificate, and Shamir shares for
+  // the supplied officers.
+  rpc CeremonyInitialize(CeremonyInitializeRequest) returns (CeremonyInitializeResponse);
+
+  // CeremonyStatus reports the current ceremony state and SPKI pin.
+  rpc CeremonyStatus(google.protobuf.Empty) returns (CeremonyStatusResponse);
+
+  // CeremonyClaimCertBegin starts a certificate-claim challenge for an
+  // officer and returns the challenge nonce.
+  rpc CeremonyClaimCertBegin(CeremonyClaimCertBeginRequest) returns (CeremonyClaimCertBeginResponse);
+
+  // CeremonyClaimCertComplete completes a certificate claim by submitting
+  // the signed nonce. Returns the issued officer certificate and the CA
+  // chain. The signature is base64-encoded to match the REST contract.
+  rpc CeremonyClaimCertComplete(CeremonyClaimCertCompleteRequest) returns (CeremonyClaimCertCompleteResponse);
+
+  // CeremonyClaimShare retrieves the Shamir share for the named officer.
+  rpc CeremonyClaimShare(CeremonyClaimShareRequest) returns (CeremonyClaimShareResponse);
+
+  // CeremonySignCSR submits a CSR for signing during the ceremony.
+  rpc CeremonySignCSR(CeremonySignCSRRequest) returns (CeremonySignCSRResponse);
+
+  // CeremonyListOfficers returns the registry of officers currently
+  // enrolled in the ceremony.
+  rpc CeremonyListOfficers(google.protobuf.Empty) returns (CeremonyListOfficersResponse);
+
+  // CeremonyEnrollExternalOfficer enrols an officer whose key material
+  // lives outside the daemon. Exactly one of cert_pem or pubkey_pem MUST
+  // be supplied.
+  rpc CeremonyEnrollExternalOfficer(CeremonyEnrollExternalOfficerRequest) returns (CeremonyEnrollExternalOfficerResponse);
+}
+
+// =============================================================================
+// Messages
+// =============================================================================
+
+// CeremonyOfficer describes a single officer for M-of-N initialization.
+message CeremonyOfficer {
+  string username = 1;
+  string csr_pem = 2;
+}
+
+// CeremonyInitializeRequest starts the initialization ceremony.
+message CeremonyInitializeRequest {
+  string so_pin = 1;
+  string user_pin = 2;
+  // credential_seal_strategy selects how the SO/User credentials are
+  // sealed. Empty selects the daemon default.
+  string credential_seal_strategy = 3;
+  int32 threshold = 4;
+  repeated CeremonyOfficer officers = 5;
+  string hostname = 6;
+  repeated string sans = 7;
+}
+
+// CeremonyInitializeResponse returns the result of ceremony initialization.
+message CeremonyInitializeResponse {
+  string spki_pin = 1;
+  string ca_cert_pem = 2;
+  string tls_cert_pem = 3;
+  string so_cert_pem = 4;
+  string so_key_pem = 5;
+  string state = 6;
+  int32 share_count = 7;
+}
+
+// CeremonyStatusResponse describes the current ceremony state.
+message CeremonyStatusResponse {
+  string state = 1;
+  string spki_pin = 2;
+}
+
+// CeremonyClaimCertBeginRequest starts a certificate claim challenge.
+message CeremonyClaimCertBeginRequest {
+  string username = 1;
+}
+
+// CeremonyClaimCertBeginResponse returns the challenge nonce.
+message CeremonyClaimCertBeginResponse {
+  string nonce_hex = 1;
+  // expires_at is RFC3339 (UTC) or empty when not supplied.
+  string expires_at = 2;
+}
+
+// CeremonyClaimCertCompleteRequest completes a certificate claim.
+message CeremonyClaimCertCompleteRequest {
+  string username = 1;
+  string nonce_hex = 2;
+  // signature is base64-encoded to match the REST contract.
+  string signature = 3;
+}
+
+// CeremonyClaimCertCompleteResponse returns the issued certificate and the
+// CA chain.
+message CeremonyClaimCertCompleteResponse {
+  string cert_pem = 1;
+  string ca_cert_pem = 2;
+}
+
+// CeremonyClaimShareRequest requests the Shamir share for an officer.
+message CeremonyClaimShareRequest {
+  string username = 1;
+}
+
+// CeremonyClaimShareResponse returns the officer's Shamir share.
+message CeremonyClaimShareResponse {
+  string share = 1;
+}
+
+// CeremonySignCSRRequest submits a CSR for signing during the ceremony.
+message CeremonySignCSRRequest {
+  string username = 1;
+  string so_pin = 2;
+  string csr_pem = 3;
+  string role = 4;
+}
+
+// CeremonySignCSRResponse returns the signed certificate.
+message CeremonySignCSRResponse {
+  string cert_pem = 1;
+}
+
+// CeremonyListOfficersResponse returns the persisted officer roster. The
+// list may be empty when no officers have been enrolled yet.
+message CeremonyListOfficersResponse {
+  repeated CeremonyOfficerInfo officers = 1;
+}
+
+// CeremonyOfficerInfo describes a single enrolled officer. Fields beyond
+// the username may be empty when the underlying registry does not yet
+// surface them.
+message CeremonyOfficerInfo {
+  string username = 1;
+  string auth_factor = 2;
+  int32 share_index = 3;
+}
+
+// CeremonyEnrollExternalOfficerRequest requests enrolment of an officer
+// whose key material lives outside the daemon.
+message CeremonyEnrollExternalOfficerRequest {
+  string username = 1;
+  string cert_pem = 2;
+  string pubkey_pem = 3;
+  int32 share_index = 4;
+  string auth_factor = 5;
+  bytes share_bytes = 6;
+}
+
+// CeremonyEnrollExternalOfficerResponse returns the sealed share envelope.
+// Empty when no share material was supplied (trust-record-only enrolment).
+message CeremonyEnrollExternalOfficerResponse {
+  string sealed_share = 1;
+}

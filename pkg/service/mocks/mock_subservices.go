@@ -45,6 +45,7 @@ type MockKMSService struct {
 	ListKeyVersionsFunc         func(ctx context.Context, req *service.ListKeyVersionsRequest) (*service.ListKeyVersionsResponse, error)
 	SetKeyPolicyFunc            func(ctx context.Context, req *service.SetKeyPolicyRequest) (*service.SetKeyPolicyResponse, error)
 	GetKeyPolicyFunc            func(ctx context.Context, req *service.GetKeyPolicyRequest) (*service.GetKeyPolicyResponse, error)
+	DeleteKeyPolicyFunc         func(ctx context.Context, req *service.DeleteKeyPolicyRequest) (*service.DeleteKeyPolicyResponse, error)
 	CreateDEKFunc               func(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error)
 	GetDEKFunc                  func(ctx context.Context, req *service.GetDEKRequest) (*service.GetDEKResponse, error)
 	ListDEKsFunc                func(ctx context.Context, req *service.ListDEKsRequest) (*service.ListDEKsResponse, error)
@@ -65,6 +66,9 @@ type MockKMSService struct {
 	SafetyCheckFunc             func(ctx context.Context, req *service.SafetyCheckRequest) (*service.SafetyCheckResponse, error)
 	SafetyReportFunc            func(ctx context.Context, req *service.SafetyReportRequest) (*service.SafetyReportResponse, error)
 	SetDefaultKeyFunc           func(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error)
+	SetKeyRotationPolicyFunc    func(ctx context.Context, req *service.SetKeyRotationPolicyRequest) (*service.SetKeyRotationPolicyResponse, error)
+	GetKeyRotationPolicyFunc    func(ctx context.Context, req *service.GetKeyRotationPolicyRequest) (*service.GetKeyRotationPolicyResponse, error)
+	DeleteKeyRotationPolicyFunc func(ctx context.Context, req *service.DeleteKeyRotationPolicyRequest) (*service.DeleteKeyRotationPolicyResponse, error)
 }
 
 var _ service.KMSService = (*MockKMSService)(nil)
@@ -172,6 +176,34 @@ func (m *MockKMSService) GetKeyPolicy(ctx context.Context, req *service.GetKeyPo
 		return m.GetKeyPolicyFunc(ctx, req)
 	}
 	return &service.GetKeyPolicyResponse{}, nil
+}
+
+func (m *MockKMSService) DeleteKeyPolicy(ctx context.Context, req *service.DeleteKeyPolicyRequest) (*service.DeleteKeyPolicyResponse, error) {
+	if m.DeleteKeyPolicyFunc != nil {
+		return m.DeleteKeyPolicyFunc(ctx, req)
+	}
+	return &service.DeleteKeyPolicyResponse{}, nil
+}
+
+func (m *MockKMSService) SetKeyRotationPolicy(ctx context.Context, req *service.SetKeyRotationPolicyRequest) (*service.SetKeyRotationPolicyResponse, error) {
+	if m.SetKeyRotationPolicyFunc != nil {
+		return m.SetKeyRotationPolicyFunc(ctx, req)
+	}
+	return &service.SetKeyRotationPolicyResponse{}, nil
+}
+
+func (m *MockKMSService) GetKeyRotationPolicy(ctx context.Context, req *service.GetKeyRotationPolicyRequest) (*service.GetKeyRotationPolicyResponse, error) {
+	if m.GetKeyRotationPolicyFunc != nil {
+		return m.GetKeyRotationPolicyFunc(ctx, req)
+	}
+	return &service.GetKeyRotationPolicyResponse{}, nil
+}
+
+func (m *MockKMSService) DeleteKeyRotationPolicy(ctx context.Context, req *service.DeleteKeyRotationPolicyRequest) (*service.DeleteKeyRotationPolicyResponse, error) {
+	if m.DeleteKeyRotationPolicyFunc != nil {
+		return m.DeleteKeyRotationPolicyFunc(ctx, req)
+	}
+	return &service.DeleteKeyRotationPolicyResponse{}, nil
 }
 
 func (m *MockKMSService) CreateDEK(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error) {
@@ -1107,6 +1139,8 @@ type MockCertificateService struct {
 	GetCABundleFunc       func(ctx context.Context, req *service.GetCABundleRequest) (*service.GetCABundleResponse, error)
 	GenerateCRLFunc       func(ctx context.Context, req *service.GenerateCRLRequest) (*service.GenerateCRLResponse, error)
 	IsRevokedFunc         func(ctx context.Context, req *service.IsRevokedRequest) (*service.IsRevokedResponse, error)
+	CAInfoFunc            func(ctx context.Context, req *service.CAInfoRequest) (*service.CAInfoResponse, error)
+	ListCertificatesFunc  func(ctx context.Context, req *service.ListCertificatesRequest) (*service.ListCertificatesResponse, error)
 }
 
 var _ service.CertificateService = (*MockCertificateService)(nil)
@@ -1188,6 +1222,20 @@ func (m *MockCertificateService) IsRevoked(ctx context.Context, req *service.IsR
 	return &service.IsRevokedResponse{}, nil
 }
 
+func (m *MockCertificateService) CAInfo(ctx context.Context, req *service.CAInfoRequest) (*service.CAInfoResponse, error) {
+	if m.CAInfoFunc != nil {
+		return m.CAInfoFunc(ctx, req)
+	}
+	return &service.CAInfoResponse{}, nil
+}
+
+func (m *MockCertificateService) ListCertificates(ctx context.Context, req *service.ListCertificatesRequest) (*service.ListCertificatesResponse, error) {
+	if m.ListCertificatesFunc != nil {
+		return m.ListCertificatesFunc(ctx, req)
+	}
+	return &service.ListCertificatesResponse{}, nil
+}
+
 // =============================================================================
 // MockDynamicSecretsService
 // =============================================================================
@@ -1260,88 +1308,6 @@ func (m *MockDynamicSecretsService) ListLeases(ctx context.Context, req *service
 		return m.ListLeasesFunc(ctx, req)
 	}
 	return &service.ListLeasesResponse{}, nil
-}
-
-// =============================================================================
-// MockClusterDEKService
-// =============================================================================
-
-// MockClusterDEKService is a mock implementation of service.ClusterDEKService.
-type MockClusterDEKService struct {
-	InitializeClusterDEKFunc  func(ctx context.Context, req *service.InitClusterDEKRequest) (*service.InitClusterDEKResponse, error)
-	GetClusterDEKStatusFunc   func(ctx context.Context) (*service.ClusterDEKStatusResponse, error)
-	RotateClusterDEKFunc      func(ctx context.Context, req *service.RotateClusterDEKRequest) (*service.RotateClusterDEKResponse, error)
-	SyncNodeDEKFunc           func(ctx context.Context, req *service.SyncNodeDEKRequest) (*service.SyncNodeDEKResponse, error)
-	GetNodeDEKStatusFunc      func(ctx context.Context, req *service.GetNodeDEKStatusRequest) (*service.GetNodeDEKStatusResponse, error)
-	StartReencryptionFunc     func(ctx context.Context, req *service.StartReencryptionRequest) (*service.StartReencryptionResponse, error)
-	GetReencryptionStatusFunc func(ctx context.Context) (*service.ReencryptionStatusResponse, error)
-	CancelReencryptionFunc    func(ctx context.Context) error
-	RecoverDEKFunc            func(ctx context.Context, req *service.RecoverDEKRequest) (*service.RecoverDEKResponse, error)
-}
-
-var _ service.ClusterDEKService = (*MockClusterDEKService)(nil)
-
-func (m *MockClusterDEKService) InitializeClusterDEK(ctx context.Context, req *service.InitClusterDEKRequest) (*service.InitClusterDEKResponse, error) {
-	if m.InitializeClusterDEKFunc != nil {
-		return m.InitializeClusterDEKFunc(ctx, req)
-	}
-	return &service.InitClusterDEKResponse{Version: 1, CreatedAt: time.Now()}, nil
-}
-
-func (m *MockClusterDEKService) GetClusterDEKStatus(ctx context.Context) (*service.ClusterDEKStatusResponse, error) {
-	if m.GetClusterDEKStatusFunc != nil {
-		return m.GetClusterDEKStatusFunc(ctx)
-	}
-	return &service.ClusterDEKStatusResponse{Initialized: true, CurrentVersion: 1}, nil
-}
-
-func (m *MockClusterDEKService) RotateClusterDEK(ctx context.Context, req *service.RotateClusterDEKRequest) (*service.RotateClusterDEKResponse, error) {
-	if m.RotateClusterDEKFunc != nil {
-		return m.RotateClusterDEKFunc(ctx, req)
-	}
-	return &service.RotateClusterDEKResponse{NewVersion: 2, OldVersion: 1, RotatedAt: time.Now()}, nil
-}
-
-func (m *MockClusterDEKService) SyncNodeDEK(ctx context.Context, req *service.SyncNodeDEKRequest) (*service.SyncNodeDEKResponse, error) {
-	if m.SyncNodeDEKFunc != nil {
-		return m.SyncNodeDEKFunc(ctx, req)
-	}
-	return &service.SyncNodeDEKResponse{NodeID: req.NodeID, SyncedAt: time.Now()}, nil
-}
-
-func (m *MockClusterDEKService) GetNodeDEKStatus(ctx context.Context, req *service.GetNodeDEKStatusRequest) (*service.GetNodeDEKStatusResponse, error) {
-	if m.GetNodeDEKStatusFunc != nil {
-		return m.GetNodeDEKStatusFunc(ctx, req)
-	}
-	return &service.GetNodeDEKStatusResponse{NodeID: req.NodeID, Status: service.NodeDEKSynced}, nil
-}
-
-func (m *MockClusterDEKService) StartReencryption(ctx context.Context, req *service.StartReencryptionRequest) (*service.StartReencryptionResponse, error) {
-	if m.StartReencryptionFunc != nil {
-		return m.StartReencryptionFunc(ctx, req)
-	}
-	return &service.StartReencryptionResponse{Started: true, Timestamp: time.Now()}, nil
-}
-
-func (m *MockClusterDEKService) GetReencryptionStatus(ctx context.Context) (*service.ReencryptionStatusResponse, error) {
-	if m.GetReencryptionStatusFunc != nil {
-		return m.GetReencryptionStatusFunc(ctx)
-	}
-	return &service.ReencryptionStatusResponse{State: service.ReencryptionCompleted}, nil
-}
-
-func (m *MockClusterDEKService) CancelReencryption(ctx context.Context) error {
-	if m.CancelReencryptionFunc != nil {
-		return m.CancelReencryptionFunc(ctx)
-	}
-	return nil
-}
-
-func (m *MockClusterDEKService) RecoverDEK(ctx context.Context, req *service.RecoverDEKRequest) (*service.RecoverDEKResponse, error) {
-	if m.RecoverDEKFunc != nil {
-		return m.RecoverDEKFunc(ctx, req)
-	}
-	return &service.RecoverDEKResponse{Success: true, RecoveredAt: time.Now()}, nil
 }
 
 // =============================================================================
@@ -1726,15 +1692,15 @@ func (m *MockObjectTransferService) StreamFetchObjects(ctx context.Context, req 
 
 // MockProjectService is a mock implementation of service.ProjectService.
 type MockProjectService struct {
-	CreateProjectFunc       func(ctx context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error)
-	GetProjectFunc          func(ctx context.Context, req *service.GetProjectRequest) (*service.GetProjectResponse, error)
-	GetProjectByNameFunc    func(ctx context.Context, req *service.GetProjectByNameRequest) (*service.GetProjectResponse, error)
-	UpdateProjectFunc       func(ctx context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error)
-	DeleteProjectFunc       func(ctx context.Context, req *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error)
-	ListProjectsFunc        func(ctx context.Context, req *service.ListProjectsRequest) (*service.ListProjectsResponse, error)
-	AuthorizeAgentFunc      func(ctx context.Context, req *service.AuthorizeAgentRequest) error
-	GrantAgentRoleFunc      func(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error)
-	RevokeAgentRoleFunc     func(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error)
+	CreateProjectFunc    func(ctx context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error)
+	GetProjectFunc       func(ctx context.Context, req *service.GetProjectRequest) (*service.GetProjectResponse, error)
+	GetProjectByNameFunc func(ctx context.Context, req *service.GetProjectByNameRequest) (*service.GetProjectResponse, error)
+	UpdateProjectFunc    func(ctx context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error)
+	DeleteProjectFunc    func(ctx context.Context, req *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error)
+	ListProjectsFunc     func(ctx context.Context, req *service.ListProjectsRequest) (*service.ListProjectsResponse, error)
+	AuthorizeAgentFunc   func(ctx context.Context, req *service.AuthorizeAgentRequest) error
+	GrantAgentRoleFunc   func(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error)
+	RevokeAgentRoleFunc  func(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error)
 }
 
 var _ service.ProjectService = (*MockProjectService)(nil)

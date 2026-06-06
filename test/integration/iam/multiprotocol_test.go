@@ -19,11 +19,9 @@ package iam_test
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -381,8 +379,12 @@ func NewGRPCClient(endpoint string) (*GRPCClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
 	conn, err := grpc.DialContext(ctx, endpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -954,8 +956,12 @@ func NewUnixSocketClient(socketPath string) (*UnixSocketClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
 	conn, err := grpc.DialContext(ctx, "unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -992,19 +998,9 @@ type MCPClient struct {
 // NewMCPClient creates a new MCP protocol client.
 func NewMCPClient(endpoint string) (*MCPClient, error) {
 	return &MCPClient{
-		endpoint: endpoint,
-		protocol: ProtocolMCP,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
+		endpoint:   endpoint,
+		protocol:   ProtocolMCP,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
 	}, nil
 }
 
@@ -1096,7 +1092,6 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 	c.authenticated.Store(true)
 	return nil
 }
-
 
 // sendRPC sends a JSON-RPC request to the MCP endpoint.
 func (c *MCPClient) sendRPC(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
@@ -1606,13 +1601,15 @@ type QUICClient struct {
 
 // NewQUICClient creates a new QUIC protocol client.
 func NewQUICClient(endpoint string) (*QUICClient, error) {
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
+	tlsCfg.NextProtos = []string{"quicbaas-quic"}
 	cfg := &transport.Config{
-		Address: endpoint,
-		Timeout: 30 * time.Second,
-		TLSConfig: &tls.Config{
-			InsecureSkipVerify: true, // For test environment only
-			MinVersion:         tls.VersionTLS13,
-		},
+		Address:         endpoint,
+		Timeout:         30 * time.Second,
+		TLSConfig:       tlsCfg,
 		MaxRetries:      3,
 		RetryBackoff:    100 * time.Millisecond,
 		MaxRetryBackoff: 5 * time.Second,

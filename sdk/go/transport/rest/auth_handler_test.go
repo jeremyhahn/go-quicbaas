@@ -21,132 +21,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
-
-func TestAuthRESTHandler_Login(t *testing.T) {
-	// Create test server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify request
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST, got %s", r.Method)
-		}
-		if r.URL.Path != "/api/v1/auth/login" {
-			t.Errorf("expected /api/v1/auth/login, got %s", r.URL.Path)
-		}
-
-		// Decode request body
-		var req authLoginRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("failed to decode request: %v", err)
-		}
-		if req.Username != "testuser" {
-			t.Errorf("expected username 'testuser', got %s", req.Username)
-		}
-		// Password-based login was removed; the SDK now sends an empty password until
-		// WebAuthn/PIV credential evidence is wired through.
-		if req.Password != "" {
-			t.Errorf("expected empty password (login no longer carries it), got %s", req.Password)
-		}
-
-		// Send response
-		expiresAt := time.Now().Add(time.Hour)
-		resp := authLoginResponse{
-			AccessToken:  "access-token-123",
-			RefreshToken: "refresh-token-456",
-			TokenType:    "Bearer",
-			ExpiresIn:    3600,
-			ExpiresAt:    expiresAt.Format(time.RFC3339),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		err := json.NewEncoder(w).Encode(resp)
-		if err != nil {
-			t.Errorf("failed to encode response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	// Create transport
-	tr, err := New(&transport.Config{
-		Address: server.URL,
-	})
-	if err != nil {
-		t.Fatalf("failed to create transport: %v", err)
-	}
-	defer tr.Close()
-
-	// Make login request
-	ctx := context.Background()
-	result, err := tr.Request(ctx, "quicbaas.Auth", "Login", &service.ExtendedLoginRequest{
-		Username: "testuser",
-	})
-	if err != nil {
-		t.Fatalf("login failed: %v", err)
-	}
-
-	// Verify response
-	loginResp, ok := result.(*service.ExtendedLoginResponse)
-	if !ok {
-		t.Fatalf("expected *service.ExtendedLoginResponse, got %T", result)
-	}
-	if loginResp.AccessToken != "access-token-123" {
-		t.Errorf("expected access token 'access-token-123', got %s", loginResp.AccessToken)
-	}
-	if loginResp.RefreshToken != "refresh-token-456" {
-		t.Errorf("expected refresh token 'refresh-token-456', got %s", loginResp.RefreshToken)
-	}
-	if loginResp.TokenType != "Bearer" {
-		t.Errorf("expected token type 'Bearer', got %s", loginResp.TokenType)
-	}
-}
-
-func TestAuthRESTHandler_Login_WithMapRequest(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		expiresAt := time.Now().Add(time.Hour)
-		resp := authLoginResponse{
-			AccessToken:  "access-token-123",
-			RefreshToken: "refresh-token-456",
-			TokenType:    "Bearer",
-			ExpiresIn:    3600,
-			ExpiresAt:    expiresAt.Format(time.RFC3339),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		err := json.NewEncoder(w).Encode(resp)
-		if err != nil {
-			t.Errorf("failed to encode response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	tr, err := New(&transport.Config{
-		Address: server.URL,
-	})
-	if err != nil {
-		t.Fatalf("failed to create transport: %v", err)
-	}
-	defer tr.Close()
-
-	// Make login request with map type
-	ctx := context.Background()
-	result, err := tr.Request(ctx, "quicbaas.Auth", "Login", map[string]interface{}{
-		"username": "testuser",
-		"password": "testpass",
-	})
-	if err != nil {
-		t.Fatalf("login failed: %v", err)
-	}
-
-	loginResp, ok := result.(*service.ExtendedLoginResponse)
-	if !ok {
-		t.Fatalf("expected *service.ExtendedLoginResponse, got %T", result)
-	}
-	if loginResp.AccessToken != "access-token-123" {
-		t.Errorf("expected access token 'access-token-123', got %s", loginResp.AccessToken)
-	}
-}
 
 func TestAuthRESTHandler_Logout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -326,31 +204,42 @@ func TestAuthRESTHandler_ValidateToken(t *testing.T) {
 	}
 }
 
-func TestAuthRESTHandler_Login_Error(t *testing.T) {
+// TestAuthRESTHandler_Login_LegacyPasswordRetired asserts the legacy
+// username/password Login verb fails closed with a typed
+// PasswordLoginUnsupportedError and never reaches the network. The unified
+// login ceremony (BeginLogin/FinishLogin) is the canonical login.
+func TestAuthRESTHandler_Login_LegacyPasswordRetired(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, err := w.Write([]byte(`{"error": "invalid credentials", "code": "unauthorized"}`))
-		if err != nil {
-			t.Errorf("failed to write response: %v", err)
-		}
+		t.Errorf("legacy password Login must not reach the network; got request to %s", r.URL.Path)
 	}))
 	defer server.Close()
 
-	tr, err := New(&transport.Config{
-		Address: server.URL,
-	})
+	tr, err := New(&transport.Config{Address: server.URL})
 	if err != nil {
 		t.Fatalf("failed to create transport: %v", err)
 	}
 	defer tr.Close()
 
 	ctx := context.Background()
-	_, err = tr.Request(ctx, "quicbaas.Auth", "Login", &service.ExtendedLoginRequest{
-		Username: "testuser",
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid credentials")
+
+	cases := []struct {
+		name string
+		req  interface{}
+	}{
+		{"ExtendedLoginRequest", &service.ExtendedLoginRequest{Username: "testuser"}},
+		{"map with password", map[string]interface{}{"username": "u", "password": "secret"}},
+		{"nil request", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tr.Request(ctx, "quicbaas.Auth", "Login", tc.req)
+			if err == nil {
+				t.Fatal("expected PasswordLoginUnsupportedError, got nil")
+			}
+			if !errors.IsPasswordLoginUnsupported(err) {
+				t.Fatalf("expected PasswordLoginUnsupportedError, got %T: %v", err, err)
+			}
+		})
 	}
 }
 

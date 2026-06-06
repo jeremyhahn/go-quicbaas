@@ -59,7 +59,7 @@ func TestIsOllamaTool(t *testing.T) {
 		{"model info tool", "quicbaas_ollama_model_info", true},
 		{"health tool", "quicbaas_ollama_health", true},
 		{"unknown tool", "quicbaas_unknown", false},
-		{"vector tool", "quicbaas_vector_search_similar", false},
+		{"vector tool", "qrdb_vector_search_similar", false},
 		{"empty string", "", false},
 	}
 

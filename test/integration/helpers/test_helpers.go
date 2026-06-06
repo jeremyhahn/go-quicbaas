@@ -17,7 +17,6 @@ package helpers
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net/url"
 	"strings"
@@ -37,9 +36,14 @@ import (
 // SetupGRPCConnectionToEndpoint creates a gRPC connection to a specific endpoint.
 // Uses non-blocking dial with a 30-second timeout to prevent hanging tests.
 func SetupGRPCConnectionToEndpoint(t *testing.T, ctx context.Context, endpoint string) (*grpc.ClientConn, error) {
+	tlsCfg, err := IntegrationTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	// Create a connection with timeout - don't use WithBlock() as it can hang
 	conn, err := grpc.DialContext(ctx, endpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
@@ -96,8 +100,13 @@ func NewTestClient(serverURL string) *TestClient {
 		}
 	}
 
+	tlsCfg, err := IntegrationTLSConfig()
+	if err != nil {
+		panic(fmt.Sprintf("failed to load integration TLS config: %v", err))
+	}
+
 	// Create a real SDK client connection
-	client, err := quicbaas.NewClient(grpcAddr, quicbaas.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	client, err := quicbaas.NewClient(grpcAddr, quicbaas.WithTLSConfig(tlsCfg))
 	if err != nil {
 		panic(fmt.Sprintf("failed to create test client: %v", err))
 	}

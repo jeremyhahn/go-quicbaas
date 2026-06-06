@@ -1,183 +1,139 @@
-//go:build !integration
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
 
 package server
 
 import (
 	"context"
 	"errors"
-	"testing"
+	"fmt"
+	"sync/atomic"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
-	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
-// ---------------------------------------------------------------------------
-// StandaloneModeError
-// ---------------------------------------------------------------------------
+// errStandaloneMode is returned by the consensus, proposal, and cluster
+// mutation methods of the standaloneRaftNode test fixture.
+var errStandaloneMode = errors.New("operation unavailable in standalone mode")
 
-func TestStandaloneModeError_Format(t *testing.T) {
-	t.Run("formats error with operation name", func(t *testing.T) {
-		err := &StandaloneModeError{Operation: "propose"}
-		assert.Equal(t, "propose unavailable in standalone mode", err.Error())
-	})
+// standaloneRaftNode is a test fixture implementing interfaces.RaftNode for
+// standalone (non-clustered) mode. Identity and health methods return
+// configured values; all consensus/proposal/cluster operations return
+// errStandaloneMode. It exists only to supply lifecycle tests with a non-nil
+// RaftNode (production leaves Server.raftNode nil on the qrdb-node path).
+type standaloneRaftNode struct {
+	id      string
+	address string
+	closed  atomic.Bool
 }
 
-func TestNewStandaloneModeError_WrapsQBError(t *testing.T) {
-	t.Run("creates QBError with unavailable code", func(t *testing.T) {
-		err := newStandaloneModeError("test.op", "cluster mutation")
-		require.NotNil(t, err)
-		assert.Equal(t, dberrors.ErrUnavailable, err.Code)
-		assert.Equal(t, "test.op", err.Op)
-
-		var sme *StandaloneModeError
-		assert.True(t, errors.As(err, &sme))
-		assert.Equal(t, "cluster mutation", sme.Operation)
-	})
+// newStandaloneRaftNode creates a new standalone raft node with the given identity.
+func newStandaloneRaftNode(nodeID uint64, address string) *standaloneRaftNode {
+	return &standaloneRaftNode{
+		id:      fmt.Sprintf("standalone-%d", nodeID),
+		address: address,
+	}
 }
 
-// ---------------------------------------------------------------------------
-// standaloneRaftNode identity and health
-// ---------------------------------------------------------------------------
+// ID returns the unique host identifier string.
+func (n *standaloneRaftNode) ID() string { return n.id }
 
-func TestStandaloneRaftNode_Identity(t *testing.T) {
-	node := newStandaloneRaftNode(42, "127.0.0.1:9001")
+// RaftAddress returns the host's Raft network address.
+func (n *standaloneRaftNode) RaftAddress() string { return n.address }
 
-	t.Run("ID returns formatted identifier", func(t *testing.T) {
-		assert.Equal(t, "standalone-42", node.ID())
-	})
+// ShardCount returns zero since standalone mode has no Raft shards.
+func (n *standaloneRaftNode) ShardCount() int { return 0 }
 
-	t.Run("RaftAddress returns configured address", func(t *testing.T) {
-		assert.Equal(t, "127.0.0.1:9001", node.RaftAddress())
-	})
-
-	t.Run("ShardCount returns zero", func(t *testing.T) {
-		assert.Equal(t, 0, node.ShardCount())
-	})
-
-	t.Run("GetNodeHostInfo returns address", func(t *testing.T) {
-		info := node.GetNodeHostInfo(interfaces.NodeHostInfoOption{})
-		require.NotNil(t, info)
-		assert.Equal(t, "127.0.0.1:9001", info.RaftAddress)
-	})
+// GetNodeHostInfo returns an empty node host info snapshot.
+func (n *standaloneRaftNode) GetNodeHostInfo(_ interfaces.NodeHostInfoOption) *interfaces.NodeHostInfo {
+	return &interfaces.NodeHostInfo{RaftAddress: n.address}
 }
 
-func TestStandaloneRaftNode_HealthCheck(t *testing.T) {
-	node := newStandaloneRaftNode(1, "127.0.0.1:9001")
-
-	t.Run("returns healthy when open", func(t *testing.T) {
-		status := node.HealthCheck()
-		assert.Equal(t, "healthy", status.Status)
-		assert.True(t, status.DiskOK)
-		assert.Equal(t, 0, status.ShardCount)
-	})
-
-	t.Run("returns closed after Close", func(t *testing.T) {
-		require.NoError(t, node.Close())
-		status := node.HealthCheck()
-		assert.Equal(t, "closed", status.Status)
-	})
+// HealthCheck returns a healthy status for standalone mode.
+func (n *standaloneRaftNode) HealthCheck() *interfaces.HealthStatus {
+	status := "healthy"
+	if n.closed.Load() {
+		status = "closed"
+	}
+	return &interfaces.HealthStatus{Status: status, DiskOK: true, ShardCount: 0}
 }
 
-// ---------------------------------------------------------------------------
-// standaloneRaftNode no-op and error operations
-// ---------------------------------------------------------------------------
+// Drain is a no-op in standalone mode.
+func (n *standaloneRaftNode) Drain() error { return nil }
 
-func TestStandaloneRaftNode_Drain(t *testing.T) {
-	node := newStandaloneRaftNode(1, "addr")
+// IsDraining returns false since standalone mode does not support draining.
+func (n *standaloneRaftNode) IsDraining() bool { return false }
 
-	t.Run("Drain is no-op", func(t *testing.T) {
-		err := node.Drain()
-		require.NoError(t, err)
-	})
-
-	t.Run("IsDraining returns false", func(t *testing.T) {
-		assert.False(t, node.IsDraining())
-	})
+// SyncPropose returns an error since proposals require Raft consensus.
+func (n *standaloneRaftNode) SyncPropose(_ context.Context, _ uint64, _ []byte) (interfaces.Result, error) {
+	return interfaces.Result{}, errStandaloneMode
 }
 
-func TestStandaloneRaftNode_ConsensusErrors(t *testing.T) {
-	node := newStandaloneRaftNode(1, "addr")
-	ctx := context.Background()
-
-	t.Run("SyncPropose returns unavailable error", func(t *testing.T) {
-		_, err := node.SyncPropose(ctx, 1, []byte("data"))
-		require.Error(t, err)
-		var de *dberrors.QBError
-		assert.True(t, errors.As(err, &de))
-		assert.Equal(t, dberrors.ErrUnavailable, de.Code)
-	})
-
-	t.Run("ProposeWithMode returns unavailable error", func(t *testing.T) {
-		_, err := node.ProposeWithMode(ctx, 1, []byte("data"), interfaces.WriteModeSync)
-		require.Error(t, err)
-		var de *dberrors.QBError
-		assert.True(t, errors.As(err, &de))
-	})
-
-	t.Run("SyncRead returns unavailable error", func(t *testing.T) {
-		_, err := node.SyncRead(ctx, 1, nil)
-		require.Error(t, err)
-	})
-
-	t.Run("StaleRead returns unavailable error", func(t *testing.T) {
-		_, err := node.StaleRead(ctx, 1, nil)
-		require.Error(t, err)
-	})
-
-	t.Run("ReadWithConsistency returns unavailable error", func(t *testing.T) {
-		_, err := node.ReadWithConsistency(ctx, 1, nil, interfaces.ReadOptions{})
-		require.Error(t, err)
-	})
-
-	t.Run("GetLeaderID returns unavailable error", func(t *testing.T) {
-		_, _, err := node.GetLeaderID(1)
-		require.Error(t, err)
-	})
-
-	t.Run("GetShardRaftState returns unavailable error", func(t *testing.T) {
-		_, _, err := node.GetShardRaftState(1)
-		require.Error(t, err)
-	})
+// ProposeWithMode returns an error since proposals require Raft consensus.
+func (n *standaloneRaftNode) ProposeWithMode(_ context.Context, _ uint64, _ []byte, _ interfaces.WriteMode) (interfaces.Result, error) {
+	return interfaces.Result{}, errStandaloneMode
 }
 
-func TestStandaloneRaftNode_ClusterOps(t *testing.T) {
-	node := newStandaloneRaftNode(1, "addr")
-	ctx := context.Background()
-
-	t.Run("RequestAddNode returns unavailable error", func(t *testing.T) {
-		_, err := node.RequestAddNode(ctx, 1, 2, "addr", 0)
-		require.Error(t, err)
-	})
-
-	t.Run("RequestRemoveNode returns unavailable error", func(t *testing.T) {
-		_, err := node.RequestRemoveNode(ctx, 1, 2, 0)
-		require.Error(t, err)
-	})
-
-	t.Run("RequestSnapshot returns unavailable error", func(t *testing.T) {
-		_, err := node.RequestSnapshot(ctx, 1)
-		require.Error(t, err)
-	})
-
-	t.Run("StartShard returns unavailable error", func(t *testing.T) {
-		err := node.StartShard(nil, false, nil, interfaces.ShardConfig{})
-		require.Error(t, err)
-	})
-
-	t.Run("StopShard returns unavailable error", func(t *testing.T) {
-		err := node.StopShard(1)
-		require.Error(t, err)
-	})
+// SyncRead returns an error since linearizable reads require Raft consensus.
+func (n *standaloneRaftNode) SyncRead(_ context.Context, _ uint64, _ interface{}) (interface{}, error) {
+	return nil, errStandaloneMode
 }
 
-func TestStandaloneRaftNode_CloseIdempotent(t *testing.T) {
-	node := newStandaloneRaftNode(1, "addr")
+// StaleRead returns an error since stale reads require a local state machine.
+func (n *standaloneRaftNode) StaleRead(_ context.Context, _ uint64, _ interface{}) (interface{}, error) {
+	return nil, errStandaloneMode
+}
 
-	t.Run("close is idempotent", func(t *testing.T) {
-		require.NoError(t, node.Close())
-		require.NoError(t, node.Close())
-	})
+// ReadWithConsistency returns an error since reads require a state machine.
+func (n *standaloneRaftNode) ReadWithConsistency(_ context.Context, _ uint64, _ interface{}, _ interfaces.ReadOptions) (interface{}, error) {
+	return nil, errStandaloneMode
+}
+
+// GetLeaderID returns zero and false since there is no leader in standalone mode.
+func (n *standaloneRaftNode) GetLeaderID(_ uint64) (uint64, bool, error) {
+	return 0, false, errStandaloneMode
+}
+
+// GetShardRaftState returns an error since there are no shards in standalone mode.
+func (n *standaloneRaftNode) GetShardRaftState(_ uint64) (uint64, uint64, error) {
+	return 0, 0, errStandaloneMode
+}
+
+// RequestAddNode returns an error since cluster operations require Raft consensus.
+func (n *standaloneRaftNode) RequestAddNode(_ context.Context, _, _ uint64, _ string, _ uint64) (interfaces.RequestState, error) {
+	return nil, errStandaloneMode
+}
+
+// RequestRemoveNode returns an error since cluster operations require Raft consensus.
+func (n *standaloneRaftNode) RequestRemoveNode(_ context.Context, _, _ uint64, _ uint64) (interfaces.RequestState, error) {
+	return nil, errStandaloneMode
+}
+
+// RequestSnapshot returns an error since snapshots require Raft consensus.
+func (n *standaloneRaftNode) RequestSnapshot(_ context.Context, _ uint64) (interfaces.RequestState, error) {
+	return nil, errStandaloneMode
+}
+
+// StartShard returns an error since shard management requires Raft consensus.
+func (n *standaloneRaftNode) StartShard(_ map[uint64]string, _ bool, _ interfaces.CreateFunc, _ interfaces.ShardConfig) error {
+	return errStandaloneMode
+}
+
+// StopShard returns an error since shard management requires Raft consensus.
+func (n *standaloneRaftNode) StopShard(_ uint64) error { return errStandaloneMode }
+
+// Close marks the standalone raft node as closed.
+func (n *standaloneRaftNode) Close() error {
+	n.closed.Store(true)
+	return nil
 }

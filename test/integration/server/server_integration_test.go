@@ -18,11 +18,9 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -31,22 +29,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestServerHealthEndpoints tests all health check endpoints
 func TestServerHealthEndpoints(t *testing.T) {
 	baseURL := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	tests := []struct {
 		name           string
@@ -89,17 +79,7 @@ func TestServerHealthEndpoints(t *testing.T) {
 // TestServerRESTAPI tests REST API endpoints
 func TestServerRESTAPI(t *testing.T) {
 	baseURL := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	entityType := "rest_test"
 	entityID := time.Now().UnixNano()
@@ -160,17 +140,7 @@ func TestServerRESTAPI(t *testing.T) {
 // TestServerMetrics tests the Prometheus metrics endpoint
 func TestServerMetrics(t *testing.T) {
 	metricsURL := getMetricsEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	resp, err := client.Get(metricsURL)
 	require.NoError(t, err)
@@ -196,17 +166,7 @@ func TestServerMetrics(t *testing.T) {
 // The test validates the API is reachable and returns parseable JSON.
 func TestServerClusterStatus(t *testing.T) {
 	baseURL := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	resp, err := client.Get(baseURL + "/api/v1/cluster/status")
 	require.NoError(t, err)
@@ -227,17 +187,7 @@ func TestServerClusterStatus(t *testing.T) {
 // TestServerFullLifecycle tests complete CRUD lifecycle
 func TestServerFullLifecycle(t *testing.T) {
 	baseURL := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	entityType := "lifecycle_test"
 
@@ -347,16 +297,7 @@ func TestServerConcurrentOperations(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 
-			client := &http.Client{
-				Transport: &http.Transport{
-					TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-					TLSHandshakeTimeout: 10 * time.Second,
-					DialContext: (&net.Dialer{
-						Timeout:   10 * time.Second,
-						KeepAlive: 30 * time.Second,
-					}).DialContext,
-				},
-			}
+			client := helpers.NewHTTPClient(30 * time.Second)
 
 			data := map[string]interface{}{
 				"index": index,

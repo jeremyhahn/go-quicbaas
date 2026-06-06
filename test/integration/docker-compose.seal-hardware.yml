@@ -1,0 +1,95 @@
+# QuicBaaS Hardware-Seal Integration Test Environment
+#
+# A lightweight, self-contained harness for the hardware-backed barrier sealing
+# strategies (tpm2, pkcs11) that go-xkms supplies and quicbaas composes via the
+# build-tagged seal factories (pkg/server/seal_factory_<backend>.go).
+#
+# Unlike docker-compose.seal.yml (cloud emulators), this file brings up ONLY
+# the hardware emulators the tpm2 and pkcs11 seal strategies need plus a single
+# test runner that:
+#
+#   * builds quicbaasd WITH the hardware seal tags (tpm2 pkcs11 + CGO), and
+#   * spawns a fresh, per-test daemon configured with each hardware strategy
+#     pointed at the emulator, then drives the barrier init -> seal -> unseal
+#     round-trip through the CLI (see test/integration/seal/).
+#
+# Hardware emulators:
+#   * swtpm1   — Software TPM 2.0 emulator for the tpm2 strategy.
+#                Listens on TCP 2321 (command) and 2322 (control/platform).
+#                The tpm2 factory connects via simulator_host=swtpm1,
+#                simulator_port=2321.
+#   * softhsm  — SoftHSM2 PKCS#11 token for the pkcs11 strategy.
+#                The token is initialised by the test runner via softhsm2-util
+#                inside the runner container (no separate init container needed:
+#                the library + softhsm2-util are in the runner image).
+#
+# Compose project name is distinct (seal-hw) so this stack and the cloud-seal
+# stack (docker-compose.seal.yml, project name "seal") can coexist without port
+# or network collisions. The two stacks must NOT run concurrently to avoid OOM
+# during parallel multi-module Docker image builds.
+
+services:
+  # Software TPM 2.0 emulator for the tpm2 seal strategy.
+  # The tpm2 factory connects via TCP: simulator_host=swtpm1, simulator_port=2321.
+  swtpm1:
+    build:
+      context: ../..
+      dockerfile: test/integration/docker/swtpm/Dockerfile
+    hostname: swtpm1
+    networks:
+      - seal-hw-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
+    restart: on-failure
+
+  # Hardware-seal integration test runner.
+  # Builds quicbaasd WITH the hardware seal tags (tpm2 pkcs11 + CGO) baked into
+  # the image, then runs the tagged seal tests which spawn per-test daemons
+  # against the emulators above.
+  seal-hw-test:
+    build:
+      context: ../..
+      additional_contexts:
+        workspace: ../../..
+      dockerfile: test/integration/Dockerfile.seal-hardware
+      args:
+        # Both the seal factories + the seal tests are gated on these tags.
+        # pkcs11 requires CGO_ENABLED=1 (miekg/pkcs11 C binding).
+        SEAL_TAGS: "tpm2 pkcs11"
+        BUILD_TAGS: "${SEAL_HW_BUILD_TAGS:-local quic raft rest iam mcp hashicorpmetrics codec_json codec_yaml tpm2 pkcs11}"
+    hostname: seal-hw-test
+    user: "0:0"
+    mem_limit: 4g
+    memswap_limit: 4g
+    environment:
+      - QUICBAAS_TEST_MODE=integration
+      - INTEGRATION_TEST=1
+      - CGO_ENABLED=1
+      - QUICBAASD_BINARY=/usr/local/bin/quicbaasd
+      - QUICBAAS_BINARY=/usr/local/bin/quicbaas
+      # swtpm emulator address (tpm2_test.go).
+      - SWTPM_HOST=swtpm1
+      - SWTPM_PORT=2321
+      # SoftHSM2 library path (pkcs11_test.go); matches Dockerfile.seal-hardware.
+      - SOFTHSM2_LIB=/usr/local/lib/softhsm/libsofthsm2.so
+    networks:
+      - seal-hw-network
+    depends_on:
+      swtpm1:
+        condition: service_healthy
+    working_dir: /workspace/go-quicbaas
+    command: >
+      bash -c "
+        set -o pipefail;
+        rm -f go.sum sdk/go/go.sum;
+        echo 'Hardware seal integration tests — tags: integration tpm2 pkcs11 codec_json codec_yaml';
+        go test -v -p 1 -tags 'integration tpm2 pkcs11 codec_json codec_yaml' -timeout 20m ./test/integration/seal/...
+      "
+
+networks:
+  seal-hw-network:
+    driver: bridge

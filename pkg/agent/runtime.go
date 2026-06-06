@@ -15,13 +15,9 @@ package agent
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,15 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 )
-
-// persistedSessionMagic tags encrypted on-disk session records. The first
-// four bytes distinguish an encrypted blob from a plaintext JSON object,
-// so LoadPersistedSessions can refuse to decode plaintext as ciphertext
-// and vice versa. Value chosen to be non-JSON: first byte is not `{` or
-// ASCII whitespace.
-var persistedSessionMagic = []byte{0xA5, 'Q', 'B', 'S'}
 
 // Runtime is the daemon-side agent runtime. It wraps pkg/orchestration
 // backends and enforces policy + sandbox resolution before each spawn.
@@ -55,11 +43,11 @@ type Runtime struct {
 	containerRuntime orchestration.ContainerRuntime
 	logger           interfaces.Logger
 
-	// Session persistence + tenant DEK. dekManager may be nil on air-gapped
-	// deployments that lack a control plane DEK service; in that case sessions are
-	// persisted in plaintext. The workDir is the parent for <workDir>/sessions.
-	dekManager security.TenantDEKManager
-	workDir    string
+	// workDir is the parent for <workDir>/sessions. Session records are
+	// persisted as plaintext JSON; at-rest confidentiality is provided by
+	// qrdb's StorageBarrier. Tenants needing cryptographic isolation may
+	// configure a dedicated per-tenant barrier.
+	workDir string
 
 	// sessionTenants tracks {sessionID -> tenantID} so Close can decrement the
 	// ActiveSessions gauge against the same label series Spawn incremented.
@@ -90,14 +78,9 @@ type RuntimeConfig struct {
 	ImageRegistry    string
 	Logger           interfaces.Logger
 
-	// TenantDEKManager encrypts persisted session state at rest. When nil,
-	// PersistSession writes plaintext JSON with a one-time warning. Operators
-	// that care about at-rest confidentiality must always wire this in.
-	TenantDEKManager security.TenantDEKManager
-
 	// WorkDir is the daemon's working directory; session records are stored
 	// under <WorkDir>/sessions/. When empty, PersistSession and
-	// LoadPersistedSessions no-op.
+	// LoadPersistedSessions are no-ops.
 	WorkDir string
 
 	// EventForwarder is the optional component that ships session events to
@@ -124,7 +107,6 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 		imageRegistry:    cfg.ImageRegistry,
 		containerRuntime: cfg.ContainerRuntime,
 		logger:           cfg.Logger,
-		dekManager:       cfg.TenantDEKManager,
 		workDir:          cfg.WorkDir,
 		sessionTenants:   map[string]string{},
 		eventForwarder:   cfg.EventForwarder,
@@ -214,7 +196,7 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 	// Persist session state + increment metrics on success. Persistence
 	// errors are logged but not propagated: the backend has already claimed
 	// the session and returning an error here would orphan it.
-	if persistErr := r.persistSession(ctx, tenantID, backendName, sess); persistErr != nil {
+	if persistErr := r.persistSession(tenantID, backendName, sess); persistErr != nil {
 		r.logger.Warnf("agent runtime: persist session %s: %v", sess.ID, persistErr)
 	}
 	SpawnsTotal.WithLabelValues(tenantID, backendName, sandboxLabel(req.Sandboxed)).Inc()
@@ -487,10 +469,9 @@ func (r *Runtime) PrepareImages(ctx context.Context, autoPull bool) error {
 }
 
 // LoadPersistedSessions reads every session record under <workDir>/sessions
-// and returns the decrypted entries. Records that fail to decrypt (bad DEK,
-// corrupted ciphertext) are moved to "<name>.corrupt" and surfaced via
-// ErrPersistedSessionCorrupt so an operator can investigate; the scan
-// continues with the remaining records.
+// and returns the decoded entries. Records that cannot be decoded are moved to
+// "<name>.corrupt" and surfaced via PersistedSessionCorruptError so an
+// operator can investigate; the scan continues with the remaining records.
 func (r *Runtime) LoadPersistedSessions(ctx context.Context) ([]PersistedSession, error) {
 	if r.workDir == "" {
 		return nil, nil
@@ -510,11 +491,11 @@ func (r *Runtime) LoadPersistedSessions(ctx context.Context) ([]PersistedSession
 			continue
 		}
 		name := e.Name()
-		if !strings.HasSuffix(name, ".json.enc") && !strings.HasSuffix(name, ".json") {
+		if !strings.HasSuffix(name, ".json") {
 			continue
 		}
 		path := filepath.Join(dir, name)
-		sess, loadErr := r.loadSessionFile(ctx, path)
+		sess, loadErr := r.loadSessionFile(path)
 		if loadErr != nil {
 			corruptCount++
 			r.logger.Warnf("agent runtime: load session %q: %v; moving to .corrupt", path, loadErr)
@@ -560,9 +541,9 @@ func (r *Runtime) imageFor(backendName string) (string, bool) {
 }
 
 // persistSession serializes a PersistedSession and writes it to disk under
-// <workDir>/sessions/<session_id>.json[.enc]. Encryption via the tenant DEK
-// is applied when the DEK manager is non-nil and WorkDir is set.
-func (r *Runtime) persistSession(ctx context.Context, tenantID, backendName string, sess *orchestration.Session) error {
+// <workDir>/sessions/<session_id>.json. At-rest confidentiality is provided
+// by qrdb's StorageBarrier; no application-level encryption is applied here.
+func (r *Runtime) persistSession(tenantID, backendName string, sess *orchestration.Session) error {
 	if r.workDir == "" || sess == nil || sess.ID == "" {
 		return nil
 	}
@@ -584,39 +565,24 @@ func (r *Runtime) persistSession(ctx context.Context, tenantID, backendName stri
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return &PersistSessionIOError{Op: "mkdir", Path: dir, Err: err}
 	}
-	if r.dekManager == nil {
-		// Plaintext path — operators see the warning in logs once per session.
-		r.logger.Warnf("agent runtime: no tenant DEK configured; writing session %s in plaintext", sess.ID)
-		path := filepath.Join(dir, sess.ID+".json")
-		return writeAtomic(path, payload)
-	}
-	enc, encErr := r.encryptWithTenantDEK(ctx, tenantID, payload)
-	if encErr != nil {
-		return encErr
-	}
-	path := filepath.Join(dir, sess.ID+".json.enc")
-	return writeAtomic(path, enc)
+	path := filepath.Join(dir, sess.ID+".json")
+	return writeAtomic(path, payload)
 }
 
-// removePersistedSession deletes both plaintext and encrypted variants of
-// a persisted record, if present. Missing files are ignored.
+// removePersistedSession deletes the persisted record for a session.
+// Missing files are ignored.
 func (r *Runtime) removePersistedSession(sessionID string) {
 	if r.workDir == "" || sessionID == "" {
 		return
 	}
-	dir := filepath.Join(r.workDir, "sessions")
-	for _, suffix := range []string{".json.enc", ".json"} {
-		path := filepath.Join(dir, sessionID+suffix)
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			r.logger.Warnf("agent runtime: remove persisted session %q: %v", path, err)
-		}
+	path := filepath.Join(r.workDir, "sessions", sessionID+".json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		r.logger.Warnf("agent runtime: remove persisted session %q: %v", path, err)
 	}
 }
 
-// loadSessionFile decodes either an encrypted or plaintext session record.
-// The file's magic prefix selects the path — not the file extension — so
-// rename attacks cannot coerce plaintext parsing.
-func (r *Runtime) loadSessionFile(ctx context.Context, path string) (PersistedSession, error) {
+// loadSessionFile decodes a plaintext JSON session record.
+func (r *Runtime) loadSessionFile(path string) (PersistedSession, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return PersistedSession{}, &PersistSessionIOError{Op: "read", Path: path, Err: err}
@@ -624,96 +590,11 @@ func (r *Runtime) loadSessionFile(ctx context.Context, path string) (PersistedSe
 	if len(raw) == 0 {
 		return PersistedSession{}, &PersistSessionDecodeError{Path: path, Err: errors.New("empty file")}
 	}
-	if len(raw) >= len(persistedSessionMagic) && string(raw[:len(persistedSessionMagic)]) == string(persistedSessionMagic) {
-		if r.dekManager == nil {
-			return PersistedSession{}, &PersistSessionDecodeError{Path: path, Err: ErrPersistNoDEK}
-		}
-		// Peek at the tenant inside the header so we fetch the right DEK.
-		plaintext, decErr := r.decryptWithTenantDEK(ctx, raw)
-		if decErr != nil {
-			return PersistedSession{}, decErr
-		}
-		var rec PersistedSession
-		if uErr := json.Unmarshal(plaintext, &rec); uErr != nil {
-			return PersistedSession{}, &PersistSessionDecodeError{Path: path, Err: uErr}
-		}
-		return rec, nil
-	}
-	// Plaintext path.
 	var rec PersistedSession
 	if uErr := json.Unmarshal(raw, &rec); uErr != nil {
 		return PersistedSession{}, &PersistSessionDecodeError{Path: path, Err: uErr}
 	}
 	return rec, nil
-}
-
-// encryptWithTenantDEK produces an at-rest blob for the supplied plaintext.
-// Format: [magic:4][tenant_len:2 LE][tenant][nonce:12][ciphertext+tag]
-// AES-256-GCM is used with a key derived directly from the tenant DEK. The
-// tenant ID is stored in the header so decryption can re-fetch the DEK on
-// daemon restart without consulting external state.
-func (r *Runtime) encryptWithTenantDEK(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error) {
-	dek, err := r.dekManager.GetOrCreateTenantDEK(ctx, tenantID)
-	if err != nil {
-		return nil, &PersistSessionCryptoError{Op: "get-dek", Err: err}
-	}
-	block, blockErr := aes.NewCipher(dek)
-	if blockErr != nil {
-		return nil, &PersistSessionCryptoError{Op: "new-cipher", Err: blockErr}
-	}
-	gcm, gcmErr := cipher.NewGCM(block)
-	if gcmErr != nil {
-		return nil, &PersistSessionCryptoError{Op: "new-gcm", Err: gcmErr}
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, rErr := io.ReadFull(rand.Reader, nonce); rErr != nil {
-		return nil, &PersistSessionCryptoError{Op: "nonce", Err: rErr}
-	}
-	// Bind the tenant ID to the ciphertext via GCM additional data so swapping
-	// headers between tenants fails authentication.
-	tenantBytes := []byte(tenantID)
-	ciphertext := gcm.Seal(nil, nonce, plaintext, tenantBytes)
-
-	out := make([]byte, 0, len(persistedSessionMagic)+2+len(tenantBytes)+len(nonce)+len(ciphertext))
-	out = append(out, persistedSessionMagic...)
-	out = append(out, byte(len(tenantBytes)&0xFF), byte((len(tenantBytes)>>8)&0xFF))
-	out = append(out, tenantBytes...)
-	out = append(out, nonce...)
-	out = append(out, ciphertext...)
-	return out, nil
-}
-
-// decryptWithTenantDEK is the inverse of encryptWithTenantDEK.
-func (r *Runtime) decryptWithTenantDEK(ctx context.Context, blob []byte) ([]byte, error) {
-	const headerLen = 4 + 2
-	if len(blob) < headerLen {
-		return nil, &PersistSessionCryptoError{Op: "header", Err: ErrPersistInvalidFormat}
-	}
-	tenantLen := int(blob[4]) | int(blob[5])<<8
-	if len(blob) < headerLen+tenantLen+12 {
-		return nil, &PersistSessionCryptoError{Op: "header-len", Err: ErrPersistInvalidFormat}
-	}
-	tenantID := string(blob[headerLen : headerLen+tenantLen])
-	nonce := blob[headerLen+tenantLen : headerLen+tenantLen+12]
-	ciphertext := blob[headerLen+tenantLen+12:]
-
-	dek, err := r.dekManager.GetTenantDEK(ctx, tenantID)
-	if err != nil {
-		return nil, &PersistSessionCryptoError{Op: "get-dek", Err: err}
-	}
-	block, blockErr := aes.NewCipher(dek)
-	if blockErr != nil {
-		return nil, &PersistSessionCryptoError{Op: "new-cipher", Err: blockErr}
-	}
-	gcm, gcmErr := cipher.NewGCM(block)
-	if gcmErr != nil {
-		return nil, &PersistSessionCryptoError{Op: "new-gcm", Err: gcmErr}
-	}
-	plaintext, openErr := gcm.Open(nil, nonce, ciphertext, []byte(tenantID))
-	if openErr != nil {
-		return nil, &PersistSessionCryptoError{Op: "gcm-open", Err: openErr}
-	}
-	return plaintext, nil
 }
 
 // writeAtomic writes data to path via a rename from a sibling temp file so
@@ -787,14 +668,6 @@ var (
 	ErrRuntimeNoLogger       = errors.New("agent: runtime requires a logger")
 	ErrRuntimeUnknownBackend = errors.New("agent: unknown backend")
 	ErrRuntimeNoImage        = errors.New("agent: no container image mapped for backend")
-
-	// ErrPersistNoDEK indicates an encrypted session record was found but no
-	// TenantDEKManager is configured to decrypt it.
-	ErrPersistNoDEK = errors.New("agent: encrypted session record requires a tenant DEK manager")
-
-	// ErrPersistInvalidFormat indicates the encrypted record header is
-	// malformed or truncated.
-	ErrPersistInvalidFormat = errors.New("agent: persisted session format invalid")
 )
 
 // PersistSessionIOError wraps a filesystem failure during persistence.
@@ -839,20 +712,6 @@ func (e *PersistSessionDecodeError) Error() string {
 
 // Unwrap supports errors.Is/As traversal.
 func (e *PersistSessionDecodeError) Unwrap() error { return e.Err }
-
-// PersistSessionCryptoError wraps an AES-GCM or DEK-fetch failure.
-type PersistSessionCryptoError struct {
-	Op  string
-	Err error
-}
-
-// Error implements the error interface.
-func (e *PersistSessionCryptoError) Error() string {
-	return "agent: persist session crypto " + e.Op + ": " + e.Err.Error()
-}
-
-// Unwrap supports errors.Is/As traversal.
-func (e *PersistSessionCryptoError) Unwrap() error { return e.Err }
 
 // PersistedSessionCorruptError signals that one or more records on disk
 // could not be decoded and have been renamed to ".corrupt". Returned

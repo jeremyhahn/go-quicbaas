@@ -16,7 +16,7 @@
 package server
 
 import (
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -24,7 +24,7 @@ import (
 // hnswIndexAdapter wraps a go-qrdb HNSWIndex to satisfy the quicbaas
 // interfaces.HNSWIndex contract.
 type hnswIndexAdapter struct {
-	index *xkmssdk.QRDBHNSWIndexImpl
+	index *qrdbsdk.HNSWIndexImpl
 }
 
 // Insert adds a new vector to the index with the given ID.
@@ -75,29 +75,29 @@ func (a *hnswIndexAdapter) GetStats() *interfaces.HNSWStats {
 }
 
 // distanceMetricMap provides O(1) lookup from string metric names to the
-// go-qrdb DistanceMetric enum.
-var distanceMetricMap = map[string]xkmssdk.QRDBHNSWDistanceMetric{
-	"l2":          xkmssdk.QRDBHNSWL2Distance,
-	"L2":          xkmssdk.QRDBHNSWL2Distance,
-	"euclidean":   xkmssdk.QRDBHNSWL2Distance,
-	"EUCLIDEAN":   xkmssdk.QRDBHNSWL2Distance,
-	"cosine":      xkmssdk.QRDBHNSWCosineDistance,
-	"COSINE":      xkmssdk.QRDBHNSWCosineDistance,
-	"dot_product": xkmssdk.QRDBHNSWDotProductDistance,
-	"DOT_PRODUCT": xkmssdk.QRDBHNSWDotProductDistance,
-	"manhattan":   xkmssdk.QRDBHNSWManhattanDistance,
-	"MANHATTAN":   xkmssdk.QRDBHNSWManhattanDistance,
-	"hamming":     xkmssdk.QRDBHNSWHammingDistance,
-	"HAMMING":     xkmssdk.QRDBHNSWHammingDistance,
+// go-qrdb HNSWDistanceMetric enum.
+var distanceMetricMap = map[string]qrdbsdk.HNSWDistanceMetric{
+	"l2":          qrdbsdk.HNSWL2Distance,
+	"L2":          qrdbsdk.HNSWL2Distance,
+	"euclidean":   qrdbsdk.HNSWL2Distance,
+	"EUCLIDEAN":   qrdbsdk.HNSWL2Distance,
+	"cosine":      qrdbsdk.HNSWCosineDistance,
+	"COSINE":      qrdbsdk.HNSWCosineDistance,
+	"dot_product": qrdbsdk.HNSWDotProductDistance,
+	"DOT_PRODUCT": qrdbsdk.HNSWDotProductDistance,
+	"manhattan":   qrdbsdk.HNSWManhattanDistance,
+	"MANHATTAN":   qrdbsdk.HNSWManhattanDistance,
+	"hamming":     qrdbsdk.HNSWHammingDistance,
+	"HAMMING":     qrdbsdk.HNSWHammingDistance,
 }
 
 // parseDistanceMetric converts a string distance metric to the go-qrdb
-// DistanceMetric type, defaulting to L2 for unknown values.
-func parseDistanceMetric(metric string) xkmssdk.QRDBHNSWDistanceMetric {
+// HNSWDistanceMetric type, defaulting to L2 for unknown values.
+func parseDistanceMetric(metric string) qrdbsdk.HNSWDistanceMetric {
 	if dm, ok := distanceMetricMap[metric]; ok {
 		return dm
 	}
-	return xkmssdk.QRDBHNSWL2Distance
+	return qrdbsdk.HNSWL2Distance
 }
 
 // hnswIndexFactory implements interfaces.HNSWIndexFactory by creating go-qrdb
@@ -106,14 +106,14 @@ type hnswIndexFactory struct{}
 
 // CreateIndex creates a new HNSW index with the specified configuration.
 func (f *hnswIndexFactory) CreateIndex(config *interfaces.HNSWConfig) (interfaces.HNSWIndex, error) {
-	hnswConfig := &xkmssdk.QRDBHNSWIndexConfig{
+	hnswConfig := &qrdbsdk.HNSWIndexConfig{
 		M:              config.M,
 		MMax:           config.MMax,
 		EfConstruction: config.EfConstruction,
 		EfSearch:       config.EfSearch,
 		DistanceMetric: parseDistanceMetric(config.DistanceMetric),
 	}
-	index, err := xkmssdk.QRDBNewHNSWIndexImpl(hnswConfig)
+	index, err := qrdbsdk.NewHNSWIndexImpl(hnswConfig)
 	if err != nil {
 		return nil, err
 	}

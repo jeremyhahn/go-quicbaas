@@ -546,8 +546,6 @@ func (m *mockSDKClientForMCP) DynamicSecrets() quicbaas.DynamicSecretsClient { r
 
 func (m *mockSDKClientForMCP) Certificate() quicbaas.CertificateClient { return nil }
 
-func (m *mockSDKClientForMCP) ClusterDEK() quicbaas.ClusterDEKClient { return nil }
-
 func (m *mockSDKClientForMCP) DEK() quicbaas.DEKClient { return nil }
 
 func (m *mockSDKClientForMCP) IAM() quicbaas.IAMClient { return nil }
@@ -1311,4 +1309,3 @@ func TestMCPSafetyClientTransportError(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
-

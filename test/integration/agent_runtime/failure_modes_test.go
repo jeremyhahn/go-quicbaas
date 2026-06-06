@@ -95,7 +95,7 @@ func TestIntegration_FailureModes(t *testing.T) {
 		require.NoError(t, err)
 
 		d, err := agent.NewDaemon(&agent.Config{
-			ServerAddr:       mc.URL(),
+			ServerAddr:        mc.URL(),
 			TenantID:          tenantID,
 			BindAddr:          "127.0.0.1:0",
 			WorkDir:           t.TempDir(),
@@ -255,7 +255,7 @@ func TestIntegration_FailureModes(t *testing.T) {
 		require.NoError(t, err)
 
 		d, err := agent.NewDaemon(&agent.Config{
-			ServerAddr:       blackholeAddr,
+			ServerAddr:        blackholeAddr,
 			TenantID:          tenantID,
 			BindAddr:          "127.0.0.1:0",
 			WorkDir:           t.TempDir(),
@@ -324,7 +324,7 @@ func TestIntegration_FailureModes(t *testing.T) {
 		require.NoError(t, err)
 
 		d, err := agent.NewDaemon(&agent.Config{
-			ServerAddr:     mc.URL(),
+			ServerAddr:      mc.URL(),
 			TenantID:        tenantID,
 			BindAddr:        "127.0.0.1:0",
 			WorkDir:         t.TempDir(),

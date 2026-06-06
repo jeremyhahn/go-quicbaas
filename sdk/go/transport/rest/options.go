@@ -85,6 +85,16 @@ func WithBasicAuth(username, password string) Option {
 	}
 }
 
+// WithDefaultTenant sets the default tenant identifier used to scope
+// tenant-bound Security() verbs (e.g. WebAuthn) whose SDK request structs
+// do not themselves carry a tenant. When unset, those verbs return a
+// typed invalid-input error instructing the caller to configure a tenant.
+func WithDefaultTenant(tenant string) Option {
+	return func(t *Transport) {
+		t.defaultTenant = tenant
+	}
+}
+
 // WithUserAgent sets a custom User-Agent header.
 func WithUserAgent(userAgent string) Option {
 	return func(t *Transport) {

@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -72,13 +72,13 @@ func (l *testLogger) WithError(_ error) interfaces.Logger {
 // in-memory backend with a pre-bound software passphrase. The passphrase
 // "test-passphrase" is used to drive the deferred-software code path
 // uniformly in tests.
-func newSoftwareBarrier(t *testing.T) *qrdbseal.StorageBarrier {
+func newSoftwareBarrier(t *testing.T) *qrdbsdk.StorageBarrier {
 	t.Helper()
-	backend := qrdbseal.NewMemoryBackend()
-	soft, err := qrdbseal.NewSoftwareStrategy([]byte("test-passphrase"))
+	backend := qrdbsdk.NewMemoryBackend()
+	soft, err := qrdbsdk.NewSoftwareStrategy([]byte("test-passphrase"))
 	require.NoError(t, err)
-	b, err := qrdbseal.NewStorageBarrier(slog.Default(), backend,
-		qrdbseal.BarrierConfig{RootKeyPath: "test/root-key"}, soft)
+	b, err := qrdbsdk.NewStorageBarrier(slog.Default(), backend,
+		qrdbsdk.BarrierConfig{RootKeyPath: "test/root-key"}, soft)
 	require.NoError(t, err)
 	return b
 }
@@ -86,18 +86,19 @@ func newSoftwareBarrier(t *testing.T) *qrdbseal.StorageBarrier {
 // newShamirBarrier constructs a barrier suitable for shamir
 // initialize/unseal flows. The barrier is left sealed; callers drive
 // initialization themselves.
-func newShamirBarrier(t *testing.T) *qrdbseal.StorageBarrier {
+func newShamirBarrier(t *testing.T) *qrdbsdk.StorageBarrier {
 	t.Helper()
-	backend := qrdbseal.NewMemoryBackend()
-	soft, err := qrdbseal.NewSoftwareStrategy([]byte("test-passphrase"))
+	backend := qrdbsdk.NewMemoryBackend()
+	soft, err := qrdbsdk.NewSoftwareStrategy([]byte("test-passphrase"))
 	require.NoError(t, err)
-	shamirStrat, err := qrdbseal.NewShamirStrategy(backend, 2, 3)
+	shamirStrat, err := qrdbsdk.NewShamirStrategy(2, 3)
 	require.NoError(t, err)
-	cfg := qrdbseal.BarrierConfig{
-		RootKeyPath: "test/root-key",
-		Shamir:      &qrdbseal.ShamirConfig{Threshold: 2, TotalShares: 3},
+	cfg := qrdbsdk.BarrierConfig{
+		RootKeyPath:     "test/root-key",
+		Shamir:          &qrdbsdk.ShamirConfig{Threshold: 2, TotalShares: 3},
+		PreferenceOrder: []qrdbsdk.StrategyID{qrdbsdk.StrategyShamir},
 	}
-	b, err := qrdbseal.NewStorageBarrier(slog.Default(), backend, cfg, shamirStrat, soft)
+	b, err := qrdbsdk.NewStorageBarrier(slog.Default(), backend, cfg, shamirStrat, soft)
 	require.NoError(t, err)
 	return b
 }
@@ -381,23 +382,23 @@ func TestBuildStrategyChain_Disabled(t *testing.T) {
 }
 
 func TestBuildStrategyChain_Software(t *testing.T) {
-	chain, err := BuildStrategyChain(&StrategyChainConfig{Kind: StrategySoftware})
+	chain, err := BuildStrategyChain(&StrategyChainConfig{Kind: StrategyPassphrase})
 	require.NoError(t, err)
 	require.Len(t, chain, 1)
-	assert.Equal(t, qrdbseal.StrategySoftware, chain[0].ID())
+	assert.Equal(t, qrdbsdk.StrategyPassphrase, chain[0].ID())
 }
 
 func TestBuildStrategyChain_Shamir(t *testing.T) {
 	chain, err := BuildStrategyChain(&StrategyChainConfig{
 		Kind:            StrategyShamir,
-		Backend:         qrdbseal.NewMemoryBackend(),
+		Backend:         qrdbsdk.NewMemoryBackend(),
 		ShamirThreshold: 2,
 		ShamirTotal:     3,
 	})
 	require.NoError(t, err)
 	require.Len(t, chain, 2)
-	assert.Equal(t, qrdbseal.StrategyShamir, chain[0].ID())
-	assert.Equal(t, qrdbseal.StrategySoftware, chain[1].ID())
+	assert.Equal(t, qrdbsdk.StrategyShamir, chain[0].ID())
+	assert.Equal(t, qrdbsdk.StrategyPassphrase, chain[1].ID())
 }
 
 func TestBuildStrategyChain_Shamir_NilBackend(t *testing.T) {
@@ -414,7 +415,7 @@ func TestBuildStrategyChain_Shamir_NilBackend(t *testing.T) {
 func TestBuildStrategyChain_Shamir_BadParams(t *testing.T) {
 	_, err := BuildStrategyChain(&StrategyChainConfig{
 		Kind:            StrategyShamir,
-		Backend:         qrdbseal.NewMemoryBackend(),
+		Backend:         qrdbsdk.NewMemoryBackend(),
 		ShamirThreshold: 1,
 		ShamirTotal:     0,
 	})
@@ -434,7 +435,7 @@ func TestBuildStrategyChain_TPM2_WithInjectedStrategy(t *testing.T) {
 	// Use a software strategy as a stand-in for the injected TPM
 	// strategy: the chain builder only needs a non-nil SealingStrategy
 	// to thread it into the resulting slice.
-	soft, err := qrdbseal.NewSoftwareStrategy([]byte("test-tpm-substitute"))
+	soft, err := qrdbsdk.NewSoftwareStrategy([]byte("test-tpm-substitute"))
 	require.NoError(t, err)
 
 	chain, err := BuildStrategyChain(&StrategyChainConfig{
@@ -444,7 +445,7 @@ func TestBuildStrategyChain_TPM2_WithInjectedStrategy(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, chain, 2)
 	assert.Same(t, soft, chain[0])
-	assert.Equal(t, qrdbseal.StrategySoftware, chain[1].ID())
+	assert.Equal(t, qrdbsdk.StrategyPassphrase, chain[1].ID())
 }
 
 func TestBuildStrategyChain_PKCS11_RequiresConfig(t *testing.T) {
@@ -454,28 +455,19 @@ func TestBuildStrategyChain_PKCS11_RequiresConfig(t *testing.T) {
 	assert.True(t, errors.As(err, &sce))
 }
 
-func TestBuildStrategyChain_PKCS11_StubBuildReportsUnsupported(t *testing.T) {
-	// Without the pkcs11 build tag the stub strategy reports
-	// Available()=false; the builder surfaces this as
-	// StrategyUnsupportedError. With the tag enabled and a real
-	// module present, this test exercises the failure-mode path.
-	chain, err := BuildStrategyChain(&StrategyChainConfig{
+func TestBuildStrategyChain_PKCS11_RequiresInjectedStrategy(t *testing.T) {
+	// PKCS#11 strategy construction lives exclusively in go-xkms. The
+	// builder requires the caller to inject a pre-constructed
+	// SealingStrategy via PKCS11Strategy. With nil PKCS11Strategy the
+	// builder must return StrategyConstructionError; with a non-nil
+	// strategy that reports Available()=false it must return
+	// StrategyUnsupportedError.
+	_, err := BuildStrategyChain(&StrategyChainConfig{
 		Kind: StrategyPKCS11,
-		PKCS11Config: &qrdbseal.PKCS11Config{
-			ModuleLibPath: "/nonexistent/lib.so",
-			SlotID:        0,
-			UserPinEnvVar: "QUICBAAS_TEST_PIN",
-			KEKLabel:      "kek",
-		},
 	})
 	if err == nil {
-		// On a build with the pkcs11 tag and a working softhsm, the
-		// strategy may construct successfully; in that case the chain
-		// must contain pkcs11 followed by software.
-		require.Len(t, chain, 2)
-		return
+		t.Fatal("PKCS11 with nil strategy: expected error, got nil")
 	}
-	// Otherwise, the builder must surface a typed error.
 	var sue *StrategyUnsupportedError
 	var sce *StrategyConstructionError
 	assert.True(t, errors.As(err, &sue) || errors.As(err, &sce),

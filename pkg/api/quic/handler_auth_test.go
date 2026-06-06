@@ -171,11 +171,11 @@ func TestGetResourceAndAction(t *testing.T) {
 		{"RemoveNode", OpRemoveNode, interfaces.ResourceCluster, interfaces.ActionAdmin},
 		{"RebalanceCluster", OpRebalanceCluster, interfaces.ResourceCluster, interfaces.ActionAdmin},
 
-		// Seal Operations
-		{"SealStatus", OpSealStatus, interfaces.ResourceSeal, interfaces.ActionRead},
-		{"SealInit", OpSealInit, interfaces.ResourceSeal, interfaces.ActionAdmin},
-		{"Unseal", OpUnseal, interfaces.ResourceSeal, interfaces.ActionAdmin},
-		{"Seal", OpSeal, interfaces.ResourceSeal, interfaces.ActionAdmin},
+		// Barrier Operations (single dispatch opcode; sub-ops validated by handler)
+		{"Barrier", OpBarrier, interfaces.ResourceBarrier, interfaces.ActionAdmin},
+
+		// Ceremony Operations (single dispatch opcode)
+		{"Ceremony", OpCeremony, interfaces.ResourceCeremony, interfaces.ActionAdmin},
 
 		// KMS Operations
 		{"KMSGetKey", OpKMSGetKey, interfaces.ResourceKMS, interfaces.ActionRead},
@@ -231,7 +231,7 @@ func TestHandlerAuthorize_PublicOperationsBypass(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthManager(mockAuth),
 		WithHandlerAuthorizationService(mockAuthz),
 	)
@@ -251,7 +251,7 @@ func TestHandlerAuthorize_MissingToken(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "text", Output: "stdout", Component: "test"})
 
 	mockAuthz := &mockAuthzService{}
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthorizationService(mockAuthz),
 	)
 
@@ -280,7 +280,7 @@ func TestHandlerAuthorize_InvalidToken(t *testing.T) {
 	}
 	mockAuthz := &mockAuthzService{}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthManager(mockAuth),
 		WithHandlerAuthorizationService(mockAuthz),
 	)
@@ -309,7 +309,7 @@ func TestHandlerAuthorize_TokenValidationError(t *testing.T) {
 	}
 	mockAuthz := &mockAuthzService{}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthManager(mockAuth),
 		WithHandlerAuthorizationService(mockAuthz),
 	)
@@ -347,7 +347,7 @@ func TestHandlerAuthorize_PermissionDenied(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthManager(mockAuth),
 		WithHandlerAuthorizationService(mockAuthz),
 	)
@@ -396,7 +396,7 @@ func TestHandlerAuthorize_AuthorizationAllowed(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthManager(mockAuth),
 		WithHandlerAuthorizationService(mockAuthz),
 	)
@@ -413,7 +413,7 @@ func TestHandlerAuthorize_NoAuthConfigured(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "text", Output: "stdout", Component: "test"})
 
 	// Handler without auth services configured (backward compatibility)
-	handler := NewHandler(nil, nil, nil, nil, nil, log)
+	handler := NewHandler(nil, nil, nil, nil, log)
 
 	req := &Request{Opcode: OpPut, Token: ""}
 	result := handler.authorize(context.Background(), req)
@@ -438,7 +438,7 @@ func TestHandlerAuthorize_AuthzOnlyNoAuthManager(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthorizationService(mockAuthz),
 	)
 
@@ -464,8 +464,8 @@ func TestHandlerAuthorize_CorrectResourceActionMapping(t *testing.T) {
 		{OpDelete, interfaces.ResourceKeys, interfaces.ActionDelete},
 		{OpClusterStatus, interfaces.ResourceCluster, interfaces.ActionRead},
 		{OpAddNode, interfaces.ResourceCluster, interfaces.ActionAdmin},
-		{OpSealStatus, interfaces.ResourceSeal, interfaces.ActionRead},
-		{OpSealInit, interfaces.ResourceSeal, interfaces.ActionAdmin},
+		{OpBarrier, interfaces.ResourceBarrier, interfaces.ActionAdmin},
+		{OpCeremony, interfaces.ResourceCeremony, interfaces.ActionAdmin},
 		{OpKMSGetKey, interfaces.ResourceKMS, interfaces.ActionRead},
 		{OpKMSGenerateKey, interfaces.ResourceKMS, interfaces.ActionWrite},
 		{OpSecretsGet, interfaces.ResourceSecrets, interfaces.ActionRead},
@@ -488,7 +488,7 @@ func TestHandlerAuthorize_CorrectResourceActionMapping(t *testing.T) {
 			},
 		}
 
-		handler := NewHandler(nil, nil, nil, nil, nil, log,
+		handler := NewHandler(nil, nil, nil, nil, log,
 			WithHandlerAuthManager(mockAuth),
 			WithHandlerAuthorizationService(mockAuthz),
 		)
@@ -519,7 +519,7 @@ func TestHandlerRequest_AuthorizationIntegration(t *testing.T) {
 	}
 	mockAuthz := &mockAuthzService{}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthManager(mockAuth),
 		WithHandlerAuthorizationService(mockAuthz),
 	)
@@ -547,7 +547,7 @@ func TestHandlerAuthorize_AuthzErrorReturnsInternalError(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthManager(mockAuth),
 		WithHandlerAuthorizationService(mockAuthz),
 	)
@@ -580,7 +580,7 @@ func TestHandlerAuthorize_PermissionDeniedDefaultReason(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(nil, nil, nil, nil, nil, log,
+	handler := NewHandler(nil, nil, nil, nil, log,
 		WithHandlerAuthManager(mockAuth),
 		WithHandlerAuthorizationService(mockAuthz),
 	)

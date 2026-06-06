@@ -549,18 +549,7 @@ func (c *restBatchClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-			TLSHandshakeTimeout: 10 * time.Second,
-			ForceAttemptHTTP2:   false,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 
 	// Probe to verify batch operations are available
 	// REST API supports /batch/put and /batch/delete but not /batch/get
@@ -842,8 +831,12 @@ func (c *grpcBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
 	conn, err := grpc.DialContext(dialCtx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -990,11 +983,12 @@ func (c *quicBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	c.address = endpoints[0]
 
 	// Configure TLS for QUIC connection
-	c.tlsConfig = &tls.Config{
-		InsecureSkipVerify: true, // Test only - skip certificate verification
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	quicTLSCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
+	quicTLSCfg.NextProtos = []string{"quicbaas-quic"}
+	c.tlsConfig = quicTLSCfg
 
 	// Configure QUIC with proper timeouts and keep-alive
 	c.quicConfig = &quicgo.Config{
@@ -1236,9 +1230,13 @@ func (c *unixSocketBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
 	conn, err := grpc.DialContext(dialCtx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return net.DialTimeout("unix", socketPath, 10*time.Second)
@@ -1394,18 +1392,7 @@ func (c *mcpBatchClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-			TLSHandshakeTimeout: 10 * time.Second,
-			ForceAttemptHTTP2:   false,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 
 	// Authenticate before probing
 	if err := c.authenticate(ctx); err != nil {
@@ -1454,7 +1441,6 @@ func (c *mcpBatchClient) authenticate(ctx context.Context) error {
 	c.authenticated = true
 	return nil
 }
-
 
 func (c *mcpBatchClient) Teardown(t *testing.T) error {
 	return nil

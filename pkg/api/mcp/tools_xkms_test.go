@@ -92,7 +92,7 @@ func TestIsXKMSTool(t *testing.T) {
 		{name: "valid xkms tool", toolName: "xkms.generateKey", expected: true},
 		{name: "valid xkms seal", toolName: "xkms.seal", expected: true},
 		{name: "valid xkms list", toolName: "xkms.listBackends", expected: true},
-		{name: "quicbaas tool", toolName: "quicbaas_put", expected: false},
+		{name: "quicbaas tool", toolName: "qrdb_put", expected: false},
 		{name: "empty string", toolName: "", expected: false},
 		{name: "partial prefix", toolName: "xkm.generateKey", expected: false},
 		{name: "similar but wrong", toolName: "xkms_generateKey", expected: false},

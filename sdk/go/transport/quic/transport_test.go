@@ -2262,9 +2262,14 @@ func TestTransport_SetAuthTokenAndRequest(t *testing.T) {
 	}
 	defer server.Close()
 
-	var receivedToken string
+	var (
+		tokenMu       sync.Mutex
+		receivedToken string
+	)
 	server.RegisterHandler(OpGet, func(req *Request) *Response {
+		tokenMu.Lock()
 		receivedToken = req.Token
+		tokenMu.Unlock()
 		return &Response{
 			Status:  StatusOK,
 			Payload: encodeResponse(map[string]string{"value": "test"}),
@@ -2305,8 +2310,11 @@ func TestTransport_SetAuthTokenAndRequest(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 
-	if receivedToken != "updated-token" {
-		t.Errorf("expected token 'updated-token', got '%s'", receivedToken)
+	tokenMu.Lock()
+	got := receivedToken
+	tokenMu.Unlock()
+	if got != "updated-token" {
+		t.Errorf("expected token 'updated-token', got '%s'", got)
 	}
 }
 

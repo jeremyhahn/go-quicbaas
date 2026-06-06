@@ -193,11 +193,8 @@ func TestServer_StopCatalogManager_Nil(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestServer_ShutdownWithDiscoveryManager(t *testing.T) {
-	t.Run("shutdown path with non-nil discovery manager", func(t *testing.T) {
+	t.Run("shutdown path", func(t *testing.T) {
 		srv := withTempServer(t)
-		// discoveryManager is checked in shutdown for stopBootstrap call
-		// Since stopBootstrap is a no-op stub, this just tests the path.
-		srv.discoveryManager = nil
 		ctx := context.Background()
 		err := srv.Shutdown(ctx)
 		assert.NoError(t, err)

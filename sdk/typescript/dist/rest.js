@@ -981,6 +981,48 @@ class RestAuthClient {
             // worst case it stays valid until its TTL expires server-side.
         }
     }
+    // registerBegin initiates the self-service registration WebAuthn ceremony.
+    // Maps to POST /api/v1/auth/register/begin.
+    async registerBegin(req) {
+        const resp = await fetch(`${this.baseUrl}/api/v1/auth/register/begin`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(req),
+        });
+        if (!resp.ok) {
+            let message = resp.statusText;
+            try {
+                const body = (await resp.json());
+                message = body.error ?? body.message ?? message;
+            }
+            catch {
+                // Use statusText when body is not parseable.
+            }
+            throw new APIError(resp.status, message);
+        }
+        return resp.json();
+    }
+    // registerFinish completes the self-service registration WebAuthn ceremony.
+    // Maps to POST /api/v1/auth/register/finish.
+    async registerFinish(req) {
+        const resp = await fetch(`${this.baseUrl}/api/v1/auth/register/finish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(req),
+        });
+        if (!resp.ok) {
+            let message = resp.statusText;
+            try {
+                const body = (await resp.json());
+                message = body.error ?? body.message ?? message;
+            }
+            catch {
+                // Use statusText when body is not parseable.
+            }
+            throw new APIError(resp.status, message);
+        }
+        return resp.json();
+    }
 }
 // RestRAGClient implements RAGClient over the QuicBaaS REST API.
 // Endpoints live under /api/v1/rag.

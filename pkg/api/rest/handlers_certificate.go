@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -39,6 +41,15 @@ func registerCertificateRoutes(s *Server, r chi.Router) {
 		r.Post("/verify", s.HandleVerifyCertificate)
 		r.Get("/ca", s.HandleGetCACertificate)
 		r.Post("/tls-config", s.HandleGetTLSConfig)
+
+		// CA administration verbs backing the canonical `quicbaas ca`
+		// CLI: info / bundle / list. Issue and revoke reuse the
+		// existing /issue and /revoke endpoints above; export-bundle is
+		// a client-side write of /ca/bundle so no extra server route is
+		// required.
+		r.Get("/ca/info", s.HandleCAInfo)
+		r.Get("/ca/bundle", s.HandleCABundle)
+		r.Get("/ca/list", s.HandleListCertificates)
 	})
 }
 
@@ -438,4 +449,188 @@ func (s *Server) HandleGetTLSConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
+}
+
+// =============================================================================
+// CA Administration Request/Response Types
+// =============================================================================
+
+// CAInfoRESTResponse is the JSON response body for GET /api/v1/certificate/ca/info.
+type CAInfoRESTResponse struct {
+	CommonName         string `json:"common_name"`
+	Subject            string `json:"subject"`
+	Issuer             string `json:"issuer"`
+	SerialNumber       string `json:"serial_number"`
+	NotBefore          int64  `json:"not_before"`
+	NotAfter           int64  `json:"not_after"`
+	IsCA               bool   `json:"is_ca"`
+	KeyType            string `json:"key_type"`
+	KeyBits            int    `json:"key_bits,omitempty"`
+	SignatureAlgorithm string `json:"signature_algorithm"`
+	CertificatePEM     string `json:"certificate_pem"`
+	CABundlePEM        string `json:"ca_bundle_pem"`
+	Timestamp          int64  `json:"timestamp"`
+}
+
+// CABundleRESTResponse is the JSON response body for GET /api/v1/certificate/ca/bundle.
+type CABundleRESTResponse struct {
+	BundlePEM string `json:"bundle_pem"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// CertificateSummaryREST is the REST projection of a single certificate
+// in a ListCertificates response.
+type CertificateSummaryREST struct {
+	CommonName   string   `json:"common_name"`
+	Subject      string   `json:"subject"`
+	Issuer       string   `json:"issuer"`
+	SerialNumber string   `json:"serial_number"`
+	NotBefore    int64    `json:"not_before"`
+	NotAfter     int64    `json:"not_after"`
+	IsCA         bool     `json:"is_ca"`
+	KeyUsage     string   `json:"key_usage,omitempty"`
+	DNSNames     []string `json:"dns_names,omitempty"`
+}
+
+// ListCertificatesRESTResponse is the JSON response body for
+// GET /api/v1/certificate/ca/list.
+type ListCertificatesRESTResponse struct {
+	Certificates []CertificateSummaryREST `json:"certificates"`
+	TotalCount   int                      `json:"total_count"`
+	Timestamp    int64                    `json:"timestamp"`
+}
+
+// =============================================================================
+// CA Administration Handlers
+// =============================================================================
+
+// HandleCAInfo handles GET /api/v1/certificate/ca/info — returns parsed
+// metadata for the active issuing CA.
+func (s *Server) HandleCAInfo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	certService := s.service.Certificate()
+	if certService == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, ErrCertificateServiceUnavailable)
+		return
+	}
+
+	svcResp, err := certService.CAInfo(ctx, &service.CAInfoRequest{})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	now := time.Now()
+	RespondJSON(w, r, http.StatusOK, &CAInfoRESTResponse{
+		CommonName:         svcResp.CommonName,
+		Subject:            svcResp.Subject,
+		Issuer:             svcResp.Issuer,
+		SerialNumber:       svcResp.SerialNumber,
+		NotBefore:          svcResp.NotBefore.Unix(),
+		NotAfter:           svcResp.NotAfter.Unix(),
+		IsCA:               svcResp.IsCA,
+		KeyType:            svcResp.KeyType,
+		KeyBits:            svcResp.KeyBits,
+		SignatureAlgorithm: svcResp.SignatureAlgorithm,
+		CertificatePEM:     svcResp.CertificatePEM,
+		CABundlePEM:        svcResp.CABundlePEM,
+		Timestamp:          now.Unix(),
+	})
+}
+
+// HandleCABundle handles GET /api/v1/certificate/ca/bundle — returns the
+// CA trust-chain PEM. Equivalent to the bundle field on the legacy
+// GetCACertificate handler, surfaced as its own resource for the
+// canonical `quicbaas ca bundle` CLI verb.
+func (s *Server) HandleCABundle(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	certService := s.service.Certificate()
+	if certService == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, ErrCertificateServiceUnavailable)
+		return
+	}
+
+	svcResp, err := certService.GetCABundle(ctx, &service.GetCABundleRequest{})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, &CABundleRESTResponse{
+		BundlePEM: svcResp.BundlePEM,
+		Timestamp: time.Now().Unix(),
+	})
+}
+
+// HandleListCertificates handles GET /api/v1/certificate/ca/list —
+// returns summaries of certificates stored in the CA's certificate
+// store. Query params: common_name, include_revoked, include_expired,
+// limit.
+func (s *Server) HandleListCertificates(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	certService := s.service.Certificate()
+	if certService == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, ErrCertificateServiceUnavailable)
+		return
+	}
+
+	q := r.URL.Query()
+	req := &service.ListCertificatesRequest{
+		CommonNameFilter: q.Get("common_name"),
+		IncludeRevoked:   parseBoolQuery(q.Get("include_revoked")),
+		IncludeExpired:   parseBoolQuery(q.Get("include_expired")),
+	}
+	if v := q.Get("limit"); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil {
+			if n < 0 {
+				RespondBadRequest(w, r, "limit must not be negative")
+				return
+			}
+			req.Limit = n
+		} else {
+			RespondBadRequest(w, r, "limit is not a valid integer")
+			return
+		}
+	}
+
+	svcResp, err := certService.ListCertificates(ctx, req)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	out := &ListCertificatesRESTResponse{
+		Certificates: make([]CertificateSummaryREST, 0, len(svcResp.Certificates)),
+		TotalCount:   svcResp.TotalCount,
+		Timestamp:    time.Now().Unix(),
+	}
+	for _, c := range svcResp.Certificates {
+		out.Certificates = append(out.Certificates, CertificateSummaryREST{
+			CommonName:   c.CommonName,
+			Subject:      c.Subject,
+			Issuer:       c.Issuer,
+			SerialNumber: c.SerialNumber,
+			NotBefore:    c.NotBefore.Unix(),
+			NotAfter:     c.NotAfter.Unix(),
+			IsCA:         c.IsCA,
+			KeyUsage:     c.KeyUsage,
+			DNSNames:     append([]string(nil), c.DNSNames...),
+		})
+	}
+
+	RespondJSON(w, r, http.StatusOK, out)
+}
+
+// parseBoolQuery treats "1", "true", "yes" (case-insensitive) as true,
+// everything else as false.
+func parseBoolQuery(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }

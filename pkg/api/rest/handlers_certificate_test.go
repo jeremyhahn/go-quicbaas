@@ -124,6 +124,21 @@ func (m *MockCertificateService) IsRevoked(ctx context.Context, req *service.IsR
 	}
 	return args.Get(0).(*service.IsRevokedResponse), args.Error(1)
 }
+func (m *MockCertificateService) CAInfo(ctx context.Context, req *service.CAInfoRequest) (*service.CAInfoResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*service.CAInfoResponse), args.Error(1)
+}
+
+func (m *MockCertificateService) ListCertificates(ctx context.Context, req *service.ListCertificatesRequest) (*service.ListCertificatesResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*service.ListCertificatesResponse), args.Error(1)
+}
 
 // =============================================================================
 // Test HandleIssueCertificate

@@ -195,13 +195,13 @@ func createTSEnabledHandler(tsSvc *mockTimeSeriesService) *Handler {
 	mockSvc := &mockTSEnabledService{
 		tsSvc: tsSvc,
 	}
-	return NewHandler(mockSvc, nil, nil, nil, nil, createTSTestLogger())
+	return NewHandler(mockSvc, nil, nil, nil, createTSTestLogger())
 }
 
 func createTSErrorHandler() *Handler {
 	// Create a handler with a service that does NOT implement timeseriesServiceInterface
 	mockSvc := &mockService{}
-	return NewHandler(mockSvc, nil, nil, nil, nil, createTSTestLogger())
+	return NewHandler(mockSvc, nil, nil, nil, createTSTestLogger())
 }
 
 // =============================================================================
@@ -241,7 +241,7 @@ func TestHandleTSWritePoint_Success(t *testing.T) {
 }
 
 func TestHandleTSWritePoint_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTSTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTSTestLogger())
 
 	payload, _ := EncodePayload(&service.WritePointRequest{})
 	req := &Request{
@@ -349,7 +349,7 @@ func TestHandleTSWriteBatch_Success(t *testing.T) {
 }
 
 func TestHandleTSWriteBatch_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTSTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTSTestLogger())
 
 	payload, _ := EncodePayload(&service.WriteBatchRequest{})
 	req := &Request{
@@ -450,7 +450,7 @@ func TestHandleTSQuery_Success(t *testing.T) {
 }
 
 func TestHandleTSQuery_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTSTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTSTestLogger())
 
 	payload, _ := EncodePayload(&service.TSQueryRequest{})
 	req := &Request{
@@ -548,7 +548,7 @@ func TestHandleTSDeleteSeries_Success(t *testing.T) {
 }
 
 func TestHandleTSDeleteSeries_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTSTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTSTestLogger())
 
 	payload, _ := EncodePayload(&service.TSDeleteRequest{})
 	req := &Request{
@@ -649,7 +649,7 @@ func TestHandleTSGetRetentionPolicy_Success(t *testing.T) {
 }
 
 func TestHandleTSGetRetentionPolicy_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTSTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTSTestLogger())
 
 	payload, _ := EncodePayload(&service.TSGetRetentionPolicyRequest{})
 	req := &Request{
@@ -750,7 +750,7 @@ func TestHandleTSSetRetentionPolicy_Success(t *testing.T) {
 }
 
 func TestHandleTSSetRetentionPolicy_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTSTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTSTestLogger())
 
 	payload, _ := EncodePayload(&service.TSSetRetentionPolicyRequest{})
 	req := &Request{
@@ -849,7 +849,7 @@ func TestHandleTSListMetrics_Success(t *testing.T) {
 }
 
 func TestHandleTSListMetrics_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTSTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTSTestLogger())
 
 	payload, _ := EncodePayload(&service.TSListMetricsRequest{})
 	req := &Request{

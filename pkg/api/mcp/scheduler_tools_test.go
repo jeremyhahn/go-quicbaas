@@ -394,7 +394,7 @@ func TestIsSchedulerTool(t *testing.T) {
 	}
 
 	t.Run("non scheduler tool", func(t *testing.T) {
-		assert.False(t, isSchedulerTool("quicbaas_put"))
+		assert.False(t, isSchedulerTool("qrdb_put"))
 	})
 }
 
@@ -405,52 +405,6 @@ func TestSchedulerToolDispatch_UnknownTool(t *testing.T) {
 	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_nonexistent", map[string]interface{}{})
 	require.Error(t, err)
 	assert.Nil(t, result)
-}
-
-// =============================================================================
-// Cluster DEK Tool Error Path Tests
-// =============================================================================
-
-func TestClusterDEKServiceNotConfigured(t *testing.T) {
-	svc := &extendedMockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_cluster_dek_status", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "cluster DEK service not configured")
-}
-
-func TestIsClusterDEKTool_Exhaustive(t *testing.T) {
-	validTools := []string{
-		"quicbaas_cluster_dek_init",
-		"quicbaas_cluster_dek_status",
-		"quicbaas_cluster_dek_rotate",
-		"quicbaas_cluster_dek_sync_node",
-		"quicbaas_cluster_dek_node_status",
-		"quicbaas_cluster_dek_start_reencryption",
-		"quicbaas_cluster_dek_reencryption_status",
-		"quicbaas_cluster_dek_cancel_reencryption",
-		"quicbaas_cluster_dek_recover",
-	}
-
-	for _, tool := range validTools {
-		assert.True(t, isClusterDEKTool(tool), "expected %s to be cluster DEK tool", tool)
-	}
-
-	invalidTools := []string{
-		"quicbaas_cluster_dek_unknown",
-		"quicbaas_kms_encrypt",
-		"quicbaas_put",
-		"",
-		"quicbaas_cluster_dek",
-	}
-
-	for _, tool := range invalidTools {
-		assert.False(t, isClusterDEKTool(tool), "expected %s to NOT be cluster DEK tool", tool)
-	}
 }
 
 // =============================================================================
@@ -491,7 +445,7 @@ func TestIsDynamicSecretsTool_Exhaustive(t *testing.T) {
 	invalidTools := []string{
 		"quicbaas_dynamic_secrets_unknown",
 		"quicbaas_kms_encrypt",
-		"quicbaas_put",
+		"qrdb_put",
 		"",
 		"quicbaas_dynamic_secrets",
 	}
@@ -536,7 +490,7 @@ func TestIsCertificateTool_Exhaustive(t *testing.T) {
 	invalidTools := []string{
 		"quicbaas_certificate_unknown",
 		"quicbaas_kms_encrypt",
-		"quicbaas_put",
+		"qrdb_put",
 		"",
 		"quicbaas_certificate",
 	}

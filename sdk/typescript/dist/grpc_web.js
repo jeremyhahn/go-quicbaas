@@ -83,6 +83,8 @@ class GrpcWebAuthClient {
     async loginPIV() { return notImpl('loginPIV'); }
     async listPublicTenants() { return notImpl('listPublicTenants'); }
     async logout(_token) { return notImpl('logout'); }
+    async registerBegin(_req) { return notImpl('registerBegin'); }
+    async registerFinish(_req) { return notImpl('registerFinish'); }
 }
 // GrpcWebBarrierClient is a stub BarrierClient that throws
 // GrpcWebNotImplementedError on every call. The barrier surface lives on

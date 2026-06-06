@@ -115,7 +115,7 @@ func (m *mockServiceWithOSAdmin) ObjectStorageAdminService() service.ObjectStora
 
 func createHandlerWithOSAdmin(adminSvc service.ObjectStorageAdminService) *Handler {
 	svc := &mockServiceWithOSAdmin{osAdminSvc: adminSvc}
-	return NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	return NewHandler(svc, nil, nil, nil, createTestLogger())
 }
 
 // =============================================================================

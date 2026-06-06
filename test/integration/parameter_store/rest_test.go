@@ -17,18 +17,18 @@ package parameter_store
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // REST API Integration Tests for Parameter Store
@@ -36,17 +36,7 @@ import (
 // TestREST_SetAndGetParameter tests basic parameter set and get via REST API.
 func TestREST_SetAndGetParameter(t *testing.T) {
 	base := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	// Unique path for this test
 	path := fmt.Sprintf("/integration-test/rest/basic/%d", time.Now().UnixNano())
@@ -130,17 +120,7 @@ func TestREST_SetAndGetParameter(t *testing.T) {
 // TestREST_DeleteParameter tests parameter deletion via REST API.
 func TestREST_DeleteParameter(t *testing.T) {
 	base := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	// Create a parameter to delete
 	path := fmt.Sprintf("/integration-test/rest/delete/%d", time.Now().UnixNano())
@@ -185,17 +165,7 @@ func TestREST_DeleteParameter(t *testing.T) {
 // TestREST_ListParameters tests parameter listing via REST API.
 func TestREST_ListParameters(t *testing.T) {
 	base := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	// Create test prefix
 	prefix := fmt.Sprintf("/integration-test/rest/list/%d", time.Now().UnixNano())
@@ -252,17 +222,7 @@ func TestREST_ListParameters(t *testing.T) {
 // TestREST_BatchOperations tests batch get, set, and delete via REST API.
 func TestREST_BatchOperations(t *testing.T) {
 	base := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	// Create test prefix
 	prefix := fmt.Sprintf("/integration-test/rest/batch/%d", time.Now().UnixNano())
@@ -348,17 +308,7 @@ func TestREST_BatchOperations(t *testing.T) {
 // TestREST_SearchByTags tests tag-based search via REST API.
 func TestREST_SearchByTags(t *testing.T) {
 	base := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	// Create test parameters with unique tags
 	prefix := fmt.Sprintf("/integration-test/rest/search/%d", time.Now().UnixNano())
@@ -426,17 +376,7 @@ func TestREST_SearchByTags(t *testing.T) {
 // TestREST_ParameterNotFound tests 404 response for non-existent parameter.
 func TestREST_ParameterNotFound(t *testing.T) {
 	base := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	path := "/integration-test/nonexistent/parameter"
 
@@ -453,17 +393,7 @@ func TestREST_ParameterNotFound(t *testing.T) {
 // TestREST_ParameterTypes tests different parameter types via REST API.
 func TestREST_ParameterTypes(t *testing.T) {
 	base := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	prefix := fmt.Sprintf("/integration-test/rest/types/%d", time.Now().UnixNano())
 
@@ -548,17 +478,7 @@ func TestREST_ParameterTypes(t *testing.T) {
 // TestREST_UpdateParameter tests parameter update (overwrite) via REST API.
 func TestREST_UpdateParameter(t *testing.T) {
 	base := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	path := fmt.Sprintf("/integration-test/rest/update/%d", time.Now().UnixNano())
 

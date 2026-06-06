@@ -68,9 +68,9 @@ type sftpFile interface {
 // pulling an SFTP server into unit tests.
 type sftpAdapter struct{ c *sftp.Client }
 
-func (a sftpAdapter) MkdirAll(dir string) error        { return a.c.MkdirAll(dir) }
+func (a sftpAdapter) MkdirAll(dir string) error           { return a.c.MkdirAll(dir) }
 func (a sftpAdapter) Chmod(p string, m os.FileMode) error { return a.c.Chmod(p, m) }
-func (a sftpAdapter) Remove(p string) error            { return a.c.Remove(p) }
+func (a sftpAdapter) Remove(p string) error               { return a.c.Remove(p) }
 func (a sftpAdapter) Create(p string) (sftpFile, error) {
 	f, err := a.c.Create(p)
 	if err != nil {

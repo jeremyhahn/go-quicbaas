@@ -241,6 +241,7 @@ func recoveredHostFromHeartbeat(payload *heartbeatBody, peer *x509.Certificate) 
 //   - Cert CN with the optional "agent-" prefix stripped (the deploy
 //     issuer stamps the daemon's LAN IP / hostname there).
 //   - First DNS SAN.
+//
 // Returns bindAddr unchanged when no derivation succeeds.
 func rewriteWildcardHost(bindAddr string, peer *x509.Certificate) string {
 	host, port, err := splitHostPortSafe(bindAddr)

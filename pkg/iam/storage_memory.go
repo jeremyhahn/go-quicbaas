@@ -36,8 +36,8 @@ type MemoryStorage struct {
 	tenantQuotas   map[string]*TenantQuota
 
 	// User storage
-	users              map[string]*User // key: tenantID:userID
-	usersByEmail       map[string]*User // key: email
+	users                map[string]*User // key: tenantID:userID
+	usersByEmail         map[string]*User // key: email
 	usersByPIVThumbprint map[string]*User // key: piv_thumbprint
 
 	// Group storage
@@ -68,22 +68,22 @@ type MemoryStorage struct {
 // NewMemoryStorage creates a new in-memory storage instance.
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		tenants:        make(map[string]*Tenant),
-		tenantSettings: make(map[string]*TenantSettings),
-		tenantQuotas:   make(map[string]*TenantQuota),
+		tenants:              make(map[string]*Tenant),
+		tenantSettings:       make(map[string]*TenantSettings),
+		tenantQuotas:         make(map[string]*TenantQuota),
 		users:                make(map[string]*User),
 		usersByEmail:         make(map[string]*User),
 		usersByPIVThumbprint: make(map[string]*User),
-		groups:         make(map[string]*Group),
-		roles:          make(map[string]*Role),
-		policies:       make(map[string]*Policy),
-		apps:           make(map[string]*Application),
-		authCodes:      make(map[string]*AuthCodeData),
-		tokens:         make(map[string]*Token),
-		tokenValues:    make(map[string]*Token),
-		revokedTokens:  make(map[string]bool),
-		sessions:       make(map[string]*Session),
-		credentials:    make(map[string]*Credential),
+		groups:               make(map[string]*Group),
+		roles:                make(map[string]*Role),
+		policies:             make(map[string]*Policy),
+		apps:                 make(map[string]*Application),
+		authCodes:            make(map[string]*AuthCodeData),
+		tokens:               make(map[string]*Token),
+		tokenValues:          make(map[string]*Token),
+		revokedTokens:        make(map[string]bool),
+		sessions:             make(map[string]*Session),
+		credentials:          make(map[string]*Credential),
 	}
 }
 
@@ -113,11 +113,10 @@ func (m *MemoryStorage) CreateTenant(ctx context.Context, tenant *Tenant) error 
 	t := *tenant
 	m.tenants[tenant.ID] = &t
 
-	// Always initialize quota (0 means unlimited for each resource type)
+	// Initialize BaaS-layer IAM quotas (0 means unlimited).
+	// Engine-level quotas (users, roles, storage) are owned by qrdb TenantServicer.
 	quota := &TenantQuota{
-		MaxUsers:    int64(tenant.Quotas.MaxUsers),
 		MaxGroups:   int64(tenant.Quotas.MaxGroups),
-		MaxRoles:    int64(tenant.Quotas.MaxRoles),
 		MaxPolicies: int64(tenant.Quotas.MaxPolicies),
 		MaxApps:     int64(tenant.Quotas.MaxApps),
 	}
@@ -327,22 +326,14 @@ func (m *MemoryStorage) IncrementQuotaUsage(ctx context.Context, tenantID string
 		m.tenantQuotas[tenantID] = quota
 	}
 
+	// Users and roles are engine-level quotas owned by qrdb TenantServicer.
+	// Only BaaS-layer IAM quotas are tracked here.
 	switch resource {
-	case "users":
-		if quota.MaxUsers > 0 && quota.CurrentUsers+delta > quota.MaxUsers {
-			return NewQuotaExceededError(tenantID, resource, quota.MaxUsers, quota.CurrentUsers)
-		}
-		quota.CurrentUsers += delta
 	case "groups":
 		if quota.MaxGroups > 0 && quota.CurrentGroups+delta > quota.MaxGroups {
 			return NewQuotaExceededError(tenantID, resource, quota.MaxGroups, quota.CurrentGroups)
 		}
 		quota.CurrentGroups += delta
-	case "roles":
-		if quota.MaxRoles > 0 && quota.CurrentRoles+delta > quota.MaxRoles {
-			return NewQuotaExceededError(tenantID, resource, quota.MaxRoles, quota.CurrentRoles)
-		}
-		quota.CurrentRoles += delta
 	case "policies":
 		if quota.MaxPolicies > 0 && quota.CurrentPolicies+delta > quota.MaxPolicies {
 			return NewQuotaExceededError(tenantID, resource, quota.MaxPolicies, quota.CurrentPolicies)
@@ -367,21 +358,12 @@ func (m *MemoryStorage) DecrementQuotaUsage(ctx context.Context, tenantID string
 		return nil // Nothing to decrement
 	}
 
+	// Users and roles are engine-level quotas owned by qrdb TenantServicer.
 	switch resource {
-	case "users":
-		quota.CurrentUsers -= delta
-		if quota.CurrentUsers < 0 {
-			quota.CurrentUsers = 0
-		}
 	case "groups":
 		quota.CurrentGroups -= delta
 		if quota.CurrentGroups < 0 {
 			quota.CurrentGroups = 0
-		}
-	case "roles":
-		quota.CurrentRoles -= delta
-		if quota.CurrentRoles < 0 {
-			quota.CurrentRoles = 0
 		}
 	case "policies":
 		quota.CurrentPolicies -= delta

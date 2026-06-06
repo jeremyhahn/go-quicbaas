@@ -68,11 +68,10 @@ type TenantSettings struct {
 	RefreshTokenTTL    time.Duration       `json:"refresh_token_ttl,omitempty" yaml:"refresh_token_ttl,omitempty"`
 }
 
-// TenantQuotas defines resource limits for a tenant.
+// TenantQuotas defines BaaS-layer IAM resource limits for a tenant.
+// Engine-level quotas (users, roles, storage, etc.) are owned by qrdb TenantServicer.
 type TenantQuotas struct {
-	MaxUsers    int `json:"max_users,omitempty" yaml:"max_users,omitempty"`
 	MaxGroups   int `json:"max_groups,omitempty" yaml:"max_groups,omitempty"`
-	MaxRoles    int `json:"max_roles,omitempty" yaml:"max_roles,omitempty"`
 	MaxPolicies int `json:"max_policies,omitempty" yaml:"max_policies,omitempty"`
 	MaxApps     int `json:"max_apps,omitempty" yaml:"max_apps,omitempty"`
 }
@@ -84,21 +83,21 @@ type TenantQuota struct {
 
 // User represents an authenticated principal in the IAM system.
 type User struct {
-	ID            string                 `json:"id" yaml:"id"`
-	Email         string                 `json:"email" yaml:"email"`
-	Name          string                 `json:"name" yaml:"name"`
-	TenantID      string                 `json:"tenant_id" yaml:"tenant_id"`
-	Roles         []string               `json:"roles,omitempty" yaml:"roles,omitempty"`
-	Groups        []string               `json:"groups,omitempty" yaml:"groups,omitempty"`
-	Attributes    map[string]interface{} `json:"attributes,omitempty" yaml:"attributes,omitempty"`
-	Created       time.Time              `json:"created" yaml:"created"`
-	Updated       time.Time              `json:"updated" yaml:"updated"`
-	LastAuth      *time.Time             `json:"last_auth,omitempty" yaml:"last_auth,omitempty"`
-	MFAEnabled    bool                   `json:"mfa_enabled" yaml:"mfa_enabled"`
-	MFAMethod     MFAMethod              `json:"mfa_method,omitempty" yaml:"mfa_method,omitempty"`
-	MFAEnrolledAt *time.Time             `json:"mfa_enrolled_at,omitempty" yaml:"mfa_enrolled_at,omitempty"`
-	MFAVerified   bool                   `json:"mfa_verified" yaml:"mfa_verified"`
-	MFATimestamp  *time.Time             `json:"mfa_timestamp,omitempty" yaml:"mfa_timestamp,omitempty"`
+	ID                string                 `json:"id" yaml:"id"`
+	Email             string                 `json:"email" yaml:"email"`
+	Name              string                 `json:"name" yaml:"name"`
+	TenantID          string                 `json:"tenant_id" yaml:"tenant_id"`
+	Roles             []string               `json:"roles,omitempty" yaml:"roles,omitempty"`
+	Groups            []string               `json:"groups,omitempty" yaml:"groups,omitempty"`
+	Attributes        map[string]interface{} `json:"attributes,omitempty" yaml:"attributes,omitempty"`
+	Created           time.Time              `json:"created" yaml:"created"`
+	Updated           time.Time              `json:"updated" yaml:"updated"`
+	LastAuth          *time.Time             `json:"last_auth,omitempty" yaml:"last_auth,omitempty"`
+	MFAEnabled        bool                   `json:"mfa_enabled" yaml:"mfa_enabled"`
+	MFAMethod         MFAMethod              `json:"mfa_method,omitempty" yaml:"mfa_method,omitempty"`
+	MFAEnrolledAt     *time.Time             `json:"mfa_enrolled_at,omitempty" yaml:"mfa_enrolled_at,omitempty"`
+	MFAVerified       bool                   `json:"mfa_verified" yaml:"mfa_verified"`
+	MFATimestamp      *time.Time             `json:"mfa_timestamp,omitempty" yaml:"mfa_timestamp,omitempty"`
 	Suspended         bool                   `json:"suspended,omitempty" yaml:"suspended,omitempty"`
 	Locked            bool                   `json:"locked,omitempty" yaml:"locked,omitempty"`
 	State             UserState              `json:"state,omitempty" yaml:"state,omitempty"`
@@ -537,16 +536,16 @@ type CompiledPolicy struct {
 type AuditEventType string
 
 const (
-	AuditEventAuthentication AuditEventType = "authentication"
-	AuditEventAuthorization  AuditEventType = "authorization"
-	AuditEventUserManagement AuditEventType = "user_management"
+	AuditEventAuthentication  AuditEventType = "authentication"
+	AuditEventAuthorization   AuditEventType = "authorization"
+	AuditEventUserManagement  AuditEventType = "user_management"
 	AuditEventGroupManagement AuditEventType = "group_management"
-	AuditEventRoleManagement AuditEventType = "role_management"
-	AuditEventPolicyChange   AuditEventType = "policy_change"
-	AuditEventMFAEvent       AuditEventType = "mfa"
-	AuditEventSessionEvent   AuditEventType = "session"
-	AuditEventTenantEvent    AuditEventType = "tenant"
-	AuditEventAppEvent       AuditEventType = "application"
+	AuditEventRoleManagement  AuditEventType = "role_management"
+	AuditEventPolicyChange    AuditEventType = "policy_change"
+	AuditEventMFAEvent        AuditEventType = "mfa"
+	AuditEventSessionEvent    AuditEventType = "session"
+	AuditEventTenantEvent     AuditEventType = "tenant"
+	AuditEventAppEvent        AuditEventType = "application"
 )
 
 // AuditCategory is the high-level category for an audit event.
@@ -577,14 +576,14 @@ type AuditResource struct {
 
 // AuditEvent represents an audit event.
 type AuditEvent struct {
-	ID        string         `json:"id" yaml:"id"`
-	Timestamp time.Time      `json:"timestamp" yaml:"timestamp"`
-	TenantID  string         `json:"tenant_id,omitempty"`
-	EventType AuditEventType `json:"event_type,omitempty"`
-	Category  AuditCategory  `json:"category,omitempty"`
-	Action    string         `json:"action,omitempty"`
-	Outcome   AuditOutcome   `json:"outcome,omitempty"`
-	Resource  *AuditResource `json:"resource,omitempty"`
+	ID        string                 `json:"id" yaml:"id"`
+	Timestamp time.Time              `json:"timestamp" yaml:"timestamp"`
+	TenantID  string                 `json:"tenant_id,omitempty"`
+	EventType AuditEventType         `json:"event_type,omitempty"`
+	Category  AuditCategory          `json:"category,omitempty"`
+	Action    string                 `json:"action,omitempty"`
+	Outcome   AuditOutcome           `json:"outcome,omitempty"`
+	Resource  *AuditResource         `json:"resource,omitempty"`
 	Details   map[string]interface{} `json:"details,omitempty"`
 }
 

@@ -321,6 +321,184 @@ func (r *ToolRegistry) registerKMSTools() {
 			"required": []string{"key_id"},
 		},
 	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_kms_set_rotation_policy",
+		Description: "Set or replace the automatic cryptoperiod rotation policy for a key",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"key_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Key identifier",
+				},
+				"auto_rotate": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Enable automatic rotation (requires interval_seconds > 0)",
+				},
+				"interval_seconds": map[string]interface{}{
+					"type":        "number",
+					"description": "Rotation interval in seconds (must be positive when auto_rotate is true)",
+				},
+				"retain_versions": map[string]interface{}{
+					"type":        "number",
+					"description": "Number of old key versions to retain after rotation",
+				},
+				"enabled": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Mark the policy as enabled",
+				},
+			},
+			"required": []string{"key_id", "auto_rotate", "interval_seconds"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_kms_get_rotation_policy",
+		Description: "Retrieve the automatic rotation policy for a key",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"key_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Key identifier",
+				},
+			},
+			"required": []string{"key_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_kms_delete_rotation_policy",
+		Description: "Remove the automatic rotation policy for a key, disabling auto-rotation",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"key_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Key identifier",
+				},
+			},
+			"required": []string{"key_id"},
+		},
+	})
+}
+
+// =============================================================================
+// KMS Rotation Policy Execute Functions
+// =============================================================================
+
+func (r *ToolRegistry) executeKMSSetRotationPolicy(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	keyID := getString(args, "key_id")
+	if keyID == "" {
+		return nil, api.NewRequiredFieldError("key_id")
+	}
+
+	intervalSecs, _ := args["interval_seconds"].(float64)
+	autoRotate, _ := args["auto_rotate"].(bool)
+	retainVersions, _ := args["retain_versions"].(float64)
+	enabled, _ := args["enabled"].(bool)
+
+	if autoRotate && intervalSecs <= 0 {
+		return nil, api.NewInvalidInputError("interval_seconds must be positive when auto_rotate is true")
+	}
+
+	kmsSvc, err := r.getKMSService()
+	if err != nil {
+		return nil, err
+	}
+
+	svcReq := &service.SetKeyRotationPolicyRequest{
+		KeyID: keyID,
+		Policy: &service.RotationPolicy{
+			Enabled:        enabled,
+			Interval:       time.Duration(intervalSecs) * time.Second,
+			RetainVersions: int(retainVersions),
+			AutoRotate:     autoRotate,
+		},
+	}
+
+	resp, err := kmsSvc.SetKeyRotationPolicy(ctx, svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	var policyMap map[string]interface{}
+	if resp.Policy != nil {
+		policyMap = map[string]interface{}{
+			"enabled":            resp.Policy.Enabled,
+			"auto_rotate":        resp.Policy.AutoRotate,
+			"interval_seconds":   int64(resp.Policy.Interval / time.Second),
+			"next_rotation_unix": resp.Policy.NextRotation.Unix(),
+			"retain_versions":    resp.Policy.RetainVersions,
+		}
+	}
+
+	return marshalResult(map[string]interface{}{
+		"key_id":    resp.KeyID,
+		"policy":    policyMap,
+		"timestamp": resp.Timestamp.Unix(),
+	})
+}
+
+func (r *ToolRegistry) executeKMSGetRotationPolicy(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	keyID := getString(args, "key_id")
+	if keyID == "" {
+		return nil, api.NewRequiredFieldError("key_id")
+	}
+
+	kmsSvc, err := r.getKMSService()
+	if err != nil {
+		return nil, err
+	}
+
+	svcReq := &service.GetKeyRotationPolicyRequest{KeyID: keyID}
+
+	resp, err := kmsSvc.GetKeyRotationPolicy(ctx, svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	var policyMap interface{}
+	if resp.Policy != nil {
+		policyMap = map[string]interface{}{
+			"enabled":            resp.Policy.Enabled,
+			"auto_rotate":        resp.Policy.AutoRotate,
+			"interval_seconds":   int64(resp.Policy.Interval / time.Second),
+			"next_rotation_unix": resp.Policy.NextRotation.Unix(),
+			"retain_versions":    resp.Policy.RetainVersions,
+		}
+	}
+
+	return marshalResult(map[string]interface{}{
+		"key_id":    resp.KeyID,
+		"policy":    policyMap,
+		"timestamp": resp.Timestamp.Unix(),
+	})
+}
+
+func (r *ToolRegistry) executeKMSDeleteRotationPolicy(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	keyID := getString(args, "key_id")
+	if keyID == "" {
+		return nil, api.NewRequiredFieldError("key_id")
+	}
+
+	kmsSvc, err := r.getKMSService()
+	if err != nil {
+		return nil, err
+	}
+
+	svcReq := &service.DeleteKeyRotationPolicyRequest{KeyID: keyID}
+
+	resp, err := kmsSvc.DeleteKeyRotationPolicy(ctx, svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"key_id":    resp.KeyID,
+		"timestamp": resp.Timestamp.Unix(),
+	})
 }
 
 // =============================================================================

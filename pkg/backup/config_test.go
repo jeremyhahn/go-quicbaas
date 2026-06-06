@@ -902,10 +902,18 @@ func TestNewBackupManager_InvalidConfig(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "storage is required")
 
-	// Test with nil raft
-	_, err = NewBackupManager(config, memStorage, nil, log)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "raft node is required")
+	// Nil raft is now accepted: when a real qrdb node owns consensus,
+	// the backup manager does not require a standalone raft node.
+	nilRaftConfig := &Config{
+		StorageBackend: "mock",
+		WorkDir:        t.TempDir(),
+		StorageConfig:  map[string]string{"path": t.TempDir()},
+	}
+	mgr, err := NewBackupManager(nilRaftConfig, memStorage, nil, log)
+	assert.NoError(t, err, "nil raft should be accepted (qrdb node path)")
+	if mgr != nil {
+		_ = mgr.Close()
+	}
 
 	// Test with nil logger
 	_, err = NewBackupManager(config, memStorage, mockRaft, nil)
@@ -1035,16 +1043,22 @@ func TestOperationsAfterClose(t *testing.T) {
 }
 
 // TestCreateBackup_GetNodeHostInfoNilWithErrors tests CreateBackup when GetNodeHostInfo returns nil.
+// Since GetNodeHostInfo nil is now treated as "no shards" (graceful degradation for the qrdb-node
+// path where a standalone raft node is not present), the backup succeeds with zero shards.
 func TestCreateBackup_GetNodeHostInfoNilWithErrors(t *testing.T) {
 	manager, _, _ := setupTestBackupManagerWithErrors(t)
 	ctx := context.Background()
 
-	// Replace raft node with one that returns nil
+	// Replace raft node with one that returns nil for GetNodeHostInfo.
+	// The backup manager now treats nil as an empty NodeHostInfo (zero shards)
+	// rather than an error, so CreateBackup should succeed with NumShards=0.
 	manager.raft = &mockRaftNodeNilInfo{}
 
-	_, err := manager.CreateBackup(ctx, BackupTypeFull)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "get node host info failed")
+	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
+	assert.NoError(t, err, "nil NodeHostInfo should produce a zero-shard backup, not an error")
+	if err == nil {
+		assert.Equal(t, 0, backup.Metadata.NumShards, "backup with nil raft info should have zero shards")
+	}
 }
 
 // TestReadKeyValue_ShortRead tests readKeyValue with incomplete data.

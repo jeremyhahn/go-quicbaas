@@ -204,6 +204,6 @@ func TestJob_NodeAffinity_OmittedWhenEmpty(t *testing.T) {
 
 // --- helpers ---
 
-func jsonMarshal(v any) ([]byte, error)         { return json.Marshal(v) }
-func jsonUnmarshal(b []byte, v any) error       { return json.Unmarshal(b, v) }
-func containsBytes(h []byte, n string) bool     { return bytes.Contains(h, []byte(n)) }
+func jsonMarshal(v any) ([]byte, error)     { return json.Marshal(v) }
+func jsonUnmarshal(b []byte, v any) error   { return json.Unmarshal(b, v) }
+func containsBytes(h []byte, n string) bool { return bytes.Contains(h, []byte(n)) }

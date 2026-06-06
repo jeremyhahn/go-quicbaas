@@ -21,6 +21,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -41,18 +42,55 @@ type canonicalInitFlags struct {
 }
 
 // validBarrierStrategies is the canonical --barrier-strategy set per
-// docs/08-bootstrap-auth-architecture.md §2 plus the Phase 11 "disabled"
-// strategy used by ephemeral test installs.
+// docs/08-bootstrap-auth-architecture.md §2. "none" is the canonical
+// no-barrier value; "disabled" is preserved as a synonym for backward
+// compatibility with operators upgrading from earlier builds. The
+// hardware-backed strategies (pkcs11/tpm2/awskms/gcpkms/azurekv/vault)
+// are recognised by the flag parser so operators see a precise typed
+// UnsupportedBarrierStrategyError instead of a generic "invalid value";
+// their factory wiring lands in a follow-on phase.
 var validBarrierStrategies = map[string]struct{}{
-	"disabled": {},
-	"software": {},
-	"shamir":   {},
-	"pkcs11":   {},
-	"tpm2":     {},
-	"awskms":   {},
-	"gcpkms":   {},
-	"azurekv":  {},
-	"vault":    {},
+	"none":       {},
+	"disabled":   {},
+	"passphrase": {},
+	"shamir":     {},
+	"pkcs11":     {},
+	"tpm2":       {},
+	"awskms":     {},
+	"gcpkms":     {},
+	"azurekv":    {},
+	"vault":      {},
+}
+
+// supportedBarrierStrategies enumerates the strategies that have wiring
+// landed today. Strategies in validBarrierStrategies but absent from this
+// set are recognised by the CLI surface but rejected at init time with
+// UnsupportedBarrierStrategyError so operators get a precise message
+// rather than a confusing init failure deep inside the seal manager.
+var supportedBarrierStrategies = map[string]struct{}{
+	"none":       {},
+	"disabled":   {},
+	"passphrase": {},
+	"shamir":     {},
+}
+
+// isPassphraseStrategy reports whether a --barrier-strategy value selects the
+// passphrase-protected software seal strategy.
+func isPassphraseStrategy(strategy string) bool {
+	return strategy == "passphrase"
+}
+
+// barrierStrategyAllowsPINs reports whether a strategy honours --so-pin /
+// --user-pin. The no-barrier strategies ("none" / "disabled") MUST NOT
+// accept PINs — silently ignoring them would let an operator believe their
+// SO credential is in effect when the daemon has no barrier at all.
+func barrierStrategyAllowsPINs(strategy string) bool {
+	switch strategy {
+	case "none", "disabled":
+		return false
+	default:
+		return true
+	}
 }
 
 // CanonicalRedirectError is emitted when an operator runs a legacy
@@ -90,6 +128,50 @@ type PendingCredentialBackendError struct {
 // Error returns a human-readable description.
 func (e *PendingCredentialBackendError) Error() string {
 	return e.Op + " is not yet wired to the SDK CredentialService"
+}
+
+// PINsNotAllowedError is returned when --so-pin or --user-pin is supplied
+// alongside a barrier strategy that has no SO/User credential concept
+// (currently "none" and "disabled"). The error is explicit rather than
+// silent: ignoring the PIN would let operators believe their SO credential
+// is in effect when the daemon has no barrier at all.
+type PINsNotAllowedError struct {
+	Strategy string
+}
+
+// Error returns a human-readable description.
+func (e *PINsNotAllowedError) Error() string {
+	return "init: --so-pin / --user-pin are not valid with --barrier-strategy=" + e.Strategy +
+		" (no barrier, no SO/User concept)"
+}
+
+// UnsupportedBarrierStrategyError is returned for barrier strategies that
+// are recognised on the CLI surface but whose factory wiring has not
+// landed yet. Today the hardware-backed strategies (pkcs11, tpm2, awskms,
+// gcpkms, azurekv, vault) fall in this category; "none", "passphrase",
+// and "shamir" are supported.
+type UnsupportedBarrierStrategyError struct {
+	Strategy string
+}
+
+// Error returns a human-readable description.
+func (e *UnsupportedBarrierStrategyError) Error() string {
+	return "init: barrier strategy " + e.Strategy + " is recognised but not yet wired; " +
+		"supported strategies: none, passphrase, shamir"
+}
+
+// InitAlreadyDoneError is returned by "quicbaasd init" when the data
+// directory already contains the markers of a previous successful init
+// (a sealed barrier file and a persisted bootstrap admin assignment).
+// Operators should run the regular "quicbaasd start" command instead.
+type InitAlreadyDoneError struct {
+	DataDir string
+}
+
+// Error returns a human-readable description.
+func (e *InitAlreadyDoneError) Error() string {
+	return "init: data directory " + e.DataDir + " is already initialized; " +
+		"run 'quicbaasd start --data-dir " + e.DataDir + "' to bring the daemon up"
 }
 
 // newCanonicalInitCmd builds the canonical root "init" command. The
@@ -132,7 +214,6 @@ Canonical environment variables (Viper-bound):
 	return cmd
 }
 
-
 // resolveAndValidateInlineInit resolves env-var fallbacks via viper and
 // validates the full Phase 11 inline init flag set. The canonical subset
 // is enforced via resolveAndValidateCanonicalInit so the locked surface
@@ -174,6 +255,22 @@ func resolveAndValidateCanonicalInit(cmd *cobra.Command, f *canonicalInitFlags, 
 	v.SetEnvPrefix(envPrefix)
 	v.AutomaticEnv()
 
+	// stringSinks / intSinks point each canonical flag at the corresponding
+	// field of f so a resolved env value is applied to the struct that the
+	// validation below actually reads. The cobra flag (bound to the inline
+	// struct) is updated in lock-step so the caller's copy-back stays correct.
+	stringSinks := map[string]*string{
+		"so-pin":           &f.soPin,
+		"user-pin":         &f.userPin,
+		"barrier-strategy": &f.barrierStrategy,
+		"hostname":         &f.hostname,
+		"sans":             &f.sans,
+		"admin-bundle":     &f.adminBundle,
+	}
+	intSinks := map[string]*int{
+		"shares":    &f.shares,
+		"threshold": &f.threshold,
+	}
 	bindings := map[string]string{
 		"so-pin":           "SO_PIN",
 		"user-pin":         "USER_PIN",
@@ -186,24 +283,59 @@ func resolveAndValidateCanonicalInit(cmd *cobra.Command, f *canonicalInitFlags, 
 	}
 	for flagName, envKey := range bindings {
 		_ = v.BindEnv(flagName, envPrefix+"_"+envKey)
-		if !cmd.Flags().Changed(flagName) {
-			if val := v.GetString(flagName); val != "" {
-				if err := cmd.Flags().Set(flagName, val); err != nil {
-					return fmt.Errorf("init: invalid env value for %s: %w", flagName, err)
-				}
+		if cmd.Flags().Changed(flagName) {
+			continue
+		}
+		val := v.GetString(flagName)
+		if val == "" {
+			continue
+		}
+		// Propagate the env value into the cobra-bound (inline) flag variable
+		// when the flag is registered, so the caller's copy-back observes it.
+		if cmd.Flags().Lookup(flagName) != nil {
+			if err := cmd.Flags().Set(flagName, val); err != nil {
+				return fmt.Errorf("init: invalid env value for %s: %w", flagName, err)
 			}
+		}
+		// Apply the resolved value to the canonicalInitFlags fields used by the
+		// validation below.
+		if sink, ok := stringSinks[flagName]; ok {
+			*sink = val
+			continue
+		}
+		if sink, ok := intSinks[flagName]; ok {
+			n, err := strconv.Atoi(val)
+			if err != nil {
+				return fmt.Errorf("init: invalid env value for %s: %w", flagName, err)
+			}
+			*sink = n
 		}
 	}
 
-	if f.soPin == "" {
-		return fmt.Errorf("init: --so-pin is required (or set %s_SO_PIN)", envPrefix)
-	}
-	if f.userPin == "" {
-		return fmt.Errorf("init: --user-pin is required (or set %s_USER_PIN)", envPrefix)
-	}
 	if _, ok := validBarrierStrategies[f.barrierStrategy]; !ok {
 		return fmt.Errorf("init: invalid --barrier-strategy %q", f.barrierStrategy)
 	}
+	if _, ok := supportedBarrierStrategies[f.barrierStrategy]; !ok {
+		return &UnsupportedBarrierStrategyError{Strategy: f.barrierStrategy}
+	}
+
+	// PIN handling depends on the strategy. The no-barrier strategies have
+	// no SO/User concept; supplying PINs would silently no-op which is the
+	// kind of failure mode that costs operators hours of head-scratching.
+	// Reject PINs explicitly so the misuse surfaces at the CLI boundary.
+	if barrierStrategyAllowsPINs(f.barrierStrategy) {
+		if f.soPin == "" {
+			return fmt.Errorf("init: --so-pin is required (or set %s_SO_PIN)", envPrefix)
+		}
+		if f.userPin == "" {
+			return fmt.Errorf("init: --user-pin is required (or set %s_USER_PIN)", envPrefix)
+		}
+	} else {
+		if f.soPin != "" || f.userPin != "" {
+			return &PINsNotAllowedError{Strategy: f.barrierStrategy}
+		}
+	}
+
 	if f.barrierStrategy == "shamir" {
 		if f.shares < 2 {
 			return fmt.Errorf("init: --shares >= 2 required when --barrier-strategy=shamir")

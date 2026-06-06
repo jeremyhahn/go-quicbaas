@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -287,11 +286,8 @@ func TestClientOpcodeConstants(t *testing.T) {
 		OpKMSKeyVersions:    "OpKMSKeyVersions",
 		OpKMSKeyStatus:      "OpKMSKeyStatus",
 		OpCryptoDataKey:     "OpCryptoDataKey",
-		OpSealStatus:        "OpSealStatus",
-		OpSealInit:          "OpSealInit",
-		OpUnseal:            "OpUnseal",
-		OpSeal:              "OpSeal",
-		OpSealRekey:         "OpSealRekey",
+		OpBarrier:           "OpBarrier",
+		OpCeremony:          "OpCeremony",
 		OpSecretsStore:      "OpSecretsStore",
 		OpSecretsGet:        "OpSecretsGet",
 		OpSecretsList:       "OpSecretsList",
@@ -861,7 +857,6 @@ type e2eMockService struct {
 	mockService
 	kmsSvc     service.KMSService
 	secretsSvc service.SecretsService
-	sealSvc    service.SealService
 	schedSvc   service.SchedulerService
 }
 
@@ -875,44 +870,6 @@ func (e *e2eMockService) Secrets() service.SecretsService {
 
 func (e *e2eMockService) Scheduler() service.SchedulerService {
 	return e.schedSvc
-}
-
-// SealService interface methods - delegate to sealSvc so the server's
-// type assertion s.service.(service.SealService) succeeds.
-func (e *e2eMockService) Status(ctx context.Context) (*service.SealStatusResponse, error) {
-	return e.sealSvc.Status(ctx)
-}
-
-func (e *e2eMockService) Initialize(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	return e.sealSvc.Initialize(ctx, req)
-}
-
-func (e *e2eMockService) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	return e.sealSvc.Unseal(ctx, req)
-}
-
-func (e *e2eMockService) Seal(ctx context.Context) error {
-	return e.sealSvc.Seal(ctx)
-}
-
-func (e *e2eMockService) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-	return e.sealSvc.Rekey(ctx, req)
-}
-
-func (e *e2eMockService) GenerateRecoveryKey(ctx context.Context, req *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
-	return e.sealSvc.GenerateRecoveryKey(ctx, req)
-}
-
-func (e *e2eMockService) DeleteRecoveryKey(ctx context.Context, req *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
-	return e.sealSvc.DeleteRecoveryKey(ctx, req)
-}
-
-func (e *e2eMockService) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
-	return e.sealSvc.GenerateRootToken(ctx, req)
-}
-
-func (e *e2eMockService) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
-	return e.sealSvc.RotateRootKey(ctx, req)
 }
 
 func (e *e2eMockService) SetQRDBClient(provider service.QRDBClientProvider) {
@@ -932,39 +889,67 @@ func (e *e2eMockService) Signal() interface{} {
 func (e *e2eMockService) SetSignalService(svc interface{}) {
 }
 
-// SetTenantIsolationManager is a no-op for the mock.
-func (e *e2eMockService) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
+// e2eBarrierService satisfies service.BarrierServicer for the in-process
+// end-to-end tests. All methods return zero-value successes; specific tests
+// can swap this fake out for a richer mock when needed.
+type e2eBarrierService struct{}
 
-// e2eSealService implements the SealService interface returning success.
-type e2eSealService struct{}
-
-func (s *e2eSealService) Status(ctx context.Context) (*service.SealStatusResponse, error) {
-	return &service.SealStatusResponse{Sealed: false, Initialized: true}, nil
+func (s *e2eBarrierService) BarrierStatus(ctx context.Context) (*service.BarrierStatusInfo, error) {
+	return &service.BarrierStatusInfo{Sealed: false, Strategy: "test"}, nil
 }
-func (s *e2eSealService) Initialize(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	return &service.SealInitResponse{}, nil
+func (s *e2eBarrierService) BarrierInitialize(ctx context.Context, secret string) error { return nil }
+func (s *e2eBarrierService) BarrierUnseal(ctx context.Context, secret string) error     { return nil }
+func (s *e2eBarrierService) BarrierSeal(ctx context.Context) error                      { return nil }
+func (s *e2eBarrierService) BarrierInitializeShamir(ctx context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
+	return &service.ShamirInitInfo{Shares: []string{"a", "b", "c"}, Threshold: threshold, TotalShares: total}, nil
 }
-func (s *e2eSealService) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	return &service.UnsealResponse{}, nil
+func (s *e2eBarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*service.UnsealShareProgress, error) {
+	return &service.UnsealShareProgress{Required: 3, Submitted: 1, Complete: false}, nil
 }
-func (s *e2eSealService) Seal(ctx context.Context) error {
+func (s *e2eBarrierService) BarrierUnsealWithShares(ctx context.Context, shares []string) error {
 	return nil
 }
-func (s *e2eSealService) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-	return &service.RekeyResponse{}, nil
+func (s *e2eBarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
+	return &service.ShamirInitInfo{Shares: []string{"a"}, Threshold: threshold, TotalShares: total}, nil
 }
-func (s *e2eSealService) GenerateRecoveryKey(ctx context.Context, req *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
-	return &service.GenerateRecoveryKeyResponse{}, nil
+func (s *e2eBarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
+	return &service.RecoveryKeysInfo{Keys: []string{"r1"}, Threshold: threshold, Total: total}, nil
 }
-func (s *e2eSealService) DeleteRecoveryKey(ctx context.Context, req *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
-	return &service.DeleteRecoveryKeyResponse{}, nil
+func (s *e2eBarrierService) BarrierRecoverWithKeys(ctx context.Context, keys []string) error {
+	return nil
 }
-func (s *e2eSealService) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
-	return &service.GenerateRootTokenResponse{}, nil
+func (s *e2eBarrierService) BarrierDeleteRecoveryKeys(ctx context.Context) error { return nil }
+func (s *e2eBarrierService) BarrierHasRecoveryKeys(ctx context.Context) (bool, error) {
+	return false, nil
+}
+func (s *e2eBarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
+	return &service.RootTokenInfo{Token: "tok"}, nil
 }
 
-func (s *e2eSealService) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
-	return &service.RotateRootKeyResponse{Success: true, Message: "ok", Timestamp: time.Now()}, nil
+// e2eCeremonyService satisfies service.CeremonyServicer for the in-process
+// end-to-end tests.
+type e2eCeremonyService struct{}
+
+func (s *e2eCeremonyService) CeremonyInitialize(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
+	return &service.CeremonyInitInfo{State: "initialized", ShareCount: req.Threshold}, nil
+}
+func (s *e2eCeremonyService) CeremonyStatus(ctx context.Context) (*service.CeremonyStatusInfo, error) {
+	return &service.CeremonyStatusInfo{State: "initialized"}, nil
+}
+func (s *e2eCeremonyService) CeremonyBeginClaimCert(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
+	return &service.CeremonyChallenge{NonceHex: "deadbeef"}, nil
+}
+func (s *e2eCeremonyService) CeremonyCompleteClaimCert(ctx context.Context, username, nonceHex, signatureBase64 string) (*service.CeremonyClaimCertResult, error) {
+	return &service.CeremonyClaimCertResult{CertPEM: []byte("CERT"), CACertPEM: []byte("CA")}, nil
+}
+func (s *e2eCeremonyService) CeremonyClaimShare(ctx context.Context, username string) (string, error) {
+	return "share-" + username, nil
+}
+func (s *e2eCeremonyService) CeremonySignCSR(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error) {
+	return &service.CeremonySignCSRResult{CertPEM: []byte("SIGNED")}, nil
+}
+func (s *e2eCeremonyService) CeremonyEnrollExternalOfficer(ctx context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error) {
+	return &service.CeremonyEnrollExternalOfficerResponse{SealedShare: "sealed"}, nil
 }
 
 // e2eSchedulerService implements the SchedulerService interface.
@@ -1130,7 +1115,6 @@ func setupE2ETestEnv(t *testing.T) *e2eTestEnv {
 		},
 		kmsSvc:     &securityTestKMSService{},
 		secretsSvc: &e2eSecretsService{},
-		sealSvc:    &e2eSealService{},
 		schedSvc:   &e2eSchedulerService{},
 	}
 
@@ -1141,7 +1125,10 @@ func setupE2ETestEnv(t *testing.T) *e2eTestEnv {
 	cfg.MaxIdleTimeout = 10 * time.Second
 
 	log := createServerTestLogger()
-	server, err := NewServer(svc, cfg, log)
+	server, err := NewServer(svc, cfg, log,
+		WithServerBarrierService(&e2eBarrierService{}),
+		WithServerCeremonyService(&e2eCeremonyService{}),
+	)
 	if err != nil {
 		t.Fatalf("failed to create server: %v", err)
 	}
@@ -1549,56 +1536,222 @@ func TestClient91_BackendOperations_E2E(t *testing.T) {
 }
 
 // =============================================================================
-// Client E2E Tests - Seal Operations
+// Client E2E Tests - Barrier Operations
 // =============================================================================
 
-func TestClient91_SealOperations_E2E(t *testing.T) {
+func TestClient91_BarrierOperations_E2E(t *testing.T) {
 	env := setupE2ETestEnv(t)
 	defer env.teardown(t)
 
 	ctx := context.Background()
 
-	t.Run("SealStatus", func(t *testing.T) {
-		resp, err := env.client.SealStatus(ctx)
+	t.Run("BarrierStatus", func(t *testing.T) {
+		resp, err := env.client.BarrierStatus(ctx)
 		if err != nil {
-			t.Fatalf("SealStatus failed: %v", err)
+			t.Fatalf("BarrierStatus failed: %v", err)
 		}
 		if resp == nil {
 			t.Fatal("expected non-nil response")
 		}
 	})
 
-	t.Run("SealInit", func(t *testing.T) {
-		resp, err := env.client.SealInit(ctx, &service.SealInitRequest{Threshold: 3, TotalShares: 5})
+	t.Run("BarrierInitialize", func(t *testing.T) {
+		err := env.client.BarrierInitialize(ctx, &BarrierInitializeRequest{Secret: "passphrase"})
 		if err != nil {
-			t.Fatalf("SealInit failed: %v", err)
+			t.Fatalf("BarrierInitialize failed: %v", err)
+		}
+	})
+
+	t.Run("BarrierShamirInitialize", func(t *testing.T) {
+		resp, err := env.client.BarrierShamirInitialize(ctx, &BarrierShamirInitializeRequest{
+			Secret: "passphrase", Threshold: 3, TotalShares: 5,
+		})
+		if err != nil {
+			t.Fatalf("BarrierShamirInitialize failed: %v", err)
 		}
 		if resp == nil {
 			t.Fatal("expected non-nil response")
 		}
 	})
 
-	t.Run("Unseal", func(t *testing.T) {
-		resp, err := env.client.Unseal(ctx, &service.UnsealRequest{Share: []byte("share1")})
+	t.Run("BarrierUnseal", func(t *testing.T) {
+		err := env.client.BarrierUnseal(ctx, &BarrierUnsealRequest{Secret: "passphrase"})
 		if err != nil {
-			t.Fatalf("Unseal failed: %v", err)
+			t.Fatalf("BarrierUnseal failed: %v", err)
+		}
+	})
+
+	t.Run("BarrierSeal", func(t *testing.T) {
+		if err := env.client.BarrierSeal(ctx); err != nil {
+			t.Fatalf("BarrierSeal failed: %v", err)
+		}
+	})
+
+	t.Run("BarrierRekey", func(t *testing.T) {
+		resp, err := env.client.BarrierRekey(ctx, &BarrierRekeyRequest{Threshold: 2, Total: 3})
+		if err != nil {
+			t.Fatalf("BarrierRekey failed: %v", err)
 		}
 		if resp == nil {
 			t.Fatal("expected non-nil response")
 		}
 	})
 
-	t.Run("Seal", func(t *testing.T) {
-		err := env.client.Seal(ctx)
+	t.Run("BarrierShamirUnsealShare", func(t *testing.T) {
+		resp, err := env.client.BarrierShamirUnsealShare(ctx, &BarrierShamirUnsealShareRequest{Share: "share1"})
 		if err != nil {
-			t.Fatalf("Seal failed: %v", err)
+			t.Fatalf("BarrierShamirUnsealShare failed: %v", err)
+		}
+		if resp == nil {
+			t.Fatal("expected non-nil response")
 		}
 	})
 
-	t.Run("Rekey", func(t *testing.T) {
-		resp, err := env.client.Rekey(ctx, &service.RekeyRequest{NewThreshold: 2, NewTotalShares: 3})
+	t.Run("BarrierShamirUnsealShares", func(t *testing.T) {
+		err := env.client.BarrierShamirUnsealShares(ctx, &BarrierShamirUnsealSharesRequest{
+			Shares: []string{"s1", "s2", "s3"},
+		})
 		if err != nil {
-			t.Fatalf("Rekey failed: %v", err)
+			t.Fatalf("BarrierShamirUnsealShares failed: %v", err)
+		}
+	})
+
+	t.Run("BarrierGenerateRecoveryKeys", func(t *testing.T) {
+		resp, err := env.client.BarrierGenerateRecoveryKeys(ctx, &BarrierRecoveryGenerateRequest{Threshold: 2, Total: 3})
+		if err != nil {
+			t.Fatalf("BarrierGenerateRecoveryKeys failed: %v", err)
+		}
+		if resp == nil {
+			t.Fatal("expected non-nil response")
+		}
+	})
+
+	t.Run("BarrierRecoverWithKeys", func(t *testing.T) {
+		err := env.client.BarrierRecoverWithKeys(ctx, &BarrierRecoveryRecoverRequest{Keys: []string{"r1"}})
+		if err != nil {
+			t.Fatalf("BarrierRecoverWithKeys failed: %v", err)
+		}
+	})
+
+	t.Run("BarrierDeleteRecoveryKeys", func(t *testing.T) {
+		if err := env.client.BarrierDeleteRecoveryKeys(ctx); err != nil {
+			t.Fatalf("BarrierDeleteRecoveryKeys failed: %v", err)
+		}
+	})
+
+	t.Run("BarrierHasRecoveryKeys", func(t *testing.T) {
+		resp, err := env.client.BarrierHasRecoveryKeys(ctx)
+		if err != nil {
+			t.Fatalf("BarrierHasRecoveryKeys failed: %v", err)
+		}
+		if resp == nil {
+			t.Fatal("expected non-nil response")
+		}
+	})
+
+	t.Run("BarrierGenerateRootToken", func(t *testing.T) {
+		resp, err := env.client.BarrierGenerateRootToken(ctx, &BarrierRootTokenRequest{Shares: []string{"s1"}})
+		if err != nil {
+			t.Fatalf("BarrierGenerateRootToken failed: %v", err)
+		}
+		if resp == nil || resp.Token == "" {
+			t.Fatal("expected non-empty token in response")
+		}
+	})
+}
+
+// =============================================================================
+// Client E2E Tests - Ceremony Operations
+// =============================================================================
+
+func TestClient91_CeremonyOperations_E2E(t *testing.T) {
+	env := setupE2ETestEnv(t)
+	defer env.teardown(t)
+
+	ctx := context.Background()
+
+	t.Run("CeremonyInitialize", func(t *testing.T) {
+		resp, err := env.client.CeremonyInitialize(ctx, &CeremonyInitializeRequest{
+			SOPin: "1234", UserPin: "5678", Threshold: 2,
+		})
+		if err != nil {
+			t.Fatalf("CeremonyInitialize failed: %v", err)
+		}
+		if resp == nil {
+			t.Fatal("expected non-nil response")
+		}
+	})
+
+	t.Run("CeremonyStatus", func(t *testing.T) {
+		resp, err := env.client.CeremonyStatus(ctx)
+		if err != nil {
+			t.Fatalf("CeremonyStatus failed: %v", err)
+		}
+		if resp == nil {
+			t.Fatal("expected non-nil response")
+		}
+	})
+
+	t.Run("CeremonyClaimCertBegin", func(t *testing.T) {
+		resp, err := env.client.CeremonyClaimCertBegin(ctx, &CeremonyClaimCertBeginRequest{Username: "alice"})
+		if err != nil {
+			t.Fatalf("CeremonyClaimCertBegin failed: %v", err)
+		}
+		if resp == nil || resp.NonceHex == "" {
+			t.Fatal("expected non-empty nonce in challenge response")
+		}
+	})
+
+	t.Run("CeremonyClaimCertComplete", func(t *testing.T) {
+		resp, err := env.client.CeremonyClaimCertComplete(ctx, &CeremonyClaimCertCompleteRequest{
+			Username: "alice", NonceHex: "deadbeef", Signature: "sig",
+		})
+		if err != nil {
+			t.Fatalf("CeremonyClaimCertComplete failed: %v", err)
+		}
+		if resp == nil {
+			t.Fatal("expected non-nil response")
+		}
+	})
+
+	t.Run("CeremonyClaimShare", func(t *testing.T) {
+		resp, err := env.client.CeremonyClaimShare(ctx, &CeremonyClaimShareRequest{Username: "alice"})
+		if err != nil {
+			t.Fatalf("CeremonyClaimShare failed: %v", err)
+		}
+		if resp == nil || resp.Share == "" {
+			t.Fatal("expected non-empty share")
+		}
+	})
+
+	t.Run("CeremonySignCSR", func(t *testing.T) {
+		resp, err := env.client.CeremonySignCSR(ctx, &CeremonySignCSRRequest{
+			Username: "alice", SOPin: "1234", CSRPEM: "csr", Role: "officer",
+		})
+		if err != nil {
+			t.Fatalf("CeremonySignCSR failed: %v", err)
+		}
+		if resp == nil {
+			t.Fatal("expected non-nil response")
+		}
+	})
+
+	t.Run("CeremonyListOfficers", func(t *testing.T) {
+		resp, err := env.client.CeremonyListOfficers(ctx)
+		if err != nil {
+			t.Fatalf("CeremonyListOfficers failed: %v", err)
+		}
+		if resp == nil {
+			t.Fatal("expected non-nil response")
+		}
+	})
+
+	t.Run("CeremonyEnrollExternalOfficer", func(t *testing.T) {
+		resp, err := env.client.CeremonyEnrollExternalOfficer(ctx, &CeremonyEnrollExternalOfficerRequest{
+			Username: "bob", PubKeyPEM: "PUBKEY", AuthFactor: "piv", ShareIndex: 2,
+		})
+		if err != nil {
+			t.Fatalf("CeremonyEnrollExternalOfficer failed: %v", err)
 		}
 		if resp == nil {
 			t.Fatal("expected non-nil response")

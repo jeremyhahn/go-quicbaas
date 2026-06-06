@@ -238,23 +238,6 @@ func TestPersistSessionDecodeError_ErrorAndUnwrap(t *testing.T) {
 	}
 }
 
-func TestPersistSessionCryptoError_ErrorAndUnwrap(t *testing.T) {
-	t.Parallel()
-	cause := errors.New("key size mismatch")
-	err := &PersistSessionCryptoError{Op: "new-cipher", Err: cause}
-
-	msg := err.Error()
-	if !strings.Contains(msg, "new-cipher") {
-		t.Errorf("Error() missing op: %q", msg)
-	}
-	if !strings.Contains(msg, "key size mismatch") {
-		t.Errorf("Error() missing cause: %q", msg)
-	}
-	if !errors.Is(err, cause) {
-		t.Error("Unwrap should chain to original cause")
-	}
-}
-
 func TestPersistedSessionCorruptError_Error(t *testing.T) {
 	t.Parallel()
 	err := &PersistedSessionCorruptError{Count: 3}

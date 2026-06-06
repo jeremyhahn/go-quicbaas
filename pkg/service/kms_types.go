@@ -378,6 +378,66 @@ type GenerateKeyRequest struct {
 
 	// Owner is the owning user or service
 	Owner string `json:"owner,omitempty"`
+
+	// RotationPolicy optionally enables automatic rotation at key creation time.
+	// When AutoRotate is true, Interval must be positive.
+	// NextRotation is computed automatically from Interval if not supplied.
+	RotationPolicy *RotationPolicy `json:"rotation_policy,omitempty"`
+}
+
+// SetKeyRotationPolicyRequest sets the automatic rotation policy for a key.
+type SetKeyRotationPolicyRequest struct {
+	// KeyID is the key identifier.
+	KeyID string `json:"key_id"`
+
+	// Policy is the rotation policy to apply.
+	Policy *RotationPolicy `json:"policy"`
+}
+
+// SetKeyRotationPolicyResponse confirms the policy was applied.
+type SetKeyRotationPolicyResponse struct {
+	// KeyID is the key identifier.
+	KeyID string `json:"key_id"`
+
+	// Policy is the stored rotation policy (with computed NextRotation).
+	Policy *RotationPolicy `json:"policy"`
+
+	// Timestamp is when the policy was applied.
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// GetKeyRotationPolicyRequest retrieves the rotation policy for a key.
+type GetKeyRotationPolicyRequest struct {
+	// KeyID is the key identifier.
+	KeyID string `json:"key_id"`
+}
+
+// GetKeyRotationPolicyResponse returns the current rotation policy.
+type GetKeyRotationPolicyResponse struct {
+	// KeyID is the key identifier.
+	KeyID string `json:"key_id"`
+
+	// Policy is the current rotation policy, or nil when none is configured.
+	Policy *RotationPolicy `json:"policy,omitempty"`
+
+	// Timestamp is when the policy was retrieved.
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// DeleteKeyRotationPolicyRequest removes the rotation policy from a key,
+// disabling automatic rotation.
+type DeleteKeyRotationPolicyRequest struct {
+	// KeyID is the key identifier whose rotation policy should be removed.
+	KeyID string `json:"key_id"`
+}
+
+// DeleteKeyRotationPolicyResponse confirms the rotation policy was removed.
+type DeleteKeyRotationPolicyResponse struct {
+	// KeyID is the key identifier.
+	KeyID string `json:"key_id"`
+
+	// Timestamp is when the policy was removed.
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // GenerateKeyResponse contains the newly generated key.
@@ -734,6 +794,21 @@ type GetKeyPolicyResponse struct {
 	Policy *KeyPolicy `json:"policy"`
 
 	// Timestamp is when policy was retrieved
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// DeleteKeyPolicyRequest removes a key's access policy, restoring default-allow-all.
+type DeleteKeyPolicyRequest struct {
+	// KeyID is the key identifier whose policy should be removed.
+	KeyID string `json:"key_id"`
+}
+
+// DeleteKeyPolicyResponse confirms that the policy was removed.
+type DeleteKeyPolicyResponse struct {
+	// KeyID is the key identifier.
+	KeyID string `json:"key_id"`
+
+	// Timestamp is when the policy was removed.
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -2130,6 +2205,57 @@ type SafetyReportResponse struct {
 
 	// Timestamp is when the report was generated
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// StartReencryptionRequest contains parameters for starting re-encryption.
+type StartReencryptionRequest struct {
+	// Path is the DEK path to re-encrypt (optional, empty means all DEKs)
+	Path string `json:"path,omitempty"`
+
+	// FromVersion is the old DEK version to re-encrypt from
+	FromVersion uint64 `json:"from_version"`
+
+	// ToVersion is the new DEK version to re-encrypt to
+	ToVersion uint64 `json:"to_version"`
+
+	// BatchSize is entities to process per batch
+	BatchSize int `json:"batch_size,omitempty"`
+
+	// Concurrency is parallel re-encryption workers
+	Concurrency int `json:"concurrency,omitempty"`
+
+	// ThrottleRate limits re-encryption rate (entities/sec, 0 = unlimited)
+	ThrottleRate int `json:"throttle_rate,omitempty"`
+
+	// Force re-encryption even if already in progress
+	Force bool `json:"force,omitempty"`
+}
+
+// StartReencryptionResponse contains the result of starting re-encryption.
+type StartReencryptionResponse struct {
+	// OperationID for tracking this re-encryption
+	OperationID string `json:"operation_id"`
+
+	// Path of the DEK being re-encrypted
+	Path string `json:"path,omitempty"`
+
+	// Started indicates if the re-encryption was started
+	Started bool `json:"started"`
+
+	// EstimatedItems is the estimated number of items to process
+	EstimatedItems int `json:"estimated_items"`
+
+	// Timestamp is when the operation started
+	Timestamp time.Time `json:"timestamp"`
+
+	// StartedAt is when re-encryption began
+	StartedAt time.Time `json:"started_at"`
+
+	// TotalEntities is estimated total entities to re-encrypt
+	TotalEntities int64 `json:"total_entities"`
+
+	// EstimatedCompletion is estimated completion time
+	EstimatedCompletion time.Time `json:"estimated_completion"`
 }
 
 // GetReencryptionProgressRequest requests re-encryption progress.

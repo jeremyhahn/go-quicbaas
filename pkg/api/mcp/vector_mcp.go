@@ -103,23 +103,23 @@ func (s *MCPServer) registerVectorTools() {
 	s.tools = append(s.tools, vectorTools...)
 
 	// Register handlers for each tool
-	s.handlers["quicbaas_vector_upsert"] = s.handleUpsertVector
-	s.handlers["quicbaas_vector_batch_upsert"] = s.handleBatchUpsertVectors
-	s.handlers["quicbaas_vector_get"] = s.handleGetVector
-	s.handlers["quicbaas_vector_delete"] = s.handleDeleteVector
-	s.handlers["quicbaas_vector_update_metadata"] = s.handleUpdateMetadata
-	s.handlers["quicbaas_vector_batch_delete"] = s.handleBatchDeleteVectors
-	s.handlers["quicbaas_vector_search_similar"] = s.handleSearchSimilar
-	s.handlers["quicbaas_vector_search_by_id"] = s.handleSearchByID
-	s.handlers["quicbaas_vector_list"] = s.handleListVectors
-	s.handlers["quicbaas_vector_list_namespaces"] = s.handleListNamespaces
-	s.handlers["quicbaas_vector_create_namespace"] = s.handleCreateNamespace
+	s.handlers["qrdb_vector_upsert"] = s.handleUpsertVector
+	s.handlers["qrdb_vector_batch_upsert"] = s.handleBatchUpsertVectors
+	s.handlers["qrdb_vector_get"] = s.handleGetVector
+	s.handlers["qrdb_vector_delete"] = s.handleDeleteVector
+	s.handlers["qrdb_vector_update_metadata"] = s.handleUpdateMetadata
+	s.handlers["qrdb_vector_batch_delete"] = s.handleBatchDeleteVectors
+	s.handlers["qrdb_vector_search_similar"] = s.handleSearchSimilar
+	s.handlers["qrdb_vector_search_by_id"] = s.handleSearchByID
+	s.handlers["qrdb_vector_list"] = s.handleListVectors
+	s.handlers["qrdb_vector_list_namespaces"] = s.handleListNamespaces
+	s.handlers["qrdb_vector_create_namespace"] = s.handleCreateNamespace
 	s.handlers["quicbaas_vector_update_namespace"] = s.handleUpdateNamespace
-	s.handlers["quicbaas_vector_delete_namespace"] = s.handleDeleteNamespace
-	s.handlers["quicbaas_vector_get_namespace_info"] = s.handleGetNamespaceInfo
+	s.handlers["qrdb_vector_delete_namespace"] = s.handleDeleteNamespace
+	s.handlers["qrdb_vector_get_namespace_info"] = s.handleGetNamespaceInfo
 	s.handlers["quicbaas_vector_get_stats"] = s.handleGetVectorStats
 	s.handlers["quicbaas_vector_health"] = s.handleVectorHealth
-	s.handlers["quicbaas_vector_rebuild_index"] = s.handleRebuildIndex
+	s.handlers["qrdb_vector_rebuild_index"] = s.handleRebuildIndex
 	s.handlers["quicbaas_vector_get_index_progress"] = s.handleGetIndexProgress
 
 	// VectorAdmin handlers

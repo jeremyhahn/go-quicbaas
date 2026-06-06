@@ -18,11 +18,9 @@ package cluster
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -352,17 +350,7 @@ func (c *restClusterClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
 	c.baseURL = endpoints[0]
-	c.client = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.client = newInsecureHTTPClient(30 * time.Second)
 	return nil
 }
 
@@ -622,8 +610,8 @@ func (c *grpcClusterClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetClusterEndpoints()
 	require.NotEmpty(t, endpoints, "gRPC endpoints must be available for integration tests")
 
-	var err error
-	c.conn, err = grpc.NewClient(endpoints[0], grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})))
+	tlsCfg := requireTLSConfig(t)
+	c.conn, err = grpc.NewClient(endpoints[0], grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	if err != nil {
 		return err
 	}
@@ -747,9 +735,9 @@ func (c *quicClusterClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetQUICEndpoints()
 	require.NotEmpty(t, endpoints, "QUIC endpoints must be available for integration tests")
 
-	// Create QUIC client with insecure mode for self-signed certs
-	var err error
-	c.client, err = quicapi.NewClient(endpoints[0], quicapi.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}), quicapi.WithTimeout(10*time.Second))
+	tlsCfg := requireTLSConfig(t)
+	tlsCfg.NextProtos = []string{"quicbaas-quic"}
+	c.client, err = quicapi.NewClient(endpoints[0], quicapi.WithTLSConfig(tlsCfg), quicapi.WithTimeout(10*time.Second))
 	require.NoError(t, err, "Failed to create QUIC client for endpoint %s", endpoints[0])
 
 	// Test connectivity
@@ -896,17 +884,7 @@ func (c *mcpClusterClient) Setup(t *testing.T, ctx context.Context) error {
 	require.NotEmpty(t, endpoints, "MCP endpoints must be available for integration tests")
 
 	c.endpoint = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = newInsecureHTTPClient(30 * time.Second)
 
 	// Test connectivity with initialize request
 	err := c.initialize(ctx)
@@ -1266,10 +1244,10 @@ func (c *unixSocketClusterClient) Setup(t *testing.T, ctx context.Context) error
 	socketPath := endpoints[0]
 
 	// Create gRPC connection over Unix socket
-	var err error
+	tlsCfg := requireTLSConfig(t)
 	c.conn, err = grpc.NewClient(
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 	)
 	require.NoError(t, err, "Failed to create gRPC connection over unix socket at %s", socketPath)
 

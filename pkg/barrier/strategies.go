@@ -14,7 +14,7 @@
 package barrier
 
 import (
-	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // StrategyKind identifies the operator-selected sealing strategy. The
@@ -27,11 +27,11 @@ const (
 	// lifecycle layer skips barrier construction in this mode.
 	StrategyDisabled StrategyKind = "disabled"
 
-	// StrategySoftware is the passphrase-based software strategy. The
+	// StrategyPassphrase is the passphrase-based software strategy. The
 	// passphrase is supplied at unseal time via the operator API; the
 	// strategy chain stores a deferred software strategy that binds the
 	// passphrase only when an unseal/initialize call arrives.
-	StrategySoftware StrategyKind = "software"
+	StrategyPassphrase StrategyKind = "passphrase"
 
 	// StrategyShamir is the Shamir Secret Sharing strategy. The wrapping
 	// strategy is software (deferred); shamir kicks in for share-based
@@ -64,15 +64,15 @@ const (
 // validStrategies enumerates every operator-selectable kind. Used for
 // CLI/REST validation and documentation.
 var validStrategies = map[StrategyKind]struct{}{
-	StrategyDisabled: {},
-	StrategySoftware: {},
-	StrategyShamir:   {},
-	StrategyTPM2:     {},
-	StrategyPKCS11:   {},
-	StrategyAWSKMS:   {},
-	StrategyGCPKMS:   {},
-	StrategyAzureKV:  {},
-	StrategyVault:    {},
+	StrategyDisabled:   {},
+	StrategyPassphrase: {},
+	StrategyShamir:     {},
+	StrategyTPM2:       {},
+	StrategyPKCS11:     {},
+	StrategyAWSKMS:     {},
+	StrategyGCPKMS:     {},
+	StrategyAzureKV:    {},
+	StrategyVault:      {},
 }
 
 // IsValidStrategy returns true if kind is a recognized sealing strategy.
@@ -130,7 +130,7 @@ type StrategyChainConfig struct {
 	// Backend is the storage backend the barrier persists state into.
 	// Must be non-nil for non-disabled kinds; the disabled kind ignores
 	// it.
-	Backend qrdbseal.StorageBackend
+	Backend qrdbsdk.StorageBackend
 
 	// ShamirThreshold is the M in M-of-N for the shamir kind. Ignored
 	// for other kinds.
@@ -143,12 +143,13 @@ type StrategyChainConfig struct {
 	// TPM2Strategy is an injected TPM2 strategy from go-xkms. When kind
 	// is "tpm2" this MUST be non-nil. Constructed by the lifecycle
 	// layer because the TPM sealer lives in go-xkms.
-	TPM2Strategy qrdbseal.SealingStrategy
+	TPM2Strategy qrdbsdk.SealingStrategy
 
-	// PKCS11Config configures the PKCS#11 strategy when kind is
-	// "pkcs11". The user PIN is loaded from the named env var at
-	// runtime; the config never carries it directly.
-	PKCS11Config *qrdbseal.PKCS11Config
+	// PKCS11Strategy is an injected PKCS#11 strategy from go-xkms. When
+	// kind is "pkcs11" this MUST be non-nil. The hardware PKCS#11
+	// implementation lives exclusively in go-xkms; qrdb itself no longer
+	// carries a PKCS#11 strategy.
+	PKCS11Strategy qrdbsdk.SealingStrategy
 }
 
 // BuildStrategyChain returns the ordered list of SealingStrategy values
@@ -173,7 +174,7 @@ type StrategyChainConfig struct {
 // AWSKMS / GCPKMS / AzureKV / Vault: not yet implemented upstream;
 // returns StrategyUnsupportedError. When the upstream constructors
 // land, this function is the single integration point.
-func BuildStrategyChain(cfg *StrategyChainConfig) ([]qrdbseal.SealingStrategy, error) {
+func BuildStrategyChain(cfg *StrategyChainConfig) ([]qrdbsdk.SealingStrategy, error) {
 	if cfg == nil {
 		return nil, &UnknownStrategyError{Kind: ""}
 	}
@@ -181,9 +182,9 @@ func BuildStrategyChain(cfg *StrategyChainConfig) ([]qrdbseal.SealingStrategy, e
 	case StrategyDisabled:
 		return nil, nil
 
-	case StrategySoftware:
-		soft := qrdbseal.NewDeferredSoftwareStrategy()
-		return []qrdbseal.SealingStrategy{soft}, nil
+	case StrategyPassphrase:
+		soft := qrdbsdk.NewDeferredSoftwareStrategy()
+		return []qrdbsdk.SealingStrategy{soft}, nil
 
 	case StrategyShamir:
 		if cfg.Backend == nil {
@@ -192,33 +193,29 @@ func BuildStrategyChain(cfg *StrategyChainConfig) ([]qrdbseal.SealingStrategy, e
 		if cfg.ShamirThreshold < 2 || cfg.ShamirTotal < cfg.ShamirThreshold {
 			return nil, &StrategyConstructionError{Kind: string(StrategyShamir), Err: errShamirParams}
 		}
-		shamirStrat, err := qrdbseal.NewShamirStrategy(cfg.Backend, cfg.ShamirThreshold, cfg.ShamirTotal)
+		shamirStrat, err := qrdbsdk.NewShamirStrategy(cfg.ShamirThreshold, cfg.ShamirTotal)
 		if err != nil {
 			return nil, &StrategyConstructionError{Kind: string(StrategyShamir), Err: err}
 		}
-		soft := qrdbseal.NewDeferredSoftwareStrategy()
-		return []qrdbseal.SealingStrategy{shamirStrat, soft}, nil
+		soft := qrdbsdk.NewDeferredSoftwareStrategy()
+		return []qrdbsdk.SealingStrategy{shamirStrat, soft}, nil
 
 	case StrategyTPM2:
 		if cfg.TPM2Strategy == nil {
 			return nil, &StrategyConstructionError{Kind: string(StrategyTPM2), Err: errTPM2Required}
 		}
-		soft := qrdbseal.NewDeferredSoftwareStrategy()
-		return []qrdbseal.SealingStrategy{cfg.TPM2Strategy, soft}, nil
+		soft := qrdbsdk.NewDeferredSoftwareStrategy()
+		return []qrdbsdk.SealingStrategy{cfg.TPM2Strategy, soft}, nil
 
 	case StrategyPKCS11:
-		if cfg.PKCS11Config == nil {
+		if cfg.PKCS11Strategy == nil {
 			return nil, &StrategyConstructionError{Kind: string(StrategyPKCS11), Err: errPKCS11ConfigRequired}
 		}
-		hsmStrat, err := qrdbseal.NewPKCS11Strategy(cfg.PKCS11Config)
-		if err != nil {
-			return nil, &StrategyConstructionError{Kind: string(StrategyPKCS11), Err: err}
-		}
-		if !hsmStrat.Available() {
+		if !cfg.PKCS11Strategy.Available() {
 			return nil, &StrategyUnsupportedError{Kind: string(StrategyPKCS11)}
 		}
-		soft := qrdbseal.NewDeferredSoftwareStrategy()
-		return []qrdbseal.SealingStrategy{hsmStrat, soft}, nil
+		soft := qrdbsdk.NewDeferredSoftwareStrategy()
+		return []qrdbsdk.SealingStrategy{cfg.PKCS11Strategy, soft}, nil
 
 	case StrategyAWSKMS, StrategyGCPKMS, StrategyAzureKV, StrategyVault:
 		// Cloud KMS strategies are not yet exposed by the upstream

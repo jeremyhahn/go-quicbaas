@@ -32,13 +32,13 @@ import (
 // encryptorMockLogger implements interfaces.Logger for testing.
 type encryptorMockLogger struct{}
 
-func (m *encryptorMockLogger) Debug(msg string, args ...any)                          {}
+func (m *encryptorMockLogger) Debug(msg string, args ...any)             {}
 func (m *encryptorMockLogger) Debugf(format string, args ...interface{}) {}
-func (m *encryptorMockLogger) Info(msg string, args ...any)                           {}
+func (m *encryptorMockLogger) Info(msg string, args ...any)              {}
 func (m *encryptorMockLogger) Infof(format string, args ...interface{})  {}
-func (m *encryptorMockLogger) Warn(msg string, args ...any)                           {}
+func (m *encryptorMockLogger) Warn(msg string, args ...any)              {}
 func (m *encryptorMockLogger) Warnf(format string, args ...interface{})  {}
-func (m *encryptorMockLogger) Error(msg string, args ...any)                          {}
+func (m *encryptorMockLogger) Error(msg string, args ...any)             {}
 func (m *encryptorMockLogger) Errorf(format string, args ...interface{}) {}
 func (m *encryptorMockLogger) Fatal(msg string)                          {}
 func (m *encryptorMockLogger) Fatalf(format string, args ...interface{}) {}

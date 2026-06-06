@@ -19,7 +19,6 @@ package iam_test
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -98,17 +97,7 @@ func TestMain(m *testing.M) {
 // waitForClusterReady waits for the QuicBaaS cluster to be ready.
 func waitForClusterReady() bool {
 	endpoint := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(5 * time.Second)
 
 	deadline := time.Now().Add(3 * time.Minute)
 	for time.Now().Before(deadline) {
@@ -237,10 +226,12 @@ func setupTestCluster(t *testing.T) *testCluster {
 	// Create HTTP client that does not follow redirects.
 	// This is important for OAuth2/OIDC testing where we need to inspect
 	// redirect responses rather than follow them to external callback URLs.
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
 	httpClient := &http.Client{
 		Timeout: defaultTimeout,
 		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			TLSClientConfig:     tlsCfg,
 			TLSHandshakeTimeout: 10 * time.Second,
 			DialContext: (&net.Dialer{
 				Timeout:   10 * time.Second,
@@ -257,7 +248,7 @@ func setupTestCluster(t *testing.T) *testCluster {
 	defer cancel()
 
 	grpcConn, err := grpc.DialContext(ctx, grpcEndpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 	)
 	require.NoError(t, err, "Failed to connect to gRPC endpoint")

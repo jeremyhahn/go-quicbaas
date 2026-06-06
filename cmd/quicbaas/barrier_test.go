@@ -41,16 +41,18 @@ type fakeBarrierClient struct {
 	initFunc            func(ctx context.Context, req *qrdbtransport.BarrierInitializeRequest) error
 	initShamirFunc      func(ctx context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error)
 	unsealFunc          func(ctx context.Context, req *qrdbtransport.BarrierUnsealRequest) error
-	unsealShareFunc     func(ctx context.Context, req *qrdbtransport.BarrierUnsealShareRequest) (*qrdbtransport.BarrierUnsealShareResponse, error)
 	unsealSharesFunc    func(ctx context.Context, req *qrdbtransport.BarrierUnsealSharesRequest) error
 	sealFunc            func(ctx context.Context) error
 	rekeyFunc           func(ctx context.Context, req *qrdbtransport.BarrierRekeyRequest) (*qrdbtransport.BarrierRekeyResponse, error)
+	genRecoveryFunc     func(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error)
+	recoverFunc         func(ctx context.Context, req *qrdbtransport.BarrierRecoverWithKeysRequest) error
 	lastInitReq         *qrdbtransport.BarrierInitializeRequest
 	lastInitShamirReq   *qrdbtransport.BarrierInitializeShamirRequest
 	lastUnsealReq       *qrdbtransport.BarrierUnsealRequest
-	lastUnsealShareReq  *qrdbtransport.BarrierUnsealShareRequest
 	lastUnsealSharesReq *qrdbtransport.BarrierUnsealSharesRequest
 	lastRekeyReq        *qrdbtransport.BarrierRekeyRequest
+	lastGenRecoveryReq  *qrdbtransport.BarrierGenerateRecoveryKeysRequest
+	lastRecoverReq      *qrdbtransport.BarrierRecoverWithKeysRequest
 }
 
 func (f *fakeBarrierClient) BarrierStatus(ctx context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
@@ -88,14 +90,6 @@ func (f *fakeBarrierClient) BarrierUnseal(ctx context.Context, req *qrdbtranspor
 	return nil
 }
 
-func (f *fakeBarrierClient) BarrierUnsealWithShare(ctx context.Context, req *qrdbtransport.BarrierUnsealShareRequest) (*qrdbtransport.BarrierUnsealShareResponse, error) {
-	f.lastUnsealShareReq = req
-	if f.unsealShareFunc != nil {
-		return f.unsealShareFunc(ctx, req)
-	}
-	return &qrdbtransport.BarrierUnsealShareResponse{Required: 3, Submitted: 1}, nil
-}
-
 func (f *fakeBarrierClient) BarrierUnsealWithShares(ctx context.Context, req *qrdbtransport.BarrierUnsealSharesRequest) error {
 	f.lastUnsealSharesReq = req
 	if f.unsealSharesFunc != nil {
@@ -123,6 +117,26 @@ func (f *fakeBarrierClient) BarrierRekey(ctx context.Context, req *qrdbtransport
 	}, nil
 }
 
+func (f *fakeBarrierClient) BarrierGenerateRecoveryKeys(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
+	f.lastGenRecoveryReq = req
+	if f.genRecoveryFunc != nil {
+		return f.genRecoveryFunc(ctx, req)
+	}
+	return &qrdbtransport.BarrierRecoveryKeysResponse{
+		Keys:      []string{"k1", "k2", "k3"},
+		Threshold: req.Threshold,
+		Total:     req.Total,
+	}, nil
+}
+
+func (f *fakeBarrierClient) BarrierRecoverWithKeys(ctx context.Context, req *qrdbtransport.BarrierRecoverWithKeysRequest) error {
+	f.lastRecoverReq = req
+	if f.recoverFunc != nil {
+		return f.recoverFunc(ctx, req)
+	}
+	return nil
+}
+
 // withFakeBarrier installs fc as the active barrier factory and returns
 // a restore func.
 func withFakeBarrier(fc *fakeBarrierClient) func() {
@@ -135,12 +149,16 @@ func withFakeBarrier(fc *fakeBarrierClient) func() {
 // value from a prior test does not leak into the next.
 func resetBarrierFlags() {
 	barrierSecret = ""
-	barrierShare = ""
+	barrierShares = nil
 	barrierSharesFile = ""
 	barrierThreshold = 0
 	barrierTotalShares = 0
 	barrierOutputFmt = "table"
 	barrierAssumeYes = false
+	barrierStrategy = ""
+	barrierSOPin = ""
+	barrierUserPin = ""
+	barrierRecoveryShares = nil
 }
 
 // =============================================================================
@@ -161,6 +179,7 @@ func TestNewBarrierCommand_Shape(t *testing.T) {
 		"unseal-shares": false,
 		"seal":          false,
 		"rekey":         false,
+		"recovery":      false,
 	}
 	for _, sub := range cmd.Commands() {
 		if _, ok := expected[sub.Name()]; ok {
@@ -169,6 +188,21 @@ func TestNewBarrierCommand_Shape(t *testing.T) {
 	}
 	for verb, present := range expected {
 		assert.True(t, present, "expected 'barrier %s' subcommand", verb)
+	}
+}
+
+// TestNewBarrierRecoveryCommand_Shape verifies the recovery subgroup.
+func TestNewBarrierRecoveryCommand_Shape(t *testing.T) {
+	cmd := newBarrierRecoveryCommand()
+	require.NotNil(t, cmd)
+	expected := map[string]bool{"generate": false, "recover": false}
+	for _, sub := range cmd.Commands() {
+		if _, ok := expected[sub.Name()]; ok {
+			expected[sub.Name()] = true
+		}
+	}
+	for verb, present := range expected {
+		assert.True(t, present, "expected 'recovery %s' subcommand", verb)
 	}
 }
 
@@ -221,28 +255,85 @@ func TestBarrierStatus_FactoryError(t *testing.T) {
 // init
 // =============================================================================
 
-// TestBarrierInit_RequiresSecret rejects empty --secret.
-func TestBarrierInit_RequiresSecret(t *testing.T) {
+// TestBarrierInit_StrategyValidation covers --barrier-strategy validation.
+func TestBarrierInit_StrategyValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "invalid-strategy",
+			args:    []string{"--barrier-strategy", "bogus", "--passphrase", "x"},
+			wantErr: "must be one of none, passphrase, shamir",
+		},
+		{
+			name:    "missing-secret",
+			args:    []string{"--barrier-strategy", "passphrase"},
+			wantErr: "--passphrase is required",
+		},
+		{
+			name:    "none-with-secret",
+			args:    []string{"--barrier-strategy", "none", "--passphrase", "x"},
+			wantErr: "--passphrase is not allowed when --barrier-strategy=none",
+		},
+		{
+			name:    "user-pin-without-so-pin",
+			args:    []string{"--barrier-strategy", "passphrase", "--passphrase", "x", "--user-pin", "u"},
+			wantErr: "--user-pin requires --so-pin",
+		},
+		{
+			name:    "so-pin-without-user-pin",
+			args:    []string{"--barrier-strategy", "passphrase", "--passphrase", "x", "--so-pin", "s"},
+			wantErr: "--so-pin requires --user-pin",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer resetBarrierFlags()
+			cmd := newBarrierInitCommand()
+			cmd.SetArgs(tc.args)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// TestBarrierInit_NoneRejectsPINs verifies that --barrier-strategy=none
+// rejects PINs with the typed PINsNotAllowedError.
+func TestBarrierInit_NoneRejectsPINs(t *testing.T) {
 	defer resetBarrierFlags()
 	cmd := newBarrierInitCommand()
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"--barrier-strategy", "none", "--so-pin", "s", "--user-pin", "u"})
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 
 	err := cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--secret is required")
+	var typed *PINsNotAllowedError
+	require.ErrorAs(t, err, &typed, "want typed PINsNotAllowedError, got %T", err)
+	assert.Equal(t, "none", typed.Strategy)
+	assert.Equal(t, "init", typed.Op)
 }
 
-// TestBarrierInit_Success forwards the secret to the SDK.
+// TestBarrierInit_Success forwards every field to the SDK.
 func TestBarrierInit_Success(t *testing.T) {
 	defer resetBarrierFlags()
 	fc := &fakeBarrierClient{}
 	defer withFakeBarrier(fc)()
 
 	cmd := newBarrierInitCommand()
-	cmd.SetArgs([]string{"--secret", "topsecret"})
+	cmd.SetArgs([]string{
+		"--barrier-strategy", "passphrase",
+		"--passphrase", "topsecret",
+		"--so-pin", "SO123",
+		"--user-pin", "USR123",
+	})
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -250,6 +341,29 @@ func TestBarrierInit_Success(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastInitReq)
 	assert.Equal(t, "topsecret", fc.lastInitReq.Secret)
+	assert.Equal(t, "passphrase", fc.lastInitReq.BarrierStrategy)
+	assert.Equal(t, "SO123", fc.lastInitReq.SOPin)
+	assert.Equal(t, "USR123", fc.lastInitReq.UserPin)
+}
+
+// TestBarrierInit_NoneStrategy succeeds without --secret or PINs.
+func TestBarrierInit_NoneStrategy(t *testing.T) {
+	defer resetBarrierFlags()
+	fc := &fakeBarrierClient{}
+	defer withFakeBarrier(fc)()
+
+	cmd := newBarrierInitCommand()
+	cmd.SetArgs([]string{"--barrier-strategy", "none"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	require.NotNil(t, fc.lastInitReq)
+	assert.Equal(t, "none", fc.lastInitReq.BarrierStrategy)
+	assert.Empty(t, fc.lastInitReq.Secret)
+	assert.Empty(t, fc.lastInitReq.SOPin)
+	assert.Empty(t, fc.lastInitReq.UserPin)
 }
 
 // =============================================================================
@@ -266,22 +380,32 @@ func TestBarrierInitShamir_FlagValidation(t *testing.T) {
 		{
 			name:    "missing-secret",
 			args:    []string{"--threshold", "2", "--total", "3"},
-			wantErr: "--secret is required",
+			wantErr: "--passphrase is required",
 		},
 		{
 			name:    "missing-threshold",
-			args:    []string{"--secret", "x", "--total", "3"},
+			args:    []string{"--passphrase", "x", "--total", "3"},
 			wantErr: "--threshold must be > 0",
 		},
 		{
 			name:    "missing-total",
-			args:    []string{"--secret", "x", "--threshold", "2"},
+			args:    []string{"--passphrase", "x", "--threshold", "2"},
 			wantErr: "--total must be > 0",
 		},
 		{
 			name:    "threshold-exceeds-total",
-			args:    []string{"--secret", "x", "--threshold", "5", "--total", "3"},
+			args:    []string{"--passphrase", "x", "--threshold", "5", "--total", "3"},
 			wantErr: "--threshold cannot exceed --total",
+		},
+		{
+			name:    "user-pin-without-so-pin",
+			args:    []string{"--passphrase", "x", "--threshold", "2", "--total", "3", "--user-pin", "u"},
+			wantErr: "--user-pin requires --so-pin",
+		},
+		{
+			name:    "so-pin-without-user-pin",
+			args:    []string{"--passphrase", "x", "--threshold", "2", "--total", "3", "--so-pin", "s"},
+			wantErr: "--so-pin requires --user-pin",
 		},
 	}
 	for _, tc := range cases {
@@ -299,14 +423,20 @@ func TestBarrierInitShamir_FlagValidation(t *testing.T) {
 	}
 }
 
-// TestBarrierInitShamir_Success verifies the SDK dispatch.
+// TestBarrierInitShamir_Success verifies the SDK dispatch, including PINs.
 func TestBarrierInitShamir_Success(t *testing.T) {
 	defer resetBarrierFlags()
 	fc := &fakeBarrierClient{}
 	defer withFakeBarrier(fc)()
 
 	cmd := newBarrierInitShamirCommand()
-	cmd.SetArgs([]string{"--secret", "x", "--threshold", "2", "--total", "3"})
+	cmd.SetArgs([]string{
+		"--passphrase", "x",
+		"--threshold", "2",
+		"--total", "3",
+		"--so-pin", "SO",
+		"--user-pin", "U",
+	})
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -316,14 +446,16 @@ func TestBarrierInitShamir_Success(t *testing.T) {
 	assert.Equal(t, "x", fc.lastInitShamirReq.Secret)
 	assert.Equal(t, 2, fc.lastInitShamirReq.Threshold)
 	assert.Equal(t, 3, fc.lastInitShamirReq.TotalShares)
+	assert.Equal(t, "SO", fc.lastInitShamirReq.SOPin)
+	assert.Equal(t, "U", fc.lastInitShamirReq.UserPin)
 }
 
 // =============================================================================
-// unseal
+// unseal (passphrase only)
 // =============================================================================
 
-// TestBarrierUnseal_RequiresInput rejects empty input.
-func TestBarrierUnseal_RequiresInput(t *testing.T) {
+// TestBarrierUnseal_RequiresSecret rejects empty --secret.
+func TestBarrierUnseal_RequiresSecret(t *testing.T) {
 	defer resetBarrierFlags()
 	cmd := newBarrierUnsealCommand()
 	cmd.SetArgs([]string{})
@@ -333,18 +465,17 @@ func TestBarrierUnseal_RequiresInput(t *testing.T) {
 
 	err := cmd.Execute()
 	require.Error(t, err)
-	var typed *BarrierUnsealNoInputError
-	assert.ErrorAs(t, err, &typed, "want typed BarrierUnsealNoInputError, got %T", err)
+	assert.Contains(t, err.Error(), "--passphrase is required")
 }
 
-// TestBarrierUnseal_Secret routes secret unseals through BarrierUnseal.
-func TestBarrierUnseal_Secret(t *testing.T) {
+// TestBarrierUnseal_Success forwards the secret to the SDK.
+func TestBarrierUnseal_Success(t *testing.T) {
 	defer resetBarrierFlags()
 	fc := &fakeBarrierClient{}
 	defer withFakeBarrier(fc)()
 
 	cmd := newBarrierUnsealCommand()
-	cmd.SetArgs([]string{"--secret", "pass"})
+	cmd.SetArgs([]string{"--passphrase", "pass"})
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -352,32 +483,22 @@ func TestBarrierUnseal_Secret(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastUnsealReq)
 	assert.Equal(t, "pass", fc.lastUnsealReq.Secret)
-	assert.Nil(t, fc.lastUnsealShareReq, "should not call BarrierUnsealWithShare")
 }
 
-// TestBarrierUnseal_Share routes share unseals through BarrierUnsealWithShare.
-func TestBarrierUnseal_Share(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
-
+// TestBarrierUnseal_DoesNotAcceptShareFlag verifies --share is NOT on
+// the unseal command (canonical surface moved it to unseal-shares).
+func TestBarrierUnseal_DoesNotAcceptShareFlag(t *testing.T) {
 	cmd := newBarrierUnsealCommand()
-	cmd.SetArgs([]string{"--share", "abc-share"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastUnsealShareReq)
-	assert.Equal(t, "abc-share", fc.lastUnsealShareReq.Share)
+	assert.Nil(t, cmd.Flags().Lookup("share"),
+		"--share must not be on 'barrier unseal'; canonical surface uses 'unseal-shares'")
 }
 
 // =============================================================================
 // unseal-shares
 // =============================================================================
 
-// TestBarrierUnsealShares_RequiresFile rejects empty --shares-file.
-func TestBarrierUnsealShares_RequiresFile(t *testing.T) {
+// TestBarrierUnsealShares_RequiresInput rejects empty input.
+func TestBarrierUnsealShares_RequiresInput(t *testing.T) {
 	defer resetBarrierFlags()
 	cmd := newBarrierUnsealSharesCommand()
 	cmd.SetArgs([]string{})
@@ -387,10 +508,51 @@ func TestBarrierUnsealShares_RequiresFile(t *testing.T) {
 
 	err := cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--shares-file is required")
+	var typed *BarrierShareInputError
+	require.ErrorAs(t, err, &typed)
+	assert.Contains(t, typed.Error(), "one of --share")
 }
 
-// TestBarrierUnsealShares_ReadsLines reads one share per line, ignoring blanks/comments.
+// TestBarrierUnsealShares_MutuallyExclusive rejects --share + --shares-file.
+func TestBarrierUnsealShares_MutuallyExclusive(t *testing.T) {
+	defer resetBarrierFlags()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shares.txt")
+	require.NoError(t, os.WriteFile(path, []byte("a\n"), 0o600))
+
+	cmd := newBarrierUnsealSharesCommand()
+	cmd.SetArgs([]string{"--share", "a", "--shares-file", path})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	var typed *BarrierShareInputError
+	require.ErrorAs(t, err, &typed)
+	assert.Contains(t, typed.Error(), "exactly one")
+}
+
+// TestBarrierUnsealShares_RepeatableShareFlag passes a repeatable
+// --share through to the SDK.
+func TestBarrierUnsealShares_RepeatableShareFlag(t *testing.T) {
+	defer resetBarrierFlags()
+	fc := &fakeBarrierClient{}
+	defer withFakeBarrier(fc)()
+
+	cmd := newBarrierUnsealSharesCommand()
+	cmd.SetArgs([]string{"--share", "a", "--share", "b", "--share", "c"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	require.NotNil(t, fc.lastUnsealSharesReq)
+	assert.Equal(t, []string{"a", "b", "c"}, fc.lastUnsealSharesReq.Shares)
+}
+
+// TestBarrierUnsealShares_ReadsLines reads one share per line, ignoring
+// blanks/comments.
 func TestBarrierUnsealShares_ReadsLines(t *testing.T) {
 	defer resetBarrierFlags()
 	fc := &fakeBarrierClient{}
@@ -428,7 +590,7 @@ func TestBarrierUnsealShares_EmptyFile(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	var typed *BarrierSharesFileEmptyError
-	assert.ErrorAs(t, err, &typed)
+	require.ErrorAs(t, err, &typed)
 }
 
 // TestBarrierUnsealShares_FileMissing rejects non-existent paths.
@@ -443,7 +605,7 @@ func TestBarrierUnsealShares_FileMissing(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	var typed *BarrierSharesFileError
-	assert.ErrorAs(t, err, &typed)
+	require.ErrorAs(t, err, &typed)
 }
 
 // =============================================================================
@@ -466,6 +628,23 @@ func TestBarrierSeal_AssumeYes(t *testing.T) {
 	assert.Contains(t, out.String(), "Barrier sealed successfully")
 }
 
+// TestBarrierSeal_AcceptsSOPin verifies the canonical --so-pin flag is
+// accepted (parsed for surface parity).
+func TestBarrierSeal_AcceptsSOPin(t *testing.T) {
+	defer resetBarrierFlags()
+	fc := &fakeBarrierClient{}
+	defer withFakeBarrier(fc)()
+
+	cmd := newBarrierSealCommand()
+	cmd.SetArgs([]string{"--so-pin", "SO123", "--assume-yes"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "SO123", barrierSOPin)
+}
+
 // =============================================================================
 // rekey
 // =============================================================================
@@ -478,19 +657,29 @@ func TestBarrierRekey_FlagValidation(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "missing-threshold",
-			args:    []string{"--total", "3"},
-			wantErr: "--threshold must be > 0",
+			name:    "missing-secret",
+			args:    []string{"--threshold", "3", "--total", "5"},
+			wantErr: "--passphrase is required",
 		},
 		{
-			name:    "missing-total",
-			args:    []string{"--threshold", "2"},
-			wantErr: "--total must be > 0",
+			name:    "unpaired-threshold",
+			args:    []string{"--passphrase", "x", "--threshold", "3"},
+			wantErr: "must be supplied together",
 		},
 		{
-			name:    "threshold-exceeds-total",
-			args:    []string{"--threshold", "9", "--total", "3"},
-			wantErr: "--threshold cannot exceed --total",
+			name:    "unpaired-total",
+			args:    []string{"--passphrase", "x", "--total", "5"},
+			wantErr: "must be supplied together",
+		},
+		{
+			name:    "threshold-too-low",
+			args:    []string{"--passphrase", "x", "--threshold", "1", "--total", "3"},
+			wantErr: "--threshold must be >= 2",
+		},
+		{
+			name:    "total-below-threshold",
+			args:    []string{"--passphrase", "x", "--threshold", "5", "--total", "3"},
+			wantErr: "--total must be >= --threshold",
 		},
 	}
 	for _, tc := range cases {
@@ -508,34 +697,150 @@ func TestBarrierRekey_FlagValidation(t *testing.T) {
 	}
 }
 
-// TestBarrierRekey_Success forwards the parameters and renders the response.
-func TestBarrierRekey_Success(t *testing.T) {
+// TestBarrierRekey_SuccessWithShamir forwards Shamir params and renders.
+func TestBarrierRekey_SuccessWithShamir(t *testing.T) {
 	defer resetBarrierFlags()
 	fc := &fakeBarrierClient{}
 	defer withFakeBarrier(fc)()
 
 	cmd := newBarrierRekeyCommand()
-	cmd.SetArgs([]string{"--threshold", "3", "--total", "5"})
+	cmd.SetArgs([]string{
+		"--passphrase", "new-pp",
+		"--so-pin", "SO",
+		"--threshold", "3",
+		"--total", "5",
+	})
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastRekeyReq)
+	assert.Equal(t, "new-pp", fc.lastRekeyReq.NewSecret)
+	assert.Equal(t, "SO", fc.lastRekeyReq.SOPin)
 	assert.Equal(t, 3, fc.lastRekeyReq.Threshold)
 	assert.Equal(t, 5, fc.lastRekeyReq.Total)
 	assert.Contains(t, out.String(), "BARRIER REKEY COMPLETE")
 }
 
+// TestBarrierRekey_SuccessWithoutShamir omits threshold/total cleanly.
+func TestBarrierRekey_SuccessWithoutShamir(t *testing.T) {
+	defer resetBarrierFlags()
+	fc := &fakeBarrierClient{}
+	defer withFakeBarrier(fc)()
+
+	cmd := newBarrierRekeyCommand()
+	cmd.SetArgs([]string{"--passphrase", "new-pp"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	require.NotNil(t, fc.lastRekeyReq)
+	assert.Equal(t, "new-pp", fc.lastRekeyReq.NewSecret)
+	assert.Equal(t, 0, fc.lastRekeyReq.Threshold)
+	assert.Equal(t, 0, fc.lastRekeyReq.Total)
+}
+
+// =============================================================================
+// recovery generate
+// =============================================================================
+
+// TestBarrierRecoveryGenerate_FlagValidation covers validation paths.
+func TestBarrierRecoveryGenerate_FlagValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "threshold-too-low",
+			args:    []string{"--threshold", "1", "--total", "3"},
+			wantErr: "--threshold must be >= 2",
+		},
+		{
+			name:    "total-below-threshold",
+			args:    []string{"--threshold", "5", "--total", "3"},
+			wantErr: "--total must be >= --threshold",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer resetBarrierFlags()
+			cmd := newBarrierRecoveryGenerateCommand()
+			cmd.SetArgs(tc.args)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// TestBarrierRecoveryGenerate_Success forwards params + SO PIN.
+func TestBarrierRecoveryGenerate_Success(t *testing.T) {
+	defer resetBarrierFlags()
+	fc := &fakeBarrierClient{}
+	defer withFakeBarrier(fc)()
+
+	cmd := newBarrierRecoveryGenerateCommand()
+	cmd.SetArgs([]string{
+		"--threshold", "3",
+		"--total", "5",
+		"--so-pin", "SO123",
+	})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	require.NotNil(t, fc.lastGenRecoveryReq)
+	assert.Equal(t, 3, fc.lastGenRecoveryReq.Threshold)
+	assert.Equal(t, 5, fc.lastGenRecoveryReq.Total)
+	assert.Equal(t, "SO123", fc.lastGenRecoveryReq.SOPin)
+	assert.Contains(t, out.String(), "RECOVERY KEYS GENERATED")
+}
+
+// =============================================================================
+// recovery recover
+// =============================================================================
+
+// TestBarrierRecoveryRecover_RequiresShare rejects empty input.
+func TestBarrierRecoveryRecover_RequiresShare(t *testing.T) {
+	defer resetBarrierFlags()
+	cmd := newBarrierRecoveryRecoverCommand()
+	cmd.SetArgs([]string{})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--share is required")
+}
+
+// TestBarrierRecoveryRecover_Success forwards repeatable shares.
+func TestBarrierRecoveryRecover_Success(t *testing.T) {
+	defer resetBarrierFlags()
+	fc := &fakeBarrierClient{}
+	defer withFakeBarrier(fc)()
+
+	cmd := newBarrierRecoveryRecoverCommand()
+	cmd.SetArgs([]string{"--share", "k1", "--share", "k2"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	require.NotNil(t, fc.lastRecoverReq)
+	assert.Equal(t, []string{"k1", "k2"}, fc.lastRecoverReq.Keys)
+}
+
 // =============================================================================
 // Errors
 // =============================================================================
-
-// TestBarrierUnsealNoInputError_Message verifies the error string.
-func TestBarrierUnsealNoInputError_Message(t *testing.T) {
-	err := &BarrierUnsealNoInputError{}
-	assert.Contains(t, err.Error(), "--secret or --share")
-}
 
 // TestBarrierSharesFileError_UnwrapAndMessage verifies wrap semantics.
 func TestBarrierSharesFileError_UnwrapAndMessage(t *testing.T) {
@@ -550,4 +855,19 @@ func TestBarrierSharesFileError_UnwrapAndMessage(t *testing.T) {
 func TestBarrierSharesFileEmptyError_Message(t *testing.T) {
 	err := &BarrierSharesFileEmptyError{Path: "/empty"}
 	assert.True(t, strings.Contains(err.Error(), "/empty"))
+}
+
+// TestPINsNotAllowedError_Message verifies the error string.
+func TestPINsNotAllowedError_Message(t *testing.T) {
+	err := &PINsNotAllowedError{Strategy: "none", Op: "init"}
+	assert.Contains(t, err.Error(), "none")
+	assert.Contains(t, err.Error(), "init")
+	assert.Contains(t, err.Error(), "--so-pin")
+}
+
+// TestBarrierShareInputError_Message verifies the error string.
+func TestBarrierShareInputError_Message(t *testing.T) {
+	err := &BarrierShareInputError{Reason: "test reason"}
+	assert.Contains(t, err.Error(), "test reason")
+	assert.Contains(t, err.Error(), "barrier unseal-shares")
 }

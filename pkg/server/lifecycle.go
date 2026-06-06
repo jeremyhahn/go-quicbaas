@@ -34,14 +34,12 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	_ "github.com/jeremyhahn/go-qrdb/pkg/seal" // placeholder import — referenced by future seal-strategy wiring
-	quicbaasseal "github.com/jeremyhahn/go-quicbaas/pkg/seal"
+	"github.com/jeremyhahn/go-qrdb/pkg/atrest"
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
-	_ "github.com/jeremyhahn/go-quicbaas/pkg/barrier" // placeholder import — wired by initBarrierIsolation in a follow-up
+	_ "github.com/jeremyhahn/go-quicbaas/pkg/barrier" // side-effect import: registers barrier package init
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cluster"
@@ -53,6 +51,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
+	quicbaasseal "github.com/jeremyhahn/go-quicbaas/pkg/seal"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
@@ -61,8 +60,6 @@ import (
 	filestorage "github.com/jeremyhahn/go-quicbaas/pkg/storage/file"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watchbridge"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 )
 
 // Seam injection points for unit testing.
@@ -293,11 +290,60 @@ func (s *Server) initializeCA() error {
 
 	s.xkmsCA = xkmsCA
 
-	// Update config paths for TLS transports
-	s.config.Security.TLSCertFile = filepath.Join(certsDir, "server.crt")
-	s.config.Security.TLSKeyFile = filepath.Join(certsDir, "server.key")
-	s.config.Security.TLSCAFile = filepath.Join(certsDir, "ca-chain.crt")
+	// Update config paths for TLS transports unless the operator has already
+	// configured them (via security.tls_cert_file / tls_key_file / tls_ca_file
+	// in config or QUICBAAS_SECURITY_TLS_*_FILE env vars). This lets
+	// deployments that mount their own CA (e.g. integration tests sharing a
+	// single CA across all nodes) bypass the auto-generated per-node CA path
+	// while keeping the default behaviour intact for plain installs.
+	if s.config.Security.TLSCertFile == "" {
+		s.config.Security.TLSCertFile = filepath.Join(certsDir, "server.crt")
+	}
+	if s.config.Security.TLSKeyFile == "" {
+		s.config.Security.TLSKeyFile = filepath.Join(certsDir, "server.key")
+	}
+	if s.config.Security.TLSCAFile == "" {
+		s.config.Security.TLSCAFile = filepath.Join(certsDir, "ca-chain.crt")
+	}
 	s.config.Security.TLSEnabled = true
+
+	// If the operator has provided an explicit server cert and key on disk
+	// (e.g. an integration cluster mounting a shared CA across all nodes,
+	// or a production deployment with externally-managed certs), load them
+	// directly and skip the per-boot CA-issued server cert path. This makes
+	// the listener serve the operator's cert chain instead of a freshly-
+	// issued, per-node cert that no external client can trust.
+	if s.config.Security.TLSCertFile != "" && s.config.Security.TLSKeyFile != "" {
+		if _, certErr := os.Stat(s.config.Security.TLSCertFile); certErr == nil {
+			if _, keyErr := os.Stat(s.config.Security.TLSKeyFile); keyErr == nil {
+				pair, loadErr := tls.LoadX509KeyPair(s.config.Security.TLSCertFile, s.config.Security.TLSKeyFile)
+				if loadErr != nil {
+					return api.NewOperationFailedError("load operator server cert/key", loadErr)
+				}
+				s.tlsConfig = &tls.Config{
+					Certificates: []tls.Certificate{pair},
+					MinVersion:   tls.VersionTLS13,
+					NextProtos:   []string{"h2", "http/1.1"},
+				}
+				// Wire the operator-provided CA for optional mTLS so per-route
+				// client-cert validation still works with externally-managed
+				// chains. Full-mTLS clusters override this in the REST server.
+				if s.config.Security.TLSCAFile != "" {
+					if caBytes, caErr := os.ReadFile(s.config.Security.TLSCAFile); caErr == nil {
+						pool := x509.NewCertPool()
+						if pool.AppendCertsFromPEM(caBytes) {
+							s.tlsConfig.ClientCAs = pool
+							if !s.config.Security.TLSClientAuth {
+								s.tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+							}
+						}
+					}
+				}
+				s.logger.Infof("TLS configured from operator-provided cert: %s", s.config.Security.TLSCertFile)
+				return nil
+			}
+		}
+	}
 
 	// Issue a server TLS certificate - CA generates the key through its keystore backend
 	dnsNames := []string{"localhost"}
@@ -611,35 +657,37 @@ func (s *Server) initBarrier() error {
 	return nil
 }
 
-// initBarrierIsolation wires a BarrierIsolationManager into svc when barrier
-// tenant isolation is configured. It extracts the system StorageBarrier from
-// the seal manager, constructs a BarrierRegistry around it, and injects the
-// resulting TenantIsolationManager. Falls back gracefully to keyspace mode if
-// any prerequisite is missing.
-func (s *Server) initBarrierIsolation(svc service.QuicBaaS) {
-	if s.sealManager == nil {
-		s.logger.Warn("Barrier tenant isolation configured but seal is not enabled, falling back to keyspace isolation")
-		return
+// initDataPlaneEncryptor builds the canonical data-plane StorageBarrier and
+// derives the single atrest.Encryptor from it. This must run after
+// initBarrier (so the data directory exists) and BEFORE initVectorStorage and
+// initTimeSeriesStorage, which need the encryptor to open their Pebble stores
+// with FS-level AES-256-GCM encryption.
+//
+// The encryptor is stored on s.dataPlaneEncryptor. When the data-plane barrier
+// cannot be constructed (no DataDir, construction error) the encryptor is a
+// no-op and all stores open in plaintext, preserving backward compatibility.
+func (s *Server) initDataPlaneEncryptor() error {
+	dataPlaneBarrierSvc, rawBarrier, dataPlaneBarrierCloser, dpErr := buildDataPlaneBarrierService(s.config, slog.Default())
+	if dpErr != nil {
+		s.logger.Warnf("Data-plane barrier construction failed (%v) — stores will open in plaintext", dpErr)
 	}
-
-	type systemBarrierProvider interface {
-		SystemBarrier() *qrdbsdk.StorageBarrier
+	if dataPlaneBarrierCloser != nil {
+		s.dataPlaneBarrierCloser = dataPlaneBarrierCloser
 	}
-
-	sb, ok := s.sealManager.(systemBarrierProvider)
-	if !ok {
-		s.logger.Warn("Seal manager does not expose SystemBarrier, falling back to keyspace isolation")
-		return
+	if rawBarrier != nil {
+		s.dataPlaneBarrier = rawBarrier
+		s.logger.Info("Data-plane StorageBarrier constructed for at-rest encryption")
 	}
-
-	registry, err := qrdbsdk.NewBarrierRegistry(slog.Default(), sb.SystemBarrier())
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to create BarrierRegistry, falling back to keyspace isolation")
-		return
+	// Stash the service for later injection into the sharded client
+	// (used by startService). Store via a package-level variable so
+	// startService can pick it up without re-building the barrier.
+	if dataPlaneBarrierSvc != nil {
+		s.cachedDataPlaneBarrierSvc = dataPlaneBarrierSvc
 	}
-
-	svc.SetTenantIsolationManager(security.NewBarrierIsolationManager(registry))
-	s.logger.Info("Barrier tenant isolation active")
+	// Build the single atrest.Encryptor. A nil barrier produces a no-op
+	// Encryptor so callers do not need to nil-check before passing it on.
+	s.dataPlaneEncryptor = atrest.New(rawBarrier)
+	return nil
 }
 
 // fileExists returns true if the file at path exists and is a regular file.
@@ -839,24 +887,34 @@ func (s *Server) startKMS() error {
 func (s *Server) startSecrets() error {
 	s.logger.Info("Initializing Secrets manager...")
 
-	// Create memory backend for secrets storage
-	backend := secrets.NewMemoryBackend()
+	// Choose backend: when the qrdb SDK client is available use the
+	// persistent KV-backed backend so secrets survive restarts.
+	// startSecrets runs before startService (which creates qrdbClient), so
+	// the KV backend is only available on a re-invocation path. For the
+	// initial start the in-memory backend is used; the caller can replace
+	// it by calling startSecrets again after startService completes.
+	// The qrdbClient guard prevents a nil-pointer panic in GetKVStore.
+	var backend secrets.Backend
+	if s.qrdbClient != nil {
+		kvStore := s.GetKVStore(qbshards.PlatformShardID)
+		backend = secrets.NewKVBackend(kvStore)
+		s.logger.Info("Secrets backend: persistent KV store (qrdb client)")
+	} else {
+		backend = secrets.NewMemoryBackend()
+		s.logger.Info("Secrets backend: in-memory (qrdb client not yet initialized)")
+	}
 
 	// Create secrets manager with logger adapter.
 	//
-	// Locker is intentionally nil in this single-process embedded
-	// boot path: the Manager's EnsureSecret falls back to a
-	// process-local sync.Mutex keyed by secret path, which is
-	// correct for single-node deployments. When qrdb's distributed
-	// lock.Service is wired into the server lifecycle (transaction +
-	// lease + watch + kv dependencies), pass it here so EnsureSecret
-	// uses cluster-wide serialization instead. The Manager code
-	// path is identical in both modes — see acquireEnsureLock.
+	// Locker is intentionally nil: the Manager's EnsureSecret falls back to a
+	// process-local sync.Mutex keyed by secret path, which is correct for
+	// single-node deployments. Distributed locking via qrdb's lock.Service
+	// can be wired here in a future phase for multi-node cluster mode.
 	logAdapter := logger.NewAdapter(s.logger)
 	secretsMgr, err := newSecretsMgr(&secrets.ManagerOptions{
 		Backend: backend,
 		Logger:  logAdapter,
-		Locker:  nil, // TODO: wire qrdb lock.Service for cluster mode
+		Locker:  nil,
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create secrets manager", err)
@@ -1311,8 +1369,12 @@ func (s *Server) startService() error {
 		WithLogger(logger.NewAdapter(s.logger)).
 		WithConfig(svcConfig)
 
-	// Add standalone raft node to satisfy service builder validation
-	builder = builder.WithRaftNode(s.raftNode)
+	// Wire the raft node when present. On the qrdb-node path s.raftNode
+	// is nil; the service builder tolerates nil raftNode when qrdbClient
+	// is set (which it always is on the node path via newNodeBackedShardedClient).
+	if s.raftNode != nil {
+		builder = builder.WithRaftNode(s.raftNode)
+	}
 
 	// Add KMS manager if initialized
 	if s.kmsManager != nil {
@@ -1418,45 +1480,41 @@ func (s *Server) startService() error {
 
 	// Initialize the qrdb ShardedClient before building the service so that
 	// the KVStore provider (used by Scheduler during Build) can resolve shards.
-	// For embedded mode, per-shard in-memory stores are self-contained and do
-	// not need the service. For network modes, clients are created lazily.
-	scOpts := []ShardedClientOption{
-		WithTransportConfig(&s.config.QRDB),
-		WithStorageConfig(&s.config.Storage),
+	//
+	// Standalone mode: s.qrdbNode is the real qrdb engine. All data-plane
+	// operations go through node.Client(), which is backed by the in-process
+	// embedded transport. The node owns the barrier, at-rest encryptor, and
+	// all storage — quicbaas does not build duplicate stores here.
+	//
+	// Both standalone and clustered modes set s.qrdbNode via
+	// initStandaloneQRDBNode / initClusteredQRDBNode respectively, so this
+	// branch is the live path for all configured server modes.
+	if s.qrdbNode != nil {
+		// Standalone/clustered node path: back the ShardedClient with the
+		// qrdb node's SDK client. All shard IDs resolve to the same client;
+		// the embedded engine handles routing internally. The node's SDK
+		// client already has barrier/ceremony/credential wired via its
+		// embedded transport — no duplicate construction needed here.
+		s.qrdbClient = newNodeBackedShardedClient(s.qrdbNode)
+		s.logger.Info("qrdb ShardedClient backed by real qrdb engine node")
+
+		// Populate s.ceremonyServices from the node's services so that the
+		// gRPC barrier/ceremony adapters and REST /api/v1/init/* routes can
+		// resolve the barrier and ceremony service without re-building the
+		// stack. When seal is disabled these fields are nil, matching the
+		// existing NotSupported fallback behaviour.
+		if svcs := s.qrdbNode.Services(); svcs != nil && svcs.Barrier != nil {
+			s.ceremonyServices = &CeremonyServices{
+				Barrier:    svcs.Barrier,
+				Credential: svcs.Credential,
+				Ceremony:   svcs.Ceremony,
+			}
+			s.logger.Info("Node barrier/ceremony/credential services wired from qrdb node")
+		}
 	}
-	// Inject vector storage into the sharded client so that the
-	// embedded transport for the vector shard writes to the same
-	// PebbleVectorStorage that the vectorService reads from.
-	if s.vectorStorage != nil && s.config.Vector.ShardID > 0 {
-		scOpts = append(scOpts, WithVectorStorage(s.vectorStorage, s.config.Vector.ShardID))
-	}
-	// Inject time series storage into the sharded client so that the
-	// embedded transport for the timeseries shard writes to the same
-	// PebbleDB timeseries storage that the timeSeriesService reads from.
-	if s.timeSeriesStorage != nil && s.config.TimeSeries.ShardID > 0 {
-		scOpts = append(scOpts, WithTimeSeriesStorage(s.timeSeriesStorage, s.config.TimeSeries.ShardID))
-	}
-	// Wire the bootstrap ceremony services into the sharded client so the
-	// /api/v1/init/* REST routes (added by the Phase 9 agent) can delegate
-	// to a real CeremonyServicer instead of returning NotSupported. The
-	// bootstrap ceremony uses an in-memory software-strategy barrier that is
-	// disjoint from the data-plane barrier (which is sealed at this point).
-	// Failure here is non-fatal: the embedded transport falls back to
-	// NotSupported errors, matching today's behaviour for clusters that
-	// don't run the init flow.
-	ceremonyDataDir := filepath.Join(s.config.Storage.DataDir, "ceremony")
-	if cerSvcs, cerErr := buildBootstrapCeremonyServices(slog.Default(), ceremonyDataDir); cerErr == nil {
-		scOpts = append(scOpts,
-			WithCeremonyService(cerSvcs.Ceremony),
-			WithCredentialService(cerSvcs.Credential),
-		)
-		s.ceremonyServices = cerSvcs
-		s.logger.Info("Bootstrap ceremony services wired into sharded client")
-	} else {
-		s.logger.Warnf("Bootstrap ceremony wiring skipped: %v — /api/v1/init/* will return NotSupported", cerErr)
-	}
-	s.qrdbClient = NewShardedClient(nil, scOpts...)
-	s.logger.Info("qrdb ShardedClient pre-initialized for KVStore provider")
+	// Phase E: the else (legacy baasTransport) branch is removed.
+	// s.qrdbNode is always set (both standalone and clustered modes build a
+	// real qrdb node). The node-backed ShardedClient is the only code path.
 
 	// Add KVStore provider for Scheduler and other services
 	builder = builder.WithKVStoreProvider(func(shardID uint64) interface{} {
@@ -1479,6 +1537,10 @@ func (s *Server) startService() error {
 		if caErr != nil {
 			s.logger.Warnf("Failed to wire CA into service builder: %v", caErr)
 		} else {
+			// Propagate the operator-configured SPIFFE trust domain so issued
+			// certificates carry their tenant-scoped SPIFFE URI SAN; login
+			// derives the tenant from the verified peer certificate.
+			caAdapter.SetSPIFFETrustDomain(s.config.IAM.SPIFFETrustDomain)
 			// Keep a reference so UpdateCA() can swap the backing CA after start.
 			s.caAdapter = caAdapter
 			builder = builder.WithCAService(caAdapter)
@@ -1500,6 +1562,20 @@ func (s *Server) startService() error {
 	svc.SetQRDBClient(s.qrdbClient)
 	s.logger.Info("qrdb ShardedClient attached to service")
 
+	// Wire the unified login-ceremony facade. The login ceremony is hosted
+	// in-process by the composed qrdb node; only node.Client().Login() exposes
+	// a transport.LoginClient. The facade forwards BeginLogin/FinishLogin to it
+	// and enforces the mTLS anti-spoofing model. When no node (or login client)
+	// is present the facade fails closed with LoginCeremonyUnavailableError.
+	if s.qrdbNode != nil {
+		if nodeClient := s.qrdbNode.Client(); nodeClient != nil {
+			if lc := nodeClient.Login(); lc != nil {
+				svc.SetLoginService(service.NewLoginService(lc))
+				s.logger.Info("unified login ceremony facade wired from qrdb node")
+			}
+		}
+	}
+
 	// Inject SDK client provider into vector service for write operations.
 	// The vector service is created before the ShardedClient (startVector runs
 	// before startService), so we inject the provider after construction.
@@ -1518,15 +1594,17 @@ func (s *Server) startService() error {
 		s.iamComponents = iamComponents
 		svc.SetIAMProvider(iamComponents)
 		s.logger.Info("IAM components attached to service")
+
+		// Bind the OIDC provider to the late-bound login session issuer that
+		// was injected into the qrdb node before IAM init. This activates
+		// OIDC bearer issuance for the node's in-process login ceremony.
+		s.bindLoginCeremonyProvider(iamComponents)
 	}
 
-	// When barrier isolation mode is configured and the system seal is enabled,
-	// construct a BarrierRegistry from the system barrier and inject a
-	// BarrierIsolationManager so that tenant creation allocates cryptographic
-	// barriers instead of relying solely on key prefixes.
-	if s.config.Security.TenantIsolation.Mode == config.TenantIsolationBarrier {
-		s.initBarrierIsolation(svc)
-	}
+	// Tenant barrier lifecycle is owned by the qrdb node's TenantServicer.
+	// When the qrdb node is initialized (initStandaloneQRDBNode/initClusteredQRDBNode),
+	// barrier isolation is configured via the qrdb server options. No separate
+	// BaaS-layer BarrierIsolationManager is needed.
 
 	return nil
 }
@@ -1576,19 +1654,26 @@ func (s *Server) startGRPCServer() error {
 		s.logger.Info("Mutual TLS (client authentication) enabled")
 	}
 
-	// Add interceptors
+	// Add interceptors. The tenant interceptor runs after recovery so a panic
+	// is still trapped, and before the handlers so tenant-scoped operations
+	// observe the caller's tenant. It is best-effort: tenantResolve is nil in
+	// non-iam builds (and the interceptor is a no-op pass-through), and even
+	// when wired it never rejects a call for lack of a tenant.
+	tenantResolve := s.tenantContextFunc()
 	grpcOpts = append(grpcOpts,
 		ggrpc.ChainUnaryInterceptor(
 			grpcapi.UnaryTimeoutInterceptor(30*time.Second),
 			grpcapi.UnaryLoggingInterceptor(s.logger),
 			grpcapi.UnaryMetricsInterceptor(),
 			grpcapi.UnaryRecoveryInterceptor(s.logger),
+			grpcapi.UnaryTenantInterceptor(tenantResolve),
 		),
 		ggrpc.ChainStreamInterceptor(
 			grpcapi.StreamTimeoutInterceptor(5*time.Minute),
 			grpcapi.StreamLoggingInterceptor(s.logger),
 			grpcapi.StreamMetricsInterceptor(),
 			grpcapi.StreamRecoveryInterceptor(s.logger),
+			grpcapi.StreamTenantInterceptor(tenantResolve),
 		),
 	)
 
@@ -1725,6 +1810,27 @@ func (s *Server) startGRPCServer() error {
 		grpcapi.RegisterXKMSServer(grpcServer, s.logger)
 		s.logger.Info("Registered XKMS gRPC service")
 	}
+
+	// Register CertificateService (CA) gRPC handlers. They live on the same
+	// *grpcapi.Server that backs QuicBaaS and delegate to service.Certificate()
+	// which composes the xkms TrustedCA, keeping the gRPC certificate surface
+	// symmetric with the REST /api/v1/ca routes and the QUIC/MCP/Unix transports.
+	s.registerCertificateService(grpcServer, quicbaasService)
+
+	// Register Barrier and Ceremony gRPC services. The handlers delegate to
+	// the embedded go-qrdb instance via the QuicBaaS service facade, keeping
+	// the gRPC surface symmetric with /api/v1/barrier and /api/v1/init REST.
+	s.registerBarrierCeremonyServices(grpcServer)
+
+	// Register the unified Login ceremony gRPC service. The handler extracts
+	// the verified mTLS peer certificate from the gRPC TLS handshake and
+	// delegates to the LoginCeremony() facade (-> embedded qrdb node).
+	s.registerLoginService(grpcServer, quicbaasService)
+
+	// Register qrdb.v1.QRDBService so SDK clients hitting quicbaasd via
+	// gRPC (and Unix-over-gRPC) can reach the credential management surface
+	// (Security().Credentials()) that lives on go-qrdb's proto interface.
+	s.registerQRDBService(grpcServer)
 
 	s.grpcServer = grpcServer
 	s.grpcAPI = quicbaasService

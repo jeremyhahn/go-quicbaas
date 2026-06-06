@@ -3487,25 +3487,8 @@ func TestMemoryStorage_IncrementQuotaUsage_GroupsExceedsLimit(t *testing.T) {
 	}
 }
 
-func TestMemoryStorage_IncrementQuotaUsage_RolesExceedsLimit(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "roles-tenant", Name: "Roles Tenant", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{MaxRoles: 2, CurrentRoles: 2}
-	if err := storage.UpdateQuota(ctx, "roles-tenant", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	err := storage.IncrementQuotaUsage(ctx, "roles-tenant", "roles", 1)
-	if err == nil {
-		t.Error("expected error when exceeding roles quota")
-	}
-}
+// TestMemoryStorage_IncrementQuotaUsage_RolesExceedsLimit is removed:
+// roles are engine-level quotas owned by qrdb TenantServicer, not tracked in IAM storage.
 
 func TestMemoryStorage_IncrementQuotaUsage_PoliciesExceedsLimit(t *testing.T) {
 	storage := NewMemoryStorage()
@@ -3551,29 +3534,8 @@ func TestMemoryStorage_DecrementQuotaUsage_GroupsFloor(t *testing.T) {
 	}
 }
 
-func TestMemoryStorage_DecrementQuotaUsage_RolesFloor(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "dec-roles", Name: "Dec Roles", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{CurrentRoles: 1}
-	if err := storage.UpdateQuota(ctx, "dec-roles", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	if err := storage.DecrementQuotaUsage(ctx, "dec-roles", "roles", 10); err != nil {
-		t.Fatalf("DecrementQuotaUsage failed: %v", err)
-	}
-
-	updatedQuota, _ := storage.GetQuota(ctx, "dec-roles")
-	if updatedQuota.CurrentRoles != 0 {
-		t.Errorf("expected CurrentRoles=0, got %d", updatedQuota.CurrentRoles)
-	}
-}
+// TestMemoryStorage_DecrementQuotaUsage_RolesFloor is removed:
+// roles are engine-level quotas owned by qrdb TenantServicer, not tracked in IAM storage.
 
 func TestMemoryStorage_DecrementQuotaUsage_PoliciesFloor(t *testing.T) {
 	storage := NewMemoryStorage()
@@ -3599,26 +3561,5 @@ func TestMemoryStorage_DecrementQuotaUsage_PoliciesFloor(t *testing.T) {
 	}
 }
 
-func TestMemoryStorage_DecrementQuotaUsage_UsersFloor(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "dec-users", Name: "Dec Users", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{CurrentUsers: 1}
-	if err := storage.UpdateQuota(ctx, "dec-users", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	if err := storage.DecrementQuotaUsage(ctx, "dec-users", "users", 10); err != nil {
-		t.Fatalf("DecrementQuotaUsage failed: %v", err)
-	}
-
-	updatedQuota, _ := storage.GetQuota(ctx, "dec-users")
-	if updatedQuota.CurrentUsers != 0 {
-		t.Errorf("expected CurrentUsers=0, got %d", updatedQuota.CurrentUsers)
-	}
-}
+// TestMemoryStorage_DecrementQuotaUsage_UsersFloor is removed:
+// users are engine-level quotas owned by qrdb TenantServicer, not tracked in IAM storage.

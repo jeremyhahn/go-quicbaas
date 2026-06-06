@@ -144,7 +144,7 @@ func TestAuthorizationChecker_WithOIDCProvider_ValidToken(t *testing.T) {
 	checker := NewAuthorizationChecker(mockAuthService, nil)
 	checker.SetOIDCProvider(mockOIDCProvider)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "valid-oidc-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "valid-oidc-token")
 
 	assert.Nil(t, err)
 	mockOIDCProvider.AssertExpectations(t)
@@ -166,7 +166,7 @@ func TestAuthorizationChecker_WithOIDCProvider_InvalidToken(t *testing.T) {
 	checker := NewAuthorizationChecker(nil, mockAuthManager)
 	checker.SetOIDCProvider(mockOIDCProvider)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "invalid-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "invalid-token")
 
 	require.NotNil(t, err)
 	assert.Equal(t, AuthErrorInvalidToken, err.Type)
@@ -201,7 +201,7 @@ func TestAuthorizationChecker_WithOIDCProvider_FallbackToAuthManager(t *testing.
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 	checker.SetOIDCProvider(mockOIDCProvider)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "legacy-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "legacy-token")
 
 	assert.Nil(t, err)
 	mockOIDCProvider.AssertExpectations(t)
@@ -232,7 +232,7 @@ func TestAuthorizationChecker_WithOIDCProvider_AudienceValidation(t *testing.T) 
 		ResourceURI: resourceURI,
 	})
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "wrong-audience-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "wrong-audience-token")
 
 	require.NotNil(t, err)
 	assert.Equal(t, AuthErrorInvalidToken, err.Type)
@@ -266,7 +266,7 @@ func TestAuthorizationChecker_WithOIDCProvider_CorrectAudience(t *testing.T) {
 		ResourceURI: resourceURI,
 	})
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "correct-audience-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "correct-audience-token")
 
 	assert.Nil(t, err)
 	mockOIDCProvider.AssertExpectations(t)
@@ -290,7 +290,7 @@ func TestAuthorizationChecker_OIDCOnly_NoAuthService(t *testing.T) {
 	checker := NewAuthorizationChecker(nil, nil)
 	checker.SetOIDCProvider(mockOIDCProvider)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "valid-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "valid-token")
 
 	// Should succeed - token is valid and no authorization service to check permissions
 	assert.Nil(t, err)
@@ -684,7 +684,7 @@ func TestAuthorizationChecker_FederatedToken(t *testing.T) {
 	checker := NewAuthorizationChecker(mockAuthService, nil)
 	checker.SetOIDCProvider(mockOIDCProvider)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "federated-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "federated-token")
 
 	assert.Nil(t, err)
 	mockOIDCProvider.AssertExpectations(t)

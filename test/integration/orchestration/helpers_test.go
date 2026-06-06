@@ -18,7 +18,6 @@ package orchestration
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -30,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/ollama"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // requireQuicBaaS fails the test if the QuicBaaS service is not available.
@@ -59,12 +59,7 @@ func postJSON(ctx context.Context, url string, body interface{}) (*http.Response
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // integration test only
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 	return client.Do(req)
 }
 
@@ -76,12 +71,7 @@ func getJSON(ctx context.Context, url string, result interface{}) (*http.Respons
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // integration test only
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, &testHTTPError{URL: url, Method: "GET", Cause: err}

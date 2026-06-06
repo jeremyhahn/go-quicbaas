@@ -39,9 +39,6 @@ type TLSConfig struct {
 
 	// ClientAuth indicates whether client certificate authentication is required
 	ClientAuth bool
-
-	// FIPSMode indicates whether FIPS 140-3 mode is enabled
-	FIPSMode bool
 }
 
 // LoadServerTLSCredentials loads TLS credentials for the gRPC server.

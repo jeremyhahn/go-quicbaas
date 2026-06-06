@@ -28,7 +28,6 @@ package session_attach
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,6 +36,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // quicbaasURL returns the base URL of the running daemon.
@@ -49,12 +50,7 @@ func quicbaasURL() string {
 
 // httpClient trusts the daemon's self-signed dev cert. Test-only.
 func httpClient() *http.Client {
-	return &http.Client{
-		Timeout: 15 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // integration test against local dev daemon
-		},
-	}
+	return helpers.NewHTTPClient(15 * time.Second)
 }
 
 // waitForReady polls /api/v1/health/ready until 200 or timeout.

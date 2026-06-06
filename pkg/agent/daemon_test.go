@@ -81,13 +81,17 @@ type testLogger struct {
 	t *testing.T
 }
 
-func (l *testLogger) Debug(msg string, args ...any)             { l.t.Log(append([]any{"DEBUG:", msg}, args...)...) }
+func (l *testLogger) Debug(msg string, args ...any) {
+	l.t.Log(append([]any{"DEBUG:", msg}, args...)...)
+}
 func (l *testLogger) Debugf(format string, args ...interface{}) { l.t.Logf("DEBUG: "+format, args...) }
 func (l *testLogger) Info(msg string, args ...any)              { l.t.Log(append([]any{"INFO:", msg}, args...)...) }
 func (l *testLogger) Infof(format string, args ...interface{})  { l.t.Logf("INFO: "+format, args...) }
 func (l *testLogger) Warn(msg string, args ...any)              { l.t.Log(append([]any{"WARN:", msg}, args...)...) }
 func (l *testLogger) Warnf(format string, args ...interface{})  { l.t.Logf("WARN: "+format, args...) }
-func (l *testLogger) Error(msg string, args ...any)             { l.t.Log(append([]any{"ERROR:", msg}, args...)...) }
+func (l *testLogger) Error(msg string, args ...any) {
+	l.t.Log(append([]any{"ERROR:", msg}, args...)...)
+}
 func (l *testLogger) Errorf(format string, args ...interface{}) { l.t.Logf("ERROR: "+format, args...) }
 func (l *testLogger) Fatal(msg string)                          { l.t.Fatal(msg) }
 func (l *testLogger) Fatalf(format string, args ...interface{}) { l.t.Fatalf(format, args...) }

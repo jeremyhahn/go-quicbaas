@@ -19,21 +19,8 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 )
-
-// PendingCredentialBackendError is emitted by "credential" subcommand
-// handlers before the credential service surface ships.
-type PendingCredentialBackendError struct {
-	Op string
-}
-
-// Error returns a human-readable description.
-func (e *PendingCredentialBackendError) Error() string {
-	return e.Op + " is not yet wired to the SDK CredentialService"
-}
 
 // newCanonicalInitCmd returns the canonical "init" command group,
 // defined in cmd/quicbaas/init.go. Per Phase 12 of the
@@ -50,51 +37,55 @@ func newCanonicalInitCmd() *cobra.Command {
 }
 
 // newCanonicalBarrierCmd returns the canonical "barrier" command
-// group, defined in cmd/quicbaas/barrier.go. The renamed "seal" tree
-// is registered separately via newSealCommand() (deprecated alias).
+// group, defined in cmd/quicbaas/barrier.go. It is the single
+// canonical entry point for StorageBarrier lifecycle operations; the
+// former "seal" alias tree has been removed.
 func newCanonicalBarrierCmd() *cobra.Command {
 	return newBarrierCommand()
 }
 
-// newCanonicalSealRedirectCmd returns the deprecated 'seal' alias
-// command tree. Each subcommand prints a deprecation warning to
-// stderr and forwards to the equivalent 'quicbaas barrier' command.
-func newCanonicalSealRedirectCmd() *cobra.Command {
-	return newSealCommand()
-}
-
-// newCanonicalCACmd builds the canonical "ca" command tree.
+// newCanonicalCACmd builds the canonical "ca" command tree. The
+// implementation lives in cmd/quicbaas/ca.go where each verb wires
+// directly to Security().Certificate() over the active SDK transport.
 func newCanonicalCACmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "ca",
-		Short: "CA operations (info, bundle, list, issue, revoke, export-bundle)",
-	}
-	for _, verb := range []string{"info", "bundle", "list", "issue", "revoke", "export-bundle"} {
-		v := verb
-		cmd.AddCommand(&cobra.Command{
-			Use:   v,
-			Short: "CA " + v,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return fmt.Errorf("quicbaas ca %s: pending SDK Security().Certificate() surface", v)
-			},
-		})
-	}
-	return cmd
+	return newCACmd()
 }
 
 // newCanonicalCeremonyCmd builds the canonical "ceremony" command.
+//
+// Per docs/08-bootstrap-auth-architecture.md §6 the "ceremony"
+// subcommand group exposes the same verb set as the top-level "init"
+// command. Both reach the same SDK Security().Ceremony() backend; the
+// two surfaces give operators a choice of whether to think of the
+// flow as "initialise this daemon" (init) or "drive the ceremony
+// state machine" (ceremony). We reuse the same cobra builders so
+// the two trees stay byte-for-byte identical instead of drifting.
 func newCanonicalCeremonyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ceremony",
-		Short: "Ceremony state-machine ops (status, claim-cert, claim-share, sign-csr)",
+		Short: "Ceremony state-machine ops (status, claim-cert, claim-share, sign-csr, enroll-external-officer)",
+		Long: `Ceremony state-machine commands.
+
+Drives the initialisation ceremony state machine — issues officer
+certificates, distributes Shamir shares, signs operator CSRs, and
+enrols external officers. The verb set matches 'quicbaas init' (each
+verb routes to the same Security().Ceremony() SDK methods).
+
+Verbs:
+  status                   Show the current ceremony state
+  claim-cert               Two-step certificate claim (begin then complete)
+  claim-share              Retrieve the officer's Shamir share
+  sign-csr                 SO-authorised CSR signing
+  enroll-external-officer  Enrol an officer whose key material is external`,
 	}
-	cmd.AddCommand(&cobra.Command{Use: "status", Short: "Show ceremony state"})
-	claimCert := &cobra.Command{Use: "claim-cert", Short: "Certificate claim operations"}
-	claimCert.AddCommand(&cobra.Command{Use: "begin", Short: "Begin certificate claim"})
-	claimCert.AddCommand(&cobra.Command{Use: "complete", Short: "Complete certificate claim"})
-	cmd.AddCommand(claimCert)
-	cmd.AddCommand(&cobra.Command{Use: "claim-share", Short: "Claim a Shamir share"})
-	cmd.AddCommand(&cobra.Command{Use: "sign-csr", Short: "Sign a CSR with SO authorization"})
+	cmd.PersistentFlags().StringVar(&initOutputFmt, "output", "table",
+		"Output format (json, yaml, table)")
+
+	cmd.AddCommand(newInitStatusCommand())
+	cmd.AddCommand(newInitClaimCertCommand())
+	cmd.AddCommand(newInitClaimShareCommand())
+	cmd.AddCommand(newInitSignCSRCommand())
+	cmd.AddCommand(newInitEnrollExternalOfficerCommand())
 	return cmd
 }
 
@@ -104,22 +95,21 @@ func newCanonicalBootstrapCmd() *cobra.Command {
 	return newBootstrapCommand()
 }
 
-// newCanonicalCredentialCmd builds the canonical "credential" command.
+// newCanonicalCredentialCmd builds the canonical "credential" command
+// tree, delegating to Security().Credentials() over the active SDK
+// transport (rest / grpc / quic / mcp / unix / embedded — all wired).
 func newCanonicalCredentialCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "credential",
 		Short: "Post-init credential operations (submit, list, rotate)",
 	}
-	for _, verb := range []string{"submit", "list", "rotate"} {
-		v := verb
-		cmd.AddCommand(&cobra.Command{
-			Use:   v,
-			Short: "Credential " + v,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return &PendingCredentialBackendError{Op: "credential " + v}
-			},
-		})
-	}
+	cmd.AddCommand(newCredentialSubmitCmd())
+	cmd.AddCommand(newCredentialListCmd())
+	cmd.AddCommand(newCredentialRotateCmd())
+	cmd.AddCommand(newCredentialRetrieveCmd())
+	cmd.AddCommand(newCredentialVersionsCmd())
+	cmd.AddCommand(newCredentialDeleteCmd())
+	cmd.AddCommand(newCredentialGCCmd())
 	return cmd
 }
 
@@ -173,5 +163,4 @@ func configureCanonicalSurface() {
 	rootCmd.AddCommand(newCanonicalCeremonyCmd())
 	rootCmd.AddCommand(newCanonicalCredentialCmd())
 	rootCmd.AddCommand(newCanonicalBootstrapCmd())
-	rootCmd.AddCommand(newCanonicalSealRedirectCmd())
 }

@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -158,19 +157,17 @@ func createSchedulerRESTClientFactory() (SchedulerClient, error) {
 		opts = append(opts, rest.WithTimeout(timeout))
 	}
 
-	// Configure TLS if enabled
-	if tlsEnabled {
+	// Configure TLS — apply whenever the address is HTTPS or the operator
+	// has passed --tls/--tls-cert/--tls-ca. The address-based path matters
+	// for tests that dial `https://host:port` without passing --tls.
+	// QuicBaaS bans insecure TLS — explicit CA trust required.
+	httpsAddress := len(baseURL) >= 8 && baseURL[:8] == "https://"
+	if tlsEnabled || httpsAddress || tlsCert != "" || tlsCA != "" {
 		if tlsCert != "" && tlsKey != "" {
 			opts = append(opts, rest.WithTLS(tlsCert, tlsKey, tlsCA))
 		} else if tlsCA != "" {
 			opts = append(opts, rest.WithTLS("", "", tlsCA))
 		}
-	}
-	if tlsSkipVerify {
-		opts = append(opts, rest.WithTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // G402: user explicitly requested --tls-skip-verify
-			MinVersion:         tls.VersionTLS13,
-		}))
 	}
 
 	// Create the REST client

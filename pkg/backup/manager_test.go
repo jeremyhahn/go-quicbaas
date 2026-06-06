@@ -841,7 +841,10 @@ func TestNewBackupManager_Validation(t *testing.T) {
 			errContains: "storage is required",
 		},
 		{
-			name: "nil raft",
+			// nil raft is accepted: on the qrdb-node path the backup manager
+			// does not require a standalone raft node. The backup will have
+			// zero shards but construction must succeed.
+			name: "nil raft accepted",
 			config: &Config{
 				StorageBackend: "mock",
 				WorkDir:        t.TempDir(),
@@ -850,8 +853,8 @@ func TestNewBackupManager_Validation(t *testing.T) {
 			storage:     memStorage,
 			raft:        nil,
 			logger:      log,
-			wantErr:     true,
-			errContains: "raft node is required",
+			wantErr:     false,
+			errContains: "",
 		},
 		{
 			name: "nil logger",
@@ -1400,10 +1403,10 @@ func TestNoneEncryptor_ReturnReadCloser(t *testing.T) {
 }
 
 func TestBackupManager_CreateBackupErrorPaths(t *testing.T) {
-	t.Run("nil node host info", func(t *testing.T) {
+	t.Run("nil node host info produces zero-shard backup", func(t *testing.T) {
+		// nil GetNodeHostInfo no longer produces an error; the backup manager
+		// treats it as zero shards (graceful degradation for the qrdb-node path).
 		memStorage := &mockStorage{MemoryStorage: memory.New(nil)}
-
-		// Mock raft that returns nil node host info
 		mockRaft := &mockRaftNodeNilInfo{}
 
 		log, err := logger.New(logger.LogConfig{
@@ -1433,9 +1436,11 @@ func TestBackupManager_CreateBackupErrorPaths(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		_, err = manager.CreateBackup(ctx, BackupTypeFull)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "node host info")
+		backup, err := manager.CreateBackup(ctx, BackupTypeFull)
+		assert.NoError(t, err, "nil NodeHostInfo should succeed with zero shards")
+		if err == nil {
+			assert.Equal(t, 0, backup.Metadata.NumShards)
+		}
 	})
 }
 

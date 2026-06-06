@@ -168,9 +168,6 @@ type KMSConfig struct {
 	// Cache contains key caching settings.
 	Cache KMSCacheConfig `yaml:"cache" json:"cache" mapstructure:"cache"`
 
-	// ClusterDEK contains cluster data encryption key settings.
-	ClusterDEK KMSClusterDEKConfig `yaml:"cluster_dek" json:"cluster_dek" mapstructure:"cluster_dek"`
-
 	// Backend-specific configurations
 	Software SoftwareBackendConfig `yaml:"software" json:"software" mapstructure:"software"`
 	TPM2     TPM2BackendConfig     `yaml:"tpm2" json:"tpm2" mapstructure:"tpm2"`
@@ -220,18 +217,6 @@ type KMSCacheConfig struct {
 	TTL time.Duration `yaml:"ttl" json:"ttl"`
 	// MaxKeys is the maximum number of keys to cache.
 	MaxKeys int `yaml:"max_keys" json:"max_keys"`
-}
-
-// KMSClusterDEKConfig contains cluster data encryption key settings.
-type KMSClusterDEKConfig struct {
-	// Algorithm is the algorithm for the DEK.
-	Algorithm string `yaml:"algorithm" json:"algorithm"`
-	// RotationPeriod is the DEK rotation schedule.
-	RotationPeriod time.Duration `yaml:"rotation_period" json:"rotation_period"`
-	// ReencryptBatch is the re-encryption batch size.
-	ReencryptBatch int `yaml:"reencrypt_batch" json:"reencrypt_batch"`
-	// ReencryptWorkers is the number of concurrent re-encryption workers.
-	ReencryptWorkers int `yaml:"reencrypt_workers" json:"reencrypt_workers"`
 }
 
 // SoftwareBackendConfig contains configuration for the software backend.
@@ -334,12 +319,6 @@ func DefaultKMSConfig() KMSConfig {
 			Enabled: true,
 			TTL:     5 * time.Minute,
 			MaxKeys: 100,
-		},
-		ClusterDEK: KMSClusterDEKConfig{
-			Algorithm:        "AES-256-GCM",
-			RotationPeriod:   30 * 24 * time.Hour, // 30 days
-			ReencryptBatch:   1000,
-			ReencryptWorkers: 4,
 		},
 		Software: SoftwareBackendConfig{
 			KeyPerms:   0600,

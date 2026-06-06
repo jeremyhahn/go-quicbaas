@@ -17,7 +17,6 @@ package scheduler
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -168,7 +167,9 @@ func setupGRPCClient(t *testing.T, ctx context.Context) *grpcclient.Client {
 	endpoints := helpers.GetClusterEndpoints()
 	require.NotEmpty(t, endpoints, "gRPC endpoints must be available for integration tests")
 
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Failed to create gRPC client for endpoint %s", endpoints[0])
 
 	return client

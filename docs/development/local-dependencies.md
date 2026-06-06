@@ -65,7 +65,7 @@ copied:
 
 ```dockerfile
 RUN { \
-        echo 'go 1.26.3'; \
+        echo 'go 1.26.4'; \
         echo 'use ('; \
         echo '    ./go-libsignal'; \
         echo '    ./go-objstore'; \

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -100,6 +101,11 @@ func (s *Server) IsClosed() bool {
 // Uptime returns zero when REST support is not compiled.
 func (s *Server) Uptime() time.Duration {
 	return 0
+}
+
+// Addr returns nil when REST support is not compiled.
+func (s *Server) Addr() net.Addr {
+	return nil
 }
 
 // RESTClient implements the QuicBaaS SDK client interfaces using REST API.

@@ -97,10 +97,32 @@ func (h *IAMHandler) PIVLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Derive the login tenant before the index lookup: SPIFFE SAN (pinned
+	// trust domain) -> home-realm discovery -> fail closed. Injecting the
+	// tenant into the context scopes the tenant-scoped PIV index lookup that
+	// follows. A non-bootstrap login is NEVER defaulted to the system tenant.
+	tenantID, err := h.server.deriveLoginTenant(ctx, r, cert, "")
+	if err != nil {
+		h.logPIVLoginFailureAudit(ctx, "", thumbprint, ErrUnauthorized,
+			"login tenant could not be resolved: "+err.Error(), r)
+		RespondIAMError(w, r, http.StatusUnauthorized,
+			NewIAMAPIError(ErrUnauthorized, "login tenant could not be resolved"))
+		return
+	}
+	ctx = loginContextWithTenant(ctx, tenantID)
+
 	user, err := store.GetUserByPIVThumbprint(ctx, thumbprint)
 	if err != nil || user == nil {
 		h.logPIVLoginFailureAudit(ctx, "", thumbprint, ErrUnauthorized,
 			"no user found for the presented certificate", r)
+		RespondIAMError(w, r, http.StatusUnauthorized,
+			NewIAMAPIError(ErrUnauthorized, "no user found for the presented certificate"))
+		return
+	}
+	// Defense-in-depth: the resolved user must belong to the derived tenant.
+	if user.TenantID != tenantID {
+		h.logPIVLoginFailureAudit(ctx, user.ID, thumbprint, ErrUnauthorized,
+			"resolved user tenant does not match derived login tenant", r)
 		RespondIAMError(w, r, http.StatusUnauthorized,
 			NewIAMAPIError(ErrUnauthorized, "no user found for the presented certificate"))
 		return

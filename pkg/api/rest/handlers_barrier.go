@@ -20,10 +20,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
-
-	"github.com/go-chi/chi/v5"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -163,15 +160,6 @@ func unsealShareProgressToResponse(p *service.UnsealShareProgress) map[string]in
 		"required":  p.Required,
 		"submitted": p.Submitted,
 		"complete":  p.Complete,
-	}
-}
-
-// shamirSharesToResponse maps a ShamirSharesInfo to its JSON shape.
-func shamirSharesToResponse(info *service.ShamirSharesInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"count":     info.Count,
-		"threshold": info.Threshold,
-		"total":     info.Total,
 	}
 }
 
@@ -338,70 +326,6 @@ func (s *Server) HandleBarrierShamirUnsealShares(w http.ResponseWriter, r *http.
 	}
 
 	if err := s.barrierSvc.BarrierUnsealWithShares(r.Context(), req.Shares); err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// HandleBarrierShamirListShares handles GET /api/v1/barrier/shamir/shares.
-func (s *Server) HandleBarrierShamirListShares(w http.ResponseWriter, r *http.Request) {
-	if !s.requireBarrierService(w, r) {
-		return
-	}
-
-	info, err := s.barrierSvc.BarrierShamirListShares(r.Context())
-	if err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	RespondJSON(w, r, http.StatusOK, shamirSharesToResponse(info))
-}
-
-// HandleBarrierShamirDeleteShare handles DELETE /api/v1/barrier/shamir/shares/{index}.
-func (s *Server) HandleBarrierShamirDeleteShare(w http.ResponseWriter, r *http.Request) {
-	if !s.requireBarrierService(w, r) {
-		return
-	}
-
-	raw := chi.URLParam(r, "index")
-	idx, err := strconv.Atoi(raw)
-	if err != nil {
-		RespondBadRequest(w, r, "index must be an integer")
-		return
-	}
-
-	if err := s.barrierSvc.BarrierShamirDeleteShare(r.Context(), idx); err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// HandleBarrierShamirDeleteAllShares handles DELETE /api/v1/barrier/shamir/shares.
-func (s *Server) HandleBarrierShamirDeleteAllShares(w http.ResponseWriter, r *http.Request) {
-	if !s.requireBarrierService(w, r) {
-		return
-	}
-
-	if err := s.barrierSvc.BarrierShamirDeleteAllShares(r.Context()); err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// HandleBarrierShamirVerify handles POST /api/v1/barrier/shamir/verify.
-func (s *Server) HandleBarrierShamirVerify(w http.ResponseWriter, r *http.Request) {
-	if !s.requireBarrierService(w, r) {
-		return
-	}
-
-	if err := s.barrierSvc.BarrierShamirVerify(r.Context()); err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}

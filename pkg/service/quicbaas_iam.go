@@ -183,4 +183,3 @@ func (s *quicBaaS) GetGDPRManager(ctx context.Context) (*iam.GDPRManager, error)
 	}
 	return provider.GetGDPRManager(ctx)
 }
-

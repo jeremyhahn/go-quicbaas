@@ -348,9 +348,9 @@ func validateUpgradeNodeRequest(req *UpgradeNodeRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("operations.UpgradeNode", "request is required")
 	}
-	if req.NodeID == 0 {
-		return errors.NewInvalidInput("operations.UpgradeNode", "node ID is required")
-	}
+	// NodeID == 0 is the canonical "upgrade all nodes" sentinel for a rolling
+	// upgrade (see the `quicbaas upgrade start` --node-id flag: "0 = all
+	// nodes"); it must not be rejected here.
 	if req.TargetVersion == "" {
 		return errors.NewInvalidInput("operations.UpgradeNode", "target version is required")
 	}

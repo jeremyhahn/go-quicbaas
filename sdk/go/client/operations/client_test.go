@@ -543,9 +543,9 @@ func TestClient_UpgradeNode_Validation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "zero node ID",
+			name:    "zero node ID means all nodes (valid)",
 			req:     &UpgradeNodeRequest{NodeID: 0, TargetVersion: "2.0.0"},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name:    "empty target version",

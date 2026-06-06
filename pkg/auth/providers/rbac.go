@@ -22,6 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/permission"
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -42,6 +45,41 @@ type RBACProvider struct {
 	logger      *logger.Logger
 	decisionSeq atomic.Uint64
 	closed      atomic.Bool
+
+	// scopes is an optional tenant-aware permission scope resolver
+	// (typically a *permission.TenantScopeStore built over the embedded
+	// qrdb node's StoreResolver). When non-nil, an admitted permission is
+	// further gated by its scope resolved in the SUBJECT's own tenant
+	// (per-tenant store -> built-in default -> ScopeSelf), applying the same
+	// system-tenant rule the qrdb RBAC authorizer uses:
+	//
+	//   - ScopeCross  : admitted only for a system-tenant subject.
+	//   - ScopeSelf   : admitted when the subject is in the system tenant or
+	//                   the subject's tenant equals the request's target tenant.
+	//   - ScopeTenantOnly: admitted only when the subject's tenant equals the
+	//                   target tenant AND the subject is NOT the system tenant.
+	//
+	// SECURITY: scope resolution fails closed. When the resolver returns an
+	// error — most importantly tenant.ErrTenantSealed for a sealed barrier
+	// tenant — the request is DENIED; the scope is never defaulted to an
+	// admitting value. When scopes is nil the provider keeps its prior
+	// scope-unaware behaviour (back-compat).
+	scopes permission.ScopeResolver
+}
+
+// SystemTenantID mirrors qrdb's structurally privileged tenant. A subject in
+// this tenant is granted cross-tenant scope for whatever roles it holds, per
+// the qrdb system-tenant rule. Kept as a package constant so the scope gate
+// matches qrdb without importing the value at every call site.
+const SystemTenantID = qrdbtenant.SystemTenantID
+
+// WithScopeResolver installs a tenant-aware permission.ScopeResolver so that
+// admitted permissions are gated by their per-tenant scope. Passing nil leaves
+// the back-compat scope-unaware behaviour in place. It is a no-op once the
+// provider is closed.
+func (p *RBACProvider) WithScopeResolver(resolver permission.ScopeResolver) *RBACProvider {
+	p.scopes = resolver
+	return p
 }
 
 // NewRBACProvider creates a new RBAC authorization provider.
@@ -123,9 +161,83 @@ func (p *RBACProvider) Authorize(ctx context.Context, req *interfaces.Authorizat
 
 	startTime := time.Now()
 	decision := p.evaluateRequest(req)
+	p.applyScopeGate(ctx, req, decision)
 	decision.EvaluationTimeNs = time.Since(startTime).Nanoseconds()
 
 	return decision, nil
+}
+
+// applyScopeGate narrows an already-admitted decision by the requested
+// permission's per-tenant scope. It is a no-op when no scope resolver is
+// installed or when the decision is already a deny. On any scope-resolution
+// error — most importantly tenant.ErrTenantSealed for a sealed barrier
+// tenant — the decision is flipped to DENY (fail closed); the scope is never
+// defaulted to an admitting value.
+//
+// The target tenant of the request is taken from the context (the same
+// convention qrdb uses via tenant.FromContext); the subject's own tenant is
+// req.Subject.TenantID. A subject in the system tenant is granted cross-tenant
+// reach for ScopeSelf / ScopeCross per the qrdb system-tenant rule.
+func (p *RBACProvider) applyScopeGate(ctx context.Context, req *interfaces.AuthorizationRequest, decision *interfaces.AuthorizationDecision) {
+	if p.scopes == nil || decision == nil || !decision.Allowed {
+		return
+	}
+
+	subjectTenant := req.Subject.TenantID
+	targetTenant := targetTenantFor(ctx, req)
+	required := permission.Permission(req.Resource + ":" + req.Action)
+
+	scope, err := p.scopes.ResolveScope(ctx, subjectTenant, required)
+	if err != nil {
+		p.denyDecision(decision, "scope resolution failed: "+err.Error())
+		return
+	}
+
+	inSystem := subjectTenant == SystemTenantID
+	switch scope {
+	case permission.ScopeCross:
+		if !inSystem {
+			p.denyDecision(decision, "cross-scope permission requires system tenant")
+		}
+	case permission.ScopeSelf:
+		if !inSystem && subjectTenant != targetTenant {
+			p.denyDecision(decision, "self-scope permission: subject not in target tenant")
+		}
+	case permission.ScopeTenantOnly:
+		if inSystem {
+			p.denyDecision(decision, "tenant-only permission denied to system tenant")
+		} else if subjectTenant != targetTenant {
+			p.denyDecision(decision, "tenant-only permission: subject not in target tenant")
+		}
+	default:
+		p.denyDecision(decision, "unknown permission scope")
+	}
+}
+
+// denyDecision flips an admitted decision to a deny with the given reason,
+// clearing the matched policy so audit records reflect the scope rejection.
+func (p *RBACProvider) denyDecision(decision *interfaces.AuthorizationDecision, reason string) {
+	decision.Allowed = false
+	decision.Reason = reason
+	decision.MatchedPolicy = ""
+}
+
+// targetTenantExtractor resolves the request's target tenant from the context.
+// It is a package-level variable so the iam build can install the canonical
+// iam.TenantFromContext extractor (see scope_tenant_iam.go) without coupling
+// this scope-unaware-by-default file to the iam-tagged package. The default
+// extractor returns "" (no tenant bound), in which case the scope gate falls
+// back to the subject's own tenant as the target — the correct behaviour for
+// the common self-scoped request that acts on the caller's own tenant.
+var targetTenantExtractor = func(ctx context.Context) string { return "" }
+
+// targetTenantFor resolves the effective target tenant for a request: the
+// context-bound tenant when present, else the subject's own tenant.
+func targetTenantFor(ctx context.Context, req *interfaces.AuthorizationRequest) string {
+	if t := targetTenantExtractor(ctx); t != "" {
+		return t
+	}
+	return req.Subject.TenantID
 }
 
 // evaluateRequest performs the actual RBAC evaluation.
@@ -260,6 +372,7 @@ func (p *RBACProvider) BatchAuthorize(ctx context.Context, reqs []*interfaces.Au
 
 		startTime := time.Now()
 		decisions[i] = p.evaluateRequest(req)
+		p.applyScopeGate(ctx, req, decisions[i])
 		decisions[i].EvaluationTimeNs = time.Since(startTime).Nanoseconds()
 	}
 

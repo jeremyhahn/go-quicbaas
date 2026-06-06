@@ -530,24 +530,24 @@ func TestSDK_FIDO2_RegisterAssert_HappyPath(t *testing.T) {
 	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
-	rt.setResponse("quicbaas.FIDO2", "Register", &quicbaas.FIDO2BeginRegistrationResponse{Challenge: "abc"}, nil)
-	rt.setResponse("quicbaas.FIDO2", "Assert", &quicbaas.FIDO2BeginAuthenticationResponse{Challenge: "def"}, nil)
+	rt.setResponse("quicbaas.FIDO2", "Register", &quicbaas.FIDO2BeginRegistrationResponse{SessionID: "abc"}, nil)
+	rt.setResponse("quicbaas.FIDO2", "Assert", &quicbaas.FIDO2BeginAuthenticationResponse{SessionID: "def"}, nil)
 
 	cli := c.Security().Auth().FIDO2()
 	reg, err := cli.Register(context.Background(), &quicbaas.FIDO2BeginRegistrationRequest{Username: "alice"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if reg.Challenge != "abc" {
-		t.Errorf("unexpected challenge %q", reg.Challenge)
+	if reg.SessionID != "abc" {
+		t.Errorf("unexpected session id %q", reg.SessionID)
 	}
 
 	asrt, err := cli.Assert(context.Background(), &quicbaas.FIDO2BeginAuthenticationRequest{Username: "alice"})
 	if err != nil {
 		t.Fatalf("Assert: %v", err)
 	}
-	if asrt.Challenge != "def" {
-		t.Errorf("unexpected challenge %q", asrt.Challenge)
+	if asrt.SessionID != "def" {
+		t.Errorf("unexpected session id %q", asrt.SessionID)
 	}
 }
 
@@ -560,14 +560,14 @@ func TestSDK_WebAuthn_BeginRegistration_HappyPath(t *testing.T) {
 	defer c.Close()
 
 	rt.setResponse("quicbaas.WebAuthn", "BeginRegistration",
-		&quicbaas.FIDO2BeginRegistrationResponse{Challenge: "go"}, nil)
+		&quicbaas.FIDO2BeginRegistrationResponse{SessionID: "go"}, nil)
 
 	out, err := c.Security().Auth().WebAuthn().BeginRegistration(context.Background(), &quicbaas.WebAuthnUser{Username: "alice"})
 	if err != nil {
 		t.Fatalf("BeginRegistration: %v", err)
 	}
-	if out.Challenge != "go" {
-		t.Errorf("unexpected challenge %q", out.Challenge)
+	if out.SessionID != "go" {
+		t.Errorf("unexpected session id %q", out.SessionID)
 	}
 }
 
@@ -681,48 +681,63 @@ func TestSDK_PIV_Attest_NilResponse_Unsupported(t *testing.T) {
 // Auth Factors — multi-type N-AuthFactor model
 // =============================================================================
 
-func TestSDK_AuthFactors_Add_HappyPath(t *testing.T) {
-	c, rt := newClientWithMockTransport(t)
+// TestSDK_AuthFactors_Add_RequiresCredentialID asserts the current SDK
+// enrollment contract: a fido2 factor cannot be enrolled without the
+// WebAuthn credentialID in MethodParams["credential_id"], because login
+// resolves the factor by that key. The check runs client-side before any
+// transport dispatch, so it holds regardless of how AuthFactors routes.
+func TestSDK_AuthFactors_Add_RequiresCredentialID(t *testing.T) {
+	c, _ := newClientWithMockTransport(t)
 	defer c.Close()
 
-	rt.setResponse("quicbaas.AuthFactors", "Add",
-		&quicbaas.AuthFactorEnrollResponse{
-			EnrollmentID: "enr-1",
-			FactorName:   "fido2",
-			UserID:       "alice",
-		}, nil)
-
-	out, err := c.Security().Auth().Factors().Add(context.Background(), &quicbaas.AuthFactorEnrollRequest{
+	_, err := c.Security().Auth().Factors().Add(context.Background(), &quicbaas.AuthFactorEnrollRequest{
 		FactorName: "fido2",
 		Subject:    "alice",
 	})
-	if err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-	if out.EnrollmentID != "enr-1" {
-		t.Errorf("unexpected enrollment id %q", out.EnrollmentID)
+	if !sdkerrors.IsInvalidInput(err) {
+		t.Fatalf("expected InvalidInput for fido2 enrollment without credential_id, got %v", err)
 	}
 }
 
-func TestSDK_AuthFactors_List_HappyPath(t *testing.T) {
-	c, rt := newClientWithMockTransport(t)
+// TestSDK_AuthFactors_Add_RoutesToQRDBUserSurface asserts that, once
+// client-side validation passes, enrollment is delegated to the qrdb
+// user-side auth-factor surface rather than the quicbaas transport. A
+// client built over a bare quicbaas transport (no embedded qrdb, no
+// network address) therefore surfaces the qrdb routing error. The dead
+// rt.setResponse("quicbaas.AuthFactors", "Add", ...) mock from the old
+// transport-dispatch contract no longer applies.
+func TestSDK_AuthFactors_Add_RoutesToQRDBUserSurface(t *testing.T) {
+	c, _ := newClientWithMockTransport(t)
 	defer c.Close()
 
-	rt.setResponse("quicbaas.AuthFactors", "List",
-		&quicbaas.AuthFactorListResponse{
-			Enrollments: []quicbaas.AuthFactorEntry{
-				{EnrollmentID: "1", FactorName: "fido2", UserID: "alice"},
-				{EnrollmentID: "2", FactorName: "piv", UserID: "alice"},
-			},
-			Total: 2,
-		}, nil)
-
-	out, err := c.Security().Auth().Factors().List(context.Background(), "alice")
-	if err != nil {
-		t.Fatalf("List: %v", err)
+	_, err := c.Security().Auth().Factors().Add(context.Background(), &quicbaas.AuthFactorEnrollRequest{
+		FactorName: "fido2",
+		Subject:    "alice",
+		MethodParams: map[string]any{
+			"credential_id": "cred-abc",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error: AuthFactors.Add must route to the qrdb user surface, which is unavailable on a bare quicbaas transport")
 	}
-	if out.Total != 2 {
-		t.Errorf("unexpected total %d", out.Total)
+}
+
+// TestSDK_AuthFactors_List_RoutesToQRDBUserSurface asserts that listing a
+// subject's factors is delegated to the qrdb user-side auth-factor surface
+// rather than the quicbaas transport. A client over a bare quicbaas
+// transport surfaces the qrdb routing error, proving the delegation. The
+// old rt.setResponse("quicbaas.AuthFactors", "List", ...) mock is dead.
+func TestSDK_AuthFactors_List_RoutesToQRDBUserSurface(t *testing.T) {
+	c, _ := newClientWithMockTransport(t)
+	defer c.Close()
+
+	if _, err := c.Security().Auth().Factors().List(context.Background(), "alice"); err == nil {
+		t.Fatal("expected error: AuthFactors.List must route to the qrdb user surface, which is unavailable on a bare quicbaas transport")
+	}
+
+	// Input validation still runs client-side, before any routing.
+	if _, err := c.Security().Auth().Factors().List(context.Background(), ""); !sdkerrors.IsInvalidInput(err) {
+		t.Errorf("expected InvalidInput for empty subject, got %v", err)
 	}
 }
 

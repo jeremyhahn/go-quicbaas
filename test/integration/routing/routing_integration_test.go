@@ -17,10 +17,8 @@ package routing
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,20 +27,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// testHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var testHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-		TLSHandshakeTimeout: 10 * time.Second,
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-	},
-}
+// testHTTPClient is a package-level HTTP client configured with CA-pinned TLS
+// trust for the integration cluster.
+var testHTTPClient = helpers.NewHTTPClient(30 * time.Second)
 
 // TestRoutingDebug verifies that the routing debug endpoint reflects config pins.
 func TestRoutingDebug(t *testing.T) {

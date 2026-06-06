@@ -18,7 +18,6 @@ package auth
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -107,17 +106,7 @@ func obtainTokenViaREST(ctx context.Context, httpEndpoint string, creds *ClientC
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send token request: %w", err)
@@ -202,17 +191,7 @@ func createTestOAuthApp(ctx context.Context, httpEndpoint, tenantID, appName str
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to register app: %w", err)
@@ -594,12 +573,7 @@ func (c *restAuthClient) Setup(t *testing.T, ctx context.Context) error {
 		return fmt.Errorf("no REST endpoints available")
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 	return nil
 }
 
@@ -686,8 +660,12 @@ func (c *grpcAuthClient) Setup(t *testing.T, ctx context.Context) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return fmt.Errorf("load integration TLS config: %w", err)
+	}
 	conn, err := grpc.DialContext(dialCtx, endpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -792,13 +770,15 @@ func (c *quicAuthClient) Setup(t *testing.T, ctx context.Context) error {
 	c.endpoint = endpoints[0]
 
 	// Create QUIC transport configuration
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return fmt.Errorf("load integration TLS config: %w", err)
+	}
+	tlsCfg.NextProtos = []string{"quicbaas-quic"}
 	cfg := &transport.Config{
-		Address: c.endpoint,
-		Timeout: 30 * time.Second,
-		TLSConfig: &tls.Config{
-			InsecureSkipVerify: true,
-			MinVersion:         tls.VersionTLS13,
-		},
+		Address:         c.endpoint,
+		Timeout:         30 * time.Second,
+		TLSConfig:       tlsCfg,
 		MaxRetries:      3,
 		RetryBackoff:    100 * time.Millisecond,
 		MaxRetryBackoff: 2 * time.Second,
@@ -925,9 +905,14 @@ func (c *unixSocketAuthClient) Setup(t *testing.T, ctx context.Context) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return fmt.Errorf("load integration TLS config: %w", err)
+	}
+	tlsCfg.ServerName = "localhost"
 	conn, err := grpc.DialContext(dialCtx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return net.DialTimeout("unix", socketPath, 10*time.Second)
@@ -1036,12 +1021,7 @@ func (c *mcpAuthClient) Setup(t *testing.T, ctx context.Context) error {
 		return fmt.Errorf("no MCP endpoints available")
 	}
 	c.endpoint = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 
 	// Initialize the MCP session
 	if err := c.initialize(ctx); err != nil {

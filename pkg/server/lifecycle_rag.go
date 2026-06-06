@@ -18,11 +18,16 @@ package server
 import (
 	ggrpc "google.golang.org/grpc"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag"
+	"github.com/jeremyhahn/go-quicbaas/pkg/rag/indexing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
 // startRAG initializes the RAG system if enabled in config.
@@ -49,8 +54,12 @@ func (s *Server) startRAG() error {
 		return nil
 	}
 
+	// Collect system options. When the vector service is running and the qrdb
+	// client is available, inject the persistent HNSW index backed by qrdb.
+	ragOpts := s.buildRAGSystemOptions()
+
 	// Create RAG system using config
-	ragSystem, err := rag.NewSystem(s.config.RAG)
+	ragSystem, err := rag.NewSystem(s.config.RAG, ragOpts...)
 	if err != nil {
 		// RAG is optional - if the embedding provider is unavailable (e.g., ollama not running),
 		// log a warning and continue without RAG instead of failing the entire server.
@@ -64,9 +73,10 @@ func (s *Server) startRAG() error {
 
 	s.ragSystem = ragSystem
 	s.logger.WithFields(map[string]interface{}{
-		"index_path": s.config.RAG.IndexPath,
-		"provider":   s.config.RAG.Embedding.Provider,
-		"dimensions": s.config.RAG.Embedding.Dimensions,
+		"index_path":   s.config.RAG.IndexPath,
+		"provider":     s.config.RAG.Embedding.Provider,
+		"dimensions":   s.config.RAG.Embedding.Dimensions,
+		"vector_index": s.ragVectorBackend(),
 	}).Info("RAG system initialized successfully")
 
 	return nil
@@ -90,6 +100,105 @@ func (s *Server) stopRAG() error {
 	s.ragSystem = nil
 	s.logger.Debug("RAG system closed")
 	return nil
+}
+
+// buildRAGSystemOptions constructs the slice of rag.SystemOption that wires
+// the persistent qrdb vector index into the RAG system when the vector
+// service and qrdb client are both available.
+//
+// Tenant isolation: the physical qrdb namespace is prefixed with the tenant
+// ID extracted from iam context if set. The RAG system itself is not per-request,
+// so a static system-level tenant (empty = system tenant) is used here; for
+// true per-tenant RAG a separate System per tenant is required.
+func (s *Server) buildRAGSystemOptions() []rag.SystemOption {
+	if s.qrdbClient == nil {
+		return nil
+	}
+
+	shardID := s.config.Vector.ShardID
+	if shardID == 0 {
+		shardID = qbshards.PlatformShardID
+	}
+
+	sdkClient, err := s.qrdbClient.ForShard(shardID)
+	if err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"shard_id": shardID,
+			"error":    err.Error(),
+		}).Warn("RAG: could not obtain qrdb client for vector shard, falling back to in-memory index")
+		return nil
+	}
+
+	vectorClient := sdkClient.Vector()
+	namespace := ragNamespace(s.config.RAG)
+	tenantID := "" // system-level RAG uses the system tenant
+
+	factory := buildQRDBVectorIndexFactory(vectorClient, namespace, tenantID)
+	return []rag.SystemOption{rag.WithVectorIndexFactory(factory)}
+}
+
+// buildQRDBVectorIndexFactory returns a vectorIndexFactory closure that creates
+// a qrdb-backed VectorIndex for the given namespace and tenant ID.
+func buildQRDBVectorIndexFactory(
+	client qrdbtransport.VectorClient,
+	namespace string,
+	tenantID string,
+) func(cfg config.RAGVectorConfig) (rag.VectorIndex, error) {
+	return func(vcfg config.RAGVectorConfig) (rag.VectorIndex, error) {
+		idxCfg := indexing.IndexingConfig{
+			IndexType: "qrdb",
+			Namespace: namespace,
+			Enabled:   true,
+		}
+		return indexing.NewVectorIndexFromConfig(
+			idxCfg,
+			vcfg.Dimensions,
+			indexing.WithVectorClient(client),
+			indexing.WithTenantID(tenantID),
+			indexing.WithDistanceMetric(ragMetricToQRDB(vcfg.Metric)),
+		)
+	}
+}
+
+// ragNamespace derives the physical vector namespace from RAG configuration.
+// The IndexPath basename is used when set; otherwise "rag" is used.
+func ragNamespace(cfg config.RAGConfig) string {
+	if cfg.IndexPath != "" {
+		// Use the last path component as a namespace discriminator.
+		for i := len(cfg.IndexPath) - 1; i >= 0; i-- {
+			if cfg.IndexPath[i] == '/' {
+				if tail := cfg.IndexPath[i+1:]; tail != "" {
+					return "rag-" + tail
+				}
+			}
+		}
+		return "rag-" + cfg.IndexPath
+	}
+	return "rag"
+}
+
+// ragMetricToQRDB converts a RAG distance metric string to the qrdb
+// transport constant. Falls back to cosine for unrecognised values.
+func ragMetricToQRDB(metric string) string {
+	metrics := map[string]string{
+		"cosine": qrdbtransport.DistanceCosine,
+		"l2":     qrdbtransport.DistanceEuclidean,
+		"ip":     qrdbtransport.DistanceDotProduct,
+		"dot":    qrdbtransport.DistanceDotProduct,
+	}
+	if m, ok := metrics[metric]; ok {
+		return m
+	}
+	return qrdbtransport.DistanceCosine
+}
+
+// ragVectorBackend returns a human-readable string identifying the vector
+// index backend used by the running RAG system.
+func (s *Server) ragVectorBackend() string {
+	if s.qrdbClient != nil {
+		return "qrdb-hnsw"
+	}
+	return "memory"
 }
 
 // startOllama initializes the Ollama service if Ollama integration is enabled.

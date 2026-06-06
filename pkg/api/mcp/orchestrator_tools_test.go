@@ -92,7 +92,7 @@ func TestIsAgentTool(t *testing.T) {
 	nonAgentTools := []string{
 		"quicbaas_scheduler_create_job",
 		"quicbaas_ollama_embed",
-		"quicbaas_put",
+		"qrdb_put",
 		"nonexistent_tool",
 		"",
 	}

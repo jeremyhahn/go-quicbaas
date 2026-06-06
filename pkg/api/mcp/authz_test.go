@@ -147,12 +147,12 @@ func TestIsPublicTool(t *testing.T) {
 		toolName string
 		expected bool
 	}{
-		{"health tool is public", "quicbaas_health", true},
+		{"health tool is public", "qrdb_health", true},
 		{"version tool is public", "quicbaas_version", true},
 		{"liveness tool is public", "quicbaas_liveness", true},
-		{"get tool is not public", "quicbaas_get", false},
-		{"put tool is not public", "quicbaas_put", false},
-		{"delete tool is not public", "quicbaas_delete", false},
+		{"get tool is not public", "qrdb_get", false},
+		{"put tool is not public", "qrdb_put", false},
+		{"delete tool is not public", "qrdb_delete", false},
 		{"cluster_status is not public", "quicbaas_cluster_status", false},
 		{"unknown tool is not public", "unknown_tool", false},
 	}
@@ -173,17 +173,17 @@ func TestGetToolResourceAction(t *testing.T) {
 		expectedAction   string
 	}{
 		// KV Read Operations
-		{"get tool", "quicbaas_get", interfaces.ResourceKeys, interfaces.ActionRead},
-		{"list tool", "quicbaas_list", interfaces.ResourceKeys, interfaces.ActionRead},
+		{"get tool", "qrdb_get", interfaces.ResourceKeys, interfaces.ActionRead},
+		{"list tool", "qrdb_list", interfaces.ResourceKeys, interfaces.ActionRead},
 		{"query tool", "quicbaas_query", interfaces.ResourceKeys, interfaces.ActionRead},
 		{"batch_get tool", "quicbaas_batch_get", interfaces.ResourceKeys, interfaces.ActionRead},
 
 		// KV Write Operations
-		{"put tool", "quicbaas_put", interfaces.ResourceKeys, interfaces.ActionWrite},
+		{"put tool", "qrdb_put", interfaces.ResourceKeys, interfaces.ActionWrite},
 		{"batch_put tool", "quicbaas_batch_put", interfaces.ResourceKeys, interfaces.ActionWrite},
 
 		// KV Delete Operations
-		{"delete tool", "quicbaas_delete", interfaces.ResourceKeys, interfaces.ActionDelete},
+		{"delete tool", "qrdb_delete", interfaces.ResourceKeys, interfaces.ActionDelete},
 		{"batch_delete tool", "quicbaas_batch_delete", interfaces.ResourceKeys, interfaces.ActionDelete},
 
 		// Cluster Operations
@@ -214,8 +214,8 @@ func TestGetToolResourceAction(t *testing.T) {
 
 		// Vector Operations
 		{"vector_search tool", "quicbaas_vector_search", interfaces.ResourceVector, interfaces.ActionRead},
-		{"vector_upsert tool", "quicbaas_vector_upsert", interfaces.ResourceVector, interfaces.ActionWrite},
-		{"vector_delete tool", "quicbaas_vector_delete", interfaces.ResourceVector, interfaces.ActionDelete},
+		{"vector_upsert tool", "qrdb_vector_upsert", interfaces.ResourceVector, interfaces.ActionWrite},
+		{"vector_delete tool", "qrdb_vector_delete", interfaces.ResourceVector, interfaces.ActionDelete},
 
 		// Timeseries Operations
 		{"timeseries_query tool", "quicbaas_timeseries_query", interfaces.ResourceTimeseries, interfaces.ActionRead},
@@ -241,7 +241,7 @@ func TestAuthorizationChecker_PublicToolBypass(t *testing.T) {
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
 	// Public tools should bypass auth completely
-	publicToolNames := []string{"quicbaas_health", "quicbaas_version", "quicbaas_liveness"}
+	publicToolNames := []string{"qrdb_health", "quicbaas_version", "quicbaas_liveness"}
 
 	for _, toolName := range publicToolNames {
 		t.Run(toolName, func(t *testing.T) {
@@ -259,7 +259,7 @@ func TestAuthorizationChecker_NoAuthServiceConfigured(t *testing.T) {
 	// When no auth service is configured, all tools should be allowed
 	checker := NewAuthorizationChecker(nil, nil)
 
-	testTools := []string{"quicbaas_get", "quicbaas_put", "quicbaas_delete", "quicbaas_cluster_status"}
+	testTools := []string{"qrdb_get", "qrdb_put", "qrdb_delete", "quicbaas_cluster_status"}
 
 	for _, toolName := range testTools {
 		t.Run(toolName, func(t *testing.T) {
@@ -277,14 +277,14 @@ func TestAuthorizationChecker_OnlyAuthManagerConfigured(t *testing.T) {
 	checker := NewAuthorizationChecker(nil, mockAuthManager)
 
 	// Non-public tool without token should fail
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "")
 	require.NotNil(t, err)
 	assert.Equal(t, AuthErrorMissingToken, err.Type)
 	assert.Equal(t, "authentication required", err.Message)
 
 	// Public tools should still bypass auth
-	err = checker.CheckToolAuthorization(context.Background(), "quicbaas_health", "")
-	assert.Nil(t, err, "quicbaas_health should be public even with authManager configured")
+	err = checker.CheckToolAuthorization(context.Background(), "qrdb_health", "")
+	assert.Nil(t, err, "qrdb_health should be public even with authManager configured")
 
 	// With a valid token, authManager should be called for validation
 	mockAuthManager.On("ValidateToken", mock.Anything, "valid-token").
@@ -296,7 +296,7 @@ func TestAuthorizationChecker_OnlyAuthManagerConfigured(t *testing.T) {
 		}, nil)
 
 	// Non-public tool with valid token should be allowed (no authService to check permissions)
-	err = checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "valid-token")
+	err = checker.CheckToolAuthorization(context.Background(), "qrdb_get", "valid-token")
 	assert.Nil(t, err, "tool should be allowed with valid token when only authManager is configured")
 	mockAuthManager.AssertExpectations(t)
 }
@@ -308,7 +308,7 @@ func TestAuthorizationChecker_MissingToken(t *testing.T) {
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
 	// Non-public tool without token should fail
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "")
 
 	require.NotNil(t, err)
 	assert.Equal(t, AuthErrorMissingToken, err.Type)
@@ -325,7 +325,7 @@ func TestAuthorizationChecker_InvalidToken(t *testing.T) {
 
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "invalid-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "invalid-token")
 
 	require.NotNil(t, err)
 	assert.Equal(t, AuthErrorInvalidToken, err.Type)
@@ -343,7 +343,7 @@ func TestAuthorizationChecker_TokenNotValid(t *testing.T) {
 
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "expired-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "expired-token")
 
 	require.NotNil(t, err)
 	assert.Equal(t, AuthErrorInvalidToken, err.Type)
@@ -374,7 +374,7 @@ func TestAuthorizationChecker_PermissionDenied(t *testing.T) {
 
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_put", "valid-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_put", "valid-token")
 
 	require.NotNil(t, err)
 	assert.Equal(t, AuthErrorPermissionDenied, err.Type)
@@ -403,7 +403,7 @@ func TestAuthorizationChecker_AuthorizationError(t *testing.T) {
 
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "valid-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "valid-token")
 
 	require.NotNil(t, err)
 	assert.Equal(t, AuthErrorPermissionDenied, err.Type)
@@ -436,7 +436,7 @@ func TestAuthorizationChecker_AllowedAccess(t *testing.T) {
 
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_put", "valid-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_put", "valid-token")
 
 	assert.Nil(t, err)
 	mockAuthManager.AssertExpectations(t)
@@ -496,8 +496,8 @@ func TestToolResourceMappingCoverage(t *testing.T) {
 		"quicbaas_seal_status",
 		"quicbaas_unseal_",
 		"quicbaas_vector_search",
-		"quicbaas_vector_upsert",
-		"quicbaas_vector_delete",
+		"qrdb_vector_upsert",
+		"qrdb_vector_delete",
 		"quicbaas_timeseries_query",
 		"quicbaas_timeseries_write",
 	}

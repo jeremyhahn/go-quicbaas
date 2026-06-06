@@ -17,13 +17,14 @@ package backup
 
 import (
 	"context"
-	"crypto/tls"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // Backend availability flags set during TestMain
@@ -104,17 +105,7 @@ func TestMain(m *testing.M) {
 // waitForClusterReady waits for the QuicBaaS cluster to be ready.
 func waitForClusterReady() bool {
 	endpoint := getQuicBaaSEndpoint()
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(5 * time.Second)
 
 	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
@@ -134,17 +125,7 @@ func waitForClusterReady() bool {
 // checkS3Availability checks if LocalStack (S3 emulator) is available.
 func checkS3Availability() bool {
 	endpoint := getS3Endpoint()
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(5 * time.Second)
 
 	// LocalStack health check endpoint
 	resp, err := client.Get(endpoint + "/_localstack/health")
@@ -177,17 +158,7 @@ func checkMinIOAvailability() bool {
 // checkAzuriteAvailability checks if Azurite (Azure emulator) is available.
 func checkAzuriteAvailability() bool {
 	endpoint := getAzuriteEndpoint()
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(5 * time.Second)
 
 	// Azurite responds to root path
 	resp, err := client.Get(endpoint)
@@ -203,17 +174,7 @@ func checkAzuriteAvailability() bool {
 // checkGCSAvailability checks if GCS emulator is available.
 func checkGCSAvailability() bool {
 	endpoint := getGCSEndpoint()
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(5 * time.Second)
 
 	// GCS emulator storage endpoint
 	resp, err := client.Get(endpoint + "/storage/v1/b")

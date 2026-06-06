@@ -340,4 +340,3 @@ func (r *ToolRegistry) executeProjectTool(ctx context.Context, name string, args
 	}
 	return nil, api.NewUnknownToolError(name)
 }
-

@@ -20,10 +20,10 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -34,7 +34,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 )
 
 // canonicalAuthLoginOptions consolidates the canonical "auth login"
@@ -46,6 +48,7 @@ type canonicalAuthLoginOptions struct {
 	clientCertPath string
 	device         string
 	rpid           string
+	origin         string
 	reader         string
 	slot           string
 	pin            string
@@ -69,6 +72,37 @@ var defaultCanonicalClientCertPaths = []string{
 	"~/.platformctl/admin.pem",
 	"~/.config/platformctl/admin.pem",
 }
+
+// ---------------------------------------------------------------------------
+// Canonical WebAuthn challenge / proof metadata keys.
+//
+// These are matched EXACTLY against the keys the server's tenant WebAuthn
+// verifier reads and writes:
+//
+//   - BeginChallenge (go-xkms/pkg/auth_factors/webauthn.go) sets the assertion
+//     request options under "options" and the relying-party session id under
+//     "session_id" in the BeginLoginResponse.ChallengeMetadata map.
+//   - Verify (same file) reads the WebAuthn session id from
+//     MethodMetadata["session_id"], the credential id from
+//     MethodMetadata["credential_id"], and the assertion JSON either from
+//     MethodMetadata["assertion"] or from the FinishLoginRequest.Signature
+//     field.
+//
+// Do NOT rename these without changing the server verifier in lockstep.
+// ---------------------------------------------------------------------------
+const (
+	// canonicalFIDO2OptionsKey is the ChallengeMetadata key carrying the
+	// JSON-marshaled WebAuthn PublicKeyCredentialRequestOptions.
+	canonicalFIDO2OptionsKey = "options"
+
+	// canonicalFIDO2SessionIDKey is the ChallengeMetadata/MethodMetadata key
+	// carrying the relying-party WebAuthn session id.
+	canonicalFIDO2SessionIDKey = "session_id"
+
+	// canonicalFIDO2CredentialIDKey is the MethodMetadata key carrying the
+	// base64url-encoded WebAuthn credential id the assertion was produced with.
+	canonicalFIDO2CredentialIDKey = "credential_id"
+)
 
 // ---------------------------------------------------------------------------
 // Typed errors
@@ -182,6 +216,33 @@ func (e *FIDO2OperationError) Error() string {
 // Unwrap returns the wrapped cause.
 func (e *FIDO2OperationError) Unwrap() error { return e.Cause }
 
+// MissingFIDO2ChallengeError is returned when the BeginLogin response for a
+// FIDO2 login carries no WebAuthn assertion options. This means the server did
+// not issue a WebAuthn challenge (e.g. the tenant WebAuthn relying party is not
+// configured) and the local authenticator cannot be driven.
+type MissingFIDO2ChallengeError struct{}
+
+// Error returns a human-readable description.
+func (e *MissingFIDO2ChallengeError) Error() string {
+	return "auth login --method fido2: server did not issue a WebAuthn challenge (no " +
+		canonicalFIDO2OptionsKey + " in begin-login metadata)"
+}
+
+// FIDO2AssertionParseError is returned when the WebAuthn assertion produced by
+// the authenticator cannot be parsed to recover the credential id used as the
+// factor lookup key.
+type FIDO2AssertionParseError struct {
+	Cause error
+}
+
+// Error returns a human-readable description.
+func (e *FIDO2AssertionParseError) Error() string {
+	return "auth login --method fido2: failed to parse WebAuthn assertion: " + e.Cause.Error()
+}
+
+// Unwrap returns the wrapped cause.
+func (e *FIDO2AssertionParseError) Unwrap() error { return e.Cause }
+
 // PIVOperationError wraps errors from PIV hardware operations.
 type PIVOperationError struct {
 	Op    string
@@ -260,8 +321,9 @@ or any CTAP2 / NIST SP 800-73-4 device works.`,
 	cmd.Flags().StringVar(&opts.factorID, "factor", "", "Enrolled factor id")
 	cmd.Flags().StringVar(&opts.username, "username", "", "Username (subject) for login")
 	cmd.Flags().StringVar(&opts.clientCertPath, "client-cert", "", "Client certificate PEM path (--method mtls)")
-	cmd.Flags().StringVar(&opts.device, "device", "", "FIDO2 device id (--method fido2)")
+	cmd.Flags().StringVar(&opts.device, "device", "", "FIDO2 local HID device path (--method fido2; default: first connected authenticator)")
 	cmd.Flags().StringVar(&opts.rpid, "rp-id", "", "WebAuthn relying-party id (--method fido2; default: quicbaas)")
+	cmd.Flags().StringVar(&opts.origin, "origin", "", "WebAuthn origin (--method fido2; default: https://<rp-id>)")
 	cmd.Flags().StringVar(&opts.reader, "reader", "", "PC/SC reader name (--method piv)")
 	cmd.Flags().StringVar(&opts.slot, "slot", "9a", "PIV slot id (--method piv; default 9a)")
 	cmd.Flags().StringVar(&opts.pin, "pin", "", "PIV User PIN (--method piv; falls back to QUICBAAS_USER_PIN)")
@@ -289,17 +351,39 @@ func runCanonicalAuthLoginV2(ctx context.Context, opts *canonicalAuthLoginOption
 		return &InvalidAuthMethodError{Method: method}
 	}
 
+	factorType, ftErr := canonicalFactorType(method)
+	if ftErr != nil {
+		return ftErr
+	}
+	auth, err := canonicalAuthService("auth login")
+	if err != nil {
+		return err
+	}
+
+	// 1. Begin the unified login ceremony. qrdb's LoginClient issues the
+	//    method-specific challenge via the registered factor authenticator
+	//    (PIV/mtls server nonce, WebAuthn RP options).
+	begin, err := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
+		Type: factorType,
+		Hint: opts.username,
+	})
+	if err != nil {
+		return err
+	}
+
+	// 2. Produce the proof from the challenge using the local factor device.
 	var (
-		req *quicbaas.AuthFactorLoginRequest
-		err error
+		lookupKey []byte
+		signature []byte
+		meta      map[string]string
 	)
 	switch method {
 	case "mtls":
-		req, err = buildCanonicalMTLSLogin(ctx, opts)
+		lookupKey, signature, meta, err = proveCanonicalMTLS(ctx, opts, begin)
 	case "fido2":
-		req, err = buildCanonicalFIDO2Login(ctx, opts)
+		lookupKey, signature, meta, err = proveCanonicalFIDO2(ctx, opts, begin)
 	case "piv":
-		req, err = buildCanonicalPIVLogin(ctx, opts)
+		lookupKey, signature, meta, err = proveCanonicalPIV(ctx, opts, begin)
 	default:
 		return &InvalidAuthMethodError{Method: method}
 	}
@@ -307,29 +391,54 @@ func runCanonicalAuthLoginV2(ctx context.Context, opts *canonicalAuthLoginOption
 		return err
 	}
 
-	factors, err := canonicalAuthFactors("auth login")
-	if err != nil {
-		return err
-	}
-	resp, err := factors.Login(ctx, req)
+	// 3. Finish: the server verifies the proof against the challenge via the
+	//    registered factor authenticator, then issues the bearer.
+	resp, err := auth.FinishLogin(ctx, qrdbtransport.FinishLoginRequest{
+		SessionID:      begin.SessionID,
+		Type:           factorType,
+		LookupKey:      lookupKey,
+		Signature:      signature,
+		MethodMetadata: meta,
+	})
 	if err != nil {
 		return err
 	}
 
 	out := os.Stdout
-	fmt.Fprintf(out, "User:       %s (%s)\n", resp.Username, resp.UserID)
-	fmt.Fprintf(out, "Token:      %s\n", resp.Token)
-	fmt.Fprintf(out, "Issued At:  %s\n", resp.IssuedAt.Format("2006-01-02T15:04:05Z"))
+	var subject, tenant string
+	if resp.Identity != nil {
+		subject = resp.Identity.Subject
+		tenant = resp.Identity.TenantID
+	}
+	fmt.Fprintf(out, "User:       %s\n", subject)
+	if tenant != "" {
+		fmt.Fprintf(out, "Tenant:     %s\n", tenant)
+	}
+	fmt.Fprintf(out, "Token:      %s\n", resp.Bearer)
 	fmt.Fprintf(out, "Expires At: %s\n", resp.ExpiresAt.Format("2006-01-02T15:04:05Z"))
 
 	if opts.saveToken {
-		path, werr := writeCanonicalSessionToken(opts.tokenPath, resp.Token)
+		path, werr := writeCanonicalSessionToken(opts.tokenPath, resp.Bearer)
 		if werr != nil {
 			return werr
 		}
 		fmt.Fprintf(out, "Token saved to %s\n", path)
 	}
 	return nil
+}
+
+// canonicalFactorType maps a CLI method name to the qrdb transport factor type.
+func canonicalFactorType(method string) (qrdbtransport.FactorType, error) {
+	switch method {
+	case "mtls":
+		return qrdbtransport.FactorTypeMTLS, nil
+	case "fido2":
+		return qrdbtransport.FactorTypeFIDO2, nil
+	case "piv":
+		return qrdbtransport.FactorTypePIV, nil
+	default:
+		return "", &InvalidAuthMethodError{Method: method}
+	}
 }
 
 // resolveCanonicalAuthLoginEnv fills in viper-bound env-var values for
@@ -381,144 +490,215 @@ func autoDiscoverCanonicalAuthMethod(ctx context.Context, opts *canonicalAuthLog
 	return "", &NoFactorsAvailableError{}
 }
 
-// buildCanonicalMTLSLogin gathers an mTLS login proof.
-func buildCanonicalMTLSLogin(_ context.Context, opts *canonicalAuthLoginOptions) (*quicbaas.AuthFactorLoginRequest, error) {
+// proveCanonicalMTLS produces the mTLS login proof for the unified ceremony.
+// Possession of the client key is proven by the TLS handshake, so there is no
+// in-band signature; the lookup key is the certificate SHA-256 that the server
+// resolves to the bound user.
+func proveCanonicalMTLS(_ context.Context, opts *canonicalAuthLoginOptions, _ *qrdbtransport.BeginLoginResponse) (lookupKey, signature []byte, meta map[string]string, err error) {
 	path := resolveCanonicalDefaultClientCert(opts.clientCertPath)
 	if path == "" {
-		return nil, &MissingClientCertError{}
+		return nil, nil, nil, &MissingClientCertError{}
 	}
-	fingerprint, certMeta, err := canonicalLoginLoadCertFingerprint(path)
-	if err != nil {
-		return nil, err
+	fingerprint, certMeta, lerr := canonicalLoginLoadCertFingerprint(path)
+	if lerr != nil {
+		return nil, nil, nil, lerr
 	}
 	rawFingerprint, decodeErr := hex.DecodeString(fingerprint)
 	if decodeErr != nil {
-		return nil, &CanonicalCertReadError{Path: path, Cause: decodeErr}
+		return nil, nil, nil, &CanonicalCertReadError{Path: path, Cause: decodeErr}
 	}
-	meta := stringifyCanonicalMetadata(certMeta)
+	meta = stringifyCanonicalMetadata(certMeta)
 	meta["credential_sha256"] = fingerprint
 	meta["cert_path"] = path
-	return &quicbaas.AuthFactorLoginRequest{
-		Username:   opts.username,
-		FactorName: "mtls",
-		FactorID:   opts.factorID,
-		Proof:      rawFingerprint,
-		Metadata:   meta,
-	}, nil
+	// No in-band signature: mTLS possession is established by the handshake.
+	return rawFingerprint, nil, meta, nil
 }
 
-// buildCanonicalFIDO2Login gathers a FIDO2 assertion proof.
-func buildCanonicalFIDO2Login(ctx context.Context, opts *canonicalAuthLoginOptions) (*quicbaas.AuthFactorLoginRequest, error) {
-	fido, err := canonicalAuthFIDO2("auth login --method fido2")
-	if err != nil {
-		return nil, err
+// proveCanonicalPIV signs the SERVER-issued challenge nonce with the PIV card.
+// Signing the server nonce (rather than a client-chosen value) gives the
+// ceremony replay protection; the qrdb PIV authenticator verifies the
+// signature over begin.Nonce against the enrolled certificate.
+func proveCanonicalPIV(ctx context.Context, opts *canonicalAuthLoginOptions, begin *qrdbtransport.BeginLoginResponse) (lookupKey, signature []byte, meta map[string]string, err error) {
+	piv, perr := canonicalAuthPIV("auth login --method piv")
+	if perr != nil {
+		return nil, nil, nil, perr
 	}
-	devices, err := fido.ListDevices(ctx)
-	if err != nil {
-		return nil, &FIDO2OperationError{Op: "ListDevices", Cause: err}
-	}
-	if devices == nil || len(devices.Devices) == 0 {
-		return nil, &NoFIDO2DeviceError{}
-	}
-	device, derr := selectCanonicalFIDO2Device(devices.Devices, opts.device)
-	if derr != nil {
-		return nil, derr
-	}
-	rpid := opts.rpid
-	if rpid == "" {
-		rpid = "quicbaas"
-	}
-	assertResp, err := fido.Assert(ctx, &quicbaas.FIDO2BeginAuthenticationRequest{
-		Username: opts.username,
-		RPID:     rpid,
-	})
-	if err != nil {
-		return nil, &FIDO2OperationError{Op: "Assert", Cause: err}
-	}
-	if assertResp == nil {
-		return nil, &FIDO2OperationError{Op: "Assert", Cause: errors.New("nil assertion response")}
-	}
-	meta := map[string]string{
-		"rp_id":     rpid,
-		"device_id": device.DeviceID,
-	}
-	if len(assertResp.CredentialIDs) > 0 {
-		meta["credential_id"] = assertResp.CredentialIDs[0]
-	}
-	return &quicbaas.AuthFactorLoginRequest{
-		Username:   opts.username,
-		FactorName: "fido2",
-		FactorID:   opts.factorID,
-		Proof:      []byte(assertResp.Challenge),
-		Metadata:   meta,
-	}, nil
-}
-
-// buildCanonicalPIVLogin gathers a PIV signature proof.
-func buildCanonicalPIVLogin(ctx context.Context, opts *canonicalAuthLoginOptions) (*quicbaas.AuthFactorLoginRequest, error) {
-	piv, err := canonicalAuthPIV("auth login --method piv")
-	if err != nil {
-		return nil, err
-	}
-	readers, err := piv.ListReaders(ctx)
-	if err != nil {
-		return nil, &PIVOperationError{Op: "ListReaders", Cause: err}
+	readers, rerr := piv.ListReaders(ctx)
+	if rerr != nil {
+		return nil, nil, nil, &PIVOperationError{Op: "ListReaders", Cause: rerr}
 	}
 	if readers == nil || len(readers.Readers) == 0 {
-		return nil, &PIVOperationError{Op: "ListReaders", Cause: errors.New("no PC/SC readers detected")}
+		return nil, nil, nil, &PIVOperationError{Op: "ListReaders", Cause: errors.New("no PC/SC readers detected")}
 	}
 	reader, derr := selectCanonicalPIVReader(readers.Readers, opts.reader)
 	if derr != nil {
-		return nil, derr
+		return nil, nil, nil, derr
 	}
 	slot := opts.slot
 	if slot == "" {
 		slot = "9a"
 	}
-	cert, err := piv.GetCertificate(ctx, reader.Name, slot)
-	if err != nil {
-		return nil, &PIVOperationError{Op: "GetCertificate", Cause: err}
+	cert, cerr := piv.GetCertificate(ctx, reader.Name, slot)
+	if cerr != nil {
+		return nil, nil, nil, &PIVOperationError{Op: "GetCertificate", Cause: cerr}
 	}
 	if cert == nil {
-		return nil, &PIVOperationError{Op: "GetCertificate", Cause: errors.New("nil certificate")}
+		return nil, nil, nil, &PIVOperationError{Op: "GetCertificate", Cause: errors.New("nil certificate")}
 	}
 	if opts.pin == "" {
-		return nil, &PIVPINRequiredError{}
+		return nil, nil, nil, &PIVPINRequiredError{}
 	}
-	nonce := make([]byte, 32)
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, &PIVOperationError{Op: "RandRead", Cause: err}
-	}
-	digest := sha256.Sum256(nonce)
-	signResp, err := piv.Sign(ctx, &quicbaas.PIVSignRequest{
+	digest := sha256.Sum256(begin.Nonce)
+	signResp, serr := piv.Sign(ctx, &quicbaas.PIVSignRequest{
 		Reader: reader.Name,
 		Slot:   slot,
 		PIN:    opts.pin,
 		Digest: digest[:],
 		Algo:   pivAlgoFromCanonicalCert(cert),
 	})
-	if err != nil {
-		return nil, &PIVOperationError{Op: "Sign", Cause: err}
+	if serr != nil {
+		return nil, nil, nil, &PIVOperationError{Op: "Sign", Cause: serr}
 	}
 	if signResp == nil {
-		return nil, &PIVOperationError{Op: "Sign", Cause: errors.New("nil signature response")}
+		return nil, nil, nil, &PIVOperationError{Op: "Sign", Cause: errors.New("nil signature response")}
 	}
 	sum := sha256.Sum256(cert.Raw)
-	return &quicbaas.AuthFactorLoginRequest{
-		Username:   opts.username,
-		FactorName: "piv",
-		FactorID:   opts.factorID,
-		Proof:      signResp.Signature,
-		Metadata: map[string]string{
-			"reader":            reader.Name,
-			"slot":              slot,
-			"credential_sha256": hex.EncodeToString(sum[:]),
-			"nonce":             hex.EncodeToString(nonce),
-			"sign_algo":         signResp.Algo,
-			"cert_cn":           cert.Subject.CommonName,
-			"cert_serial":       cert.SerialNumber.String(),
-		},
-	}, nil
+	meta = map[string]string{
+		"reader":      reader.Name,
+		"slot":        slot,
+		"sign_algo":   signResp.Algo,
+		"cert_cn":     cert.Subject.CommonName,
+		"cert_serial": cert.SerialNumber.String(),
+	}
+	return sum[:], signResp.Signature, meta, nil
+}
+
+// canonicalFIDO2AssertFunc drives a connected CTAP2 authenticator through a
+// WebAuthn assertion ceremony whose options were issued by the server, and
+// returns the navigator.credentials.get() assertion JSON the server verifies.
+//
+// It is a package-level seam so the device-free login plumbing (options
+// extraction, lookup-key derivation, metadata assembly) can be unit-tested
+// without a physical authenticator. The production default drives a real HID
+// authenticator over CTAP2 (canonicalFIDO2AssertWithOptions); tests replace it
+// with a function that returns a fixed assertion. The seam never bypasses CTAP2
+// in production code.
+var canonicalFIDO2AssertFunc = canonicalFIDO2AssertWithOptions
+
+// canonicalFIDO2AssertWithOptions is the production implementation behind
+// canonicalFIDO2AssertFunc. It builds a real FIDO2 handler over the platform
+// HID enumerator (the same construction xkmsctl uses) and drives the connected
+// authenticator with the server-issued WebAuthn request options.
+//
+// devicePath, when non-empty, pins a specific local HID device; when empty the
+// handler selects the first connected FIDO2 authenticator. origin, when
+// non-empty, overrides the WebAuthn-standard same-origin default
+// ("https://<rpId>") for relying parties whose origin host differs from the RP
+// id.
+func canonicalFIDO2AssertWithOptions(ctx context.Context, optionsJSON []byte, devicePath, origin string) ([]byte, error) {
+	fidoConfig := xkmsfido2.DefaultConfig
+	if devicePath != "" {
+		fidoConfig.DevicePath = devicePath
+	}
+	enumerator := xkmsfido2.NewDefaultEnumerator()
+	handler, err := xkmsfido2.NewHandler(&fidoConfig, enumerator)
+	if err != nil {
+		return nil, &FIDO2OperationError{Op: "NewHandler", Cause: err}
+	}
+	defer func() { _ = handler.Close() }()
+
+	assertion, aerr := handler.AssertWithOptionsAndOrigin(ctx, optionsJSON, origin)
+	if aerr != nil {
+		return nil, &FIDO2OperationError{Op: "Assert", Cause: aerr}
+	}
+	return assertion, nil
+}
+
+// proveCanonicalFIDO2 produces a WebAuthn assertion over the server-issued
+// request options and assembles the proof the unified FinishLogin carries.
+//
+// The server's tenant WebAuthn verifier (go-xkms/pkg/auth_factors/webauthn.go)
+// issued the WebAuthn PublicKeyCredentialRequestOptions under
+// begin.ChallengeMetadata["options"] and the relying-party session id under
+// begin.ChallengeMetadata["session_id"] from BeginChallenge. This function:
+//
+//  1. Reads the options JSON; a missing key means the server did not issue a
+//     WebAuthn challenge.
+//  2. Drives the connected authenticator over CTAP2 with those options to obtain
+//     the navigator.credentials.get() assertion JSON.
+//  3. Recovers the base64url credential id from the assertion's "rawId" — the
+//     qrdb FIDO2 factor lookup key is the credential id (matching how the factor
+//     is enrolled and indexed) — and returns:
+//     - lookupKey: the credential id bytes, which the qrdb LoginResolver maps
+//     to the bound user;
+//     - signature: the assertion JSON, which Verify parses (it accepts the
+//     assertion via FinishLoginRequest.Signature when MethodMetadata
+//     ["assertion"] is absent);
+//     - meta: the session id and credential id under the exact keys Verify
+//     reads (session_id / credential_id).
+func proveCanonicalFIDO2(ctx context.Context, opts *canonicalAuthLoginOptions, begin *qrdbtransport.BeginLoginResponse) (lookupKey, signature []byte, meta map[string]string, err error) {
+	optionsJSON, perr := canonicalFIDO2OptionsFromBegin(begin)
+	if perr != nil {
+		return nil, nil, nil, perr
+	}
+
+	assertion, aerr := canonicalFIDO2AssertFunc(ctx, optionsJSON, opts.device, opts.origin)
+	if aerr != nil {
+		return nil, nil, nil, aerr
+	}
+
+	credentialID, cerr := canonicalFIDO2CredentialID(assertion)
+	if cerr != nil {
+		return nil, nil, nil, cerr
+	}
+
+	sessionID := ""
+	if begin != nil && begin.ChallengeMetadata != nil {
+		sessionID = begin.ChallengeMetadata[canonicalFIDO2SessionIDKey]
+	}
+	meta = map[string]string{
+		canonicalFIDO2SessionIDKey:    sessionID,
+		canonicalFIDO2CredentialIDKey: credentialID,
+	}
+	// The lookup key is the credential id bytes; the proof is the assertion JSON
+	// carried in the signature field (Verify reads it there when the assertion
+	// metadata key is absent).
+	return []byte(credentialID), assertion, meta, nil
+}
+
+// canonicalFIDO2OptionsFromBegin extracts the JSON-marshaled WebAuthn request
+// options from a BeginLogin response. Returns MissingFIDO2ChallengeError when
+// the server did not issue a WebAuthn challenge.
+func canonicalFIDO2OptionsFromBegin(begin *qrdbtransport.BeginLoginResponse) ([]byte, error) {
+	if begin == nil || begin.ChallengeMetadata == nil {
+		return nil, &MissingFIDO2ChallengeError{}
+	}
+	options := begin.ChallengeMetadata[canonicalFIDO2OptionsKey]
+	if options == "" {
+		return nil, &MissingFIDO2ChallengeError{}
+	}
+	return []byte(options), nil
+}
+
+// canonicalFIDO2CredentialID recovers the base64url-encoded WebAuthn credential
+// id from a navigator.credentials.get() assertion document. The credential id
+// is the qrdb FIDO2 factor lookup key.
+func canonicalFIDO2CredentialID(assertion []byte) (string, error) {
+	var doc struct {
+		ID    string `json:"id"`
+		RawID string `json:"rawId"`
+	}
+	if err := json.Unmarshal(assertion, &doc); err != nil {
+		return "", &FIDO2AssertionParseError{Cause: err}
+	}
+	credentialID := doc.RawID
+	if credentialID == "" {
+		credentialID = doc.ID
+	}
+	if credentialID == "" {
+		return "", &FIDO2AssertionParseError{Cause: errors.New("assertion carries no credential id (id/rawId)")}
+	}
+	return credentialID, nil
 }
 
 // ---------------------------------------------------------------------------

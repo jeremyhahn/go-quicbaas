@@ -222,29 +222,46 @@ type QUICSealClient struct {
 	client *quic.Client
 }
 
-// SealStatus returns the current seal status.
+// QUICSealRemovedError signals that the QUIC seal-tree path was deleted in
+// Phase 8c. Callers should migrate to the barrier surface (QUICBarrierClient
+// over the new OpBarrier dispatcher).
+type QUICSealRemovedError struct {
+	Op string
+}
+
+// Error implements the error interface.
+func (e *QUICSealRemovedError) Error() string {
+	return "quic seal." + e.Op + " removed in Phase 8c; use the barrier surface"
+}
+
+// SealStatus is no longer supported on the QUIC transport. Use the barrier
+// surface (BarrierStatus) instead.
 func (c *QUICSealClient) SealStatus(ctx context.Context) (*service.SealStatusResponse, error) {
-	return c.client.SealStatus(ctx)
+	return nil, &QUICSealRemovedError{Op: "SealStatus"}
 }
 
-// SealInit initializes the seal and generates key shares.
+// SealInit is no longer supported on the QUIC transport. Use the barrier
+// surface (BarrierInitialize / BarrierShamirInitialize) instead.
 func (c *QUICSealClient) SealInit(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	return c.client.SealInit(ctx, req)
+	return nil, &QUICSealRemovedError{Op: "SealInit"}
 }
 
-// Unseal provides a key share to unseal the database.
+// Unseal is no longer supported on the QUIC transport. Use the barrier
+// surface (BarrierUnseal / BarrierShamirUnsealShare) instead.
 func (c *QUICSealClient) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	return c.client.Unseal(ctx, req)
+	return nil, &QUICSealRemovedError{Op: "Unseal"}
 }
 
-// Seal re-seals the database.
+// Seal is no longer supported on the QUIC transport. Use the barrier
+// surface (BarrierSeal) instead.
 func (c *QUICSealClient) Seal(ctx context.Context) error {
-	return c.client.Seal(ctx)
+	return &QUICSealRemovedError{Op: "Seal"}
 }
 
-// Rekey generates new key shares with a new threshold configuration.
+// Rekey is no longer supported on the QUIC transport. Use the barrier
+// surface (BarrierRekey) instead.
 func (c *QUICSealClient) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-	return c.client.Rekey(ctx, req)
+	return nil, &QUICSealRemovedError{Op: "Rekey"}
 }
 
 // Close closes the QUIC client connection.
@@ -393,21 +410,21 @@ func createQUICClientInternal() (*quic.Client, error) {
 		quic.WithMaxIdleTimeout(5 * time.Minute),
 	}
 
-	// TLS is required for QUIC connections
-	if !tlsEnabled && !tlsSkipVerify {
+	// QUIC always uses TLS — QuicBaaS bans insecure TLS so the operator must
+	// supply a CA via --tls-ca (or set --tls-cert/--tls-key for mTLS).
+	tlsCfg, err := buildTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	if tlsCfg == nil {
 		return nil, errors.Newf(
 			errors.ErrConfiguration,
 			"createQUICClientInternal",
-			"TLS is required for QUIC connections",
+			"TLS configuration is required for QUIC connections (use --tls-ca)",
 		)
 	}
-
-	if tlsSkipVerify {
-		opts = append(opts, quic.WithTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // G402: user explicitly requested --tls-skip-verify
-			MinVersion:         tls.VersionTLS13,
-		}))
-	}
+	tlsCfg.MinVersion = tls.VersionTLS13
+	opts = append(opts, quic.WithTLSConfig(tlsCfg))
 
 	// Create QUIC client
 	client, err := quic.NewClient(address, opts...)

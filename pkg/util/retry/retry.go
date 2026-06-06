@@ -16,8 +16,8 @@ package retry
 import (
 	"context"
 
-	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	sdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // Operation is a function that can be retried.

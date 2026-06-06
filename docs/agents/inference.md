@@ -1,8 +1,12 @@
-# Fleet-Routed Stateless Inference
+# Fleet-Routed Stateless Inference & Embeddings
 
 ## Overview
 
 Fleet-routed stateless inference lets any QuicBaaS client (CLI, REST, gRPC, SDK) submit a single-turn prompt to a named backend (e.g., Ollama) running on a fleet-resident agent daemon without first creating a session. The orchestrator resolves the target daemon via the existing `RemoteBackendResolver`, forwards the prompt over the mTLS-authenticated gRPC connection, and streams the response back.
+
+**Architecture boundary (L4 ↔ L2):**
+- **LLM text generation** (chat, completion, code generation) — quicbaas (L4) owns the Ollama client and LLM orchestration.
+- **Embedding generation** — delegated to qrdb's embedding provider (L2) via the SDK; quicbaas wraps it with a convenience single-text API (`pkg/embedding/provider.go`).
 
 ## Architecture
 
@@ -159,6 +163,31 @@ for chunk := range chunks {
 ## Scope
 
 The `AgentScopeRuntimeInfer = "agent:runtime:infer"` scope authorises daemon tokens for the Infer RPC. The handler also accepts the existing `AgentScopeRuntimePrompt` scope for backward compatibility with tokens issued before this feature was deployed.
+
+## Embedding Providers
+
+Embeddings for RAG (Retrieval-Augmented Generation) workflows are sourced from
+go-qrdb's embedding provider interface via the SDK. The qrdb embedding provider
+is a tenant-scoped, provider-agnostic proxy that supports:
+
+- **Ollama** — local open-source models via HTTP
+- **OpenAI** — `text-embedding-3-small`, `text-embedding-3-large`, `text-embedding-ada-002`
+- **LMStudio** — local models via HTTP
+- **Voyage** — commercial embeddings API
+
+quicbaas wraps the qrdb provider to add a single-text convenience API
+(`pkg/embedding/bridge.go` — `providerBridgeIn` / `providerBridgeOut`). The wrapper
+is thin: it adapts between quicbaas's `Embed(text) -> []float32` interface and
+qrdb's batch-oriented `Embed(texts, model) -> EmbeddingResult` interface.
+
+**Key pattern:** When quicbaas code needs embeddings, it obtains the provider
+via the SDK (`qrdbsdk.EmbeddingManager()`) rather than maintaining a private
+embedding client. This ensures:
+- **Consistent tenant scoping** across all embedding operations.
+- **Unified provider configuration** — one source of truth in qrdb.
+- **No provider duplication** — qrdb's Ollama/OpenAI/Voyage adapters are the only implementations.
+
+See [Embedding Provider Integration](../embedding/README.md) for configuration and usage.
 
 ## Session Events
 

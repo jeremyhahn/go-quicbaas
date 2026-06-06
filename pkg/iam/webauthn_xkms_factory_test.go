@@ -16,6 +16,7 @@
 package iam
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -130,7 +131,7 @@ func TestWebAuthnServiceFactory_ServiceFor_RejectsEmptyTenantID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, err := f.ServiceFor(""); err == nil {
+	if _, err := f.ServiceFor(context.Background(), ""); err == nil {
 		t.Fatalf("expected error for empty tenant id")
 	}
 }

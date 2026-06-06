@@ -18,7 +18,6 @@ package timeseries
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -104,17 +103,7 @@ type NodeInfo struct {
 
 // httpClient returns a configured HTTP client with appropriate timeout.
 func httpClient() *http.Client {
-	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	return helpers.NewHTTPClient(30 * time.Second)
 }
 
 // writePointREST writes a single data point via REST API.
@@ -266,10 +255,13 @@ func getLeaderNode(ctx context.Context, t *testing.T) (string, uint64) {
 
 	endpoints := helpers.GetClusterEndpoints()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+
 	for _, endpoint := range endpoints {
 		connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
 		conn, err := grpc.DialContext(connCtx, endpoint,
-			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 			grpc.WithBlock(),
 		)
 		connCancel()
@@ -510,9 +502,11 @@ func TestTimeSeriesRaft_LeaderFailover(t *testing.T) {
 	t.Logf("Simulating leader instability...")
 
 	// Create a connection to leader and close it abruptly
+	failoverTLSCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
 	connCtx, connCancel := context.WithTimeout(ctx, 5*time.Second)
 	conn, err := grpc.DialContext(connCtx, grpcEndpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(failoverTLSCfg)),
 		grpc.WithBlock(),
 	)
 	connCancel()

@@ -177,7 +177,7 @@ func (m *mockServiceWithScheduler) Scheduler() service.SchedulerService {
 
 func createHandlerWithScheduler(schedSvc service.SchedulerService) *Handler {
 	svc := &mockServiceWithScheduler{schedulerSvc: schedSvc}
-	return NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	return NewHandler(svc, nil, nil, nil, createTestLogger())
 }
 
 // =============================================================================

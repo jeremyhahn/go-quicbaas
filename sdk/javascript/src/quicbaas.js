@@ -25,7 +25,6 @@ import SecretsClient, { SecretStatus, RotationInterval } from './clients/secrets
 import CryptoClient, { HashAlgorithm, SignatureAlgorithm, KeyDerivationFunction } from './clients/crypto.js';
 import DynamicSecretsClient, { CredentialType } from './clients/dynamicSecrets.js';
 import CertificateClient, { CertificateUsage, KeyAlgorithm as CertKeyAlgorithm, TLSVersion } from './clients/certificate.js';
-import ClusterDEKClient, { NodeDEKSyncStatus, ReencryptionState, RecoveryMethod } from './clients/clusterDek.js';
 import IAMClient, { TenantStatus, UserStatus, ExportFormat, AuditEventType } from './clients/iam.js';
 import VectorClient, { DistanceMetric, IndexType } from './clients/vector.js';
 import TimeSeriesClient, { Aggregation, Interval } from './clients/timeSeries.js';
@@ -92,8 +91,7 @@ export class QuicBaaS {
   #cryptoClient = null;
   #dynamicSecretsClient = null;
   #certificateClient = null;
-  #clusterDEKClient = null;
-  #iamClient = null;
+#iamClient = null;
   #vectorClient = null;
   #timeSeriesClient = null;
   #backupClient = null;
@@ -349,18 +347,6 @@ export class QuicBaaS {
       this.#certificateClient = new CertificateClient(this.#transport);
     }
     return this.#certificateClient;
-  }
-
-  /**
-   * Get the ClusterDEK client for cluster data encryption key management.
-   *
-   * @returns {ClusterDEKClient}
-   */
-  clusterDEK() {
-    if (!this.#clusterDEKClient) {
-      this.#clusterDEKClient = new ClusterDEKClient(this.#transport);
-    }
-    return this.#clusterDEKClient;
   }
 
   // ============================================================================
@@ -647,7 +633,6 @@ export {
   CryptoClient,
   DynamicSecretsClient,
   CertificateClient,
-  ClusterDEKClient,
   IAMClient,
   VectorClient,
   TimeSeriesClient,

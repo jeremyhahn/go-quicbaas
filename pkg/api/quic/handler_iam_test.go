@@ -1810,16 +1810,16 @@ func (m *errorCombinedIAMService91) GetDeletionStatus(_ context.Context, _ strin
 // =============================================================================
 
 func createIAMHandler91() *Handler {
-	return NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger(), WithIAMService(&mockIAMService91{}), WithMFAService(&mockMFAService91{}))
+	return NewHandler(&mockService{}, nil, nil, nil, createTestLogger(), WithIAMService(&mockIAMService91{}), WithMFAService(&mockMFAService91{}))
 }
 func createErrorIAMHandler91() *Handler {
-	return NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger(), WithIAMService(&errorIAMService91{}), WithMFAService(&errorMFAService91{}))
+	return NewHandler(&mockService{}, nil, nil, nil, createTestLogger(), WithIAMService(&errorIAMService91{}), WithMFAService(&errorMFAService91{}))
 }
 func createCombinedHandler91() *Handler {
-	return NewHandler(&mockCombinedIAMService91{}, nil, nil, nil, nil, createTestLogger(), WithIAMService(&mockIAMService91{}), WithMFAService(&mockMFAService91{}))
+	return NewHandler(&mockCombinedIAMService91{}, nil, nil, nil, createTestLogger(), WithIAMService(&mockIAMService91{}), WithMFAService(&mockMFAService91{}))
 }
 func createErrorCombinedHandler91() *Handler {
-	return NewHandler(&errorCombinedIAMService91{}, nil, nil, nil, nil, createTestLogger(), WithIAMService(&errorIAMService91{}), WithMFAService(&errorMFAService91{}))
+	return NewHandler(&errorCombinedIAMService91{}, nil, nil, nil, createTestLogger(), WithIAMService(&errorIAMService91{}), WithMFAService(&errorMFAService91{}))
 }
 
 // =============================================================================
@@ -2422,7 +2422,7 @@ func TestIAMHandler91_ValidateSubscribeRequest(t *testing.T) {
 
 func TestIAMHandler91_WithIAMServiceOption(t *testing.T) {
 	t.Parallel()
-	h := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger(), WithIAMService(&mockIAMService91{}))
+	h := NewHandler(&mockService{}, nil, nil, nil, createTestLogger(), WithIAMService(&mockIAMService91{}))
 	if h.getIAMService() == nil {
 		t.Fatal("expected non-nil")
 	}
@@ -2430,7 +2430,7 @@ func TestIAMHandler91_WithIAMServiceOption(t *testing.T) {
 
 func TestIAMHandler91_WithMFAServiceOption(t *testing.T) {
 	t.Parallel()
-	h := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger(), WithMFAService(&mockMFAService91{}))
+	h := NewHandler(&mockService{}, nil, nil, nil, createTestLogger(), WithMFAService(&mockMFAService91{}))
 	if h.getMFAService() == nil {
 		t.Fatal("expected non-nil")
 	}

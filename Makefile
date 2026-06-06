@@ -301,7 +301,7 @@ endif
 # Strip leading/trailing spaces for go build
 BUILD_TAGS_ARG := $(if $(strip $(BUILD_TAGS)),-tags '$(strip $(BUILD_TAGS))',)
 # FIPS builds need to combine fips tag with optional features
-FIPS_BUILD_TAGS := fips $(strip $(BUILD_TAGS))
+FIPS_BUILD_TAGS := $(strip $(BUILD_TAGS))
 FIPS_BUILD_TAGS_ARG := -tags '$(strip $(FIPS_BUILD_TAGS))'
 # Integration tests need Raft (cluster mode), vector, and cloud object storage backends
 INTEGRATION_BUILD_TAGS := $(strip $(BUILD_TAGS)) raft vector qrdb_vector rag awss3 gcpstorage azureblob minio
@@ -762,6 +762,17 @@ install: build ## Install the binary
 # Note: Go 1.25+ requires space-separated tags, not comma-separated
 TEST_TAGS := !integration $(strip $(BUILD_TAGS))
 
+# IAM_TEST_TAGS: TEST_TAGS guaranteed to include the 'iam' build tag.
+# Every file under pkg/iam/... and pkg/iam/qrdbadapter/... carries a
+# //go:build iam directive, so test/coverage/bench targets that touch
+# those packages must pass the iam tag even when WITH_IAM is not set
+# on the command line.
+ifeq ($(findstring iam,$(TEST_TAGS)),)
+  IAM_TEST_TAGS := $(TEST_TAGS) iam
+else
+  IAM_TEST_TAGS := $(TEST_TAGS)
+endif
+
 .PHONY: test
 test: ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
@@ -811,8 +822,9 @@ test-%: ## Run unit tests for a specific package (e.g., make test-xkms)
 			exit 1; \
 		fi; \
 	fi; \
+	case "$${PKG}" in iam|iam/*) TAGS='$(IAM_TEST_TAGS)';; *) TAGS='$(TEST_TAGS)';; esac; \
 	echo "$(BLUE)Running tests for $${PKG_PATH}...$(NC)"; \
-	$(GOTEST) -v -tags '$(TEST_TAGS)' -timeout=5m $${PKG_PATH}
+	$(GOTEST) -v -tags "$${TAGS}" -timeout=5m $${PKG_PATH}
 
 # Redis L2 Cache integration tests
 .PHONY: integration-test-cache-redis
@@ -998,6 +1010,199 @@ integration-test-signalbridge: ## Run Signal Bridge integration tests (docker-co
 		echo "$(YELLOW)test/integration/signalbridge/ not found - skipping$(NC)"; \
 	fi
 
+# ==============================================================================
+# Phase F: Standalone + Cluster + Seal/Hardware integration test targets
+# ==============================================================================
+
+.PHONY: integration-test-standalone
+integration-test-standalone: ## Phase F: Run standalone (no-Raft, in-process embedded qrdb engine) integration tests (no docker required)
+	@echo "$(BLUE)Running Phase F standalone integration tests (in-process, no docker)...$(NC)"
+	@GOFLAGS=-mod=mod $(GOTEST) -v -tags integration -timeout 120s ./test/integration/standalone/...
+	@echo "$(GREEN)✓ Phase F standalone integration tests PASSED$(NC)"
+
+.PHONY: integration-test-cluster
+integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration tests in Docker (requires docker-compose.cluster.yml)
+	@echo "$(BLUE)Running Phase F cluster integration tests (3+1-node qrdb Raft cluster with at-rest encryption)...$(NC)"
+	@if ! docker compose version > /dev/null 2>&1 && ! command -v docker-compose > /dev/null 2>&1; then \
+		echo "$(RED)Error: Docker Compose is not installed$(NC)"; \
+		exit 1; \
+	fi
+	@COMPOSE_FILE="test/integration/docker-compose.cluster.yml"; \
+	CLUSTER_DIR="test/integration"; \
+	echo "$(YELLOW)Cleaning up any previous cluster-test containers and bind-mount data dirs...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
+	ABS_CLUSTER_DIR="$$PWD/$$CLUSTER_DIR"; \
+	if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
+		docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
+	fi; \
+	rm -rf $$CLUSTER_DIR/cluster-data $$CLUSTER_DIR/cluster-logs 2>/dev/null || true; \
+	echo "$(YELLOW)Pre-creating host bind-mount data and log dirs (wide perms so container can write and host can read)...$(NC)"; \
+	for N in node1 node2 node3 node4; do \
+		mkdir -p $$CLUSTER_DIR/cluster-data/$$N $$CLUSTER_DIR/cluster-logs/$$N; \
+		chmod 0777 $$CLUSTER_DIR/cluster-data/$$N $$CLUSTER_DIR/cluster-logs/$$N; \
+	done; \
+	echo "$(YELLOW)Building cluster-test image...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE build 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	echo "$(YELLOW)Starting 3-node quicbaas cluster (nodes 1-3, bootstrap group)...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE up -d quicbaas-node1 quicbaas-node2 quicbaas-node3; \
+	echo "$(YELLOW)Waiting for all 3 cluster nodes to become ready (up to 120s)...$(NC)"; \
+	DEADLINE=$$(( $$(date +%s) + 120 )); \
+	while [ $$(date +%s) -lt $$DEADLINE ]; do \
+		N1=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:8081/api/v1/health/ready 2>/dev/null || echo 0); \
+		N2=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:8082/api/v1/health/ready 2>/dev/null || echo 0); \
+		N3=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:8083/api/v1/health/ready 2>/dev/null || echo 0); \
+		if [ "$$N1" = "200" ] && [ "$$N2" = "200" ] && [ "$$N3" = "200" ]; then \
+			echo "$(GREEN)All 3 nodes ready (node1=$$N1, node2=$$N2, node3=$$N3)$(NC)"; \
+			break; \
+		fi; \
+		echo "  node1=$$N1 node2=$$N2 node3=$$N3 (waiting...)"; \
+		sleep 3; \
+	done; \
+	echo "$(YELLOW)Granting host read access to node data dirs (test runner needs to walk SST files)...$(NC)"; \
+	docker run --rm -v "$$PWD/$$CLUSTER_DIR/cluster-data:/data" alpine sh -c \
+		"chmod -R a+rX /data 2>/dev/null; true" || true; \
+	echo "$(YELLOW)Starting node4 (dynamic-membership joiner — will join via AddNode API)...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE up -d quicbaas-node4; \
+	echo "$(YELLOW)Adding node4 to the Raft cluster via REST AddNode API (trying all nodes to find the leader)...$(NC)"; \
+	ADD_DEADLINE=$$(( $$(date +%s) + 45 )); \
+	ADD_OK=0; \
+	while [ $$(date +%s) -lt $$ADD_DEADLINE ]; do \
+		for PORT in 8081 8082 8083; do \
+			CODE=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+				-X POST http://localhost:$$PORT/api/v1/cluster/nodes \
+				-H 'Content-Type: application/json' \
+				-d '{"shard_id":1,"node_id":4,"address":"quicbaas-node4:63004"}' \
+				2>/dev/null || echo 0); \
+			if [ "$$CODE" = "200" ]; then \
+				echo "$(GREEN)AddNode succeeded via node at port $$PORT$(NC)"; \
+				ADD_OK=1; \
+				break 2; \
+			fi; \
+		done; \
+		echo "  AddNode not yet accepted (retrying in 3s)..."; \
+		sleep 3; \
+	done; \
+	if [ $$ADD_OK -eq 0 ]; then \
+		echo "$(RED)AddNode failed within 45s — dynamic membership test will likely fail$(NC)"; \
+	fi; \
+	echo "$(YELLOW)Waiting for node4 to become ready (up to 90s)...$(NC)"; \
+	N4_DEADLINE=$$(( $$(date +%s) + 90 )); \
+	N4_READY=0; \
+	while [ $$(date +%s) -lt $$N4_DEADLINE ]; do \
+		N4=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:8084/api/v1/health/ready 2>/dev/null || echo 0); \
+		if [ "$$N4" = "200" ]; then \
+			echo "$(GREEN)node4 ready$(NC)"; \
+			N4_READY=1; \
+			break; \
+		fi; \
+		echo "  node4=$$N4 (waiting...)"; \
+		sleep 3; \
+	done; \
+	if [ $$N4_READY -eq 0 ]; then \
+		echo "$(RED)node4 did not become ready within 60s$(NC)"; \
+		docker compose -f $$COMPOSE_FILE logs quicbaas-node4 --tail=50; \
+	fi; \
+	echo "$(YELLOW)Granting host read access to all node data dirs (including node4, for at-rest test)...$(NC)"; \
+	docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/data" alpine sh -c \
+		"chmod -R a+rX /data 2>/dev/null; true" || true; \
+	echo "$(YELLOW)Running cluster integration tests (including AtRest + DynamicMembership)...$(NC)"; \
+	QUICBAAS_NODE1_URL="http://localhost:8081" \
+	QUICBAAS_NODE2_URL="http://localhost:8082" \
+	QUICBAAS_NODE3_URL="http://localhost:8083" \
+	QUICBAAS_NODE4_URL="http://localhost:8084" \
+	QUICBAAS_NODE1_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node1" \
+	QUICBAAS_NODE2_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node2" \
+	QUICBAAS_NODE3_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node3" \
+	QUICBAAS_NODE4_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node4" \
+	$(GOTEST) -v -tags integration -timeout 300s ./test/integration/cluster/...; \
+	RESULT=$$?; \
+	echo "$(BLUE)Stopping cluster stack...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
+		docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
+	fi; \
+	rm -rf $$CLUSTER_DIR/cluster-data $$CLUSTER_DIR/cluster-logs 2>/dev/null || true; \
+	if [ $$RESULT -eq 0 ]; then \
+		echo "$(GREEN)✓ Phase F cluster integration tests PASSED$(NC)"; \
+	else \
+		echo "$(RED)✗ Phase F cluster integration tests FAILED (exit $$RESULT)$(NC)"; \
+	fi; \
+	exit $$RESULT
+
+.PHONY: integration-test-cluster-failover
+integration-test-cluster-failover: ## Phase F: Run leader-failover integration test only (requires a running cluster stack)
+	@echo "$(BLUE)Running Phase F leader-failover integration test...$(NC)"
+	@if [ -z "$(QUICBAAS_NODE1_URL)" ] || [ -z "$(QUICBAAS_NODE2_URL)" ] || [ -z "$(QUICBAAS_NODE3_URL)" ]; then \
+		echo "$(RED)Error: QUICBAAS_NODE1_URL, NODE2_URL, NODE3_URL must be set$(NC)"; \
+		exit 1; \
+	fi
+	@$(GOTEST) -v -tags integration -timeout 180s -run TestQRDBCluster_LeaderFailoverRecovers \
+		./test/integration/cluster/...
+
+.PHONY: integration-test-cluster-membership
+integration-test-cluster-membership: ## Phase F: Run dynamic-membership integration test only (requires QUICBAAS_NODE4_URL)
+	@echo "$(BLUE)Running Phase F dynamic-membership integration test...$(NC)"
+	@$(GOTEST) -v -tags integration -timeout 180s -run TestQRDBCluster_DynamicMembership \
+		./test/integration/cluster/...
+
+.PHONY: integration-test-seal
+integration-test-seal: ## Run cloud-backed barrier seal integration tests (awskms+vault emulators) in Docker
+	@echo "$(BLUE)Running cloud-seal integration tests (awskms + vault)...$(NC)"
+	@if ! docker compose version > /dev/null 2>&1 && ! command -v docker-compose > /dev/null 2>&1; then \
+		echo "$(RED)Error: Docker Compose is not installed$(NC)"; \
+		exit 1; \
+	fi
+	@COMPOSE_FILE="test/integration/docker-compose.seal.yml"; \
+	echo "$(YELLOW)Cleaning up any previous seal-test containers...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
+	echo "$(YELLOW)Building seal-test image (quicbaasd + quicbaas built with -tags 'awskms vault')...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE build seal-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	echo "$(YELLOW)Starting emulators (localstack KMS + vault dev server)...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE up -d localstack vault; \
+	echo "$(YELLOW)Running seal integration tests...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE run --rm -T seal-test; \
+	RESULT=$$?; \
+	echo "$(BLUE)Stopping seal-test stack...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	if [ $$RESULT -eq 0 ]; then \
+		echo "$(GREEN)✓ Cloud-seal integration tests PASSED$(NC)"; \
+	else \
+		echo "$(RED)✗ Cloud-seal integration tests FAILED (exit $$RESULT)$(NC)"; \
+	fi; \
+	exit $$RESULT
+
+.PHONY: integration-test-seal-hardware
+integration-test-seal-hardware: ## Run hardware-backed barrier seal integration tests (swtpm + SoftHSM2) in Docker
+	@echo "$(BLUE)Running hardware-seal integration tests (tpm2/swtpm + pkcs11/SoftHSM2)...$(NC)"
+	@if ! docker compose version > /dev/null 2>&1 && ! command -v docker-compose > /dev/null 2>&1; then \
+		echo "$(RED)Error: Docker Compose is not installed$(NC)"; \
+		exit 1; \
+	fi
+	@COMPOSE_FILE="test/integration/docker-compose.seal-hardware.yml"; \
+	CLOUD_COMPOSE="test/integration/docker-compose.seal.yml"; \
+	echo "$(YELLOW)Checking for concurrent cloud-seal stack...$(NC)"; \
+	while docker compose -f $$CLOUD_COMPOSE ps --services --filter status=running 2>/dev/null | grep -q .; do \
+		echo "$(YELLOW)  cloud-seal stack is still running; waiting 60s before building hardware stack...$(NC)"; \
+		sleep 60; \
+	done; \
+	echo "$(YELLOW)Cleaning up any previous hardware-seal-test containers...$(NC)"; \
+	docker compose -p seal-hw -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
+	echo "$(YELLOW)Building hardware-seal-test image (quicbaasd + quicbaas built with -tags 'tpm2 pkcs11', CGO_ENABLED=1)...$(NC)"; \
+	docker compose -p seal-hw -f $$COMPOSE_FILE build seal-hw-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	echo "$(YELLOW)Starting hardware emulators (swtpm1)...$(NC)"; \
+	docker compose -p seal-hw -f $$COMPOSE_FILE up -d swtpm1; \
+	echo "$(YELLOW)Running hardware-seal integration tests...$(NC)"; \
+	docker compose -p seal-hw -f $$COMPOSE_FILE run --rm -T seal-hw-test; \
+	RESULT=$$?; \
+	echo "$(BLUE)Stopping hardware-seal-test stack...$(NC)"; \
+	docker compose -p seal-hw -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	if [ $$RESULT -eq 0 ]; then \
+		echo "$(GREEN)✓ Hardware-seal integration tests PASSED$(NC)"; \
+	else \
+		echo "$(RED)✗ Hardware-seal integration tests FAILED (exit $$RESULT)$(NC)"; \
+	fi; \
+	exit $$RESULT
+
 .PHONY: build-desktop
 # The `build-desktop*` targets are compatibility aliases for `build-cli`.
 # The client binary ALWAYS has the desktop GUI embedded — this matches
@@ -1040,9 +1245,10 @@ coverage-%: ## Generate coverage report for a specific package (e.g., make cover
 			exit 1; \
 		fi; \
 	fi; \
+	case "$${PKG_DIR}" in iam|iam/*) TAGS='$(IAM_TEST_TAGS)';; *) TAGS='$(TEST_TAGS)';; esac; \
 	echo "$(BLUE)Generating coverage for $${PKG_PATH}...$(NC)"; \
 	mkdir -p $(COVERAGE_DIR); \
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-$${SAFE_NAME}.out $${PKG_PATH}; \
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags "$${TAGS}" -coverprofile=$(COVERAGE_DIR)/coverage-$${SAFE_NAME}.out $${PKG_PATH}; \
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-$${SAFE_NAME}.out -o $(COVERAGE_DIR)/coverage-$${SAFE_NAME}.html; \
 	echo "$(GREEN)Coverage report: $(COVERAGE_DIR)/coverage-$${SAFE_NAME}.html$(NC)"; \
 	TOTAL=$$($(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-$${SAFE_NAME}.out | grep total | awk '{print $$3}'); \
@@ -1060,8 +1266,9 @@ bench-%: ## Run benchmarks for a specific package (e.g., make bench-xkms)
 			exit 1; \
 		fi; \
 	fi; \
+	case "$${PKG}" in iam|iam/*) TAGS='$(IAM_TEST_TAGS)';; *) TAGS='$(TEST_TAGS)';; esac; \
 	echo "$(BLUE)Running benchmarks for $${PKG_PATH}...$(NC)"; \
-	$(GOTEST) -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ $${PKG_PATH}
+	$(GOTEST) -tags "$${TAGS}" -bench=. -benchmem -run=^$$ $${PKG_PATH}
 
 .PHONY: list-packages
 list-packages: ## List all packages with available test targets
@@ -1157,7 +1364,7 @@ test-integration-tagged: ## Run integration tests with build tag (in-process)
 	exit $$TEST_RESULT
 
 .PHONY: integration-test
-integration-test: ## Run ALL integration tests in Docker containers
+integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by default; OLLAMA_CPU=1 or GPU_HOST=<host> to include)
 	@echo "$(BLUE)Running Docker integration tests...$(NC)"
 	@if ! command -v docker > /dev/null 2>&1; then \
 		echo "$(RED)Error: Docker is not installed$(NC)"; \
@@ -1173,21 +1380,57 @@ integration-test: ## Run ALL integration tests in Docker containers
 	fi
 	@START_TIME=$$(date +%s); \
 	COMPOSE_FILE="test/integration/docker-compose.integration.yml"; \
-	if command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi > /dev/null 2>&1; then \
+	GPU_HOST="$(strip $(GPU_HOST))"; \
+	OLLAMA_CPU="$(strip $(OLLAMA_CPU))"; \
+	OLLAMA_ENABLED=0; \
+	GPU_AVAILABLE=0; \
+	START_LOCAL_OLLAMA=0; \
+	export OLLAMA_URL="http://ollama:11434"; \
+	export QUICBAAS_OLLAMA_BASE_URL="http://ollama:11434"; \
+	export QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL="http://ollama:11434"; \
+	export QUICBAAS_OLLAMA_ENABLED="false"; \
+	if [ -n "$$GPU_HOST" ]; then \
+		case "$$GPU_HOST" in *:*) : ;; *) GPU_HOST="$$GPU_HOST:11434" ;; esac; \
+		echo "$(GREEN)  ✓ Using remote GPU Ollama host: $$GPU_HOST$(NC)"; \
+		OLLAMA_ENABLED=1; \
+		GPU_AVAILABLE=1; \
+		export OLLAMA_URL="http://$$GPU_HOST"; \
+		export QUICBAAS_OLLAMA_BASE_URL="http://$$GPU_HOST"; \
+		export QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL="http://$$GPU_HOST"; \
+		export QUICBAAS_OLLAMA_ENABLED="true"; \
+	elif command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi > /dev/null 2>&1; then \
 		GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1); \
 		GPU_MEM=$$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1); \
 		GPU_IDX=$$(nvidia-smi --query-gpu=index --format=csv,noheader | head -1); \
 		echo "$(GREEN)  ✓ NVIDIA GPU detected: $$GPU_NAME ($$GPU_MEM) [device $$GPU_IDX]$(NC)"; \
 		export NVIDIA_DEVICE_ID=$${NVIDIA_DEVICE_ID:-$$GPU_IDX}; \
 		COMPOSE_FILE="$$COMPOSE_FILE -f test/integration/docker-compose.gpu.yml"; \
+		OLLAMA_ENABLED=1; \
+		GPU_AVAILABLE=1; \
+		START_LOCAL_OLLAMA=1; \
+		export QUICBAAS_OLLAMA_ENABLED="true"; \
+	elif [ "$$OLLAMA_CPU" = "1" ]; then \
+		echo "$(YELLOW)  ⚠ OLLAMA_CPU=1 — running Ollama tests against local CPU container (serialized)$(NC)"; \
+		OLLAMA_ENABLED=1; \
+		GPU_AVAILABLE=0; \
+		START_LOCAL_OLLAMA=1; \
+		export QUICBAAS_OLLAMA_ENABLED="true"; \
 	else \
-		echo "$(YELLOW)  ⚠ No NVIDIA GPU detected - Ollama will use CPU inference$(NC)"; \
+		echo "$(YELLOW)  ⚠ No GPU_HOST, no local NVIDIA GPU, OLLAMA_CPU unset — EXCLUDING Ollama-dependent tests$(NC)"; \
+		echo "$(YELLOW)    (run with OLLAMA_CPU=1 or GPU_HOST=<host> to include them)$(NC)"; \
 	fi; \
+	TEST_GPU=$$GPU_AVAILABLE; \
+	OLLAMA_UP_SERVICES=""; \
+	if [ $$START_LOCAL_OLLAMA -eq 1 ]; then OLLAMA_UP_SERVICES="ollama ollama-setup"; fi; \
+	echo "$(BLUE)  Ollama mode: enabled=$$OLLAMA_ENABLED gpu=$$TEST_GPU local-container=$$START_LOCAL_OLLAMA url=$$OLLAMA_URL$(NC)"; \
 	cp go.mod /tmp/quicbaas-gomod-backup; \
 	cp sdk/go/go.mod /tmp/quicbaas-sdk-gomod-backup; \
 	echo "$(YELLOW)Building CLI binary for integration tests...$(NC)"; \
 	mkdir -p bin; \
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags "$(strip $(INTEGRATION_BUILD_TAGS))" -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas; \
+	if ! CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags "$(strip $(INTEGRATION_BUILD_TAGS))" -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas; then \
+		echo "$(RED)  ✗ CLI binary build FAILED — aborting integration test (would dispatch with a stale binary)$(NC)"; \
+		exit 1; \
+	fi; \
 	echo "$(GREEN)  ✓ CLI binary built: bin/quicbaas$(NC)"; \
 	echo ""; \
 	echo "$(YELLOW)Generating Raft mTLS certificates for integration test cluster...$(NC)"; \
@@ -1212,7 +1455,7 @@ integration-test: ## Run ALL integration tests in Docker containers
 	done; \
 	echo ""; \
 	echo "$(YELLOW)Starting integration test cluster...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 localstack minio azurite fake-gcs-server ollama ollama-setup; \
+	docker compose -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 localstack minio azurite fake-gcs-server $$OLLAMA_UP_SERVICES; \
 	echo ""; \
 	echo "$(YELLOW)Waiting for cluster nodes to be healthy (checking every 5s, max 120s)...$(NC)"; \
 	WAIT_COUNT=0; \
@@ -1318,35 +1561,46 @@ integration-test: ## Run ALL integration tests in Docker containers
 		echo "$(YELLOW)  ⚠ Some storage backends not ready, backup tests may fail$(NC)"; \
 	fi; \
 	echo ""; \
-	echo "$(YELLOW)Waiting for Ollama service to be ready...$(NC)"; \
-	OLLAMA_WAIT=0; \
-	OLLAMA_MAX_WAIT=120; \
-	while [ $$OLLAMA_WAIT -lt $$OLLAMA_MAX_WAIT ]; do \
-		if docker compose -f $$COMPOSE_FILE exec -T ollama ollama list >/dev/null 2>&1; then \
-			echo "$(GREEN)  ✓ Ollama ready after $${OLLAMA_WAIT}s$(NC)"; \
-			MODEL_READY=0; \
-			if docker compose -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'all-minilm'; then \
-				echo "$(GREEN)  ✓ all-minilm model loaded$(NC)"; \
-				MODEL_READY=1; \
+	if [ $$START_LOCAL_OLLAMA -eq 1 ]; then \
+		echo "$(YELLOW)Waiting for local Ollama container to be ready...$(NC)"; \
+		OLLAMA_WAIT=0; \
+		OLLAMA_MAX_WAIT=120; \
+		while [ $$OLLAMA_WAIT -lt $$OLLAMA_MAX_WAIT ]; do \
+			if docker compose -f $$COMPOSE_FILE exec -T ollama ollama list >/dev/null 2>&1; then \
+				echo "$(GREEN)  ✓ Ollama ready after $${OLLAMA_WAIT}s$(NC)"; \
+				MODEL_READY=0; \
+				if docker compose -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'all-minilm'; then \
+					echo "$(GREEN)  ✓ all-minilm model loaded$(NC)"; \
+					MODEL_READY=1; \
+				fi; \
+				if [ $$MODEL_READY -eq 0 ]; then \
+					echo "$(YELLOW)  ⚠ Model not yet loaded, pulling all-minilm...$(NC)"; \
+					docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull all-minilm 2>&1 | tail -1; \
+				fi; \
+				if docker compose -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'tinyllama'; then \
+					echo "$(GREEN)  ✓ tinyllama model loaded$(NC)"; \
+				else \
+					echo "$(YELLOW)  ⚠ tinyllama not loaded, pulling...$(NC)"; \
+					docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull tinyllama 2>&1 | tail -1; \
+				fi; \
+				break; \
 			fi; \
-			if [ $$MODEL_READY -eq 0 ]; then \
-				echo "$(YELLOW)  ⚠ Model not yet loaded, pulling all-minilm...$(NC)"; \
-				docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull all-minilm 2>&1 | tail -1; \
-			fi; \
-			if docker compose -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'tinyllama'; then \
-				echo "$(GREEN)  ✓ tinyllama model loaded$(NC)"; \
-			else \
-				echo "$(YELLOW)  ⚠ tinyllama not loaded, pulling...$(NC)"; \
-				docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull tinyllama 2>&1 | tail -1; \
-			fi; \
-			break; \
+			echo "  [$$OLLAMA_WAIT s] Ollama starting..."; \
+			sleep 5; \
+			OLLAMA_WAIT=$$((OLLAMA_WAIT + 5)); \
+		done; \
+		if [ $$OLLAMA_WAIT -ge $$OLLAMA_MAX_WAIT ]; then \
+			echo "$(YELLOW)  ⚠ Ollama not ready, embedding/RAG tests may fail$(NC)"; \
 		fi; \
-		echo "  [$$OLLAMA_WAIT s] Ollama starting..."; \
-		sleep 5; \
-		OLLAMA_WAIT=$$((OLLAMA_WAIT + 5)); \
-	done; \
-	if [ $$OLLAMA_WAIT -ge $$OLLAMA_MAX_WAIT ]; then \
-		echo "$(YELLOW)  ⚠ Ollama not ready, embedding/RAG tests may fail$(NC)"; \
+	elif [ $$OLLAMA_ENABLED -eq 1 ]; then \
+		echo "$(YELLOW)Probing remote Ollama host $$OLLAMA_URL ...$(NC)"; \
+		if curl -sf "$$OLLAMA_URL/api/tags" >/dev/null 2>&1; then \
+			echo "$(GREEN)  ✓ Remote Ollama reachable at $$OLLAMA_URL$(NC)"; \
+		else \
+			echo "$(YELLOW)  ⚠ Remote Ollama at $$OLLAMA_URL not reachable yet — tests will retry$(NC)"; \
+		fi; \
+	else \
+		echo "$(BLUE)Ollama disabled — skipping Ollama readiness wait$(NC)"; \
 	fi; \
 	echo ""; \
 	echo "$(YELLOW)Allowing brief stabilization period (5s)...$(NC)"; \
@@ -1357,7 +1611,12 @@ integration-test: ## Run ALL integration tests in Docker containers
 	echo "$(BLUE)RUNNING INTEGRATION TESTS$(NC)"; \
 	echo "$(BLUE)=========================================================================================================$(NC)"; \
 	echo ""; \
-	docker compose -f $$COMPOSE_FILE run --rm -T -e QUICBAAS_TEST_FILTER="$(QUICBAAS_TEST_FILTER)" integration-test 2>&1 | while IFS= read -r line; do \
+	docker compose -f $$COMPOSE_FILE run --rm -T \
+		-e QUICBAAS_TEST_FILTER="$(QUICBAAS_TEST_FILTER)" \
+		-e QUICBAAS_TEST_OLLAMA="$$OLLAMA_ENABLED" \
+		-e QUICBAAS_TEST_GPU="$$TEST_GPU" \
+		-e OLLAMA_URL="$$OLLAMA_URL" \
+		integration-test 2>&1 | while IFS= read -r line; do \
 		echo "$$line"; \
 	done; \
 	DOCKER_RESULT=$${PIPESTATUS[0]}; \
@@ -1392,6 +1651,20 @@ integration-test: ## Run ALL integration tests in Docker containers
 	fi; \
 	echo "$(BLUE)=========================================================================================================$(NC)"; \
 	exit $$DOCKER_RESULT
+
+.PHONY: integration-test-ollama-cpu
+integration-test-ollama-cpu: ## Run the full integration suite INCLUDING Ollama tests against a local CPU container (serialized)
+	@echo "$(BLUE)Running integration tests with local CPU Ollama (serialized)...$(NC)"
+	@$(MAKE) integration-test OLLAMA_CPU=1
+
+.PHONY: integration-test-ollama-gpu
+integration-test-ollama-gpu: ## Run the full integration suite INCLUDING Ollama + GPU tests against a remote GPU host (requires GPU_HOST=<host>)
+	@if [ -z "$(strip $(GPU_HOST))" ]; then \
+		echo "$(RED)Error: integration-test-ollama-gpu requires GPU_HOST=<host> (e.g. make integration-test-ollama-gpu GPU_HOST=gpu01.lan)$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Running integration tests with remote GPU Ollama host: $(GPU_HOST)$(NC)"
+	@$(MAKE) integration-test GPU_HOST="$(GPU_HOST)"
 
 .PHONY: integration-test-minikube
 integration-test-minikube: ## Run Minikube integration tests (auto-starts Minikube if needed)
@@ -2317,20 +2590,23 @@ integration-bench: ## Run integration benchmarks
 # ==============================================================================
 
 # IAM package tests
+# Every file in pkg/iam/... and pkg/iam/qrdbadapter/... has a //go:build iam
+# directive, so test/coverage/bench targets must always pass the iam tag --
+# regardless of whether WITH_IAM=1 was supplied to make.
 .PHONY: test-iam
 test-iam: ## Run IAM unit tests
-	go test -v -race -count=1 ./pkg/iam/...
+	go test -v -race -count=1 -tags '$(IAM_TEST_TAGS)' ./pkg/iam/...
 
 .PHONY: test-iam-coverage
 test-iam-coverage:
 	@mkdir -p $(COVERAGE_DIR)
-	$(GOTEST) -v -race -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-iam.out -covermode=atomic ./pkg/iam/...
+	$(GOTEST) -v -race -tags '$(IAM_TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-iam.out -covermode=atomic ./pkg/iam/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-iam.out -o $(COVERAGE_DIR)/coverage-iam.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-iam.out | grep total
 
 .PHONY: bench-iam
 bench-iam:
-	go test -bench=. -benchmem -benchtime=5s ./pkg/iam/...
+	go test -tags '$(IAM_TEST_TAGS)' -bench=. -benchmem -benchtime=5s ./pkg/iam/...
 
 # =============================================================================
 # Ollama Package Tests
@@ -2412,9 +2688,9 @@ coverage-agent: ## Generate coverage report for agent daemon package
 
 # Special integration tests with custom build flags (not covered by dynamic pattern)
 .PHONY: integration-test-rag
-integration-test-rag: ## Run RAG integration tests (requires vector + rag build tags)
+integration-test-rag: ## Run RAG integration tests (Ollama via local CPU container; pass GPU_HOST=<host> to use a remote GPU)
 	@echo "$(BLUE)Running RAG integration tests...$(NC)"
-	@QUICBAAS_TEST_FILTER="./test/integration/rag/..." WITH_RAFT=1 WITH_REST=1 WITH_RAG=1 WITH_VECTOR=1 WITH_IAM=1 $(MAKE) integration-test
+	@QUICBAAS_TEST_FILTER="./test/integration/rag/..." OLLAMA_CPU=$${OLLAMA_CPU:-1} WITH_RAFT=1 WITH_REST=1 WITH_RAG=1 WITH_VECTOR=1 WITH_IAM=1 $(MAKE) integration-test
 
 .PHONY: integration-test-timeseries
 integration-test-timeseries: ## Run Time Series integration tests (requires timeseries build tag)
@@ -2430,6 +2706,22 @@ integration-test-backup: ## Run Backup multi-backend integration tests
 integration-test-iam: ## Run IAM integration tests
 	@echo "$(BLUE)Running IAM integration tests...$(NC)"
 	@QUICBAAS_TEST_FILTER="./test/integration/iam/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 WITH_IAM=1 $(MAKE) integration-test
+
+.PHONY: integration-test-login
+integration-test-login: ## Run unified login ceremony integration tests (mTLS + PIV across REST/gRPC/QUIC/Unix)
+	@echo "$(BLUE)Running unified login ceremony integration tests...$(NC)"
+	@QUICBAAS_TEST_FILTER="./test/integration/login/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 WITH_IAM=1 $(MAKE) integration-test
+
+.PHONY: integration-test-factors
+integration-test-factors: ## Run cross-vendor hardware factor integration tests (spec §M13)
+	@echo "$(BLUE)Running cross-vendor factor integration tests...$(NC)"
+	@go test -v -tags integration -timeout 60s ./test/integration/factors/...
+
+.PHONY: integration-test-init
+integration-test-init: build-daemon ## Run canonical init/start/transport matrix (15 software-only cells + negative)
+	@echo "$(BLUE)Running canonical init matrix integration tests...$(NC)"
+	@INTEGRATION_TEST=1 QUICBAASD_BINARY="$(abspath $(BIN_DIR)/$(APP_NAME)d)" \
+		go test -v -tags integration -timeout 5m -count 1 ./test/integration/init/...
 
 .PHONY: integration-test-agent
 integration-test-agent: ## Run agent orchestration integration tests (requires Docker + Ollama)
@@ -2492,16 +2784,16 @@ integration-test-agent-runtime: ## Run agent daemon integration tests in Docker 
 	echo "$(GREEN)Agent runtime integration tests passed$(NC)"
 
 .PHONY: integration-test-embedding
-integration-test-embedding: ## Run embedding integration tests in Docker (with Ollama)
-	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/embedding/..."
+integration-test-embedding: ## Run embedding integration tests in Docker (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
+	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/embedding/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: integration-test-orchestration
-integration-test-orchestration: ## Run orchestrator E2E integration tests in Docker (with Ollama + QuicBaaS cluster)
-	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/orchestration/..."
+integration-test-orchestration: ## Run orchestrator E2E integration tests in Docker (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
+	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/orchestration/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: integration-test-orchestrator
-integration-test-orchestrator: ## Run multi-protocol CLI integration tests for orchestrator inference command
-	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="-run TestOrchestratorInference ./test/integration/cli/..."
+integration-test-orchestrator: ## Run multi-protocol CLI orchestrator inference tests (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
+	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="-run TestOrchestratorInference ./test/integration/cli/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: e2e-remote-agent
 e2e-remote-agent: ## Run E2E remote agent test (deploys Claude Code to remote host via SSH)
@@ -2911,3 +3203,70 @@ verify-api-shapes: ## Diff QuicBaaS Barrier*/Ceremony*/Bootstrap* TS types again
 .PHONY: verify
 verify: verify-naming verify-cli-flags verify-api-shapes ## Run all cross-project verifications
 	@echo "$(GREEN)All verifications OK$(NC)"
+
+# =============================================================================
+# Server Package Tests
+# =============================================================================
+
+.PHONY: coverage-server-iam
+coverage-server-iam: ## Generate coverage report for pkg/server with the iam build tag
+	@mkdir -p $(COVERAGE_DIR)
+	$(GOTEST) -count=1 -tags '$(IAM_TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-server-iam.out -covermode=atomic ./pkg/server/
+	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-server-iam.out -o $(COVERAGE_DIR)/coverage-server-iam.html
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-server-iam.out | tail -1
+
+.PHONY: coverage-server-full
+coverage-server-full: ## Merge unit + integration coverage for pkg/server (real daemon-boot coverage)
+	@echo "$(BLUE)Generating combined coverage for pkg/server/...$(NC)"
+	@mkdir -p $(COVERAGE_DIR)
+	@echo "$(YELLOW)Stage 1/3: unit coverage (covermode=atomic, full integration tags)$(NC)"
+	@# covermode=atomic matches the daemon binary, which is built with
+	@# 'go build -cover -covermode=atomic' so that runtime/coverage.WriteCountersDir
+	@# can flush deterministically on graceful shutdown. Matching modes lets
+	@# gocovmerge union the unit profile with the daemon's textfmt profile.
+	@# Full integration build tags are used so the instrumented source blocks line
+	@# up with the daemon binary (which is built with the same tag set).
+	@$(GOTEST) -count=1 -tags 'iam $(INTEGRATION_BUILD_TAGS)' \
+		-coverpkg=github.com/jeremyhahn/go-quicbaas/pkg/server \
+		-coverprofile=$(COVERAGE_DIR)/coverage-server-unit.out \
+		-covermode=atomic ./pkg/server/
+	@echo "$(YELLOW)Stage 2/3: daemon-boot coverage from the running cluster$(NC)"
+	@if [ "$$INTEGRATION_COVERAGE" = "1" ]; then \
+		echo "$(BLUE)Building coverage-instrumented daemon and running the integration cluster...$(NC)"; \
+		COVDATA_BASE=$$(pwd)/$(COVERAGE_DIR)/covdata; \
+		rm -rf "$$COVDATA_BASE"; \
+		mkdir -p "$$COVDATA_BASE/node1" "$$COVDATA_BASE/node2" "$$COVDATA_BASE/node3"; \
+		chmod -R 0777 "$$COVDATA_BASE"; \
+		COVER=1 \
+		QUICBAAS_NODE_GOCOVERDIR=/covdata \
+		QUICBAAS_COVDATA_DIR_NODE1="$$COVDATA_BASE/node1" \
+		QUICBAAS_COVDATA_DIR_NODE2="$$COVDATA_BASE/node2" \
+		QUICBAAS_COVDATA_DIR_NODE3="$$COVDATA_BASE/node3" \
+		$(MAKE) integration-test || true; \
+		echo "$(YELLOW)Extracting daemon coverage from $$COVDATA_BASE (covdata textfmt)...$(NC)"; \
+		COVDIRS=$$(find "$$COVDATA_BASE" -maxdepth 1 -mindepth 1 -type d | paste -sd, -); \
+		if [ -n "$$COVDIRS" ] && [ -n "$$(find "$$COVDATA_BASE" -name 'covmeta.*' -print -quit)" ]; then \
+			$(GOCMD) tool covdata textfmt -i="$$COVDIRS" -o=$(COVERAGE_DIR)/coverage-server-integration-raw.out; \
+			echo "mode: atomic" > $(COVERAGE_DIR)/coverage-server-integration.out; \
+			grep "github.com/jeremyhahn/go-quicbaas/pkg/server/" $(COVERAGE_DIR)/coverage-server-integration-raw.out >> $(COVERAGE_DIR)/coverage-server-integration.out || true; \
+			echo "$(GREEN)  ✓ Daemon coverage extracted ($$(go tool cover -func=$(COVERAGE_DIR)/coverage-server-integration.out 2>/dev/null | tail -1 | awk '{print $$NF}') from daemon boot)$(NC)"; \
+		else \
+			echo "$(RED)  ✗ No covdata emitted by the daemon (covmeta.* missing under $$COVDATA_BASE)$(NC)"; \
+			echo "$(RED)    The instrumented daemon did not flush coverage — check graceful shutdown / GOCOVERDIR.$(NC)"; \
+			echo "mode: atomic" > $(COVERAGE_DIR)/coverage-server-integration.out; \
+		fi; \
+	else \
+		echo "$(YELLOW)Skipping integration stage (set INTEGRATION_COVERAGE=1 to include)$(NC)"; \
+		echo "mode: atomic" > $(COVERAGE_DIR)/coverage-server-integration.out; \
+	fi
+	@echo "$(YELLOW)Stage 3/3: merging unit + daemon-boot profiles$(NC)"
+	@$(GOCMD) run github.com/wadey/gocovmerge@latest \
+		$(COVERAGE_DIR)/coverage-server-unit.out \
+		$(COVERAGE_DIR)/coverage-server-integration.out \
+		> $(COVERAGE_DIR)/coverage-server-merged.out 2>$(COVERAGE_DIR)/gocovmerge.err || \
+		{ echo "$(RED)gocovmerge failed:$(NC)"; cat $(COVERAGE_DIR)/gocovmerge.err; \
+		  cp $(COVERAGE_DIR)/coverage-server-unit.out $(COVERAGE_DIR)/coverage-server-merged.out; }
+	@$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-server-merged.out -o $(COVERAGE_DIR)/coverage-server-merged.html
+	@echo "$(GREEN)Combined coverage report: $(COVERAGE_DIR)/coverage-server-merged.html$(NC)"
+	@echo "$(BLUE)Unit-only:$(NC)"; $(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-server-unit.out | tail -1
+	@echo "$(BLUE)Combined (unit + daemon-boot):$(NC)"; $(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-server-merged.out | tail -1

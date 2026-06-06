@@ -59,51 +59,51 @@ func TestIntegration_SandboxPolicy(t *testing.T) {
 		wantMode orchestration.SandboxMode
 	}
 
-	policyOptIn    := orchestration.SandboxPolicyOptIn
-	policyPref     := orchestration.SandboxPolicyPreferred
+	policyOptIn := orchestration.SandboxPolicyOptIn
+	policyPref := orchestration.SandboxPolicyPreferred
 	policyRequired := orchestration.SandboxPolicyRequired
 
 	cases := []tc{
 		// ── SandboxPolicyOptIn ──────────────────────────────────────────────
 		{
-			name: "optin/default/no-override/no-rt",
+			name:         "optin/default/no-override/no-rt",
 			daemonPolicy: policyOptIn, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: nil, hasContainerRT: false,
 			wantErr: false, wantMode: orchestration.SandboxModeNone,
 		},
 		{
-			name: "optin/default/no-override/has-rt",
+			name:         "optin/default/no-override/has-rt",
 			daemonPolicy: policyOptIn, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: nil, hasContainerRT: true,
 			wantErr: false, wantMode: orchestration.SandboxModeNone,
 		},
 		{
-			name: "optin/required/no-override/has-rt",
+			name:         "optin/required/no-override/has-rt",
 			daemonPolicy: policyOptIn, requestMode: orchestration.SandboxModeRequired,
 			tenantOverride: nil, hasContainerRT: true,
 			wantErr: false, wantMode: orchestration.SandboxModeRequired,
 		},
 		{
-			name: "optin/required/no-override/no-rt",
+			name:         "optin/required/no-override/no-rt",
 			daemonPolicy: policyOptIn, requestMode: orchestration.SandboxModeRequired,
 			tenantOverride: nil, hasContainerRT: false,
 			wantErr: true, // no container runtime → violation
 		},
 		{
-			name: "optin/none/no-override/no-rt",
+			name:         "optin/none/no-override/no-rt",
 			daemonPolicy: policyOptIn, requestMode: orchestration.SandboxModeNone,
 			tenantOverride: nil, hasContainerRT: false,
 			wantErr: false, wantMode: orchestration.SandboxModeNone,
 		},
 		// tenant override tightens to Required
 		{
-			name: "optin/default/tenant-required/has-rt",
+			name:         "optin/default/tenant-required/has-rt",
 			daemonPolicy: policyOptIn, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: &policyRequired, hasContainerRT: true,
 			wantErr: false, wantMode: orchestration.SandboxModeRequired,
 		},
 		{
-			name: "optin/none/tenant-required/has-rt",
+			name:         "optin/none/tenant-required/has-rt",
 			daemonPolicy: policyOptIn, requestMode: orchestration.SandboxModeNone,
 			tenantOverride: &policyRequired, hasContainerRT: true,
 			wantErr: true, // override requires sandbox; NONE is forbidden
@@ -111,39 +111,39 @@ func TestIntegration_SandboxPolicy(t *testing.T) {
 
 		// ── SandboxPolicyPreferred ──────────────────────────────────────────
 		{
-			name: "preferred/default/no-override/has-rt",
+			name:         "preferred/default/no-override/has-rt",
 			daemonPolicy: policyPref, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: nil, hasContainerRT: true,
 			wantErr: false, wantMode: orchestration.SandboxModeRequired,
 		},
 		{
-			name: "preferred/default/no-override/no-rt",
+			name:         "preferred/default/no-override/no-rt",
 			daemonPolicy: policyPref, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: nil, hasContainerRT: false,
 			// Preferred falls back to None when no runtime available.
 			wantErr: false, wantMode: orchestration.SandboxModeNone,
 		},
 		{
-			name: "preferred/required/no-override/has-rt",
+			name:         "preferred/required/no-override/has-rt",
 			daemonPolicy: policyPref, requestMode: orchestration.SandboxModeRequired,
 			tenantOverride: nil, hasContainerRT: true,
 			wantErr: false, wantMode: orchestration.SandboxModeRequired,
 		},
 		{
-			name: "preferred/none/no-override/has-rt",
+			name:         "preferred/none/no-override/has-rt",
 			daemonPolicy: policyPref, requestMode: orchestration.SandboxModeNone,
 			tenantOverride: nil, hasContainerRT: true,
 			wantErr: false, wantMode: orchestration.SandboxModeNone,
 		},
 		{
-			name: "preferred/default/tenant-optin/has-rt",
+			name:         "preferred/default/tenant-optin/has-rt",
 			daemonPolicy: policyPref, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: &policyOptIn, hasContainerRT: true,
 			// Tenant override drops policy to OptIn → default resolves to None.
 			wantErr: false, wantMode: orchestration.SandboxModeNone,
 		},
 		{
-			name: "preferred/none/tenant-required/has-rt",
+			name:         "preferred/none/tenant-required/has-rt",
 			daemonPolicy: policyPref, requestMode: orchestration.SandboxModeNone,
 			tenantOverride: &policyRequired, hasContainerRT: true,
 			wantErr: true, // tenant required policy; NONE forbidden
@@ -151,45 +151,45 @@ func TestIntegration_SandboxPolicy(t *testing.T) {
 
 		// ── SandboxPolicyRequired ───────────────────────────────────────────
 		{
-			name: "required/default/no-override/has-rt",
+			name:         "required/default/no-override/has-rt",
 			daemonPolicy: policyRequired, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: nil, hasContainerRT: true,
 			wantErr: false, wantMode: orchestration.SandboxModeRequired,
 		},
 		{
-			name: "required/default/no-override/no-rt",
+			name:         "required/default/no-override/no-rt",
 			daemonPolicy: policyRequired, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: nil, hasContainerRT: false,
 			wantErr: true, // required policy + no runtime → violation
 		},
 		{
-			name: "required/required/no-override/has-rt",
+			name:         "required/required/no-override/has-rt",
 			daemonPolicy: policyRequired, requestMode: orchestration.SandboxModeRequired,
 			tenantOverride: nil, hasContainerRT: true,
 			wantErr: false, wantMode: orchestration.SandboxModeRequired,
 		},
 		{
-			name: "required/none/no-override/has-rt",
+			name:         "required/none/no-override/has-rt",
 			daemonPolicy: policyRequired, requestMode: orchestration.SandboxModeNone,
 			tenantOverride: nil, hasContainerRT: true,
 			wantErr: true, // NONE forbidden under Required policy
 		},
 		{
-			name: "required/none/no-override/no-rt",
+			name:         "required/none/no-override/no-rt",
 			daemonPolicy: policyRequired, requestMode: orchestration.SandboxModeNone,
 			tenantOverride: nil, hasContainerRT: false,
 			wantErr: true,
 		},
 		// tenant override relaxes to Preferred
 		{
-			name: "required/none/tenant-preferred/has-rt",
+			name:         "required/none/tenant-preferred/has-rt",
 			daemonPolicy: policyRequired, requestMode: orchestration.SandboxModeNone,
 			tenantOverride: &policyPref, hasContainerRT: true,
 			// Override wins: Preferred allows explicit None.
 			wantErr: false, wantMode: orchestration.SandboxModeNone,
 		},
 		{
-			name: "required/default/tenant-optin/has-rt",
+			name:         "required/default/tenant-optin/has-rt",
 			daemonPolicy: policyRequired, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: &policyOptIn, hasContainerRT: true,
 			wantErr: false, wantMode: orchestration.SandboxModeNone,

@@ -29,6 +29,32 @@ import (
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
+// requestTimeout derives the REST handler request timeout from the server
+// write timeout. The handler timeout must be strictly less than the write
+// timeout so that a timed-out handler can still flush the error response
+// before the server closes the TCP connection.
+//
+// Rule: requestTimeout = writeTimeout − 5s, clamped to [5s, 25s].
+// When writeTimeout is zero (not configured), defaults to 25s.
+func requestTimeout(writeTimeout time.Duration) time.Duration {
+	const (
+		minTimeout = 5 * time.Second
+		maxTimeout = 25 * time.Second
+		margin     = 5 * time.Second
+	)
+	if writeTimeout <= 0 {
+		return maxTimeout
+	}
+	t := writeTimeout - margin
+	if t < minTimeout {
+		return minTimeout
+	}
+	if t > maxTimeout {
+		return maxTimeout
+	}
+	return t
+}
+
 // REST seam injection points for unit testing.
 var (
 	newREST        = restapi.NewServer
@@ -75,13 +101,21 @@ func (s *Server) startRESTServer() error {
 
 	// Create REST server configuration
 	restConfig := &restapi.Config{
-		Address:           fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.REST.Port),
-		ReadTimeout:       s.config.Server.ReadTimeout,
-		WriteTimeout:      s.config.Server.WriteTimeout,
-		IdleTimeout:       s.config.Server.IdleTimeout,
-		MaxHeaderBytes:    1 << 20, // 1 MB
-		MaxConnections:    s.config.Server.MaxConnections,
-		RequestTimeout:    30 * time.Second,
+		Address:        fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.REST.Port),
+		ReadTimeout:    s.config.Server.ReadTimeout,
+		WriteTimeout:   s.config.Server.WriteTimeout,
+		IdleTimeout:    s.config.Server.IdleTimeout,
+		MaxHeaderBytes: 1 << 20, // 1 MB
+		MaxConnections: s.config.Server.MaxConnections,
+		// RequestTimeout is the maximum time a handler may run before the
+		// middleware cancels its context. It must be less than WriteTimeout
+		// so the server can still flush the timeout response to the client.
+		// Set to 25s: the REST handler gives Raft proposals 25s to commit
+		// before returning a retryable 503. The HTTP server's WriteTimeout
+		// (default 30s, configurable) allows ~5s to flush the 503 response.
+		// Using a fixed 25s avoids a dependency on the WriteTimeout value
+		// which may not be properly parsed from some config paths.
+		RequestTimeout:    25 * time.Second,
 		RateLimit:         0, // No rate limiting by default
 		ExposeShardHeader: s.config.Server.ExposeShardHeader,
 		NodeID:            s.config.Raft.NodeID,
@@ -98,7 +132,14 @@ func (s *Server) startRESTServer() error {
 			TrustedRootsFile: s.config.IAM.PIVLogin.CAFile,
 			TrustedIssuers:   s.config.IAM.PIVLogin.TrustedIssuers,
 		},
+		// SPIFFE trust domain for login tenant derivation (and pinning).
+		SPIFFETrustDomain: s.config.IAM.SPIFFETrustDomain,
 	}
+
+	// Wire the home-realm discovery resolver over the shared/system store so
+	// SPIFFE-less logins (browser/WebAuthn/federated) can resolve their tenant
+	// while target tenant barriers are sealed. No-op when iam is not built.
+	s.attachHomeRealmResolver(restConfig)
 
 	// Create REST server using QuicBaaS facade
 	restServer, err := newREST(s.quicBaaSService, restConfig, s.logger)
@@ -181,6 +222,26 @@ func (s *Server) startRESTServer() error {
 		restServer.SetCertificateAuthority(s.xkmsCA)
 	}
 
+	// Wire the credential management service into the REST server so the
+	// /v1/credentials/* endpoints serve real responses. The service is the
+	// same instance the embedded SDK transport dispatches Security().
+	// Credentials() calls to, ensuring a uniform credential surface across
+	// every transport.
+	if s.ceremonyServices != nil && s.ceremonyServices.Credential != nil {
+		restServer.SetCredentialService(s.ceremonyServices.Credential)
+		s.logger.Info("Credential service wired into REST server")
+	}
+
+	// Wire barrier and ceremony services into the REST server so the
+	// root-level /v1/barrier/* and /v1/ceremony/* endpoints (which the qrdb
+	// SDK REST sub-client targets) serve real responses. These are the same
+	// facades the gRPC/QUIC/MCP transports use, keeping barrier/ceremony
+	// behaviour symmetric across every transport.
+	barrierSvc, ceremonySvc := s.buildBarrierCeremonyServices()
+	restServer.SetBarrierService(barrierSvc)
+	restServer.SetCeremonyService(ceremonySvc)
+	s.logger.Info("Barrier and ceremony services wired into REST server")
+
 	// Wire the seal service into the QuicBaaS facade so that REST
 	// handlers can reach it via the service.SealService type assertion.
 	// This must run after initBarrier (called earlier in Start) has
@@ -192,6 +253,17 @@ func (s *Server) startRESTServer() error {
 		s.quicBaaSService.SetSealService(sealSvc)
 		s.logger.Info("Seal service wired into service facade")
 	}
+
+	// Wire the RBAC authorization middleware onto the REST server. This mirrors
+	// the MCP transport (configureMCPAuth in lifecycle_mcp.go): the same OIDC
+	// tokens are validated and the same role model enforced, so an
+	// authenticated-but-unprivileged caller is denied protected /api/v1
+	// endpoints with 403 while public routes (health, login, oauth2/token,
+	// activation) stay open. SetAuthorizationService rebuilds the router with
+	// the middleware installed, so it MUST run before Start. The call is a
+	// no-op when IAM/OIDC is unavailable (see the rest && !iam stub),
+	// preserving the prior no-authz behaviour for storage-less / embedded boots.
+	s.configureRESTAuthz(restServer)
 
 	// Start REST server
 	address := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.REST.Port)

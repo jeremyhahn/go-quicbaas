@@ -1,0 +1,179 @@
+# QuicBaaS Cloud-Seal Integration Test Runner Dockerfile
+#
+# Builds quicbaasd AND the quicbaas CLI WITH the cloud seal build tags
+# (awskms vault) so the seal factories (pkg/server/seal_factory_<backend>.go)
+# are compiled in, then ships the full Go toolchain + workspace so the tagged
+# seal integration tests (test/integration/seal/, //go:build integration &&
+# <backend>) can compile and run against the emulators.
+#
+# Build model mirrors test/integration/Dockerfile: a go.work workspace is
+# reconstructed from the sibling repos supplied via the BuildKit `workspace`
+# named context.
+#
+# pkcs11 and tpm2 are NOT enabled here:
+#   * pkcs11 needs CGO + a PKCS#11 provider (SoftHSM2) system library.
+#     To add it: install `softhsm2 opensc` (the runtime libs), build with
+#     CGO_ENABLED=1 and -tags pkcs11, initialise a SoftHSM token in setup,
+#     and point seal.pkcs11.library at /usr/lib/softhsm/libsofthsm2.so.
+#   * tpm2 needs a software TPM (swtpm) + the go-xkms tpm_simulator tag.
+#     To add it: install `swtpm tpm2-tools`, run `swtpm socket ...`, build
+#     with -tags 'tpm2 tpm_simulator', provision the simulated TPM in setup,
+#     and set seal.tpm2.use_simulator=true.
+# Both are documented as the hardware-integration follow-up.
+
+ARG BUILD_TAGS="local quic raft rest iam mcp hashicorpmetrics codec_json codec_yaml awskms vault"
+
+# ============================================================================
+# Stage 1: Build quicbaasd + quicbaas CLI inside a workspace mirroring host
+# ============================================================================
+FROM golang:1.26-alpine AS builder
+
+ARG BUILD_TAGS
+
+RUN apk add --no-cache git make bash ca-certificates
+
+WORKDIR /workspace
+
+COPY --from=workspace go-libsignal  ./go-libsignal
+COPY --from=workspace go-objstore   ./go-objstore
+COPY --from=workspace go-qrdb       ./go-qrdb
+COPY --from=workspace go-quicraft   ./go-quicraft
+COPY --from=workspace go-signal     ./go-signal
+COPY --from=workspace go-truststrap ./go-truststrap
+COPY --from=workspace go-xkms       ./go-xkms
+COPY --from=workspace go-codec      ./go-codec
+COPY --from=workspace go-frost      ./go-frost
+
+COPY . ./go-quicbaas
+
+RUN { \
+        echo 'go 1.26.4'; \
+        echo ''; \
+        echo 'use ('; \
+        echo '	./go-libsignal'; \
+        echo '	./go-objstore'; \
+        echo '	./go-objstore/api/sdks/go'; \
+        echo '	./go-qrdb'; \
+        echo '	./go-qrdb/sdk/go'; \
+        echo '	./go-quicbaas'; \
+        echo '	./go-quicbaas/sdk/go'; \
+        echo '	./go-quicraft'; \
+        echo '	./go-signal'; \
+        echo '	./go-xkms'; \
+        echo '	./go-codec'; \
+        echo '	./go-frost'; \
+        echo '	./go-xkms/sdk/go'; \
+        echo '	./go-xkms/xkey'; \
+        echo ')'; \
+        echo ''; \
+        echo 'replace ('; \
+        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
+        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
+        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
+        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
+        echo ')'; \
+    } > go.work
+
+WORKDIR /workspace/go-quicbaas
+
+RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
+RUN rm -f go.sum sdk/go/go.sum
+
+# Build the daemon WITH the cloud seal tags so the seal factories compile in.
+RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
+
+# Build the CLI (same tags) so the seal tests can drive the barrier verbs.
+RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
+
+# ============================================================================
+# Stage 2: Test runtime — full Go toolchain, workspace, built binaries
+# ============================================================================
+FROM golang:1.26-alpine
+
+ARG BUILD_TAGS
+
+LABEL maintainer="Jeremy Hahn"
+LABEL description="QuicBaaS cloud-seal integration test runner"
+
+RUN apk add --no-cache bash coreutils curl wget jq ca-certificates tzdata netcat-openbsd git make
+
+WORKDIR /workspace
+
+COPY --from=workspace go-libsignal  ./go-libsignal
+COPY --from=workspace go-objstore   ./go-objstore
+COPY --from=workspace go-qrdb       ./go-qrdb
+COPY --from=workspace go-quicraft   ./go-quicraft
+COPY --from=workspace go-signal     ./go-signal
+COPY --from=workspace go-truststrap ./go-truststrap
+COPY --from=workspace go-xkms       ./go-xkms
+COPY --from=workspace go-codec      ./go-codec
+COPY --from=workspace go-frost      ./go-frost
+COPY . ./go-quicbaas
+
+RUN { \
+        echo 'go 1.26.4'; \
+        echo ''; \
+        echo 'use ('; \
+        echo '	./go-libsignal'; \
+        echo '	./go-objstore'; \
+        echo '	./go-objstore/api/sdks/go'; \
+        echo '	./go-qrdb'; \
+        echo '	./go-qrdb/sdk/go'; \
+        echo '	./go-quicbaas'; \
+        echo '	./go-quicbaas/sdk/go'; \
+        echo '	./go-quicraft'; \
+        echo '	./go-signal'; \
+        echo '	./go-xkms'; \
+        echo '	./go-codec'; \
+        echo '	./go-frost'; \
+        echo '	./go-xkms/sdk/go'; \
+        echo '	./go-xkms/xkey'; \
+        echo ')'; \
+        echo ''; \
+        echo 'replace ('; \
+        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
+        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
+        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
+        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
+        echo ')'; \
+    } > go.work
+
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaas  /usr/local/bin/quicbaas
+RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas
+
+WORKDIR /workspace/go-quicbaas
+
+ENV QUICBAAS_TEST_MODE=integration \
+    CGO_ENABLED=0 \
+    GO111MODULE=on \
+    GOSUMDB=off \
+    GOINSECURE=github.com/jeremyhahn/* \
+    PATH="/usr/local/bin:${PATH}" \
+    SEAL_BUILD_TAGS="${BUILD_TAGS}"
+
+CMD ["bash", "-c", "rm -f go.sum sdk/go/go.sum && go test -v -p 1 -tags 'integration awskms vault' -timeout 20m ./test/integration/seal/..."]

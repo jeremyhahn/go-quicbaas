@@ -18,7 +18,6 @@ package secretsresolver
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -214,17 +213,7 @@ func (c *RESTClient) Name() string {
 func (c *RESTClient) Setup(t *testing.T, ctx context.Context) error {
 	t.Helper()
 	c.endpoint = getRESTEndpoint()
-	c.client = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.client = helpers.NewHTTPClient(30 * time.Second)
 
 	// Verify connectivity
 	url := fmt.Sprintf("%s/health", c.endpoint)
@@ -360,7 +349,9 @@ func (c *GRPCClient) Setup(t *testing.T, ctx context.Context) error {
 	t.Helper()
 	c.endpoint = getGRPCEndpoint()
 
-	client, err := grpcclient.NewClient(c.endpoint, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(c.endpoint, grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "connecting to gRPC endpoint " + c.endpoint, Cause: err}
 	}
@@ -463,7 +454,9 @@ func (c *UnixClient) Setup(t *testing.T, ctx context.Context) error {
 
 	// Create gRPC client over Unix socket
 	unixEndpoint := fmt.Sprintf("unix://%s", c.socketPath)
-	client, err := grpcclient.NewClient(unixEndpoint, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(unixEndpoint, grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to create gRPC Unix socket client", Cause: err}
 	}
@@ -571,11 +564,9 @@ func (c *QUICClient) Setup(t *testing.T, ctx context.Context) error {
 	t.Helper()
 	c.endpoint = getQUICEndpoint()
 
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // Test only - skip certificate verification
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
-	}
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -742,17 +733,7 @@ func (c *MCPClient) Name() string {
 func (c *MCPClient) Setup(t *testing.T, ctx context.Context) error {
 	t.Helper()
 	c.endpoint = getMCPEndpoint()
-	c.client = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.client = helpers.NewHTTPClient(30 * time.Second)
 	c.nextID = 1
 
 	// Verify connectivity via initialize call
@@ -833,7 +814,6 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 	c.authenticated = true
 	return nil
 }
-
 
 // Teardown closes the MCP client.
 func (c *MCPClient) Teardown(t *testing.T) error {

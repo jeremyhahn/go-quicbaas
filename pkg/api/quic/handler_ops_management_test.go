@@ -34,7 +34,7 @@ func TestHandleMigrateData_DecodeError(t *testing.T) {
 			return &service.MigrateDataResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	resp := handler.handleMigrateData(context.Background(), &Request{Payload: []byte("{bad")})
 	if resp.Status == StatusOK {
@@ -48,7 +48,7 @@ func TestHandleMigrateData_ServiceError(t *testing.T) {
 			return nil, errors.New("migration failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.MigrateDataRequest{})
 	resp := handler.handleMigrateData(context.Background(), &Request{Payload: payload})
@@ -63,7 +63,7 @@ func TestHandleGetMigrationProgress_DecodeError(t *testing.T) {
 			return &service.GetMigrationProgressResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	resp := handler.handleGetMigrationProgress(context.Background(), &Request{Payload: []byte("{bad")})
 	if resp.Status == StatusOK {
@@ -77,7 +77,7 @@ func TestHandleGetMigrationProgress_ServiceError(t *testing.T) {
 			return nil, errors.New("progress check failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetMigrationProgressRequest{})
 	resp := handler.handleGetMigrationProgress(context.Background(), &Request{Payload: payload})
@@ -92,7 +92,7 @@ func TestHandleReplaceNode_DecodeError(t *testing.T) {
 			return &service.ReplaceNodeResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	resp := handler.handleReplaceNode(context.Background(), &Request{Payload: []byte("{bad")})
 	if resp.Status == StatusOK {
@@ -106,7 +106,7 @@ func TestHandleReplaceNode_ServiceError(t *testing.T) {
 			return nil, errors.New("replace failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.ReplaceNodeRequest{})
 	resp := handler.handleReplaceNode(context.Background(), &Request{Payload: payload})
@@ -121,7 +121,7 @@ func TestHandleUpgradeNode_DecodeError(t *testing.T) {
 			return &service.UpgradeNodeResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	resp := handler.handleUpgradeNode(context.Background(), &Request{Payload: []byte("{bad")})
 	if resp.Status == StatusOK {
@@ -135,7 +135,7 @@ func TestHandleUpgradeNode_ServiceError(t *testing.T) {
 			return nil, errors.New("upgrade failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.UpgradeNodeRequest{})
 	resp := handler.handleUpgradeNode(context.Background(), &Request{Payload: payload})
@@ -150,7 +150,7 @@ func TestHandleGetUpgradeStatus_DecodeError(t *testing.T) {
 			return &service.GetUpgradeStatusResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	resp := handler.handleGetUpgradeStatus(context.Background(), &Request{Payload: []byte("{bad")})
 	if resp.Status == StatusOK {
@@ -164,7 +164,7 @@ func TestHandleGetUpgradeStatus_ServiceError(t *testing.T) {
 			return nil, errors.New("status check failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetUpgradeStatusRequest{})
 	resp := handler.handleGetUpgradeStatus(context.Background(), &Request{Payload: payload})
@@ -345,7 +345,7 @@ func TestHandleRebalanceStatus_WithOperationID(t *testing.T) {
 			}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(map[string]string{"operation_id": "op-123"})
 	resp := handler.handleRebalanceStatus(context.Background(), &Request{Payload: payload})
@@ -368,7 +368,7 @@ func TestHandleRebalanceStatus_ServiceError(t *testing.T) {
 			return nil, errors.New("service error")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(map[string]string{"operation_id": "op-123"})
 	resp := handler.handleRebalanceStatus(context.Background(), &Request{Payload: payload})
@@ -378,7 +378,7 @@ func TestHandleRebalanceStatus_ServiceError(t *testing.T) {
 }
 
 func TestHandleNodeReplaceRequest_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.ReplaceNodeRequest{})
 	resp := handler.handleNodeReplaceRequest(context.Background(), &Request{Payload: payload})
@@ -395,7 +395,7 @@ func TestHandleSchedulerUpdateJob_DecodeError(t *testing.T) {
 	svc := &mockServiceWithScheduler{
 		schedulerSvc: &mockSchedulerService{},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload := append([]byte{SubOpSchedulerUpdateJob}, []byte("{bad")...)
 	resp := handler.handleSchedulerDispatch(context.Background(), &Request{Payload: payload})
@@ -408,7 +408,7 @@ func TestHandleSchedulerDeleteJob_DecodeError(t *testing.T) {
 	svc := &mockServiceWithScheduler{
 		schedulerSvc: &mockSchedulerService{},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload := append([]byte{SubOpSchedulerDeleteJob}, []byte("{bad")...)
 	resp := handler.handleSchedulerDispatch(context.Background(), &Request{Payload: payload})
@@ -421,7 +421,7 @@ func TestHandleSchedulerListJobs_DecodeError(t *testing.T) {
 	svc := &mockServiceWithScheduler{
 		schedulerSvc: &mockSchedulerService{},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload := append([]byte{SubOpSchedulerListJobs}, []byte("{bad")...)
 	resp := handler.handleSchedulerDispatch(context.Background(), &Request{Payload: payload})
@@ -434,7 +434,7 @@ func TestHandleSchedulerTriggerJob_DecodeError(t *testing.T) {
 	svc := &mockServiceWithScheduler{
 		schedulerSvc: &mockSchedulerService{},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload := append([]byte{SubOpSchedulerTriggerJob}, []byte("{bad")...)
 	resp := handler.handleSchedulerDispatch(context.Background(), &Request{Payload: payload})
@@ -447,7 +447,7 @@ func TestHandleSchedulerPauseJob_DecodeError(t *testing.T) {
 	svc := &mockServiceWithScheduler{
 		schedulerSvc: &mockSchedulerService{},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload := append([]byte{SubOpSchedulerPauseJob}, []byte("{bad")...)
 	resp := handler.handleSchedulerDispatch(context.Background(), &Request{Payload: payload})
@@ -460,7 +460,7 @@ func TestHandleSchedulerResumeJob_DecodeError(t *testing.T) {
 	svc := &mockServiceWithScheduler{
 		schedulerSvc: &mockSchedulerService{},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload := append([]byte{SubOpSchedulerResumeJob}, []byte("{bad")...)
 	resp := handler.handleSchedulerDispatch(context.Background(), &Request{Payload: payload})
@@ -473,7 +473,7 @@ func TestHandleSchedulerCancelJob_DecodeError(t *testing.T) {
 	svc := &mockServiceWithScheduler{
 		schedulerSvc: &mockSchedulerService{},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload := append([]byte{SubOpSchedulerCancelJob}, []byte("{bad")...)
 	resp := handler.handleSchedulerDispatch(context.Background(), &Request{Payload: payload})
@@ -486,7 +486,7 @@ func TestHandleSchedulerGetJobHistory_DecodeError(t *testing.T) {
 	svc := &mockServiceWithScheduler{
 		schedulerSvc: &mockSchedulerService{},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload := append([]byte{SubOpSchedulerGetJobHistory}, []byte("{bad")...)
 	resp := handler.handleSchedulerDispatch(context.Background(), &Request{Payload: payload})
@@ -503,7 +503,7 @@ func TestHandleSchedulerPauseJob_ServiceError(t *testing.T) {
 			},
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	jobPayload, _ := EncodePayload(&service.PauseSchedulerJobRequest{JobID: 1})
 	payload := append([]byte{SubOpSchedulerPauseJob}, jobPayload...)
@@ -521,7 +521,7 @@ func TestHandleSchedulerResumeJob_ServiceError(t *testing.T) {
 			},
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	jobPayload, _ := EncodePayload(&service.ResumeSchedulerJobRequest{JobID: 1})
 	payload := append([]byte{SubOpSchedulerResumeJob}, jobPayload...)
@@ -539,7 +539,7 @@ func TestHandleSchedulerCancelJob_ServiceError(t *testing.T) {
 			},
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	jobPayload, _ := EncodePayload(&service.CancelSchedulerJobRequest{JobID: 1})
 	payload := append([]byte{SubOpSchedulerCancelJob}, jobPayload...)
@@ -564,7 +564,7 @@ func TestHandleRebalanceStatus_OperationIDPascalCase(t *testing.T) {
 			}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(map[string]string{"OperationID": "op-pascal"})
 	resp := handler.handleRebalanceStatus(context.Background(), &Request{Payload: payload})
@@ -584,7 +584,7 @@ func TestHandleRebalanceStatus_JobIDVariant(t *testing.T) {
 			}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(map[string]string{"JobID": "job-123"})
 	resp := handler.handleRebalanceStatus(context.Background(), &Request{Payload: payload})
@@ -601,7 +601,7 @@ func TestHandleRebalanceStatus_NotFoundError(t *testing.T) {
 			return nil, qberrors.NotFound("test", "operation")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(map[string]string{"operation_id": "nonexistent"})
 	resp := handler.handleRebalanceStatus(context.Background(), &Request{Payload: payload})

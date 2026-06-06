@@ -1,4 +1,4 @@
-//go:build vector
+//go:build vector && qrdb_vector
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -48,10 +48,10 @@ func (p *providerBridgeIn) EmbedBatch(ctx context.Context, texts []string) ([][]
 	return result.Embeddings, nil
 }
 
-func (p *providerBridgeIn) Dimensions() int  { return p.inner.Dimensions() }
-func (p *providerBridgeIn) MaxTokens() int   { return 0 }
-func (p *providerBridgeIn) Name() string     { return p.inner.Name() }
-func (p *providerBridgeIn) Close() error     { return p.inner.Close() }
+func (p *providerBridgeIn) Dimensions() int { return p.inner.Dimensions() }
+func (p *providerBridgeIn) MaxTokens() int  { return 0 }
+func (p *providerBridgeIn) Name() string    { return p.inner.Name() }
+func (p *providerBridgeIn) Close() error    { return p.inner.Close() }
 
 // providerBridgeOut adapts a go-quicbaas Provider (single-text, no model param)
 // to the qrdbsdk.EmbeddingProvider interface (batch-first, with model param).
@@ -84,7 +84,9 @@ func (p *providerBridgeOut) Embed(ctx context.Context, texts []string, _ string)
 	}, nil
 }
 
-func (p *providerBridgeOut) Dimensions() int                                           { return p.inner.Dimensions() }
-func (p *providerBridgeOut) Name() string                                              { return p.inner.Name() }
-func (p *providerBridgeOut) Models(_ context.Context) ([]qrdbsdk.EmbeddingModelInfo, error) { return nil, nil }
-func (p *providerBridgeOut) Close() error                                              { return p.inner.Close() }
+func (p *providerBridgeOut) Dimensions() int { return p.inner.Dimensions() }
+func (p *providerBridgeOut) Name() string    { return p.inner.Name() }
+func (p *providerBridgeOut) Models(_ context.Context) ([]qrdbsdk.EmbeddingModelInfo, error) {
+	return nil, nil
+}
+func (p *providerBridgeOut) Close() error { return p.inner.Close() }

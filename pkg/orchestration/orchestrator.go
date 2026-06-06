@@ -1783,10 +1783,10 @@ func (s *agentServiceImpl) autoSpawnTask(ctx context.Context, req *CreateTaskReq
 
 	// Build the work item for matchAgentForTask using request routing hints.
 	item := &WorkItem{
-		ID:          task.ID,
-		Title:       task.Subject,
-		Description: task.Description,
-		Backend:     req.Backend,
+		ID:           task.ID,
+		Title:        task.Subject,
+		Description:  task.Description,
+		Backend:      req.Backend,
 		HostAffinity: req.HostAffinity,
 	}
 	if req.GpuRequired {

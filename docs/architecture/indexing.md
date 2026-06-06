@@ -1,8 +1,8 @@
-# Selective Indexing
+# Selective Indexing & Vector Indexing
 
-## Overview
+## Selective Field Indexing
 
-QuicBaaS supports selective field indexing. Only fields marked with `index:"true"` struct tags are indexed, conserving resources by avoiding unnecessary index creation.
+QuicBaaS supports selective field indexing on KV records. Only fields marked with `index:"true"` struct tags are indexed, conserving resources by avoiding unnecessary index creation.
 
 ## Why Selective Indexing?
 
@@ -187,6 +187,62 @@ go run main.go
 # Non-indexed fields will NOT use extra storage or processing.
 ```
 
-## Implementation Details
+## Implementation Details (Field Indexing)
 
-The selective indexing system uses Go's reflection to parse struct tags at registration time. `RegisterEntityType()` scans struct tags, `IndexEntityWithType()` only indexes registered fields, unregistered types index all fields for backward compatibility.
+The selective field indexing system uses Go's reflection to parse struct tags at registration time. `RegisterEntityType()` scans struct tags, `IndexEntityWithType()` only indexes registered fields, unregistered types index all fields for backward compatibility.
+
+## Vector Indexing (Persistent HNSW via qrdb)
+
+**Implemented (2026-05-31):** RAG vector storage has been migrated from the in-process in-memory brute-force index to go-qrdb's persistent, barrier-encrypted HNSW vector primitive, accessed over the qrdb SDK.
+
+### Architecture
+
+**Locked Architecture:** qrdb owns the vector primitive; quicbaas owns RAG orchestration.
+
+```
+Server (lifecycle_rag.go)
+  └── rag.NewSystem(cfg, rag.WithVectorIndexFactory(factory))
+        └── factory → indexing.NewVectorIndexFromConfig(..., WithVectorClient(client))
+              └── qrdbVectorIndex (pkg/rag/indexing/vector_qrdb.go)
+                    └── transport.VectorClient (via ShardedClient.ForShard(vectorShardID))
+                          └── baasTransport → PebbleVectorStorage (barrier-encrypted)
+```
+
+### Components
+
+**`pkg/rag/indexing/vector_qrdb.go`** — `qrdbVectorIndex` implements `rag.VectorIndex`:
+- Delegates every op to `transport.VectorClient` (CreateNamespace, UpsertVector, SearchSimilar, DeleteVector, GetNamespaceInfo).
+- `Train()`/`IsTrained()` are no-ops: the qrdb HNSW graph builds lazily as vectors are inserted.
+- `Save()`/`Load()` are no-ops: qrdb persists to PebbleDB automatically.
+- RAG string IDs (e.g. `ns:abc123:0`) are mapped to qrdb `uint64` IDs via FNV-1a 64-bit hash and recovered via the `rag_id` metadata field on search results.
+
+**`pkg/rag/indexing/vector_adapter.go`** — `NewVectorIndexFromConfig` functional options:
+- `WithVectorClient(client)` — injects the qrdb VectorClient.
+- `WithTenantID(tenantID)` — prefixes the physical namespace: `{tenantID}:{namespace}`.
+- `WithDistanceMetric(metric)` — overrides the distance metric.
+- Index type `"qrdb"` is now registered. `"auto"` and `"hnsw"` resolve to qrdb when a VectorClient is present; fall back to in-memory otherwise.
+
+**`pkg/rag/factory.go`** — `rag.NewSystem` now accepts `rag.WithVectorIndexFactory(factory)` to inject the qrdb-backed factory without creating an import cycle between `pkg/rag` and `pkg/rag/indexing`.
+
+**`pkg/server/lifecycle_rag.go`** — `buildRAGSystemOptions()` wires the factory at server startup:
+- Resolves the vector shard client via `ShardedClient.ForShard(vectorShardID)`.
+- Derives the physical namespace from `config.RAG.IndexPath` (or defaults to `"rag"`).
+- System-level RAG uses the system/single-tenant context (empty tenant ID).
+
+### Tenant Isolation
+
+Tenant isolation is encoded into the qrdb **namespace name** at construction time:
+- Physical namespace: `{tenantID}:{logicalNamespace}` (or just `logicalNamespace` for system tenant).
+- The `baasTransport.VectorClient` uses the namespace string as the KV key prefix, providing complete storage isolation between tenants without relying on the `tenant.FromContext(ctx)` context key (which uses a different context slot than quicbaas's `iam.tenantContextKey{}`).
+- The system-level RAG operates under the system tenant. Per-tenant RAG requires a separate `rag.System` per tenant, constructed with `WithRAGTenantID(tenantID)` propagated through the server's per-tenant initialization flow.
+
+### In-Memory Fallback
+
+The in-process in-memory brute-force index (`pkg/rag/vector_index.go`) is retained as an explicit `index_type: memory` option for development, testing, and offline scenarios where the qrdb vector service is not available. It is no longer the default when a VectorClient is present.
+
+### Properties
+
+- **Durability:** Vectors survive daemon restarts (stored in PebbleDB).
+- **Barrier encryption:** Vectors are encrypted at the DEK layer by the qrdb storage barrier.
+- **Tenant isolation:** Per-tenant namespace prefixes prevent cross-tenant data access.
+- **HNSW index:** Approximate nearest-neighbor search with configurable `EfSearch` (mapped from the `nprobe` parameter).

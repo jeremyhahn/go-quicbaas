@@ -20,6 +20,8 @@ import (
 
 	"google.golang.org/grpc"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
@@ -58,49 +60,25 @@ func (h *authHandler) handleRequest(ctx context.Context, svc, method string, req
 		return h.handleRefreshToken(ctx, client, req)
 	case "ValidateToken":
 		return h.handleValidateToken(ctx, client, req)
+	case "BeginLogin":
+		return h.handleBeginLogin(ctx, req)
+	case "FinishLogin":
+		return h.handleFinishLogin(ctx, req)
 	default:
 		return nil, errors.NewUnimplemented("authHandler.handleRequest",
 			"unsupported method: "+method)
 	}
 }
 
-// handleLogin handles Login requests.
-func (h *authHandler) handleLogin(ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error) {
-	// Handle the ExtendedLoginRequest type from the service package.
-	// TODO: Password-based login was removed from ExtendedLoginRequest; auth must now flow
-	// through WebAuthn or PIV smartcard. We send an empty password until proto LoginRequest
-	// is updated to carry the new credential evidence.
-	var username string
-
-	switch r := req.(type) {
-	case *service.ExtendedLoginRequest:
-		username = r.Username
-	default:
-		return nil, errors.NewInvalidInput("authHandler.handleLogin",
-			"invalid request type, expected *service.ExtendedLoginRequest")
-	}
-
-	// Convert SDK request to protobuf request.
-	pbReq := &pb.LoginRequest{
-		Username: username,
-		Password: "",
-	}
-
-	// Call gRPC.
-	pbResp, err := client.Login(ctx, pbReq)
-	if err != nil {
-		return nil, convertGRPCError(err, "authHandler.handleLogin")
-	}
-
-	// Convert protobuf response to SDK response.
-	return &service.ExtendedLoginResponse{
-		AccessToken:  pbResp.AccessToken,
-		RefreshToken: pbResp.RefreshToken,
-		ExpiresAt:    time.Unix(0, pbResp.ExpiresAt),
-		TokenType:    pbResp.TokenType,
-		MFARequired:  false,
-		MFAChallenge: nil,
-	}, nil
+// handleLogin is the retired legacy username/password login verb. The locked
+// architecture has no passwords; authentication is cert/factor-based. This
+// path previously submitted an empty password to the server, which is unsafe.
+// It now fails closed with a typed PasswordLoginUnsupportedError directing the
+// caller to the unified login ceremony (BeginLogin/FinishLogin) with an mtls,
+// fido2, or piv factor. The method is retained so the router and downstream
+// callers keep compiling; it never reaches the network.
+func (h *authHandler) handleLogin(_ context.Context, _ pb.QuicBaaSClient, _ interface{}) (interface{}, error) {
+	return nil, errors.NewPasswordLoginUnsupported("authHandler.handleLogin")
 }
 
 // handleLogout handles Logout requests.
@@ -191,4 +169,74 @@ func (h *authHandler) handleValidateToken(ctx context.Context, client pb.QuicBaa
 		Roles:     pbResp.Roles,
 		ExpiresAt: time.Unix(0, pbResp.ExpiresAt),
 	}, nil
+}
+
+// handleBeginLogin routes the unified login ceremony BeginLogin step to the
+// gRPC Login service. The request/response are go-qrdb transport types.
+func (h *authHandler) handleBeginLogin(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*qrdbtransport.BeginLoginRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("authHandler.handleBeginLogin",
+			"invalid request type, expected *transport.BeginLoginRequest")
+	}
+	client := pb.NewLoginClient(h.conn)
+	pbResp, err := client.BeginLogin(ctx, &pb.BeginLoginRequest{
+		Type:     string(r.Type),
+		Hint:     r.Hint,
+		TenantId: r.TenantID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "authHandler.handleBeginLogin")
+	}
+	out := &qrdbtransport.BeginLoginResponse{
+		SessionID:         pbResp.GetSessionId(),
+		Nonce:             pbResp.GetNonce(),
+		ChallengeMetadata: pbResp.GetChallengeMetadata(),
+	}
+	if ts := pbResp.GetExpiresAt(); ts != "" {
+		if parsed, perr := time.Parse(time.RFC3339Nano, ts); perr == nil {
+			out.ExpiresAt = parsed
+		}
+	}
+	return out, nil
+}
+
+// handleFinishLogin routes the unified login ceremony FinishLogin step to the
+// gRPC Login service. For an mtls factor the server derives the lookup key
+// from the verified peer certificate; the lookup_key here is ignored server
+// side for mtls over the network.
+func (h *authHandler) handleFinishLogin(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*qrdbtransport.FinishLoginRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("authHandler.handleFinishLogin",
+			"invalid request type, expected *transport.FinishLoginRequest")
+	}
+	client := pb.NewLoginClient(h.conn)
+	pbResp, err := client.FinishLogin(ctx, &pb.FinishLoginRequest{
+		SessionId:      r.SessionID,
+		Type:           string(r.Type),
+		LookupKey:      r.LookupKey,
+		Signature:      r.Signature,
+		MethodMetadata: r.MethodMetadata,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "authHandler.handleFinishLogin")
+	}
+	out := &qrdbtransport.FinishLoginResponse{
+		Bearer:   pbResp.GetBearer(),
+		FactorID: pbResp.GetFactorId(),
+	}
+	if ts := pbResp.GetExpiresAt(); ts != "" {
+		if parsed, perr := time.Parse(time.RFC3339Nano, ts); perr == nil {
+			out.ExpiresAt = parsed
+		}
+	}
+	if id := pbResp.GetIdentity(); id != nil {
+		out.Identity = &qrdbtransport.Identity{
+			Subject:  id.GetSubject(),
+			TenantID: id.GetTenantId(),
+			Roles:    id.GetRoles(),
+		}
+	}
+	return out, nil
 }

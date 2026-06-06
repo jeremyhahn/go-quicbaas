@@ -17,7 +17,6 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -1310,22 +1309,8 @@ func (r *ToolRegistry) executeIAMTenantCreate(ctx context.Context, args map[stri
 		if parseErr := parseJSONObject(convertedSettings, settings); parseErr == nil {
 			req.Settings = settings
 		}
-		// Also extract max_users into quotas if present
-		if maxUsersRaw, ok := settingsRaw["max_users"]; ok {
-			maxUsers := 0
-			switch v := maxUsersRaw.(type) {
-			case string:
-				fmt.Sscanf(v, "%d", &maxUsers)
-			case float64:
-				maxUsers = int(v)
-			}
-			if maxUsers > 0 {
-				if req.Quotas == nil {
-					req.Quotas = &iam.TenantQuotas{}
-				}
-				req.Quotas.MaxUsers = maxUsers
-			}
-		}
+		// max_users from settings is an engine-level quota owned by qrdb; ignore it here.
+		_ = settingsRaw
 	}
 	if quotasRaw, ok := args["quotas"].(map[string]interface{}); ok {
 		quotas := &iam.TenantQuotas{}
@@ -1333,19 +1318,8 @@ func (r *ToolRegistry) executeIAMTenantCreate(ctx context.Context, args map[stri
 			req.Quotas = quotas
 		}
 	}
-	// Also check for max_users at top level (from SDK flattening)
-	if maxUsersRaw, ok := args["max_users"]; ok && req.Quotas == nil {
-		maxUsers := 0
-		switch v := maxUsersRaw.(type) {
-		case string:
-			fmt.Sscanf(v, "%d", &maxUsers)
-		case float64:
-			maxUsers = int(v)
-		}
-		if maxUsers > 0 {
-			req.Quotas = &iam.TenantQuotas{MaxUsers: maxUsers}
-		}
-	}
+	// max_users is an engine-level quota owned by qrdb TenantServicer; it is
+	// not settable via the BaaS IAM quota surface.
 
 	resp, err := iamSvc.CreateTenant(ctx, req)
 	if err != nil {
@@ -1391,22 +1365,8 @@ func (r *ToolRegistry) executeIAMTenantUpdate(ctx context.Context, args map[stri
 		if parseErr := parseJSONObject(convertedSettings, settings); parseErr == nil {
 			req.Settings = settings
 		}
-		// Also extract max_users into quotas if present
-		if maxUsersRaw, ok := settingsRaw["max_users"]; ok {
-			maxUsers := 0
-			switch v := maxUsersRaw.(type) {
-			case string:
-				fmt.Sscanf(v, "%d", &maxUsers)
-			case float64:
-				maxUsers = int(v)
-			}
-			if maxUsers > 0 {
-				if req.Quotas == nil {
-					req.Quotas = &iam.TenantQuotas{}
-				}
-				req.Quotas.MaxUsers = maxUsers
-			}
-		}
+		// max_users from settings is an engine-level quota owned by qrdb; ignore it here.
+		_ = settingsRaw
 	}
 	if quotasRaw, ok := args["quotas"].(map[string]interface{}); ok {
 		quotas := &iam.TenantQuotas{}
@@ -1414,19 +1374,7 @@ func (r *ToolRegistry) executeIAMTenantUpdate(ctx context.Context, args map[stri
 			req.Quotas = quotas
 		}
 	}
-	// Also check for max_users at top level (from SDK flattening)
-	if maxUsersRaw, ok := args["max_users"]; ok && req.Quotas == nil {
-		maxUsers := 0
-		switch v := maxUsersRaw.(type) {
-		case string:
-			fmt.Sscanf(v, "%d", &maxUsers)
-		case float64:
-			maxUsers = int(v)
-		}
-		if maxUsers > 0 {
-			req.Quotas = &iam.TenantQuotas{MaxUsers: maxUsers}
-		}
-	}
+	// max_users is an engine-level quota owned by qrdb TenantServicer.
 
 	resp, err := iamSvc.UpdateTenant(ctx, req)
 	if err != nil {

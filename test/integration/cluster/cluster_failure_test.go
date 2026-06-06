@@ -17,7 +17,6 @@ package cluster
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"testing"
 	"time"
@@ -46,8 +45,9 @@ func TestNodeFailureAndRecovery(t *testing.T) {
 	for i, endpoint := range endpoints {
 		// Use shorter timeout for individual connections with retry
 		connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
+		tlsCfg1 := requireTLSConfig(t)
 		conn, err := grpc.DialContext(connCtx, endpoint,
-			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg1)),
 			grpc.WithBlock(),
 		)
 		connCancel()
@@ -136,8 +136,9 @@ func TestLeaderElectionAfterLeaderFailure(t *testing.T) {
 
 	// Connect to first node with timeout
 	connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
+	tlsCfg2 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg2)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -184,8 +185,9 @@ func TestLeaderElectionAfterLeaderFailure(t *testing.T) {
 	if err != nil {
 		// If error, try another node
 		connCtx2, connCancel2 := context.WithTimeout(ctx, 10*time.Second)
+		tlsCfg3 := requireTLSConfig(t)
 		conn2, err2 := grpc.DialContext(connCtx2, endpoints[1],
-			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg3)),
 			grpc.WithBlock(),
 		)
 		connCancel2()
@@ -212,8 +214,9 @@ func TestNetworkPartition(t *testing.T) {
 
 	// Connect to nodes in different partitions
 	connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
+	tlsCfg4 := requireTLSConfig(t)
 	conn1, err := grpc.DialContext(connCtx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg4)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -287,8 +290,9 @@ func TestNodeReplacement(t *testing.T) {
 
 	// Connect to cluster
 	connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
+	tlsCfg5 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg5)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -361,8 +365,9 @@ func TestSlowNode(t *testing.T) {
 
 	// Connect to cluster
 	connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
+	tlsCfg6 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg6)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -424,8 +429,9 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 
 	// Connect to cluster
 	connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
+	tlsCfg7 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg7)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -461,8 +467,9 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 
 	// Reconnect and verify data persists
 	connCtx2, connCancel2 := context.WithTimeout(ctx, 10*time.Second)
+	tlsCfg8 := requireTLSConfig(t)
 	conn2, err := grpc.DialContext(connCtx2, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg8)),
 		grpc.WithBlock(),
 	)
 	connCancel2()
@@ -472,8 +479,9 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 
 		// Try again
 		connCtx3, connCancel3 := context.WithTimeout(ctx, 10*time.Second)
+		tlsCfg9 := requireTLSConfig(t)
 		conn2, err = grpc.DialContext(connCtx3, endpoints[0],
-			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg9)),
 			grpc.WithBlock(),
 		)
 		connCancel3()
@@ -514,8 +522,9 @@ func TestConcurrentFailuresAndWrites(t *testing.T) {
 
 	// Connect to cluster
 	connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
+	tlsCfg10 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg10)),
 		grpc.WithBlock(),
 	)
 	connCancel()

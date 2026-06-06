@@ -16,7 +16,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cache"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/clusterdek"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/crypto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/dynamicsecrets"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/embedding"
@@ -113,7 +112,7 @@ func TestNewClient_HTTPURLAutoDetectsREST(t *testing.T) {
 
 func TestNewClient_HTTPSURLAutoDetectsREST(t *testing.T) {
 	// HTTPS URL should auto-detect REST transport
-	client, err := NewClient("https://localhost:8443", WithInsecure())
+	client, err := NewClient("https://localhost:8443", WithTLSConfig(testTLSConfig()))
 	if err != nil {
 		// Connection errors are expected since server isn't running
 		t.Logf("Expected transport creation, got error (may be connection related): %v", err)
@@ -691,6 +690,15 @@ func (m *mockKMSClientForCoverage) BackendStatus(ctx context.Context) (*kms.Back
 func (m *mockKMSClientForCoverage) UnwrapKey(ctx context.Context, req *kms.UnwrapKeyRequest) (*kms.UnwrapKeyResponse, error) {
 	return nil, nil
 }
+func (m *mockKMSClientForCoverage) SetKeyRotationPolicy(ctx context.Context, req *kms.SetKeyRotationPolicyRequest) (*kms.KeyRotationPolicy, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) GetKeyRotationPolicy(ctx context.Context, keyID string) (*kms.KeyRotationPolicy, error) {
+	return nil, nil
+}
+func (m *mockKMSClientForCoverage) DeleteKeyRotationPolicy(ctx context.Context, keyID string) error {
+	return nil
+}
 
 type mockSecretsClientForCoverage struct{}
 
@@ -1169,36 +1177,6 @@ func (m *mockCertificateClientForCoverage) IsInitialized(ctx context.Context) (b
 	return true, nil
 }
 
-type mockClusterDEKClientForCoverage struct{}
-
-func (m *mockClusterDEKClientForCoverage) InitializeClusterDEK(ctx context.Context, req *clusterdek.InitClusterDEKRequest) (*clusterdek.InitClusterDEKResponse, error) {
-	return nil, nil
-}
-func (m *mockClusterDEKClientForCoverage) GetClusterDEKStatus(ctx context.Context) (*clusterdek.ClusterDEKStatusResponse, error) {
-	return nil, nil
-}
-func (m *mockClusterDEKClientForCoverage) RotateClusterDEK(ctx context.Context, req *clusterdek.RotateClusterDEKRequest) (*clusterdek.RotateClusterDEKResponse, error) {
-	return nil, nil
-}
-func (m *mockClusterDEKClientForCoverage) SyncNodeDEK(ctx context.Context, req *clusterdek.SyncNodeDEKRequest) (*clusterdek.SyncNodeDEKResponse, error) {
-	return nil, nil
-}
-func (m *mockClusterDEKClientForCoverage) GetNodeDEKStatus(ctx context.Context, req *clusterdek.GetNodeDEKStatusRequest) (*clusterdek.GetNodeDEKStatusResponse, error) {
-	return nil, nil
-}
-func (m *mockClusterDEKClientForCoverage) StartReencryption(ctx context.Context, req *clusterdek.StartReencryptionRequest) (*clusterdek.StartReencryptionResponse, error) {
-	return nil, nil
-}
-func (m *mockClusterDEKClientForCoverage) GetReencryptionStatus(ctx context.Context) (*clusterdek.ReencryptionStatusResponse, error) {
-	return nil, nil
-}
-func (m *mockClusterDEKClientForCoverage) CancelReencryption(ctx context.Context) error {
-	return nil
-}
-func (m *mockClusterDEKClientForCoverage) RecoverDEK(ctx context.Context, req *clusterdek.RecoverDEKRequest) (*clusterdek.RecoverDEKResponse, error) {
-	return nil, nil
-}
-
 type mockObjectStorageClientForCoverage struct{}
 
 func (m *mockObjectStorageClientForCoverage) PutObject(ctx context.Context, req *objectstorage.PutObjectRequest) (*objectstorage.PutObjectResponse, error) {
@@ -1410,18 +1388,6 @@ func TestClient_ExtendedAccessors_WriteLockPath(t *testing.T) {
 		}
 	})
 
-	t.Run("ClusterDEK_WriteLockPath", func(t *testing.T) {
-		c := &client{transport: mockT, opts: defaultOptions()}
-		result := c.ClusterDEK()
-		if result == nil {
-			t.Error("expected non-nil ClusterDEK client after write lock initialization")
-		}
-		result2 := c.ClusterDEK()
-		if result != result2 {
-			t.Error("expected same ClusterDEK client instance on repeated calls")
-		}
-	})
-
 	t.Run("ObjectStorage_WriteLockPath", func(t *testing.T) {
 		c := &client{transport: mockT, opts: defaultOptions()}
 		result := c.ObjectStorage()
@@ -1501,7 +1467,6 @@ func TestClient_ExtendedAccessors_Concurrent(t *testing.T) {
 		{"RBAC", func(c *client) interface{} { return c.RBAC() }},
 		{"DynamicSecrets", func(c *client) interface{} { return c.DynamicSecrets() }},
 		{"Certificate", func(c *client) interface{} { return c.Certificate() }},
-		{"ClusterDEK", func(c *client) interface{} { return c.ClusterDEK() }},
 		{"ObjectStorage", func(c *client) interface{} { return c.ObjectStorage() }},
 		{"ParameterStore", func(c *client) interface{} { return c.ParameterStore() }},
 		{"Embedding", func(c *client) interface{} { return c.Embedding() }},
@@ -1568,14 +1533,16 @@ func TestOptionFunctions(t *testing.T) {
 		}
 	})
 
-	t.Run("WithInsecure_SetsInsecureFlag", func(t *testing.T) {
+	t.Run("WithInsecure_IsBanned", func(t *testing.T) {
+		// Per QuicBaaS FedRAMP policy, WithInsecure() must refuse and
+		// MUST NOT mark the client as insecure.
 		opts := defaultOptions()
 		err := WithInsecure()(opts)
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
+		if err == nil {
+			t.Fatal("WithInsecure must return an error (banned by policy)")
 		}
-		if !opts.insecure {
-			t.Error("expected insecure to be true")
+		if opts.insecure {
+			t.Error("WithInsecure must NOT set insecure=true")
 		}
 	})
 
@@ -1889,13 +1856,6 @@ func TestNewClientFunctions(t *testing.T) {
 		result := newCertificateClient(mockT)
 		if result == nil {
 			t.Error("newCertificateClient should return non-nil client")
-		}
-	})
-
-	t.Run("newClusterDEKClient", func(t *testing.T) {
-		result := newClusterDEKClient(mockT)
-		if result == nil {
-			t.Error("newClusterDEKClient should return non-nil client")
 		}
 	})
 

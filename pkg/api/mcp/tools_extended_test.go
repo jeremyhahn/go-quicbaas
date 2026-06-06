@@ -299,7 +299,7 @@ func TestExecuteUserCreate_Error(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	reg := NewToolRegistry(svc, log)
 
-	_, err := reg.ExecuteTool(context.Background(), "quicbaas_user_create", map[string]interface{}{
+	_, err := reg.ExecuteTool(context.Background(), "qrdb_user_create", map[string]interface{}{
 		"username": "testuser",
 		"password": "password123",
 	})
@@ -323,7 +323,7 @@ func TestExecuteRoleCreate_Error(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	reg := NewToolRegistry(svc, log)
 
-	_, err := reg.ExecuteTool(context.Background(), "quicbaas_role_create", map[string]interface{}{
+	_, err := reg.ExecuteTool(context.Background(), "qrdb_role_create", map[string]interface{}{
 		"roleName":    "admin",
 		"permissions": []interface{}{"read", "write"},
 	})

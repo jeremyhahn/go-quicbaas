@@ -27,12 +27,12 @@ import (
 // fakeSFTPClient implements sftpClient for unit tests. It keeps every
 // uploaded file in memory so assertions can verify exact bytes.
 type fakeSFTPClient struct {
-	mu       sync.Mutex
-	mkdirs   []string
-	created  map[string]*fakeSFTPFile
-	removed  []string
-	chmods   map[string]os.FileMode
-	failMkdir bool
+	mu         sync.Mutex
+	mkdirs     []string
+	created    map[string]*fakeSFTPFile
+	removed    []string
+	chmods     map[string]os.FileMode
+	failMkdir  bool
 	failCreate bool
 	failChmod  bool
 	failRemove bool

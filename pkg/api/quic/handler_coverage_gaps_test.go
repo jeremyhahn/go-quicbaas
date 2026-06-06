@@ -29,7 +29,7 @@ import (
 
 func TestHandleCryptoGenerateHMAC_Success(t *testing.T) {
 	cryptoSvc := &securityTestCryptoService{}
-	handler := NewHandler(&mockService{}, nil, nil, nil, cryptoSvc, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, cryptoSvc, createTestLogger())
 
 	payload, err := EncodePayload(&service.HMACRequest{
 		KeyID:   "hmac-key",
@@ -49,7 +49,7 @@ func TestHandleCryptoGenerateHMAC_Success(t *testing.T) {
 }
 
 func TestHandleCryptoGenerateHMAC_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.HMACRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -63,7 +63,7 @@ func TestHandleCryptoGenerateHMAC_NilService(t *testing.T) {
 
 func TestHandleCryptoGenerateHMAC_DecodeError(t *testing.T) {
 	cryptoSvc := &securityTestCryptoService{}
-	handler := NewHandler(&mockService{}, nil, nil, nil, cryptoSvc, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, cryptoSvc, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpCryptoHMAC,
@@ -76,7 +76,7 @@ func TestHandleCryptoGenerateHMAC_DecodeError(t *testing.T) {
 
 func TestHandleCryptoGenerateHMAC_ServiceError(t *testing.T) {
 	cryptoSvc := &errorCryptoService{}
-	handler := NewHandler(&mockService{}, nil, nil, nil, cryptoSvc, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, cryptoSvc, createTestLogger())
 
 	payload, _ := EncodePayload(&service.HMACRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -90,7 +90,7 @@ func TestHandleCryptoGenerateHMAC_ServiceError(t *testing.T) {
 
 func TestHandleCryptoVerifyHMAC_Success(t *testing.T) {
 	cryptoSvc := &securityTestCryptoService{}
-	handler := NewHandler(&mockService{}, nil, nil, nil, cryptoSvc, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, cryptoSvc, createTestLogger())
 
 	payload, err := EncodePayload(&service.VerifyHMACRequest{
 		KeyID:   "hmac-key",
@@ -111,7 +111,7 @@ func TestHandleCryptoVerifyHMAC_Success(t *testing.T) {
 }
 
 func TestHandleCryptoVerifyHMAC_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.VerifyHMACRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -125,7 +125,7 @@ func TestHandleCryptoVerifyHMAC_NilService(t *testing.T) {
 
 func TestHandleCryptoVerifyHMAC_DecodeError(t *testing.T) {
 	cryptoSvc := &securityTestCryptoService{}
-	handler := NewHandler(&mockService{}, nil, nil, nil, cryptoSvc, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, cryptoSvc, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpCryptoVerifyHMAC,
@@ -138,7 +138,7 @@ func TestHandleCryptoVerifyHMAC_DecodeError(t *testing.T) {
 
 func TestHandleCryptoVerifyHMAC_ServiceError(t *testing.T) {
 	cryptoSvc := &errorCryptoService{}
-	handler := NewHandler(&mockService{}, nil, nil, nil, cryptoSvc, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, cryptoSvc, createTestLogger())
 
 	payload, _ := EncodePayload(&service.VerifyHMACRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -156,7 +156,7 @@ func TestHandleCryptoVerifyHMAC_ServiceError(t *testing.T) {
 
 func TestHandleKMSDEKStartReencryption_Success(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.StartReencryptionRequest{})
 	if err != nil {
@@ -173,7 +173,7 @@ func TestHandleKMSDEKStartReencryption_Success(t *testing.T) {
 }
 
 func TestHandleKMSDEKStartReencryption_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.StartReencryptionRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -187,7 +187,7 @@ func TestHandleKMSDEKStartReencryption_NilService(t *testing.T) {
 
 func TestHandleKMSDEKStartReencryption_DecodeError(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpKMSDEKStartReencryption,
@@ -200,7 +200,7 @@ func TestHandleKMSDEKStartReencryption_DecodeError(t *testing.T) {
 
 func TestHandleKMSDEKStartReencryption_ServiceError(t *testing.T) {
 	kmsSvc := &errorKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.StartReencryptionRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -214,7 +214,7 @@ func TestHandleKMSDEKStartReencryption_ServiceError(t *testing.T) {
 
 func TestHandleKMSDEKGetReencryptProgress_Success(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetReencryptionProgressRequest{})
 	if err != nil {
@@ -231,7 +231,7 @@ func TestHandleKMSDEKGetReencryptProgress_Success(t *testing.T) {
 }
 
 func TestHandleKMSDEKGetReencryptProgress_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetReencryptionProgressRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -245,7 +245,7 @@ func TestHandleKMSDEKGetReencryptProgress_NilService(t *testing.T) {
 
 func TestHandleKMSDEKGetReencryptProgress_DecodeError(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpKMSDEKGetReencryptProgress,
@@ -258,7 +258,7 @@ func TestHandleKMSDEKGetReencryptProgress_DecodeError(t *testing.T) {
 
 func TestHandleKMSDEKGetReencryptProgress_ServiceError(t *testing.T) {
 	kmsSvc := &errorKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetReencryptionProgressRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -276,7 +276,7 @@ func TestHandleKMSDEKGetReencryptProgress_ServiceError(t *testing.T) {
 
 func TestHandleKMSSetKeyPolicy_Success(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.SetKeyPolicyRequest{
 		KeyID: "key-1",
@@ -295,7 +295,7 @@ func TestHandleKMSSetKeyPolicy_Success(t *testing.T) {
 }
 
 func TestHandleKMSSetKeyPolicy_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.SetKeyPolicyRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -309,7 +309,7 @@ func TestHandleKMSSetKeyPolicy_NilService(t *testing.T) {
 
 func TestHandleKMSSetKeyPolicy_DecodeError(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpKMSSetKeyPolicy,
@@ -322,7 +322,7 @@ func TestHandleKMSSetKeyPolicy_DecodeError(t *testing.T) {
 
 func TestHandleKMSSetKeyPolicy_ServiceError(t *testing.T) {
 	kmsSvc := &errorKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.SetKeyPolicyRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -336,7 +336,7 @@ func TestHandleKMSSetKeyPolicy_ServiceError(t *testing.T) {
 
 func TestHandleKMSGetKeyPolicy_Success(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetKeyPolicyRequest{
 		KeyID: "key-1",
@@ -355,7 +355,7 @@ func TestHandleKMSGetKeyPolicy_Success(t *testing.T) {
 }
 
 func TestHandleKMSGetKeyPolicy_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetKeyPolicyRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -369,7 +369,7 @@ func TestHandleKMSGetKeyPolicy_NilService(t *testing.T) {
 
 func TestHandleKMSGetKeyPolicy_DecodeError(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpKMSGetKeyPolicy,
@@ -382,7 +382,7 @@ func TestHandleKMSGetKeyPolicy_DecodeError(t *testing.T) {
 
 func TestHandleKMSGetKeyPolicy_ServiceError(t *testing.T) {
 	kmsSvc := &errorKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetKeyPolicyRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -400,7 +400,7 @@ func TestHandleKMSGetKeyPolicy_ServiceError(t *testing.T) {
 
 func TestHandleKMSGetKeyMetadata_Success(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetKeyMetadataRequest{
 		KeyID: "key-1",
@@ -419,7 +419,7 @@ func TestHandleKMSGetKeyMetadata_Success(t *testing.T) {
 }
 
 func TestHandleKMSGetKeyMetadata_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetKeyMetadataRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -433,7 +433,7 @@ func TestHandleKMSGetKeyMetadata_NilService(t *testing.T) {
 
 func TestHandleKMSGetKeyMetadata_DecodeError(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpKMSGetKeyMetadata,
@@ -446,7 +446,7 @@ func TestHandleKMSGetKeyMetadata_DecodeError(t *testing.T) {
 
 func TestHandleKMSGetKeyMetadata_ServiceError(t *testing.T) {
 	kmsSvc := &errorKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetKeyMetadataRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -460,7 +460,7 @@ func TestHandleKMSGetKeyMetadata_ServiceError(t *testing.T) {
 
 func TestHandleKMSUpdateKeyMetadata_Success(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.UpdateKeyMetadataRequest{
 		KeyID: "key-1",
@@ -479,7 +479,7 @@ func TestHandleKMSUpdateKeyMetadata_Success(t *testing.T) {
 }
 
 func TestHandleKMSUpdateKeyMetadata_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.UpdateKeyMetadataRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -493,7 +493,7 @@ func TestHandleKMSUpdateKeyMetadata_NilService(t *testing.T) {
 
 func TestHandleKMSUpdateKeyMetadata_DecodeError(t *testing.T) {
 	kmsSvc := &securityTestKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpKMSUpdateKeyMetadata,
@@ -506,7 +506,7 @@ func TestHandleKMSUpdateKeyMetadata_DecodeError(t *testing.T) {
 
 func TestHandleKMSUpdateKeyMetadata_ServiceError(t *testing.T) {
 	kmsSvc := &errorKMSService{}
-	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, kmsSvc, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.UpdateKeyMetadataRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -528,7 +528,7 @@ func TestHandleCreateBackup_Success(t *testing.T) {
 			return &service.CreateBackupResponse{BackupID: "backup-1"}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.CreateBackupRequest{})
 	if err != nil {
@@ -545,7 +545,7 @@ func TestHandleCreateBackup_Success(t *testing.T) {
 }
 
 func TestHandleCreateBackup_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.CreateBackupRequest{})
 	resp := handler.handleCreateBackup(context.Background(), &Request{Payload: payload})
@@ -560,7 +560,7 @@ func TestHandleCreateBackup_DecodeError(t *testing.T) {
 			return &service.CreateBackupResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	resp := handler.handleCreateBackup(context.Background(), &Request{Payload: []byte("{bad")})
 	if resp.Status == StatusOK {
@@ -574,7 +574,7 @@ func TestHandleCreateBackup_ServiceError(t *testing.T) {
 			return nil, errors.New("backup failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.CreateBackupRequest{})
 	resp := handler.handleCreateBackup(context.Background(), &Request{Payload: payload})
@@ -595,7 +595,7 @@ func TestHandleTimeSeriesQuery_Success(t *testing.T) {
 			return nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.TimeSeriesQueryRequest{})
 	if err != nil {
@@ -612,7 +612,7 @@ func TestHandleTimeSeriesQuery_Success(t *testing.T) {
 }
 
 func TestHandleTimeSeriesQuery_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.TimeSeriesQueryRequest{})
 	resp := handler.handleTimeSeriesQuery(context.Background(), &Request{Payload: payload})
@@ -628,7 +628,7 @@ func TestHandleTimeSeriesQuery_DecodeError(t *testing.T) {
 			return nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	resp := handler.handleTimeSeriesQuery(context.Background(), &Request{Payload: []byte("{bad")})
 	if resp.Status == StatusOK {
@@ -643,7 +643,7 @@ func TestHandleTimeSeriesQuery_ServiceError(t *testing.T) {
 			return errors.New("query failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.TimeSeriesQueryRequest{})
 	resp := handler.handleTimeSeriesQuery(context.Background(), &Request{Payload: payload})
@@ -658,7 +658,7 @@ func TestHandleTimeSeriesQuery_ServiceError(t *testing.T) {
 
 func TestHandleSecretsGetVersion_Success(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetSecretVersionRequest{
 		SecretID: "secret-test",
@@ -678,7 +678,7 @@ func TestHandleSecretsGetVersion_Success(t *testing.T) {
 }
 
 func TestHandleSecretsGetVersion_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetSecretVersionRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -692,7 +692,7 @@ func TestHandleSecretsGetVersion_NilService(t *testing.T) {
 
 func TestHandleSecretsGetVersion_DecodeError(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpSecretsGetVersion,
@@ -705,7 +705,7 @@ func TestHandleSecretsGetVersion_DecodeError(t *testing.T) {
 
 func TestHandleSecretsGetVersion_ServiceError(t *testing.T) {
 	secretsSvc := &errorSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetSecretVersionRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -719,7 +719,7 @@ func TestHandleSecretsGetVersion_ServiceError(t *testing.T) {
 
 func TestHandleSecretsSetRotation_Success(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.SetRotationPolicyRequest{
 		SecretID: "secret-test",
@@ -738,7 +738,7 @@ func TestHandleSecretsSetRotation_Success(t *testing.T) {
 }
 
 func TestHandleSecretsSetRotation_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.SetRotationPolicyRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -752,7 +752,7 @@ func TestHandleSecretsSetRotation_NilService(t *testing.T) {
 
 func TestHandleSecretsSetRotation_DecodeError(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpSecretsSetRotation,
@@ -765,7 +765,7 @@ func TestHandleSecretsSetRotation_DecodeError(t *testing.T) {
 
 func TestHandleSecretsSetRotation_ServiceError(t *testing.T) {
 	secretsSvc := &errorSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.SetRotationPolicyRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -779,7 +779,7 @@ func TestHandleSecretsSetRotation_ServiceError(t *testing.T) {
 
 func TestHandleSecretsGetRotation_Success(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetRotationPolicyRequest{
 		SecretID: "secret-test",
@@ -798,7 +798,7 @@ func TestHandleSecretsGetRotation_Success(t *testing.T) {
 }
 
 func TestHandleSecretsGetRotation_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetRotationPolicyRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -812,7 +812,7 @@ func TestHandleSecretsGetRotation_NilService(t *testing.T) {
 
 func TestHandleSecretsGetRotation_DecodeError(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpSecretsGetRotation,
@@ -825,7 +825,7 @@ func TestHandleSecretsGetRotation_DecodeError(t *testing.T) {
 
 func TestHandleSecretsGetRotation_ServiceError(t *testing.T) {
 	secretsSvc := &errorSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetRotationPolicyRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -839,7 +839,7 @@ func TestHandleSecretsGetRotation_ServiceError(t *testing.T) {
 
 func TestHandleSecretsUpdateStatus_Success(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.UpdateSecretStatusRequest{
 		SecretID: "secret-test",
@@ -858,7 +858,7 @@ func TestHandleSecretsUpdateStatus_Success(t *testing.T) {
 }
 
 func TestHandleSecretsUpdateStatus_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.UpdateSecretStatusRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -872,7 +872,7 @@ func TestHandleSecretsUpdateStatus_NilService(t *testing.T) {
 
 func TestHandleSecretsUpdateStatus_DecodeError(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpSecretsUpdateStatus,
@@ -885,7 +885,7 @@ func TestHandleSecretsUpdateStatus_DecodeError(t *testing.T) {
 
 func TestHandleSecretsUpdateStatus_ServiceError(t *testing.T) {
 	secretsSvc := &errorSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.UpdateSecretStatusRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -899,7 +899,7 @@ func TestHandleSecretsUpdateStatus_ServiceError(t *testing.T) {
 
 func TestHandleSecretsGetByPrefix_Success(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetSecretsByPrefixRequest{
 		Prefix: "secret/",
@@ -918,7 +918,7 @@ func TestHandleSecretsGetByPrefix_Success(t *testing.T) {
 }
 
 func TestHandleSecretsGetByPrefix_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetSecretsByPrefixRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -932,7 +932,7 @@ func TestHandleSecretsGetByPrefix_NilService(t *testing.T) {
 
 func TestHandleSecretsGetByPrefix_DecodeError(t *testing.T) {
 	secretsSvc := &securityTestSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpSecretsGetByPrefix,
@@ -945,7 +945,7 @@ func TestHandleSecretsGetByPrefix_DecodeError(t *testing.T) {
 
 func TestHandleSecretsGetByPrefix_ServiceError(t *testing.T) {
 	secretsSvc := &errorSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetSecretsByPrefixRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -979,7 +979,7 @@ func (s *watchableSecretsService) WatchSecretsByPrefix(ctx context.Context, req 
 
 func TestHandleSecretsWatch_Success(t *testing.T) {
 	secretsSvc := &watchableSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.WatchSecretsRequest{
 		Prefix: "secret/",
@@ -998,7 +998,7 @@ func TestHandleSecretsWatch_Success(t *testing.T) {
 }
 
 func TestHandleSecretsWatch_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.WatchSecretsRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -1012,7 +1012,7 @@ func TestHandleSecretsWatch_NilService(t *testing.T) {
 
 func TestHandleSecretsWatch_DecodeError(t *testing.T) {
 	secretsSvc := &watchableSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	resp := handler.HandleRequest(context.Background(), &Request{
 		Opcode:  OpSecretsWatch,
@@ -1025,7 +1025,7 @@ func TestHandleSecretsWatch_DecodeError(t *testing.T) {
 
 func TestHandleSecretsWatch_ServiceError(t *testing.T) {
 	secretsSvc := &errorSecretsService{}
-	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, secretsSvc, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.WatchSecretsRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -1047,7 +1047,7 @@ func TestHandleMigrateData_Success(t *testing.T) {
 			return &service.MigrateDataResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.MigrateDataRequest{})
 	if err != nil {
@@ -1061,7 +1061,7 @@ func TestHandleMigrateData_Success(t *testing.T) {
 }
 
 func TestHandleMigrateData_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.MigrateDataRequest{})
 	resp := handler.handleMigrateData(context.Background(), &Request{Payload: payload})
@@ -1076,7 +1076,7 @@ func TestHandleGetMigrationProgress_Success(t *testing.T) {
 			return &service.GetMigrationProgressResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetMigrationProgressRequest{})
 	if err != nil {
@@ -1090,7 +1090,7 @@ func TestHandleGetMigrationProgress_Success(t *testing.T) {
 }
 
 func TestHandleGetMigrationProgress_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetMigrationProgressRequest{})
 	resp := handler.handleGetMigrationProgress(context.Background(), &Request{Payload: payload})
@@ -1105,7 +1105,7 @@ func TestHandleReplaceNode_Success(t *testing.T) {
 			return &service.ReplaceNodeResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.ReplaceNodeRequest{})
 	if err != nil {
@@ -1119,7 +1119,7 @@ func TestHandleReplaceNode_Success(t *testing.T) {
 }
 
 func TestHandleReplaceNode_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.ReplaceNodeRequest{})
 	resp := handler.handleReplaceNode(context.Background(), &Request{Payload: payload})
@@ -1134,7 +1134,7 @@ func TestHandleUpgradeNode_Success(t *testing.T) {
 			return &service.UpgradeNodeResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.UpgradeNodeRequest{})
 	if err != nil {
@@ -1148,7 +1148,7 @@ func TestHandleUpgradeNode_Success(t *testing.T) {
 }
 
 func TestHandleUpgradeNode_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.UpgradeNodeRequest{})
 	resp := handler.handleUpgradeNode(context.Background(), &Request{Payload: payload})
@@ -1163,7 +1163,7 @@ func TestHandleGetUpgradeStatus_Success(t *testing.T) {
 			return &service.GetUpgradeStatusResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetUpgradeStatusRequest{})
 	if err != nil {
@@ -1177,7 +1177,7 @@ func TestHandleGetUpgradeStatus_Success(t *testing.T) {
 }
 
 func TestHandleGetUpgradeStatus_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetUpgradeStatusRequest{})
 	resp := handler.handleGetUpgradeStatus(context.Background(), &Request{Payload: payload})
@@ -1185,22 +1185,9 @@ func TestHandleGetUpgradeStatus_NilService(t *testing.T) {
 		t.Error("expected error with nil service")
 	}
 }
-
-// =============================================================================
-// Handler Option Tests (0% coverage for WithClusterDEKService, WithObjectTransferRegistry)
-// =============================================================================
-
-func TestWithClusterDEKService(t *testing.T) {
-	svc := &mockClusterDEKService{}
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger(), WithClusterDEKService(svc))
-	if handler.clusterDEKService == nil {
-		t.Error("expected clusterDEKService to be set")
-	}
-}
-
 func TestWithObjectTransferRegistry(t *testing.T) {
 	registry := NewObjectTransferRegistry()
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger(), WithObjectTransferRegistry(registry))
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger(), WithObjectTransferRegistry(registry))
 	if handler.objectTransferRegistry == nil {
 		t.Error("expected objectTransferRegistry to be set")
 	}
@@ -1211,7 +1198,7 @@ func TestWithObjectTransferRegistry(t *testing.T) {
 // =============================================================================
 
 func TestHandleGet_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetRequest{EntityType: "test", ID: 1})
 	resp := handler.handleGet(context.Background(), &Request{Payload: payload})
@@ -1226,7 +1213,7 @@ func TestHandleGet_ServiceError(t *testing.T) {
 			return nil, errors.New("get failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetRequest{EntityType: "test", ID: 1})
 	resp := handler.handleGet(context.Background(), &Request{Payload: payload})
@@ -1236,7 +1223,7 @@ func TestHandleGet_ServiceError(t *testing.T) {
 }
 
 func TestHandleDelete_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.DeleteRequest{EntityType: "test", ID: 1})
 	resp := handler.handleDelete(context.Background(), &Request{Payload: payload})
@@ -1251,7 +1238,7 @@ func TestHandleDelete_ServiceError(t *testing.T) {
 			return nil, errors.New("delete failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.DeleteRequest{EntityType: "test", ID: 1})
 	resp := handler.handleDelete(context.Background(), &Request{Payload: payload})
@@ -1261,7 +1248,7 @@ func TestHandleDelete_ServiceError(t *testing.T) {
 }
 
 func TestHandleRebalanceCluster_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.RebalanceClusterRequest{})
 	resp := handler.handleRebalanceCluster(context.Background(), &Request{Payload: payload})
@@ -1276,7 +1263,7 @@ func TestHandleRebalanceCluster_DecodeError(t *testing.T) {
 			return &service.RebalanceClusterResponse{}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	resp := handler.handleRebalanceCluster(context.Background(), &Request{Payload: []byte("{bad")})
 	if resp.Status == StatusOK {
@@ -1290,7 +1277,7 @@ func TestHandleRebalanceCluster_ServiceError(t *testing.T) {
 			return nil, errors.New("rebalance failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.RebalanceClusterRequest{})
 	resp := handler.handleRebalanceCluster(context.Background(), &Request{Payload: payload})
@@ -1300,45 +1287,100 @@ func TestHandleRebalanceCluster_ServiceError(t *testing.T) {
 }
 
 // =============================================================================
-// Seal Handler Error Paths (83.3% -> higher)
+// Barrier / Ceremony Dispatcher Error Paths (replaces legacy Seal tests).
 // =============================================================================
 
-func TestHandleSealInit_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+func TestHandleBarrierInitialize_NilService(t *testing.T) {
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
-	payload, _ := EncodePayload(&service.SealInitRequest{})
+	body, _ := EncodePayload(&barrierInitializeWireRequest{Secret: "pw"})
+	payload := append([]byte{SubOpBarrierInitialize}, body...)
 	resp := handler.HandleRequest(context.Background(), &Request{
-		Opcode:  OpSealInit,
+		Opcode:  OpBarrier,
 		Payload: payload,
 	})
 	if resp.Status == StatusOK {
-		t.Error("expected error with nil seal service")
+		t.Error("expected error with nil barrier service")
 	}
 }
 
-func TestHandleUnseal_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+func TestHandleBarrierUnseal_NilService(t *testing.T) {
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
-	payload, _ := EncodePayload(&service.UnsealRequest{})
+	body, _ := EncodePayload(&barrierUnsealWireRequest{Secret: "pw"})
+	payload := append([]byte{SubOpBarrierUnseal}, body...)
 	resp := handler.HandleRequest(context.Background(), &Request{
-		Opcode:  OpUnseal,
+		Opcode:  OpBarrier,
 		Payload: payload,
 	})
 	if resp.Status == StatusOK {
-		t.Error("expected error with nil seal service")
+		t.Error("expected error with nil barrier service")
 	}
 }
 
-func TestHandleSealRekey_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+func TestHandleBarrierRekey_NilService(t *testing.T) {
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
-	payload, _ := EncodePayload(&service.RekeyRequest{})
+	body, _ := EncodePayload(&barrierRekeyWireRequest{Threshold: 1, Total: 1})
+	payload := append([]byte{SubOpBarrierRekey}, body...)
 	resp := handler.HandleRequest(context.Background(), &Request{
-		Opcode:  OpSealRekey,
+		Opcode:  OpBarrier,
 		Payload: payload,
 	})
 	if resp.Status == StatusOK {
-		t.Error("expected error with nil seal service")
+		t.Error("expected error with nil barrier service")
+	}
+}
+
+func TestHandleCeremonyInitialize_NilService(t *testing.T) {
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
+
+	body, _ := EncodePayload(&ceremonyInitializeWireRequest{SOPin: "1234"})
+	payload := append([]byte{SubOpCeremonyInitialize}, body...)
+	resp := handler.HandleRequest(context.Background(), &Request{
+		Opcode:  OpCeremony,
+		Payload: payload,
+	})
+	if resp.Status == StatusOK {
+		t.Error("expected error with nil ceremony service")
+	}
+}
+
+func TestHandleBarrierDispatch_MissingSubOpcode(t *testing.T) {
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
+	resp := handler.HandleRequest(context.Background(), &Request{Opcode: OpBarrier})
+	if resp.Status == StatusOK {
+		t.Error("expected error for missing barrier sub-opcode")
+	}
+}
+
+func TestHandleCeremonyDispatch_MissingSubOpcode(t *testing.T) {
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
+	resp := handler.HandleRequest(context.Background(), &Request{Opcode: OpCeremony})
+	if resp.Status == StatusOK {
+		t.Error("expected error for missing ceremony sub-opcode")
+	}
+}
+
+func TestHandleBarrierDispatch_UnknownSubOpcode(t *testing.T) {
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
+	resp := handler.HandleRequest(context.Background(), &Request{
+		Opcode:  OpBarrier,
+		Payload: []byte{0xFE},
+	})
+	if resp.Status == StatusOK {
+		t.Error("expected error for unknown barrier sub-opcode")
+	}
+}
+
+func TestHandleCeremonyDispatch_UnknownSubOpcode(t *testing.T) {
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
+	resp := handler.HandleRequest(context.Background(), &Request{
+		Opcode:  OpCeremony,
+		Payload: []byte{0xFE},
+	})
+	if resp.Status == StatusOK {
+		t.Error("expected error for unknown ceremony sub-opcode")
 	}
 }
 
@@ -1347,7 +1389,7 @@ func TestHandleSealRekey_NilService(t *testing.T) {
 // =============================================================================
 
 func TestHandlePut_NilService(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(nil, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.PutRequest{EntityType: "test", ID: 1, Data: []byte("v")})
 	resp := handler.handlePut(context.Background(), &Request{Payload: payload})
@@ -1362,7 +1404,7 @@ func TestHandlePut_ServiceError(t *testing.T) {
 			return nil, errors.New("put failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.PutRequest{EntityType: "test", ID: 1, Data: []byte("v")})
 	resp := handler.handlePut(context.Background(), &Request{Payload: payload})
@@ -1376,7 +1418,7 @@ func TestHandlePut_ServiceError(t *testing.T) {
 // =============================================================================
 
 func TestHandleSecretsStore_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.StoreSecretRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -1389,7 +1431,7 @@ func TestHandleSecretsStore_NilService(t *testing.T) {
 }
 
 func TestHandleSecretsGet_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.GetSecretRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -1402,7 +1444,7 @@ func TestHandleSecretsGet_NilService(t *testing.T) {
 }
 
 func TestHandleSecretsList_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.ListSecretsRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -1415,7 +1457,7 @@ func TestHandleSecretsList_NilService(t *testing.T) {
 }
 
 func TestHandleSecretsDelete_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.DeleteSecretRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -1428,7 +1470,7 @@ func TestHandleSecretsDelete_NilService(t *testing.T) {
 }
 
 func TestHandleSecretsListVersions_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.ListSecretVersionsRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -1441,7 +1483,7 @@ func TestHandleSecretsListVersions_NilService(t *testing.T) {
 }
 
 func TestHandleSecretsRollback_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.RollbackSecretRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{

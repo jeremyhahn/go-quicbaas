@@ -138,7 +138,7 @@ func constructSchedulerRESTBaseURL(addr string) string {
 
 	// Determine scheme based on TLS configuration
 	scheme := "http"
-	if tlsEnabled || tlsSkipVerify {
+	if tlsEnabled {
 		scheme = "https"
 	}
 

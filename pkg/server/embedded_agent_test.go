@@ -447,16 +447,123 @@ func makeNoopLogger() interfaces.Logger {
 
 type noopLogger struct{}
 
-func (n *noopLogger) Debug(_ string, _ ...any)              {}
-func (n *noopLogger) Debugf(_ string, _ ...interface{})    {}
-func (n *noopLogger) Info(_ string, _ ...any)              {}
-func (n *noopLogger) Infof(_ string, _ ...interface{})     {}
-func (n *noopLogger) Warn(_ string, _ ...any)              {}
-func (n *noopLogger) Warnf(_ string, _ ...interface{})     {}
-func (n *noopLogger) Error(_ string, _ ...any)             {}
-func (n *noopLogger) Errorf(_ string, _ ...interface{})    {}
-func (n *noopLogger) Fatal(_ string)                       {}
-func (n *noopLogger) Fatalf(_ string, _ ...interface{})    {}
-func (n *noopLogger) WithField(_ string, _ interface{}) interfaces.Logger  { return n }
+func (n *noopLogger) Debug(_ string, _ ...any)                              {}
+func (n *noopLogger) Debugf(_ string, _ ...interface{})                     {}
+func (n *noopLogger) Info(_ string, _ ...any)                               {}
+func (n *noopLogger) Infof(_ string, _ ...interface{})                      {}
+func (n *noopLogger) Warn(_ string, _ ...any)                               {}
+func (n *noopLogger) Warnf(_ string, _ ...interface{})                      {}
+func (n *noopLogger) Error(_ string, _ ...any)                              {}
+func (n *noopLogger) Errorf(_ string, _ ...interface{})                     {}
+func (n *noopLogger) Fatal(_ string)                                        {}
+func (n *noopLogger) Fatalf(_ string, _ ...interface{})                     {}
+func (n *noopLogger) WithField(_ string, _ interface{}) interfaces.Logger   { return n }
 func (n *noopLogger) WithFields(_ map[string]interface{}) interfaces.Logger { return n }
-func (n *noopLogger) WithError(_ error) interfaces.Logger                  { return n }
+func (n *noopLogger) WithError(_ error) interfaces.Logger                   { return n }
+
+// TestStartEmbeddedAgent_IssuesMTLSIdentityWhenCAPresent drives the
+// mTLS-identity issuance branch of startEmbeddedAgent: when the server has a
+// CA wired, the embedded agent requests an agent certificate and records the
+// cert-issued flag in its fleet metadata. This covers the cert-issuance path
+// that the no-CA happy-path test skips.
+func TestStartEmbeddedAgent_IssuesMTLSIdentityWhenCAPresent(t *testing.T) {
+	t.Parallel()
+
+	srv := withTempServer(t)
+	srv.agentRegistry = orchestration.NewInMemoryAgentRegistry()
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.Server.EmbeddedAgent.Enabled = true
+	srv.config.Server.EmbeddedAgent.Backends = []string{"ollama"}
+	srv.config.Server.EmbeddedAgent.DataDir = t.TempDir()
+
+	err := srv.startEmbeddedAgent()
+	require.NoError(t, err, "embedded agent must start with a CA-issued mTLS identity")
+	defer srv.stopEmbeddedAgent(context.Background())
+
+	agentID := srv.embeddedAgentState.agentID
+	reg, err := srv.agentRegistry.GetAgent(context.Background(), embeddedAgentTenantID, agentID)
+	require.NoError(t, err)
+	assert.Equal(t, "true", reg.Metadata["cert_issued"],
+		"the fleet metadata must record that an mTLS cert was issued from the CA")
+}
+
+// buildEmbeddedAgentBackends constructs the ACP/exec backends for the
+// claude, codex, and opencode kinds in addition to ollama.
+func TestBuildEmbeddedAgentBackends_ACPKinds(t *testing.T) {
+	t.Parallel()
+
+	log := makeNoopLogger()
+	backends, err := buildEmbeddedAgentBackends(
+		[]string{"ollama", "claude", "codex", "opencode"}, "", log)
+	require.NoError(t, err)
+
+	for _, name := range []string{"ollama", "claude", "codex", "opencode"} {
+		if _, ok := backends[name]; !ok {
+			t.Fatalf("expected backend %q to be constructed", name)
+		}
+	}
+}
+
+// TestEmbeddedAgent_StopIsIdempotent covers the already-stopped guard of
+// embeddedAgent.stop: a second stop on the same agent returns nil immediately
+// without re-invoking the spawn server's Stop.
+func TestEmbeddedAgent_StopIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	srv := withTempServer(t)
+	srv.agentRegistry = orchestration.NewInMemoryAgentRegistry()
+	srv.config.Server.EmbeddedAgent.Enabled = true
+	srv.config.Server.EmbeddedAgent.Backends = []string{"ollama"}
+	srv.config.Server.EmbeddedAgent.OllamaURL = "http://127.0.0.1:11434"
+	srv.config.Server.EmbeddedAgent.DataDir = t.TempDir()
+
+	require.NoError(t, srv.startEmbeddedAgent())
+	ea := srv.embeddedAgentState
+	require.NotNil(t, ea)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	require.NoError(t, ea.stop(ctx), "first stop must succeed")
+	// Second stop must take the already-stopped fast path and return nil.
+	require.NoError(t, ea.stop(ctx), "second stop must be an idempotent no-op")
+
+	// Clean up server-level state so Shutdown does not double-stop.
+	srv.embeddedAgentState = nil
+}
+
+// removeErrRegistry embeds an AgentRegistry but makes RemoveAgent fail, so the
+// deregister-error warning branch of stopEmbeddedAgent runs.
+type removeErrRegistry struct{ orchestration.AgentRegistry }
+
+func (removeErrRegistry) RemoveAgent(context.Context, string, string) error {
+	return errors.New("registry deregister refused")
+}
+
+// TestStopEmbeddedAgent_DeregisterErrorTolerated covers the RemoveAgent-error
+// warning branch of stopEmbeddedAgent: a failing fleet deregistration is logged
+// but does not prevent the agent from stopping and the state from clearing.
+func TestStopEmbeddedAgent_DeregisterErrorTolerated(t *testing.T) {
+	t.Parallel()
+
+	srv := withTempServer(t)
+	srv.agentRegistry = orchestration.NewInMemoryAgentRegistry()
+	srv.config.Server.EmbeddedAgent.Enabled = true
+	srv.config.Server.EmbeddedAgent.Backends = []string{"ollama"}
+	srv.config.Server.EmbeddedAgent.OllamaURL = "http://127.0.0.1:11434"
+	srv.config.Server.EmbeddedAgent.DataDir = t.TempDir()
+
+	require.NoError(t, srv.startEmbeddedAgent())
+	require.NotNil(t, srv.embeddedAgentState)
+
+	// Swap in a registry whose RemoveAgent fails so the deregister-warning
+	// branch of stopEmbeddedAgent runs.
+	srv.agentRegistry = removeErrRegistry{srv.agentRegistry}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.stopEmbeddedAgent(ctx)
+
+	require.Nil(t, srv.embeddedAgentState,
+		"embedded agent state must clear even when fleet deregistration fails")
+}

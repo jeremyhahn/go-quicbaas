@@ -18,7 +18,6 @@ package kms
 import (
 	"context"
 	"crypto/elliptic"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -1283,7 +1282,9 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetClusterEndpoints()
 	require.NotEmpty(t, endpoints, "gRPC endpoints must be available for integration tests")
 
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Failed to connect to gRPC endpoint %s", endpoints[0])
 	c.client = client
 
@@ -1471,15 +1472,17 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	require.NoError(t, err, "Unix socket must be available at %s for integration tests", socketPath)
 
 	// Create gRPC connection over unix socket
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	require.NoError(t, err, "Failed to connect to unix socket at %s", socketPath)
 	c.conn = conn
 
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Failed to create gRPC client over unix socket at %s", socketPath)
 	c.client = client
 

@@ -162,28 +162,6 @@ func TestIsKernelCmdlineFIPS_ReturnsBool(t *testing.T) {
 	assert.IsType(t, false, result)
 }
 
-// TestTlsVersionString verifies TLS version string conversion.
-func TestTlsVersionString(t *testing.T) {
-	tests := []struct {
-		version  uint16
-		expected string
-	}{
-		{0x0301, "TLS 1.0"},
-		{0x0302, "TLS 1.1"},
-		{0x0303, "TLS 1.2"},
-		{0x0304, "TLS 1.3"},
-		{0x0000, "Unknown (0x0)"},
-		{0xFFFF, "Unknown (0xffff)"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.expected, func(t *testing.T) {
-			result := tlsVersionString(tt.version)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 // TestGetStatus_FieldConsistency checks that all fields are populated consistently.
 func TestGetStatus_FieldConsistency(t *testing.T) {
 	status := GetStatus()

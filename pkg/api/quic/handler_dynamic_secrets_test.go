@@ -251,7 +251,7 @@ func createDynamicSecretsTestLogger() *logger.Logger {
 }
 
 func createDynamicSecretsTestHandler(svc service.DynamicSecretsService) *Handler {
-	return NewHandler(&mockService{}, nil, nil, nil, nil, createDynamicSecretsTestLogger(), WithDynamicSecretsService(svc))
+	return NewHandler(&mockService{}, nil, nil, nil, createDynamicSecretsTestLogger(), WithDynamicSecretsService(svc))
 }
 
 // =============================================================================

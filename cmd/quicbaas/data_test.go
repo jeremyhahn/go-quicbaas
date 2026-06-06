@@ -124,7 +124,6 @@ func (m *mockSDKClient) Crypto() quicbaas.CryptoClient                         {
 func (m *mockSDKClient) RBAC() quicbaas.RBACClient                             { return nil }
 func (m *mockSDKClient) DynamicSecrets() quicbaas.DynamicSecretsClient         { return nil }
 func (m *mockSDKClient) Certificate() quicbaas.CertificateClient               { return nil }
-func (m *mockSDKClient) ClusterDEK() quicbaas.ClusterDEKClient                 { return nil }
 func (m *mockSDKClient) DEK() quicbaas.DEKClient                               { return nil }
 func (m *mockSDKClient) IAM() quicbaas.IAMClient                               { return nil }
 func (m *mockSDKClient) Vector() quicbaas.VectorClient                         { return nil }
@@ -2143,157 +2142,6 @@ func TestTransactionCommandEdgeCases(t *testing.T) {
 	})
 }
 
-// TestRoleCommandEdgeCases tests role command edge cases
-func TestRoleCommandEdgeCases(t *testing.T) {
-	t.Run("role create missing args", func(t *testing.T) {
-		cmd := newRoleCreateCommand()
-		cmd.SetArgs([]string{})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg(s)")
-	})
-
-	t.Run("role delete missing args", func(t *testing.T) {
-		cmd := newRoleDeleteCommand()
-		cmd.SetArgs([]string{})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg(s)")
-	})
-
-	t.Run("role list command", func(t *testing.T) {
-		cmd := newRoleListCommand()
-		cmd.SetArgs([]string{"--output", "json"})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		// Should fail to connect to server
-		assert.Error(t, err)
-	})
-
-	t.Run("role show missing args", func(t *testing.T) {
-		cmd := newRoleShowCommand()
-		cmd.SetArgs([]string{})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg(s)")
-	})
-
-	t.Run("role assign missing args", func(t *testing.T) {
-		cmd := newRoleAssignCommand()
-		cmd.SetArgs([]string{})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 2 arg(s)")
-	})
-
-	t.Run("role unassign missing args", func(t *testing.T) {
-		cmd := newRoleUnassignCommand()
-		cmd.SetArgs([]string{})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 2 arg(s)")
-	})
-
-	// Note: Permission commands (grant, revoke, list) not yet implemented
-}
-
-// TestUserCommandEdgeCases tests user command edge cases
-func TestUserCommandEdgeCases(t *testing.T) {
-	t.Run("user create missing args", func(t *testing.T) {
-		cmd := newUserCreateCommand()
-		cmd.SetArgs([]string{})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg(s)")
-	})
-
-	t.Run("user delete missing args", func(t *testing.T) {
-		cmd := newUserDeleteCommand()
-		cmd.SetArgs([]string{})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg(s)")
-	})
-
-	t.Run("user list command", func(t *testing.T) {
-		cmd := newUserListCommand()
-		cmd.SetArgs([]string{"--output", "json"})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		// Should fail to connect to server
-		assert.Error(t, err)
-	})
-
-	t.Run("user show missing args", func(t *testing.T) {
-		cmd := newUserShowCommand()
-		cmd.SetArgs([]string{})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg(s)")
-	})
-
-	t.Run("user update missing args", func(t *testing.T) {
-		cmd := newUserUpdateCommand()
-		cmd.SetArgs([]string{})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "accepts 1 arg(s)")
-	})
-}
-
 // TestCryptoCommandEdgeCases tests crypto command edge cases
 func TestCryptoCommandEdgeCases(t *testing.T) {
 	t.Run("crypto decrypt missing plaintext arg", func(t *testing.T) {
@@ -2333,22 +2181,6 @@ func TestCryptoCommandEdgeCases(t *testing.T) {
 			"--signature", "test-signature",
 			"--key-id", "test-key",
 		})
-
-		var buf bytes.Buffer
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-
-		err := cmd.Execute()
-		// Should fail to connect
-		assert.Error(t, err)
-	})
-}
-
-// TestSealCommandEdgeCases tests seal command edge cases
-func TestSealCommandEdgeCases(t *testing.T) {
-	t.Run("seal command", func(t *testing.T) {
-		cmd := newSealSealCommand()
-		cmd.SetArgs([]string{})
 
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
@@ -2516,11 +2348,9 @@ func TestCommandHelpOutput(t *testing.T) {
 		{"backup", newBackupCommands},
 		{"cluster", newClusterCommands},
 		{"kms", newKMSCommand},
-		{"seal", newSealCommand},
+		{"barrier", newBarrierCommand},
 		{"secrets", newSecretsCommand},
 		{"transaction", newTransactionCommand},
-		{"user", newUserCommand},
-		{"role", newRoleCommand},
 	}
 
 	for _, tc := range commands {
@@ -2540,5 +2370,3 @@ func TestCommandHelpOutput(t *testing.T) {
 		})
 	}
 }
-
-

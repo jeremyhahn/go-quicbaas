@@ -413,7 +413,7 @@ func TestIsEmbeddingTool(t *testing.T) {
 		{"quicbaas_embedding_set_default", true},
 		{"quicbaas_embedding_cache_stats", true},
 		{"quicbaas_embedding_cache_clear", true},
-		{"quicbaas_put", false},
+		{"qrdb_put", false},
 		{"unknown_tool", false},
 	}
 

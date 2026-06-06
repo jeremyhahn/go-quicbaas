@@ -15,8 +15,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -65,18 +67,6 @@ type BarrierServicer interface {
 	// BarrierUnsealWithShares unseals the barrier using a complete set of
 	// Shamir shares in a single call.
 	BarrierUnsealWithShares(ctx context.Context, shares []string) error
-
-	// BarrierShamirListShares returns metadata about persisted shares.
-	BarrierShamirListShares(ctx context.Context) (*ShamirSharesInfo, error)
-
-	// BarrierShamirDeleteShare removes a single share by index.
-	BarrierShamirDeleteShare(ctx context.Context, index int) error
-
-	// BarrierShamirDeleteAllShares removes all persisted shares.
-	BarrierShamirDeleteAllShares(ctx context.Context) error
-
-	// BarrierShamirVerify validates the consistency of persisted shares.
-	BarrierShamirVerify(ctx context.Context) error
 
 	// BarrierRekey generates new Shamir shares for the existing root key.
 	BarrierRekey(ctx context.Context, threshold, total int) (*ShamirInitInfo, error)
@@ -139,18 +129,6 @@ type UnsealShareProgress struct {
 
 	// Complete is true when the quorum threshold has been met.
 	Complete bool
-}
-
-// ShamirSharesInfo describes the persisted Shamir share state.
-type ShamirSharesInfo struct {
-	// Count is the number of shares currently in storage.
-	Count int
-
-	// Threshold is the minimum shares required for reconstruction.
-	Threshold int
-
-	// Total is the total shares generated during initialisation.
-	Total int
 }
 
 // RecoveryKeysInfo contains the output of recovery key generation.
@@ -230,12 +208,48 @@ func (s *BarrierService) BarrierStatus(ctx context.Context) (*BarrierStatusInfo,
 	return info, nil
 }
 
-// BarrierInitialize initialises the barrier with a passphrase.
+// BarrierInitialize initialises the barrier with a passphrase. For
+// hardware-backed and cloud KMS strategies the daemon auto-initialises the
+// barrier on first boot, so a subsequent explicit init call from the CLI is
+// idempotent — ErrAlreadyInitialized is treated as success rather than
+// surfaced as an error to the caller.
 func (s *BarrierService) BarrierInitialize(ctx context.Context, secret string) error {
 	if s.client == nil {
 		return &BarrierServiceMissingError{}
 	}
-	return s.client.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{Secret: secret})
+	if err := s.client.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{Secret: secret}); err != nil {
+		if isAlreadyInitializedError(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// isAlreadyInitializedError reports whether err indicates a barrier that was
+// already initialized. It covers both the direct error value (embedded
+// transport) and gRPC status errors that wrap the message (network
+// transports).
+func isAlreadyInitializedError(err error) bool {
+	if errors.Is(err, qrdbsdk.ErrAlreadyInitialized) {
+		return true
+	}
+	// gRPC transport wraps the error in a status; check the message.
+	return err != nil && len(err.Error()) > 0 &&
+		containsAlreadyInitializedMsg(err.Error())
+}
+
+// containsAlreadyInitializedMsg returns true when msg contains the canonical
+// qrdb "barrier already initialized" diagnostic. The substr is stable; the
+// seal package documents it as part of ErrAlreadyInitialized.
+func containsAlreadyInitializedMsg(msg string) bool {
+	const marker = "barrier already initialized"
+	for i := 0; i+len(marker) <= len(msg); i++ {
+		if msg[i:i+len(marker)] == marker {
+			return true
+		}
+	}
+	return false
 }
 
 // BarrierUnseal unseals the barrier with a passphrase.
@@ -296,46 +310,6 @@ func (s *BarrierService) BarrierUnsealWithShares(ctx context.Context, shares []s
 		return &BarrierServiceMissingError{}
 	}
 	return s.client.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{Shares: shares})
-}
-
-// BarrierShamirListShares returns metadata about persisted shares.
-func (s *BarrierService) BarrierShamirListShares(ctx context.Context) (*ShamirSharesInfo, error) {
-	if s.client == nil {
-		return nil, &BarrierServiceMissingError{}
-	}
-	resp, err := s.client.BarrierShamirListShares(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &ShamirSharesInfo{
-		Count:     resp.Count,
-		Threshold: resp.Threshold,
-		Total:     resp.Total,
-	}, nil
-}
-
-// BarrierShamirDeleteShare removes a single share by index.
-func (s *BarrierService) BarrierShamirDeleteShare(ctx context.Context, index int) error {
-	if s.client == nil {
-		return &BarrierServiceMissingError{}
-	}
-	return s.client.BarrierShamirDeleteShare(ctx, &transport.BarrierShamirDeleteShareRequest{Index: index})
-}
-
-// BarrierShamirDeleteAllShares removes all persisted shares.
-func (s *BarrierService) BarrierShamirDeleteAllShares(ctx context.Context) error {
-	if s.client == nil {
-		return &BarrierServiceMissingError{}
-	}
-	return s.client.BarrierShamirDeleteAllShares(ctx)
-}
-
-// BarrierShamirVerify validates persisted share consistency.
-func (s *BarrierService) BarrierShamirVerify(ctx context.Context) error {
-	if s.client == nil {
-		return &BarrierServiceMissingError{}
-	}
-	return s.client.BarrierShamirVerify(ctx)
 }
 
 // BarrierRekey generates new Shamir shares for the existing root key.

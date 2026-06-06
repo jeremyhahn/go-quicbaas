@@ -203,6 +203,36 @@ seal:
 - Check auto-unseal backend status
 - Manual unseal as temporary measure
 
+## Hardware / Cloud Seal Strategy Injection
+
+QuicBaaS does not implement any seal crypto. Hardware/cloud sealing strategies
+are owned by **go-xkms** and injected into the embedded go-qrdb engine through a
+single seam: `XKMSCryptoOptions` (pkg/server/crypto_options.go) builds the
+`StrategyRegistry`/`PINBackend`/`FactorRegistry` server options, and the node
+builder applies the active strategy via `qrdbnode.WithSealStrategy(...)` inside
+`buildNodeSealSubsystem`. The thin per-backend injectors live in
+`pkg/server/seal_factory_*.go` (awskms, gcpkms, azurekv, vault, **pkcs11**,
+**tpm2**) — each constructs the go-xkms backend from operator config and wraps it
+with the canonical `xkmssdk.New<Backend>Strategy(...)`. No HSM/TPM crypto is
+reimplemented here, and the go-xkms **xkey** sealed-blob services (a separate
+desktop-agent domain) are never used by the barrier.
+
+## Strategy Integration Test Coverage
+
+All hardware/cloud seal strategies are exercised by real barrier
+init→seal→unseal round-trips against emulators/HSM (no fakes, no skips):
+
+| Strategy | Emulator/HSM | Test | Make target |
+|---|---|---|---|
+| `awskms` | LocalStack KMS | `TestAWSKMSSealRoundTrip` | `make integration-test-seal` |
+| `vault` | Vault dev (Transit) | `TestVaultSealRoundTrip` | `make integration-test-seal` |
+| `tpm2` | swtpm (TCP) | `TestTPM2SealRoundTrip` | `make integration-test-seal-hardware` |
+| `pkcs11` | SoftHSM2 | `TestPKCS11SealRoundTrip` | `make integration-test-seal-hardware` |
+
+The software (`passphrase`), `shamir`, and `none` strategies are covered by the
+CLI barrier suite. Per-tenant barriers may select any of these strategies via
+`TenantBarrierInitWithStrategy` (see [multi-tenancy.md](multi-tenancy.md)).
+
 ## See Also
 
 - [Cluster DEK](cluster-dek.md) - Cluster encryption key management

@@ -54,7 +54,7 @@ func (r *ToolRegistry) registerTimeSeriesTools() {
 	// Write Operations
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_ts_write_point",
+		Name:        "qrdb_ts_write_point",
 		Description: "Write a single data point to the time series database",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -81,7 +81,7 @@ func (r *ToolRegistry) registerTimeSeriesTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_ts_write_batch",
+		Name:        "qrdb_ts_write_batch",
 		Description: "Write multiple data points atomically in a single operation for better throughput",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -98,7 +98,7 @@ func (r *ToolRegistry) registerTimeSeriesTools() {
 	// Query Operations
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_ts_query",
+		Name:        "qrdb_ts_query",
 		Description: "Query time series data with optional aggregation, downsampling, and grouping",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -148,7 +148,7 @@ func (r *ToolRegistry) registerTimeSeriesTools() {
 	// Delete Operations
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_ts_delete_series",
+		Name:        "qrdb_ts_delete_series",
 		Description: "Delete a time series or specific data points within a time range",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -177,7 +177,7 @@ func (r *ToolRegistry) registerTimeSeriesTools() {
 	// Retention Policy Operations
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_ts_get_retention_policy",
+		Name:        "qrdb_ts_get_retention_policy",
 		Description: "Retrieve the retention policy for a specific metric",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -192,7 +192,7 @@ func (r *ToolRegistry) registerTimeSeriesTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_ts_set_retention_policy",
+		Name:        "qrdb_ts_set_retention_policy",
 		Description: "Set the retention policy for a metric including duration, resolution, and aggregation",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -222,7 +222,7 @@ func (r *ToolRegistry) registerTimeSeriesTools() {
 	// Metric Operations
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_ts_list_metrics",
+		Name:        "qrdb_ts_list_metrics",
 		Description: "List all available metrics with optional filtering and pagination",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -558,13 +558,13 @@ func (r *ToolRegistry) executeTimeSeriesListMetrics(ctx context.Context, args ma
 // isTimeSeriesTool checks if a tool name is a timeseries tool.
 func isTimeSeriesTool(name string) bool {
 	switch name {
-	case "quicbaas_ts_write_point",
-		"quicbaas_ts_write_batch",
-		"quicbaas_ts_query",
-		"quicbaas_ts_delete_series",
-		"quicbaas_ts_get_retention_policy",
-		"quicbaas_ts_set_retention_policy",
-		"quicbaas_ts_list_metrics":
+	case "qrdb_ts_write_point",
+		"qrdb_ts_write_batch",
+		"qrdb_ts_query",
+		"qrdb_ts_delete_series",
+		"qrdb_ts_get_retention_policy",
+		"qrdb_ts_set_retention_policy",
+		"qrdb_ts_list_metrics":
 		return true
 	default:
 		return false
@@ -575,19 +575,19 @@ func isTimeSeriesTool(name string) bool {
 // appropriate handler.
 func (r *ToolRegistry) executeTimeSeriesTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	switch name {
-	case "quicbaas_ts_write_point":
+	case "qrdb_ts_write_point":
 		return r.executeTimeSeriesWritePoint(ctx, args)
-	case "quicbaas_ts_write_batch":
+	case "qrdb_ts_write_batch":
 		return r.executeTimeSeriesWriteBatch(ctx, args)
-	case "quicbaas_ts_query":
+	case "qrdb_ts_query":
 		return r.executeTimeSeriesQuery(ctx, args)
-	case "quicbaas_ts_delete_series":
+	case "qrdb_ts_delete_series":
 		return r.executeTimeSeriesDeleteSeries(ctx, args)
-	case "quicbaas_ts_get_retention_policy":
+	case "qrdb_ts_get_retention_policy":
 		return r.executeTimeSeriesGetRetentionPolicy(ctx, args)
-	case "quicbaas_ts_set_retention_policy":
+	case "qrdb_ts_set_retention_policy":
 		return r.executeTimeSeriesSetRetentionPolicy(ctx, args)
-	case "quicbaas_ts_list_metrics":
+	case "qrdb_ts_list_metrics":
 		return r.executeTimeSeriesListMetrics(ctx, args)
 	default:
 		return nil, api.NewUnknownToolError(name)

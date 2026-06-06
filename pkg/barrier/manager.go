@@ -26,7 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -115,7 +115,7 @@ var ErrRotateRootKeyUnsupported = errors.New("rotate root key: not supported by 
 // interfaces.BarrierManager surface. All cryptographic state lives on the
 // embedded barrier; Manager performs no key handling of its own.
 type Manager struct {
-	barrier *qrdbseal.StorageBarrier
+	barrier *qrdbsdk.StorageBarrier
 	logger  interfaces.Logger
 	config  *Config
 	version atomic.Uint64
@@ -126,7 +126,7 @@ type Manager struct {
 // because seal/unseal operations are security-sensitive and must always
 // emit operator-visible audit messages.
 func NewManager(
-	barrier *qrdbseal.StorageBarrier,
+	barrier *qrdbsdk.StorageBarrier,
 	config *Config,
 	logger interfaces.Logger,
 ) (*Manager, error) {
@@ -149,7 +149,7 @@ func NewManager(
 // SystemBarrier returns the underlying StorageBarrier so that the lifecycle
 // layer can register tenant barriers against the same root. Callers must
 // not hold the returned pointer past the manager's lifetime.
-func (m *Manager) SystemBarrier() *qrdbseal.StorageBarrier {
+func (m *Manager) SystemBarrier() *qrdbsdk.StorageBarrier {
 	return m.barrier
 }
 
@@ -192,12 +192,12 @@ func (m *Manager) Initialize(ctx context.Context, shares, threshold int) (interf
 		shares = m.config.TotalShares
 	}
 
-	m.barrier.SetShamirConfig(&qrdbseal.ShamirConfig{
+	m.barrier.SetShamirConfig(&qrdbsdk.ShamirConfig{
 		Threshold:   threshold,
 		TotalShares: shares,
 	})
 
-	result, err := m.barrier.InitializeShamir(ctx, qrdbseal.Credentials{})
+	result, err := m.barrier.InitializeShamir(ctx, qrdbsdk.Credentials{})
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +306,7 @@ func (m *Manager) GenerateRecoveryKeys(ctx context.Context, threshold, totalKeys
 func (m *Manager) DeleteRecoveryKeys(ctx context.Context) error {
 	m.logger.Warn("Deleting recovery keys")
 	if err := m.barrier.DeleteRecoveryKeys(ctx); err != nil {
-		if errors.Is(err, qrdbseal.ErrSealed) {
+		if errors.Is(err, qrdbsdk.ErrSealed) {
 			return nil
 		}
 		return err

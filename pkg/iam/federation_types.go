@@ -379,6 +379,38 @@ var (
 		Op:   "iam.federation.state",
 		Err:  &FederationStateExpiredError{},
 	}
+
+	// ErrEmailNotVerified is returned when an email-link/JIT login presents an
+	// IdP token whose email is not verified (account-takeover guard).
+	ErrEmailNotVerified = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.federation.email",
+		Err:  &EmailNotVerifiedError{},
+	}
+
+	// ErrMissingEmailClaim is returned when email linking/JIT is in play but the
+	// IdP token has no email claim.
+	ErrMissingEmailClaim = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.federation.email",
+		Err:  &MissingEmailClaimError{},
+	}
+
+	// ErrEmailDomainNotAllowed is returned when the email's domain is not in the
+	// provider's AllowedEmailDomains allowlist.
+	ErrEmailDomainNotAllowed = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.federation.email",
+		Err:  &EmailDomainNotAllowedError{},
+	}
+
+	// ErrNoRolesResolvable is returned when RequireExplicitRoleMapping is set and
+	// a login resolves to zero roles (fail-closed, no zero-role user).
+	ErrNoRolesResolvable = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.federation.roles",
+		Err:  &NoRolesResolvableError{},
+	}
 )
 
 // ProviderType represents the type of external identity provider.
@@ -430,6 +462,10 @@ type ExternalProvider struct {
 	// UserInfoURL is the OAuth2 userinfo endpoint.
 	UserInfoURL string `json:"userinfo_url,omitempty"`
 
+	// JWKSURL is the explicit JWKS endpoint used to verify ID-token signatures.
+	// When empty it is discovered from the issuer's OIDC discovery document.
+	JWKSURL string `json:"jwks_url,omitempty"`
+
 	// Scopes are the OAuth2 scopes to request.
 	Scopes []string `json:"scopes"`
 
@@ -447,6 +483,19 @@ type ExternalProvider struct {
 
 	// DefaultGroups are assigned to auto-provisioned users.
 	DefaultGroups []string `json:"default_groups,omitempty"`
+
+	// AllowedEmailDomains restricts which IdP-asserted email domains may
+	// authenticate through this provider. When non-empty, a federated login
+	// whose verified email's domain is not in the list (case-insensitive) is
+	// rejected. An empty list allows all domains (back-compatible default).
+	AllowedEmailDomains []string `json:"allowed_email_domains,omitempty"`
+
+	// RequireExplicitRoleMapping, when true, fails the login closed if neither
+	// the GroupRoleMappings produced a match NOR DefaultRoles are configured —
+	// no zero-role user is ever provisioned or linked. When false (the default)
+	// the provider DefaultRoles are used as a fallback, preserving the legacy
+	// behaviour.
+	RequireExplicitRoleMapping bool `json:"require_explicit_role_mapping,omitempty"`
 
 	// Created is the provider creation timestamp.
 	Created time.Time `json:"created"`
@@ -513,6 +562,26 @@ type ClaimMappings struct {
 
 	// Attributes maps custom claims to user attributes.
 	Attributes map[string]string `json:"attributes,omitempty"`
+
+	// GroupRoleMappings maps IdP group/role values (from the Groups/Roles
+	// claims) to tenant-scoped quicbaas roles. When non-empty, role assignment
+	// is fail-closed: a federated login whose IdP values match no entry is
+	// denied. When empty, the provider DefaultRoles are used instead.
+	GroupRoleMappings []GroupRoleMapping `json:"group_role_mappings,omitempty"`
+}
+
+// GroupRoleMapping maps a single IdP group/role value to a tenant role.
+type GroupRoleMapping struct {
+	// Group is the IdP group or role value to match (case-insensitive).
+	Group string `json:"group"`
+
+	// RoleID is the tenant-scoped quicbaas role ID (or name) to assign when the
+	// IdP value matches.
+	RoleID string `json:"role_id"`
+
+	// Prefix, when true, matches any IdP value that starts with Group
+	// (STARTS_WITH) instead of requiring an exact match.
+	Prefix bool `json:"prefix,omitempty"`
 }
 
 // ApplyDefaults applies default values to the claim mappings.
@@ -615,6 +684,12 @@ type FederationCallbackState struct {
 
 	// ExpiresAt is when this state expires.
 	ExpiresAt time.Time `json:"expires_at"`
+
+	// OIDCNonce is the OIDC nonce sent to the IdP in the authorize request. It
+	// is matched against the `nonce` claim in the returned ID token for replay
+	// protection (OIDC core 3.1.2.7). Distinct from Nonce, which is the CSRF
+	// state token.
+	OIDCNonce string `json:"oidc_nonce,omitempty"`
 
 	// CodeVerifier is the PKCE code verifier (optional, for PKCE flow).
 	CodeVerifier string `json:"code_verifier,omitempty"`

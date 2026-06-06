@@ -17,6 +17,7 @@ import (
 	"context"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -24,6 +25,21 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
+
+// Compile-time assertion that the QuicBaaS gRPC Server satisfies the generated
+// CertificateService server interface. The certificate handler methods live on
+// the same *Server that backs the QuicBaaS facade, so registering the service
+// requires no separate backing type.
+var _ pb.CertificateServiceServer = (*Server)(nil)
+
+// RegisterCertificateServiceServer registers the CertificateService handlers
+// with a gRPC server. The handlers are implemented directly on *Server and
+// delegate to the QuicBaaS service's Certificate() sub-service, which composes
+// the xkms TrustedCA. This keeps the gRPC certificate surface symmetric with
+// the REST /api/v1/ca routes and the QUIC/MCP/Unix certificate transports.
+func RegisterCertificateServiceServer(server *grpc.Server, srv *Server) {
+	pb.RegisterCertificateServiceServer(server, srv)
+}
 
 // IssueCertificate generates a new X.509 certificate with the specified parameters.
 func (s *Server) IssueCertificate(ctx context.Context, req *pb.IssueCertificateRequest) (*pb.IssueCertificateResponse, error) {

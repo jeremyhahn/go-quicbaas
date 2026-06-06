@@ -17,12 +17,13 @@ package agents
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 const (
@@ -79,12 +80,7 @@ func TestMain(m *testing.M) {
 // waitForService polls the given URL until it responds with HTTP 200 or the
 // context deadline expires. Uses a ticker for polling instead of time.Sleep.
 func waitForService(url string) bool {
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // integration test only
-		},
-	}
+	client := helpers.NewHTTPClient(5 * time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), readyTimeout)
 	defer cancel()

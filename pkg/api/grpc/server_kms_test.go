@@ -857,6 +857,8 @@ func TestSetKeyPolicy(t *testing.T) {
 		errorCode   codes.Code
 	}{
 		{
+			// SetKeyPolicy requires the service layer. Without it the server
+			// returns Unimplemented rather than a silent stub.
 			name: "successful_set_policy",
 			request: &pb.SetKeyPolicyRequest{
 				KeyId: "key-12345",
@@ -868,7 +870,8 @@ func TestSetKeyPolicy(t *testing.T) {
 					RequireMfa:        true,
 				},
 			},
-			expectError: false,
+			expectError: true,
+			errorCode:   codes.Unimplemented,
 		},
 		{
 			name:        "missing_key_id",
@@ -901,7 +904,6 @@ func TestSetKeyPolicy(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				require.NotNil(t, resp)
-				assert.Equal(t, uint64(2), resp.PolicyVersion)
 			}
 		})
 	}

@@ -22,7 +22,6 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 )
 
 // IAM returns the IAM service when IAM is enabled.
@@ -31,19 +30,16 @@ func (s *quicBaaS) IAM() IAMService {
 	if s.iamProvider == nil {
 		return nil
 	}
-	s.mu.RLock()
-	tim := s.tenantIsolationManager
-	s.mu.RUnlock()
 	return &iamServiceWrapper{
-		provider:               s.iamProvider,
-		tenantIsolationManager: tim,
+		provider: s.iamProvider,
 	}
 }
 
 // iamServiceWrapper implements IAMService by delegating to IAMServiceProvider.
+// Tenant barrier lifecycle is owned by qrdb's TenantServicer; this wrapper
+// manages only the BaaS-layer IAM metadata (groups, policies, apps, OIDC, etc.).
 type iamServiceWrapper struct {
-	provider               IAMServiceProvider
-	tenantIsolationManager security.TenantIsolationManager
+	provider IAMServiceProvider
 }
 
 // Compile-time interface verification.
@@ -88,15 +84,10 @@ func (w *iamServiceWrapper) CreateTenant(ctx context.Context, req *CreateTenantR
 		return nil, err
 	}
 
-	// Register the tenant with the isolation layer. In keyspace mode this is a
-	// no-op. In barrier mode it allocates a TenantBarrier inside the registry.
-	if w.tenantIsolationManager != nil {
-		if regErr := w.tenantIsolationManager.RegisterTenant(ctx, tenant.ID); regErr != nil {
-			// Roll back the IAM tenant creation to keep the two stores consistent.
-			_ = tm.DeleteTenant(ctx, tenant.ID)
-			return nil, regErr
-		}
-	}
+	// Barrier lifecycle (TenantBarrier allocation, per-tenant DEK provisioning,
+	// isolation enforcement) is handled entirely by qrdb's TenantServicer,
+	// which is invoked by the embedded qrdb node during tenant creation through
+	// the qrdb SDK's embedded transport. No duplicate barrier work is needed here.
 
 	return &CreateTenantResponse{
 		Tenant:    tenant,
@@ -166,11 +157,8 @@ func (w *iamServiceWrapper) DeleteTenant(ctx context.Context, req *DeleteTenantR
 		return nil, err
 	}
 
-	// Remove the tenant from the isolation layer. Errors are best-effort:
-	// the IAM record is already gone, so we log rather than fail.
-	if w.tenantIsolationManager != nil {
-		_ = w.tenantIsolationManager.UnregisterTenant(ctx, req.ID)
-	}
+	// Barrier deregistration and crypto-shred of tenant DEK are handled by qrdb's
+	// TenantServicer.DeleteTenant via the embedded qrdb node SDK transport.
 
 	return &DeleteTenantResponse{
 		Deleted:   true,

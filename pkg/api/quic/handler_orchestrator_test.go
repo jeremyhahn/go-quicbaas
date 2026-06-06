@@ -318,7 +318,7 @@ func createOrchestratorHandler(agentSvc orchestration.AgentService) *Handler {
 	svc := &mockServiceWithAgent{
 		agentSvc: agentSvc,
 	}
-	return NewHandler(svc, nil, nil, nil, nil, createOrchestratorTestLogger())
+	return NewHandler(svc, nil, nil, nil, createOrchestratorTestLogger())
 }
 
 // buildOrchestratorRequest creates a Request with OpOrchestrator and the given sub-opcode + payload.
@@ -1075,7 +1075,7 @@ func TestHandleOrchestratorInference_NoAgentService(t *testing.T) {
 	// Handler with no agent service.
 	svc := &mockService{}
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	handler := NewHandler(svc, nil, nil, nil, nil, log)
+	handler := NewHandler(svc, nil, nil, nil, log)
 
 	payload, err := EncodePayload(&orchestratorInferenceRequest{
 		Backend: "ollama",

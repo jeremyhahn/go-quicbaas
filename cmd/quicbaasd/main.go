@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -360,8 +361,14 @@ func bindEnvVars() {
 	// because viper cannot parse comma-separated strings to []uint64 or key:value
 	// format to map[string]uint64. These are handled by parseSpecialEnvVars().
 
+	// Server HTTP timeout configuration.
+	_ = viper.BindEnv("server.read_timeout")
+	_ = viper.BindEnv("server.write_timeout")
+	_ = viper.BindEnv("server.idle_timeout")
+
 	// Raft configuration.
 	_ = viper.BindEnv("raft.node_id")
+	_ = viper.BindEnv("raft.deployment_id")
 	_ = viper.BindEnv("raft.raft_address")
 	_ = viper.BindEnv("raft.listen_address")
 	_ = viper.BindEnv("raft.join_addresses")
@@ -379,6 +386,10 @@ func bindEnvVars() {
 	// Security configuration.
 	_ = viper.BindEnv("security.fips_mode")
 	_ = viper.BindEnv("security.tls_enabled")
+	_ = viper.BindEnv("security.tls_cert_file")
+	_ = viper.BindEnv("security.tls_key_file")
+	_ = viper.BindEnv("security.tls_ca_file")
+	_ = viper.BindEnv("security.tls_client_auth")
 
 	// Discovery configuration.
 	_ = viper.BindEnv("discovery.type")
@@ -389,6 +400,24 @@ func bindEnvVars() {
 	_ = viper.BindEnv("kms.enabled")
 	_ = viper.BindEnv("kms.backend")
 	_ = viper.BindEnv("kms.enabled_backends")
+
+	// Seal/barrier configuration. Binding seal.strategy lets an operator
+	// override the barrier strategy persisted by `quicbaasd init` via the
+	// QUICBAAS_SEAL_STRATEGY env var (or a seal.strategy config-file key). When
+	// set, runStart marks cfg.Seal.StrategyExplicit so the override wins over
+	// the data dir's init marker. See pkg/server/init_marker.go.
+	// QUICBAAS_SEAL_PASSPHRASE is handled separately in runDaemon because viper
+	// does not zero secrets — it is read once via os.Getenv and passed directly
+	// to server.WithSealPassphrase so the slice can be zeroed immediately.
+	_ = viper.BindEnv("seal.enabled")
+	_ = viper.BindEnv("seal.strategy")
+	_ = viper.BindEnv("seal.threshold")
+	_ = viper.BindEnv("seal.total_shares")
+
+	// Raft join mode: QUICBAAS_RAFT_JOIN=true signals that this node is
+	// joining an existing cluster rather than bootstrapping a new one.
+	// Used for dynamic membership (node4+ joining a running 3-node cluster).
+	_ = viper.BindEnv("raft.join")
 
 	// Secrets configuration.
 	_ = viper.BindEnv("secrets.enabled")
@@ -420,6 +449,12 @@ func bindEnvVars() {
 	// Orchestration configuration.
 	_ = viper.BindEnv("orchestration.enabled")
 
+	// Ollama service configuration.
+	_ = viper.BindEnv("ollama.enabled")
+	_ = viper.BindEnv("ollama.base_url")
+	_ = viper.BindEnv("ollama.default_chat_model")
+	_ = viper.BindEnv("ollama.default_embedding_model")
+
 	// Embedded agent configuration.
 	_ = viper.BindEnv("server.embedded_agent.enabled")
 	_ = viper.BindEnv("server.embedded_agent.backends")
@@ -432,6 +467,42 @@ func bindEnvVars() {
 // parseSpecialEnvVars parses environment variables that viper doesn't handle automatically.
 // Viper doesn't convert comma-separated strings to []uint64 or key:value format to maps.
 func parseSpecialEnvVars() {
+	// Parse QUICBAAS_SERVER_WRITE_TIMEOUT (duration string, e.g. "45s").
+	// Viper does not automatically parse duration strings from env vars
+	// without an explicit decode hook, so we do it here.
+	if val := os.Getenv("QUICBAAS_SERVER_WRITE_TIMEOUT"); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			cfg.Server.WriteTimeout = d
+		}
+	}
+	if val := os.Getenv("QUICBAAS_SERVER_READ_TIMEOUT"); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			cfg.Server.ReadTimeout = d
+		}
+	}
+	if val := os.Getenv("QUICBAAS_SERVER_IDLE_TIMEOUT"); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			cfg.Server.IdleTimeout = d
+		}
+	}
+
+	// Parse QUICBAAS_RAFT_JOIN_ADDRESSES (comma-separated list of peer addresses).
+	// Viper does not automatically split a comma-separated string into a []string
+	// slice during Unmarshal, so we do it here. Entries may be plain "host:port"
+	// or "id=host:port" format; buildClusterMembers filters for the "id=" prefix.
+	if joinEnv := os.Getenv("QUICBAAS_RAFT_JOIN_ADDRESSES"); joinEnv != "" {
+		var addrs []string
+		for _, a := range strings.Split(joinEnv, ",") {
+			a = strings.TrimSpace(a)
+			if a != "" {
+				addrs = append(addrs, a)
+			}
+		}
+		if len(addrs) > 0 {
+			cfg.Raft.JoinAddresses = addrs
+		}
+	}
+
 	// Parse QUICBAAS_SERVER_SHARDS (comma-separated list of shard IDs).
 	if shardsEnv := os.Getenv("QUICBAAS_SERVER_SHARDS"); shardsEnv != "" {
 		parts := strings.Split(shardsEnv, ",")
@@ -508,7 +579,20 @@ func runStart(cmd *cobra.Command, args []string) error {
 	cfg.Server.Mode = config.ServerModeStandalone
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
+	applySealOverride()
 	return runDaemon("local")
+}
+
+// applySealOverride records whether the operator explicitly supplied a seal
+// strategy via config file or environment. When viper reports seal.strategy as
+// set, cfg.Seal.StrategyExplicit is flipped on so the configured strategy wins
+// over any barrier strategy persisted by `quicbaasd init` in the data dir
+// (resolveBarrierStrategy precedence). When unset, the persisted init strategy
+// remains authoritative for an already-initialised data dir.
+func applySealOverride() {
+	if viper.IsSet("seal.strategy") {
+		cfg.Seal.StrategyExplicit = true
+	}
 }
 
 // runNode handles the 'node' command - multi-node Raft cluster.
@@ -533,6 +617,7 @@ func runNode(cmd *cobra.Command, args []string) error {
 		cfg.Discovery.StaticPeers = strings.Split(joinAddresses, ",")
 	}
 
+	applySealOverride()
 	return runDaemon("node")
 }
 
@@ -548,6 +633,7 @@ func runCluster(cmd *cobra.Command, args []string) error {
 	// Single-node Raft cluster doesn't need discovery.
 	cfg.Discovery.Enabled = false
 
+	applySealOverride()
 	return runDaemon("cluster")
 }
 
@@ -683,8 +769,25 @@ func runDaemon(modeName string) error {
 		return err
 	}
 
-	// Create server instance.
-	srv, err := server.NewServer(cfg)
+	// Collect optional server construction options.
+	var srvOpts []server.ServerOption
+
+	// When QUICBAAS_SEAL_PASSPHRASE is set and seal is enabled, inject the
+	// passphrase so the node auto-initialises and unseals on startup. The
+	// passphrase byte slice is zeroed after the server is fully constructed
+	// (not before — the WithSealPassphrase option closure holds a reference to
+	// the same underlying array, so it must remain valid until NewServer returns).
+	// This is the correct injection point for containerised / CI deployments
+	// where the passphrase is supplied via the environment rather than an
+	// interactive `quicbaasd barrier unseal` call.
+	sealPassphrase := os.Getenv("QUICBAAS_SEAL_PASSPHRASE")
+	if sealPassphrase != "" && cfg.Seal.Enabled {
+		srvOpts = append(srvOpts, server.WithSealPassphrase([]byte(sealPassphrase)))
+	}
+
+	// Create server instance. The server's node builder zeros the passphrase
+	// slice after consuming it (inside initStandaloneQRDBNode/initClusteredQRDBNode).
+	srv, err := server.NewServer(cfg, srvOpts...)
 	if err != nil {
 		log.WithError(err).Error("Failed to create server")
 		return err
@@ -718,6 +821,9 @@ func runDaemon(modeName string) error {
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.WithError(err).Error("Shutdown error")
+		// Flush coverage even on a failed shutdown so the integration-coverage
+		// pipeline still captures the daemon-boot profile (no-op in production).
+		flushCoverage()
 		return err
 	}
 
@@ -725,6 +831,10 @@ func runDaemon(modeName string) error {
 	if cfg.Server.Unix.Enabled && cfg.Server.Unix.Socket != "" {
 		_ = os.Remove(cfg.Server.Unix.Socket)
 	}
+
+	// Flush the Go coverage profile to GOCOVERDIR (no-op in production builds).
+	// Done after Shutdown so the shutdown code paths are included in the profile.
+	flushCoverage()
 
 	log.Info("QuicBaaS daemon shutdown complete")
 	return nil
@@ -767,6 +877,10 @@ func main() {
 	// every Automate The Things daemon leaves no plaintext key
 	// material resident across exit.
 	secure.CatchInterrupt()
+	// In coverage builds, re-register the signal handler so the Go coverage
+	// profile is flushed to GOCOVERDIR before the secure-wipe exit runs on
+	// SIGINT/SIGTERM. No-op in production builds.
+	setupCoverageSignalHook()
 	defer func() {
 		if err := secure.Purge(); err != nil {
 			fmt.Fprintf(os.Stderr, "quicbaasd: secure.Purge: %v\n", err)

@@ -602,17 +602,7 @@ func (c *restProtocolClient) Name() string { return "REST" }
 
 func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	c.endpoint = getRESTEndpoint()
-	c.client = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.client = helpers.NewHTTPClient(30 * time.Second)
 
 	// Verify endpoint is reachable
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
@@ -943,11 +933,11 @@ func (c *quicProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	addr := endpoints[0]
 
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1136,10 +1126,16 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 		return &qberrors.WrappedMessageError{Message: "unix socket not available at " + socketPath, Cause: err}
 	}
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
+	tlsCfg.ServerName = "localhost"
+
 	// Create gRPC connection over unix socket
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
@@ -1245,17 +1241,7 @@ func (c *mcpProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.endpoint = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 	c.nextID = 1
 
 	// Verify MCP endpoint is reachable via initialize

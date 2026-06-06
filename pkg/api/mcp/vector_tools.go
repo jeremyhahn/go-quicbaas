@@ -23,7 +23,7 @@ var (
 
 	// UpsertVectorTool creates or updates a single vector.
 	UpsertVectorTool = Tool{
-		Name:        "quicbaas_vector_upsert",
+		Name:        "qrdb_vector_upsert",
 		Description: "Insert or update a vector in a namespace with optional metadata",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -65,7 +65,7 @@ var (
 
 	// BatchUpsertVectorsTool creates or updates multiple vectors atomically.
 	BatchUpsertVectorsTool = Tool{
-		Name:        "quicbaas_vector_batch_upsert",
+		Name:        "qrdb_vector_batch_upsert",
 		Description: "Batch upsert multiple vectors atomically - all succeed or all fail",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -103,7 +103,7 @@ var (
 
 	// GetVectorTool retrieves a vector by ID.
 	GetVectorTool = Tool{
-		Name:        "quicbaas_vector_get",
+		Name:        "qrdb_vector_get",
 		Description: "Retrieve a vector by ID with optional metadata and vector data",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -142,7 +142,7 @@ var (
 
 	// DeleteVectorTool removes a vector by ID.
 	DeleteVectorTool = Tool{
-		Name:        "quicbaas_vector_delete",
+		Name:        "qrdb_vector_delete",
 		Description: "Delete a vector by ID (idempotent operation)",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -175,7 +175,7 @@ var (
 
 	// UpdateMetadataTool updates vector metadata.
 	UpdateMetadataTool = Tool{
-		Name:        "quicbaas_vector_update_metadata",
+		Name:        "qrdb_vector_update_metadata",
 		Description: "Update metadata for an existing vector",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -207,7 +207,7 @@ var (
 
 	// BatchDeleteVectorsTool removes multiple vectors atomically.
 	BatchDeleteVectorsTool = Tool{
-		Name:        "quicbaas_vector_batch_delete",
+		Name:        "qrdb_vector_batch_delete",
 		Description: "Batch delete multiple vectors atomically - all succeed or all fail",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -236,7 +236,7 @@ var (
 
 	// SearchSimilarTool performs k-NN similarity search.
 	SearchSimilarTool = Tool{
-		Name:        "quicbaas_vector_search_similar",
+		Name:        "qrdb_vector_search_similar",
 		Description: "Perform k-NN similarity search to find nearest neighbors",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -296,7 +296,7 @@ var (
 
 	// SearchByIDTool performs k-NN search using an existing vector.
 	SearchByIDTool = Tool{
-		Name:        "quicbaas_vector_search_by_id",
+		Name:        "qrdb_vector_search_by_id",
 		Description: "Perform k-NN search using an existing vector as the query",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -361,7 +361,7 @@ var (
 
 	// ListVectorsTool returns all vectors in a namespace.
 	ListVectorsTool = Tool{
-		Name:        "quicbaas_vector_list",
+		Name:        "qrdb_vector_list",
 		Description: "List all vectors in a namespace with pagination support",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -408,7 +408,7 @@ var (
 
 	// ListNamespacesTool lists all vector namespaces.
 	ListNamespacesTool = Tool{
-		Name:        "quicbaas_vector_list_namespaces",
+		Name:        "qrdb_vector_list_namespaces",
 		Description: "List all available vector namespaces with metadata",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -432,7 +432,7 @@ var (
 
 	// CreateNamespaceTool creates a new vector namespace.
 	CreateNamespaceTool = Tool{
-		Name:        "quicbaas_vector_create_namespace",
+		Name:        "qrdb_vector_create_namespace",
 		Description: "Create a new vector namespace with specified configuration",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -524,7 +524,7 @@ var (
 
 	// DeleteNamespaceTool removes a namespace.
 	DeleteNamespaceTool = Tool{
-		Name:        "quicbaas_vector_delete_namespace",
+		Name:        "qrdb_vector_delete_namespace",
 		Description: "Delete a namespace and all its vectors (DESTRUCTIVE - cannot be undone)",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -549,7 +549,7 @@ var (
 
 	// GetNamespaceInfoTool retrieves namespace information.
 	GetNamespaceInfoTool = Tool{
-		Name:        "quicbaas_vector_get_namespace_info",
+		Name:        "qrdb_vector_get_namespace_info",
 		Description: "Get namespace configuration and statistics",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -616,7 +616,7 @@ var (
 
 	// RebuildIndexTool rebuilds the vector index.
 	RebuildIndexTool = Tool{
-		Name:        "quicbaas_vector_rebuild_index",
+		Name:        "qrdb_vector_rebuild_index",
 		Description: "Rebuild the vector index for a namespace to optimize search performance",
 		InputSchema: InputSchema{
 			Type: "object",

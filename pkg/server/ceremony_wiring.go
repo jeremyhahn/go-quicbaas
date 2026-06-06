@@ -14,16 +14,11 @@
 package server
 
 import (
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/ceremony"
-	"github.com/jeremyhahn/go-qrdb/pkg/credentials"
-	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
@@ -47,11 +42,18 @@ func (e *CeremonyWiringError) Unwrap() error {
 	return e.Cause
 }
 
-// CeremonyServices bundles the trio of services produced by the bootstrap
-// ceremony wiring path: a credential service, a ceremony service, and the
-// underlying core ceremony.CeremonyService for callers that need direct
+// CeremonyServices bundles the services produced by the bootstrap ceremony
+// wiring path: a barrier service, credential service, ceremony service, and
+// the underlying core ceremony.CeremonyService for callers that need direct
 // access (e.g., to register a CeremonyCA implementation).
 type CeremonyServices struct {
+	// Barrier is the BarrierServicer backed by the bootstrap ceremony's
+	// in-memory StorageBarrier. It is injected into the BaaS embedded
+	// transport via WithBarrierService so that all five API transports
+	// (REST, gRPC, QUIC, MCP, Unix) share the same barrier instance with
+	// no split-brain state. Always non-nil when err is nil.
+	Barrier BaasBarrierService
+
 	// Credential is the SDK-typed credential service used by the BaaS
 	// embedded transport. Always non-nil when err is nil.
 	Credential qrdbsdk.ServiceCredentialServicer
@@ -63,7 +65,7 @@ type CeremonyServices struct {
 	// Core is the underlying ceremony.CeremonyService instance. Exposed so
 	// later wiring stages (CA, threshold registration, external CA pools)
 	// can reach it without re-constructing the stack.
-	Core *ceremony.CeremonyService
+	Core *qrdbsdk.CeremonyService
 }
 
 // buildBootstrapCeremonyServices constructs the bootstrap ceremony service
@@ -108,8 +110,8 @@ func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir string) (*Cerem
 	// 2. Build a manual credential service. Manual strategy stores SO/User
 	//    PINs in memory with blocking retrieval semantics, matching the
 	//    bootstrap window where the operator submits PINs interactively.
-	credCore, err := credentials.NewCredentialService(
-		&credentials.Config{Strategy: credentials.StrategyManual},
+	credCore, err := qrdbsdk.NewVersionedCredentialService(
+		&qrdbsdk.CredentialConfig{Strategy: qrdbsdk.CredentialStrategyManual},
 		barrier,
 		logger,
 	)
@@ -119,19 +121,21 @@ func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir string) (*Cerem
 
 	// 3. Build the core ceremony service with the bootstrap barrier and
 	//    credential service.
-	ceremonyCfg := &ceremony.CeremonyConfig{
+	ceremonyCfg := &qrdbsdk.CeremonyConfig{
 		DataDir: dataDir,
 	}
-	ceremonyCore, err := ceremony.NewCeremonyService(ceremonyCfg, barrier, credCore, logger)
+	ceremonyCore, err := qrdbsdk.NewCeremonyService(ceremonyCfg, barrier, credCore, logger)
 	if err != nil {
 		return nil, &CeremonyWiringError{Stage: "ceremony-core", Cause: err}
 	}
 
 	// 4. Wrap each in the SDK service-layer types that the BaaS embedded
-	//    transport consumes via baasTransport.ceremonySvc / .credentialSvc.
+	//    transport consumes via baasTransport.barrierSvc / .ceremonySvc /
+	//    .credentialSvc.
 	return &CeremonyServices{
-		Credential: qrdbservice.NewCredentialService(credCore),
-		Ceremony:   qrdbservice.NewCeremonyService(ceremonyCore),
+		Barrier:    qrdbsdk.NewBarrierService(barrier),
+		Credential: qrdbsdk.NewCredentialService(credCore),
+		Ceremony:   qrdbsdk.NewServiceCeremonyService(ceremonyCore),
 		Core:       ceremonyCore,
 	}, nil
 }
@@ -179,35 +183,15 @@ func SOCertSPKIThumbprint(certPEM []byte) (string, error) {
 	if block == nil {
 		return "", ErrSOCertNoPEMBlock
 	}
-	// Parse the cert through x509 indirectly: we use the SDK helper that
-	// exposes RawSubjectPublicKeyInfo. This is preferable to reinventing the
-	// SPKI extraction in two places.
-	spki, err := extractSPKI(block.Bytes)
+	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		return "", &SOCertSPKIThumbprintError{Reason: err.Error()}
 	}
-	if len(spki) == 0 {
+	if len(cert.RawSubjectPublicKeyInfo) == 0 {
 		return "", ErrSOCertNoSPKI
 	}
-	sum := sha256.Sum256(spki)
-	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
-}
-
-// extractSPKI returns the DER-encoded SubjectPublicKeyInfo bytes of the given
-// certificate. It uses the parsed certificate's RawSubjectPublicKeyInfo field
-// (RFC 5280 §4.1.2.7), which avoids re-encoding the public key and is stable
-// across go versions.
-func extractSPKI(certDER []byte) ([]byte, error) {
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, err
-	}
-	if len(cert.RawSubjectPublicKeyInfo) == 0 {
-		return nil, ErrSOCertNoSPKI
-	}
-	// Defensive copy: callers must not mutate the certificate's internal
-	// buffer. The slice is small (~272B for P-256, ~550B for RSA-4096).
-	out := make([]byte, len(cert.RawSubjectPublicKeyInfo))
-	copy(out, cert.RawSubjectPublicKeyInfo)
-	return out, nil
+	// The SPKI-thumbprint algorithm is owned by go-qrdb (the single canonical
+	// implementation for the whole stack), consumed via the SDK; quicbaas must
+	// not reimplement it.
+	return qrdbsdk.ComputeSPKIThumbprint(cert), nil
 }

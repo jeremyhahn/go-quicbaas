@@ -30,13 +30,13 @@ import (
 func buildTestToolRegistry() *ToolRegistry {
 	r := &ToolRegistry{
 		tools: []ToolDefinition{
-			{Name: "quicbaas_health", Description: "Health check"},
+			{Name: "qrdb_health", Description: "Health check"},
 			{Name: "quicbaas_kms_get_key", Description: "Get KMS key"},
 			{Name: "quicbaas_kms_create_key", Description: "Create KMS key"},
 			{Name: "quicbaas_secrets_get", Description: "Get secret"},
 			{Name: "quicbaas_secrets_store", Description: "Store secret"},
-			{Name: "quicbaas_get", Description: "Get KV"},
-			{Name: "quicbaas_put", Description: "Put KV"},
+			{Name: "qrdb_get", Description: "Get KV"},
+			{Name: "qrdb_put", Description: "Put KV"},
 			{Name: "quicbaas_cluster_status", Description: "Cluster status"},
 		},
 	}
@@ -78,7 +78,7 @@ func TestFilterToolsByAuthorization_FullPermissions(t *testing.T) {
 
 	// Verify public tools are in the result
 	names := toolNames(filtered)
-	assert.Contains(t, names, "quicbaas_health")
+	assert.Contains(t, names, "qrdb_health")
 }
 
 func TestFilterToolsByAuthorization_KMSReadOnly(t *testing.T) {
@@ -114,7 +114,7 @@ func TestFilterToolsByAuthorization_KMSReadOnly(t *testing.T) {
 	names := toolNames(filtered)
 
 	// Public tools always visible
-	assert.Contains(t, names, "quicbaas_health")
+	assert.Contains(t, names, "qrdb_health")
 
 	// KMS read tools visible
 	assert.Contains(t, names, "quicbaas_kms_get_key")
@@ -125,8 +125,8 @@ func TestFilterToolsByAuthorization_KMSReadOnly(t *testing.T) {
 	// Other tools not visible
 	assert.NotContains(t, names, "quicbaas_secrets_get")
 	assert.NotContains(t, names, "quicbaas_secrets_store")
-	assert.NotContains(t, names, "quicbaas_get")
-	assert.NotContains(t, names, "quicbaas_put")
+	assert.NotContains(t, names, "qrdb_get")
+	assert.NotContains(t, names, "qrdb_put")
 	assert.NotContains(t, names, "quicbaas_cluster_status")
 }
 
@@ -159,7 +159,7 @@ func TestFilterToolsByAuthorization_NoScopes(t *testing.T) {
 
 	// Only public tools should be visible
 	assert.Equal(t, 1, len(filtered), "agent with no scopes should see only public tools")
-	assert.Contains(t, names, "quicbaas_health")
+	assert.Contains(t, names, "qrdb_health")
 }
 
 func TestFilterToolsByAuthorization_InvalidToken(t *testing.T) {
@@ -181,7 +181,7 @@ func TestFilterToolsByAuthorization_InvalidToken(t *testing.T) {
 
 	// Only public tools should be visible (non-public tools fail token validation)
 	assert.Equal(t, 1, len(filtered), "invalid token should see only public tools")
-	assert.Contains(t, names, "quicbaas_health")
+	assert.Contains(t, names, "qrdb_health")
 }
 
 func TestFilterToolsByAuthorization_NoAuthChecker(t *testing.T) {
@@ -230,7 +230,7 @@ func TestFilterToolsByAuthorization_MixedPermissions(t *testing.T) {
 	names := toolNames(filtered)
 
 	require.Equal(t, 3, len(filtered), "expected 1 public + 2 read tools")
-	assert.Contains(t, names, "quicbaas_health")
+	assert.Contains(t, names, "qrdb_health")
 	assert.Contains(t, names, "quicbaas_kms_get_key")
 	assert.Contains(t, names, "quicbaas_secrets_get")
 

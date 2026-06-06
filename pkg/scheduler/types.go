@@ -31,7 +31,7 @@
 //
 //   - New(config, storage)                  -- single-node / test mode
 //   - NewWithClustering(config, storage,
-//         nodeID, leader)                   -- cluster deployment
+//     nodeID, leader)                   -- cluster deployment
 //
 // Existing idempotent handlers (audit_cleanup, kms_grace,
 // db_compaction) work unchanged under both constructors.

@@ -18,6 +18,7 @@ package quic
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Server implements a QUIC transport layer for QuicBaaS.
@@ -44,6 +47,34 @@ type Server struct {
 	// Authorization dependencies
 	authzService interfaces.AuthorizationService
 	authManager  interfaces.AuthManager
+
+	// barrierService is the storage barrier facade used to serve OpBarrier
+	// requests. Wired by lifecycle via SetBarrierService once the qrdb SDK
+	// BarrierClient is online; nil before wiring completes.
+	barrierService service.BarrierServicer
+
+	// ceremonyService is the M-of-N officer ceremony facade used to serve
+	// OpCeremony requests. Wired by lifecycle via SetCeremonyService once
+	// the qrdb SDK CeremonyClient is online; nil before wiring completes.
+	ceremonyService service.CeremonyServicer
+
+	// qrdbCredentialSvc is the qrdb credential management facade used to
+	// serve credential.* methods over the qrdb-quic ALPN. Wired by
+	// lifecycle via SetQRDBCredentialService once the credential service
+	// is online; nil before wiring completes.
+	qrdbCredentialSvc qrdbsdk.ServiceCredentialServicer
+
+	// tenantResolver derives the caller's tenant from the verified mTLS peer
+	// certificate and stamps it onto the request context. Wired by lifecycle
+	// via SetTenantResolver; nil before wiring (and in non-iam builds), in
+	// which case requests proceed without a tenant. Best-effort and
+	// permissive: it never rejects a request for lack of a tenant.
+	tenantResolver TenantContextFunc
+
+	// svcMu guards barrierService, ceremonyService, and qrdbCredentialSvc
+	// against the racey lifecycle pattern where the server starts before
+	// the facades are installed concurrently.
+	svcMu sync.RWMutex
 
 	// Server state
 	running atomic.Bool
@@ -139,6 +170,29 @@ func WithAuthorizationService(authz interfaces.AuthorizationService) ServerOptio
 func WithAuthManager(auth interfaces.AuthManager) ServerOption {
 	return func(s *Server) {
 		s.authManager = auth
+	}
+}
+
+// WithServerBarrierService installs the BarrierServicer used by the OpBarrier
+// handler tree. Wired by lifecycle before Start() is invoked; safe to call
+// concurrently with request handling thanks to the server's svcMu.
+func WithServerBarrierService(svc service.BarrierServicer) ServerOption {
+	return func(s *Server) {
+		s.svcMu.Lock()
+		s.barrierService = svc
+		s.svcMu.Unlock()
+	}
+}
+
+// WithServerCeremonyService installs the CeremonyServicer used by the
+// OpCeremony handler tree. Wired by lifecycle before Start() is invoked;
+// safe to call concurrently with request handling thanks to the server's
+// svcMu.
+func WithServerCeremonyService(svc service.CeremonyServicer) ServerOption {
+	return func(s *Server) {
+		s.svcMu.Lock()
+		s.ceremonyService = svc
+		s.svcMu.Unlock()
 	}
 }
 
@@ -338,15 +392,36 @@ func (s *Server) acceptConnections() {
 
 // handleConnection handles a single QUIC connection.
 // The connection is a *quicgo.Conn (pointer to connection struct).
+//
+// Each connection negotiated exactly one ALPN at the TLS handshake. When
+// the negotiated ALPN is QRDBALPN ("qrdb-quic") the connection's streams
+// are dispatched via the qrdb wire-format handler (method-name frames,
+// protobuf payloads). All other ALPNs use the legacy quicbaas opcode
+// handler.
 func (s *Server) handleConnection(conn *quicgo.Conn) {
 	defer s.wg.Done()
 	defer s.activeConns.Add(-1)
 
+	connState := conn.ConnectionState().TLS
+	alpn := connState.NegotiatedProtocol
 	connLogger := s.logger.WithFields(map[string]interface{}{
 		"remote_addr": conn.RemoteAddr().String(),
+		"alpn":        alpn,
 	})
 
+	// Capture the VERIFIED mTLS peer certificate (if any) once per connection.
+	// It is threaded into each request context so the unified login ceremony
+	// can derive the mtls factor lookup key from the handshake rather than
+	// trusting a client-supplied value. Using VerifiedChains guarantees the
+	// certificate passed chain validation against the configured client CA.
+	var peerCert *x509.Certificate
+	if len(connState.VerifiedChains) > 0 && len(connState.VerifiedChains[0]) > 0 {
+		peerCert = connState.VerifiedChains[0][0]
+	}
+
 	connLogger.Debug("New QUIC connection")
+
+	useQRDBWire := alpn == QRDBALPN
 
 	// Accept streams from this connection
 	for s.running.Load() {
@@ -369,13 +444,17 @@ func (s *Server) handleConnection(conn *quicgo.Conn) {
 
 		s.activeStreams.Add(1)
 		s.wg.Add(1)
-		go s.handleStream(stream, connLogger)
+		if useQRDBWire {
+			go s.handleQRDBStream(stream)
+		} else {
+			go s.handleStream(stream, connLogger, peerCert)
+		}
 	}
 }
 
 // handleStream handles a single QUIC stream (one request/response).
 // The stream is a *quicgo.Stream (pointer to stream struct), which implements io.Reader/Writer.
-func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger) {
+func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger, peerCert *x509.Certificate) {
 	defer s.wg.Done()
 	defer s.activeStreams.Add(-1)
 	defer stream.Close()
@@ -409,22 +488,40 @@ func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger) 
 	secretsService := s.service.Secrets()
 	cryptoService := s.service.Crypto()
 
-	// Try to extract seal service via type assertion (QuicBaaS implements SealService)
-	var sealService service.SealService
-	if svc, ok := s.service.(service.SealService); ok {
-		sealService = svc
-	}
+	// Snapshot lifecycle-wired facades under svcMu so concurrent
+	// SetBarrierService/SetCeremonyService calls cannot race with handler
+	// construction.
+	s.svcMu.RLock()
+	barrierService := s.barrierService
+	ceremonyService := s.ceremonyService
+	tenantResolver := s.tenantResolver
+	s.svcMu.RUnlock()
 
 	// Create a request-specific context with a deadline for raft operations
 	// The server context may not have a deadline, but raft requires one
 	requestCtx, requestCancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer requestCancel()
 
+	// Thread the verified mTLS peer certificate into the request context so the
+	// login-ceremony handler can derive the mtls lookup key from it.
+	if peerCert != nil {
+		requestCtx = service.WithVerifiedPeerCert(requestCtx, peerCert)
+
+		// Best-effort: derive the caller's tenant from the verified peer cert
+		// and stamp it onto the context so tenant-scoped operations observe it.
+		// Never rejects — a cert that maps to no tenant simply proceeds.
+		if tenantResolver != nil {
+			requestCtx = tenantResolver(requestCtx, peerCert)
+		}
+	}
+
 	// Create handler with service dependencies and process request
 	// Include IAM and MFA service options (provided by server_iam.go when IAM is enabled)
-	handler := NewHandler(s.service, kmsService, secretsService, sealService, cryptoService, streamLogger,
+	handler := NewHandler(s.service, kmsService, secretsService, cryptoService, streamLogger,
 		WithHandlerAuthManager(s.authManager),
 		WithHandlerAuthorizationService(s.authzService),
+		WithBarrierService(barrierService),
+		WithCeremonyService(ceremonyService),
 		getIAMServiceOption(s.service),
 		getMFAServiceOption(s.service),
 	)
@@ -458,4 +555,44 @@ func (s *Server) GetMetrics() map[string]interface{} {
 // IsRunning returns true if the server is currently running.
 func (s *Server) IsRunning() bool {
 	return s.running.Load()
+}
+
+// SetBarrierService installs (or replaces) the BarrierServicer used by the
+// OpBarrier handler tree. Lifecycle wiring invokes this once the qrdb SDK
+// BarrierClient is online. Safe to call concurrently with request handling.
+func (s *Server) SetBarrierService(svc service.BarrierServicer) {
+	s.svcMu.Lock()
+	s.barrierService = svc
+	s.svcMu.Unlock()
+}
+
+// SetCeremonyService installs (or replaces) the CeremonyServicer used by the
+// OpCeremony handler tree. Lifecycle wiring invokes this once the qrdb SDK
+// CeremonyClient is online. Safe to call concurrently with request handling.
+func (s *Server) SetCeremonyService(svc service.CeremonyServicer) {
+	s.svcMu.Lock()
+	s.ceremonyService = svc
+	s.svcMu.Unlock()
+}
+
+// TenantContextFunc derives the caller's tenant from a VERIFIED mTLS peer
+// certificate and returns a context carrying it. It is supplied by the server
+// layer (which owns the SPIFFE trust domain + home-realm directory) so this
+// transport package needs no dependency on the iam build tag.
+//
+// The contract is BEST-EFFORT and PERMISSIVE: it MUST return a usable context
+// in every case — a tenant-scoped child context on success, or the input
+// context unchanged otherwise. It MUST NOT reject the request. Tenant
+// enforcement (e.g. login) belongs to the specific operation, never this hook.
+type TenantContextFunc func(ctx context.Context, cert *x509.Certificate) context.Context
+
+// SetTenantResolver installs (or replaces) the best-effort tenant-derivation
+// hook applied to every request that presents a verified peer certificate.
+// Lifecycle wiring invokes this with a resolver bound to the operator-
+// configured SPIFFE trust domain and home-realm directory. Safe to call
+// concurrently with request handling.
+func (s *Server) SetTenantResolver(resolve TenantContextFunc) {
+	s.svcMu.Lock()
+	s.tenantResolver = resolve
+	s.svcMu.Unlock()
 }

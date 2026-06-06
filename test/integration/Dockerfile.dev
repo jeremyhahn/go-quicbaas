@@ -1,100 +1,147 @@
-# QuicBaaS Development Dockerfile
-# Includes development tools and supports hot reloading
+# QuicBaaS Development / SDK Single-Node Dockerfile
+# Builds a single-node QuicBaaS server image used by the SDK integration
+# suite (sdk/go/test/integration/docker-compose.yml). The container runs
+# `quicbaasd node` for SDK clients to exercise over REST/gRPC.
+#
+# Build model: a Go workspace (go.work) is reconstructed inside the image
+# from sibling repos supplied via Docker BuildKit's `workspace` named
+# context (see the SDK docker-compose.yml). go.work is then the single
+# source of truth for cross-module resolution — same model as local dev
+# and the cluster Dockerfile/Dockerfile.node.
+# No `.deps/` staging or replace-directive rewriting required.
 
-# Build arguments
-ARG BUILD_TAGS=iam
+ARG BUILD_TAGS="iam raft rest rag"
 
-FROM golang:1.26-alpine
+# ============================================================================
+# Stage 1: Build binaries inside a Go workspace mirroring the host layout.
+# ============================================================================
+FROM golang:1.26-alpine AS builder
 
 ARG BUILD_TAGS
 
-# Install development dependencies
+# Install build dependencies
 RUN apk add --no-cache \
     git \
     make \
     bash \
-    curl \
-    vim \
-    ca-certificates \
-    tzdata \
-    protobuf \
-    protobuf-dev
+    ca-certificates
 
-# Install development tools
-RUN go install github.com/air-verse/air@latest && \
-    go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
-    go install github.com/securego/gosec/v2/cmd/gosec@latest && \
-    go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+WORKDIR /workspace
 
-# Set working directory
-WORKDIR /app
+# Pull each sibling go-quicbaas needs from the workspace named context.
+# The host go.work also references unrelated Layer 0 modules that we
+# deliberately do not bring into Docker; the pruned go.work below covers
+# exactly what is used.
+COPY --from=workspace go-libsignal  ./go-libsignal
+COPY --from=workspace go-objstore   ./go-objstore
+COPY --from=workspace go-qrdb       ./go-qrdb
+COPY --from=workspace go-quicraft   ./go-quicraft
+COPY --from=workspace go-signal     ./go-signal
+COPY --from=workspace go-truststrap ./go-truststrap
+COPY --from=workspace go-xkms       ./go-xkms
 
-# Copy module files first for caching
-COPY go.mod go.sum ./
-COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+# go-quicbaas itself comes from the default context (project root).
+COPY . ./go-quicbaas
 
-# Copy local dependencies (staged by Makefile into .deps/)
-COPY .deps/ /deps/
+# Pruned go.work — same shape as the host go.work, trimmed to the modules
+# we actually copy. Replace directives mirror the workspace-only v0.0.0
+# entries from the host file. Keeping go.work as the single source of truth
+# means individual go.mod files do not need any Docker-specific shimming.
+RUN { \
+        echo 'go 1.26.4'; \
+        echo ''; \
+        echo 'use ('; \
+        echo '	./go-libsignal'; \
+        echo '	./go-objstore'; \
+        echo '	./go-objstore/api/sdks/go'; \
+        echo '	./go-qrdb'; \
+        echo '	./go-qrdb/sdk/go'; \
+        echo '	./go-quicbaas'; \
+        echo '	./go-quicbaas/sdk/go'; \
+        echo '	./go-quicraft'; \
+        echo '	./go-signal'; \
+        echo '	./go-xkms'; \
+        echo '	./go-xkms/sdk/go'; \
+        echo '	./go-xkms/xkey'; \
+        echo ')'; \
+        echo ''; \
+        echo 'replace ('; \
+        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
+        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
+        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
+        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
+        echo ')'; \
+    } > go.work
 
-# Rewrite local replace directives to point to staged deps
-RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod sdk/go/go.mod
+WORKDIR /workspace/go-quicbaas
 
-# Download remaining dependencies
-RUN rm -f go.sum sdk/go/go.sum && GONOSUMCHECK='*' GONOSUMDB='*' go mod download
-
-# Copy source code
-COPY . .
-
-# Rewrite replace directives again (COPY . . overwrites go.mod)
-RUN sed -i 's|=> [^ ]*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-signal|=> /deps/go-signal|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> [^ ]*/go-libsignal|=> /deps/go-libsignal|g' go.mod sdk/go/go.mod
-
-# Remove deprecated debug route variants to avoid stale files in image cache
+# Remove deprecated debug route variants to avoid stale files in image cache.
 RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
 
-# Build both binaries for integration/runtime use
-RUN CGO_ENABLED=0 GONOSUMCHECK='*' go build -mod=mod -buildvcs=false -tags "${BUILD_TAGS}" -o /usr/local/bin/quicbaasd ./cmd/quicbaasd && \
-    CGO_ENABLED=0 GONOSUMCHECK='*' go build -mod=mod -buildvcs=false -tags "${BUILD_TAGS}" -o /usr/local/bin/quicbaas ./cmd/quicbaas
+# Drop go.sum: workspace `use` directives resolve sibling modules locally,
+# but go.sum still gets consulted and may be out of sync with workspace
+# versions (e.g. an in-flight sibling change). Letting Go regenerate sums
+# under workspace mode is the correct behavior here.
+RUN rm -f go.sum sdk/go/go.sum
 
-# Create non-root user for running the application
+# Build node + CLI. go.work at /workspace/go.work resolves every sibling.
+RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd && \
+    CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
+
+# ============================================================================
+# Stage 2: Minimal runtime for the single-node SDK test server.
+# ============================================================================
+FROM alpine:latest
+
+LABEL maintainer="Jeremy Hahn"
+LABEL description="QuicBaaS SDK integration test single-node server"
+LABEL version="2.0.0"
+
+RUN apk add --no-cache \
+    bash \
+    curl \
+    ca-certificates \
+    tzdata \
+    netcat-openbsd
+
 RUN addgroup -g 1000 quicbaas && \
-    adduser -D -u 1000 -G quicbaas quicbaas
+    adduser -D -u 1000 -G quicbaas -s /bin/bash quicbaas
 
-# Create data directories and set ownership to quicbaas user
-RUN mkdir -p /data /var/log/quicbaas /.cache /var/run/quicbaas /var/lib/quicbaas && \
-    chown -R quicbaas:quicbaas /data /var/log/quicbaas /.cache /app /var/run/quicbaas /var/lib/quicbaas
+RUN mkdir -p /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas && \
+    chown -R quicbaas:quicbaas /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas
 
-# Switch to non-root user
-USER quicbaas
+# Copy built binaries from the workspace builder stage.
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaas  /usr/local/bin/quicbaas
+
+RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas
 
 # Expose ports
 # 8080: HTTP/REST API
 # 9090: Metrics/Prometheus
 # 50051: gRPC API
+# 4433: QUIC
 # 63001-63010: Raft cluster communication
-# 2345: Delve debugger (if needed)
-EXPOSE 8080 9090 50051 63001-63010 2345
+EXPOSE 8080 9090 50051 4433 63001-63010
 
-# Volume for data persistence and hot reload
-VOLUME ["/app", "/data"]
+VOLUME ["/data", "/var/log/quicbaas"]
 
-# Default environment variables for development
+# Default environment variables for the dev/SDK server.
 ENV QUICBAAS_LOG_LEVEL=debug \
     QUICBAAS_LOG_FORMAT=console \
     QUICBAAS_DATA_DIR=/data \
     CGO_ENABLED=0
 
-# Default to air for hot reloading in development; compose overrides to run server
-CMD ["air", "-c", ".air.toml"]
+# Default to a single-node server; the SDK compose overrides the command
+# with explicit discovery and port flags.
+CMD ["/usr/local/bin/quicbaasd", "node"]

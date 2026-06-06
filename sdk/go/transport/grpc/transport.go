@@ -282,6 +282,63 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// Check if this is a Certificate service request and route through the
+	// certificate handler. Certificate services use plain Go structs which
+	// don't implement proto.Message, so we need to convert them to the
+	// generated CertificateService proto types before calling gRPC.
+	if isCertificateService(service) {
+		handler := newCertificateHandler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// Check if this is an Operations service request and route through the
+	// operations handler. The SDK operations client uses plain Go structs which
+	// don't implement proto.Message, so we need to convert them to the generated
+	// QuicBaaS proto types (UpgradeNode/MigrateData/ReplaceNode/...) before
+	// calling gRPC; otherwise the untyped conn.Invoke path below fails to
+	// marshal the non-proto request struct.
+	if isOperationsService(service) {
+		handler := newOperationsHandler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// Check if this is a KMS or DEK service request and route through the KMS
+	// handler. The KMS/DEK SDK clients use plain Go structs which don't
+	// implement proto.Message; the handler converts them to the generated
+	// KeyManagement/DEKManagement proto types (reusing the pkg/api/grpc
+	// converters) before calling gRPC.
+	if isKMSService(service) || isDEKService(service) {
+		handler, herr := newKMSHandler(conn)
+		if herr != nil {
+			return nil, herr
+		}
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// Check if this is a Secrets service request and route through the secrets
+	// handler. The secrets SDK client uses plain Go structs which don't
+	// implement proto.Message; the handler converts them to the generated
+	// SecretsManagement proto types before calling gRPC.
+	if isSecretsService(service) {
+		handler, herr := newSecretsHandler(conn)
+		if herr != nil {
+			return nil, herr
+		}
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// Check if this is a Crypto service request and route through the crypto
+	// handler. The crypto SDK client converts its inputs to canonical service.*
+	// requests, but those still don't implement proto.Message; the handler
+	// relays them through the generated Crypto proto service.
+	if isCryptoService(service) {
+		handler, herr := newCryptoHandler(conn)
+		if herr != nil {
+			return nil, herr
+		}
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
 	// Build full method path for other services.
 	fullMethod := "/" + service + "/" + method
 

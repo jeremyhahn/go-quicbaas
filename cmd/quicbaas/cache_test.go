@@ -2573,8 +2573,6 @@ func (m *mockSDKClientForClusterCovPlusTest) DynamicSecrets() quicbaas.DynamicSe
 
 func (m *mockSDKClientForClusterCovPlusTest) Certificate() quicbaas.CertificateClient { return nil }
 
-func (m *mockSDKClientForClusterCovPlusTest) ClusterDEK() quicbaas.ClusterDEKClient { return nil }
-
 func (m *mockSDKClientForClusterCovPlusTest) DEK() quicbaas.DEKClient { return nil }
 
 func (m *mockSDKClientForClusterCovPlusTest) IAM() quicbaas.IAMClient { return nil }
@@ -3237,4 +3235,3 @@ func TestCreateSDKClient_EmptyAddressCovPlus(t *testing.T) {
 	assert.Nil(t, client)
 	assert.Contains(t, err.Error(), "empty")
 }
-

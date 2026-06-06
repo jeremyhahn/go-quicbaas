@@ -1,0 +1,90 @@
+// QuicBaaS Unified Login Ceremony Protocol Buffer Definitions v1
+//
+// The unified login ceremony (BeginLogin / FinishLogin) is owned by the
+// embedded go-qrdb node; QuicBaaS exposes a thin gRPC facade so gRPC-only
+// clients dialling the QuicBaaS endpoint can drive the ceremony against the
+// composed stack. The shape mirrors go-qrdb transport.BeginLogin* /
+// FinishLogin* and the LoginCeremony() service-layer facade.
+//
+// SECURITY: for an mtls factor the server DERIVES the lookup key from the
+// verified TLS peer certificate; the lookup_key field on FinishLoginRequest is
+// IGNORED for mtls over a network transport (the client cannot spoof another
+// certificate's identity). See pkg/service/login_service.go.
+//
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+
+syntax = "proto3";
+
+package quicbaas.login.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// Login Service
+// =============================================================================
+
+// Login exposes the unified login ceremony through gRPC. Both RPCs delegate
+// to the QuicBaaS LoginCeremony() facade, which forwards to the embedded
+// go-qrdb node's in-process LoginClient.
+service Login {
+  // BeginLogin opens a login attempt and returns the server-issued challenge
+  // (nonce + method-specific metadata).
+  rpc BeginLogin(BeginLoginRequest) returns (BeginLoginResponse);
+
+  // FinishLogin consumes the proof and mints a bearer. For an mtls factor the
+  // server derives the lookup key from the verified peer certificate.
+  rpc FinishLogin(FinishLoginRequest) returns (FinishLoginResponse);
+}
+
+// =============================================================================
+// Messages
+// =============================================================================
+
+// BeginLoginRequest opens a login attempt for the given factor type.
+message BeginLoginRequest {
+  // type is the factor type: "mtls", "fido2", or "piv".
+  string type = 1;
+  // hint is an optional caller-supplied user hint (username / tenant id).
+  string hint = 2;
+  // tenant_id scopes the attempt to a tenant.
+  string tenant_id = 3;
+}
+
+// BeginLoginResponse carries the server-issued login challenge.
+message BeginLoginResponse {
+  string session_id = 1;
+  bytes nonce = 2;
+  map<string, string> challenge_metadata = 3;
+  // expires_at is RFC3339 (UTC).
+  string expires_at = 4;
+}
+
+// FinishLoginRequest carries the result of the hardware-signing step.
+message FinishLoginRequest {
+  string session_id = 1;
+  // type is the factor type: "mtls", "fido2", or "piv".
+  string type = 2;
+  // lookup_key is the canonical credential lookup key. For an mtls factor over
+  // a network transport this field is IGNORED — the server derives the key
+  // from the verified peer certificate.
+  bytes lookup_key = 3;
+  bytes signature = 4;
+  map<string, string> method_metadata = 5;
+}
+
+// FinishLoginResponse delivers the issued bearer and the resolved identity.
+message FinishLoginResponse {
+  string bearer = 1;
+  LoginIdentity identity = 2;
+  // expires_at is RFC3339 (UTC).
+  string expires_at = 3;
+  string factor_id = 4;
+}
+
+// LoginIdentity is the resolved authenticated entity.
+message LoginIdentity {
+  string subject = 1;
+  string tenant_id = 2;
+  repeated string roles = 3;
+}

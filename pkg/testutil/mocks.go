@@ -26,7 +26,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -43,6 +42,7 @@ import (
 // For sub-services with conflicting methods (Embedding, Ollama, Certificate),
 // dedicated fields are provided so a separate mock can be injected.
 type MockQuicBaaS struct {
+	loginService service.LoginServicer
 	mock.Mock
 
 	// Sub-service fields for interfaces with conflicting method signatures.
@@ -58,7 +58,6 @@ type MockQuicBaaS struct {
 	KMSService        service.KMSService
 	ParameterStoreSvc service.ParameterStoreService
 	VectorService     service.VectorService
-	ClusterDEKSvc     service.ClusterDEKService
 
 	// DisableKMS causes KMS() to return nil, forcing handlers into the
 	// KMSManager() fallback path for testing.
@@ -527,11 +526,6 @@ func (m *MockQuicBaaS) DynamicSecrets() service.DynamicSecretsService {
 	return m.DynamicSecretsSvc
 }
 
-// ClusterDEK returns ClusterDEKSvc when set, otherwise nil.
-func (m *MockQuicBaaS) ClusterDEK() service.ClusterDEKService {
-	return m.ClusterDEKSvc
-}
-
 // ObjectStorageService returns the mock itself as an ObjectStorageService.
 func (m *MockQuicBaaS) ObjectStorageService() service.ObjectStorageService {
 	return m
@@ -642,9 +636,14 @@ func (m *MockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider) {
 	// No-op for mock
 }
 
-// SetTenantIsolationManager is a no-op for the mock.
-func (m *MockQuicBaaS) SetTenantIsolationManager(_ security.TenantIsolationManager) {
-	// No-op for mock
+// LoginCeremony returns the stored login-ceremony facade (nil unless set).
+func (m *MockQuicBaaS) LoginCeremony() service.LoginServicer {
+	return m.loginService
+}
+
+// SetLoginService stores the login-ceremony facade.
+func (m *MockQuicBaaS) SetLoginService(svc service.LoginServicer) {
+	m.loginService = svc
 }
 
 func (m *MockQuicBaaS) Close() error {
@@ -729,6 +728,27 @@ func (m *MockQuicBaaS) GenerateRootToken(ctx context.Context, req *service.Gener
 func (m *MockQuicBaaS) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
 	args := m.Called(ctx, req)
 	resp, _ := args.Get(0).(*service.RotateRootKeyResponse)
+	return resp, args.Error(1)
+}
+
+// SetKeyRotationPolicy delegates to testify mock infrastructure.
+func (m *MockQuicBaaS) SetKeyRotationPolicy(ctx context.Context, req *service.SetKeyRotationPolicyRequest) (*service.SetKeyRotationPolicyResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.SetKeyRotationPolicyResponse)
+	return resp, args.Error(1)
+}
+
+// GetKeyRotationPolicy delegates to testify mock infrastructure.
+func (m *MockQuicBaaS) GetKeyRotationPolicy(ctx context.Context, req *service.GetKeyRotationPolicyRequest) (*service.GetKeyRotationPolicyResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.GetKeyRotationPolicyResponse)
+	return resp, args.Error(1)
+}
+
+// DeleteKeyRotationPolicy delegates to testify mock infrastructure.
+func (m *MockQuicBaaS) DeleteKeyRotationPolicy(ctx context.Context, req *service.DeleteKeyRotationPolicyRequest) (*service.DeleteKeyRotationPolicyResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.DeleteKeyRotationPolicyResponse)
 	return resp, args.Error(1)
 }
 

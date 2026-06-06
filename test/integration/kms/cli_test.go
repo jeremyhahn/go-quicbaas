@@ -109,7 +109,7 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	fullArgs := []string{
 		"--transport", c.protocol,
 		"--address", c.address,
-		"--tls-skip-verify",
+		"--tls-ca", "/etc/quicbaas/certs/ca.crt",
 		"--output", c.outputFmt,
 	}
 	fullArgs = append(fullArgs, args...)
@@ -146,7 +146,7 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	fullArgs := []string{
 		"--transport", c.protocol,
 		"--address", c.address,
-		"--tls-skip-verify",
+		"--tls-ca", "/etc/quicbaas/certs/ca.crt",
 		"--output", c.outputFmt,
 	}
 	fullArgs = append(fullArgs, args...)

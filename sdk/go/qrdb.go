@@ -15,15 +15,20 @@
 package quicbaas
 
 import (
+	"context"
+	"strings"
 	"sync"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 	qrdbgrpc "github.com/jeremyhahn/go-qrdb/sdk/go/transport/grpc"
 	qrdbmcp "github.com/jeremyhahn/go-qrdb/sdk/go/transport/mcp"
 	qrdbquic "github.com/jeremyhahn/go-qrdb/sdk/go/transport/quic"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
 	qrdbunix "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -263,6 +268,27 @@ type QRDBBarrierRekeyRequest = qrdbtransport.BarrierRekeyRequest
 // QRDBBarrierRekeyResponse is a re-export of the qrdb BarrierRekeyResponse type.
 type QRDBBarrierRekeyResponse = qrdbtransport.BarrierRekeyResponse
 
+// QRDBBarrierUnsealSharesRequest is a re-export of the qrdb BarrierUnsealSharesRequest type.
+type QRDBBarrierUnsealSharesRequest = qrdbtransport.BarrierUnsealSharesRequest
+
+// QRDBBarrierGenerateRecoveryKeysRequest is a re-export of the qrdb BarrierGenerateRecoveryKeysRequest type.
+type QRDBBarrierGenerateRecoveryKeysRequest = qrdbtransport.BarrierGenerateRecoveryKeysRequest
+
+// QRDBBarrierRecoveryKeysResponse is a re-export of the qrdb BarrierRecoveryKeysResponse type.
+type QRDBBarrierRecoveryKeysResponse = qrdbtransport.BarrierRecoveryKeysResponse
+
+// QRDBBarrierRecoverWithKeysRequest is a re-export of the qrdb BarrierRecoverWithKeysRequest type.
+type QRDBBarrierRecoverWithKeysRequest = qrdbtransport.BarrierRecoverWithKeysRequest
+
+// QRDBBarrierHasRecoveryKeysResponse is a re-export of the qrdb BarrierHasRecoveryKeysResponse type.
+type QRDBBarrierHasRecoveryKeysResponse = qrdbtransport.BarrierHasRecoveryKeysResponse
+
+// QRDBBarrierGenerateRootTokenRequest is a re-export of the qrdb BarrierGenerateRootTokenRequest type.
+type QRDBBarrierGenerateRootTokenRequest = qrdbtransport.BarrierGenerateRootTokenRequest
+
+// QRDBBarrierRootTokenResponse is a re-export of the qrdb BarrierRootTokenResponse type.
+type QRDBBarrierRootTokenResponse = qrdbtransport.BarrierRootTokenResponse
+
 // =============================================================================
 // QRDB Ceremony Request/Response Re-exports
 // =============================================================================
@@ -393,7 +419,81 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 
 // buildQRDBClient constructs the qrdb transport and client from the
 // existing clientOptions.
+//
+// Dispatch order:
+//  1. If WithEmbeddedQRDB has installed qrdb servicers, the qrdb sub-client
+//     is built over the in-process qrdb embedded transport regardless of
+//     the quicbaas transport selection. This is the path quicbaasd takes
+//     when it composes itself with WithEmbedded(facade) + WithEmbeddedQRDB:
+//     the quicbaas surface talks to the in-process facade, the qrdb surface
+//     talks to the in-process qrdb services, and no network listener is
+//     required.
+//  2. If the quicbaas transport is TransportEmbedded but no qrdb servicers
+//     have been installed, the qrdb sub-client cannot fall through to the
+//     network (there is no listener) — return an explicit configuration
+//     error so callers see the missing wiring immediately.
+//  3. Otherwise, the qrdb transport is constructed against the configured
+//     address. The transport's Connect method is invoked to perform the
+//     underlying handshake; we swallow the QRDB-level Health-RPC mismatch
+//     ("health check failed") because QuicBaaS does not export that RPC
+//     even though every other RPC works against the same connection.
 func (c *client) buildQRDBClient() (*qrdbsdk.Client, error) {
+	// Embedded qrdb: dispatch in-process whenever servicers have been
+	// supplied, regardless of the quicbaas transport selection.
+	if c.opts.embeddedQRDB != nil {
+		return c.buildQRDBEmbeddedClient()
+	}
+	// TransportEmbedded without qrdb servicers cannot dial — fail fast
+	// with a helpful error so callers know to add WithEmbeddedQRDB(...).
+	if c.opts.transportType == TransportEmbedded {
+		return nil, sdkerrors.NewInvalidInput("buildQRDBClient",
+			"TransportEmbedded requires WithEmbeddedQRDB(...) — the qrdb sub-client cannot fall through to a network address without an in-process servicer set")
+	}
+
+	t, err := c.buildQRDBTransport()
+	if err != nil {
+		return nil, err
+	}
+	// QRDB transports are lazy — they construct without dialing. Call
+	// Connect now so the underlying gRPC/QUIC client is ready before
+	// any qrdbsdk operation (e.g. Barrier/SealStore) tries to use it.
+	// Without this, the first call panics with a nil-pointer dereference
+	// inside the transport.
+	//
+	// qrdb's Connect performs a health check via the QRDBService.Health
+	// RPC. QuicBaaS does not export that RPC, so the health check fails
+	// even though the connection itself is healthy and other RPCs (like
+	// BarrierStatus) work. We swallow that one specific error so the SDK
+	// stays usable.
+	connectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if connErr := t.Connect(connectCtx); connErr != nil {
+		if !strings.Contains(connErr.Error(), "health check failed") {
+			return nil, connErr
+		}
+	}
+	return qrdbsdk.NewClient(t)
+}
+
+// buildQRDBTransport constructs the go-qrdb transport that matches the active
+// quicbaas transport selection and TLS posture.
+//
+// The Unix selection has a TLS subtlety: quicbaasd serves its Unix socket
+// with the *same* TLS-credentialed gRPC server it uses for TCP (see
+// pkg/server/lifecycle.go startUnixSocketListener), so a client must speak
+// TLS over the socket. go-qrdb's dedicated unix transport, however, dials
+// with insecure credentials by design (Unix sockets give kernel-level
+// isolation) — that mismatch produces "error reading server preface: EOF".
+//
+// To match quicbaasd without weakening the standalone-qrdb unix path, when a
+// TLS config is present we route the qrdb unix sub-client through go-qrdb's
+// gRPC transport pointed at a "unix://<socket>" target. go-qrdb's gRPC
+// transport leaves the unix:// scheme intact for gRPC's unix name resolver
+// and dials with TLS credentials whenever a TLSConfig is set — exactly what
+// the quicbaas-native unix transport already does. Only when no TLS config is
+// available (standalone/dev) do we fall back to go-qrdb's insecure unix
+// transport.
+func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 	var opts []qrdbtransport.Option
 	opts = append(opts, qrdbtransport.WithAddress(c.address))
 	if c.opts.tlsEnabled && c.opts.tlsConfig != nil {
@@ -403,23 +503,119 @@ func (c *client) buildQRDBClient() (*qrdbsdk.Client, error) {
 		opts = append(opts, qrdbtransport.WithTimeout(c.opts.timeout))
 	}
 
-	var t qrdbtransport.Transport
-	var err error
 	switch c.opts.transportType {
 	case TransportREST:
-		t, err = qrdbrest.New(opts...)
+		return qrdbrest.New(opts...)
 	case TransportQUIC:
-		t, err = qrdbquic.New(opts...)
+		return qrdbquic.New(opts...)
 	case TransportUnix:
-		t, err = qrdbunix.New(opts...)
+		return c.buildQRDBUnixTransport()
 	case TransportMCP:
-		t, err = qrdbmcp.New(opts...)
+		return qrdbmcp.New(opts...)
 	default:
-		t, err = qrdbgrpc.New(opts...)
+		return qrdbgrpc.New(opts...)
 	}
+}
+
+// buildQRDBUnixTransport builds the qrdb sub-client transport for the Unix
+// socket. When a TLS config is configured (the quicbaasd case), it dials the
+// socket over go-qrdb's gRPC transport with TLS so it matches quicbaasd's TLS
+// Unix listener. Without TLS it uses go-qrdb's native insecure unix transport,
+// preserving standalone-qrdb behavior.
+func (c *client) buildQRDBUnixTransport() (qrdbtransport.Transport, error) {
+	socketPath := c.opts.unixSocketPath
+	if socketPath == "" {
+		socketPath = c.address
+	}
+
+	if c.opts.tlsEnabled && c.opts.tlsConfig != nil {
+		opts := []qrdbtransport.Option{
+			qrdbtransport.WithAddress(unixGRPCTarget(socketPath)),
+			qrdbtransport.WithTLSConfig(c.opts.tlsConfig),
+		}
+		if c.opts.timeout > 0 {
+			opts = append(opts, qrdbtransport.WithTimeout(c.opts.timeout))
+		}
+		return qrdbgrpc.New(opts...)
+	}
+
+	opts := []qrdbtransport.Option{qrdbtransport.WithAddress(socketPath)}
+	if c.opts.timeout > 0 {
+		opts = append(opts, qrdbtransport.WithTimeout(c.opts.timeout))
+	}
+	return qrdbunix.New(opts...)
+}
+
+// unixGRPCTarget normalizes a Unix socket path into a gRPC dial target the
+// go-qrdb gRPC transport accepts. The transport strips http(s):// schemes but
+// leaves unix:// intact for gRPC's unix name resolver, so a "unix://<path>"
+// target dials the socket directly. Paths that already carry a unix scheme are
+// returned unchanged.
+func unixGRPCTarget(socketPath string) string {
+	if strings.HasPrefix(socketPath, "unix://") || strings.HasPrefix(socketPath, "unix:") {
+		return socketPath
+	}
+	return "unix://" + socketPath
+}
+
+// buildQRDBEmbeddedClient builds the qrdb SDK client over the in-process
+// embedded transport using the servicers supplied via WithEmbeddedQRDB.
+// Returns a typed configuration error when the option has not been set.
+//
+// Optional servicers (Barrier, Ceremony, Credential, Tenant, etc.) are
+// installed via the qrdb embedded transport's functional options when
+// non-nil; calls against an absent servicer return a NilServiceError from
+// the qrdb embedded transport itself.
+func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
+	if c.opts.embeddedQRDB == nil {
+		return nil, sdkerrors.NewInvalidInput("buildQRDBEmbeddedClient",
+			"TransportEmbedded requires WithEmbeddedQRDB(...) — pass qrdb servicers to enable in-process dispatch")
+	}
+	s := c.opts.embeddedQRDB
+	if s.KV == nil || s.Admin == nil {
+		return nil, sdkerrors.NewInvalidInput("buildQRDBEmbeddedClient",
+			"WithEmbeddedQRDB requires non-nil KV and Admin servicers")
+	}
+
+	var embOpts []qrdbembedded.Option
+	if s.Barrier != nil {
+		embOpts = append(embOpts, qrdbembedded.WithBarrierService(s.Barrier))
+	}
+	if s.Ceremony != nil {
+		embOpts = append(embOpts, qrdbembedded.WithCeremonyService(s.Ceremony))
+	}
+	if s.CeremonyCA != nil {
+		embOpts = append(embOpts, qrdbembedded.WithCeremonyCA(s.CeremonyCA))
+	}
+	if s.Credential != nil {
+		embOpts = append(embOpts, qrdbembedded.WithCredentialService(s.Credential))
+	}
+	if s.Tenant != nil {
+		embOpts = append(embOpts, qrdbembedded.WithTenantService(s.Tenant))
+	}
+	if s.CustodianGroup != nil {
+		embOpts = append(embOpts, qrdbembedded.WithCustodianGroupService(s.CustodianGroup))
+	}
+	if s.Share != nil {
+		embOpts = append(embOpts, qrdbembedded.WithShareService(s.Share))
+	}
+	if s.AuthFactor != nil {
+		embOpts = append(embOpts, qrdbembedded.WithAuthFactorService(s.AuthFactor))
+	}
+	if s.UserAuthFactor != nil {
+		embOpts = append(embOpts, qrdbembedded.WithUserAuthFactorService(s.UserAuthFactor))
+	}
+	if s.User != nil {
+		embOpts = append(embOpts, qrdbembedded.WithUserService(s.User))
+	}
+
+	t, err := qrdbembedded.New(s.KV, s.Admin, embOpts...)
 	if err != nil {
 		return nil, err
 	}
+	// Connect is a no-op for the qrdb embedded transport; skip it. The
+	// network-transport Connect-with-health-check workaround does not
+	// apply here because the embedded transport never dials anything.
 	return qrdbsdk.NewClient(t)
 }
 

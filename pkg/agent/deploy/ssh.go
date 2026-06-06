@@ -292,7 +292,7 @@ func normalizeHostPort(host string) string {
 }
 
 // shellQuote wraps s in single quotes safe for sh -c. Embedded single
-// quotes are emitted as '\''. This keeps commands auditable since we
+// quotes are emitted as '\”. This keeps commands auditable since we
 // never pass user data through /bin/sh expansions.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

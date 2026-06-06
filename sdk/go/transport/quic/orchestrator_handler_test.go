@@ -183,10 +183,10 @@ func TestConvertOrchestratorResponse_PromptSession(t *testing.T) {
 func TestConvertOrchestratorResponse_SessionStatus(t *testing.T) {
 	t.Run("converts SessionStatus response", func(t *testing.T) {
 		data := map[string]interface{}{
-			"session_id": "sess-001",
-			"backend":    "ollama",
-			"status":     "running",
-			"created_at": float64(1700000000),
+			"session_id":  "sess-001",
+			"backend":     "ollama",
+			"status":      "running",
+			"created_at":  float64(1700000000),
 			"last_active": float64(1700000100),
 		}
 		result, err := convertOrchestratorResponse("SessionStatus", data)

@@ -151,91 +151,6 @@ func (m *mockStatusWithSyncedNodesMethod) SyncedNodes() map[uint64]string {
 	return m.syncedNodes
 }
 
-type mockClusterDEKStatusLike struct {
-	initialized  bool
-	version      uint64
-	algorithm    string
-	keyBytes     int
-	createdAt    time.Time
-	syncedNodes  map[uint64]string
-	reencryption interface{}
-}
-
-func (m *mockClusterDEKStatusLike) GetInitialized() bool { return m.initialized }
-
-func (m *mockClusterDEKStatusLike) GetVersion() uint64 { return m.version }
-
-func (m *mockClusterDEKStatusLike) GetAlgorithm() string { return m.algorithm }
-
-func (m *mockClusterDEKStatusLike) GetKeyBytes() int { return m.keyBytes }
-
-func (m *mockClusterDEKStatusLike) GetCreatedAt() time.Time { return m.createdAt }
-
-func (m *mockClusterDEKStatusLike) GetReencryption() interface{} { return m.reencryption }
-
-func (m *mockClusterDEKStatusLike) GetSyncedNodes() map[uint64]string { return m.syncedNodes }
-
-type mockDEKManagerForGetNodeLastSyncTime struct {
-	getStatusFn    func(ctx context.Context) (interface{}, error)
-	isNodeSyncedFn func(nodeID uint64) bool
-}
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) Initialize(ctx context.Context, algorithm string, keyBytes int) error {
-	return nil
-}
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) GetStatus(ctx context.Context) (interface{}, error) {
-	if m.getStatusFn != nil {
-		return m.getStatusFn(ctx)
-	}
-	return nil, nil
-}
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) Rotate(ctx context.Context) error { return nil }
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) GetCurrentDEK() ([]byte, error) { return nil, nil }
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) GetDEKVersion() uint64 { return 0 }
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) SyncToNode(ctx context.Context, nodeID uint64) error {
-	return nil
-}
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) IsNodeSynced(nodeID uint64) bool {
-	if m.isNodeSyncedFn != nil {
-		return m.isNodeSyncedFn(nodeID)
-	}
-	return false
-}
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) StartReencryption(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) GetReencryptionStatus(ctx context.Context) (interface{}, error) {
-	return nil, nil
-}
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) CancelReencryption(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) RecoverDEK(ctx context.Context, recoveryData interface{}) error {
-	return nil
-}
-
-func (m *mockDEKManagerForGetNodeLastSyncTime) Close() error { return nil }
-
-type mockReencryptionInfoWithGetters struct {
-	totalKeys     uint64
-	processedKeys uint64
-	startedAt     time.Time
-}
-
-func (m *mockReencryptionInfoWithGetters) GetTotalKeys() uint64     { return m.totalKeys }
-func (m *mockReencryptionInfoWithGetters) GetProcessedKeys() uint64 { return m.processedKeys }
-func (m *mockReencryptionInfoWithGetters) GetStartedAt() time.Time  { return m.startedAt }
-
 func TestServiceImpl_Accessor_KMS(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	svc := createTestService(t, withMockRaftNode(mockRaft))
@@ -927,47 +842,6 @@ func (m *boost81RaftNode) GetShardRaftState(_ uint64) (uint64, uint64, error) {
 	return 0, 0, nil
 }
 
-type boost81ClusterDEKStatus struct {
-	initialized  bool
-	version      uint64
-	algorithm    string
-	keyBytes     int
-	createdAt    time.Time
-	syncedNodes  map[uint64]string
-	reencryption interface{}
-}
-
-func (m *boost81ClusterDEKStatus) GetInitialized() bool              { return m.initialized }
-func (m *boost81ClusterDEKStatus) GetVersion() uint64                { return m.version }
-func (m *boost81ClusterDEKStatus) GetAlgorithm() string              { return m.algorithm }
-func (m *boost81ClusterDEKStatus) GetKeyBytes() int                  { return m.keyBytes }
-func (m *boost81ClusterDEKStatus) GetCreatedAt() time.Time           { return m.createdAt }
-func (m *boost81ClusterDEKStatus) GetSyncedNodes() map[uint64]string { return m.syncedNodes }
-func (m *boost81ClusterDEKStatus) GetReencryption() interface{}      { return m.reencryption }
-
-type boost81ReencryptionInfo struct {
-	active   bool
-	progress float64
-}
-
-func (m *boost81ReencryptionInfo) GetActive() bool      { return m.active }
-func (m *boost81ReencryptionInfo) GetProgress() float64 { return m.progress }
-
-type boost81ReencryptionStatus struct {
-	active        bool
-	startedAt     time.Time
-	totalKeys     uint64
-	processedKeys uint64
-	progress      float64
-}
-
-func (m *boost81ReencryptionStatus) GetActive() bool          { return m.active }
-func (m *boost81ReencryptionStatus) GetStartedAt() time.Time  { return m.startedAt }
-func (m *boost81ReencryptionStatus) GetTotalKeys() uint64     { return m.totalKeys }
-func (m *boost81ReencryptionStatus) GetProcessedKeys() uint64 { return m.processedKeys }
-func (m *boost81ReencryptionStatus) GetProgress() float64     { return m.progress }
-func (m *boost81ReencryptionStatus) GetOldVersion() uint64    { return 0 }
-
 type boost82MockCacheManager struct {
 	closeErr error
 }
@@ -1206,35 +1080,6 @@ type mockReencStatusWithOldVersion struct {
 }
 
 func (m *mockReencStatusWithOldVersion) GetOldVersion() uint64 { return m.oldVersion }
-
-type mockClusterDEKStatusPartial struct {
-	initialized bool
-}
-
-func (m *mockClusterDEKStatusPartial) GetInitialized() bool { return m.initialized }
-
-type mockClusterDEKStatusVersion struct {
-	version uint64
-}
-
-func (m *mockClusterDEKStatusVersion) GetVersion() uint64 { return m.version }
-
-type cov90MockDEKStatusWithReencryption struct {
-	mockDEKStatusWithGetters
-	reencryption interface{}
-}
-
-func (m *cov90MockDEKStatusWithReencryption) GetReencryption() interface{} {
-	return m.reencryption
-}
-
-type cov90MockReencInfo struct {
-	active   bool
-	progress float64
-}
-
-func (m *cov90MockReencInfo) GetActive() bool      { return m.active }
-func (m *cov90MockReencInfo) GetProgress() float64 { return m.progress }
 
 // cov90RoleLogger creates a logger for auth.NewRoleManager.
 func cov90RoleLogger() *logger.Logger {
@@ -2120,8 +1965,6 @@ func TestQueryService_Query_EmptyValueIncluded(t *testing.T) {
 		t.Fatal("timeout waiting for query response")
 	}
 }
-
-type mockClusterDEKStatusWithEmptyFields struct{}
 
 // Test Helpers.
 func testLoggerCoverage(t *testing.T) interfaces.Logger {

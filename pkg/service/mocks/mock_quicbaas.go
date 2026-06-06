@@ -23,7 +23,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -32,6 +31,7 @@ import (
 // All methods delegate to configurable function fields, enabling flexible test scenarios.
 // If a function field is nil, the method returns default empty values.
 type MockQuicBaaS struct {
+	loginService service.LoginServicer
 	// KV Service function fields
 	PutFunc             func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	GetFunc             func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
@@ -123,7 +123,6 @@ type MockQuicBaaS struct {
 	OllamaServiceFunc             func() service.OllamaService
 	CertificateServiceFunc        func() service.CertificateService
 	DynamicSecretsServiceFunc     func() service.DynamicSecretsService
-	ClusterDEKServiceFunc         func() service.ClusterDEKService
 	ObjectStorageServiceFunc      func() service.ObjectStorageService
 	ObjectStorageAdminServiceFunc func() service.ObjectStorageAdminService
 	ParameterStoreServiceFunc     func() service.ParameterStoreService
@@ -149,7 +148,6 @@ type MockQuicBaaS struct {
 	MockOllamaService             *MockOllamaService
 	MockCertificateService        *MockCertificateService
 	MockDynamicSecretsService     *MockDynamicSecretsService
-	MockClusterDEKService         *MockClusterDEKService
 	MockObjectStorageService      *MockObjectStorageService
 	MockObjectStorageAdminService *MockObjectStorageAdminService
 	MockParameterStoreService     *MockParameterStoreService
@@ -706,16 +704,6 @@ func (m *MockQuicBaaS) DynamicSecrets() service.DynamicSecretsService {
 	return nil
 }
 
-func (m *MockQuicBaaS) ClusterDEK() service.ClusterDEKService {
-	if m.ClusterDEKServiceFunc != nil {
-		return m.ClusterDEKServiceFunc()
-	}
-	if m.MockClusterDEKService != nil {
-		return m.MockClusterDEKService
-	}
-	return nil
-}
-
 func (m *MockQuicBaaS) ObjectStorageService() service.ObjectStorageService {
 	if m.ObjectStorageServiceFunc != nil {
 		return m.ObjectStorageServiceFunc()
@@ -908,8 +896,16 @@ func (m *MockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider) {
 	// No-op in mock
 }
 
-// SetTenantIsolationManager is a no-op in the mock.
-func (m *MockQuicBaaS) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
+// LoginCeremonyFunc allows tests to stub the login-ceremony facade.
+// Declared on the struct below via the mock's function-field convention is
+// not used here; the simple accessor returns the stored value.
+func (m *MockQuicBaaS) LoginCeremony() service.LoginServicer {
+	return m.loginService
+}
+
+func (m *MockQuicBaaS) SetLoginService(svc service.LoginServicer) {
+	m.loginService = svc
+}
 
 func (m *MockQuicBaaS) Close() error {
 	if m.CloseFunc != nil {
@@ -938,7 +934,6 @@ func NewMockQuicBaaSWithAllSubservices() *MockQuicBaaS {
 		MockOllamaService:             &MockOllamaService{},
 		MockCertificateService:        &MockCertificateService{},
 		MockDynamicSecretsService:     &MockDynamicSecretsService{},
-		MockClusterDEKService:         &MockClusterDEKService{},
 		MockObjectStorageService:      &MockObjectStorageService{},
 		MockObjectStorageAdminService: &MockObjectStorageAdminService{},
 		MockParameterStoreService:     &MockParameterStoreService{},

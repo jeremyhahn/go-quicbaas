@@ -62,12 +62,12 @@ type sshGenerateKeyRequest struct {
 // into a mlocked buffer via secureio.PasswordField — plaintext never
 // touches a Go string.
 type sshImportKeyRequest struct {
-	Scope      string                   `json:"scope"`
-	Owner      string                   `json:"owner"`
-	Name       string                   `json:"name"`
-	Comment    string                   `json:"comment,omitempty"`
-	PEM        []byte                   `json:"pem"`
-	Passphrase secureio.PasswordField   `json:"passphrase_b64,omitempty"`
+	Scope      string                 `json:"scope"`
+	Owner      string                 `json:"owner"`
+	Name       string                 `json:"name"`
+	Comment    string                 `json:"comment,omitempty"`
+	PEM        []byte                 `json:"pem"`
+	Passphrase secureio.PasswordField `json:"passphrase_b64,omitempty"`
 }
 
 // sshKeyListResponse wraps the key list for JSON serialization.

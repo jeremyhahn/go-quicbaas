@@ -411,7 +411,7 @@ func TestIsMsgTool(t *testing.T) {
 	for _, name := range msgTools {
 		assert.True(t, isMsgTool(name))
 	}
-	assert.False(t, isMsgTool("quicbaas_put"))
+	assert.False(t, isMsgTool("qrdb_put"))
 	assert.False(t, isMsgTool(""))
 }
 
@@ -1621,7 +1621,7 @@ func TestIsOllamaTool_Coverage(t *testing.T) {
 	}
 
 	assert.False(t, isOllamaTool("quicbaas_embedding_generate"))
-	assert.False(t, isOllamaTool("quicbaas_put"))
+	assert.False(t, isOllamaTool("qrdb_put"))
 	assert.False(t, isOllamaTool(""))
 }
 
@@ -1642,7 +1642,7 @@ func TestIsParameterTool_Coverage(t *testing.T) {
 	}
 
 	assert.False(t, isParameterTool("quicbaas_ollama_embed"))
-	assert.False(t, isParameterTool("quicbaas_put"))
+	assert.False(t, isParameterTool("qrdb_put"))
 	assert.False(t, isParameterTool(""))
 }
 
@@ -1662,6 +1662,6 @@ func TestIsEmbeddingTool_Coverage(t *testing.T) {
 	}
 
 	assert.False(t, isEmbeddingTool("quicbaas_ollama_embed"))
-	assert.False(t, isEmbeddingTool("quicbaas_put"))
+	assert.False(t, isEmbeddingTool("qrdb_put"))
 	assert.False(t, isEmbeddingTool(""))
 }

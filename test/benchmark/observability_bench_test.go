@@ -726,7 +726,6 @@ func BenchmarkComparison(b *testing.B) {
 	}
 }
 
-
 // mustBenchPassword builds a *secure.Buffer for benchmark code paths
 // that cannot accept *testing.T. It panics on allocation failure,
 // which is acceptable in benchmark-only contexts.

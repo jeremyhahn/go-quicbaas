@@ -17,7 +17,6 @@ package helpers
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"strconv"
 	"time"
@@ -196,13 +195,18 @@ func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, 
 	var client quicbaas.Client
 	var err error
 
+	tlsCfg, err := IntegrationTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	// Retry connection with exponential backoff
 	backoff := retryBackoff
 	for attempt := 0; attempt <= retries; attempt++ {
 		client, err = quicbaas.NewClient(
 			endpoint,
 			quicbaas.WithTimeout(timeout),
-			quicbaas.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}),
+			quicbaas.WithTLSConfig(tlsCfg),
 		)
 		if err == nil {
 			return client, nil

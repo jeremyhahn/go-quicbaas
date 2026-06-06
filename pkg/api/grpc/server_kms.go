@@ -40,6 +40,8 @@ import (
 // KMSServer wraps the KMS manager for gRPC endpoints.
 type KMSServer struct {
 	pb.UnimplementedKeyManagementServer
+	pb.UnimplementedDeleteKeyPolicyServer
+	pb.UnimplementedKeyRotationPolicyServer
 	kmsMgr   interfaces.KMSManager
 	kmsSvc   service.KMSService // optional: for service-layer operations
 	logger   *logger.Logger
@@ -730,29 +732,44 @@ func (s *KMSServer) ListKeyVersions(ctx context.Context, req *pb.ListKeyVersions
 }
 
 // SetKeyPolicy sets the access control policy for a key.
+// The policy is validated, the key is verified to exist, and the policy is
+// persisted in the Raft-replicated KVStore for evaluation on every crypto call.
+// Requires the service layer (kmsSvc). Returns Unimplemented when kmsSvc is nil.
 func (s *KMSServer) SetKeyPolicy(ctx context.Context, req *pb.SetKeyPolicyRequest) (*pb.SetKeyPolicyResponse, error) {
 	s.logger.WithField("key_id", req.KeyId).Debug("Processing SetKeyPolicy request")
 
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
-
 	if req.Policy == nil {
 		return nil, status.Error(codes.InvalidArgument, "policy is required")
 	}
 
-	// Policy management is stored in metadata
-	// This is a simplified implementation - full policy would require additional backend support
-	now := time.Now()
+	if s.kmsSvc == nil {
+		return nil, status.Error(codes.Unimplemented, "SetKeyPolicy requires service layer; use NewKMSServerWithService")
+	}
+
+	svcReq := &service.SetKeyPolicyRequest{
+		KeyID:  req.KeyId,
+		Policy: protoKeyPolicyToService(req.Policy),
+	}
+
+	resp, err := s.kmsSvc.SetKeyPolicy(ctx, svcReq)
+	if err != nil {
+		return nil, convertKMSError(err)
+	}
 
 	return &pb.SetKeyPolicyResponse{
-		KeyId:         req.KeyId,
-		PolicyVersion: req.Policy.Version + 1,
-		Timestamp:     now.Unix(),
+		KeyId:         resp.KeyID,
+		PolicyVersion: resp.PolicyVersion,
+		Timestamp:     resp.Timestamp.Unix(),
 	}, nil
 }
 
-// GetKeyPolicy retrieves the access control policy for a key.
+// GetKeyPolicy retrieves the persisted access control policy for a key.
+// When the service layer is not configured (kmsSvc == nil) a default open
+// policy is returned so existing tests and deployments using the lighter
+// NewKMSServer constructor continue to function.
 func (s *KMSServer) GetKeyPolicy(ctx context.Context, req *pb.GetKeyPolicyRequest) (*pb.GetKeyPolicyResponse, error) {
 	s.logger.WithField("key_id", req.KeyId).Debug("Processing GetKeyPolicy request")
 
@@ -760,24 +777,182 @@ func (s *KMSServer) GetKeyPolicy(ctx context.Context, req *pb.GetKeyPolicyReques
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
-	// Get key to verify it exists
-	_, err := s.kmsMgr.GetKey(ctx, req.KeyId)
+	// Without a service layer, verify the key exists via the manager and return
+	// a default open policy (backward compatible with pre-authz behaviour).
+	if s.kmsSvc == nil {
+		_, err := s.kmsMgr.GetKey(ctx, req.KeyId)
+		if err != nil {
+			return nil, convertKMSError(err)
+		}
+		now := time.Now()
+		return &pb.GetKeyPolicyResponse{
+			Policy: &pb.KeyPolicy{
+				KeyId:             req.KeyId,
+				Version:           1,
+				AllowedOperations: []pb.KeyUsage{pb.KeyUsage_KEY_USAGE_ENCRYPT, pb.KeyUsage_KEY_USAGE_DECRYPT},
+				UpdatedAt:         now.Unix(),
+			},
+			Timestamp: now.Unix(),
+		}, nil
+	}
+
+	svcReq := &service.GetKeyPolicyRequest{KeyID: req.KeyId}
+
+	resp, err := s.kmsSvc.GetKeyPolicy(ctx, svcReq)
 	if err != nil {
 		return nil, convertKMSError(err)
 	}
 
-	now := time.Now()
-
-	// Return default policy - full policy would require additional backend support
 	return &pb.GetKeyPolicyResponse{
-		Policy: &pb.KeyPolicy{
-			KeyId:             req.KeyId,
-			Version:           1,
-			AllowedOperations: []pb.KeyUsage{pb.KeyUsage_KEY_USAGE_ENCRYPT, pb.KeyUsage_KEY_USAGE_DECRYPT},
-			UpdatedAt:         now.Unix(),
-		},
-		Timestamp: now.Unix(),
+		Policy:    serviceKeyPolicyToProto(resp.Policy),
+		Timestamp: resp.Timestamp.Unix(),
 	}, nil
+}
+
+// DeleteKeyPolicy removes the access control policy for a key.
+// Requires the service layer (kmsSvc). Returns Unimplemented when kmsSvc is nil.
+func (s *KMSServer) DeleteKeyPolicy(ctx context.Context, req *pb.DeleteKeyPolicyRequest) (*pb.DeleteKeyPolicyResponse, error) {
+	s.logger.WithField("key_id", req.GetKeyId()).Debug("Processing DeleteKeyPolicy request")
+
+	if req.GetKeyId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_id is required")
+	}
+
+	if s.kmsSvc == nil {
+		return nil, status.Error(codes.Unimplemented, "DeleteKeyPolicy requires service layer; use NewKMSServerWithService")
+	}
+
+	svcReq := &service.DeleteKeyPolicyRequest{KeyID: req.GetKeyId()}
+
+	resp, err := s.kmsSvc.DeleteKeyPolicy(ctx, svcReq)
+	if err != nil {
+		return nil, convertKMSError(err)
+	}
+
+	return &pb.DeleteKeyPolicyResponse{
+		KeyId:     resp.KeyID,
+		Timestamp: resp.Timestamp.Unix(),
+	}, nil
+}
+
+// SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+// Requires the service layer (kmsSvc). Returns Unimplemented when kmsSvc is nil.
+func (s *KMSServer) SetKeyRotationPolicy(ctx context.Context, req *pb.SetKeyRotationPolicyRequest) (*pb.SetKeyRotationPolicyResponse, error) {
+	s.logger.WithField("key_id", req.GetKeyId()).Debug("Processing SetKeyRotationPolicy request")
+
+	if req.GetKeyId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_id is required")
+	}
+	if req.GetPolicy() == nil {
+		return nil, status.Error(codes.InvalidArgument, "policy is required")
+	}
+
+	if s.kmsSvc == nil {
+		return nil, status.Error(codes.Unimplemented, "SetKeyRotationPolicy requires service layer; use NewKMSServerWithService")
+	}
+
+	svcReq := &service.SetKeyRotationPolicyRequest{
+		KeyID:  req.GetKeyId(),
+		Policy: protoToServiceRotationPolicy(req.GetPolicy()),
+	}
+
+	resp, err := s.kmsSvc.SetKeyRotationPolicy(ctx, svcReq)
+	if err != nil {
+		return nil, convertKMSError(err)
+	}
+
+	return &pb.SetKeyRotationPolicyResponse{
+		KeyId:     resp.KeyID,
+		Policy:    serviceToProtoRotationPolicy(resp.Policy),
+		Timestamp: resp.Timestamp.Unix(),
+	}, nil
+}
+
+// GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+// Requires the service layer (kmsSvc). Returns Unimplemented when kmsSvc is nil.
+func (s *KMSServer) GetKeyRotationPolicy(ctx context.Context, req *pb.GetKeyRotationPolicyRequest) (*pb.GetKeyRotationPolicyResponse, error) {
+	s.logger.WithField("key_id", req.GetKeyId()).Debug("Processing GetKeyRotationPolicy request")
+
+	if req.GetKeyId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_id is required")
+	}
+
+	if s.kmsSvc == nil {
+		return nil, status.Error(codes.Unimplemented, "GetKeyRotationPolicy requires service layer; use NewKMSServerWithService")
+	}
+
+	svcReq := &service.GetKeyRotationPolicyRequest{KeyID: req.GetKeyId()}
+
+	resp, err := s.kmsSvc.GetKeyRotationPolicy(ctx, svcReq)
+	if err != nil {
+		return nil, convertKMSError(err)
+	}
+
+	return &pb.GetKeyRotationPolicyResponse{
+		KeyId:     resp.KeyID,
+		Policy:    serviceToProtoRotationPolicy(resp.Policy),
+		Timestamp: resp.Timestamp.Unix(),
+	}, nil
+}
+
+// DeleteKeyRotationPolicy removes the rotation policy for a key, disabling auto-rotation.
+// Requires the service layer (kmsSvc). Returns Unimplemented when kmsSvc is nil.
+func (s *KMSServer) DeleteKeyRotationPolicy(ctx context.Context, req *pb.DeleteKeyRotationPolicyRequest) (*pb.DeleteKeyRotationPolicyResponse, error) {
+	s.logger.WithField("key_id", req.GetKeyId()).Debug("Processing DeleteKeyRotationPolicy request")
+
+	if req.GetKeyId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_id is required")
+	}
+
+	if s.kmsSvc == nil {
+		return nil, status.Error(codes.Unimplemented, "DeleteKeyRotationPolicy requires service layer; use NewKMSServerWithService")
+	}
+
+	svcReq := &service.DeleteKeyRotationPolicyRequest{KeyID: req.GetKeyId()}
+
+	resp, err := s.kmsSvc.DeleteKeyRotationPolicy(ctx, svcReq)
+	if err != nil {
+		return nil, convertKMSError(err)
+	}
+
+	return &pb.DeleteKeyRotationPolicyResponse{
+		KeyId:     resp.KeyID,
+		Timestamp: resp.Timestamp.Unix(),
+	}, nil
+}
+
+// protoToServiceRotationPolicy converts a proto RotationPolicyProto to service RotationPolicy.
+func protoToServiceRotationPolicy(p *pb.RotationPolicyProto) *service.RotationPolicy {
+	if p == nil {
+		return nil
+	}
+	rp := &service.RotationPolicy{
+		Enabled:        p.GetEnabled(),
+		Interval:       time.Duration(p.GetIntervalSeconds()) * time.Second,
+		RetainVersions: int(p.GetRetainVersions()),
+		AutoRotate:     p.GetAutoRotate(),
+	}
+	if p.GetNextRotationUnix() > 0 {
+		rp.NextRotation = time.Unix(p.GetNextRotationUnix(), 0)
+	}
+	return rp
+}
+
+// serviceToProtoRotationPolicy converts a service RotationPolicy to proto RotationPolicyProto.
+func serviceToProtoRotationPolicy(p *service.RotationPolicy) *pb.RotationPolicyProto {
+	if p == nil {
+		return nil
+	}
+	proto := &pb.RotationPolicyProto{
+		Enabled:         p.Enabled,
+		IntervalSeconds: int64(p.Interval / time.Second),
+		RetainVersions:  int32(p.RetainVersions), //nolint:gosec // G115: retain_versions bounded
+		AutoRotate:      p.AutoRotate,
+	}
+	if !p.NextRotation.IsZero() {
+		proto.NextRotationUnix = p.NextRotation.Unix()
+	}
+	return proto
 }
 
 // GetSupportedAlgorithms returns the list of cryptographic algorithms supported by the backend.
@@ -1685,6 +1860,90 @@ func convertProtoKeyUsage(usage pb.KeyUsage) service.KeyUsage {
 		return service.KeyUsageVerifyMAC
 	default:
 		return service.KeyUsageEncrypt
+	}
+}
+
+// protoKeyPolicyToService converts a proto KeyPolicy to a service.KeyPolicy.
+func protoKeyPolicyToService(p *pb.KeyPolicy) *service.KeyPolicy {
+	if p == nil {
+		return nil
+	}
+	ops := make([]service.KeyUsage, len(p.GetAllowedOperations()))
+	for i, u := range p.GetAllowedOperations() {
+		ops[i] = convertProtoKeyUsage(u)
+	}
+	svcPolicy := &service.KeyPolicy{
+		KeyID:             p.GetKeyId(),
+		Version:           p.GetVersion(),
+		AllowedOperations: ops,
+		AllowedPrincipals: p.GetAllowedPrincipals(),
+		DeniedPrincipals:  p.GetDeniedPrincipals(),
+		RotationRequired:  p.GetRotationRequired(),
+		RequireMFA:        p.GetRequireMfa(),
+		UpdatedAt:         unixToTime(p.GetUpdatedAt()),
+	}
+	if ts := p.GetExpiresAt(); ts != 0 {
+		t := unixToTime(ts)
+		svcPolicy.ExpiresAt = &t
+	}
+	if mc := p.GetMaxUsageCount(); mc != 0 {
+		svcPolicy.MaxUsageCount = &mc
+	}
+	return svcPolicy
+}
+
+// serviceKeyPolicyToProto converts a service.KeyPolicy to a proto KeyPolicy.
+func serviceKeyPolicyToProto(p *service.KeyPolicy) *pb.KeyPolicy {
+	if p == nil {
+		return nil
+	}
+	ops := make([]pb.KeyUsage, 0, len(p.AllowedOperations))
+	for _, op := range p.AllowedOperations {
+		ops = append(ops, convertServiceKeyUsageToProto(op))
+	}
+	pp := &pb.KeyPolicy{
+		KeyId:             p.KeyID,
+		Version:           p.Version,
+		AllowedOperations: ops,
+		AllowedPrincipals: p.AllowedPrincipals,
+		DeniedPrincipals:  p.DeniedPrincipals,
+		RotationRequired:  p.RotationRequired,
+		RequireMfa:        p.RequireMFA,
+		UpdatedAt:         p.UpdatedAt.Unix(),
+	}
+	if p.ExpiresAt != nil {
+		pp.ExpiresAt = p.ExpiresAt.Unix()
+	}
+	if p.MaxUsageCount != nil {
+		pp.MaxUsageCount = *p.MaxUsageCount
+	}
+	return pp
+}
+
+// unixToTime converts a Unix timestamp (seconds) to time.Time.
+// Returns zero time for zero input.
+func unixToTime(unix int64) time.Time {
+	if unix == 0 {
+		return time.Time{}
+	}
+	return time.Unix(unix, 0)
+}
+
+// convertServiceKeyUsageToProto converts service.KeyUsage to pb.KeyUsage.
+func convertServiceKeyUsageToProto(u service.KeyUsage) pb.KeyUsage {
+	switch u {
+	case service.KeyUsageEncrypt:
+		return pb.KeyUsage_KEY_USAGE_ENCRYPT
+	case service.KeyUsageDecrypt:
+		return pb.KeyUsage_KEY_USAGE_DECRYPT
+	case service.KeyUsageSign:
+		return pb.KeyUsage_KEY_USAGE_SIGN
+	case service.KeyUsageVerify:
+		return pb.KeyUsage_KEY_USAGE_VERIFY
+	case service.KeyUsageWrapKey:
+		return pb.KeyUsage_KEY_USAGE_WRAP_KEY
+	default:
+		return pb.KeyUsage_KEY_USAGE_UNSPECIFIED
 	}
 }
 

@@ -194,7 +194,7 @@ func createParameterTestLogger() *logger.Logger {
 func TestHandleParameterGet_Success(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, err := EncodePayload(&interfaces.GetParameterRequest{
 		Path:           "/test/param",
@@ -218,7 +218,7 @@ func TestHandleParameterGet_Success(t *testing.T) {
 func TestHandleParameterSet_Success(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, err := EncodePayload(&interfaces.SetParameterRequest{
 		Path:      "/test/param",
@@ -244,7 +244,7 @@ func TestHandleParameterSet_Success(t *testing.T) {
 func TestHandleParameterDelete_Success(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, err := EncodePayload(&interfaces.DeleteParameterRequest{
 		Path: "/test/param",
@@ -267,7 +267,7 @@ func TestHandleParameterDelete_Success(t *testing.T) {
 func TestHandleParameterList_Success(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, err := EncodePayload(&interfaces.ListParametersRequest{
 		Prefix:    "/test",
@@ -292,7 +292,7 @@ func TestHandleParameterList_Success(t *testing.T) {
 func TestHandleParameterBatchGet_Success(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, err := EncodePayload(&interfaces.GetParametersRequest{
 		Paths:          []string{"/test/param1", "/test/param2"},
@@ -316,7 +316,7 @@ func TestHandleParameterBatchGet_Success(t *testing.T) {
 func TestHandleParameterBatchSet_Success(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, err := EncodePayload(&interfaces.SetParametersRequest{
 		Parameters: []*interfaces.SetParameterRequest{
@@ -342,7 +342,7 @@ func TestHandleParameterBatchSet_Success(t *testing.T) {
 func TestHandleParameterBatchDelete_Success(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, err := EncodePayload(&interfaces.DeleteParametersRequest{
 		Paths: []string{"/test/param1", "/test/param2"},
@@ -365,7 +365,7 @@ func TestHandleParameterBatchDelete_Success(t *testing.T) {
 func TestHandleParameterSearch_Success(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, err := EncodePayload(&interfaces.SearchByTagsRequest{
 		Tags:  map[string]string{"env": "test"},
@@ -392,7 +392,7 @@ func TestHandleParameterSearch_Success(t *testing.T) {
 
 func TestHandleParameterGet_NilService(t *testing.T) {
 	svc := &mockServiceWithParameterStore{paramSvc: nil}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.GetParameterRequest{Path: "/test/param"})
 	req := &Request{
@@ -408,7 +408,7 @@ func TestHandleParameterGet_NilService(t *testing.T) {
 
 func TestHandleParameterSet_NilService(t *testing.T) {
 	svc := &mockServiceWithParameterStore{paramSvc: nil}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.SetParameterRequest{Path: "/test/param", Value: []byte("value")})
 	req := &Request{
@@ -424,7 +424,7 @@ func TestHandleParameterSet_NilService(t *testing.T) {
 
 func TestHandleParameterDelete_NilService(t *testing.T) {
 	svc := &mockServiceWithParameterStore{paramSvc: nil}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.DeleteParameterRequest{Path: "/test/param"})
 	req := &Request{
@@ -440,7 +440,7 @@ func TestHandleParameterDelete_NilService(t *testing.T) {
 
 func TestHandleParameterList_NilService(t *testing.T) {
 	svc := &mockServiceWithParameterStore{paramSvc: nil}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.ListParametersRequest{Prefix: "/test"})
 	req := &Request{
@@ -456,7 +456,7 @@ func TestHandleParameterList_NilService(t *testing.T) {
 
 func TestHandleParameterBatchGet_NilService(t *testing.T) {
 	svc := &mockServiceWithParameterStore{paramSvc: nil}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.GetParametersRequest{Paths: []string{"/test/param"}})
 	req := &Request{
@@ -472,7 +472,7 @@ func TestHandleParameterBatchGet_NilService(t *testing.T) {
 
 func TestHandleParameterBatchSet_NilService(t *testing.T) {
 	svc := &mockServiceWithParameterStore{paramSvc: nil}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.SetParametersRequest{})
 	req := &Request{
@@ -488,7 +488,7 @@ func TestHandleParameterBatchSet_NilService(t *testing.T) {
 
 func TestHandleParameterBatchDelete_NilService(t *testing.T) {
 	svc := &mockServiceWithParameterStore{paramSvc: nil}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.DeleteParametersRequest{Paths: []string{"/test"}})
 	req := &Request{
@@ -504,7 +504,7 @@ func TestHandleParameterBatchDelete_NilService(t *testing.T) {
 
 func TestHandleParameterSearch_NilService(t *testing.T) {
 	svc := &mockServiceWithParameterStore{paramSvc: nil}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.SearchByTagsRequest{Tags: map[string]string{"env": "test"}})
 	req := &Request{
@@ -525,7 +525,7 @@ func TestHandleParameterSearch_NilService(t *testing.T) {
 func TestHandleParameterGet_DecodeError(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	req := &Request{
 		Opcode:  OpParameterGet,
@@ -541,7 +541,7 @@ func TestHandleParameterGet_DecodeError(t *testing.T) {
 func TestHandleParameterSet_DecodeError(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	req := &Request{
 		Opcode:  OpParameterSet,
@@ -557,7 +557,7 @@ func TestHandleParameterSet_DecodeError(t *testing.T) {
 func TestHandleParameterDelete_DecodeError(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	req := &Request{
 		Opcode:  OpParameterDelete,
@@ -573,7 +573,7 @@ func TestHandleParameterDelete_DecodeError(t *testing.T) {
 func TestHandleParameterList_DecodeError(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	req := &Request{
 		Opcode:  OpParameterList,
@@ -589,7 +589,7 @@ func TestHandleParameterList_DecodeError(t *testing.T) {
 func TestHandleParameterBatchGet_DecodeError(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	req := &Request{
 		Opcode:  OpParameterBatchGet,
@@ -605,7 +605,7 @@ func TestHandleParameterBatchGet_DecodeError(t *testing.T) {
 func TestHandleParameterBatchSet_DecodeError(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	req := &Request{
 		Opcode:  OpParameterBatchSet,
@@ -621,7 +621,7 @@ func TestHandleParameterBatchSet_DecodeError(t *testing.T) {
 func TestHandleParameterBatchDelete_DecodeError(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	req := &Request{
 		Opcode:  OpParameterBatchDelete,
@@ -637,7 +637,7 @@ func TestHandleParameterBatchDelete_DecodeError(t *testing.T) {
 func TestHandleParameterSearch_DecodeError(t *testing.T) {
 	paramSvc := &mockParameterStoreService{}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	req := &Request{
 		Opcode:  OpParameterSearch,
@@ -661,7 +661,7 @@ func TestHandleParameterGet_ServiceError(t *testing.T) {
 		},
 	}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.GetParameterRequest{Path: "/test/param"})
 	req := &Request{
@@ -682,7 +682,7 @@ func TestHandleParameterSet_ServiceError(t *testing.T) {
 		},
 	}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.SetParameterRequest{Path: "/test/param", Value: []byte("value")})
 	req := &Request{
@@ -703,7 +703,7 @@ func TestHandleParameterDelete_ServiceError(t *testing.T) {
 		},
 	}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.DeleteParameterRequest{Path: "/test/param"})
 	req := &Request{
@@ -724,7 +724,7 @@ func TestHandleParameterList_ServiceError(t *testing.T) {
 		},
 	}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.ListParametersRequest{Prefix: "/test"})
 	req := &Request{
@@ -745,7 +745,7 @@ func TestHandleParameterBatchGet_ServiceError(t *testing.T) {
 		},
 	}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.GetParametersRequest{Paths: []string{"/test/param"}})
 	req := &Request{
@@ -766,7 +766,7 @@ func TestHandleParameterBatchSet_ServiceError(t *testing.T) {
 		},
 	}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.SetParametersRequest{
 		Parameters: []*interfaces.SetParameterRequest{{Path: "/test", Value: []byte("v")}},
@@ -789,7 +789,7 @@ func TestHandleParameterBatchDelete_ServiceError(t *testing.T) {
 		},
 	}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.DeleteParametersRequest{Paths: []string{"/test"}})
 	req := &Request{
@@ -810,7 +810,7 @@ func TestHandleParameterSearch_ServiceError(t *testing.T) {
 		},
 	}
 	svc := &mockServiceWithParameterStore{paramSvc: paramSvc}
-	handler := NewHandler(svc, nil, nil, nil, nil, createParameterTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createParameterTestLogger())
 
 	payload, _ := EncodePayload(&interfaces.SearchByTagsRequest{Tags: map[string]string{"env": "test"}})
 	req := &Request{

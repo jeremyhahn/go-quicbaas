@@ -18,12 +18,15 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +71,8 @@ func (s *Server) installRemoteBackendResolver(agentSvc orchestration.AgentServic
 	}
 
 	adapter := logger.NewAdapter(s.logger)
-	pool := newRemoteBackendPool(s.agentRegistry, s.orchestratorDaemonClient, s.centralTokenEndpoint(), s.config.Orchestration.HostAffinity, adapter)
+	caCertPath := filepath.Join(s.config.Storage.DataDir, "certs", "ca-chain.crt")
+	pool := newRemoteBackendPool(s.agentRegistry, s.orchestratorDaemonClient, s.centralTokenEndpoint(), caCertPath, s.config.Orchestration.HostAffinity, adapter)
 
 	// Wire the embedded dialer registry so in-process agents bypass TCP.
 	// Initialized here so the pool is ready before embedded agent startup;
@@ -112,6 +116,7 @@ type remoteBackendPool struct {
 	registry    orchestration.AgentRegistry
 	centralCred *OrchestratorDaemonClient
 	tokenURL    string
+	caCertPath  string
 	logger      interfaces.Logger
 
 	// hostAffinityCfg carries the operator-level enforcement default for
@@ -137,6 +142,7 @@ func newRemoteBackendPool(
 	registry orchestration.AgentRegistry,
 	cred *OrchestratorDaemonClient,
 	tokenURL string,
+	caCertPath string,
 	hostAffinityCfg config.SchedulerHostAffinityConfig,
 	logger interfaces.Logger,
 ) *remoteBackendPool {
@@ -144,6 +150,7 @@ func newRemoteBackendPool(
 		registry:        registry,
 		centralCred:     cred,
 		tokenURL:        tokenURL,
+		caCertPath:      caCertPath,
 		hostAffinityCfg: hostAffinityCfg,
 		logger:          logger,
 		entries:         map[string]*pooledBackend{},
@@ -333,7 +340,7 @@ func (p *remoteBackendPool) backendFor(ctx context.Context, reg *orchestration.A
 	// agents; only remote daemon backends need OAuth2 bearer tokens.
 	var tokenSource oauth2.TokenSource
 	if !isEmbedded {
-		tokenSource = newCentralOAuth2TokenSource(p.centralCred, p.tokenURL)
+		tokenSource = newCentralOAuth2TokenSource(p.centralCred, p.tokenURL, p.caCertPath)
 	}
 
 	backend, err := orchestration.NewRemoteACPBackend(orchestration.RemoteACPBackendDeps{
@@ -365,10 +372,11 @@ func (p *remoteBackendPool) backendFor(ctx context.Context, reg *orchestration.A
 // way any third-party client would, which means daemons never need special
 // trust of the central beyond the standard JWT validation.
 type centralOAuth2TokenSource struct {
-	client      *http.Client
-	cred        *OrchestratorDaemonClient
-	tokenURL    string
-	insecureTLS bool
+	client     *http.Client
+	cred       *OrchestratorDaemonClient
+	tokenURL   string
+	loopback   bool
+	caCertPath string
 
 	mu        sync.Mutex
 	cached    *oauth2.Token
@@ -376,19 +384,18 @@ type centralOAuth2TokenSource struct {
 }
 
 // newCentralOAuth2TokenSource constructs the source. The http.Client is the
-// default client — we rely on the central's cert being self-trusted here
-// because /oauth2/token is served over the same listener we just started
-// and operators configure their clients with the right root CA.
-func newCentralOAuth2TokenSource(cred *OrchestratorDaemonClient, tokenURL string) *centralOAuth2TokenSource {
+// default client — we rely on the central's cert being self-trusted via the
+// system trust store. For loopback-local token endpoint calls (central
+// talking to itself on 127.0.0.1) we build a dedicated http.Client that
+// trusts the daemon's on-disk ca-chain.crt, since the cert was issued by
+// the daemon's own CA and is not in the system trust store.
+func newCentralOAuth2TokenSource(cred *OrchestratorDaemonClient, tokenURL, caCertPath string) *centralOAuth2TokenSource {
 	return &centralOAuth2TokenSource{
-		client:   &http.Client{Timeout: 15 * time.Second},
-		cred:     cred,
-		tokenURL: tokenURL,
-		// Loopback-local token endpoint calls hit a cert issued by the
-		// central's own CA. Rather than build up a trust store that duplicates
-		// the CA chain already on disk, we accept the loopback cert — the
-		// central is literally talking to itself on 127.0.0.1.
-		insecureTLS: isLoopback(tokenURL),
+		client:     &http.Client{Timeout: 15 * time.Second},
+		cred:       cred,
+		tokenURL:   tokenURL,
+		loopback:   isLoopback(tokenURL),
+		caCertPath: caCertPath,
 	}
 }
 
@@ -425,8 +432,12 @@ func (t *centralOAuth2TokenSource) refresh() (*oauth2.Token, error) {
 	req.SetBasicAuth(t.cred.ClientID, t.cred.ClientSecret)
 
 	client := t.client
-	if t.insecureTLS {
-		client = loopbackInsecureClient()
+	if t.loopback {
+		lbClient, lbErr := loopbackTrustedClient(t.caCertPath)
+		if lbErr != nil {
+			return nil, fmt.Errorf("loopback token client: %w", lbErr)
+		}
+		client = lbClient
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -480,14 +491,33 @@ func isLoopback(rawURL string) bool {
 	return host == "127.0.0.1" || host == "::1" || host == "localhost"
 }
 
-// loopbackInsecureClient returns an http.Client that skips TLS verification.
-// Only ever used when the target is loopback — the central is talking to
-// itself on 127.0.0.1, so MITM is not a threat model worth hardening.
-func loopbackInsecureClient() *http.Client {
+// loopbackTrustedClient returns an http.Client that trusts the daemon's own
+// CA chain from disk. Used when the central is talking to itself on 127.0.0.1
+// (the cert is issued by the daemon's CA). QuicBaaS bans insecure TLS, so we
+// load the on-disk ca-chain.crt explicitly rather than skip verification.
+//
+// The caCertPath is set on the remoteBackendPool at construction time from
+// the server config's data-dir/certs/ca-chain.crt. Empty path returns an
+// error — there is no fallback to insecure mode.
+func loopbackTrustedClient(caCertPath string) (*http.Client, error) {
+	if caCertPath == "" {
+		return nil, fmt.Errorf("loopbackTrustedClient: caCertPath is required (QuicBaaS bans insecure TLS)")
+	}
+	caPEM, err := os.ReadFile(caCertPath) //nolint:gosec // caCertPath comes from server config
+	if err != nil {
+		return nil, fmt.Errorf("read ca-chain %s: %w", caCertPath, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("no PEM certs in ca-chain %s", caCertPath)
+	}
 	return &http.Client{
 		Timeout: 15 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // loopback only; see isLoopback guard
+			TLSClientConfig: &tls.Config{
+				RootCAs:    pool,
+				MinVersion: tls.VersionTLS13,
+			},
 		},
-	}
+	}, nil
 }

@@ -133,7 +133,7 @@ func TestBackendStorage_TenantCRUD(t *testing.T) {
 }
 
 func TestBackendStorage_UserCRUD(t *testing.T) {
-	ctx := context.Background()
+	ctx := ContextWithTenant(context.Background(), "tenant-1")
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 
@@ -243,7 +243,7 @@ func TestBackendStorage_RoleCRUD(t *testing.T) {
 }
 
 func TestBackendStorage_AppCRUD(t *testing.T) {
-	ctx := context.Background()
+	ctx := ContextWithTenant(context.Background(), "tenant-1")
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 
@@ -284,7 +284,7 @@ func TestBackendStorage_AppCRUD(t *testing.T) {
 }
 
 func TestBackendStorage_TokenOperations(t *testing.T) {
-	ctx := context.Background()
+	ctx := ContextWithTenant(context.Background(), "tenant-1")
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 
@@ -439,27 +439,26 @@ func TestBackendStorage_QuotaOperations(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, quota)
 
-	// Update quota
-	quota.MaxUsers = 100
+	// Update BaaS-layer IAM quotas (users/roles are owned by qrdb TenantServicer)
 	quota.MaxGroups = 50
 	err = storage.UpdateQuota(ctx, tenantID, quota)
 	require.NoError(t, err)
 
-	// Increment usage
-	err = storage.IncrementQuotaUsage(ctx, tenantID, QuotaResourceUsers, 5)
+	// Increment groups usage (BaaS-layer quota)
+	err = storage.IncrementQuotaUsage(ctx, tenantID, QuotaResourceGroups, 5)
 	require.NoError(t, err)
 
 	updated, err := storage.GetQuota(ctx, tenantID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(5), updated.CurrentUsers)
+	assert.Equal(t, int64(5), updated.CurrentGroups)
 
-	// Decrement usage
-	err = storage.DecrementQuotaUsage(ctx, tenantID, QuotaResourceUsers, 2)
+	// Decrement groups usage
+	err = storage.DecrementQuotaUsage(ctx, tenantID, QuotaResourceGroups, 2)
 	require.NoError(t, err)
 
 	updated, err = storage.GetQuota(ctx, tenantID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), updated.CurrentUsers)
+	assert.Equal(t, int64(3), updated.CurrentGroups)
 }
 
 func TestBackendStorage_NotFoundErrors(t *testing.T) {
@@ -554,17 +553,20 @@ func TestBackendStorage_KeyPrefixes(t *testing.T) {
 	key = policyKey("tenant-1", "policy-1")
 	assert.Equal(t, "__iam:tenant:tenant-1:policy:policy-1", key)
 
-	// Test app key
-	key = appKey("client-123")
-	assert.Equal(t, "__iam:app:client-123", key)
+	// Test app key (tenant-scoped) + legacy variant
+	key = appKey("tenant-1", "client-123")
+	assert.Equal(t, "__iam:app:tenant-1:client-123", key)
+	assert.Equal(t, "__iam:app:client-123", legacyAppKey("client-123"))
 
-	// Test token key
-	key = tokenKey("jti-123")
-	assert.Equal(t, "__iam:token:jti-123", key)
+	// Test token key (tenant-scoped) + legacy variant
+	key = tokenKey("tenant-1", "jti-123")
+	assert.Equal(t, "__iam:token:tenant-1:jti-123", key)
+	assert.Equal(t, "__iam:token:jti-123", legacyTokenKey("jti-123"))
 
-	// Test email index key
-	key = emailIndexKey("TEST@EXAMPLE.COM")
-	assert.Equal(t, "__iam:idx:email:test@example.com", key)
+	// Test email index key (tenant-scoped) + legacy variant
+	key = emailIndexKey("tenant-1", "TEST@EXAMPLE.COM")
+	assert.Equal(t, "__iam:idx:email:tenant-1:test@example.com", key)
+	assert.Equal(t, "__iam:idx:email:test@example.com", legacyEmailIndexKey("TEST@EXAMPLE.COM"))
 
 	// Test session key
 	key = sessionKey("tenant-1", "session-123")
@@ -572,11 +574,10 @@ func TestBackendStorage_KeyPrefixes(t *testing.T) {
 }
 
 func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
-	ctx := context.Background()
+	tenantID := "cascade-tenant"
+	ctx := ContextWithTenant(context.Background(), tenantID)
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
-
-	tenantID := "cascade-tenant"
 
 	// Create tenant
 	tenant := &Tenant{
@@ -1659,16 +1660,12 @@ func TestBackendStorage_IncrementQuotaUsage_AllResources(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	// Create initial quota
+	// Create initial BaaS-layer IAM quota (users/roles are owned by qrdb TenantServicer)
 	initialQuota := &TenantQuota{
-		MaxUsers:        100,
 		MaxGroups:       50,
-		MaxRoles:        25,
 		MaxPolicies:     100,
 		MaxApps:         10,
-		CurrentUsers:    0,
 		CurrentGroups:   0,
-		CurrentRoles:    0,
 		CurrentPolicies: 0,
 		CurrentApps:     0,
 	}
@@ -1676,19 +1673,19 @@ func TestBackendStorage_IncrementQuotaUsage_AllResources(t *testing.T) {
 		t.Fatalf("UpdateQuota failed: %v", err)
 	}
 
-	// Test incrementing users quota
+	// users/roles are engine-level quotas; IncrementQuotaUsage is a no-op for them
 	if err := storage.IncrementQuotaUsage(ctx, tenantID, QuotaResourceUsers, 5); err != nil {
-		t.Fatalf("IncrementQuotaUsage (users) failed: %v", err)
+		t.Fatalf("IncrementQuotaUsage (users, no-op) should not error: %v", err)
 	}
 
-	// Test incrementing groups quota
+	// Test incrementing groups quota (BaaS-layer)
 	if err := storage.IncrementQuotaUsage(ctx, tenantID, QuotaResourceGroups, 3); err != nil {
 		t.Fatalf("IncrementQuotaUsage (groups) failed: %v", err)
 	}
 
-	// Test incrementing roles quota
+	// roles are engine-level; no-op
 	if err := storage.IncrementQuotaUsage(ctx, tenantID, QuotaResourceRoles, 2); err != nil {
-		t.Fatalf("IncrementQuotaUsage (roles) failed: %v", err)
+		t.Fatalf("IncrementQuotaUsage (roles, no-op) should not error: %v", err)
 	}
 
 	// Test incrementing policies quota
@@ -1701,20 +1698,15 @@ func TestBackendStorage_IncrementQuotaUsage_AllResources(t *testing.T) {
 		t.Fatalf("IncrementQuotaUsage (apps) failed: %v", err)
 	}
 
-	// Verify all quotas were updated
+	// Verify BaaS-layer quotas were updated
 	quota, err := storage.GetQuota(ctx, tenantID)
 	if err != nil {
 		t.Fatalf("GetQuota failed: %v", err)
 	}
 
-	if quota.CurrentUsers != 5 {
-		t.Errorf("expected CurrentUsers=5, got %d", quota.CurrentUsers)
-	}
+	// Users are not tracked here (qrdb owns them); expect 0
 	if quota.CurrentGroups != 3 {
 		t.Errorf("expected CurrentGroups=3, got %d", quota.CurrentGroups)
-	}
-	if quota.CurrentRoles != 2 {
-		t.Errorf("expected CurrentRoles=2, got %d", quota.CurrentRoles)
 	}
 	if quota.CurrentPolicies != 10 {
 		t.Errorf("expected CurrentPolicies=10, got %d", quota.CurrentPolicies)
@@ -1723,14 +1715,14 @@ func TestBackendStorage_IncrementQuotaUsage_AllResources(t *testing.T) {
 		t.Errorf("expected CurrentApps=1, got %d", quota.CurrentApps)
 	}
 
-	// Test decrementing (negative delta)
-	if err := storage.DecrementQuotaUsage(ctx, tenantID, QuotaResourceUsers, 2); err != nil {
+	// Test decrementing groups
+	if err := storage.DecrementQuotaUsage(ctx, tenantID, QuotaResourceGroups, 2); err != nil {
 		t.Fatalf("DecrementQuotaUsage failed: %v", err)
 	}
 
 	quota, _ = storage.GetQuota(ctx, tenantID)
-	if quota.CurrentUsers != 3 {
-		t.Errorf("expected CurrentUsers=3 after decrement, got %d", quota.CurrentUsers)
+	if quota.CurrentGroups != 1 {
+		t.Errorf("expected CurrentGroups=1 after decrement, got %d", quota.CurrentGroups)
 	}
 }
 
@@ -3596,10 +3588,9 @@ func TestBackendStorage_QuotaOperations_AllResources(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
+	// BaaS-layer IAM quotas only (users/roles are owned by qrdb TenantServicer)
 	initialQuota := &TenantQuota{
-		MaxUsers:    100,
 		MaxGroups:   50,
-		MaxRoles:    25,
 		MaxPolicies: 10,
 		MaxApps:     5,
 	}
@@ -3607,13 +3598,14 @@ func TestBackendStorage_QuotaOperations_AllResources(t *testing.T) {
 		t.Fatalf("UpdateQuota failed: %v", err)
 	}
 
-	// Test increment and decrement for each resource type
+	// Test increment and decrement for BaaS-layer resources
+	// Users and roles are engine-level (qrdb-owned); Increment/Decrement are no-ops for them
 	resources := []string{
-		QuotaResourceUsers,
-		QuotaResourceGroups,
-		QuotaResourceRoles,
-		QuotaResourcePolicies,
-		QuotaResourceApps,
+		QuotaResourceUsers,    // no-op (engine-level)
+		QuotaResourceGroups,   // BaaS-layer
+		QuotaResourceRoles,    // no-op (engine-level)
+		QuotaResourcePolicies, // BaaS-layer
+		QuotaResourceApps,     // BaaS-layer
 	}
 
 	for _, resource := range resources {
@@ -3628,11 +3620,10 @@ func TestBackendStorage_QuotaOperations_AllResources(t *testing.T) {
 		}
 	}
 
-	// Verify quota is back to original (all zeros)
+	// Verify BaaS-layer quotas are back to zero
 	quota, _ := storage.GetQuota(ctx, tenantID)
-	if quota.CurrentUsers != 0 || quota.CurrentGroups != 0 || quota.CurrentRoles != 0 ||
-		quota.CurrentPolicies != 0 || quota.CurrentApps != 0 {
-		t.Error("expected all current values to be 0 after increment/decrement")
+	if quota.CurrentGroups != 0 || quota.CurrentPolicies != 0 || quota.CurrentApps != 0 {
+		t.Error("expected all BaaS-layer current values to be 0 after increment/decrement")
 	}
 }
 
@@ -3650,7 +3641,8 @@ func TestBackendStorage_IncrementQuotaUsage_UnknownResourceIgnored(t *testing.T)
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	initialQuota := &TenantQuota{CurrentUsers: 5}
+	// Use a BaaS-layer field for the "unchanged" assertion
+	initialQuota := &TenantQuota{CurrentGroups: 5}
 	if err := storage.UpdateQuota(ctx, tenantID, initialQuota); err != nil {
 		t.Fatalf("UpdateQuota failed: %v", err)
 	}
@@ -3661,10 +3653,10 @@ func TestBackendStorage_IncrementQuotaUsage_UnknownResourceIgnored(t *testing.T)
 		t.Fatalf("IncrementQuotaUsage (unknown) should not error: %v", err)
 	}
 
-	// Verify quota unchanged
+	// Verify BaaS-layer quota unchanged
 	quota, _ := storage.GetQuota(ctx, tenantID)
-	if quota.CurrentUsers != 5 {
-		t.Errorf("expected CurrentUsers=5, got %d", quota.CurrentUsers)
+	if quota.CurrentGroups != 5 {
+		t.Errorf("expected CurrentGroups=5, got %d", quota.CurrentGroups)
 	}
 }
 
@@ -4265,25 +4257,25 @@ func TestBackendStorage_UpdateQuota_Update(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	// Set initial quota
-	quota1 := &TenantQuota{MaxUsers: 10, CurrentUsers: 5}
+	// Set initial BaaS-layer IAM quota (users are engine-level, owned by qrdb)
+	quota1 := &TenantQuota{MaxGroups: 10, CurrentGroups: 5}
 	if err := storage.UpdateQuota(ctx, tenantID, quota1); err != nil {
 		t.Fatalf("UpdateQuota (initial) failed: %v", err)
 	}
 
 	// Update quota
-	quota2 := &TenantQuota{MaxUsers: 100, CurrentUsers: 10}
+	quota2 := &TenantQuota{MaxGroups: 100, CurrentGroups: 10}
 	if err := storage.UpdateQuota(ctx, tenantID, quota2); err != nil {
 		t.Fatalf("UpdateQuota (update) failed: %v", err)
 	}
 
 	// Verify update
 	retrieved, _ := storage.GetQuota(ctx, tenantID)
-	if retrieved.MaxUsers != 100 {
-		t.Errorf("expected MaxUsers=100, got %d", retrieved.MaxUsers)
+	if retrieved.MaxGroups != 100 {
+		t.Errorf("expected MaxGroups=100, got %d", retrieved.MaxGroups)
 	}
-	if retrieved.CurrentUsers != 10 {
-		t.Errorf("expected CurrentUsers=10, got %d", retrieved.CurrentUsers)
+	if retrieved.CurrentGroups != 10 {
+		t.Errorf("expected CurrentGroups=10, got %d", retrieved.CurrentGroups)
 	}
 }
 

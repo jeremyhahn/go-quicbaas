@@ -32,7 +32,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/embedding"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
@@ -2120,24 +2119,6 @@ func TestMockTimeSeriesClient_FuncFieldPaths(t *testing.T) {
 	})
 }
 
-func TestMockRBACClient_ListRoles_WithFunc(t *testing.T) {
-	ctx := context.Background()
-	expected := &rbac.ListRolesResponse{
-		Roles: []*rbac.RoleInfo{
-			{RoleID: "custom-role", RoleName: "editor"},
-		},
-		TotalCount: 1,
-	}
-	client := &MockRBACClient{
-		ListRolesFunc: func(ctx context.Context, req *rbac.ListRolesRequest) (*rbac.ListRolesResponse, error) {
-			return expected, nil
-		},
-	}
-	resp, err := client.ListRoles(ctx, &rbac.ListRolesRequest{})
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-}
-
 // =============================================================================
 // Scheduler format function YAML/default branch coverage
 // =============================================================================
@@ -3038,18 +3019,6 @@ func TestRunCommandsWithInvalidServer(t *testing.T) {
 				return cmd.Execute()
 			},
 			description: "Test vector index stats command with connection failure",
-		},
-		{
-			name: "runSealSealCommand",
-			setupCmd: func() error {
-				cmd := newSealSealCommand()
-				cmd.SetArgs([]string{})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test seal command with connection failure",
 		},
 	}
 

@@ -50,7 +50,7 @@ func TestIsRAGTool(t *testing.T) {
 		{"build context tool", "quicbaas_rag_build_context", true},
 		{"unknown tool", "quicbaas_unknown", false},
 		{"ollama tool", "quicbaas_ollama_embed", false},
-		{"vector tool", "quicbaas_vector_search_similar", false},
+		{"vector tool", "qrdb_vector_search_similar", false},
 		{"empty string", "", false},
 	}
 
@@ -433,7 +433,7 @@ func TestIsRAGTool_AllBranches(t *testing.T) {
 	}
 
 	assert.False(t, isRAGTool("quicbaas_embedding_generate"))
-	assert.False(t, isRAGTool("quicbaas_put"))
+	assert.False(t, isRAGTool("qrdb_put"))
 	assert.False(t, isRAGTool(""))
 }
 
@@ -453,7 +453,7 @@ func TestIsSchedulerTool_AllBranches(t *testing.T) {
 	}
 
 	assert.False(t, isSchedulerTool("quicbaas_embedding_generate"))
-	assert.False(t, isSchedulerTool("quicbaas_put"))
+	assert.False(t, isSchedulerTool("qrdb_put"))
 	assert.False(t, isSchedulerTool(""))
 }
 
@@ -468,7 +468,7 @@ func TestIsObjectTransferTool_AllBranches(t *testing.T) {
 	}
 
 	assert.False(t, isObjectTransferTool("quicbaas_object_put"))
-	assert.False(t, isObjectTransferTool("quicbaas_put"))
+	assert.False(t, isObjectTransferTool("qrdb_put"))
 	assert.False(t, isObjectTransferTool(""))
 }
 
@@ -489,30 +489,8 @@ func TestIsDynamicSecretsTool_AllBranches(t *testing.T) {
 	}
 
 	assert.False(t, isDynamicSecretsTool("quicbaas_kms_encrypt"))
-	assert.False(t, isDynamicSecretsTool("quicbaas_put"))
+	assert.False(t, isDynamicSecretsTool("qrdb_put"))
 	assert.False(t, isDynamicSecretsTool(""))
-}
-
-func TestIsClusterDEKTool_AllBranches(t *testing.T) {
-	clusterTools := []string{
-		"quicbaas_cluster_dek_init",
-		"quicbaas_cluster_dek_status",
-		"quicbaas_cluster_dek_rotate",
-		"quicbaas_cluster_dek_sync_node",
-		"quicbaas_cluster_dek_node_status",
-		"quicbaas_cluster_dek_start_reencryption",
-		"quicbaas_cluster_dek_reencryption_status",
-		"quicbaas_cluster_dek_cancel_reencryption",
-		"quicbaas_cluster_dek_recover",
-	}
-
-	for _, name := range clusterTools {
-		assert.True(t, isClusterDEKTool(name), "expected %s to be cluster DEK tool", name)
-	}
-
-	assert.False(t, isClusterDEKTool("quicbaas_kms_encrypt"))
-	assert.False(t, isClusterDEKTool("quicbaas_put"))
-	assert.False(t, isClusterDEKTool(""))
 }
 
 func TestIsIAMTool_AllBranches(t *testing.T) {
@@ -527,19 +505,19 @@ func TestIsIAMTool_AllBranches(t *testing.T) {
 	}
 
 	assert.False(t, isIAMTool("quicbaas_kms_encrypt"))
-	assert.False(t, isIAMTool("quicbaas_put"))
+	assert.False(t, isIAMTool("qrdb_put"))
 	assert.False(t, isIAMTool(""))
 }
 
 func TestIsVectorTool_AllBranches(t *testing.T) {
 	vectorTools := []string{
 		"quicbaas_vector_put",
-		"quicbaas_vector_get",
-		"quicbaas_vector_delete",
+		"qrdb_vector_get",
+		"qrdb_vector_delete",
 		"quicbaas_vector_search",
 		"quicbaas_vector_batch_put",
 		"quicbaas_vector_batch_get",
-		"quicbaas_vector_batch_delete",
+		"qrdb_vector_batch_delete",
 	}
 
 	for _, name := range vectorTools {
@@ -547,7 +525,7 @@ func TestIsVectorTool_AllBranches(t *testing.T) {
 	}
 
 	assert.False(t, isVectorTool("quicbaas_kms_encrypt"))
-	assert.False(t, isVectorTool("quicbaas_put"))
+	assert.False(t, isVectorTool("qrdb_put"))
 	assert.False(t, isVectorTool(""))
 }
 
@@ -566,7 +544,7 @@ func TestIsCertificateTool_AllBranches(t *testing.T) {
 	}
 
 	assert.False(t, isCertificateTool("quicbaas_kms_encrypt"))
-	assert.False(t, isCertificateTool("quicbaas_put"))
+	assert.False(t, isCertificateTool("qrdb_put"))
 	assert.False(t, isCertificateTool(""))
 }
 
@@ -589,7 +567,7 @@ func TestIsMsgTool_AllBranches(t *testing.T) {
 	}
 
 	assert.False(t, isMsgTool("quicbaas_kms_encrypt"))
-	assert.False(t, isMsgTool("quicbaas_put"))
+	assert.False(t, isMsgTool("qrdb_put"))
 	assert.False(t, isMsgTool(""))
 }
 

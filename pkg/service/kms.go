@@ -189,7 +189,8 @@ type kmsServiceImpl struct {
 	defaultKeyName    atomic.Value       // stores string: the current default key name
 	scheduler         KMSScheduler       // scheduler for grace period jobs
 	versionStatus     sync.Map           // local cache: "keyID:version" -> *versionStatusInfo
-	kvStore           interfaces.KVStore // persistent store for version status (Raft-replicated)
+	kvStore           interfaces.KVStore // persistent store for version status and key policies (Raft-replicated)
+	authzEnabled      bool               // when true, per-key authorization is enforced on crypto ops
 }
 
 // versionStatusInfo stores status information for a specific key version.
@@ -475,6 +476,18 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 
 	// Convert manager response to service response
 	// Return the original (unscoped) key name to callers
+	// Pre-compute the rotation policy for the response so it is always
+	// present in resp.Metadata regardless of whether the backend returns a
+	// typed *kms.KeyMetadata (the kmsMeta block below also persists it).
+	var resolvedRotationPolicy *RotationPolicy
+	if req.RotationPolicy != nil {
+		p := *req.RotationPolicy
+		if p.AutoRotate && p.Interval > 0 && p.NextRotation.IsZero() {
+			p.NextRotation = time.Now().Add(p.Interval)
+		}
+		resolvedRotationPolicy = &p
+	}
+
 	resp := &GenerateKeyResponse{
 		Key: &KeyHandle{
 			KeyID:     req.Name,
@@ -497,6 +510,7 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 			UpdatedAt:          time.Now(),
 			Tags:               req.Tags,
 			Owner:              req.Owner,
+			RotationPolicy:     resolvedRotationPolicy,
 		},
 		Timestamp: time.Now(),
 	}
@@ -514,8 +528,8 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		}).Info("Generated new cryptographic key")
 	}
 
-	// Persist application-level metadata (description, exportable, tags, owner)
-	// that the crypto backend does not store natively.
+	// Persist application-level metadata (description, exportable, tags, owner,
+	// and optional rotation policy) that the crypto backend does not store natively.
 	if kmsMeta, ok := keyMetadata.(*kms.KeyMetadata); ok {
 		kmsMeta.Name = req.Name
 		kmsMeta.Description = req.Description
@@ -524,6 +538,22 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		kmsMeta.Tags = req.Tags
 		kmsMeta.Owner = req.Owner
 		kmsMeta.Usage = serviceUsageToKMS(req.Usage)
+
+		// Apply rotation policy if supplied at creation time.
+		if resolvedRotationPolicy != nil {
+			kmsMeta.RotationPolicy = serviceRotationToKMS(resolvedRotationPolicy)
+
+			// Persist in KVStore for distributed replication.
+			if persistErr := k.persistRotationPolicy(ctx, req.Name, resolvedRotationPolicy); persistErr != nil {
+				if k.logger != nil {
+					k.logger.WithFields(map[string]interface{}{
+						"key_id": req.Name,
+						"error":  persistErr.Error(),
+					}).Warn("GenerateKey: failed to persist rotation policy to KVStore")
+				}
+			}
+		}
+
 		if err := k.kmsManager.UpdateStoredMetadata(kmsMeta); err != nil {
 			if k.logger != nil {
 				k.logger.WithFields(map[string]interface{}{
@@ -1318,7 +1348,10 @@ func (k *kmsServiceImpl) UpdateKeyMetadata(ctx context.Context, req *UpdateKeyMe
 	return resp, nil
 }
 
-// SetKeyPolicy sets the access control policy for a key.
+// SetKeyPolicy sets the access control policy for a key and persists it in
+// the Raft-replicated KVStore so that every node evaluates the same policy.
+// The policy is validated, the key is verified to exist, and then the policy
+// is stored under kms:policy:<keyID>.
 func (k *kmsServiceImpl) SetKeyPolicy(ctx context.Context, req *SetKeyPolicyRequest) (*SetKeyPolicyResponse, error) {
 	start := time.Now()
 	if k.metrics != nil {
@@ -1344,23 +1377,37 @@ func (k *kmsServiceImpl) SetKeyPolicy(ctx context.Context, req *SetKeyPolicyRequ
 		return nil, WrapError(err, errors.ErrNotFound, "kms.SetKeyPolicy", "key not found")
 	}
 
-	resp := &SetKeyPolicyResponse{
-		KeyID:         req.KeyID,
-		PolicyVersion: req.Policy.Version + 1,
-		Timestamp:     time.Now(),
+	// Stamp the policy with the updated timestamp and incremented version.
+	newPolicy := *req.Policy
+	newPolicy.KeyID = req.KeyID
+	newPolicy.Version = req.Policy.Version + 1
+	newPolicy.UpdatedAt = time.Now()
+
+	// Persist the policy via the Raft-backed KVStore.
+	if err := k.persistKeyPolicy(ctx, &newPolicy); err != nil {
+		if k.metrics != nil {
+			k.metrics.errorsByType.With("storage_error", "set_key_policy").Inc()
+		}
+		return nil, WrapError(err, errors.ErrStorage, "kms.SetKeyPolicy", "failed to persist key policy")
 	}
 
 	if k.logger != nil {
 		k.logger.WithFields(map[string]interface{}{
 			"key_id":         req.KeyID,
-			"policy_version": resp.PolicyVersion,
+			"policy_version": newPolicy.Version,
 		}).Info("Updated key policy")
 	}
 
-	return resp, nil
+	return &SetKeyPolicyResponse{
+		KeyID:         req.KeyID,
+		PolicyVersion: newPolicy.Version,
+		Timestamp:     newPolicy.UpdatedAt,
+	}, nil
 }
 
-// GetKeyPolicy retrieves the access control policy for a key.
+// GetKeyPolicy retrieves the persisted access control policy for a key.
+// When no policy has been stored, a default open policy is returned so that
+// callers can distinguish "key exists but no policy" from "key not found".
 func (k *kmsServiceImpl) GetKeyPolicy(ctx context.Context, req *GetKeyPolicyRequest) (*GetKeyPolicyResponse, error) {
 	start := time.Now()
 	if k.metrics != nil {
@@ -1386,17 +1433,305 @@ func (k *kmsServiceImpl) GetKeyPolicy(ctx context.Context, req *GetKeyPolicyRequ
 		return nil, WrapError(err, errors.ErrNotFound, "kms.GetKeyPolicy", "key not found")
 	}
 
-	resp := &GetKeyPolicyResponse{
-		Policy: &KeyPolicy{
-			KeyID:             req.KeyID,
-			Version:           1,
-			AllowedOperations: []KeyUsage{KeyUsageEncrypt, KeyUsageDecrypt},
-			UpdatedAt:         time.Now(),
-		},
-		Timestamp: time.Now(),
+	// Load persisted policy.
+	policy, err := k.loadKeyPolicy(ctx, req.KeyID)
+	if err != nil {
+		if k.metrics != nil {
+			k.metrics.errorsByType.With("storage_error", "get_key_policy").Inc()
+		}
+		return nil, WrapError(err, errors.ErrStorage, "kms.GetKeyPolicy", "failed to load key policy")
 	}
 
-	return resp, nil
+	// No policy set yet — return a default open policy.
+	if policy == nil {
+		policy = &KeyPolicy{
+			KeyID:             req.KeyID,
+			Version:           0,
+			AllowedOperations: []KeyUsage{},
+			UpdatedAt:         time.Now(),
+		}
+	}
+
+	return &GetKeyPolicyResponse{
+		Policy:    policy,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// DeleteKeyPolicy removes the access control policy for a key, restoring the
+// default-allow-all behaviour for authenticated principals.
+func (k *kmsServiceImpl) DeleteKeyPolicy(ctx context.Context, req *DeleteKeyPolicyRequest) (*DeleteKeyPolicyResponse, error) {
+	if req == nil {
+		return nil, NewError(errors.ErrInvalidInput, "kms.DeleteKeyPolicy", "request is nil")
+	}
+	if req.KeyID == "" {
+		return nil, NewError(errors.ErrInvalidInput, "kms.DeleteKeyPolicy", "key_id is required")
+	}
+
+	// Verify key exists
+	_, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	if err != nil {
+		return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKeyPolicy", "key not found")
+	}
+
+	if err := k.deleteKeyPolicy(ctx, req.KeyID); err != nil {
+		return nil, WrapError(err, errors.ErrStorage, "kms.DeleteKeyPolicy", "failed to delete key policy")
+	}
+
+	if k.logger != nil {
+		k.logger.WithFields(map[string]interface{}{
+			"key_id": req.KeyID,
+		}).Info("Deleted key policy")
+	}
+
+	return &DeleteKeyPolicyResponse{
+		KeyID:     req.KeyID,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// =============================================================================
+// Key Rotation Policy Operations
+// =============================================================================
+
+// kmsRotationPolicyPrefix is the KVStore namespace for persisted per-key rotation policies.
+const kmsRotationPolicyPrefix = "kms:rotpolicy:"
+
+// kmsRotationPolicyKey returns the KVStore key for a given keyID's rotation policy.
+func kmsRotationPolicyKey(keyID string) string {
+	return kmsRotationPolicyPrefix + keyID
+}
+
+// persistRotationPolicy serialises and stores the rotation policy in the KVStore.
+// When kvStore is nil (not configured) the policy is stored only in the
+// in-memory metadata via UpdateStoredMetadata so single-node deployments work.
+func (k *kmsServiceImpl) persistRotationPolicy(ctx context.Context, keyID string, policy *RotationPolicy) error {
+	if k.kvStore == nil {
+		return nil
+	}
+	if policy == nil {
+		// A nil policy means "delete" — remove the key if it exists.
+		return k.kvStore.Delete(ctx, kmsRotationPolicyKey(keyID))
+	}
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return NewError(errors.ErrInternal, "kms.persistRotationPolicy", "failed to marshal rotation policy")
+	}
+	if putErr := k.kvStore.Put(ctx, kmsRotationPolicyKey(keyID), data); putErr != nil {
+		return WrapError(putErr, errors.ErrStorage, "kms.persistRotationPolicy", "failed to store rotation policy")
+	}
+	return nil
+}
+
+// loadRotationPolicy reads the persisted rotation policy for keyID.
+// Returns (nil, nil) when no policy has been stored.
+func (k *kmsServiceImpl) loadRotationPolicy(ctx context.Context, keyID string) (*RotationPolicy, error) {
+	if k.kvStore == nil {
+		return nil, nil
+	}
+	data, err := k.kvStore.Get(ctx, kmsRotationPolicyKey(keyID))
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, WrapError(err, errors.ErrStorage, "kms.loadRotationPolicy", "failed to load rotation policy")
+	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var policy RotationPolicy
+	if err := json.Unmarshal(data, &policy); err != nil {
+		return nil, NewError(errors.ErrInternal, "kms.loadRotationPolicy", "failed to unmarshal rotation policy")
+	}
+	return &policy, nil
+}
+
+// SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+// Validates: AutoRotate requires Interval > 0. Computes NextRotation from
+// Interval when not explicitly supplied. Gated by per-key authz (key-management
+// operations use the "set_rotation_policy" operation string which is not mapped
+// to a crypto operation — the authz gate allows it unless DeniedPrincipals matches).
+func (k *kmsServiceImpl) SetKeyRotationPolicy(ctx context.Context, req *SetKeyRotationPolicyRequest) (*SetKeyRotationPolicyResponse, error) {
+	if req == nil {
+		return nil, NewError(errors.ErrInvalidInput, "kms.SetKeyRotationPolicy", "request is nil")
+	}
+	if req.KeyID == "" {
+		return nil, NewError(errors.ErrInvalidInput, "kms.SetKeyRotationPolicy", "key_id is required")
+	}
+	if req.Policy == nil {
+		return nil, NewError(errors.ErrInvalidInput, "kms.SetKeyRotationPolicy", "policy is required")
+	}
+	if req.Policy.AutoRotate && req.Policy.Interval <= 0 {
+		return nil, NewError(errors.ErrInvalidInput, "kms.SetKeyRotationPolicy", "interval must be positive when auto_rotate is true")
+	}
+
+	// Per-key authz gate: key-management operation.
+	if err := k.checkKeyAuthz(ctx, req.KeyID, "set_rotation_policy"); err != nil {
+		return nil, err
+	}
+
+	// Verify key exists.
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	if err != nil {
+		return nil, WrapError(err, errors.ErrNotFound, "kms.SetKeyRotationPolicy", "key not found")
+	}
+
+	// Build the policy with a computed NextRotation.
+	policy := *req.Policy
+	if policy.AutoRotate && policy.Interval > 0 && policy.NextRotation.IsZero() {
+		policy.NextRotation = time.Now().Add(policy.Interval)
+	}
+
+	// Persist to KVStore (distributed replication).
+	if err := k.persistRotationPolicy(ctx, req.KeyID, &policy); err != nil {
+		return nil, WrapError(err, errors.ErrStorage, "kms.SetKeyRotationPolicy", "failed to persist rotation policy")
+	}
+
+	// Also embed in key metadata so the scheduler can read it from ListKeys/GetKey.
+	if kmsMeta, ok := keyData.(*kms.KeyMetadata); ok {
+		kmsMeta.Updated = time.Now()
+		kmsMeta.RotationPolicy = serviceRotationToKMS(&policy)
+		if updateErr := k.kmsManager.UpdateStoredMetadata(kmsMeta); updateErr != nil {
+			if k.logger != nil {
+				k.logger.WithFields(map[string]interface{}{
+					"key_id": req.KeyID,
+					"error":  updateErr.Error(),
+				}).Warn("SetKeyRotationPolicy: failed to embed rotation policy in key metadata")
+			}
+		}
+	}
+
+	if k.logger != nil {
+		k.logger.WithFields(map[string]interface{}{
+			"key_id":      req.KeyID,
+			"auto_rotate": policy.AutoRotate,
+			"interval":    policy.Interval.String(),
+		}).Info("Set key rotation policy")
+	}
+
+	return &SetKeyRotationPolicyResponse{
+		KeyID:     req.KeyID,
+		Policy:    &policy,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+// Reads from KVStore first; falls back to key metadata for single-node deployments.
+func (k *kmsServiceImpl) GetKeyRotationPolicy(ctx context.Context, req *GetKeyRotationPolicyRequest) (*GetKeyRotationPolicyResponse, error) {
+	if req == nil {
+		return nil, NewError(errors.ErrInvalidInput, "kms.GetKeyRotationPolicy", "request is nil")
+	}
+	if req.KeyID == "" {
+		return nil, NewError(errors.ErrInvalidInput, "kms.GetKeyRotationPolicy", "key_id is required")
+	}
+
+	// Per-key authz gate: read operation.
+	if err := k.checkKeyAuthz(ctx, req.KeyID, "get_rotation_policy"); err != nil {
+		return nil, err
+	}
+
+	// Verify key exists.
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	if err != nil {
+		return nil, WrapError(err, errors.ErrNotFound, "kms.GetKeyRotationPolicy", "key not found")
+	}
+
+	// Prefer KVStore (replicated); fall back to embedded metadata.
+	policy, err := k.loadRotationPolicy(ctx, req.KeyID)
+	if err != nil {
+		return nil, WrapError(err, errors.ErrStorage, "kms.GetKeyRotationPolicy", "failed to load rotation policy")
+	}
+	if policy == nil {
+		// Fall back to metadata embedded in the key.
+		if kmsMeta, ok := keyData.(*kms.KeyMetadata); ok && kmsMeta.RotationPolicy != nil {
+			policy = kmsRotationToService(kmsMeta.RotationPolicy)
+		}
+	}
+
+	return &GetKeyRotationPolicyResponse{
+		KeyID:     req.KeyID,
+		Policy:    policy,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// DeleteKeyRotationPolicy removes the rotation policy for a key, disabling
+// automatic rotation. The scheduler will no longer rotate this key.
+func (k *kmsServiceImpl) DeleteKeyRotationPolicy(ctx context.Context, req *DeleteKeyRotationPolicyRequest) (*DeleteKeyRotationPolicyResponse, error) {
+	if req == nil {
+		return nil, NewError(errors.ErrInvalidInput, "kms.DeleteKeyRotationPolicy", "request is nil")
+	}
+	if req.KeyID == "" {
+		return nil, NewError(errors.ErrInvalidInput, "kms.DeleteKeyRotationPolicy", "key_id is required")
+	}
+
+	// Per-key authz gate: key-management operation.
+	if err := k.checkKeyAuthz(ctx, req.KeyID, "delete_rotation_policy"); err != nil {
+		return nil, err
+	}
+
+	// Verify key exists.
+	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	if err != nil {
+		return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKeyRotationPolicy", "key not found")
+	}
+
+	// Remove from KVStore.
+	if err := k.persistRotationPolicy(ctx, req.KeyID, nil); err != nil {
+		return nil, WrapError(err, errors.ErrStorage, "kms.DeleteKeyRotationPolicy", "failed to remove rotation policy")
+	}
+
+	// Clear from key metadata.
+	if kmsMeta, ok := keyData.(*kms.KeyMetadata); ok {
+		kmsMeta.Updated = time.Now()
+		kmsMeta.RotationPolicy = nil
+		if updateErr := k.kmsManager.UpdateStoredMetadata(kmsMeta); updateErr != nil {
+			if k.logger != nil {
+				k.logger.WithFields(map[string]interface{}{
+					"key_id": req.KeyID,
+					"error":  updateErr.Error(),
+				}).Warn("DeleteKeyRotationPolicy: failed to clear rotation policy from key metadata")
+			}
+		}
+	}
+
+	if k.logger != nil {
+		k.logger.WithField("key_id", req.KeyID).Info("Deleted key rotation policy")
+	}
+
+	return &DeleteKeyRotationPolicyResponse{
+		KeyID:     req.KeyID,
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// serviceRotationToKMS converts a service RotationPolicy to the kms package RotationPolicy.
+func serviceRotationToKMS(p *RotationPolicy) *kms.RotationPolicy {
+	if p == nil {
+		return nil
+	}
+	return &kms.RotationPolicy{
+		Enabled:        p.Enabled,
+		Interval:       p.Interval,
+		NextRotation:   p.NextRotation,
+		RetainVersions: p.RetainVersions,
+		AutoRotate:     p.AutoRotate,
+	}
+}
+
+// kmsRotationToService converts a kms RotationPolicy to the service RotationPolicy.
+func kmsRotationToService(p *kms.RotationPolicy) *RotationPolicy {
+	if p == nil {
+		return nil
+	}
+	return &RotationPolicy{
+		Enabled:        p.Enabled,
+		Interval:       p.Interval,
+		NextRotation:   p.NextRotation,
+		RetainVersions: p.RetainVersions,
+		AutoRotate:     p.AutoRotate,
+	}
 }
 
 // =============================================================================
@@ -1538,9 +1873,9 @@ func (k *kmsServiceImpl) validateSetKeyPolicyRequest(req *SetKeyPolicyRequest) e
 		return NewError(errors.ErrInvalidInput, "kms.validateSetKeyPolicyRequest", "policy is required")
 	}
 
-	if len(req.Policy.AllowedOperations) == 0 {
-		return NewError(errors.ErrInvalidInput, "kms.validateSetKeyPolicyRequest", "at least one allowed operation is required")
-	}
+	// AllowedOperations is optional: an empty list means all operations are
+	// permitted (for any principal passing the AllowedPrincipals check).
+	// A non-empty list restricts which operations are allowed.
 
 	return nil
 }
@@ -1760,6 +2095,9 @@ func extractKeyMetadata(keyID string, keyData interface{}) *KeyMetadata {
 			t := *kmsMeta.LastUsedAt
 			metadata.LastUsedAt = &t
 		}
+		if kmsMeta.RotationPolicy != nil {
+			metadata.RotationPolicy = kmsRotationToService(kmsMeta.RotationPolicy)
+		}
 		return metadata
 	}
 
@@ -1791,6 +2129,10 @@ func extractKeyMetadata(keyID string, keyData interface{}) *KeyMetadata {
 		if svcMeta.LastUsedAt != nil {
 			t := *svcMeta.LastUsedAt
 			metadata.LastUsedAt = &t
+		}
+		if svcMeta.RotationPolicy != nil {
+			rp := *svcMeta.RotationPolicy
+			metadata.RotationPolicy = &rp
 		}
 		return metadata
 	}

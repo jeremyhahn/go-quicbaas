@@ -43,6 +43,7 @@ var validIndexTypes = map[string]struct{}{
 	"auto":   {},
 	"memory": {},
 	"hnsw":   {},
+	"qrdb":   {},
 }
 
 // IndexingConfig holds configuration for the auto-indexing service.

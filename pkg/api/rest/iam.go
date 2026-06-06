@@ -74,6 +74,7 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	router.Post("/oauth2/token-mtls", h.TokenMTLS) // RFC 8705 §5 mTLS alias
 	router.Get("/oauth2/userinfo", h.UserInfo)
 	router.Post("/oauth2/revoke", h.Revoke)
+	router.Post("/oauth2/introspect", h.Introspect) // RFC 7662 token introspection
 
 	// Dynamic Client Registration (RFC 7591)
 	router.Post("/oauth2/register", h.RegisterDynamicClient)
@@ -87,6 +88,12 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		r.Post("/logout", h.Logout)          // Revoke access token
 		r.Post("/validate", h.ValidateToken) // Validate access token
 		r.Post("/login/piv", h.PIVLogin)     // PIV smartcard mTLS login
+
+		// Unified login ceremony (mtls / fido2 / piv) — delegates to the
+		// composed qrdb node via the LoginCeremony() facade. Public: the
+		// ceremony itself authenticates (mtls handshake / signature).
+		r.Post("/login/begin", h.CeremonyBeginLogin)
+		r.Post("/login/finish", h.CeremonyFinishLogin)
 
 		// Self-service registration (public — no auth required).
 		// Gated by iam.self_service_registration.enabled in config.

@@ -22,18 +22,18 @@ import (
 type IntentKind string
 
 const (
-	IntentUnknown     IntentKind = "unknown"
-	IntentSpawn       IntentKind = "spawn"
-	IntentAttach      IntentKind = "attach"
-	IntentDetach      IntentKind = "detach"
-	IntentPrompt      IntentKind = "prompt"
-	IntentClose       IntentKind = "close"
-	IntentStatus      IntentKind = "status"
-	IntentSessions    IntentKind = "sessions"
-	IntentAgents      IntentKind = "agents"
-	IntentWorkflow    IntentKind = "workflow"
-	IntentHelp        IntentKind = "help"
-	IntentSettings    IntentKind = "settings"
+	IntentUnknown  IntentKind = "unknown"
+	IntentSpawn    IntentKind = "spawn"
+	IntentAttach   IntentKind = "attach"
+	IntentDetach   IntentKind = "detach"
+	IntentPrompt   IntentKind = "prompt"
+	IntentClose    IntentKind = "close"
+	IntentStatus   IntentKind = "status"
+	IntentSessions IntentKind = "sessions"
+	IntentAgents   IntentKind = "agents"
+	IntentWorkflow IntentKind = "workflow"
+	IntentHelp     IntentKind = "help"
+	IntentSettings IntentKind = "settings"
 )
 
 // Intent is the parsed result of operator input. Fields are present

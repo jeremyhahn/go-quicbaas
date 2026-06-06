@@ -128,65 +128,13 @@ func (m *MockDEKService) GetReencryptionProgress(ctx context.Context, req *servi
 	return args.Get(0).(*service.GetReencryptionProgressResponse), args.Error(1)
 }
 
-// MockClusterDEKService mocks ClusterDEKService.
-type MockClusterDEKService struct {
-	mock.Mock
-}
-
-// StartReencryption mocks starting re-encryption.
-func (m *MockClusterDEKService) StartReencryption(ctx context.Context, req *service.StartReencryptionRequest) (*service.StartReencryptionResponse, error) {
-	args := m.Called(ctx, req)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*service.StartReencryptionResponse), args.Error(1)
-}
-
-// InitializeClusterDEK mocks InitializeClusterDEK.
-func (m *MockClusterDEKService) InitializeClusterDEK(ctx context.Context, req *service.InitClusterDEKRequest) (*service.InitClusterDEKResponse, error) {
-	return nil, nil
-}
-
-// GetClusterDEKStatus mocks GetClusterDEKStatus.
-func (m *MockClusterDEKService) GetClusterDEKStatus(ctx context.Context) (*service.ClusterDEKStatusResponse, error) {
-	return nil, nil
-}
-
-// RotateClusterDEK mocks RotateClusterDEK.
-func (m *MockClusterDEKService) RotateClusterDEK(ctx context.Context, req *service.RotateClusterDEKRequest) (*service.RotateClusterDEKResponse, error) {
-	return nil, nil
-}
-
-// SyncNodeDEK mocks SyncNodeDEK.
-func (m *MockClusterDEKService) SyncNodeDEK(ctx context.Context, req *service.SyncNodeDEKRequest) (*service.SyncNodeDEKResponse, error) {
-	return nil, nil
-}
-
-// GetNodeDEKStatus mocks GetNodeDEKStatus.
-func (m *MockClusterDEKService) GetNodeDEKStatus(ctx context.Context, req *service.GetNodeDEKStatusRequest) (*service.GetNodeDEKStatusResponse, error) {
-	return nil, nil
-}
-
-// GetReencryptionStatus mocks GetReencryptionStatus.
-func (m *MockClusterDEKService) GetReencryptionStatus(ctx context.Context) (*service.ReencryptionStatusResponse, error) {
-	return nil, nil
-}
-
-// CancelReencryption mocks CancelReencryption.
-func (m *MockClusterDEKService) CancelReencryption(ctx context.Context) error {
-	return nil
-}
-
-// RecoverDEK mocks RecoverDEK.
-func (m *MockClusterDEKService) RecoverDEK(ctx context.Context, req *service.RecoverDEKRequest) (*service.RecoverDEKResponse, error) {
-	return nil, nil
-}
-
 // testQuicBaaSWithDEK wraps MockQuicBaaS and provides DEK service implementations.
+// The kmsSvc field is stored so that mock expectations on StartReencryption persist
+// across multiple KMS() calls.
 type testQuicBaaSWithDEK struct {
 	*MockQuicBaaS
-	dekSvc        *MockDEKService
-	clusterDEKSvc *MockClusterDEKService
+	dekSvc *MockDEKService
+	kmsSvc *mockKMSServiceWithDEK
 }
 
 // CreateDEK implements DEK creation.
@@ -234,12 +182,8 @@ func (m *testQuicBaaSWithDEK) ClearDEKSafety(ctx context.Context, req *service.C
 	return m.dekSvc.ClearDEKSafety(ctx, req)
 }
 
-// ClusterDEKService returns the cluster DEK service.
-func (m *testQuicBaaSWithDEK) ClusterDEKService() service.ClusterDEKService {
-	return m.clusterDEKSvc
-}
-
-// mockKMSServiceWithDEK wraps MockDEKService and implements service.KMSService interface.
+// mockKMSServiceWithDEK wraps MockDEKService and implements service.KMSService.
+// StartReencryption is backed by testify mock so individual tests can set expectations.
 type mockKMSServiceWithDEK struct {
 	mock.Mock
 	dekSvc *MockDEKService
@@ -343,8 +287,12 @@ func (m *mockKMSServiceWithDEK) ListKeyVersions(_ context.Context, _ *service.Li
 	return nil, nil
 }
 
-func (m *mockKMSServiceWithDEK) StartReencryption(_ context.Context, _ *service.StartReencryptionRequest) (*service.StartReencryptionResponse, error) {
-	return nil, nil
+func (m *mockKMSServiceWithDEK) StartReencryption(ctx context.Context, req *service.StartReencryptionRequest) (*service.StartReencryptionResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*service.StartReencryptionResponse), args.Error(1)
 }
 
 func (m *mockKMSServiceWithDEK) BackendStatus(_ context.Context) (*service.BackendStatusResponse, error) {
@@ -387,10 +335,26 @@ func (m *mockKMSServiceWithDEK) GetPublicKey(_ context.Context, _ *service.GetPu
 	return nil, nil
 }
 
-// KMS returns the mock KMS service.
-// This overrides MockQuicBaaS.KMS() to return our test service that implements DEK methods.
+func (m *mockKMSServiceWithDEK) DeleteKeyPolicy(_ context.Context, _ *service.DeleteKeyPolicyRequest) (*service.DeleteKeyPolicyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockKMSServiceWithDEK) SetKeyRotationPolicy(_ context.Context, _ *service.SetKeyRotationPolicyRequest) (*service.SetKeyRotationPolicyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockKMSServiceWithDEK) GetKeyRotationPolicy(_ context.Context, _ *service.GetKeyRotationPolicyRequest) (*service.GetKeyRotationPolicyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockKMSServiceWithDEK) DeleteKeyRotationPolicy(_ context.Context, _ *service.DeleteKeyRotationPolicyRequest) (*service.DeleteKeyRotationPolicyResponse, error) {
+	return nil, nil
+}
+
+// KMS returns the stored KMS mock so that StartReencryption expectations
+// registered on kmsSvc are visible across multiple KMS() calls.
 func (m *testQuicBaaSWithDEK) KMS() service.KMSService {
-	return &mockKMSServiceWithDEK{dekSvc: m.dekSvc}
+	return m.kmsSvc
 }
 
 // GetReencryptionProgress implements getting re-encryption progress.
@@ -399,10 +363,11 @@ func (m *testQuicBaaSWithDEK) GetReencryptionProgress(ctx context.Context, req *
 }
 
 func newTestQuicBaaSWithDEK() *testQuicBaaSWithDEK {
+	dekSvc := &MockDEKService{}
 	return &testQuicBaaSWithDEK{
-		MockQuicBaaS:  &MockQuicBaaS{},
-		dekSvc:        &MockDEKService{},
-		clusterDEKSvc: &MockClusterDEKService{},
+		MockQuicBaaS: &MockQuicBaaS{},
+		dekSvc:       dekSvc,
+		kmsSvc:       &mockKMSServiceWithDEK{dekSvc: dekSvc},
 	}
 }
 
@@ -819,7 +784,7 @@ func TestDEKToolsStartReencryption(t *testing.T) {
 	mockSvc := newTestQuicBaaSWithDEK()
 	now := time.Now()
 
-	mockSvc.clusterDEKSvc.On("StartReencryption", mock.Anything, mock.MatchedBy(func(req *service.StartReencryptionRequest) bool {
+	mockSvc.kmsSvc.On("StartReencryption", mock.Anything, mock.MatchedBy(func(req *service.StartReencryptionRequest) bool {
 		return req.Path == "tenant-123/" && req.FromVersion == 1 && req.ToVersion == 2
 	})).Return(&service.StartReencryptionResponse{
 		OperationID:    "reencrypt-op-123",
@@ -850,7 +815,7 @@ func TestDEKToolsStartReencryption(t *testing.T) {
 	assert.Equal(t, "reencrypt-op-123", resultMap["operation_id"])
 	assert.Equal(t, true, resultMap["started"])
 
-	mockSvc.clusterDEKSvc.AssertExpectations(t)
+	mockSvc.kmsSvc.AssertExpectations(t)
 }
 
 func TestDEKToolsGetReencryptionProgress(t *testing.T) {
@@ -1173,7 +1138,7 @@ func TestDEKToolsServiceError(t *testing.T) {
 
 	t.Run("dek_start_reencryption error propagation", func(t *testing.T) {
 		mockSvc := newTestQuicBaaSWithDEK()
-		mockSvc.clusterDEKSvc.On("StartReencryption", mock.Anything, mock.Anything).Return(
+		mockSvc.kmsSvc.On("StartReencryption", mock.Anything, mock.Anything).Return(
 			nil, errors.New("reencryption already in progress"))
 		registry := NewToolRegistry(mockSvc, log)
 
@@ -1184,7 +1149,7 @@ func TestDEKToolsServiceError(t *testing.T) {
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "reencryption already in progress")
-		mockSvc.clusterDEKSvc.AssertExpectations(t)
+		mockSvc.kmsSvc.AssertExpectations(t)
 	})
 
 	t.Run("dek_get_reencryption_progress error propagation", func(t *testing.T) {
@@ -1293,7 +1258,7 @@ func TestDEKToolsInvalidInput(t *testing.T) {
 	t.Run("dek_start_reencryption with custom batch and concurrency", func(t *testing.T) {
 		mockSvc := newTestQuicBaaSWithDEK()
 		now := time.Now()
-		mockSvc.clusterDEKSvc.On("StartReencryption", mock.Anything, mock.MatchedBy(func(req *service.StartReencryptionRequest) bool {
+		mockSvc.kmsSvc.On("StartReencryption", mock.Anything, mock.MatchedBy(func(req *service.StartReencryptionRequest) bool {
 			return req.BatchSize == 500 && req.Concurrency == 8 && req.ThrottleRate == 1000
 		})).Return(&service.StartReencryptionResponse{
 			OperationID:   "op-123",
@@ -1313,7 +1278,7 @@ func TestDEKToolsInvalidInput(t *testing.T) {
 			"throttle_rate": float64(1000),
 		})
 		require.NoError(t, err)
-		mockSvc.clusterDEKSvc.AssertExpectations(t)
+		mockSvc.kmsSvc.AssertExpectations(t)
 	})
 
 	t.Run("dek_get_reencryption_progress with operation_id", func(t *testing.T) {
@@ -1393,7 +1358,7 @@ func TestDEKToolsInvalidInput(t *testing.T) {
 	t.Run("dek_start_reencryption with force flag", func(t *testing.T) {
 		mockSvc := newTestQuicBaaSWithDEK()
 		now := time.Now()
-		mockSvc.clusterDEKSvc.On("StartReencryption", mock.Anything, mock.MatchedBy(func(req *service.StartReencryptionRequest) bool {
+		mockSvc.kmsSvc.On("StartReencryption", mock.Anything, mock.MatchedBy(func(req *service.StartReencryptionRequest) bool {
 			return req.Force == true
 		})).Return(&service.StartReencryptionResponse{
 			OperationID:   "op-forced",
@@ -1411,7 +1376,7 @@ func TestDEKToolsInvalidInput(t *testing.T) {
 			"force":        true,
 		})
 		require.NoError(t, err)
-		mockSvc.clusterDEKSvc.AssertExpectations(t)
+		mockSvc.kmsSvc.AssertExpectations(t)
 	})
 }
 
@@ -1530,7 +1495,7 @@ func TestDEKToolsEdgeCases(t *testing.T) {
 	t.Run("dek_start_reencryption with default batch and concurrency", func(t *testing.T) {
 		mockSvc := newTestQuicBaaSWithDEK()
 		now := time.Now()
-		mockSvc.clusterDEKSvc.On("StartReencryption", mock.Anything, mock.MatchedBy(func(req *service.StartReencryptionRequest) bool {
+		mockSvc.kmsSvc.On("StartReencryption", mock.Anything, mock.MatchedBy(func(req *service.StartReencryptionRequest) bool {
 			// Default values: batch_size=100, concurrency=4, throttle_rate=0
 			return req.BatchSize == 100 && req.Concurrency == 4 && req.ThrottleRate == 0
 		})).Return(&service.StartReencryptionResponse{
@@ -1548,76 +1513,19 @@ func TestDEKToolsEdgeCases(t *testing.T) {
 			// batch_size, concurrency, throttle_rate not specified - should use defaults
 		})
 		require.NoError(t, err)
-		mockSvc.clusterDEKSvc.AssertExpectations(t)
+		mockSvc.kmsSvc.AssertExpectations(t)
 	})
 }
 
 // =============================================================================
-// DEK Tool Tests - Start Reencryption Nil ClusterDEKService
+// DEK Tool Tests - Start Reencryption Nil KMS
 // =============================================================================
 
-// testQuicBaaSWithNilClusterDEK wraps MockQuicBaaS but returns nil for ClusterDEKService.
-type testQuicBaaSWithNilClusterDEK struct {
-	*MockQuicBaaS
-	dekSvc *MockDEKService
-}
-
-// CreateDEK implements DEK creation.
-func (m *testQuicBaaSWithNilClusterDEK) CreateDEK(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error) {
-	return m.dekSvc.CreateDEK(ctx, req)
-}
-
-// GetDEK implements DEK retrieval.
-func (m *testQuicBaaSWithNilClusterDEK) GetDEK(ctx context.Context, req *service.GetDEKRequest) (*service.GetDEKResponse, error) {
-	return m.dekSvc.GetDEK(ctx, req)
-}
-
-// ListDEKs implements DEK listing.
-func (m *testQuicBaaSWithNilClusterDEK) ListDEKs(ctx context.Context, req *service.ListDEKsRequest) (*service.ListDEKsResponse, error) {
-	return m.dekSvc.ListDEKs(ctx, req)
-}
-
-// RotateDEK implements DEK rotation.
-func (m *testQuicBaaSWithNilClusterDEK) RotateDEK(ctx context.Context, req *service.RotateDEKRequest) (*service.RotateDEKResponse, error) {
-	return m.dekSvc.RotateDEK(ctx, req)
-}
-
-// DeleteDEK implements DEK deletion.
-func (m *testQuicBaaSWithNilClusterDEK) DeleteDEK(ctx context.Context, req *service.DeleteDEKRequest) (*service.DeleteDEKResponse, error) {
-	return m.dekSvc.DeleteDEK(ctx, req)
-}
-
-// GetDEKStatus implements DEK status retrieval.
-func (m *testQuicBaaSWithNilClusterDEK) GetDEKStatus(ctx context.Context, req *service.GetDEKStatusRequest) (*service.GetDEKStatusResponse, error) {
-	return m.dekSvc.GetDEKStatus(ctx, req)
-}
-
-// SetDefaultDEK implements setting default DEK.
-func (m *testQuicBaaSWithNilClusterDEK) SetDefaultDEK(ctx context.Context, req *service.SetDefaultDEKRequest) (*service.SetDefaultDEKResponse, error) {
-	return m.dekSvc.SetDefaultDEK(ctx, req)
-}
-
-// SetDEKSafety implements setting DEK safety limits.
-func (m *testQuicBaaSWithNilClusterDEK) SetDEKSafety(ctx context.Context, req *service.SetDEKSafetyRequest) (*service.SetDEKSafetyResponse, error) {
-	return m.dekSvc.SetDEKSafety(ctx, req)
-}
-
-// ClearDEKSafety implements clearing DEK safety limits.
-func (m *testQuicBaaSWithNilClusterDEK) ClearDEKSafety(ctx context.Context, req *service.ClearDEKSafetyRequest) (*service.ClearDEKSafetyResponse, error) {
-	return m.dekSvc.ClearDEKSafety(ctx, req)
-}
-
-// ClusterDEKService returns nil to simulate missing service.
-func (m *testQuicBaaSWithNilClusterDEK) ClusterDEKService() service.ClusterDEKService {
-	return nil
-}
-
-// GetReencryptionProgress implements getting re-encryption progress.
-func (m *testQuicBaaSWithNilClusterDEK) GetReencryptionProgress(ctx context.Context, req *service.GetReencryptionProgressRequest) (*service.GetReencryptionProgressResponse, error) {
-	return m.dekSvc.GetReencryptionProgress(ctx, req)
-}
-
-func TestDEKToolsStartReencryptionNilClusterService(t *testing.T) {
+// TestDEKToolsStartReencryptionNilKMSService verifies that executing
+// quicbaas_dek_start_reencryption returns an error when the KMS service is not
+// configured. The live code routes StartReencryption through KMS().StartReencryption,
+// so a nil KMS → service unavailable.
+func TestDEKToolsStartReencryptionNilKMSService(t *testing.T) {
 	log, err := logger.New(logger.LogConfig{
 		Level:     "error",
 		Format:    "json",
@@ -1626,10 +1534,9 @@ func TestDEKToolsStartReencryptionNilClusterService(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	mockSvc := &testQuicBaaSWithNilClusterDEK{
-		MockQuicBaaS: &MockQuicBaaS{},
-		dekSvc:       &MockDEKService{},
-	}
+	// MockQuicBaaS.KMS() returns nil (via embedded mockService.KMS()), so
+	// getDEKService() → getKMSService() returns ErrServiceUnavailable.
+	mockSvc := &MockQuicBaaS{}
 	registry := NewToolRegistry(mockSvc, log)
 
 	_, err = registry.ExecuteTool(context.Background(), "quicbaas_dek_start_reencryption", map[string]interface{}{
@@ -1638,5 +1545,5 @@ func TestDEKToolsStartReencryptionNilClusterService(t *testing.T) {
 		"to_version":   float64(2),
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cluster DEK service not available")
+	assert.Contains(t, err.Error(), "not available")
 }

@@ -241,7 +241,7 @@ var LoadConfigFromFile = config.LoadFromFile
 var LoadConfigFromEnv = config.LoadFromEnv
 
 // DefaultKMSConfig returns the default KMS configuration with all sub-configs
-// (Cache, Safety, Defaults, Raft, ClusterDEK, Software, TPM2, PKCS11, etc.)
+// (Cache, Safety, Defaults, Raft, Software, TPM2, PKCS11, etc.)
 // properly initialized.
 var DefaultKMSConfig = config.DefaultKMSConfig
 

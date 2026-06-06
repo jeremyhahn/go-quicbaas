@@ -461,9 +461,49 @@ fmt.Printf("Events sent: %d, Errors: %d\n", sent, errors)
 2. Verify `buffer_size` is adequate for event volume
 3. Check for log rotation issues with `max_size` and `max_backups`
 
+## Key-Use Audit (AU-2 / NIST 800-53)
+
+Cryptographic operations are audited individually to satisfy NIST 800-53 AU-2 and
+PCI DSS 3.6 requirements for cryptoperiod and key-use tracking.
+
+### Interface
+
+```go
+// KMSKeyUseAuditLogger extends the standard KMSAuditLogger with per-operation
+// key-use recording. Wire it via service.WithKMSAuditLogger.
+type KMSKeyUseAuditLogger interface {
+    KMSAuditLogger
+
+    // LogKeyUse records a single key-use operation.
+    // outcome is "allow" or "deny"; both outcomes are always logged.
+    LogKeyUse(ctx context.Context,
+              principal, keyID, operation string,
+              outcome keyUseOutcome,
+              timestamp time.Time) error
+}
+```
+
+### Covered operations
+
+| Operation | Logged by |
+|---|---|
+| Encrypt | `cryptoService.Encrypt` |
+| Decrypt | `cryptoService.Decrypt` |
+| Sign | `cryptoService.Sign` |
+| Verify | `cryptoService.Verify` |
+| GenerateDataKey | `cryptoService.GenerateDataKey` |
+| GenerateKey | `kmsServiceImpl.GenerateKey` (existing) |
+| ImportKey | `kmsServiceImpl.ImportKey` (existing) |
+| DeleteKey | `kmsServiceImpl.DeleteKey` (existing) |
+| ExportKey | `kmsServiceImpl.ExportKey` (existing) |
+
+Key-use events are emitted from the service layer and therefore cover all transports
+(gRPC, REST, QUIC, MCP, embedded) without any transport-specific wiring.
+
 ## See Also
 
 - [Security README](README.md) - Security overview
+- [KMS Security](kms.md) - Per-key authorization and policy management
 - [Hardening Guide](hardening-guide.md) - Production hardening
 - [Authentication](authentication.md) - Authentication configuration
 - [RBAC](rbac.md) - Authorization and access control

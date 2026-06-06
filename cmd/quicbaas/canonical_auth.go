@@ -23,16 +23,21 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/spf13/cobra"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 )
 
 // canonicalValidFactorTypes is the canonical "--type" set per
@@ -43,30 +48,47 @@ var canonicalValidFactorTypes = map[string]struct{}{
 	"piv":   {},
 }
 
-// canonicalValidAuthMethods is the canonical "--method" set per
-// docs/08-bootstrap-auth-architecture.md §5e.
+// canonicalValidAuthMethods is the canonical "auth login --method" set. It
+// mirrors canonicalValidFactorTypes: each factor type is also a login method.
 var canonicalValidAuthMethods = map[string]struct{}{
 	"mtls":  {},
 	"fido2": {},
 	"piv":   {},
 }
 
+// InvalidAuthMethodError is returned when "auth login --method" is empty or
+// not one of the canonical login methods.
+type InvalidAuthMethodError struct {
+	Method string
+}
+
+// Error returns a human-readable description.
+func (e *InvalidAuthMethodError) Error() string {
+	methods := make([]string, 0, len(canonicalValidAuthMethods))
+	for m := range canonicalValidAuthMethods {
+		methods = append(methods, m)
+	}
+	sort.Strings(methods)
+	return fmt.Sprintf("invalid auth method %q: must be one of %s",
+		e.Method, strings.Join(methods, " | "))
+}
+
 // ---------------------------------------------------------------------------
 // Typed errors
 // ---------------------------------------------------------------------------
 
-// MissingFactorIDError is returned when a factor subcommand requires
-// a positional <factor-id> argument and none was supplied.
+// MissingFactorIDError is returned when a factor subcommand requires a
+// positional <factor-id> argument that was not supplied.
 type MissingFactorIDError struct {
 	Op string
 }
 
 // Error returns a human-readable description.
 func (e *MissingFactorIDError) Error() string {
-	return e.Op + ": factor id is required"
+	return e.Op + ": a factor id argument is required"
 }
 
-// MissingLabelError is returned when --label is required but missing.
+// MissingLabelError is returned when --label is required but unset.
 type MissingLabelError struct {
 	Op string
 }
@@ -76,30 +98,19 @@ func (e *MissingLabelError) Error() string {
 	return e.Op + ": --label is required"
 }
 
-// InvalidFactorTypeError is returned when --type is not one of the
-// canonical factor types.
+// InvalidFactorTypeError is returned when --type is empty or not one of
+// the canonical factor types.
 type InvalidFactorTypeError struct {
 	Type string
 }
 
 // Error returns a human-readable description.
 func (e *InvalidFactorTypeError) Error() string {
-	return "invalid --type " + e.Type + " (must be one of: mtls, fido2, piv)"
+	return fmt.Sprintf("invalid factor type %q: must be one of mtls | fido2 | piv", e.Type)
 }
 
-// InvalidAuthMethodError is returned when --method is not one of the
-// canonical auth methods.
-type InvalidAuthMethodError struct {
-	Method string
-}
-
-// Error returns a human-readable description.
-func (e *InvalidAuthMethodError) Error() string {
-	return "invalid --method " + e.Method + " (must be one of: mtls, fido2, piv)"
-}
-
-// MissingCertPathError is returned when "--type mtls" is selected but
-// --cert was not supplied.
+// MissingCertPathError is returned when --type mtls is selected without
+// --cert.
 type MissingCertPathError struct{}
 
 // Error returns a human-readable description.
@@ -107,8 +118,7 @@ func (e *MissingCertPathError) Error() string {
 	return "auth factor add --type mtls: --cert <path> is required"
 }
 
-// CertReadError wraps errors raised while reading or parsing a cert
-// PEM file.
+// CertReadError wraps a failure to read or parse a PEM certificate.
 type CertReadError struct {
 	Path  string
 	Cause error
@@ -116,26 +126,24 @@ type CertReadError struct {
 
 // Error returns a human-readable description.
 func (e *CertReadError) Error() string {
-	if e.Path == "" {
-		return "cert read error: " + e.Cause.Error()
+	if e.Path != "" {
+		return fmt.Sprintf("cert read error (%s): %v", e.Path, e.Cause)
 	}
-	return "cert read error (" + e.Path + "): " + e.Cause.Error()
+	return fmt.Sprintf("cert read error: %v", e.Cause)
 }
 
-// Unwrap returns the wrapped cause for errors.Is/As.
+// Unwrap returns the wrapped cause.
 func (e *CertReadError) Unwrap() error { return e.Cause }
 
-// SecuritySurfaceUnavailableError is returned when the SDK client does
-// not implement the M10 ExtendedSecurityService surface (older server
-// builds). The handlers expect Security().Auth().Factors() to be
-// reachable.
+// SecuritySurfaceUnavailableError is returned when the SDK Security()
+// surface (or a required sub-service) is nil for the requested operation.
 type SecuritySurfaceUnavailableError struct {
 	Op string
 }
 
 // Error returns a human-readable description.
 func (e *SecuritySurfaceUnavailableError) Error() string {
-	return e.Op + ": quicbaas SDK Security().Auth().Factors() surface is unavailable (server too old?)"
+	return e.Op + ": Security() surface unavailable on the configured SDK client"
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +159,7 @@ type canonicalAuthFactorAddFlags struct {
 	tenant      string
 	certPath    string
 	fido2Device string
+	fido2Origin string
 	pivReader   string
 	pivSlot     string
 }
@@ -266,6 +275,7 @@ func bindCanonicalAuthFactorAddFlags(cmd *cobra.Command, f *canonicalAuthFactorA
 	cmd.Flags().StringVar(&f.tenant, "tenant", "", "Tenant ID (optional)")
 	cmd.Flags().StringVar(&f.certPath, "cert", "", "Certificate PEM path (--type mtls)")
 	cmd.Flags().StringVar(&f.fido2Device, "device", "", "FIDO2 device id (--type fido2; default first connected)")
+	cmd.Flags().StringVar(&f.fido2Origin, "origin", "", "WebAuthn origin (--type fido2; default: https://<rp-id>)")
 	cmd.Flags().StringVar(&f.pivReader, "reader", "", "PC/SC reader name (--type piv)")
 	cmd.Flags().StringVar(&f.pivSlot, "slot", "9a", "PIV slot id (--type piv; default 9a)")
 }
@@ -292,6 +302,21 @@ func canonicalAuthFactors(op string) (quicbaas.AuthFactorsClient, error) {
 	return factors, nil
 }
 
+// canonicalAuthService resolves the unified Security().Auth() surface used by
+// the canonical login dispatcher to drive the qrdb-backed BeginLogin /
+// FinishLogin ceremony for every factor type.
+func canonicalAuthService(op string) (quicbaas.AuthService, error) {
+	cl, err := sdkClientFactory()
+	if err != nil {
+		return nil, err
+	}
+	auth := cl.Security().Auth()
+	if auth == nil {
+		return nil, &SecuritySurfaceUnavailableError{Op: op}
+	}
+	return auth, nil
+}
+
 // canonicalAuthFIDO2 resolves the FIDO2 sub-client.
 func canonicalAuthFIDO2(op string) (quicbaas.FIDO2Client, error) {
 	cl, err := sdkClientFactory()
@@ -307,6 +332,24 @@ func canonicalAuthFIDO2(op string) (quicbaas.FIDO2Client, error) {
 		return nil, &SecuritySurfaceUnavailableError{Op: op}
 	}
 	return f, nil
+}
+
+// canonicalAuthWebAuthn resolves the WebAuthn relying-party sub-client used to
+// complete the server-side registration ceremony (FinishRegistration).
+func canonicalAuthWebAuthn(op string) (quicbaas.WebAuthnClient, error) {
+	cl, err := sdkClientFactory()
+	if err != nil {
+		return nil, err
+	}
+	auth := cl.Security().Auth()
+	if auth == nil {
+		return nil, &SecuritySurfaceUnavailableError{Op: op}
+	}
+	w := auth.WebAuthn()
+	if w == nil {
+		return nil, &SecuritySurfaceUnavailableError{Op: op}
+	}
+	return w, nil
 }
 
 // canonicalAuthPIV resolves the PIV sub-client.
@@ -380,18 +423,10 @@ func runCanonicalAuthFactorAdd(ctx context.Context, f *canonicalAuthFactorAddFla
 	out := os.Stdout
 	fmt.Fprintf(out, "Enrollment ID: %s\n", resp.EnrollmentID)
 	fmt.Fprintf(out, "Type:          %s\n", resp.FactorName)
-	fmt.Fprintf(out, "User:          %s\n", resp.UserID)
-	if resp.TenantID != "" {
-		fmt.Fprintf(out, "Tenant:        %s\n", resp.TenantID)
-	}
-	fmt.Fprintf(out, "Enrolled At:   %s\n", resp.EnrolledAt.Format("2006-01-02T15:04:05Z"))
-	if f.label != "" {
-		fmt.Fprintf(out, "Label:         %s\n", f.label)
-	}
 	return nil
 }
 
-// runCanonicalAuthFactorRemove revokes an enrollment.
+// runCanonicalAuthFactorRemove removes an enrolled factor.
 func runCanonicalAuthFactorRemove(ctx context.Context, factorID string, force bool) error {
 	if factorID == "" {
 		return &MissingFactorIDError{Op: "auth factor remove"}
@@ -407,7 +442,8 @@ func runCanonicalAuthFactorRemove(ctx context.Context, factorID string, force bo
 	return nil
 }
 
-// runCanonicalAuthFactorRotate rotates a factor atomically.
+// runCanonicalAuthFactorRotate revokes an old factor and enrolls a
+// replacement in a single operation.
 func runCanonicalAuthFactorRotate(ctx context.Context, oldID string, f *canonicalAuthFactorAddFlags) error {
 	if oldID == "" {
 		return &MissingFactorIDError{Op: "auth factor rotate"}
@@ -479,19 +515,15 @@ func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddF
 			params[k] = v
 		}
 	case "fido2":
-		fido2, err := canonicalAuthFIDO2("auth factor add --type fido2")
+		credentialID, err := canonicalFIDO2EnrollFunc(ctx, f)
 		if err != nil {
 			return nil, err
 		}
-		// Build a vendor-agnostic registration request. The deviceID
-		// scope is the only flag-driven input; the SDK selects the
-		// first connected authenticator when empty.
-		regReq := &quicbaas.FIDO2BeginRegistrationRequest{}
-		regResp, err := fido2.Register(ctx, regReq)
-		if err != nil {
-			return nil, fmt.Errorf("fido2.Register: %w", err)
-		}
-		params["fido2_credential_create_options"] = regResp
+		// credential_id is the base64url credential id the login path uses
+		// as the qrdb FIDO2 factor lookup key; the SDK stores it as the
+		// factor Credential so a later "auth login --method fido2" resolves
+		// it via LookupByCredentialKey.
+		params["credential_id"] = credentialID
 		if f.fido2Device != "" {
 			params["device_id"] = f.fido2Device
 		}
@@ -552,11 +584,227 @@ func canonicalLoadCertFingerprint(path string) (string, map[string]any, error) {
 	meta := map[string]any{
 		"cert_cn":         cert.Subject.CommonName,
 		"cert_serial":     cert.SerialNumber.String(),
-		"cert_not_after":  cert.NotAfter.UTC().Format("2006-01-02T15:04:05Z"),
 		"cert_not_before": cert.NotBefore.UTC().Format("2006-01-02T15:04:05Z"),
+		"cert_not_after":  cert.NotAfter.UTC().Format("2006-01-02T15:04:05Z"),
 	}
 	return fingerprint, meta, nil
 }
 
-// keep the strings import in scope (used elsewhere in this file).
-var _ = strings.Builder{}
+// ---------------------------------------------------------------------------
+// FIDO2 enrollment ceremony
+// ---------------------------------------------------------------------------
+
+// FIDO2RegistrationParseError is returned when the server-issued WebAuthn
+// creation options cannot be parsed into a registration request, or when the
+// authenticator's attestation cannot be parsed to recover the credential id.
+type FIDO2RegistrationParseError struct {
+	Cause error
+}
+
+// Error returns a human-readable description.
+func (e *FIDO2RegistrationParseError) Error() string {
+	return "auth factor add --type fido2: failed to parse WebAuthn registration data: " + e.Cause.Error()
+}
+
+// Unwrap returns the wrapped cause.
+func (e *FIDO2RegistrationParseError) Unwrap() error { return e.Cause }
+
+// MissingFIDO2RegistrationOptionsError is returned when the server's
+// BeginRegistration response carries no creation options. This means the server
+// did not issue a WebAuthn registration challenge (e.g. the tenant relying party
+// is not configured) and the local authenticator cannot be driven.
+type MissingFIDO2RegistrationOptionsError struct{}
+
+// Error returns a human-readable description.
+func (e *MissingFIDO2RegistrationOptionsError) Error() string {
+	return "auth factor add --type fido2: server did not issue WebAuthn creation options"
+}
+
+// canonicalFIDO2RegisterFunc drives a connected CTAP2 authenticator through a
+// WebAuthn registration ceremony whose creation options were issued by the
+// server, and returns the navigator.credentials.create() PublicKeyCredential
+// JSON the server's FinishRegistration consumes.
+//
+// It is a package-level seam so the device-free enrollment plumbing (options
+// parsing, attestation -> credential-id extraction, MethodParams assembly) can
+// be unit-tested without a physical authenticator. The production default
+// drives a real HID authenticator over CTAP2 (canonicalFIDO2RegisterWithOptions);
+// tests replace it with a function that returns a fixed attestation. The seam
+// never bypasses CTAP2 in production code.
+var canonicalFIDO2RegisterFunc = canonicalFIDO2RegisterWithOptions
+
+// canonicalFIDO2RegisterWithOptions is the production implementation behind
+// canonicalFIDO2RegisterFunc. It parses the server's
+// PublicKeyCredentialCreationOptions, builds a real FIDO2 handler over the
+// platform HID enumerator (the same construction xkmsctl's RegisterWebAuthn
+// uses), and drives the connected authenticator with the server-issued
+// registration challenge.
+//
+// devicePath, when non-empty, pins a specific local HID device; when empty the
+// handler selects the first connected FIDO2 authenticator. origin, when
+// non-empty, overrides the WebAuthn-standard same-origin default
+// ("https://<rpId>") for relying parties whose origin host differs from the RP
+// id.
+func canonicalFIDO2RegisterWithOptions(_ context.Context, optionsJSON []byte, devicePath, origin string) ([]byte, error) {
+	var creation protocol.CredentialCreation
+	if err := json.Unmarshal(optionsJSON, &creation); err != nil {
+		return nil, &FIDO2RegistrationParseError{Cause: err}
+	}
+
+	rpID := creation.Response.RelyingParty.ID
+	if origin == "" {
+		origin = "https://" + rpID
+	}
+	userID, err := decodeCanonicalWebAuthnUserID(creation.Response.User.ID)
+	if err != nil {
+		return nil, &FIDO2RegistrationParseError{Cause: err}
+	}
+
+	fidoConfig := xkmsfido2.DefaultConfig
+	if devicePath != "" {
+		fidoConfig.DevicePath = devicePath
+	}
+	enumerator := xkmsfido2.NewDefaultEnumerator()
+	handler, err := xkmsfido2.NewHandler(&fidoConfig, enumerator)
+	if err != nil {
+		return nil, &FIDO2OperationError{Op: "NewHandler", Cause: err}
+	}
+	defer func() { _ = handler.Close() }()
+
+	att, rerr := handler.RegisterWebAuthn(xkmsfido2.WebAuthnRegistrationOptions{
+		Challenge:       creation.Response.Challenge,
+		Origin:          origin,
+		RPID:            rpID,
+		RPName:          creation.Response.RelyingParty.Name,
+		UserID:          userID,
+		UserName:        creation.Response.User.Name,
+		UserDisplayName: creation.Response.User.DisplayName,
+	})
+	if rerr != nil {
+		return nil, &FIDO2OperationError{Op: "Register", Cause: rerr}
+	}
+	return att.PublicKeyCredentialJSON, nil
+}
+
+// canonicalFIDO2Registerer is the device-side registration seam signature:
+// given the server creation-options JSON, an optional device path, and an
+// optional WebAuthn origin, it returns the PublicKeyCredential attestation JSON.
+type canonicalFIDO2Registerer func(ctx context.Context, optionsJSON []byte, devicePath, origin string) ([]byte, error)
+
+// canonicalFIDO2EnrollFunc resolves the FIDO2/WebAuthn SDK sub-clients and drives
+// the full registration ceremony, returning the base64url credential id stored
+// under MethodParams["credential_id"]. It is a package-level seam so the
+// buildCanonicalEnrollRequest credential-id propagation can be unit-tested
+// without faking the entire SDK Security() surface; production callers use the
+// default (canonicalFIDO2Enroll), which resolves live transport-backed clients.
+var canonicalFIDO2EnrollFunc = canonicalFIDO2Enroll
+
+// canonicalFIDO2Enroll is the production implementation behind
+// canonicalFIDO2EnrollFunc. It resolves the FIDO2 device client (server-side
+// BeginRegistration) and the WebAuthn relying-party client (FinishRegistration)
+// from the configured SDK client and drives the ceremony via enrollCanonicalFIDO2.
+func canonicalFIDO2Enroll(ctx context.Context, f *canonicalAuthFactorAddFlags) (string, error) {
+	fido2, err := canonicalAuthFIDO2("auth factor add --type fido2")
+	if err != nil {
+		return "", err
+	}
+	webauthn, err := canonicalAuthWebAuthn("auth factor add --type fido2")
+	if err != nil {
+		return "", err
+	}
+	return enrollCanonicalFIDO2(ctx, f, fido2, webauthn, canonicalFIDO2RegisterFunc)
+}
+
+// enrollCanonicalFIDO2 drives the full WebAuthn registration ceremony for a
+// FIDO2 factor enrollment and returns the base64url credential id used as the
+// login lookup key:
+//
+//  1. fido2.Register issues the server-side creation options + session id
+//     (BeginRegistration).
+//  2. register drives the connected authenticator over CTAP2 with those options
+//     to obtain the navigator.credentials.create() attestation JSON.
+//  3. webauthn.FinishRegistration completes the server-side ceremony with the
+//     attestation under the issued session id.
+//  4. The credential id is recovered from the attestation's "rawId" — the same
+//     base64url encoding the login path's lookup key uses — and returned so the
+//     enroll request can store it as MethodParams["credential_id"].
+func enrollCanonicalFIDO2(
+	ctx context.Context,
+	f *canonicalAuthFactorAddFlags,
+	fido2 quicbaas.FIDO2Client,
+	webauthn quicbaas.WebAuthnClient,
+	register canonicalFIDO2Registerer,
+) (string, error) {
+	beginResp, err := fido2.Register(ctx, &quicbaas.FIDO2BeginRegistrationRequest{
+		Username:    f.user,
+		DisplayName: f.label,
+	})
+	if err != nil {
+		return "", fmt.Errorf("fido2.Register: %w", err)
+	}
+	if beginResp == nil || beginResp.OptionsJSON == "" {
+		return "", &MissingFIDO2RegistrationOptionsError{}
+	}
+
+	attestation, err := register(ctx, []byte(beginResp.OptionsJSON), f.fido2Device, f.fido2Origin)
+	if err != nil {
+		return "", err
+	}
+
+	credentialID, err := canonicalFIDO2CredentialIDFromAttestation(attestation)
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := webauthn.FinishRegistration(ctx, &quicbaas.WebAuthnUser{
+		Username:    f.user,
+		DisplayName: f.label,
+	}, &quicbaas.FIDO2FinishRegistrationRequest{
+		SessionID:       beginResp.SessionID,
+		AttestationJSON: string(attestation),
+	}); err != nil {
+		return "", fmt.Errorf("webauthn.FinishRegistration: %w", err)
+	}
+
+	return credentialID, nil
+}
+
+// canonicalFIDO2CredentialIDFromAttestation recovers the base64url-encoded
+// WebAuthn credential id from a navigator.credentials.create() attestation
+// document. The credential id is the qrdb FIDO2 factor lookup key, and uses the
+// exact same encoding the login path derives from the assertion's rawId, so a
+// later "auth login --method fido2" resolves the enrolled factor.
+func canonicalFIDO2CredentialIDFromAttestation(attestation []byte) (string, error) {
+	var doc struct {
+		ID    string `json:"id"`
+		RawID string `json:"rawId"`
+	}
+	if err := json.Unmarshal(attestation, &doc); err != nil {
+		return "", &FIDO2RegistrationParseError{Cause: err}
+	}
+	credentialID := doc.RawID
+	if credentialID == "" {
+		credentialID = doc.ID
+	}
+	if credentialID == "" {
+		return "", &FIDO2RegistrationParseError{Cause: errors.New("attestation carries no credential id (id/rawId)")}
+	}
+	return credentialID, nil
+}
+
+// decodeCanonicalWebAuthnUserID extracts the WebAuthn user handle bytes from the
+// JSON-decoded User.ID field of a CredentialCreation. The go-webauthn library
+// serializes the handle as a base64url string, so after JSON decoding it arrives
+// as a Go string.
+func decodeCanonicalWebAuthnUserID(id any) ([]byte, error) {
+	switch v := id.(type) {
+	case string:
+		return base64.RawURLEncoding.DecodeString(v)
+	case []byte:
+		return v, nil
+	case nil:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected user handle type %T", id)
+	}
+}

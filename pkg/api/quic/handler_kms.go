@@ -606,6 +606,79 @@ func (h *Handler) handleKMSGetKeyPolicy(ctx context.Context, req *Request) *Resp
 }
 
 // =============================================================================
+// KMS Rotation Policy Handlers
+// =============================================================================
+
+func (h *Handler) handleKMSSetRotationPolicy(ctx context.Context, req *Request) *Response {
+	if h.kmsService == nil {
+		return h.errorResponse(api.NewServiceUnavailableError("KMS"))
+	}
+
+	var svcReq service.SetKeyRotationPolicyRequest
+	if err := DecodePayload(req.Payload, &svcReq); err != nil {
+		return h.errorResponse(err)
+	}
+
+	resp, err := h.kmsService.SetKeyRotationPolicy(ctx, &svcReq)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	payload, err := EncodePayload(resp)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	return &Response{Status: StatusOK, Payload: payload}
+}
+
+func (h *Handler) handleKMSGetRotationPolicy(ctx context.Context, req *Request) *Response {
+	if h.kmsService == nil {
+		return h.errorResponse(api.NewServiceUnavailableError("KMS"))
+	}
+
+	var svcReq service.GetKeyRotationPolicyRequest
+	if err := DecodePayload(req.Payload, &svcReq); err != nil {
+		return h.errorResponse(err)
+	}
+
+	resp, err := h.kmsService.GetKeyRotationPolicy(ctx, &svcReq)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	payload, err := EncodePayload(resp)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	return &Response{Status: StatusOK, Payload: payload}
+}
+
+func (h *Handler) handleKMSDeleteRotationPolicy(ctx context.Context, req *Request) *Response {
+	if h.kmsService == nil {
+		return h.errorResponse(api.NewServiceUnavailableError("KMS"))
+	}
+
+	var svcReq service.DeleteKeyRotationPolicyRequest
+	if err := DecodePayload(req.Payload, &svcReq); err != nil {
+		return h.errorResponse(err)
+	}
+
+	resp, err := h.kmsService.DeleteKeyRotationPolicy(ctx, &svcReq)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	payload, err := EncodePayload(resp)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	return &Response{Status: StatusOK, Payload: payload}
+}
+
+// =============================================================================
 // KMS Safety Operations Handlers
 // =============================================================================
 

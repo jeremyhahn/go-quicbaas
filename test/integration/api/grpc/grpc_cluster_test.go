@@ -17,14 +17,15 @@ package grpc
 
 import (
 	"context"
-	"crypto/tls"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestGRPC_ClusterStatus verifies that the ClusterStatus RPC returns a valid
@@ -32,10 +33,8 @@ import (
 // so Nodes and Shards may be empty. The test validates the API is reachable
 // and returns a well-formed response.
 func TestGRPC_ClusterStatus(t *testing.T) {
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true, //nolint:gosec // G402: integration test
-		MinVersion:         tls.VersionTLS13,
-	}
+	tlsConfig, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
 	conn, err := grpc.Dial("test-node1:50051", grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), grpc.WithBlock(), grpc.WithTimeout(5*time.Second))
 	if err != nil {
 		t.Fatalf("failed to dial grpc: %v", err)

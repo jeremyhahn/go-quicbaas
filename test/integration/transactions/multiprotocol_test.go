@@ -18,7 +18,6 @@ package transactions
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -525,17 +524,7 @@ func (c *restTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 	return nil
 }
 
@@ -702,8 +691,12 @@ func (c *grpcTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
 	conn, err := grpc.DialContext(dialCtx, endpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -936,11 +929,11 @@ func (c *quicTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 	}
 	c.address = endpoints[0]
 
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // Test only - skip certificate verification
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1252,9 +1245,13 @@ func (c *unixSocketTransactionClient) Setup(t *testing.T, ctx context.Context) e
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
 	conn, err := grpc.DialContext(dialCtx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return net.DialTimeout("unix", socketPath, 10*time.Second)
@@ -1401,17 +1398,7 @@ func (c *mcpTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 
 	// Authenticate with the MCP server
 	if err := c.authenticate(ctx); err != nil {
@@ -1442,7 +1429,6 @@ func (c *mcpTransactionClient) authenticate(ctx context.Context) error {
 	c.authenticated = true
 	return nil
 }
-
 
 // callMCPTool is the internal method that sends MCP tool requests without authentication.
 // Used by authenticate() to avoid circular dependency.
@@ -1584,7 +1570,7 @@ func (c *mcpTransactionClient) callMCP(ctx context.Context, method string, args 
 }
 
 func (c *mcpTransactionClient) Put(ctx context.Context, entityType, key string, value []byte) (*CRUDResult, error) {
-	_, err := c.callMCP(ctx, "quicbaas_put", map[string]interface{}{
+	_, err := c.callMCP(ctx, "qrdb_put", map[string]interface{}{
 		"entity_type": entityType,
 		"key":         key,
 		"value":       string(value),
@@ -1600,7 +1586,7 @@ func (c *mcpTransactionClient) Put(ctx context.Context, entityType, key string, 
 }
 
 func (c *mcpTransactionClient) Get(ctx context.Context, entityType, key string) (*CRUDResult, error) {
-	result, err := c.callMCP(ctx, "quicbaas_get", map[string]interface{}{
+	result, err := c.callMCP(ctx, "qrdb_get", map[string]interface{}{
 		"entity_type": entityType,
 		"key":         key,
 	})
@@ -1631,7 +1617,7 @@ func (c *mcpTransactionClient) Get(ctx context.Context, entityType, key string) 
 }
 
 func (c *mcpTransactionClient) Delete(ctx context.Context, entityType, key string) (*CRUDResult, error) {
-	_, err := c.callMCP(ctx, "quicbaas_delete", map[string]interface{}{
+	_, err := c.callMCP(ctx, "qrdb_delete", map[string]interface{}{
 		"entity_type": entityType,
 		"key":         key,
 	})

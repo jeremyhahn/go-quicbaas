@@ -16,13 +16,13 @@
 package rest
 
 import (
-	"crypto/tls"
-	"net"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 func TestREST_ShardHeaderPresent(t *testing.T) {
@@ -36,16 +36,7 @@ func TestREST_ShardHeaderPresent(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST error: %v", err)

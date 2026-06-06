@@ -23,8 +23,8 @@ import (
 // invariant that a conversation has at most one attached session at a
 // time.
 type SessionManager struct {
-	store      StateStore
-	defaults   VerbosityPrefs
+	store    StateStore
+	defaults VerbosityPrefs
 
 	mu    sync.Mutex
 	cache map[string]*ConversationState

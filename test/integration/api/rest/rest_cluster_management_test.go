@@ -196,11 +196,17 @@ func TestRESTClusterAddNode(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// Note: Adding a node may succeed or fail depending on cluster state
-	// We accept both OK and error status codes for this test
-	assert.Contains(t, []int{http.StatusOK, http.StatusBadRequest, http.StatusInternalServerError, http.StatusRequestTimeout},
-		resp.StatusCode,
-		"Expected valid response status for add node")
+	// Note: Adding a node may succeed or fail depending on cluster state. The
+	// REST handler maps raft membership errors (ErrRaft, ErrLeaderNotAvailable)
+	// to 503 Service Unavailable, which is the expected result here since the
+	// test asks to add a node that is not reachable.
+	assert.Contains(t, []int{
+		http.StatusOK,
+		http.StatusBadRequest,
+		http.StatusInternalServerError,
+		http.StatusRequestTimeout,
+		http.StatusServiceUnavailable,
+	}, resp.StatusCode, "Expected valid response status for add node")
 
 	if resp.StatusCode == http.StatusOK {
 		var addResp AddNodeRestResponse
@@ -233,10 +239,17 @@ func TestRESTClusterRemoveNode(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// Should return an error or success depending on node existence
-	assert.Contains(t, []int{http.StatusOK, http.StatusNotFound, http.StatusBadRequest, http.StatusInternalServerError, http.StatusRequestTimeout},
-		resp.StatusCode,
-		"Expected valid response status for remove node")
+	// Should return an error or success depending on node existence. Raft
+	// membership errors surface as 503 Service Unavailable when the underlying
+	// raft op rejects removal of an unknown node.
+	assert.Contains(t, []int{
+		http.StatusOK,
+		http.StatusNotFound,
+		http.StatusBadRequest,
+		http.StatusInternalServerError,
+		http.StatusRequestTimeout,
+		http.StatusServiceUnavailable,
+	}, resp.StatusCode, "Expected valid response status for remove node")
 
 	if resp.StatusCode == http.StatusOK {
 		var removeResp RemoveNodeRestResponse

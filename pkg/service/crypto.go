@@ -40,6 +40,11 @@ type cryptoService struct {
 	logger        interfaces.Logger
 	metrics       *cryptoMetrics
 	safetyTracker *AEADSafetyTracker
+	// kmsSvc is the KMS service used for per-key authorization and audit.
+	// When set together with authzEnabled, every crypto call is gated by
+	// checkKeyAuthz before the underlying operation proceeds.
+	kmsSvc       *kmsServiceImpl
+	authzEnabled bool
 }
 
 // cryptoMetrics holds Prometheus metrics for crypto operations.
@@ -66,6 +71,16 @@ func newCryptoService(cryptoManager interfaces.CryptoManager, kmsManager interfa
 	svc.initMetrics()
 
 	return svc
+}
+
+// checkKeyAuthz gates a crypto operation behind per-key authorization and
+// emits a key-use audit event.  When kmsSvc is nil or authzEnabled is false
+// the check is skipped (backward-compatible with existing deployments).
+func (t *cryptoService) checkKeyAuthz(ctx context.Context, keyID, operation string) error {
+	if !t.authzEnabled || t.kmsSvc == nil {
+		return nil
+	}
+	return t.kmsSvc.checkKeyAuthz(ctx, keyID, operation)
 }
 
 // initMetrics initializes Prometheus metrics for crypto operations.
@@ -145,6 +160,13 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, err
 	}
 
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, req.KeyID, "encrypt"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
+		return nil, err
+	}
+
 	// Track key usage before encryption (if tracker configured)
 	if t.safetyTracker != nil {
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(len(req.Plaintext))); err != nil {
@@ -219,6 +241,13 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		}
 		t.metrics.decryptOperationsTotal.With(keyID, "invalid").Inc()
 		t.metrics.errorsByType.With("validation_error").Inc()
+		return nil, err
+	}
+
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, req.KeyID, "decrypt"); err != nil {
+		t.metrics.decryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
 	}
 
@@ -530,6 +559,13 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 		return nil, err
 	}
 
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, req.KeyID, "generate_data_key"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
+		return nil, err
+	}
+
 	// Determine key size from KeyAttributes (default to 32 bytes for AES-256)
 	keyBytes := keySizeFromAttributes(req.KeyAttributes)
 
@@ -672,6 +708,13 @@ func (t *cryptoService) Sign(ctx context.Context, req *SignRequest) (*SignRespon
 		return nil, err
 	}
 
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, req.KeyID, "sign"); err != nil {
+		t.metrics.signOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
+		return nil, err
+	}
+
 	// Default to SHA-256 if not specified
 	hashAlg := string(req.HashAlgorithm)
 	if hashAlg == "" {
@@ -726,6 +769,13 @@ func (t *cryptoService) Verify(ctx context.Context, req *VerifyRequest) (*Verify
 		}
 		t.metrics.verifyOperationsTotal.With(keyID, "invalid").Inc()
 		t.metrics.errorsByType.With("validation_error").Inc()
+		return nil, err
+	}
+
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, req.KeyID, "verify"); err != nil {
+		t.metrics.verifyOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
 	}
 

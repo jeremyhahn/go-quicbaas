@@ -172,7 +172,7 @@ func TestMCPPublicToolsNoAuth(t *testing.T) {
 	defer tc.Close()
 
 	publicTools := []string{
-		"quicbaas_health",
+		"qrdb_health",
 		"quicbaas_version",
 		"quicbaas_liveness",
 	}
@@ -192,10 +192,10 @@ func TestMCPProtectedToolsRequireToken(t *testing.T) {
 	defer tc.Close()
 
 	protectedTools := []string{
-		"quicbaas_get",
-		"quicbaas_put",
-		"quicbaas_delete",
-		"quicbaas_list",
+		"qrdb_get",
+		"qrdb_put",
+		"qrdb_delete",
+		"qrdb_list",
 		"quicbaas_query",
 		"quicbaas_secrets_get",
 		"quicbaas_kms_get_key",
@@ -218,7 +218,7 @@ func TestMCPAuthErrorMissingToken(t *testing.T) {
 	tc := newTestMCPContext(t)
 	defer tc.Close()
 
-	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_get", "")
+	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", "")
 
 	require.NotNil(t, authErr)
 	assert.Equal(t, mcp.AuthErrorMissingToken, authErr.Type)
@@ -230,7 +230,7 @@ func TestMCPAuthErrorInvalidToken(t *testing.T) {
 	tc := newTestMCPContext(t)
 	defer tc.Close()
 
-	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_get", "invalid-token-12345")
+	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", "invalid-token-12345")
 
 	require.NotNil(t, authErr)
 	assert.Equal(t, mcp.AuthErrorInvalidToken, authErr.Type)
@@ -247,7 +247,7 @@ func TestMCPAuthErrorPermissionDenied(t *testing.T) {
 	require.NoError(t, err)
 
 	// Readonly user trying to use write tool
-	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_put", token)
+	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_put", token)
 
 	require.NotNil(t, authErr)
 	assert.Equal(t, mcp.AuthErrorPermissionDenied, authErr.Type)
@@ -263,10 +263,10 @@ func TestMCPAdminRoleAccess(t *testing.T) {
 	require.NoError(t, err)
 
 	adminTools := []string{
-		"quicbaas_get",
-		"quicbaas_put",
-		"quicbaas_delete",
-		"quicbaas_list",
+		"qrdb_get",
+		"qrdb_put",
+		"qrdb_delete",
+		"qrdb_list",
 		"quicbaas_query",
 		"quicbaas_secrets_get",
 		"quicbaas_secrets_store",
@@ -280,8 +280,8 @@ func TestMCPAdminRoleAccess(t *testing.T) {
 		"quicbaas_unseal",
 		"quicbaas_cluster_status",
 		"quicbaas_add_node",
-		"quicbaas_user_create",
-		"quicbaas_role_create",
+		"qrdb_user_create",
+		"qrdb_role_create",
 		"quicbaas_backup_create",
 		"quicbaas_backup_delete",
 	}
@@ -303,17 +303,17 @@ func TestMCPReadWriteRoleAccess(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("can_read_keys", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_get", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", token)
 		assert.Nil(t, authErr)
 	})
 
 	t.Run("can_write_keys", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_put", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_put", token)
 		assert.Nil(t, authErr)
 	})
 
 	t.Run("can_delete_keys", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_delete", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_delete", token)
 		assert.Nil(t, authErr)
 	})
 
@@ -324,7 +324,7 @@ func TestMCPReadWriteRoleAccess(t *testing.T) {
 	})
 
 	t.Run("cannot_manage_users", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_user_create", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_user_create", token)
 		require.NotNil(t, authErr)
 		assert.Equal(t, mcp.AuthErrorPermissionDenied, authErr.Type)
 	})
@@ -339,12 +339,12 @@ func TestMCPReadOnlyRoleAccess(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("can_read_keys", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_get", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", token)
 		assert.Nil(t, authErr)
 	})
 
 	t.Run("can_list_keys", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_list", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_list", token)
 		assert.Nil(t, authErr)
 	})
 
@@ -354,13 +354,13 @@ func TestMCPReadOnlyRoleAccess(t *testing.T) {
 	})
 
 	t.Run("cannot_write_keys", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_put", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_put", token)
 		require.NotNil(t, authErr)
 		assert.Equal(t, mcp.AuthErrorPermissionDenied, authErr.Type)
 	})
 
 	t.Run("cannot_delete_keys", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_delete", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_delete", token)
 		require.NotNil(t, authErr)
 		assert.Equal(t, mcp.AuthErrorPermissionDenied, authErr.Type)
 	})
@@ -375,10 +375,10 @@ func TestMCPToolToResourceMapping(t *testing.T) {
 		description      string
 	}{
 		// KV Operations
-		{"quicbaas_get", interfaces.ResourceKeys, interfaces.ActionRead, "get -> keys:read"},
-		{"quicbaas_put", interfaces.ResourceKeys, interfaces.ActionWrite, "put -> keys:write"},
-		{"quicbaas_delete", interfaces.ResourceKeys, interfaces.ActionDelete, "delete -> keys:delete"},
-		{"quicbaas_list", interfaces.ResourceKeys, interfaces.ActionRead, "list -> keys:read"},
+		{"qrdb_get", interfaces.ResourceKeys, interfaces.ActionRead, "get -> keys:read"},
+		{"qrdb_put", interfaces.ResourceKeys, interfaces.ActionWrite, "put -> keys:write"},
+		{"qrdb_delete", interfaces.ResourceKeys, interfaces.ActionDelete, "delete -> keys:delete"},
+		{"qrdb_list", interfaces.ResourceKeys, interfaces.ActionRead, "list -> keys:read"},
 		{"quicbaas_query", interfaces.ResourceKeys, interfaces.ActionRead, "query -> keys:read"},
 		{"quicbaas_batch_get", interfaces.ResourceKeys, interfaces.ActionRead, "batch_get -> keys:read"},
 		{"quicbaas_batch_put", interfaces.ResourceKeys, interfaces.ActionWrite, "batch_put -> keys:write"},
@@ -399,14 +399,14 @@ func TestMCPToolToResourceMapping(t *testing.T) {
 		{"quicbaas_backup_delete", interfaces.ResourceBackups, interfaces.ActionDelete, "backup_delete -> backups:delete"},
 
 		// User Management
-		{"quicbaas_user_create", interfaces.ResourceUsers, interfaces.ActionWrite, "user_create -> users:write"},
-		{"quicbaas_user_delete", interfaces.ResourceUsers, interfaces.ActionDelete, "user_delete -> users:delete"},
-		{"quicbaas_user_list", interfaces.ResourceUsers, interfaces.ActionRead, "user_list -> users:read"},
+		{"qrdb_user_create", interfaces.ResourceUsers, interfaces.ActionWrite, "user_create -> users:write"},
+		{"qrdb_user_delete", interfaces.ResourceUsers, interfaces.ActionDelete, "user_delete -> users:delete"},
+		{"qrdb_user_list", interfaces.ResourceUsers, interfaces.ActionRead, "user_list -> users:read"},
 
 		// Role Management
-		{"quicbaas_role_create", interfaces.ResourceRoles, interfaces.ActionWrite, "role_create -> roles:write"},
-		{"quicbaas_role_delete", interfaces.ResourceRoles, interfaces.ActionDelete, "role_delete -> roles:delete"},
-		{"quicbaas_role_list", interfaces.ResourceRoles, interfaces.ActionRead, "role_list -> roles:read"},
+		{"qrdb_role_create", interfaces.ResourceRoles, interfaces.ActionWrite, "role_create -> roles:write"},
+		{"qrdb_role_delete", interfaces.ResourceRoles, interfaces.ActionDelete, "role_delete -> roles:delete"},
+		{"qrdb_role_list", interfaces.ResourceRoles, interfaces.ActionRead, "role_list -> roles:read"},
 	}
 
 	for _, tc := range testCases {
@@ -427,7 +427,7 @@ func TestMCPRevokedTokenRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify token works initially
-	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_get", token)
+	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", token)
 	assert.Nil(t, authErr)
 
 	// Revoke the token
@@ -435,7 +435,7 @@ func TestMCPRevokedTokenRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify token is now rejected
-	authErr = tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_get", token)
+	authErr = tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", token)
 	require.NotNil(t, authErr)
 	assert.Equal(t, mcp.AuthErrorInvalidToken, authErr.Type)
 }
@@ -479,7 +479,7 @@ func TestMCPCustomRoleAuthorization(t *testing.T) {
 	})
 
 	t.Run("cannot_read_keys", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_get", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", token)
 		require.NotNil(t, authErr)
 		assert.Equal(t, mcp.AuthErrorPermissionDenied, authErr.Type)
 	})
@@ -500,12 +500,12 @@ func TestMCPMultipleRolesAuthorization(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("can_read_from_readonly", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_get", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", token)
 		assert.Nil(t, authErr)
 	})
 
 	t.Run("can_write_from_readwrite", func(t *testing.T) {
-		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_put", token)
+		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_put", token)
 		assert.Nil(t, authErr)
 	})
 
@@ -519,7 +519,7 @@ func TestMCPMultipleRolesAuthorization(t *testing.T) {
 // TestMCPIsPublicTool tests the IsPublicTool function.
 func TestMCPIsPublicTool(t *testing.T) {
 	publicTools := []string{
-		"quicbaas_health",
+		"qrdb_health",
 		"quicbaas_version",
 		"quicbaas_liveness",
 	}
@@ -531,9 +531,9 @@ func TestMCPIsPublicTool(t *testing.T) {
 	}
 
 	protectedTools := []string{
-		"quicbaas_get",
-		"quicbaas_put",
-		"quicbaas_delete",
+		"qrdb_get",
+		"qrdb_put",
+		"qrdb_delete",
 		"quicbaas_secrets_get",
 		"quicbaas_kms_get_key",
 	}
@@ -577,9 +577,9 @@ func TestMCPNilAuthServiceDisablesAuth(t *testing.T) {
 
 	// All tools should pass when auth is disabled
 	protectedTools := []string{
-		"quicbaas_get",
-		"quicbaas_put",
-		"quicbaas_delete",
+		"qrdb_get",
+		"qrdb_put",
+		"qrdb_delete",
 		"quicbaas_admin_operation",
 	}
 

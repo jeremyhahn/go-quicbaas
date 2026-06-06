@@ -62,22 +62,22 @@ import (
 // =============================================================================
 
 var (
-	initServer        string
-	initSPKIPin       string
-	initUsername      string
-	initCSRKeyPath    string
-	initOutputPath    string
-	initTLSCertPath   string
-	initTLSKeyPath    string
-	initSOPin         string
-	initCSRPath       string
-	initRole          string
-	initCertPath      string
-	initPubKeyPath    string
-	initShareIndex    int
-	initAuthFactor    string
-	initOutputFmt     string
-	validAuthFactors  = map[string]struct{}{"mtls": {}, "webauthn": {}, "piv": {}}
+	initServer       string
+	initSPKIPin      string
+	initUsername     string
+	initCSRKeyPath   string
+	initOutputPath   string
+	initTLSCertPath  string
+	initTLSKeyPath   string
+	initSOPin        string
+	initCSRPath      string
+	initRole         string
+	initCertPath     string
+	initPubKeyPath   string
+	initShareIndex   int
+	initAuthFactor   string
+	initOutputFmt    string
+	validAuthFactors = map[string]struct{}{"mtls": {}, "webauthn": {}, "piv": {}}
 )
 
 // =============================================================================
@@ -113,7 +113,7 @@ func createSDKCeremonyClient() (CeremonyClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return sdk.BarrierCeremony()
+	return sdk.Security().Ceremony()
 }
 
 // =============================================================================
@@ -691,4 +691,3 @@ func formatInitStatusResponse(resp *qrdbtransport.CeremonyStatusResponse, format
 		return nil
 	}
 }
-

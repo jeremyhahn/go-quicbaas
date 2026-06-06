@@ -19,12 +19,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/elliptic"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -138,7 +136,9 @@ func TestGRPCBackendOperations(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "must be able to connect to gRPC server in integration tests")
 	defer client.Close()
 
@@ -418,18 +418,8 @@ type MultiBackendRESTClient struct {
 // NewMultiBackendRESTClient creates a new multi-backend REST client.
 func NewMultiBackendRESTClient(baseURL string) *MultiBackendRESTClient {
 	return &MultiBackendRESTClient{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
+		baseURL:    baseURL,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
 	}
 }
 
@@ -680,18 +670,8 @@ type DEKRESTClient struct {
 // NewDEKRESTClient creates a new DEK REST client.
 func NewDEKRESTClient(baseURL string) *DEKRESTClient {
 	return &DEKRESTClient{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
+		baseURL:    baseURL,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
 	}
 }
 

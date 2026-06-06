@@ -187,6 +187,9 @@ See [security.md](security.md)
 - [State Machines](state-machines.md) - Business logic layer
 - [Storage Engine](storage-engine.md) - PebbleDB integration
 - [Write Modes](write-modes.md) - Durability guarantees and performance tradeoffs
+- [Composition](composition.md) - How quicbaasd composes qrdb + xkms via `With*` injection
+- [Embedded Mode](embedded-mode.md) - In-process qrdb routing (QRDBEmbeddedServicers + WithEmbeddedQRDB)
+- [Barrier](barrier.md) - StorageBarrier design (Software + Shamir + None)
 
 ### Features
 - [Vector Database](vector.md) - Vector search architecture

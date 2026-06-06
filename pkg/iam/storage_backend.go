@@ -132,9 +132,34 @@ func policyKey(tenantID, policyName string) string {
 	return KeyPrefixTenant + tenantID + KeyPrefixPolicy + policyName
 }
 
-// appKey returns the key for an OAuth2 application.
-func appKey(clientID string) string {
+// appKey returns the tenant-scoped key for an OAuth2 application. The tenant
+// is parsed from the clientID (format app_<tenant>_<suffix>) so two tenants
+// cannot collide on a global clientID slot.
+func appKey(tenantID, clientID string) string {
+	return KeyPrefixIAM + "app:" + tenantID + ":" + clientID
+}
+
+// legacyAppKey returns the pre-tenant-scoping global app key (dual-read shim).
+func legacyAppKey(clientID string) string {
 	return KeyPrefixIAM + "app:" + clientID
+}
+
+// tenantFromClientID extracts the tenant ID from an OAuth2 clientID minted in
+// the format app_<tenant>_<suffix> (see generateClientID). It returns an empty
+// string when the clientID does not match that shape, so callers can fall back
+// to the legacy global key.
+func tenantFromClientID(clientID string) string {
+	const prefix = "app_"
+	if !strings.HasPrefix(clientID, prefix) {
+		return ""
+	}
+	rest := clientID[len(prefix):]
+	// rest is <tenant>_<suffix>; the tenant is everything up to the LAST "_".
+	idx := strings.LastIndex(rest, "_")
+	if idx <= 0 {
+		return ""
+	}
+	return rest[:idx]
 }
 
 // appTenantKey returns the key for app lookup by tenant.
@@ -142,8 +167,15 @@ func appTenantKey(tenantID, clientID string) string {
 	return KeyPrefixTenant + tenantID + KeyPrefixApp + clientID
 }
 
-// tokenKey returns the key for a token record.
-func tokenKey(jti string) string {
+// tokenKey returns the tenant-scoped key for a token record. Scoping by tenant
+// isolates per-tenant token state and prevents a forged JTI in one tenant from
+// resolving a token in another.
+func tokenKey(tenantID, jti string) string {
+	return KeyPrefixIAM + "token:" + tenantID + ":" + jti
+}
+
+// legacyTokenKey returns the pre-tenant-scoping global token key (dual-read).
+func legacyTokenKey(jti string) string {
 	return KeyPrefixIAM + "token:" + jti
 }
 
@@ -157,13 +189,28 @@ func authCodeKey(code string) string {
 	return KeyPrefixIAM + "authcode:" + code
 }
 
-// emailIndexKey returns the key for email->user lookup.
-func emailIndexKey(email string) string {
+// emailIndexKey returns the tenant-scoped key for email->user lookup. Scoping
+// by tenant prevents the same email address registered in two tenants from
+// sharing one global index slot (cross-tenant identity collision).
+func emailIndexKey(tenantID, email string) string {
+	return KeyPrefixEmailIndex + tenantID + ":" + strings.ToLower(email)
+}
+
+// legacyEmailIndexKey returns the pre-tenant-scoping global email index key,
+// consulted only on the read path as a dual-read fallback for deployments
+// predating tenant scoping.
+func legacyEmailIndexKey(email string) string {
 	return KeyPrefixEmailIndex + strings.ToLower(email)
 }
 
-// pivIndexKey returns the key for PIV thumbprint->user lookup.
-func pivIndexKey(thumbprint string) string {
+// pivIndexKey returns the tenant-scoped key for PIV thumbprint->user lookup.
+func pivIndexKey(tenantID, thumbprint string) string {
+	return KeyPrefixPIVIndex + tenantID + ":" + strings.ToLower(thumbprint)
+}
+
+// legacyPIVIndexKey returns the pre-tenant-scoping global PIV index key,
+// consulted only on the read path as a dual-read fallback.
+func legacyPIVIndexKey(thumbprint string) string {
 	return KeyPrefixPIVIndex + strings.ToLower(thumbprint)
 }
 
@@ -240,7 +287,8 @@ func (s *BackendStorage) deleteUsersWithIndexes(ctx context.Context, userPrefix 
 	// Delete email indexes for each user
 	for _, user := range users {
 		if user.Email != "" {
-			_ = s.delete(ctx, emailIndexKey(user.Email))
+			_ = s.delete(ctx, emailIndexKey(user.TenantID, user.Email))
+			_ = s.delete(ctx, legacyEmailIndexKey(user.Email))
 		}
 	}
 
@@ -251,6 +299,9 @@ func (s *BackendStorage) deleteUsersWithIndexes(ctx context.Context, userPrefix 
 // deleteAppsWithIndexes deletes apps and their global indexes.
 // Tenant-scoped app entries store only the clientID as value, not the full Application.
 func (s *BackendStorage) deleteAppsWithIndexes(ctx context.Context, appPrefix string) error {
+	// The tenant is encoded in the index prefix: __iam:tenant:<tenantID>:app:
+	tenantID := strings.TrimSuffix(strings.TrimPrefix(appPrefix, KeyPrefixTenant), KeyPrefixApp)
+
 	// Collect all client IDs from tenant-scoped app index entries
 	var clientIDs []string
 	err := s.kv.Scan(ctx, appPrefix, func(key string, value []byte) error {
@@ -264,10 +315,13 @@ func (s *BackendStorage) deleteAppsWithIndexes(ctx context.Context, appPrefix st
 		return err
 	}
 
-	// Delete global app records and indexes for each app
+	// Delete app records and indexes for each app (tenant-scoped + legacy).
 	for _, clientID := range clientIDs {
-		// Delete global app record: __iam:app:<clientID>
-		_ = s.delete(ctx, appKey(clientID))
+		_ = s.delete(ctx, appKey(tenantID, clientID))
+		if tid := tenantFromClientID(clientID); tid != "" && tid != tenantID {
+			_ = s.delete(ctx, appKey(tid, clientID))
+		}
+		_ = s.delete(ctx, legacyAppKey(clientID))
 		// Delete app index: __iam:idx:app:<clientID>
 		_ = s.delete(ctx, KeyPrefixAppIndex+clientID)
 	}
@@ -578,14 +632,11 @@ func (s *BackendStorage) IncrementQuotaUsage(ctx context.Context, tenantID, reso
 		return err
 	}
 
-	// Apply increment based on resource type
+	// Apply increment based on resource type. Users and roles are tracked by
+	// qrdb's TenantServicer (engine-level) and are not tracked here.
 	switch resource {
-	case QuotaResourceUsers:
-		quota.CurrentUsers += delta
 	case QuotaResourceGroups:
 		quota.CurrentGroups += delta
-	case QuotaResourceRoles:
-		quota.CurrentRoles += delta
 	case QuotaResourcePolicies:
 		quota.CurrentPolicies += delta
 	case QuotaResourceApps:
@@ -626,17 +677,21 @@ func (s *BackendStorage) CreateUser(ctx context.Context, user *User) error {
 	// Create email index
 	if user.Email != "" {
 		indexData := []byte(user.TenantID + ":" + user.ID)
-		if err := s.put(ctx, emailIndexKey(user.Email), indexData); err != nil {
+		if err := s.put(ctx, emailIndexKey(user.TenantID, user.Email), indexData); err != nil {
 			return &dberrors.QBError{Code: dberrors.ErrStorage, Op: "iam.user.create", Err: err}
 		}
+		// Dual-write the legacy un-scoped key during the migration window so
+		// callers that look up without a tenant in context keep resolving.
+		_ = s.put(ctx, legacyEmailIndexKey(user.Email), indexData)
 	}
 
 	// Create PIV thumbprint index (only when a thumbprint is registered)
 	if user.PIVCertThumbprint != "" {
 		indexData := []byte(user.TenantID + ":" + user.ID)
-		if err := s.put(ctx, pivIndexKey(user.PIVCertThumbprint), indexData); err != nil {
+		if err := s.put(ctx, pivIndexKey(user.TenantID, user.PIVCertThumbprint), indexData); err != nil {
 			return &dberrors.QBError{Code: dberrors.ErrStorage, Op: "iam.user.create", Err: err}
 		}
+		_ = s.put(ctx, legacyPIVIndexKey(user.PIVCertThumbprint), indexData)
 	}
 
 	return nil
@@ -659,10 +714,15 @@ func (s *BackendStorage) GetUser(ctx context.Context, tenantID, userID string) (
 
 // GetUserByEmail retrieves a user by email.
 func (s *BackendStorage) GetUserByEmail(ctx context.Context, email string) (*User, error) {
-	// Look up in email index
-	indexData, err := s.get(ctx, emailIndexKey(email))
+	// Look up in the tenant-scoped email index, falling back to the legacy
+	// global key (dual-read shim) for deployments predating tenant scoping.
+	tenantID := TenantFromContext(ctx)
+	indexData, err := s.get(ctx, emailIndexKey(tenantID, email))
 	if err != nil {
-		return nil, err
+		indexData, err = s.get(ctx, legacyEmailIndexKey(email))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Parse tenant:user from index
@@ -676,9 +736,13 @@ func (s *BackendStorage) GetUserByEmail(ctx context.Context, email string) (*Use
 
 // GetUserByPIVThumbprint retrieves a user by PIV certificate SHA-256 thumbprint.
 func (s *BackendStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint string) (*User, error) {
-	indexData, err := s.get(ctx, pivIndexKey(thumbprint))
+	tenantID := TenantFromContext(ctx)
+	indexData, err := s.get(ctx, pivIndexKey(tenantID, thumbprint))
 	if err != nil {
-		return nil, err
+		indexData, err = s.get(ctx, legacyPIVIndexKey(thumbprint))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	parts := strings.SplitN(string(indexData), ":", 2)
@@ -711,11 +775,13 @@ func (s *BackendStorage) UpdateUser(ctx context.Context, user *User) error {
 	// Update email index if changed
 	if existing.Email != user.Email {
 		if existing.Email != "" {
-			_ = s.delete(ctx, emailIndexKey(existing.Email))
+			_ = s.delete(ctx, emailIndexKey(user.TenantID, existing.Email))
+			_ = s.delete(ctx, legacyEmailIndexKey(existing.Email))
 		}
 		if user.Email != "" {
 			indexData := []byte(user.TenantID + ":" + user.ID)
-			_ = s.put(ctx, emailIndexKey(user.Email), indexData)
+			_ = s.put(ctx, emailIndexKey(user.TenantID, user.Email), indexData)
+			_ = s.put(ctx, legacyEmailIndexKey(user.Email), indexData)
 		}
 	}
 
@@ -724,13 +790,15 @@ func (s *BackendStorage) UpdateUser(ctx context.Context, user *User) error {
 	// gets written and login fails with "no user found".
 	if existing.PIVCertThumbprint != user.PIVCertThumbprint {
 		if existing.PIVCertThumbprint != "" {
-			_ = s.delete(ctx, pivIndexKey(existing.PIVCertThumbprint))
+			_ = s.delete(ctx, pivIndexKey(user.TenantID, existing.PIVCertThumbprint))
+			_ = s.delete(ctx, legacyPIVIndexKey(existing.PIVCertThumbprint))
 		}
 		if user.PIVCertThumbprint != "" {
 			indexData := []byte(user.TenantID + ":" + user.ID)
-			if err := s.put(ctx, pivIndexKey(user.PIVCertThumbprint), indexData); err != nil {
+			if err := s.put(ctx, pivIndexKey(user.TenantID, user.PIVCertThumbprint), indexData); err != nil {
 				return &dberrors.QBError{Code: dberrors.ErrStorage, Op: "iam.user.update", Err: err}
 			}
+			_ = s.put(ctx, legacyPIVIndexKey(user.PIVCertThumbprint), indexData)
 		}
 	}
 
@@ -749,13 +817,15 @@ func (s *BackendStorage) DeleteUser(ctx context.Context, tenantID, userID string
 		return err
 	}
 
-	// Clean up email index
+	// Clean up email index (tenant-scoped + legacy).
 	if user.Email != "" {
-		_ = s.delete(ctx, emailIndexKey(user.Email))
+		_ = s.delete(ctx, emailIndexKey(tenantID, user.Email))
+		_ = s.delete(ctx, legacyEmailIndexKey(user.Email))
 	}
-	// Clean up PIV thumbprint index
+	// Clean up PIV thumbprint index (tenant-scoped + legacy).
 	if user.PIVCertThumbprint != "" {
-		_ = s.delete(ctx, pivIndexKey(user.PIVCertThumbprint))
+		_ = s.delete(ctx, pivIndexKey(tenantID, user.PIVCertThumbprint))
+		_ = s.delete(ctx, legacyPIVIndexKey(user.PIVCertThumbprint))
 	}
 
 	return nil
@@ -984,7 +1054,9 @@ func (s *BackendStorage) ListRoles(ctx context.Context, tenantID string, opts Li
 
 // CreateApp stores a new OAuth2 application.
 func (s *BackendStorage) CreateApp(ctx context.Context, app *Application) error {
-	key := appKey(app.ClientID)
+	// The tenant is authoritative from the app record; the clientID also
+	// encodes it (app_<tenant>_<suffix>) for read-path resolution.
+	key := appKey(app.TenantID, app.ClientID)
 
 	_, err := s.get(ctx, key)
 	if err == nil {
@@ -999,6 +1071,10 @@ func (s *BackendStorage) CreateApp(ctx context.Context, app *Application) error 
 	if err := s.put(ctx, key, data); err != nil {
 		return err
 	}
+	// Dual-write the legacy global app record during the migration window so
+	// reads by bare clientID (no tenant in context, non app_<tenant>_ form)
+	// keep resolving.
+	_ = s.put(ctx, legacyAppKey(app.ClientID), data)
 
 	// Create tenant->app index
 	if app.TenantID != "" {
@@ -1010,9 +1086,25 @@ func (s *BackendStorage) CreateApp(ctx context.Context, app *Application) error 
 
 // GetApp retrieves an application by client ID.
 func (s *BackendStorage) GetApp(ctx context.Context, clientID string) (*Application, error) {
-	data, err := s.get(ctx, appKey(clientID))
+	// Resolve via the tenant-scoped key. The tenant is parsed from the
+	// clientID (format app_<tenant>_<suffix>); when the clientID does not
+	// encode a tenant, the context tenant is used. Both fall back to the
+	// legacy global key (dual-read shim) for deployments predating scoping.
+	var data []byte
+	var err error = &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.app.get"}
+	if tid := tenantFromClientID(clientID); tid != "" {
+		data, err = s.get(ctx, appKey(tid, clientID))
+	}
 	if err != nil {
-		return nil, err
+		if tid := TenantFromContext(ctx); tid != "" {
+			data, err = s.get(ctx, appKey(tid, clientID))
+		}
+	}
+	if err != nil {
+		data, err = s.get(ctx, legacyAppKey(clientID))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var app Application
@@ -1037,7 +1129,7 @@ func (s *BackendStorage) GetAppByTenant(ctx context.Context, tenantID, clientID 
 
 // UpdateApp updates an existing application.
 func (s *BackendStorage) UpdateApp(ctx context.Context, app *Application) error {
-	key := appKey(app.ClientID)
+	key := appKey(app.TenantID, app.ClientID)
 
 	_, err := s.get(ctx, key)
 	if err != nil {
@@ -1049,7 +1141,11 @@ func (s *BackendStorage) UpdateApp(ctx context.Context, app *Application) error 
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.app.update", Err: err}
 	}
 
-	return s.put(ctx, key, data)
+	if err := s.put(ctx, key, data); err != nil {
+		return err
+	}
+	_ = s.put(ctx, legacyAppKey(app.ClientID), data)
+	return nil
 }
 
 // DeleteApp removes an application.
@@ -1059,9 +1155,11 @@ func (s *BackendStorage) DeleteApp(ctx context.Context, clientID string) error {
 		return err
 	}
 
-	if err := s.delete(ctx, appKey(clientID)); err != nil {
+	if err := s.delete(ctx, appKey(app.TenantID, clientID)); err != nil {
 		return err
 	}
+	// Clean up any legacy global app record.
+	_ = s.delete(ctx, legacyAppKey(clientID))
 
 	// Clean up tenant index
 	if app.TenantID != "" {
@@ -1080,9 +1178,12 @@ func (s *BackendStorage) ListApps(ctx context.Context, tenantID string, opts Lis
 		return nil, err
 	}
 
+	// Resolve each app under the listing tenant so the tenant-scoped GetApp
+	// key is selected even for clientIDs that do not encode a tenant.
+	appCtx := ContextWithTenant(ctx, tenantID)
 	apps := make([]*Application, 0, len(values))
 	for _, clientIDBytes := range values {
-		app, err := s.GetApp(ctx, string(clientIDBytes))
+		app, err := s.GetApp(appCtx, string(clientIDBytes))
 		if err != nil {
 			continue
 		}
@@ -1155,13 +1256,17 @@ func (s *BackendStorage) StoreToken(ctx context.Context, token *Token) error {
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.token.store", Err: err}
 	}
 
-	if err := s.put(ctx, tokenKey(token.JTI), data); err != nil {
+	if err := s.put(ctx, tokenKey(token.TenantID, token.JTI), data); err != nil {
 		return err
 	}
+	// Dual-write the legacy global token record during the migration window.
+	_ = s.put(ctx, legacyTokenKey(token.JTI), data)
 
-	// Create token value index for refresh tokens (using JTI as value key)
+	// Create token value index for refresh tokens. The value carries the
+	// token's tenant so GetTokenByValue can resolve the tenant-scoped token
+	// key without an ambient tenant in context: value = "<tenantID>:<jti>".
 	if token.TokenType == TokenTypeRefresh {
-		_ = s.put(ctx, tokenValueKey(token.JTI), []byte(token.JTI))
+		_ = s.put(ctx, tokenValueKey(token.JTI), []byte(token.TenantID+":"+token.JTI))
 	}
 
 	return nil
@@ -1169,9 +1274,18 @@ func (s *BackendStorage) StoreToken(ctx context.Context, token *Token) error {
 
 // GetToken retrieves a token by JTI.
 func (s *BackendStorage) GetToken(ctx context.Context, jti string) (*Token, error) {
-	data, err := s.get(ctx, tokenKey(jti))
+	// Resolve via the tenant-scoped key (tenant from context, set by the
+	// handler from the JWT tenant_id claim) with a legacy global fallback.
+	tenantID := TenantFromContext(ctx)
+	// Always attempt the tenant-scoped key first (an empty tenant still has a
+	// distinct scoped key, e.g. "__iam:token::<jti>"), then fall back to the
+	// legacy un-scoped global key (dual-read shim).
+	data, err := s.get(ctx, tokenKey(tenantID, jti))
 	if err != nil {
-		return nil, err
+		data, err = s.get(ctx, legacyTokenKey(jti))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var token Token
@@ -1189,7 +1303,15 @@ func (s *BackendStorage) GetTokenByValue(ctx context.Context, tokenValue string)
 		return nil, err
 	}
 
-	return s.GetToken(ctx, string(jtiData))
+	// The value index stores "<tenantID>:<jti>" for tenant-scoped resolution.
+	// Legacy entries stored only the bare jti; handle both.
+	raw := string(jtiData)
+	jti := raw
+	if idx := strings.Index(raw, ":"); idx >= 0 {
+		ctx = ContextWithTenant(ctx, raw[:idx])
+		jti = raw[idx+1:]
+	}
+	return s.GetToken(ctx, jti)
 }
 
 // RevokeToken marks a token as revoked.
@@ -1206,7 +1328,16 @@ func (s *BackendStorage) RevokeToken(ctx context.Context, jti string) error {
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.token.revoke", Err: err}
 	}
 
-	return s.put(ctx, tokenKey(jti), data)
+	// Persist under the token's own (authoritative) tenant-scoped key, and
+	// clear any legacy global entry so the revocation is observed regardless
+	// of which key a future read resolves.
+	if err := s.put(ctx, tokenKey(token.TenantID, jti), data); err != nil {
+		return err
+	}
+	// Keep the legacy global record in sync during the migration window so a
+	// legacy-path read observes the revocation too.
+	_ = s.put(ctx, legacyTokenKey(jti), data)
+	return nil
 }
 
 // IsTokenRevoked checks if a token is revoked.
@@ -1237,7 +1368,8 @@ func (s *BackendStorage) DeleteExpiredTokens(ctx context.Context) error {
 			continue
 		}
 		if token.Expires.Before(now) {
-			_ = s.delete(ctx, tokenKey(token.JTI))
+			_ = s.delete(ctx, tokenKey(token.TenantID, token.JTI))
+			_ = s.delete(ctx, legacyTokenKey(token.JTI))
 			// Also clean up the value index for refresh tokens
 			if token.TokenType == TokenTypeRefresh {
 				_ = s.delete(ctx, tokenValueKey(token.JTI))
@@ -1256,15 +1388,24 @@ func (s *BackendStorage) ListTokensByUser(ctx context.Context, userID string) ([
 		return nil, err
 	}
 
+	// The migration shim dual-writes each token under both its tenant-scoped
+	// key and the legacy global key, so the prefix scan can return two copies
+	// of the same token. De-duplicate by JTI.
 	tokens := make([]*Token, 0)
+	seen := make(map[string]struct{})
 	for _, data := range values {
 		var token Token
 		if err := json.Unmarshal(data, &token); err != nil {
 			continue
 		}
-		if token.Subject == userID {
-			tokens = append(tokens, &token)
+		if token.Subject != userID {
+			continue
 		}
+		if _, dup := seen[token.JTI]; dup {
+			continue
+		}
+		seen[token.JTI] = struct{}{}
+		tokens = append(tokens, &token)
 	}
 
 	return tokens, nil
@@ -1278,7 +1419,10 @@ func (s *BackendStorage) RevokeUserTokens(ctx context.Context, userID string) er
 	}
 
 	for _, token := range tokens {
-		if err := s.RevokeToken(ctx, token.JTI); err != nil {
+		// Revoke under the token's own tenant so GetToken inside RevokeToken
+		// resolves the tenant-scoped key.
+		tokenCtx := ContextWithTenant(ctx, token.TenantID)
+		if err := s.RevokeToken(tokenCtx, token.JTI); err != nil {
 			continue // Best effort
 		}
 	}

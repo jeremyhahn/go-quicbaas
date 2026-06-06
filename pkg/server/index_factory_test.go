@@ -414,3 +414,104 @@ func TestHNSWVectorIndexAdapter_GetStatsNilInner(t *testing.T) {
 		assert.Equal(t, interfaces.IndexTypeHNSW, stats.IndexType)
 	})
 }
+
+// TestHNSWIndexFactory_SearchError covers the error branch of
+// hnswIndexAdapter.Search: a query whose dimension does not match the inserted
+// vectors makes the underlying go-qrdb index reject the search, and the adapter
+// must surface that error (nil results) rather than panicking.
+func TestHNSWIndexFactory_SearchError(t *testing.T) {
+	factory := &hnswIndexFactory{}
+	idx, err := factory.CreateIndex(&interfaces.HNSWConfig{
+		M:              16,
+		MMax:           32,
+		EfConstruction: 200,
+		EfSearch:       100,
+		DistanceMetric: "cosine",
+	})
+	require.NoError(t, err)
+	require.NoError(t, idx.Insert(1, []float32{1.0, 0.0, 0.0}))
+
+	// Wrong-dimension query: 2-d against 3-d vectors.
+	results, err := idx.Search([]float32{1.0, 0.0}, 1)
+	require.Error(t, err, "a dimension-mismatched query must error")
+	require.Nil(t, results)
+}
+
+// TestVectorIndexFactory_FlatSearchError covers the error branch of
+// flatIndexAdapter.Search: a dimension-mismatched query is rejected by the
+// underlying go-qrdb flat index and the adapter surfaces the error.
+func TestVectorIndexFactory_FlatSearchError(t *testing.T) {
+	factory := NewVectorIndexFactory()
+	idx, err := factory.CreateIndex(&interfaces.VectorIndexConfig{
+		IndexType:      interfaces.IndexTypeFlat,
+		DistanceMetric: "l2",
+	})
+	require.NoError(t, err)
+	require.NoError(t, idx.Insert(1, []float32{1.0, 0.0}))
+
+	results, err := idx.Search([]float32{1.0, 0.0, 0.0}, 1, nil) // 3-d vs 2-d
+	require.Error(t, err, "dimension-mismatched flat search must error")
+	require.Nil(t, results)
+}
+
+// TestVectorIndexFactory_HNSWVectorAdapterSearchError covers the error branch of
+// hnswVectorIndexAdapter.Search: a dimension-mismatched query surfaces the
+// underlying index error through the VectorIndex adapter wrapper.
+func TestVectorIndexFactory_HNSWVectorAdapterSearchError(t *testing.T) {
+	factory := NewVectorIndexFactory()
+	idx, err := factory.CreateIndex(&interfaces.VectorIndexConfig{
+		IndexType:      interfaces.IndexTypeHNSW,
+		DistanceMetric: "cosine",
+		M:              16,
+		MMax:           32,
+		EfConstruction: 200,
+		EfSearch:       100,
+	})
+	require.NoError(t, err)
+	require.NoError(t, idx.Insert(1, []float32{1.0, 0.0, 0.0}))
+
+	results, err := idx.Search([]float32{1.0, 0.0}, 1, nil) // 2-d vs 3-d
+	require.Error(t, err, "dimension-mismatched HNSW search must error")
+	require.Nil(t, results)
+}
+
+// TestCreateHNSWIndex_InvalidConfigError covers the construction-error branch of
+// createHNSWIndex: an invalid HNSW configuration (negative graph parameters) is
+// rejected by the underlying qrdb constructor and surfaces as an error.
+func TestCreateHNSWIndex_InvalidConfigError(t *testing.T) {
+	idx, err := createHNSWIndex(&interfaces.VectorIndexConfig{
+		M:              -1,
+		MMax:           -1,
+		EfConstruction: -1,
+	})
+	require.Error(t, err, "an invalid HNSW config must be rejected")
+	require.Nil(t, idx)
+}
+
+// TestVectorIndexFactory_IVFFlatSearchError covers the error branch of
+// ivfFlatAdapter.Search: a dimension-mismatched query against a trained IVF
+// index surfaces the underlying engine error (nil result).
+func TestVectorIndexFactory_IVFFlatSearchError(t *testing.T) {
+	factory := NewVectorIndexFactory()
+	idx, err := factory.CreateIndex(&interfaces.VectorIndexConfig{
+		IndexType:      interfaces.IndexTypeIVFFlat,
+		DistanceMetric: "l2",
+		Dimensions:     4,
+		Nlist:          16,
+	})
+	require.NoError(t, err)
+
+	vecs := make([][]float32, 0, 20)
+	for i := 0; i < 20; i++ {
+		v := []float32{float32(i), 1, 2, 3}
+		vecs = append(vecs, v)
+	}
+	require.NoError(t, idx.Train(vecs))
+	for i, v := range vecs {
+		require.NoError(t, idx.Insert(uint64(i+1), v))
+	}
+
+	results, err := idx.Search([]float32{1, 2}, 1, nil) // 2-d query vs 4-d index
+	require.Error(t, err, "a dimension-mismatched IVF search must error")
+	require.Nil(t, results)
+}

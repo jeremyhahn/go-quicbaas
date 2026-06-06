@@ -16,68 +16,28 @@
 package server
 
 import (
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// initVectorStorage initializes the PebbleDB-backed vector storage engine.
-// This must be called before startVector so that vectorStorage is available
-// for the vector service to use.
+// initVectorStorage is a no-op. The qrdb node always owns vector storage;
+// startVector wires the node's SDK transport directly.
 func (s *Server) initVectorStorage() error {
 	if !s.config.Vector.Enabled {
 		s.logger.Info("Vector storage is disabled, skipping initialization")
 		return nil
 	}
-
-	s.logger.Info("Initializing vector storage...")
-
-	// Backfill defaults so the documented one-env-var enable path
-	// (QUICBAAS_VECTOR_ENABLED=true) produces a config that passes Validate
-	// without requiring the operator to hand-author an HNSW block. Any fields
-	// the operator has supplied are preserved by ApplyDefaults.
-	s.config.Vector.ApplyDefaults(s.config.Storage.DataDir)
-
-	// Validate vector configuration
-	if err := s.config.Vector.Validate(); err != nil {
-		return &qberrors.QBError{
-			Code: qberrors.ErrConfiguration,
-			Op:   "server.initVectorStorage",
-			Err:  &ServerCauseError{Message: "invalid vector configuration", Cause: err},
-		}
-	}
-
-	// Build PebbleDB vector storage configuration from the server config
-	storageConfig := xkmssdk.QRDBDefaultVectorStorageConfig(s.config.Vector.StoragePath)
-
-	// Adapt the quicbaas logger to the qrdb logger interface
-	qrdbLogger := newQRDBLoggerAdapter(s.logger)
-
-	// Open PebbleDB vector storage
-	pebbleStorage, err := xkmssdk.QRDBNewPebbleVectorStorage(storageConfig, qrdbLogger)
-	if err != nil {
-		return &qberrors.QBError{
-			Code: qberrors.ErrInternal,
-			Op:   "server.initVectorStorage",
-			Err:  &ServerCauseError{Message: "failed to open vector storage", Cause: err},
-		}
-	}
-
-	// Wrap the qrdb storage with the quicbaas interface adapter
-	s.vectorStorage = newVectorStorageAdapter(pebbleStorage)
-	s.logger.WithFields(map[string]interface{}{
-		"storage_path": s.config.Vector.StoragePath,
-		"shard_id":     s.config.Vector.ShardID,
-	}).Info("Vector storage initialized successfully")
-
+	// The qrdb engine node owns the vector storage and at-rest encryption.
+	// Building a separate PebbleDB store here would create a disconnected
+	// duplicate. startVector wires the node's SDK client transport.
+	s.logger.Info("Vector storage owned by qrdb node, skipping standalone storage init")
 	return nil
 }
 
-// startVector creates the vector service using the pre-initialized storage.
-// If vector is not enabled in config, this is a no-op.
-// If vectorStorage is nil and vector is enabled, storage is initialized first.
+// startVector creates the vector service backed by the qrdb node's SDK
+// client embedded transport. The node owns the vector engine (PebbleDB-backed)
+// and its at-rest encryptor. If vector is not enabled in config, this is a no-op.
 func (s *Server) startVector() error {
 	if !s.config.Vector.Enabled {
 		s.logger.Info("Vector service is disabled, skipping initialization")
@@ -86,37 +46,24 @@ func (s *Server) startVector() error {
 
 	s.logger.Info("Initializing vector service...")
 
-	// If storage was not pre-initialized, create it now
-	if s.vectorStorage == nil {
-		if err := s.initVectorStorage(); err != nil {
-			return err
-		}
-	}
-
-	// Adapt the quicbaas logger to the quicbaas interfaces.Logger
+	nodeClient := s.qrdbNode.Client()
+	nodeStorage := newNodeVectorStorage(nodeClient)
 	logAdapter := logger.NewAdapter(s.logger)
-
-	// Build vector service options with vector index factory for similarity search
 	opts := []service.VectorServiceOption{
 		service.WithVectorShardID(s.config.Vector.ShardID),
 		service.WithVectorIndexFactory(NewVectorIndexFactory()),
 	}
-
-	// Create the vector service with storage and options
-	vectorSvc, err := service.NewVectorService(s.vectorStorage, logAdapter, opts...)
+	vectorSvc, err := service.NewVectorService(nodeStorage, logAdapter, opts...)
 	if err != nil {
 		return &qberrors.QBError{
 			Code: qberrors.ErrInternal,
 			Op:   "server.startVector",
-			Err:  &ServerCauseError{Message: "failed to create vector service", Cause: err},
+			Err:  &ServerCauseError{Message: "failed to create node-backed vector service", Cause: err},
 		}
 	}
-
 	s.vectorService = vectorSvc
 	s.logger.WithFields(map[string]interface{}{
-		"shard_id":     s.config.Vector.ShardID,
-		"storage_path": s.config.Vector.StoragePath,
-	}).Info("Vector service initialized successfully")
-
+		"shard_id": s.config.Vector.ShardID,
+	}).Info("Vector service initialized via qrdb node SDK transport")
 	return nil
 }

@@ -102,6 +102,87 @@ kms:
 Created → Active → Rotated → Deprecated → Destroyed
 ```
 
+## Cryptoperiod Enforcement (PCI DSS 3.6)
+
+QuicBaaS enforces cryptoperiod expiry automatically through the **KMS rotation
+scheduler**, a background goroutine that scans key metadata at a configurable
+interval and rotates any key whose `RotationPolicy.AutoRotate` is `true` and
+whose `NextRotation` timestamp has passed.
+
+### How it works
+
+1. On service start (inside the KMS + scheduler block of `newQuicBaaS`), a
+   `KMSRotationScheduler` is constructed and started alongside the grace-period
+   scheduler engine.
+2. Every `KMSRotationScanInterval` (default: 5 minutes) the scheduler calls
+   `kmsManager.ListKeys`, filters for expired `AutoRotate` keys, and calls
+   `kmsServiceImpl.RotateKey` for each one under `auth.NewSystemContext` so
+   that per-key authorization is bypassed for this internal daemon operation.
+3. After a successful rotation, `NextRotation` is advanced by `Interval`
+   (clamped to the first future boundary if the daemon was offline for more
+   than one interval) and persisted via `kmsManager.UpdateStoredMetadata`.
+4. Each rotation attempt — success or failure — is recorded via the
+   `KMSAutoRotationAuditLogger` extension interface (see below). If the
+   installed `KMSAuditLogger` does not implement this extension, the event is
+   written to the structured logger instead.
+5. The scheduler stops cleanly on `quicBaaS.Close()`, before the scheduler
+   engine, ensuring no rotation scan is in flight during shutdown.
+
+### Configuration
+
+```go
+svc, err := service.NewService(
+    service.WithConfig(&service.ServiceConfig{
+        EnableScheduler:         true,
+        KMSRotationScanInterval: 5 * time.Minute, // default; safe to omit
+    }),
+    service.WithKMSManager(kmsMgr),
+    // ...
+)
+```
+
+```yaml
+# ServiceConfig fields (mapped from your YAML loader)
+scheduler:
+  enabled: true
+kms:
+  rotation_scan_interval: 5m   # how often the scheduler checks for expired keys
+```
+
+### Audit logging extension
+
+Implement `KMSAutoRotationAuditLogger` (in addition to `KMSAuditLogger`) to
+receive structured rotation events in your audit store:
+
+```go
+type KMSAutoRotationAuditLogger interface {
+    // LogKeyAutoRotation logs a cryptoperiod-driven auto-rotation attempt.
+    // success is false when RotateKey returned an error.
+    LogKeyAutoRotation(ctx context.Context, keyID, algorithm string,
+                       success bool, errMsg string) error
+}
+```
+
+Wire via `service.WithKMSAuditLogger(myLogger)` — when the logger also
+implements `KMSAutoRotationAuditLogger`, rotation events are dispatched to it
+automatically.
+
+### Setting a rotation policy on a key
+
+The `RotationPolicy` lives on the `kms.KeyMetadata` stored in the KMS backend.
+Update it via `kmsManager.UpdateStoredMetadata` or any KMS management API that
+exposes the policy fields:
+
+```go
+meta.RotationPolicy = &kms.RotationPolicy{
+    Enabled:      true,
+    AutoRotate:   true,             // required for scheduler-driven rotation
+    Interval:     90 * 24 * time.Hour, // PCI DSS 3.6: rotate every 90 days
+    NextRotation: time.Now().Add(90 * 24 * time.Hour),
+}
+_ = kmsManager.UpdateStoredMetadata(meta)
+```
+
 ## Build Tags for Backend Selection
 
 QuicBaaS uses build tags to control which KMS backends are compiled into the binary.
@@ -278,14 +359,95 @@ signature, err := svc.Sign(ctx, "my-signing-key", digest[:], "SHA256")
 valid, err := svc.Verify(ctx, "my-signing-key", digest[:], signature, "SHA256")
 ```
 
+## Per-Key Authorization (NIST 800-53 AC-3/AC-6)
+
+Every cryptographic operation — Encrypt, Decrypt, Sign, Verify, GenerateDataKey — is
+gated by a per-key policy before the underlying key material is touched. Authorization
+is enforced at the **service layer** so that gRPC, REST, QUIC, MCP, and the embedded
+path all share exactly the same check.
+
+### How it works
+
+1. The authentication middleware (gRPC interceptor / REST AuthzMiddleware / QUIC handler /
+   MCP `CheckToolAuthorizationWithContext`) validates the caller's token and injects an
+   `interfaces.Subject` into the request `context.Context` using `auth.SubjectIntoContext`.
+
+2. `cryptoService` and `kmsServiceImpl` call `checkKeyAuthz(ctx, keyID, operation)` which:
+   - Skips the check for system contexts (`auth.NewSystemContext`) used by internal
+     daemon operations (scheduler, re-encryption) — these must never originate from
+     network requests.
+   - Denies immediately when `authz_enabled` is `false` (for test/dev deployments).
+   - Denies when no authenticated `Subject` is found in the context (fail-closed).
+   - Loads the stored `KeyPolicy` from the Raft-replicated KVStore under
+     `kms:policy:<keyID>`.
+   - Default-allows when no policy is stored (any authenticated principal may use the
+     key until a policy is set).
+   - Evaluates `AllowedPrincipals`, `DeniedPrincipals`, `AllowedOperations`, and
+     `ExpiresAt`. Explicit deny entries always take precedence.
+
+### Key policy management
+
+```bash
+# Set a policy: only alice and service-account-1 may encrypt with this key
+quicbaas kms policy set prod-key \
+  --allow-principal alice \
+  --allow-principal service-account-1 \
+  --allow-op encrypt \
+  --allow-op decrypt
+
+# Retrieve the policy
+quicbaas kms policy get prod-key
+
+# Remove the policy (restore default-allow-all)
+quicbaas kms policy delete prod-key
+```
+
+Policies are stored in the Raft-replicated KVStore so every cluster node evaluates
+the same rules in real time with no TTL drift.
+
+### Enable per-key authz
+
+```go
+svc := service.NewKMSService(mgr, logger,
+    service.WithKMSAuthzEnabled(true),
+)
+```
+
+In production the flag defaults to `false` for backward compatibility. New deployments
+must set it to `true`. The `WithKMSAuthzEnabled` option on `kmsServiceImpl` also
+propagates to the `cryptoService` when constructed via the service builder.
+
+## Key-Use Audit (NIST 800-53 AU-2 / PCI 3.6)
+
+The `KMSKeyUseAuditLogger` interface extends `KMSAuditLogger` with a `LogKeyUse` method
+that records every cryptographic operation (both allow **and** deny outcomes) with:
+
+- Authenticated principal ID
+- Key ID
+- Operation (encrypt / decrypt / sign / verify / generate_data_key)
+- Outcome (allow / deny)
+- Timestamp
+
+```go
+type KMSKeyUseAuditLogger interface {
+    KMSAuditLogger
+    LogKeyUse(ctx context.Context, principal, keyID, operation string,
+              outcome keyUseOutcome, timestamp time.Time) error
+}
+```
+
+Wire in via `service.WithKMSAuditLogger(myLogger)`.
+
 ## Security Features
 
-1. **Key Isolation**: Cryptographically isolated keys
-2. **Access Control**: Fine-grained permissions per key
-3. **Audit Logging**: All operations logged
-4. **Key Rotation**: Regular rotation policies
-5. **Secure Storage**: Keys encrypted at rest
+1. **Key Isolation**: Per-key policy with AllowedPrincipals / DeniedPrincipals
+2. **Fail-Closed Authz**: No authenticated subject → deny; policy load failure → deny
+3. **Audit Logging**: All key-use operations logged (allow and deny)
+4. **Key Rotation**: Regular rotation policies with cryptoperiod tracking
+5. **Secure Storage**: Keys encrypted at rest, policies in Raft KVStore
 6. **No Export**: Keys never leave KMS in plaintext
+7. **System Context Bypass**: Internal daemon operations use `auth.NewSystemContext`;
+   this path is inaccessible from any network transport
 
 ## Performance
 

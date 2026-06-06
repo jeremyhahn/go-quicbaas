@@ -188,10 +188,12 @@ func IAMTenantListJSONCommand() CommandDef {
 
 // IAMUserCreateCommand returns a command to create an IAM user within a tenant.
 // IAM operations are supported via gRPC, REST, Unix, and MCP transports.
-func IAMUserCreateCommand(tenantID, email, name, password string) CommandDef {
+// QuicBaaS is passwordless: the new user is created in the pending state and
+// activates via the FIDO2/PIV invite flow.
+func IAMUserCreateCommand(tenantID, email, name string) CommandDef {
 	return CommandDef{
 		Name:           fmt.Sprintf("iam user create %s", email),
-		Args:           []string{"iam", "user", "create", email, "--tenant", tenantID, "--name", name, "--password", password},
+		Args:           []string{"iam", "user", "create", email, "--tenant", tenantID, "--name", name},
 		ExpectSuccess:  true,
 		ExpectOutput:   []string{email},
 		Timeout:        10 * time.Second,

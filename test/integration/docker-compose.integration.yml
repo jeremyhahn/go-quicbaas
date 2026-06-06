@@ -130,7 +130,7 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
     hostname: integration-test
     user: "0:0"
     # Increase memory limit to handle test compilation
@@ -148,6 +148,10 @@ services:
     environment:
       # Test configuration
       - QUICBAAS_TEST_MODE=integration
+      # Opt into the env-gated init matrix suite (test/integration/init).
+      # The suite execs the daemon built into this image at the path below.
+      - INTEGRATION_TEST=1
+      - QUICBAASD_BINARY=/usr/local/bin/quicbaasd
       - QUICBAAS_LOG_LEVEL=debug
       - QUICBAAS_LOG_FORMAT=text
       - CGO_ENABLED=0
@@ -177,7 +181,7 @@ services:
       - QUICBAAS_MCP_ENABLED=true
       - QUICBAAS_BACKUP_ENABLED=true
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
-      - QUICBAAS_OLLAMA_ENABLED=true
+      - QUICBAAS_OLLAMA_ENABLED=${QUICBAAS_OLLAMA_ENABLED:-true}
       - QUICBAAS_MESSAGING_ENABLED=true
       - QUICBAAS_ORCHESTRATION_ENABLED=true
 
@@ -187,7 +191,7 @@ services:
       - QUICBAAS_TEST_TIMEOUT=30m
 
       # Ollama embedding service (for vector/embedding tests)
-      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
       - OLLAMA_MODEL=tinyllama
       - QUICBAAS_URL=https://test-node1:8080
 
@@ -244,24 +248,50 @@ services:
         echo 'Using pre-built CLI binary: /workspace/go-quicbaas/bin/quicbaas' &&
         ls -la /workspace/go-quicbaas/bin/quicbaas &&
         echo '' &&
-        TEST_TAGS=\"integration $$TEST_BUILD_TAGS\" &&
-        echo \"Build tags: $$TEST_TAGS\" &&
+        ALL_PKG_ROOT='github.com/jeremyhahn/go-quicbaas/test/integration/...' &&
+        OLLAMA_PKGS_RE='/(agent|orchestration|orchestration_gpu|rag|embedding)$$' &&
+        BASE_TAGS=$$(echo \"integration $$TEST_BUILD_TAGS\" | tr ' ' '\\n' | grep -vx -e rag -e gpu | tr '\\n' ' ' | sed 's/  */ /g; s/ $$//') &&
+        if [ \"$$QUICBAAS_TEST_GPU\" = 'true' ]; then RAG_TAGS='integration rag gpu'; else RAG_TAGS='integration rag'; fi &&
+        echo \"Non-ollama test tags: $$BASE_TAGS\" &&
+        echo \"Ollama enabled: $${QUICBAAS_TEST_OLLAMA:-0}  |  Ollama test tags: $$RAG_TAGS  |  Ollama URL: $${OLLAMA_URL:-unset}\" &&
+        echo 'Test configuration:' &&
+        echo '  - Sequential execution (-p 1) to prevent connection storms' &&
+        echo '  - Total timeout: 60 minutes' &&
+        echo '' &&
+        OVERALL_EXIT=0 &&
         if [ -n \"$$QUICBAAS_TEST_FILTER\" ]; then
           echo \"Running filtered integration tests: $$QUICBAAS_TEST_FILTER\" &&
           echo '' &&
-          TEST_PKGS=\"$$QUICBAAS_TEST_FILTER\";
+          FILTER_TAGS=\"integration $$TEST_BUILD_TAGS\" &&
+          if [ \"$$QUICBAAS_TEST_GPU\" = 'true' ]; then FILTER_TAGS=\"$$FILTER_TAGS gpu\"; fi &&
+          go test -v -p 1 -tags \"$$FILTER_TAGS\" -timeout 60m $$QUICBAAS_TEST_FILTER 2>&1 | tee /test-results/integration-test.log;
+          OVERALL_EXIT=$${PIPESTATUS[0]};
         else
-          echo 'Running integration tests (excluding ollama-dependent: embedding, rag)...' &&
+          echo 'Phase 1: non-ollama integration packages...' &&
           echo '' &&
-          TEST_PKGS=$$(go list -tags \"$$TEST_TAGS\" github.com/jeremyhahn/go-quicbaas/test/integration/... | grep -v '/embedding$$' | grep -v '/rag$$');
-        fi &&
-        echo 'Test configuration:' &&
-        echo '  - Sequential execution (-p 1) to prevent connection storms' &&
-        echo '  - Package timeout: 15 minutes' &&
-        echo '  - Total timeout: 60 minutes' &&
-        echo '' &&
-        go test -v -p 1 -tags \"$$TEST_TAGS\" -timeout 60m $$TEST_PKGS 2>&1 | tee /test-results/integration-test.log;
-        TEST_EXIT=$${PIPESTATUS[0]};
+          BASE_PKGS=$$(go list -tags \"$$BASE_TAGS\" $$ALL_PKG_ROOT | grep -vE \"$$OLLAMA_PKGS_RE\") &&
+          go test -v -p 1 -tags \"$$BASE_TAGS\" -timeout 60m $$BASE_PKGS 2>&1 | tee /test-results/integration-test.log;
+          OVERALL_EXIT=$${PIPESTATUS[0]};
+          if [ \"$$QUICBAAS_TEST_OLLAMA\" = '1' ] || [ \"$$QUICBAAS_TEST_OLLAMA\" = 'true' ]; then
+            echo '' &&
+            echo 'Phase 2: ollama-dependent packages (serialized, one inference at a time)...' &&
+            echo '' &&
+            OLLAMA_PKGS=$$(go list -tags \"$$RAG_TAGS\" $$ALL_PKG_ROOT | grep -E '/(agent|orchestration|orchestration_gpu|rag)$$') &&
+            go test -v -p 1 -tags \"$$RAG_TAGS\" -timeout 60m $$OLLAMA_PKGS 2>&1 | tee -a /test-results/integration-test.log;
+            OLLAMA_EXIT=$${PIPESTATUS[0]};
+            if [ $$OLLAMA_EXIT -ne 0 ]; then OVERALL_EXIT=$$OLLAMA_EXIT; fi;
+            echo '' &&
+            echo 'Phase 2b: cli orchestrator inference (ollama) subset...' &&
+            echo '' &&
+            go test -v -p 1 -tags \"$$RAG_TAGS\" -timeout 60m -run 'TestOrchestratorInference_(Stateless_Ollama|StreamMode|TenantIsolation)$$' github.com/jeremyhahn/go-quicbaas/test/integration/cli/... 2>&1 | tee -a /test-results/integration-test.log;
+            CLI_EXIT=$${PIPESTATUS[0]};
+            if [ $$CLI_EXIT -ne 0 ]; then OVERALL_EXIT=$$CLI_EXIT; fi;
+          else
+            echo '' &&
+            echo 'Ollama disabled — skipping ollama-dependent packages (agent, orchestration, rag, embedding, cli inference subset).';
+          fi;
+        fi;
+        TEST_EXIT=$$OVERALL_EXIT;
         if [ $$TEST_EXIT -eq 0 ]; then
           echo '';
           echo '========================================';
@@ -284,7 +314,8 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        COVER: "${COVER:-}"
     hostname: test-node1
     # Add capabilities required for multicast networking
     cap_add:
@@ -293,12 +324,17 @@ services:
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_DEPLOYMENT_ID=1
+      - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
       - QUICBAAS_RAFT_RAFT_ADDRESS=test-node1:63001
       - QUICBAAS_RAFT_MUTUAL_TLS=true
       - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node1.crt
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/node1.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/node1.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node1.key
-      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node2:63002,test-node3:63003
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=test-node1:63001,2=test-node2:63002,3=test-node3:63003
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
@@ -339,8 +375,9 @@ services:
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service
-      - QUICBAAS_OLLAMA_ENABLED=true
-      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_BASE_URL=${QUICBAAS_OLLAMA_BASE_URL:-http://ollama:11434}
+      - QUICBAAS_OLLAMA_ENABLED=${QUICBAAS_OLLAMA_ENABLED:-true}
+      - QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL=${QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL:-http://ollama:11434}
       - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
@@ -357,6 +394,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin
     volumes:
       - test-data-node1:/data
+      - ${QUICBAAS_COVDATA_DIR_NODE1:-/tmp/quicbaas-covdata-disabled-node1}:/covdata
       - test-logs-node1:/var/log/quicbaas
       - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - quicbaas-sockets:/var/run/quicbaas
@@ -390,7 +428,7 @@ services:
       retries: 30
       start_period: 30s
     restart: on-failure
-    stop_grace_period: 10s
+    stop_grace_period: 45s
 
   # Test Node 2
   test-node2:
@@ -400,7 +438,8 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        COVER: "${COVER:-}"
     hostname: test-node2
     # Add capabilities required for multicast networking
     cap_add:
@@ -409,12 +448,17 @@ services:
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_RAFT_NODE_ID=2
+      - QUICBAAS_RAFT_DEPLOYMENT_ID=1
+      - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
       - QUICBAAS_RAFT_RAFT_ADDRESS=test-node2:63002
       - QUICBAAS_RAFT_MUTUAL_TLS=true
       - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node2.crt
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/node2.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/node2.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node2.key
-      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node1:63001,test-node3:63003
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=test-node1:63001,2=test-node2:63002,3=test-node3:63003
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
@@ -455,8 +499,9 @@ services:
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service
-      - QUICBAAS_OLLAMA_ENABLED=true
-      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_BASE_URL=${QUICBAAS_OLLAMA_BASE_URL:-http://ollama:11434}
+      - QUICBAAS_OLLAMA_ENABLED=${QUICBAAS_OLLAMA_ENABLED:-true}
+      - QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL=${QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL:-http://ollama:11434}
       - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
@@ -473,6 +518,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin
     volumes:
       - test-data-node2:/data
+      - ${QUICBAAS_COVDATA_DIR_NODE2:-/tmp/quicbaas-covdata-disabled-node2}:/covdata
       - test-logs-node2:/var/log/quicbaas
       - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - quicbaas-sockets:/var/run/quicbaas
@@ -508,7 +554,7 @@ services:
       retries: 30
       start_period: 30s
     restart: on-failure
-    stop_grace_period: 10s
+    stop_grace_period: 45s
 
   # Test Node 3
   test-node3:
@@ -518,7 +564,8 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        COVER: "${COVER:-}"
     hostname: test-node3
     # Add capabilities required for multicast networking
     cap_add:
@@ -527,12 +574,17 @@ services:
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_RAFT_NODE_ID=3
+      - QUICBAAS_RAFT_DEPLOYMENT_ID=1
+      - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
       - QUICBAAS_RAFT_RAFT_ADDRESS=test-node3:63003
       - QUICBAAS_RAFT_MUTUAL_TLS=true
       - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node3.crt
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/node3.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/node3.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node3.key
-      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node1:63001,test-node2:63002
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=test-node1:63001,2=test-node2:63002,3=test-node3:63003
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
@@ -573,8 +625,9 @@ services:
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service
-      - QUICBAAS_OLLAMA_ENABLED=true
-      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_BASE_URL=${QUICBAAS_OLLAMA_BASE_URL:-http://ollama:11434}
+      - QUICBAAS_OLLAMA_ENABLED=${QUICBAAS_OLLAMA_ENABLED:-true}
+      - QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL=${QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL:-http://ollama:11434}
       - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
@@ -591,6 +644,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin
     volumes:
       - test-data-node3:/data
+      - ${QUICBAAS_COVDATA_DIR_NODE3:-/tmp/quicbaas-covdata-disabled-node3}:/covdata
       - test-logs-node3:/var/log/quicbaas
       - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - quicbaas-sockets:/var/run/quicbaas
@@ -628,7 +682,7 @@ services:
       retries: 30
       start_period: 30s
     restart: on-failure
-    stop_grace_period: 10s
+    stop_grace_period: 45s
 
   # Test Node 4 - For dynamic membership tests
   # Only started when needed via profiles
@@ -639,7 +693,8 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        COVER: "${COVER:-}"
     hostname: test-node4
     profiles:
       - membership-tests
@@ -650,12 +705,16 @@ services:
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_RAFT_NODE_ID=4
+      - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
       - QUICBAAS_RAFT_RAFT_ADDRESS=test-node4:63004
       - QUICBAAS_RAFT_MUTUAL_TLS=true
       - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node4.crt
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/node4.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/node4.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node4.key
-      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node1:63001,test-node2:63002,test-node3:63003
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=test-node1:63001,2=test-node2:63002,3=test-node3:63003
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
@@ -696,8 +755,9 @@ services:
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service
-      - QUICBAAS_OLLAMA_ENABLED=true
-      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_BASE_URL=${QUICBAAS_OLLAMA_BASE_URL:-http://ollama:11434}
+      - QUICBAAS_OLLAMA_ENABLED=${QUICBAAS_OLLAMA_ENABLED:-true}
+      - QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL=${QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL:-http://ollama:11434}
       - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
@@ -714,6 +774,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin
     volumes:
       - test-data-node4:/data
+      - ${QUICBAAS_COVDATA_DIR_NODE4:-/tmp/quicbaas-covdata-disabled-node4}:/covdata
       - test-logs-node4:/var/log/quicbaas
       - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - quicbaas-sockets:/var/run/quicbaas
@@ -735,7 +796,7 @@ services:
       retries: 30
       start_period: 30s
     restart: on-failure
-    stop_grace_period: 10s
+    stop_grace_period: 45s
 
   # Test Node 5 - For dynamic membership tests
   test-node5:
@@ -745,7 +806,8 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+        COVER: "${COVER:-}"
     hostname: test-node5
     profiles:
       - membership-tests
@@ -756,12 +818,16 @@ services:
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_RAFT_NODE_ID=5
+      - GOCOVERDIR=${QUICBAAS_NODE_GOCOVERDIR:-}
       - QUICBAAS_RAFT_RAFT_ADDRESS=test-node5:63005
       - QUICBAAS_RAFT_MUTUAL_TLS=true
       - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node5.crt
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/node5.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/node5.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node5.key
-      - QUICBAAS_RAFT_JOIN_ADDRESSES=test-node1:63001,test-node2:63002,test-node3:63003,test-node4:63004
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=test-node1:63001,2=test-node2:63002,3=test-node3:63003,4=test-node4:63004
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
@@ -802,8 +868,9 @@ services:
       # Enable Backup service
       - QUICBAAS_BACKUP_ENABLED=true
       # Enable Ollama/RAG service
-      - QUICBAAS_OLLAMA_ENABLED=true
-      - QUICBAAS_OLLAMA_BASE_URL=http://ollama:11434
+      - QUICBAAS_OLLAMA_BASE_URL=${QUICBAAS_OLLAMA_BASE_URL:-http://ollama:11434}
+      - QUICBAAS_OLLAMA_ENABLED=${QUICBAAS_OLLAMA_ENABLED:-true}
+      - QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL=${QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL:-http://ollama:11434}
       - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
@@ -820,6 +887,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin
     volumes:
       - test-data-node5:/data
+      - ${QUICBAAS_COVDATA_DIR_NODE5:-/tmp/quicbaas-covdata-disabled-node5}:/covdata
       - test-logs-node5:/var/log/quicbaas
       - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - quicbaas-sockets:/var/run/quicbaas
@@ -841,7 +909,7 @@ services:
       retries: 30
       start_period: 30s
     restart: on-failure
-    stop_grace_period: 10s
+    stop_grace_period: 45s
 
 networks:
   integration-test-network:

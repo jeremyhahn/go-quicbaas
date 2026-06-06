@@ -472,6 +472,12 @@ class WailsAuthClient {
         // revoke. The host application owns the OS-level session; this is a no-op
         // so the caller can use a single logout() method across transports.
     }
+    async registerBegin(_req) {
+        throw new Error('registerBegin: use REST transport for self-service registration in desktop mode');
+    }
+    async registerFinish(_req) {
+        throw new Error('registerFinish: use REST transport for self-service registration in desktop mode');
+    }
 }
 // WailsClient is the top-level Client implementation for Wails desktop mode.
 export class WailsClient {

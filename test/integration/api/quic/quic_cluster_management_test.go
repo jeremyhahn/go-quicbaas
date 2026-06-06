@@ -17,7 +17,6 @@ package quic
 
 import (
 	"context"
-	"crypto/tls"
 	"os"
 	"sync"
 	"testing"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // =============================================================================
@@ -41,12 +41,13 @@ type quicClient struct {
 
 // newQUICClient creates a new QUIC client connection to the specified address
 func newQUICClient(ctx context.Context, addr string) (*quicClient, error) {
-	// Create insecure TLS config for testing
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	// CA-pinned TLS config for the QUIC transport. ALPN must remain
+	// "quicbaas-quic" for the server to accept the connection.
+	tlsConfig, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return nil, err
 	}
+	tlsConfig.NextProtos = []string{"quicbaas-quic"}
 
 	// QUIC client configuration
 	quicConfig := &quicgo.Config{

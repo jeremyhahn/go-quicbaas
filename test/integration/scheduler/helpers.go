@@ -18,11 +18,9 @@ package scheduler
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -34,6 +32,7 @@ import (
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // Note: Scheduler gRPC client methods are not yet implemented.
@@ -162,18 +161,8 @@ type SchedulerRESTClient struct {
 // NewSchedulerRESTClient creates a new scheduler REST client.
 func NewSchedulerRESTClient(baseURL string) *SchedulerRESTClient {
 	return &SchedulerRESTClient{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
+		baseURL:    baseURL,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
 	}
 }
 

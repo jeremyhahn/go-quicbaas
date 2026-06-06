@@ -30,13 +30,13 @@ import (
 
 type orchestratorTestLogger struct{}
 
-func (l *orchestratorTestLogger) Debug(msg string, args ...any)                                          {}
+func (l *orchestratorTestLogger) Debug(msg string, args ...any)                             {}
 func (l *orchestratorTestLogger) Debugf(format string, args ...interface{})                 {}
-func (l *orchestratorTestLogger) Info(msg string, args ...any)                                           {}
+func (l *orchestratorTestLogger) Info(msg string, args ...any)                              {}
 func (l *orchestratorTestLogger) Infof(format string, args ...interface{})                  {}
-func (l *orchestratorTestLogger) Warn(msg string, args ...any)                                           {}
+func (l *orchestratorTestLogger) Warn(msg string, args ...any)                              {}
 func (l *orchestratorTestLogger) Warnf(format string, args ...interface{})                  {}
-func (l *orchestratorTestLogger) Error(msg string, args ...any)                                          {}
+func (l *orchestratorTestLogger) Error(msg string, args ...any)                             {}
 func (l *orchestratorTestLogger) Errorf(format string, args ...interface{})                 {}
 func (l *orchestratorTestLogger) Fatal(msg string)                                          {}
 func (l *orchestratorTestLogger) Fatalf(format string, args ...interface{})                 {}

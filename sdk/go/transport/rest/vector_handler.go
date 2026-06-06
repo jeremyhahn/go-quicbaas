@@ -73,6 +73,12 @@ func (h *vectorHandler) handleRequest(ctx context.Context, method string, req in
 		return h.handleCompact(ctx, req)
 	case "GetCompactionProgress":
 		return h.handleGetCompactionProgress(ctx, req)
+	case "List":
+		return h.handleListVectors(ctx, req)
+	case "UpdateMetadata":
+		return h.handleUpdateMetadata(ctx, req)
+	case "GetStats":
+		return h.handleGetStats(ctx, req)
 	default:
 		// Fall back to generic handling for other methods
 		return nil, errors.NewUnimplemented("vectorHandler.handleRequest",
@@ -720,6 +726,137 @@ func (h *vectorHandler) handleGetCompactionProgress(ctx context.Context, req int
 		SpaceReclaimedBytes: vectorGetInt64(respMap, "space_reclaimed_bytes"),
 		ElapsedTimeMs:       vectorGetInt64(respMap, "elapsed_time_ms"),
 		Timestamp:           vectorGetTime(respMap, "timestamp"),
+	}, nil
+}
+
+// handleListVectors handles List requests.
+//
+// Earlier revisions of this handler omitted the List, UpdateMetadata and
+// GetStats methods entirely, so the SDK vector client received the
+// "unsupported Vector method" error from the default branch rather than a
+// real response. These handlers substitute the {namespace}/{id} path
+// parameters from the typed SDK request and decode the RESTful wire responses.
+func (h *vectorHandler) handleListVectors(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*vector.ListVectorsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("vectorHandler.handleListVectors",
+			"invalid request type, expected *vector.ListVectorsRequest")
+	}
+	if sdkReq.Namespace == "" {
+		return nil, errors.NewInvalidInput("vectorHandler.handleListVectors", "namespace is required")
+	}
+
+	endpoint := "/api/v1/vector/namespaces/" + sdkReq.Namespace + "/vectors"
+	params := []string{}
+	if sdkReq.PageSize > 0 {
+		params = append(params, "page_size="+vectorItoa(int(sdkReq.PageSize)))
+	}
+	if sdkReq.PageToken != "" {
+		params = append(params, "page_token="+sdkReq.PageToken)
+	}
+	if sdkReq.IncludeVectors {
+		params = append(params, "include_vectors=true")
+	}
+	if sdkReq.IncludeMetadata {
+		params = append(params, "include_metadata=true")
+	}
+	if len(params) > 0 {
+		endpoint += "?" + strings.Join(params, "&")
+	}
+
+	var wire struct {
+		Vectors []struct {
+			ID        string            `json:"id"`
+			Metadata  map[string]string `json:"metadata,omitempty"`
+			Version   int64             `json:"version"`
+			CreatedAt time.Time         `json:"created_at,omitempty"`
+			UpdatedAt time.Time         `json:"updated_at,omitempty"`
+		} `json:"vectors"`
+		Pagination struct {
+			NextPageToken string `json:"next_page_token"`
+			TotalCount    int64  `json:"total_count,omitempty"`
+		} `json:"pagination"`
+	}
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, endpoint, nil, &wire); err != nil {
+		return nil, err
+	}
+
+	out := &vector.ListVectorsResponse{
+		Vectors:       make([]*vector.VectorEntity, 0, len(wire.Vectors)),
+		TotalCount:    wire.Pagination.TotalCount,
+		NextPageToken: wire.Pagination.NextPageToken,
+	}
+	for _, v := range wire.Vectors {
+		out.Vectors = append(out.Vectors, &vector.VectorEntity{
+			ID:        v.ID,
+			Namespace: sdkReq.Namespace,
+			Version:   v.Version,
+			Metadata:  v.Metadata,
+			CreatedAt: v.CreatedAt,
+			UpdatedAt: v.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+// handleUpdateMetadata handles UpdateMetadata requests.
+func (h *vectorHandler) handleUpdateMetadata(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*vector.UpdateMetadataRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("vectorHandler.handleUpdateMetadata",
+			"invalid request type, expected *vector.UpdateMetadataRequest")
+	}
+	if sdkReq.Namespace == "" {
+		return nil, errors.NewInvalidInput("vectorHandler.handleUpdateMetadata", "namespace is required")
+	}
+	if sdkReq.ID == "" {
+		return nil, errors.NewInvalidInput("vectorHandler.handleUpdateMetadata", "vector ID is required")
+	}
+
+	endpoint := "/api/v1/vector/namespaces/" + sdkReq.Namespace + "/vectors/" + sdkReq.ID + "/metadata"
+	body := map[string]interface{}{"metadata": sdkReq.Metadata}
+
+	var wire struct {
+		ID        string    `json:"id"`
+		Version   int64     `json:"version"`
+		Timestamp time.Time `json:"timestamp"`
+	}
+	if err := h.transport.doJSONRequest(ctx, http.MethodPut, endpoint, body, &wire); err != nil {
+		return nil, err
+	}
+	return &vector.UpdateMetadataResponse{
+		Success:   true,
+		Version:   wire.Version,
+		Timestamp: wire.Timestamp,
+	}, nil
+}
+
+// handleGetStats handles GetStats requests for a namespace.
+func (h *vectorHandler) handleGetStats(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*vector.GetStatsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("vectorHandler.handleGetStats",
+			"invalid request type, expected *vector.GetStatsRequest")
+	}
+	if sdkReq.Namespace == "" {
+		return nil, errors.NewInvalidInput("vectorHandler.handleGetStats", "namespace is required")
+	}
+
+	endpoint := "/api/v1/vector/namespaces/" + sdkReq.Namespace + "/stats"
+	var wire struct {
+		Namespace    string `json:"namespace"`
+		VectorCount  int64  `json:"vector_count"`
+		StorageBytes int64  `json:"storage_bytes"`
+		IndexBytes   int64  `json:"index_bytes"`
+	}
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, endpoint, nil, &wire); err != nil {
+		return nil, err
+	}
+	return &vector.GetStatsResponse{
+		Namespace:        sdkReq.Namespace,
+		VectorCount:      wire.VectorCount,
+		IndexSizeBytes:   wire.IndexBytes,
+		StorageSizeBytes: wire.StorageBytes,
 	}, nil
 }
 

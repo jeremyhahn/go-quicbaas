@@ -238,7 +238,7 @@ func createFederationTestLogger() *logger.Logger {
 }
 
 func createFederationTestHandler(svc *mockFederationService) *Handler {
-	return NewHandler(svc, nil, nil, nil, nil, createFederationTestLogger())
+	return NewHandler(svc, nil, nil, nil, createFederationTestLogger())
 }
 
 // encodeSubPayload creates an encoded sub-request payload for direct handler method testing.
@@ -327,7 +327,7 @@ func TestHandleFederationCreateProvider_Success(t *testing.T) {
 
 func TestHandleFederationCreateProvider_NilService(t *testing.T) {
 	// Use base mockService which doesn't implement federationServiceInterface
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	provider := &iam.ExternalProvider{
 		ID:       "provider-1",
@@ -446,7 +446,7 @@ func TestHandleFederationGetProvider_Success(t *testing.T) {
 }
 
 func TestHandleFederationGetProvider_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	getReq := &GetProviderRequest{
 		TenantID:   "tenant-1",
@@ -546,7 +546,7 @@ func TestHandleFederationUpdateProvider_Success(t *testing.T) {
 }
 
 func TestHandleFederationUpdateProvider_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	provider := &iam.ExternalProvider{
 		ID:       "provider-1",
@@ -665,7 +665,7 @@ func TestHandleFederationDeleteProvider_Success(t *testing.T) {
 }
 
 func TestHandleFederationDeleteProvider_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	deleteReq := &DeleteProviderRequest{
 		TenantID:   "tenant-1",
@@ -772,7 +772,7 @@ func TestHandleFederationListProviders_Success(t *testing.T) {
 }
 
 func TestHandleFederationListProviders_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	listReq := &ListProvidersRequest{
 		TenantID: "tenant-1",
@@ -878,7 +878,7 @@ func TestHandleFederationBeginLogin_Success(t *testing.T) {
 }
 
 func TestHandleFederationBeginLogin_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	loginReq := &BeginLoginRequest{
 		TenantID:     "tenant-1",
@@ -987,7 +987,7 @@ func TestHandleFederationHandleCallback_Success(t *testing.T) {
 }
 
 func TestHandleFederationHandleCallback_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	callbackReq := &HandleCallbackRequest{
 		StateToken: "test-state-token",
@@ -1083,7 +1083,7 @@ func TestHandleFederationLinkAccount_Success(t *testing.T) {
 }
 
 func TestHandleFederationLinkAccount_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	linkReq := &LinkAccountRequest{
 		UserID:        "user-123",
@@ -1182,7 +1182,7 @@ func TestHandleFederationUnlinkAccount_Success(t *testing.T) {
 }
 
 func TestHandleFederationUnlinkAccount_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	unlinkReq := &UnlinkAccountRequest{
 		UserID:     "user-123",
@@ -1288,7 +1288,7 @@ func TestHandleFederationGetUserLinks_Success(t *testing.T) {
 }
 
 func TestHandleFederationGetUserLinks_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createFederationTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createFederationTestLogger())
 
 	linksReq := &GetUserLinksRequest{
 		UserID:   "user-123",

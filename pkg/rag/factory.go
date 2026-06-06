@@ -137,7 +137,11 @@ type System struct {
 
 // NewSystem creates a complete RAG system from configuration.
 // This is the main entry point for creating a RAG system with real providers.
-func NewSystem(cfg config.RAGConfig) (*System, error) {
+//
+// When opts include WithQRDBVectorClient, the vector index is backed by the
+// qrdb persistent HNSW engine. Otherwise the in-memory brute-force fallback
+// is used.
+func NewSystem(cfg config.RAGConfig, opts ...SystemOption) (*System, error) {
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrInvalidConfig, Cause: err}
@@ -151,14 +155,27 @@ func NewSystem(cfg config.RAGConfig) (*System, error) {
 		}
 	}
 
+	// Apply functional options.
+	o := &systemOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	// Resolve vector index factory: use the per-call override when provided,
+	// otherwise fall back to the package-level factory (default: in-memory).
+	vectorFactory := createVectorIndexFunc
+	if o.vectorIndexOverride != nil {
+		vectorFactory = o.vectorIndexOverride
+	}
+
 	// 1. Create embedding provider
 	embedder, err := createEmbedderFunc(cfg.Embedding)
 	if err != nil {
 		return nil, &ComponentError{Component: "embedder", Operation: "create", Cause: err}
 	}
 
-	// 2. Create and train vector index
-	vectorIndex, err := createVectorIndexFunc(cfg.Vector)
+	// 2. Create and train vector index.
+	vectorIndex, err := vectorFactory(cfg.Vector)
 	if err != nil {
 		closeErr := embedder.Close()
 		if closeErr != nil {

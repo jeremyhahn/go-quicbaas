@@ -69,8 +69,8 @@ test.beforeAll(async () => {
 // ---------------------------------------------------------------------------
 
 test.afterAll(async () => {
-  if (invite?.user_id) {
-    await deleteTestUser('default', invite.user_id);
+  if (invite?.id) {
+    await deleteTestUser('default', invite.id);
   }
 });
 

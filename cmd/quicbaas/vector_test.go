@@ -888,8 +888,6 @@ func (m *mockSDKClientWithVector) DynamicSecrets() quicbaas.DynamicSecretsClient
 
 func (m *mockSDKClientWithVector) Certificate() quicbaas.CertificateClient { return nil }
 
-func (m *mockSDKClientWithVector) ClusterDEK() quicbaas.ClusterDEKClient { return nil }
-
 func (m *mockSDKClientWithVector) DEK() quicbaas.DEKClient { return nil }
 
 func (m *mockSDKClientWithVector) IAM() quicbaas.IAMClient { return nil }
@@ -1295,8 +1293,6 @@ func (m *testSDKClientForVector) DynamicSecrets() quicbaas.DynamicSecretsClient 
 
 func (m *testSDKClientForVector) Certificate() quicbaas.CertificateClient { return nil }
 
-func (m *testSDKClientForVector) ClusterDEK() quicbaas.ClusterDEKClient { return nil }
-
 func (m *testSDKClientForVector) DEK() quicbaas.DEKClient { return nil }
 
 func (m *testSDKClientForVector) IAM() quicbaas.IAMClient { return nil }
@@ -1360,8 +1356,8 @@ func (m *testSDKClientForVector) TenantMgmt() (quicbaas.QRDBTenantClient, error)
 func (m *testSDKClientForVector) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
 	return nil, nil
 }
-func (m *testSDKClientForVector) Share() (quicbaas.QRDBShareClient, error)  { return nil, nil }
-func (m *testSDKClientForVector) Project() quicbaas.ProjectClient { return nil }
+func (m *testSDKClientForVector) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
+func (m *testSDKClientForVector) Project() quicbaas.ProjectClient          { return nil }
 
 func (m *testSDKClientForVector) Orchestrator() quicbaas.OrchestratorClient { return nil }
 
@@ -2648,5 +2644,3 @@ func TestFormatVectorSearchByIDResponseTable(t *testing.T) {
 	err := formatVectorSearchByIDResponse(resp)
 	assert.NoError(t, err)
 }
-
-

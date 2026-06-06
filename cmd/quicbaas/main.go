@@ -41,7 +41,6 @@ var (
 	address        string
 	transport      string
 	globalTimeout  time.Duration
-	tlsSkipVerify  bool
 	globalTenantID string
 
 	// Global configuration.
@@ -76,7 +75,7 @@ Security and Identity:
   - IAM: users, roles, groups, policies, tenants, federation
   - KMS: key creation, rotation, encryption, decryption
   - Secrets: store, fetch, rotate, delete
-  - Seal/unseal and certificate management
+  - Barrier: storage seal/unseal lifecycle and certificate management
   - Cryptographic operations (sign, verify, encrypt, decrypt)
 
 Platform Services:
@@ -162,10 +161,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&fipsMode, "fips", false, "enable FIPS 140-3 mode")
 	rootCmd.PersistentFlags().StringVar(&dataDir, "data-dir", "./data", "data directory path")
 	rootCmd.PersistentFlags().StringVar(&address, "address", config.DefaultUnixSocket, "QuicBaaS server address (Unix socket path or host:port)")
-	rootCmd.PersistentFlags().StringVar(&transport, "transport", "grpc", "Transport protocol (grpc, rest, quic, unix, mcp, embedded)")
+	rootCmd.PersistentFlags().StringVar(&transport, "transport", "unix", "Transport protocol (grpc, rest, quic, unix, mcp, embedded)")
 	rootCmd.PersistentFlags().DurationVar(&globalTimeout, "timeout", 30*time.Second, "Command timeout duration (e.g., 10s, 1m)")
 	rootCmd.PersistentFlags().BoolVar(&tlsEnabled, "tls", false, "Enable TLS")
-	rootCmd.PersistentFlags().BoolVar(&tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
 	rootCmd.PersistentFlags().StringVar(&tlsCA, "tls-ca", "", "TLS CA certificate file (auto-detected from data-dir if not set)")
 	rootCmd.PersistentFlags().StringVar(&tlsCert, "tls-cert", "", "TLS client certificate file (for mTLS)")
 	rootCmd.PersistentFlags().StringVar(&tlsKey, "tls-key", "", "TLS client key file (for mTLS)")
@@ -188,16 +186,13 @@ func init() {
 	rootCmd.AddCommand(newNodeCommands())
 	rootCmd.AddCommand(newUpgradeCommands())
 	rootCmd.AddCommand(newAuthCommand())
-	rootCmd.AddCommand(newUserCommand())
-	rootCmd.AddCommand(newRoleCommand())
 	rootCmd.AddCommand(newCacheCommands())
 
-	// Add new KMS, Secrets, Seal, and Crypto commands
+	// Add new KMS, Secrets, and Crypto commands
 	rootCmd.AddCommand(newKMSCommand())
 	rootCmd.AddCommand(newSecretsCommand())
-	// Canonical surface: replace legacy "seal" with "barrier" per
-	// docs/08-bootstrap-auth-architecture.md §6. The canonical wiring
-	// adds a redirect stub for the renamed "seal" path.
+	// Canonical surface: the StorageBarrier lifecycle is exposed via the
+	// "barrier" command group per docs/08-bootstrap-auth-architecture.md §6.
 	configureCanonicalSurface()
 	rootCmd.AddCommand(newCryptoCommand())
 	rootCmd.AddCommand(newSSHCommand())
@@ -228,7 +223,10 @@ func init() {
 
 	// Add Agent command for fleet management
 	rootCmd.AddCommand(newAgentCommand())
-	rootCmd.AddCommand(newSignalBridgeCommand())
+
+	// Signal bridge is gated on the quicbaas_signal build tag; the
+	// registerSignalBridgeCommand stub is a no-op when the tag is off.
+	registerSignalBridgeCommand(rootCmd)
 }
 
 // initConfig reads in config file and ENV variables.

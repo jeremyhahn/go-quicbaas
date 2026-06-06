@@ -29,9 +29,9 @@ import (
 // fakeSender records every Send and Edit call and can be asked about
 // its history.
 type fakeSender struct {
-	mu    sync.Mutex
-	sends []OutboundMessage
-	edits []editCall
+	mu        sync.Mutex
+	sends     []OutboundMessage
+	edits     []editCall
 	failSends bool
 }
 

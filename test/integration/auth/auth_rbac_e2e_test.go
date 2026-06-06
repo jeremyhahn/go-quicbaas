@@ -17,7 +17,6 @@ package auth
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"strings"
 	"testing"
@@ -978,9 +977,11 @@ func TestAuthWithGRPCClient(t *testing.T) {
 	serverAddr := endpoints[0]
 
 	t.Run("create client with auth token", func(t *testing.T) {
+		tlsCfg, err := helpers.IntegrationTLSConfig()
+		require.NoError(t, err, "load integration TLS config")
 		// Create gRPC connection directly
 		conn, err := grpc.DialContext(ctx, serverAddr,
-			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 			grpc.WithBlock(),
 		)
 		require.NoError(t, err, "Must connect to server at %s", serverAddr)

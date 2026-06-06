@@ -198,6 +198,10 @@ const (
 	OpRefreshToken  byte = 0x62
 	OpValidateToken byte = 0x63
 
+	// Unified login ceremony (0x78-0x79). Free on both SDK and server.
+	OpAuthBeginLogin  byte = 0x78
+	OpAuthFinishLogin byte = 0x79
+
 	// Dynamic Secrets Operations (0x64-0x6B).
 	OpDynamicSecretsCreateRole  byte = 0x64
 	OpDynamicSecretsGetRole     byte = 0x65
@@ -208,12 +212,6 @@ const (
 	OpDynamicSecretsRevokeLease byte = 0x6A
 	OpDynamicSecretsListLeases  byte = 0x6B
 
-	// Cluster DEK Operations (0x6C-0x6F, 0x78-0x7C).
-	OpClusterDEKInit     byte = 0x6C
-	OpClusterDEKStatus   byte = 0x6D
-	OpClusterDEKRotate   byte = 0x6E
-	OpClusterDEKSyncNode byte = 0x6F
-
 	// RBAC Operations (0x70-0x77).
 	OpCreateUser byte = 0x70
 	OpDeleteUser byte = 0x71
@@ -223,13 +221,6 @@ const (
 	OpListRoles  byte = 0x75
 	OpAssignRole byte = 0x76
 	OpRevokeRole byte = 0x77
-
-	// Cluster DEK Operations continued (0x78-0x7C).
-	OpClusterDEKNodeStatus      byte = 0x78
-	OpClusterDEKStartReencrypt  byte = 0x79
-	OpClusterDEKReencryptStatus byte = 0x7A
-	OpClusterDEKCancelReencrypt byte = 0x7B
-	OpClusterDEKRecover         byte = 0x7C
 
 	// Parameter Store Operations (0x7D-0x7F, 0x8A-0x8E).
 	OpParameterGet         byte = 0x7D
@@ -320,16 +311,21 @@ const (
 	OpIAMRegisterApp     byte = 0xBD
 	OpIAMGetApp          byte = 0xBE
 	OpIAMUpdateApp       byte = 0xBF
-	OpIAMDeleteApp       byte = 0xC5 // Skip 0xC0-0xC4 (Seal)
+	OpIAMDeleteApp       byte = 0xC5 // Skip 0xC0-0xC4 (Barrier/Ceremony, deprecated Seal)
 	OpIAMListApps        byte = 0xC6
 	OpIAMRotateAppSecret byte = 0xC7
 
-	// Seal Operations (0xC0-0xC4).
-	OpSealStatus byte = 0xC0
-	OpSealInit   byte = 0xC1
-	OpUnseal     byte = 0xC2
-	OpSeal       byte = 0xC3
-	OpSealRekey  byte = 0xC4
+	// Barrier Operations - uses OpBarrier (0xC0) as the dispatch opcode with
+	// sub-operation code in the first byte of payload (same pattern as Scheduler).
+	// Replaces the deprecated seal-tree opcodes (0xC0-0xC4) removed in Phase 8c.
+	OpBarrier byte = 0xC0 // Barrier dispatch opcode (sub-op in payload[0])
+
+	// Ceremony Operations - uses OpCeremony (0xC1) as the dispatch opcode with
+	// sub-operation code in the first byte of payload. Mirrors /api/v1/init.
+	OpCeremony byte = 0xC1 // Ceremony dispatch opcode (sub-op in payload[0])
+
+	// Opcodes 0xC2-0xC4 are reserved (formerly Unseal/Seal/SealRekey under the
+	// deprecated seal subsystem). Reuse requires bumping the protocol version.
 
 	// IAM Policy Operations (0xC8-0xCE).
 	OpIAMCreatePolicy   byte = 0xC8
@@ -385,6 +381,11 @@ const (
 	OpSecretsSetRotation  byte = 0xED
 	OpSecretsGetRotation  byte = 0xEE
 	OpSecretsUpdateStatus byte = 0xEF
+
+	// KMS Rotation Policy Operations (0x6C-0x6E).
+	OpKMSSetRotationPolicy    byte = 0x6C
+	OpKMSGetRotationPolicy    byte = 0x6D
+	OpKMSDeleteRotationPolicy byte = 0x6E
 
 	// Transit Operations (0xF0-0xF9).
 	OpCryptoEncrypt    byte = 0xF0
@@ -477,6 +478,101 @@ const (
 	// Inference (0x0D) - stateless fleet-routed inference (aggregate response).
 	SubOpOrchestratorInference byte = 0x0D
 )
+
+// Barrier sub-operation codes (used in payload[0] when OpBarrier is the main opcode).
+// These are NOT wire opcodes - they are decoded from the request payload.
+// Mirrors the /api/v1/barrier REST surface. Sub-op codes 0x08-0x0B were
+// retired with persisted Shamir share management; their byte values are
+// intentionally left unassigned to preserve wire compatibility.
+const (
+	SubOpBarrierStatus             byte = 0x01
+	SubOpBarrierInitialize         byte = 0x02
+	SubOpBarrierUnseal             byte = 0x03
+	SubOpBarrierSeal               byte = 0x04
+	SubOpBarrierShamirInitialize   byte = 0x05
+	SubOpBarrierShamirUnsealShare  byte = 0x06
+	SubOpBarrierShamirUnsealShares byte = 0x07
+	SubOpBarrierRekey              byte = 0x0C
+	SubOpBarrierRecoveryGenerate   byte = 0x0D
+	SubOpBarrierRecoveryRecover    byte = 0x0E
+	SubOpBarrierRecoveryDelete     byte = 0x0F
+	SubOpBarrierRecoveryStatus     byte = 0x10
+	SubOpBarrierRootToken          byte = 0x11
+)
+
+// Ceremony sub-operation codes (used in payload[0] when OpCeremony is the main opcode).
+// These are NOT wire opcodes - they are decoded from the request payload.
+// Mirrors the /api/v1/init REST surface (8 sub-ops).
+const (
+	SubOpCeremonyInitialize            byte = 0x01
+	SubOpCeremonyStatus                byte = 0x02
+	SubOpCeremonyClaimCertBegin        byte = 0x03
+	SubOpCeremonyClaimCertComplete     byte = 0x04
+	SubOpCeremonyClaimShare            byte = 0x05
+	SubOpCeremonySignCSR               byte = 0x06
+	SubOpCeremonyListOfficers          byte = 0x07
+	SubOpCeremonyEnrollExternalOfficer byte = 0x08
+)
+
+// BarrierSubOpcodeToString returns a human-readable name for a barrier
+// sub-opcode. Used by logging and error messages.
+func BarrierSubOpcodeToString(subOpcode byte) string {
+	switch subOpcode {
+	case SubOpBarrierStatus:
+		return "BarrierStatus"
+	case SubOpBarrierInitialize:
+		return "BarrierInitialize"
+	case SubOpBarrierUnseal:
+		return "BarrierUnseal"
+	case SubOpBarrierSeal:
+		return "BarrierSeal"
+	case SubOpBarrierShamirInitialize:
+		return "BarrierShamirInitialize"
+	case SubOpBarrierShamirUnsealShare:
+		return "BarrierShamirUnsealShare"
+	case SubOpBarrierShamirUnsealShares:
+		return "BarrierShamirUnsealShares"
+	case SubOpBarrierRekey:
+		return "BarrierRekey"
+	case SubOpBarrierRecoveryGenerate:
+		return "BarrierRecoveryGenerate"
+	case SubOpBarrierRecoveryRecover:
+		return "BarrierRecoveryRecover"
+	case SubOpBarrierRecoveryDelete:
+		return "BarrierRecoveryDelete"
+	case SubOpBarrierRecoveryStatus:
+		return "BarrierRecoveryStatus"
+	case SubOpBarrierRootToken:
+		return "BarrierRootToken"
+	default:
+		return fmt.Sprintf("UnknownBarrierOp(0x%02X)", subOpcode)
+	}
+}
+
+// CeremonySubOpcodeToString returns a human-readable name for a ceremony
+// sub-opcode. Used by logging and error messages.
+func CeremonySubOpcodeToString(subOpcode byte) string {
+	switch subOpcode {
+	case SubOpCeremonyInitialize:
+		return "CeremonyInitialize"
+	case SubOpCeremonyStatus:
+		return "CeremonyStatus"
+	case SubOpCeremonyClaimCertBegin:
+		return "CeremonyClaimCertBegin"
+	case SubOpCeremonyClaimCertComplete:
+		return "CeremonyClaimCertComplete"
+	case SubOpCeremonyClaimShare:
+		return "CeremonyClaimShare"
+	case SubOpCeremonySignCSR:
+		return "CeremonySignCSR"
+	case SubOpCeremonyListOfficers:
+		return "CeremonyListOfficers"
+	case SubOpCeremonyEnrollExternalOfficer:
+		return "CeremonyEnrollExternalOfficer"
+	default:
+		return fmt.Sprintf("UnknownCeremonyOp(0x%02X)", subOpcode)
+	}
+}
 
 // Request represents a QUIC protocol request.
 // Wire format: [opcode:1][tokenLen:2][token:N][payloadLen:4][payload:M].
@@ -887,26 +983,6 @@ func OpcodeToString(opcode byte) string {
 	case OpDynamicSecretsListLeases:
 		return "DynamicSecretsListLeases"
 
-	// Cluster DEK Operations
-	case OpClusterDEKInit:
-		return "ClusterDEKInit"
-	case OpClusterDEKStatus:
-		return "ClusterDEKStatus"
-	case OpClusterDEKRotate:
-		return "ClusterDEKRotate"
-	case OpClusterDEKSyncNode:
-		return "ClusterDEKSyncNode"
-	case OpClusterDEKNodeStatus:
-		return "ClusterDEKNodeStatus"
-	case OpClusterDEKStartReencrypt:
-		return "ClusterDEKStartReencrypt"
-	case OpClusterDEKReencryptStatus:
-		return "ClusterDEKReencryptStatus"
-	case OpClusterDEKCancelReencrypt:
-		return "ClusterDEKCancelReencrypt"
-	case OpClusterDEKRecover:
-		return "ClusterDEKRecover"
-
 	// Parameter Store Operations
 	case OpParameterGet:
 		return "ParameterGet"
@@ -1099,17 +1175,13 @@ func OpcodeToString(opcode byte) string {
 	case OpGetUpgradeStatus:
 		return "GetUpgradeStatus"
 
-	// Seal Operations
-	case OpSealStatus:
-		return "SealStatus"
-	case OpSealInit:
-		return "SealInit"
-	case OpUnseal:
-		return "Unseal"
-	case OpSeal:
-		return "Seal"
-	case OpSealRekey:
-		return "SealRekey"
+	// Barrier Operations (sub-op dispatched)
+	case OpBarrier:
+		return "Barrier"
+
+	// Ceremony Operations (sub-op dispatched)
+	case OpCeremony:
+		return "Ceremony"
 
 	// KMS Operations
 	case OpKMSGenerateKey:
@@ -1168,6 +1240,7 @@ func OpcodeToString(opcode byte) string {
 		return "KMSSetKeyPolicy"
 	case OpKMSGetKeyPolicy:
 		return "KMSGetKeyPolicy"
+	// Rotation policy ops are handled in the 0xFD-0xFF block above
 	case OpKMSSetKeySafety:
 		return "KMSSetKeySafety"
 	case OpKMSClearKeySafety:
@@ -1184,6 +1257,12 @@ func OpcodeToString(opcode byte) string {
 		return "KMSGetKeyMetadata"
 	case OpKMSUpdateKeyMetadata:
 		return "KMSUpdateKeyMetadata"
+	case OpKMSSetRotationPolicy:
+		return "KMSSetRotationPolicy"
+	case OpKMSGetRotationPolicy:
+		return "KMSGetRotationPolicy"
+	case OpKMSDeleteRotationPolicy:
+		return "KMSDeleteRotationPolicy"
 
 	// Secrets Operations
 	case OpSecretsStore:

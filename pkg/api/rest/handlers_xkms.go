@@ -1351,9 +1351,9 @@ func (s *Server) HandleXKMSFinishRegistration(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.Username == "" || req.CredentialID == "" {
+	if req.SessionID == "" || req.AttestationJSON == "" {
 		respondXKMSError(w, http.StatusBadRequest, &XKMSInvalidRequestError{
-			Detail: "username and credential_id are required",
+			Detail: "session_id and attestation_json are required",
 		})
 		return
 	}
@@ -1403,9 +1403,9 @@ func (s *Server) HandleXKMSFinishAuthentication(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if req.Username == "" || req.CredentialID == "" {
+	if req.SessionID == "" || req.Username == "" || req.AssertionJSON == "" {
 		respondXKMSError(w, http.StatusBadRequest, &XKMSInvalidRequestError{
-			Detail: "username and credential_id are required",
+			Detail: "session_id, username and assertion_json are required",
 		})
 		return
 	}

@@ -127,8 +127,8 @@ func respondSessionHistoryJSON(w http.ResponseWriter, r *http.Request, log orche
 		w.Header().Set("X-Next-Sequence", strconv.FormatUint(next, 10))
 	}
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"events":    events,
-		"next_seq":  next,
+		"events":     events,
+		"next_seq":   next,
 		"session_id": sessionID,
 	})
 }

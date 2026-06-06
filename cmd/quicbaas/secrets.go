@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1446,17 +1445,18 @@ func createSecretsGRPCClient() (*grpc.Client, error) {
 		opts = append(opts, grpc.WithTLS(secretsTLSCert, secretsTLSKey, secretsTLSCA))
 	case secretsTLSEnabled && secretsTLSCA != "":
 		// Server-side TLS only: just verify server with CA
-		opts = append(opts, grpc.WithTLS("", "", secretsTLSCA))
-	case tlsSkipVerify:
-		opts = append(opts, grpc.WithTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // G402: user explicitly requested --tls-skip-verify
-			MinVersion:         tls.VersionTLS13,
-		}))
+		opt, err := grpcCAOnlyTLSOption(secretsTLSCA)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrConfiguration,
+				"createSecretsGRPCClient", "failed to load --tls-ca")
+		}
+		opts = append(opts, opt)
 	default:
+		// QuicBaaS bans insecure TLS — explicit CA trust required.
 		return nil, errors.Newf(
 			errors.ErrConfiguration,
 			"createSecretsGRPCClient",
-			"TLS is required for gRPC connections (use --tls-cert, --tls-key, and --tls-ca, or --tls-skip-verify flags)",
+			"TLS is required for gRPC connections (use --tls-cert, --tls-key, and --tls-ca)",
 		)
 	}
 

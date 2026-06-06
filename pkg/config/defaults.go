@@ -199,13 +199,21 @@ func DefaultMessagingConfig() MessagingConfig {
 func DefaultSealConfig() SealConfig {
 	return SealConfig{
 		Enabled:           false,
+		Strategy:          "passphrase",
 		Mode:              "manual",
 		Threshold:         2,
 		TotalShares:       3,
-		PreferenceOrder:   []string{"software"},
+		PreferenceOrder:   []string{"passphrase"},
 		RecoveryEnabled:   true,
 		RecoveryThreshold: 3,
 		RecoveryTotal:     5,
+		TPM2: TPM2SealConfig{
+			Device:  "/dev/tpmrm0",
+			PCRBank: "SHA256",
+		},
+		Vault: VaultSealConfig{
+			TransitPath: "transit",
+		},
 	}
 }
 

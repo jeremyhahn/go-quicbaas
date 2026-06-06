@@ -182,12 +182,6 @@ func TestOpcodeToString_Exhaustive(t *testing.T) {
 		{"OpDynamicSecretsRevokeLease", OpDynamicSecretsRevokeLease, "DynamicSecretsRevokeLease"},
 		{"OpDynamicSecretsListLeases", OpDynamicSecretsListLeases, "DynamicSecretsListLeases"},
 
-		// Cluster DEK Operations
-		{"OpClusterDEKInit", OpClusterDEKInit, "ClusterDEKInit"},
-		{"OpClusterDEKStatus", OpClusterDEKStatus, "ClusterDEKStatus"},
-		{"OpClusterDEKRotate", OpClusterDEKRotate, "ClusterDEKRotate"},
-		{"OpClusterDEKSyncNode", OpClusterDEKSyncNode, "ClusterDEKSyncNode"},
-
 		// RBAC Operations
 		{"OpCreateUser", OpCreateUser, "CreateUser"},
 		{"OpDeleteUser", OpDeleteUser, "DeleteUser"},
@@ -197,13 +191,6 @@ func TestOpcodeToString_Exhaustive(t *testing.T) {
 		{"OpListRoles", OpListRoles, "ListRoles"},
 		{"OpAssignRole", OpAssignRole, "AssignRole"},
 		{"OpRevokeRole", OpRevokeRole, "RevokeRole"},
-
-		// Cluster DEK Operations continued
-		{"OpClusterDEKNodeStatus", OpClusterDEKNodeStatus, "ClusterDEKNodeStatus"},
-		{"OpClusterDEKStartReencrypt", OpClusterDEKStartReencrypt, "ClusterDEKStartReencrypt"},
-		{"OpClusterDEKReencryptStatus", OpClusterDEKReencryptStatus, "ClusterDEKReencryptStatus"},
-		{"OpClusterDEKCancelReencrypt", OpClusterDEKCancelReencrypt, "ClusterDEKCancelReencrypt"},
-		{"OpClusterDEKRecover", OpClusterDEKRecover, "ClusterDEKRecover"},
 
 		// Parameter Store Operations
 		{"OpParameterGet", OpParameterGet, "ParameterGet"},
@@ -296,12 +283,9 @@ func TestOpcodeToString_Exhaustive(t *testing.T) {
 		{"OpIAMListApps", OpIAMListApps, "IAMListApps"},
 		{"OpIAMRotateAppSecret", OpIAMRotateAppSecret, "IAMRotateAppSecret"},
 
-		// Seal Operations
-		{"OpSealStatus", OpSealStatus, "SealStatus"},
-		{"OpSealInit", OpSealInit, "SealInit"},
-		{"OpUnseal", OpUnseal, "Unseal"},
-		{"OpSeal", OpSeal, "Seal"},
-		{"OpSealRekey", OpSealRekey, "SealRekey"},
+		// Barrier / Ceremony Operations (sub-op dispatched)
+		{"OpBarrier", OpBarrier, "Barrier"},
+		{"OpCeremony", OpCeremony, "Ceremony"},
 
 		// IAM Policy Operations
 		{"OpIAMCreatePolicy", OpIAMCreatePolicy, "IAMCreatePolicy"},

@@ -45,16 +45,16 @@ type fakeDaemonServer struct {
 	closeCalls      atomic.Int32
 	listModelsCalls atomic.Int32
 
-	spawnResp       *proto.SpawnSessionResponse
-	spawnErr        error
-	promptResp      *proto.PromptSessionResponse
-	promptErr       error
-	statusResp      *proto.SessionStatusResponse
-	statusErr       error
-	closeResp       *proto.CloseSessionResponse
-	closeErr        error
-	listModelsResp  *proto.ListModelsResponse
-	listModelsErr   error
+	spawnResp      *proto.SpawnSessionResponse
+	spawnErr       error
+	promptResp     *proto.PromptSessionResponse
+	promptErr      error
+	statusResp     *proto.SessionStatusResponse
+	statusErr      error
+	closeResp      *proto.CloseSessionResponse
+	closeErr       error
+	listModelsResp *proto.ListModelsResponse
+	listModelsErr  error
 }
 
 func (f *fakeDaemonServer) Spawn(ctx context.Context, req *proto.SpawnSessionRequest) (*proto.SpawnSessionResponse, error) {

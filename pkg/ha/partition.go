@@ -17,7 +17,11 @@ package ha
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -429,20 +433,89 @@ func (pd *PartitionDetector) checkPeerReachability(ctx context.Context) map[uint
 	return results
 }
 
-// pingPeer attempts to ping a peer and measure RTT.
+// healthURL builds the GET /health URL for a peer. The peer address is
+// expected to be a host:port string (as supplied in PartitionConfig.Peers).
+// It uses HTTPS unless the address already carries an explicit scheme.
+func healthURL(address string) string {
+	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
+		return strings.TrimRight(address, "/") + "/health"
+	}
+	return "https://" + address + "/health"
+}
+
+// pingPeer performs a real HTTP GET /health probe against the peer's REST API
+// endpoint. It uses the HealthCheckTimeout from the detector config (bound by
+// any deadline already present on ctx). Returns (true, rtt) when the peer
+// responds with HTTP 200 or 503 — 503 indicates a sealed/not-ready node that
+// is still reachable, mirroring the semantics used by the qrdb REST transport's
+// reachable() helper. Any transport error or non-2xx/503 status is treated as
+// unreachable.
+//
+// TLS certificate verification is intentionally skipped for the health probe:
+// partition detection is a liveness signal, not a security boundary, and peer
+// certificates may be self-signed within the cluster. Mutual authentication for
+// data-plane operations is handled separately at the transport layer.
 func (pd *PartitionDetector) pingPeer(ctx context.Context, peer *PeerState) (bool, time.Duration) {
 	start := time.Now()
 
-	// In a real implementation, this would send a health check RPC
-	// For now, we simulate by checking if we've seen the peer recently
-	pd.peersMu.RLock()
-	lastSeen := peer.LastSeen
-	pd.peersMu.RUnlock()
+	timeout := pd.config.HealthCheckTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
 
-	// Consider peer unreachable if we haven't seen it within PeerTimeout
-	reachable := time.Since(lastSeen) < pd.config.PeerTimeout
+	// Scope the request to the health-check timeout, respecting any tighter
+	// deadline already set on the parent context.
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
+	url := healthURL(peer.Address)
+
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, url, nil)
+	if err != nil {
+		pd.logger.WithFields(map[string]interface{}{
+			"node_id": peer.NodeID,
+			"address": peer.Address,
+			"error":   err.Error(),
+		}).Debug("pingPeer: failed to build health request")
+		return false, time.Since(start)
+	}
+
+	// Use an ad-hoc client per probe; sharing a persistent client across all
+	// ping goroutines would require additional locking without meaningful benefit
+	// given the low frequency of health checks.
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // liveness probe, not a security boundary
+			},
+		},
+	}
+
+	resp, err := client.Do(req)
 	rtt := time.Since(start)
+	if err != nil {
+		pd.logger.WithFields(map[string]interface{}{
+			"node_id": peer.NodeID,
+			"address": peer.Address,
+			"error":   err.Error(),
+		}).Debug("pingPeer: health request failed")
+		return false, rtt
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	// 200 = healthy; 503 = sealed/not-ready but the process is alive.
+	reachable := resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusServiceUnavailable
+
+	if !reachable {
+		pd.logger.WithFields(map[string]interface{}{
+			"node_id":     peer.NodeID,
+			"address":     peer.Address,
+			"status_code": resp.StatusCode,
+		}).Debug("pingPeer: peer returned unexpected health status")
+	}
+
 	return reachable, rtt
 }
 

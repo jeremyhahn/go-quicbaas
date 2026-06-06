@@ -742,114 +742,9 @@ func TestFT2_StartVector_Disabled(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestFT2_StartVector_Enabled_LocalMode(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	cfg := createFTConfig(t)
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 2
-	cfg.Vector.HNSW = &config.HNSWConfig{M: 16, EfConstruction: 200, MaxElements: 10000, Ml: 1.0}
-	cfg.Vector.StoragePath = filepath.Join(cfg.Storage.DataDir, "vector-test")
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.startVector()
-	assert.NoError(t, err)
-	assert.NotNil(t, srv.vectorService)
-
-	// Cleanup vector storage.
-	if srv.vectorStorage != nil {
-		srv.vectorStorage.Close()
-	}
-}
-
-func TestFT2_StartVector_WithPreCreatedStorage(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	cfg := createFTConfig(t)
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 2
-	cfg.Vector.HNSW = &config.HNSWConfig{M: 16, EfConstruction: 200, MaxElements: 10000, Ml: 1.0}
-	cfg.Vector.StoragePath = filepath.Join(cfg.Storage.DataDir, "vector-pre-test")
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	// Pre-create vector storage like cluster mode does.
-	err = srv.initVectorStorage()
-	require.NoError(t, err)
-
-	err = srv.startVector()
-	assert.NoError(t, err)
-	assert.NotNil(t, srv.vectorService)
-
-	if srv.vectorStorage != nil {
-		srv.vectorStorage.Close()
-	}
-}
-
-func TestFT2_InitVectorStorage_Success(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	cfg := createFTConfig(t)
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 2
-	cfg.Vector.HNSW = &config.HNSWConfig{M: 16, EfConstruction: 200, MaxElements: 10000, Ml: 1.0}
-	cfg.Vector.StoragePath = filepath.Join(cfg.Storage.DataDir, "vector-init-test")
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.initVectorStorage()
-	assert.NoError(t, err)
-	assert.NotNil(t, srv.vectorStorage)
-
-	if srv.vectorStorage != nil {
-		srv.vectorStorage.Close()
-	}
-}
-
-func TestFT2_InitVectorStorage_WithCacheMaxSize(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	cfg := createFTConfig(t)
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 2
-	cfg.Vector.HNSW = &config.HNSWConfig{M: 16, EfConstruction: 200, MaxElements: 10000, Ml: 1.0}
-	cfg.Vector.StoragePath = filepath.Join(cfg.Storage.DataDir, "vector-cache-test")
-	cfg.Vector.CacheMaxSize = 5000
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.initVectorStorage()
-	assert.NoError(t, err)
-	assert.NotNil(t, srv.vectorStorage)
-
-	if srv.vectorStorage != nil {
-		srv.vectorStorage.Close()
-	}
-}
-
 // =============================================================================
 // TimeSeries Lifecycle Tests
 // =============================================================================
-
-func TestFT2_InitTimeSeriesStorage_Success(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	cfg := createFTConfig(t)
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.initTimeSeriesStorage()
-	assert.NoError(t, err)
-	assert.NotNil(t, srv.timeSeriesStorage)
-
-	if srv.timeSeriesStorage != nil {
-	}
-}
 
 func TestFT2_StartTimeSeries_NilStorage(t *testing.T) {
 	saveAndRestoreSeams(t)
@@ -1271,48 +1166,6 @@ func TestFT2_Shutdown_WithEmbeddingManager(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestFT2_Shutdown_WithTimeSeriesStorage(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	cfg := createFTConfig(t)
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-	srv.started = true
-
-	tsErr := srv.initTimeSeriesStorage()
-	if tsErr == nil {
-		require.NotNil(t, srv.timeSeriesStorage)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err = srv.Shutdown(ctx)
-	assert.NoError(t, err)
-}
-
-func TestFT2_Shutdown_WithVectorStorage(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	cfg := createFTConfig(t)
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 2
-	cfg.Vector.HNSW = &config.HNSWConfig{M: 16, EfConstruction: 200, MaxElements: 10000, Ml: 1.0}
-	cfg.Vector.StoragePath = filepath.Join(cfg.Storage.DataDir, "vector-shutdown-test")
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-	srv.started = true
-
-	vsErr := srv.initVectorStorage()
-	if vsErr == nil {
-		require.NotNil(t, srv.vectorStorage)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err = srv.Shutdown(ctx)
-	assert.NoError(t, err)
-}
-
 func TestFT2_Shutdown_WithRESTServer(t *testing.T) {
 	saveAndRestoreSeams(t)
 
@@ -1488,7 +1341,8 @@ func TestFT2_StartService_WithTimeSeries(t *testing.T) {
 	require.NoError(t, tsErr)
 
 	// Standalone raft node required by service builder
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	assert.NoError(t, err)
@@ -1525,7 +1379,8 @@ func TestFT2_StartService_WithEmbedding(t *testing.T) {
 	}
 
 	// Standalone raft node required by service builder
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	assert.NoError(t, err)
@@ -1551,7 +1406,8 @@ func TestFT2_StartService_WithMessaging(t *testing.T) {
 	require.NoError(t, err)
 
 	// Standalone raft node required by service builder
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	assert.NoError(t, err)
@@ -1788,6 +1644,19 @@ func TestFT2_InitializeIAMComponents_Full(t *testing.T) {
 	cfg.Auth.BootstrapAdmin = true
 	cfg.Auth.InsecureDevMode = true
 	cfg.Auth.Enabled = true
+	// The OIDC provider's ES256 signing key is created through the
+	// xkms-backed iam.NewSigningKeyManagerFromXKMS. That requires the xkms
+	// subsystem to be initialized, which only happens inside startKMS when
+	// KMS is enabled. The production lifecycle runs startKMS before
+	// initializeIAMComponents; without it the signing key manager returns
+	// "quicbaas xkms not initialized" and the OIDC provider is left nil
+	// (graceful degradation), so this full-path test must enable KMS to
+	// faithfully exercise the OIDC branch.
+	cfg.KMS.Enabled = true
+	// Enable AAGUID enforcement so the WebAuthn AAGUID-allowlist wiring branch
+	// in initializeIAMComponents runs (the allowlist is built and installed on
+	// the WebAuthn manager).
+	cfg.IAM.AAGUID.Mode = "enforce"
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
@@ -1796,8 +1665,13 @@ func TestFT2_InitializeIAMComponents_Full(t *testing.T) {
 	require.NoError(t, srv.startStorage())
 	require.NoError(t, srv.startIndexes())
 
+	// Initialize xkms (KMS infrastructure) so the OIDC ES256 signing key can
+	// be created. Matches the production startup ordering.
+	require.NoError(t, srv.startKMS(), "KMS init must succeed for OIDC signing key")
+
 	// Standalone raft node required by service builder
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	// Start service to create qrdbClient
 	require.NoError(t, srv.startService())
@@ -1837,7 +1711,8 @@ func TestFT2_InitializeIAMComponents_NoPasswordAuth(t *testing.T) {
 	// Initialize storage and indexes so qrdbClient is available
 	require.NoError(t, srv.startStorage())
 	require.NoError(t, srv.startIndexes())
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 	require.NoError(t, srv.startService())
 
 	components, iamErr := srv.initializeIAMComponents()
@@ -1850,4 +1725,36 @@ func TestFT2_InitializeIAMComponents_NoPasswordAuth(t *testing.T) {
 	} else {
 		assert.Nil(t, components)
 	}
+}
+
+// TestFT2_RegisterLoginService_NilService covers the nil-service skip branch of
+// registerLoginService: with no QuicBaaS facade, login registration is skipped.
+func TestFT2_RegisterLoginService_NilService(t *testing.T) {
+	saveAndRestoreSeams(t)
+
+	cfg := createFTConfig(t)
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	srv.quicBaaSService = nil
+
+	grpcServer := ggrpc.NewServer()
+	defer grpcServer.Stop()
+
+	// Must skip cleanly without panicking.
+	srv.registerLoginService(grpcServer, nil)
+}
+
+// TestFT2_RegisterLoginService_WithService covers the registration branch of
+// registerLoginService: with a QuicBaaS facade present, the unified Login
+// ceremony service is registered on the gRPC server.
+func TestFT2_RegisterLoginService_WithService(t *testing.T) {
+	saveAndRestoreSeams(t)
+
+	srv := createFTServerWithService(t)
+
+	grpcServer := ggrpc.NewServer()
+	defer grpcServer.Stop()
+
+	// Service exists; the login ceremony servicer must register without panic.
+	srv.registerLoginService(grpcServer, nil)
 }

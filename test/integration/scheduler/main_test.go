@@ -17,7 +17,6 @@ package scheduler
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -75,7 +74,9 @@ func TestSchedulerAvailability(t *testing.T) {
 		endpoints := getGRPCEndpoints()
 		for _, endpoint := range endpoints {
 			t.Run(endpoint, func(t *testing.T) {
-				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+				tlsCfg, err := helpers.IntegrationTLSConfig()
+				require.NoError(t, err, "load integration TLS config")
+				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
 				require.NoError(t, err, "gRPC service must be available at %s", endpoint)
 				defer client.Close()
 

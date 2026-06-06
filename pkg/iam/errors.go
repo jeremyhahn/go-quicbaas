@@ -1132,6 +1132,9 @@ const (
 	ErrOAuthUnsupportedResponseType = "unsupported_response_type"
 	ErrOAuthServerError             = "server_error"
 	ErrOAuthTemporarilyUnavailable  = "temporarily_unavailable"
+	// ErrOAuthInvalidDPoPProof is returned when a presented DPoP proof fails
+	// verification at the token endpoint (RFC 9449 §5).
+	ErrOAuthInvalidDPoPProof = "invalid_dpop_proof"
 )
 
 // OAuth Error represents an OAuth2 error response.
@@ -1248,6 +1251,37 @@ type InvalidIndexEntryError struct{}
 // Error implements the error interface.
 func (e *InvalidIndexEntryError) Error() string {
 	return "invalid index entry"
+}
+
+// HRDInvalidError is returned when a home-realm directory operation receives
+// invalid arguments (empty tenant/domain/host, nil store).
+type HRDInvalidError struct {
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *HRDInvalidError) Error() string {
+	return "home-realm directory: invalid request: " + e.Reason
+}
+
+// HRDNotFoundError is returned when no home-realm routing entry matches the
+// presented hints (fail-closed: the login must be rejected).
+type HRDNotFoundError struct{}
+
+// Error implements the error interface.
+func (e *HRDNotFoundError) Error() string {
+	return "home-realm directory: no tenant routing entry matched"
+}
+
+// HRDConflictError is returned when a domain/host is already registered to a
+// different tenant, or an unregister is attempted by a non-owner.
+type HRDConflictError struct {
+	Owner string
+}
+
+// Error implements the error interface.
+func (e *HRDConflictError) Error() string {
+	return "home-realm directory: routing entry owned by another tenant"
 }
 
 // SyncInProgressError is returned when a sync is already in progress.

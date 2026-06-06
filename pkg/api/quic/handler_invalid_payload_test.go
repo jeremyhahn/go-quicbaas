@@ -26,7 +26,7 @@ import (
 // =============================================================================
 
 func TestHandler_BackupOperations_InvalidPayload(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 	ctx := context.Background()
 	invalidPayload := []byte("{invalid json")
 
@@ -54,7 +54,7 @@ func TestHandler_BackupOperations_InvalidPayload(t *testing.T) {
 }
 
 func TestHandler_AuthOperations_InvalidPayload(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 	ctx := context.Background()
 	invalidPayload := []byte("{invalid json")
 
@@ -81,7 +81,7 @@ func TestHandler_AuthOperations_InvalidPayload(t *testing.T) {
 }
 
 func TestHandler_RBACOperations_InvalidPayload(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 	ctx := context.Background()
 	invalidPayload := []byte("{invalid json")
 
@@ -113,7 +113,7 @@ func TestHandler_RBACOperations_InvalidPayload(t *testing.T) {
 }
 
 func TestHandler_ClusterOperations_InvalidPayload(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 	ctx := context.Background()
 	invalidPayload := []byte("{invalid json")
 
@@ -143,7 +143,7 @@ func TestHandler_ClusterOperations_InvalidPayload(t *testing.T) {
 }
 
 func TestHandler_OperationsManagement_InvalidPayload(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 	ctx := context.Background()
 	invalidPayload := []byte("{invalid json")
 
@@ -172,7 +172,7 @@ func TestHandler_OperationsManagement_InvalidPayload(t *testing.T) {
 }
 
 func TestHandler_CacheOperations_InvalidPayload(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 	ctx := context.Background()
 	invalidPayload := []byte("{invalid json")
 
@@ -200,7 +200,7 @@ func TestHandler_CacheOperations_InvalidPayload(t *testing.T) {
 }
 
 func TestHandler_TimeSeriesOperations_InvalidPayload(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 	ctx := context.Background()
 	invalidPayload := []byte("{invalid json")
 
@@ -225,7 +225,7 @@ func TestHandler_TimeSeriesOperations_InvalidPayload(t *testing.T) {
 }
 
 func TestHandler_HealthOperations_InvalidPayload(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 	ctx := context.Background()
 	invalidPayload := []byte("{invalid json")
 

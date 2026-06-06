@@ -181,7 +181,21 @@ const (
 	ResourceCrypto = "crypto"
 
 	// ResourceSeal represents seal/unseal operations.
+	// Deprecated: Seal is replaced by the Barrier subsystem. New authorization
+	// policies should use ResourceBarrier; ResourceSeal is retained for legacy
+	// RBAC/ABAC policy compatibility only and is no longer mapped to any wire
+	// opcode after the QUIC seal handler was removed in favour of barrier.
 	ResourceSeal = "seal"
+
+	// ResourceBarrier represents storage barrier operations (initialize,
+	// unseal, seal, rekey, shamir share management, recovery, root-token).
+	// The barrier subsystem is the successor to the deprecated seal subsystem.
+	ResourceBarrier = "barrier"
+
+	// ResourceCeremony represents M-of-N officer initialization ceremony
+	// operations (initialize, claim-cert begin/complete, claim-share,
+	// sign-csr, enroll-external-officer, status, list-officers).
+	ResourceCeremony = "ceremony"
 
 	// ResourceHealth represents health check operations.
 	ResourceHealth = "health"

@@ -25,8 +25,7 @@ func TestMemoryStorage_TenantOperations(t *testing.T) {
 		Created: time.Now(),
 		Updated: time.Now(),
 		Quotas: TenantQuotas{
-			MaxUsers:  100,
-			MaxGroups: 50,
+			MaxGroups: 50, // MaxUsers is engine-level, owned by qrdb TenantServicer
 		},
 	}
 
@@ -119,8 +118,8 @@ func TestMemoryStorage_QuotaOperations(t *testing.T) {
 	}
 	storage.CreateTenant(ctx, tenant)
 
+	// Use BaaS-layer IAM quota (groups); users are engine-level owned by qrdb
 	quota := &TenantQuota{
-		MaxUsers:  10,
 		MaxGroups: 5,
 	}
 	err := storage.UpdateQuota(ctx, tenant.ID, quota)
@@ -129,31 +128,31 @@ func TestMemoryStorage_QuotaOperations(t *testing.T) {
 	}
 
 	// Test quota increment within limits
-	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "users", 5)
+	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "groups", 3)
 	if err != nil {
 		t.Fatalf("IncrementQuotaUsage failed: %v", err)
 	}
 
 	retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentUsers != 5 {
-		t.Errorf("Expected CurrentUsers=5, got %d", retrieved.CurrentUsers)
+	if retrieved.CurrentGroups != 3 {
+		t.Errorf("Expected CurrentGroups=3, got %d", retrieved.CurrentGroups)
 	}
 
 	// Test quota exceeded
-	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "users", 10)
+	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "groups", 10)
 	if err == nil {
 		t.Error("Expected quota exceeded error")
 	}
 
 	// Test quota decrement
-	err = storage.DecrementQuotaUsage(ctx, tenant.ID, "users", 3)
+	err = storage.DecrementQuotaUsage(ctx, tenant.ID, "groups", 2)
 	if err != nil {
 		t.Fatalf("DecrementQuotaUsage failed: %v", err)
 	}
 
 	retrieved, _ = storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentUsers != 2 {
-		t.Errorf("Expected CurrentUsers=2, got %d", retrieved.CurrentUsers)
+	if retrieved.CurrentGroups != 1 {
+		t.Errorf("Expected CurrentGroups=1, got %d", retrieved.CurrentGroups)
 	}
 }
 
@@ -833,10 +832,9 @@ func TestMemoryStorage_IncrementQuotaUsage_Comprehensive(t *testing.T) {
 	}
 	storage.CreateTenant(ctx, tenant)
 
+	// BaaS-layer IAM quotas only; users and roles are engine-level (qrdb-owned).
 	quota := &TenantQuota{
-		MaxUsers:    10,
 		MaxGroups:   5,
-		MaxRoles:    3,
 		MaxPolicies: 8,
 		MaxApps:     4,
 	}
@@ -849,12 +847,11 @@ func TestMemoryStorage_IncrementQuotaUsage_Comprehensive(t *testing.T) {
 		expectError  bool
 		expectedUsed int64
 	}{
-		{"users within limit", "users", 5, false, 5},
+		{"users no-op (engine-level)", "users", 5, false, 0}, // no-op: engine-owned
 		{"groups within limit", "groups", 3, false, 3},
-		{"roles within limit", "roles", 2, false, 2},
+		{"roles no-op (engine-level)", "roles", 2, false, 0}, // no-op: engine-owned
 		{"policies within limit", "policies", 4, false, 4},
 		{"apps within limit", "apps", 2, false, 2},
-		{"users exceed limit", "users", 10, true, 5},  // Would go to 15, exceeds 10
 		{"groups exceed limit", "groups", 5, true, 3}, // Would go to 8, exceeds 5
 		{"unknown resource", "unknown", 1, false, 0},  // Unknown resources don't trigger quota
 	}
@@ -869,17 +866,13 @@ func TestMemoryStorage_IncrementQuotaUsage_Comprehensive(t *testing.T) {
 				t.Errorf("Unexpected error: %v", err)
 			}
 
-			// Verify the current usage
-			if !tt.expectError && tt.resource != "unknown" {
+			// Verify the current usage for BaaS-layer resources
+			if !tt.expectError && tt.resource != "unknown" && tt.resource != "users" && tt.resource != "roles" {
 				retrieved, _ := storage.GetQuota(ctx, tenant.ID)
 				var currentUsage int64
 				switch tt.resource {
-				case "users":
-					currentUsage = retrieved.CurrentUsers
 				case "groups":
 					currentUsage = retrieved.CurrentGroups
-				case "roles":
-					currentUsage = retrieved.CurrentRoles
 				case "policies":
 					currentUsage = retrieved.CurrentPolicies
 				case "apps":
@@ -906,15 +899,15 @@ func TestMemoryStorage_IncrementQuotaUsage_NoQuota(t *testing.T) {
 	}
 	storage.CreateTenant(ctx, tenant)
 
-	// Don't set any quota, should create empty quota and increment
-	err := storage.IncrementQuotaUsage(ctx, tenant.ID, "users", 5)
+	// Don't set any quota; increment a BaaS-layer resource (groups)
+	err := storage.IncrementQuotaUsage(ctx, tenant.ID, "groups", 5)
 	if err != nil {
 		t.Fatalf("IncrementQuotaUsage failed when quota doesn't exist: %v", err)
 	}
 
 	retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentUsers != 5 {
-		t.Errorf("Expected CurrentUsers=5, got %d", retrieved.CurrentUsers)
+	if retrieved.CurrentGroups != 5 {
+		t.Errorf("Expected CurrentGroups=5, got %d", retrieved.CurrentGroups)
 	}
 }
 
@@ -931,13 +924,10 @@ func TestMemoryStorage_DecrementQuotaUsage_Comprehensive(t *testing.T) {
 	}
 	storage.CreateTenant(ctx, tenant)
 
+	// BaaS-layer IAM quotas only; users and roles are engine-level (qrdb-owned).
 	quota := &TenantQuota{
-		MaxUsers:        10,
-		CurrentUsers:    8,
 		MaxGroups:       5,
 		CurrentGroups:   4,
-		MaxRoles:        3,
-		CurrentRoles:    2,
 		MaxPolicies:     8,
 		CurrentPolicies: 6,
 		MaxApps:         4,
@@ -951,12 +941,12 @@ func TestMemoryStorage_DecrementQuotaUsage_Comprehensive(t *testing.T) {
 		delta        int64
 		expectedUsed int64
 	}{
-		{"users decrement", "users", 3, 5},
+		{"users no-op (engine-level)", "users", 3, 0},
 		{"groups decrement", "groups", 2, 2},
-		{"roles decrement", "roles", 1, 1},
+		{"roles no-op (engine-level)", "roles", 1, 0},
 		{"policies decrement", "policies", 4, 2},
 		{"apps decrement", "apps", 2, 1},
-		{"users decrement below zero", "users", 10, 0}, // Should clamp to 0
+		{"groups decrement below zero", "groups", 10, 0}, // Clamped to 0
 		{"unknown resource", "unknown", 1, 0},
 	}
 
@@ -967,16 +957,12 @@ func TestMemoryStorage_DecrementQuotaUsage_Comprehensive(t *testing.T) {
 				t.Errorf("DecrementQuotaUsage failed: %v", err)
 			}
 
-			if tt.resource != "unknown" {
+			if tt.resource != "unknown" && tt.resource != "users" && tt.resource != "roles" {
 				retrieved, _ := storage.GetQuota(ctx, tenant.ID)
 				var currentUsage int64
 				switch tt.resource {
-				case "users":
-					currentUsage = retrieved.CurrentUsers
 				case "groups":
 					currentUsage = retrieved.CurrentGroups
-				case "roles":
-					currentUsage = retrieved.CurrentRoles
 				case "policies":
 					currentUsage = retrieved.CurrentPolicies
 				case "apps":
@@ -1003,16 +989,16 @@ func TestMemoryStorage_DecrementQuotaUsage_NoQuota(t *testing.T) {
 	}
 	storage.CreateTenant(ctx, tenant)
 
-	// Don't set any quota, should not error
-	err := storage.DecrementQuotaUsage(ctx, tenant.ID, "users", 5)
+	// Don't set any quota, should not error (no-op for engine-level resources)
+	err := storage.DecrementQuotaUsage(ctx, tenant.ID, "groups", 5)
 	if err != nil {
 		t.Errorf("DecrementQuotaUsage should not error when quota doesn't exist: %v", err)
 	}
 
-	// Verify quota was not created
+	// Verify quota was not created (or current groups is still 0)
 	retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentUsers != 0 {
-		t.Errorf("Expected CurrentUsers=0 (quota should not exist), got %d", retrieved.CurrentUsers)
+	if retrieved.CurrentGroups != 0 {
+		t.Errorf("Expected CurrentGroups=0 (quota should not exist), got %d", retrieved.CurrentGroups)
 	}
 }
 
@@ -1430,19 +1416,19 @@ func TestMemoryStorage_IncrementQuotaUsage_ExceedsLimit(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	// Set quota limits
-	quota := &TenantQuota{MaxUsers: 2}
+	// Use BaaS-layer IAM quota (apps); users are engine-level owned by qrdb.
+	quota := &TenantQuota{MaxApps: 2}
 	if err := storage.UpdateQuota(ctx, "t1", quota); err != nil {
 		t.Fatalf("UpdateQuota failed: %v", err)
 	}
 
 	// Increment within limit
-	if err := storage.IncrementQuotaUsage(ctx, "t1", "users", 2); err != nil {
+	if err := storage.IncrementQuotaUsage(ctx, "t1", "apps", 2); err != nil {
 		t.Fatalf("IncrementQuotaUsage within limit failed: %v", err)
 	}
 
 	// Increment beyond limit
-	err := storage.IncrementQuotaUsage(ctx, "t1", "users", 1)
+	err := storage.IncrementQuotaUsage(ctx, "t1", "apps", 1)
 	if err == nil {
 		t.Fatal("expected error when exceeding quota")
 	}
@@ -1456,18 +1442,18 @@ func TestMemoryStorage_DecrementQuotaUsage_ExistingQuota(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	quota := &TenantQuota{MaxUsers: 10}
+	quota := &TenantQuota{MaxApps: 10}
 	if err := storage.UpdateQuota(ctx, "t1", quota); err != nil {
 		t.Fatalf("UpdateQuota failed: %v", err)
 	}
 
 	// Increment first
-	if err := storage.IncrementQuotaUsage(ctx, "t1", "users", 5); err != nil {
+	if err := storage.IncrementQuotaUsage(ctx, "t1", "apps", 5); err != nil {
 		t.Fatalf("IncrementQuotaUsage failed: %v", err)
 	}
 
 	// Decrement
-	if err := storage.DecrementQuotaUsage(ctx, "t1", "users", 3); err != nil {
+	if err := storage.DecrementQuotaUsage(ctx, "t1", "apps", 3); err != nil {
 		t.Fatalf("DecrementQuotaUsage failed: %v", err)
 	}
 
@@ -1476,8 +1462,8 @@ func TestMemoryStorage_DecrementQuotaUsage_ExistingQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetQuota failed: %v", err)
 	}
-	if q.CurrentUsers != 2 {
-		t.Fatalf("expected 2 users after decrement, got %d", q.CurrentUsers)
+	if q.CurrentApps != 2 {
+		t.Fatalf("expected 2 apps after decrement, got %d", q.CurrentApps)
 	}
 }
 
@@ -1489,13 +1475,13 @@ func TestMemoryStorage_DecrementQuotaUsage_FloorAtZero(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	quota := &TenantQuota{MaxUsers: 10}
+	quota := &TenantQuota{MaxApps: 10}
 	if err := storage.UpdateQuota(ctx, "t1", quota); err != nil {
 		t.Fatalf("UpdateQuota failed: %v", err)
 	}
 
 	// Decrement more than current (should floor at 0)
-	if err := storage.DecrementQuotaUsage(ctx, "t1", "users", 100); err != nil {
+	if err := storage.DecrementQuotaUsage(ctx, "t1", "apps", 100); err != nil {
 		t.Fatalf("DecrementQuotaUsage failed: %v", err)
 	}
 
@@ -1503,8 +1489,8 @@ func TestMemoryStorage_DecrementQuotaUsage_FloorAtZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetQuota failed: %v", err)
 	}
-	if q.CurrentUsers != 0 {
-		t.Fatalf("expected 0 users after excessive decrement, got %d", q.CurrentUsers)
+	if q.CurrentApps != 0 {
+		t.Fatalf("expected 0 apps after excessive decrement, got %d", q.CurrentApps)
 	}
 }
 

@@ -1005,110 +1005,353 @@ func (c *Client) KMSBackendTest(ctx context.Context) (*service.BackendTestRespon
 }
 
 // =============================================================================
-// Seal Operations
+// Barrier Operations
+//
+// These methods replace the deprecated seal-tree client methods (SealStatus,
+// SealInit, Unseal, Seal, Rekey) removed in Phase 8c. All calls multiplex
+// over the single OpBarrier wire opcode with the sub-operation byte
+// prepended to the JSON payload.
 // =============================================================================
 
-// SealStatus returns the current seal status.
-func (c *Client) SealStatus(ctx context.Context) (*service.SealStatusResponse, error) {
-	payload, err := EncodePayload(nil)
-	if err != nil {
-		return nil, err
+// callBarrier executes a barrier sub-operation. The encoded request body is
+// prefixed with the sub-opcode byte so the server's handleBarrierDispatch
+// can route to the correct handler.
+func (c *Client) callBarrier(ctx context.Context, subOp byte, body interface{}) (*Response, error) {
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = EncodePayload(body)
+		if err != nil {
+			return nil, err
+		}
 	}
-
-	resp, err := c.sendRequest(ctx, OpSealStatus, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.SealStatusResponse
-	if err := DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
+	payload := make([]byte, 1+len(bodyBytes))
+	payload[0] = subOp
+	copy(payload[1:], bodyBytes)
+	return c.sendRequest(ctx, OpBarrier, payload)
 }
 
-// SealInit initializes the seal and generates key shares.
-func (c *Client) SealInit(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
+// BarrierStatus returns the current barrier status (mirrors
+// /api/v1/barrier/status). The response is decoded against the JSON shape
+// emitted by handler_barrier.go.
+func (c *Client) BarrierStatus(ctx context.Context) (*BarrierStatusResponse, error) {
+	resp, err := c.callBarrier(ctx, SubOpBarrierStatus, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out BarrierStatusResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BarrierInitialize initialises the barrier with a single passphrase
+// (mirrors /api/v1/barrier/initialize).
+func (c *Client) BarrierInitialize(ctx context.Context, req *BarrierInitializeRequest) error {
 	if req == nil {
-		return nil, api.NewNilInputError("Client.SealInit", "request")
+		return api.NewNilInputError("Client.BarrierInitialize", "request")
 	}
-
-	payload, err := EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, OpSealInit, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.SealInitResponse
-	if err := DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-// Unseal provides a key share to unseal the database.
-func (c *Client) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	if req == nil {
-		return nil, api.NewNilInputError("Client.Unseal", "request")
-	}
-
-	payload, err := EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, OpUnseal, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.UnsealResponse
-	if err := DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-// Seal re-seals the database.
-func (c *Client) Seal(ctx context.Context) error {
-	payload, err := EncodePayload(nil)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.sendRequest(ctx, OpSeal, payload)
+	_, err := c.callBarrier(ctx, SubOpBarrierInitialize, req)
 	return err
 }
 
-// Rekey generates new key shares with a new threshold configuration.
-func (c *Client) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
+// BarrierUnseal unseals the barrier with a single passphrase
+// (mirrors /api/v1/barrier/unseal).
+func (c *Client) BarrierUnseal(ctx context.Context, req *BarrierUnsealRequest) error {
 	if req == nil {
-		return nil, api.NewNilInputError("Client.Rekey", "request")
+		return api.NewNilInputError("Client.BarrierUnseal", "request")
 	}
+	_, err := c.callBarrier(ctx, SubOpBarrierUnseal, req)
+	return err
+}
 
-	payload, err := EncodePayload(req)
+// BarrierSeal transitions the barrier into the sealed state (mirrors
+// /api/v1/barrier/seal).
+func (c *Client) BarrierSeal(ctx context.Context) error {
+	_, err := c.callBarrier(ctx, SubOpBarrierSeal, nil)
+	return err
+}
+
+// BarrierShamirInitialize initialises the barrier with Shamir secret sharing
+// (mirrors /api/v1/barrier/shamir/initialize).
+func (c *Client) BarrierShamirInitialize(ctx context.Context, req *BarrierShamirInitializeRequest) (*ShamirInitResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.BarrierShamirInitialize", "request")
+	}
+	resp, err := c.callBarrier(ctx, SubOpBarrierShamirInitialize, req)
 	if err != nil {
 		return nil, err
 	}
+	var out ShamirInitResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
 
-	resp, err := c.sendRequest(ctx, OpSealRekey, payload)
+// BarrierShamirUnsealShare submits a single Shamir share (mirrors
+// /api/v1/barrier/shamir/unseal-share).
+func (c *Client) BarrierShamirUnsealShare(ctx context.Context, req *BarrierShamirUnsealShareRequest) (*UnsealShareProgressResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.BarrierShamirUnsealShare", "request")
+	}
+	resp, err := c.callBarrier(ctx, SubOpBarrierShamirUnsealShare, req)
 	if err != nil {
 		return nil, err
 	}
-
-	var result service.RekeyResponse
-	if err := DecodePayload(resp.Payload, &result); err != nil {
+	var out UnsealShareProgressResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
 		return nil, err
 	}
+	return &out, nil
+}
 
-	return &result, nil
+// BarrierShamirUnsealShares submits the complete set of Shamir shares
+// (mirrors /api/v1/barrier/shamir/unseal-shares).
+func (c *Client) BarrierShamirUnsealShares(ctx context.Context, req *BarrierShamirUnsealSharesRequest) error {
+	if req == nil {
+		return api.NewNilInputError("Client.BarrierShamirUnsealShares", "request")
+	}
+	_, err := c.callBarrier(ctx, SubOpBarrierShamirUnsealShares, req)
+	return err
+}
+
+// BarrierRekey generates new Shamir shares for the existing root key
+// (mirrors POST /api/v1/barrier/rekey).
+func (c *Client) BarrierRekey(ctx context.Context, req *BarrierRekeyRequest) (*ShamirInitResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.BarrierRekey", "request")
+	}
+	resp, err := c.callBarrier(ctx, SubOpBarrierRekey, req)
+	if err != nil {
+		return nil, err
+	}
+	var out ShamirInitResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BarrierGenerateRecoveryKeys generates recovery shares (mirrors POST
+// /api/v1/barrier/recovery/generate).
+func (c *Client) BarrierGenerateRecoveryKeys(ctx context.Context, req *BarrierRecoveryGenerateRequest) (*RecoveryKeysResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.BarrierGenerateRecoveryKeys", "request")
+	}
+	resp, err := c.callBarrier(ctx, SubOpBarrierRecoveryGenerate, req)
+	if err != nil {
+		return nil, err
+	}
+	var out RecoveryKeysResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BarrierRecoverWithKeys unseals the barrier using recovery shares
+// (mirrors POST /api/v1/barrier/recovery/recover).
+func (c *Client) BarrierRecoverWithKeys(ctx context.Context, req *BarrierRecoveryRecoverRequest) error {
+	if req == nil {
+		return api.NewNilInputError("Client.BarrierRecoverWithKeys", "request")
+	}
+	_, err := c.callBarrier(ctx, SubOpBarrierRecoveryRecover, req)
+	return err
+}
+
+// BarrierDeleteRecoveryKeys removes recovery key metadata (mirrors DELETE
+// /api/v1/barrier/recovery).
+func (c *Client) BarrierDeleteRecoveryKeys(ctx context.Context) error {
+	_, err := c.callBarrier(ctx, SubOpBarrierRecoveryDelete, nil)
+	return err
+}
+
+// BarrierHasRecoveryKeys reports whether recovery key metadata exists
+// (mirrors GET /api/v1/barrier/recovery/status).
+func (c *Client) BarrierHasRecoveryKeys(ctx context.Context) (*RecoveryStatusResponse, error) {
+	resp, err := c.callBarrier(ctx, SubOpBarrierRecoveryStatus, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out RecoveryStatusResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BarrierGenerateRootToken creates a new root token by proving knowledge of
+// the master key through Shamir shares (mirrors POST
+// /api/v1/barrier/root-token).
+func (c *Client) BarrierGenerateRootToken(ctx context.Context, req *BarrierRootTokenRequest) (*RootTokenResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.BarrierGenerateRootToken", "request")
+	}
+	resp, err := c.callBarrier(ctx, SubOpBarrierRootToken, req)
+	if err != nil {
+		return nil, err
+	}
+	var out RootTokenResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// =============================================================================
+// Ceremony Operations
+//
+// These methods multiplex over the single OpCeremony wire opcode with the
+// ceremony sub-operation byte prepended to the JSON payload.
+// =============================================================================
+
+// callCeremony executes a ceremony sub-operation, prefixing the JSON body
+// with the ceremony sub-opcode byte.
+func (c *Client) callCeremony(ctx context.Context, subOp byte, body interface{}) (*Response, error) {
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = EncodePayload(body)
+		if err != nil {
+			return nil, err
+		}
+	}
+	payload := make([]byte, 1+len(bodyBytes))
+	payload[0] = subOp
+	copy(payload[1:], bodyBytes)
+	return c.sendRequest(ctx, OpCeremony, payload)
+}
+
+// CeremonyInitialize starts the initialization ceremony (mirrors POST
+// /api/v1/init/initialize).
+func (c *Client) CeremonyInitialize(ctx context.Context, req *CeremonyInitializeRequest) (*CeremonyInitResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.CeremonyInitialize", "request")
+	}
+	resp, err := c.callCeremony(ctx, SubOpCeremonyInitialize, req)
+	if err != nil {
+		return nil, err
+	}
+	var out CeremonyInitResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CeremonyStatus returns the current ceremony state (mirrors GET
+// /api/v1/init/status).
+func (c *Client) CeremonyStatus(ctx context.Context) (*CeremonyStatusResponse, error) {
+	resp, err := c.callCeremony(ctx, SubOpCeremonyStatus, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out CeremonyStatusResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CeremonyClaimCertBegin starts a certificate claim challenge (mirrors POST
+// /api/v1/init/claim-cert/begin).
+func (c *Client) CeremonyClaimCertBegin(ctx context.Context, req *CeremonyClaimCertBeginRequest) (*CeremonyChallengeResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.CeremonyClaimCertBegin", "request")
+	}
+	resp, err := c.callCeremony(ctx, SubOpCeremonyClaimCertBegin, req)
+	if err != nil {
+		return nil, err
+	}
+	var out CeremonyChallengeResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CeremonyClaimCertComplete completes a certificate claim by submitting a
+// signed nonce (mirrors POST /api/v1/init/claim-cert/complete).
+func (c *Client) CeremonyClaimCertComplete(ctx context.Context, req *CeremonyClaimCertCompleteRequest) (*CeremonyClaimCertResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.CeremonyClaimCertComplete", "request")
+	}
+	resp, err := c.callCeremony(ctx, SubOpCeremonyClaimCertComplete, req)
+	if err != nil {
+		return nil, err
+	}
+	var out CeremonyClaimCertResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CeremonyClaimShare retrieves the Shamir share for an officer (mirrors POST
+// /api/v1/init/claim-share).
+func (c *Client) CeremonyClaimShare(ctx context.Context, req *CeremonyClaimShareRequest) (*CeremonyClaimShareResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.CeremonyClaimShare", "request")
+	}
+	resp, err := c.callCeremony(ctx, SubOpCeremonyClaimShare, req)
+	if err != nil {
+		return nil, err
+	}
+	var out CeremonyClaimShareResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CeremonySignCSR signs a CSR during the ceremony (mirrors POST
+// /api/v1/init/sign-csr).
+func (c *Client) CeremonySignCSR(ctx context.Context, req *CeremonySignCSRRequest) (*CeremonySignCSRResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.CeremonySignCSR", "request")
+	}
+	resp, err := c.callCeremony(ctx, SubOpCeremonySignCSR, req)
+	if err != nil {
+		return nil, err
+	}
+	var out CeremonySignCSRResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CeremonyListOfficers returns the persistent ceremony officer registry
+// (mirrors GET /api/v1/init/officers).
+func (c *Client) CeremonyListOfficers(ctx context.Context) (*CeremonyListOfficersResponse, error) {
+	resp, err := c.callCeremony(ctx, SubOpCeremonyListOfficers, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out CeremonyListOfficersResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CeremonyEnrollExternalOfficer enrols an officer whose key material lives
+// outside the daemon (mirrors POST /api/v1/init/enroll-external-officer).
+func (c *Client) CeremonyEnrollExternalOfficer(ctx context.Context, req *CeremonyEnrollExternalOfficerRequest) (*CeremonyEnrollExternalOfficerResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.CeremonyEnrollExternalOfficer", "request")
+	}
+	resp, err := c.callCeremony(ctx, SubOpCeremonyEnrollExternalOfficer, req)
+	if err != nil {
+		return nil, err
+	}
+	var out CeremonyEnrollExternalOfficerResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // =============================================================================

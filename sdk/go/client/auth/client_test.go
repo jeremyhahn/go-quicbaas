@@ -166,8 +166,7 @@ func TestLogin(t *testing.T) {
 
 	t.Run("empty username returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.Login(context.Background(), &service.ExtendedLoginRequest{
-		})
+		_, err := c.Login(context.Background(), &service.ExtendedLoginRequest{})
 		if err == nil {
 			t.Error("expected error for empty username")
 		}

@@ -250,24 +250,17 @@ func TestWithTLSConfig(t *testing.T) {
 	})
 }
 
+// TestWithInsecure verifies WithInsecure is banned per QuicBaaS's FedRAMP
+// security policy. Callers MUST use WithTLSConfig(cfg) with cfg.RootCAs
+// set; there is no insecure escape hatch in the SDK.
 func TestWithInsecure(t *testing.T) {
 	opts := defaultOptions()
-	opts.tlsEnabled = true
-	opts.tlsConfig = &tls.Config{}
-
 	err := WithInsecure()(opts)
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("WithInsecure must return an error (it is banned by policy)")
 	}
-	if !opts.insecure {
-		t.Error("expected insecure=true")
-	}
-	// WithInsecure only sets insecure=true; it does not clear tlsEnabled or tlsConfig.
-	if !opts.tlsEnabled {
-		t.Error("expected tlsEnabled to remain true")
-	}
-	if opts.tlsConfig == nil {
-		t.Error("expected tlsConfig to remain non-nil")
+	if opts.insecure {
+		t.Error("WithInsecure must NOT set insecure=true even when called")
 	}
 }
 

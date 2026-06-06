@@ -55,6 +55,21 @@ type Transport struct {
 	backupHandler       *backupHandler
 	orchestratorHandler *orchestratorHandler
 	projectHandler      *projectRESTHandler
+	certificateHandler  *certificateRESTHandler
+	kmsHandler          *kmsRESTHandler
+	dekHandler          *dekRESTHandler
+	secretsHandler      *secretsRESTHandler
+	cryptoHandler       *cryptoRESTHandler
+	messagingHandler    *messagingRESTHandler
+	timeseriesHandler   *timeseriesRESTHandler
+	securityHandler     *securityRESTHandler
+
+	// defaultTenant scopes tenant-bound Security() verbs (e.g. WebAuthn)
+	// whose SDK request structs do not themselves carry a tenant. It
+	// mirrors the IAM transport's existing "tenant_id travels with the
+	// request" mechanism for verbs whose public SDK signature predates
+	// multi-tenant routing. Configured via WithDefaultTenant.
+	defaultTenant string
 
 	mu sync.RWMutex
 }
@@ -122,6 +137,16 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 
 	// Initialize Project handler
 	t.projectHandler = newProjectRESTHandler(t)
+
+	// Initialize Certificate handler
+	t.certificateHandler = newCertificateRESTHandler(t)
+	t.kmsHandler = newKMSRESTHandler(t)
+	t.dekHandler = newDEKRESTHandler(t)
+	t.secretsHandler = newSecretsRESTHandler(t)
+	t.cryptoHandler = newCryptoRESTHandler(t)
+	t.messagingHandler = newMessagingRESTHandler(t)
+	t.timeseriesHandler = newTimeseriesRESTHandler(t)
+	t.securityHandler = newSecurityRESTHandler(t)
 
 	// Mark as healthy initially
 	t.lastHealth.Store(time.Now().UnixNano())
@@ -257,6 +282,51 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	// Route Project requests through the Project handler.
 	if isProjectService(service) {
 		return t.projectHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route Certificate requests through the Certificate handler for
+	// proper typed response decoding.
+	if isCertificateService(service) {
+		return t.certificateHandler.handleRequest(ctx, service, method, req)
+	}
+
+	// Route KMS requests through the KMS handler so path parameters such as
+	// {name} are substituted and responses are decoded into service types.
+	if isKMSService(service) {
+		return t.kmsHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route DEK requests through the DEK handler.
+	if isDEKService(service) {
+		return t.dekHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route Secrets requests through the Secrets handler.
+	if isSecretsService(service) {
+		return t.secretsHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route Crypto requests through the Crypto handler.
+	if isCryptoService(service) {
+		return t.cryptoHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route Messaging requests through the Messaging handler.
+	if isMessagingService(service) {
+		return t.messagingHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route TimeSeries requests through the TimeSeries handler.
+	if isTimeseriesService(service) {
+		return t.timeseriesHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route Security services (WebAuthn/FIDO2/PIV/ACME/Trust) through the
+	// security handler so tenant-scoped WebAuthn verbs reach the real
+	// IAM-mounted server routes and so verbs without a server surface
+	// return a precise typed error rather than a broken generic dispatch.
+	if isSecurityService(service) {
+		return t.securityHandler.handleRequest(ctx, service, method, req)
 	}
 
 	return t.requestWithRetry(ctx, service, method, req)
@@ -455,6 +525,78 @@ func (t *Transport) doJSONRequest(ctx context.Context, httpMethod, endpoint stri
 	return nil
 }
 
+// rawResponse carries the raw body bytes and selected response headers
+// from a REST call. It is used by handlers that must observe both the
+// response body and headers (e.g. the WebAuthn ceremony, where the
+// session identifier is returned in the X-Session-Id response header).
+type rawResponse struct {
+	StatusCode int
+	Body       []byte
+	Header     http.Header
+}
+
+// doRawRequest executes an HTTP request with a caller-supplied raw byte
+// body and request headers, returning the raw response body and headers
+// without JSON-decoding. The reqHeaders override the transport defaults
+// for the duration of the call. This is required for transports whose
+// server contract exchanges opaque WebAuthn ceremony JSON plus correlation
+// headers rather than a flat JSON envelope.
+func (t *Transport) doRawRequest(ctx context.Context, httpMethod, endpoint string, reqBody []byte, reqHeaders map[string]string) (*rawResponse, error) {
+	if t.closed.Load() {
+		return nil, errors.NewConnection("rest.doRawRequest", "transport is closed")
+	}
+
+	url := t.baseURL + t.basePath + endpoint
+
+	var body io.Reader
+	if len(reqBody) > 0 {
+		body = bytes.NewReader(reqBody)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, httpMethod, url, body)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "rest.doRawRequest",
+			"failed to create HTTP request")
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	t.mu.RLock()
+	for k, v := range t.headers {
+		httpReq.Header.Set(k, v)
+	}
+	t.mu.RUnlock()
+
+	for k, v := range reqHeaders {
+		httpReq.Header.Set(k, v)
+	}
+
+	resp, err := t.client.Do(httpReq)
+	if err != nil {
+		return nil, t.convertHTTPError(err, "rest.doRawRequest")
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "rest.doRawRequest",
+			"failed to read response body")
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, t.parseErrorResponse(resp.StatusCode, respBody)
+	}
+
+	t.lastHealth.Store(time.Now().UnixNano())
+
+	return &rawResponse{
+		StatusCode: resp.StatusCode,
+		Body:       respBody,
+		Header:     resp.Header.Clone(),
+	}, nil
+}
+
 // mapToEndpoint maps a gRPC-style service/method to a REST endpoint.
 func (t *Transport) mapToEndpoint(service, method string) (string, string) {
 	// Remove package prefix if present
@@ -507,6 +649,8 @@ func (t *Transport) mapToEndpoint(service, method string) (string, string) {
 		return t.mapSchedulerMethod(method)
 	case "RAG":
 		return t.mapRAGMethod(method)
+	case "Certificate":
+		return t.mapCertificateMethod(method)
 	default:
 		// Default mapping: /api/v1/{service}/{method}
 		return "/api/v1/" + strings.ToLower(serviceName) + "/" + strings.ToLower(method), http.MethodPost
@@ -1313,4 +1457,34 @@ type Factory struct{}
 // Create creates a new REST transport.
 func (f *Factory) Create(cfg *transport.Config) (transport.Transport, error) {
 	return New(cfg)
+}
+
+// mapCertificateMethod maps Certificate service methods to REST
+// endpoints exposed by the quicbaasd server. The CA-administration
+// endpoints (CAInfo / CABundle / ListCertificates) live under
+// /api/v1/certificate/ca/* so the canonical `quicbaas ca` CLI surface
+// has a stable, dedicated subtree.
+func (t *Transport) mapCertificateMethod(method string) (string, string) {
+	switch method {
+	case "IssueCertificate":
+		return "/api/v1/certificate/issue", http.MethodPost
+	case "SignCSR":
+		return "/api/v1/certificate/sign-csr", http.MethodPost
+	case "RevokeCertificate":
+		return "/api/v1/certificate/revoke", http.MethodPost
+	case "VerifyCertificate":
+		return "/api/v1/certificate/verify", http.MethodPost
+	case "GetCACertificate":
+		return "/api/v1/certificate/ca", http.MethodGet
+	case "GetTLSConfig":
+		return "/api/v1/certificate/tls-config", http.MethodPost
+	case "CAInfo":
+		return "/api/v1/certificate/ca/info", http.MethodGet
+	case "GetCABundle":
+		return "/api/v1/certificate/ca/bundle", http.MethodGet
+	case "ListCertificates":
+		return "/api/v1/certificate/ca/list", http.MethodGet
+	default:
+		return "/api/v1/certificate/" + strings.ToLower(method), http.MethodPost
+	}
 }

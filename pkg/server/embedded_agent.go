@@ -536,4 +536,3 @@ type EmbeddedAgentBuildBackendsError struct {
 func (e *EmbeddedAgentBuildBackendsError) Error() string {
 	return fmt.Sprintf("embedded agent: no backends constructed from %v", e.Kinds)
 }
-

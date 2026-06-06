@@ -327,31 +327,33 @@ func testEmbeddingCache(t *testing.T) {
 	})
 
 	t.Run("CacheCompression", func(t *testing.T) {
-		// Create cache with compression
-		cache1, err := embedding.NewCache(100, 3600, true)
-		require.NoError(t, err)
+		// Caching (and its optional compression) lives inside the embedding
+		// Manager via CacheCompress; there is no standalone cache type to
+		// construct directly. Verify compression is lossless by embedding the
+		// same text twice (miss then cache hit) with compression both on and
+		// off and asserting the cached vector matches the freshly-computed one.
+		for _, compress := range []bool{true, false} {
+			cfg := config
+			cfg.CacheEnabled = true
+			cfg.CacheCompress = compress
 
-		// Create cache without compression
-		cache2, err := embedding.NewCache(100, 3600, false)
-		require.NoError(t, err)
+			mgrC, err := embedding.NewManager(cfg)
+			require.NoError(t, err)
+			defer mgrC.Close()
 
-		// Store same embedding in both
-		testEmb := make([]float32, defaultDimensions)
-		for i := range testEmb {
-			testEmb[i] = float32(i) / float32(defaultDimensions)
+			providerC, err := embedding.NewOpenAIProvider(cfg)
+			require.NoError(t, err)
+			require.NoError(t, mgrC.RegisterProvider("openai", providerC))
+
+			text := "compression round-trip test"
+			first, err := mgrC.Embed(ctx, text) // miss: computed and cached
+			require.NoError(t, err)
+			cached, err := mgrC.Embed(ctx, text) // hit: served from cache
+			require.NoError(t, err)
+
+			assert.Equal(t, first, cached,
+				"compress=%v: cached embedding must match the original (compression must be lossless)", compress)
 		}
-
-		cache1.Put("test", testEmb)
-		cache2.Put("test", testEmb)
-
-		// Retrieve and verify
-		emb1, ok1 := cache1.Get("test")
-		require.True(t, ok1)
-		emb2, ok2 := cache2.Get("test")
-		require.True(t, ok2)
-
-		assert.Equal(t, testEmb, emb1)
-		assert.Equal(t, testEmb, emb2)
 	})
 }
 

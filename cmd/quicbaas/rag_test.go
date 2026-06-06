@@ -81,7 +81,6 @@ func (m *mockRAGSDKClient) Crypto() quicbaas.CryptoClient                       
 func (m *mockRAGSDKClient) RBAC() quicbaas.RBACClient                             { return nil }
 func (m *mockRAGSDKClient) DynamicSecrets() quicbaas.DynamicSecretsClient         { return nil }
 func (m *mockRAGSDKClient) Certificate() quicbaas.CertificateClient               { return nil }
-func (m *mockRAGSDKClient) ClusterDEK() quicbaas.ClusterDEKClient                 { return nil }
 func (m *mockRAGSDKClient) DEK() quicbaas.DEKClient                               { return nil }
 func (m *mockRAGSDKClient) IAM() quicbaas.IAMClient                               { return nil }
 func (m *mockRAGSDKClient) Vector() quicbaas.VectorClient                         { return nil }
@@ -982,4 +981,3 @@ func TestCreateStorageFromURL_EmptyURL(t *testing.T) {
 	_, err := createStorageFromURL("")
 	assert.Error(t, err)
 }
-

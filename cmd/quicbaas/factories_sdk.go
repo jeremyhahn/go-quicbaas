@@ -20,6 +20,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	operationsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
@@ -1015,6 +1016,58 @@ func (c *sdkOrchestratorClient) Close() error {
 }
 
 // =============================================================================
+// SDK Operations Client
+// =============================================================================
+
+// sdkOperationsClient implements the OperationsClient interface using the
+// SDK transport. Every method delegates to sdk.Operations(), which routes
+// the request through the active transport (rest / grpc / quic / mcp /
+// unix / embedded) so the migrate / node / upgrade verbs are no longer
+// pinned to a hardcoded gRPC connection.
+type sdkOperationsClient struct {
+	sdk quicbaas.Client
+}
+
+// createSDKOperationsClient resolves the active SDK client and wraps its
+// Operations() accessor.
+func createSDKOperationsClient() (OperationsClient, error) {
+	sdk, err := sdkClientFactory()
+	if err != nil {
+		return nil, err
+	}
+	ops := sdk.Operations()
+	if ops == nil {
+		return nil, sdkerrors.NewInternal("createSDKOperationsClient", "operations client not available")
+	}
+	return &sdkOperationsClient{sdk: sdk}, nil
+}
+
+// MigrateData migrates data between shards via the active transport.
+func (c *sdkOperationsClient) MigrateData(ctx context.Context, req *operationsSDK.MigrateDataRequest) (*operationsSDK.MigrateDataResponse, error) {
+	return c.sdk.Operations().MigrateData(ctx, req)
+}
+
+// GetMigrationProgress reports migration progress via the active transport.
+func (c *sdkOperationsClient) GetMigrationProgress(ctx context.Context, req *operationsSDK.GetMigrationProgressRequest) (*operationsSDK.GetMigrationProgressResponse, error) {
+	return c.sdk.Operations().GetMigrationProgress(ctx, req)
+}
+
+// ReplaceNode replaces a cluster node via the active transport.
+func (c *sdkOperationsClient) ReplaceNode(ctx context.Context, req *operationsSDK.ReplaceNodeRequest) (*operationsSDK.ReplaceNodeResponse, error) {
+	return c.sdk.Operations().ReplaceNode(ctx, req)
+}
+
+// UpgradeNode starts a rolling node upgrade via the active transport.
+func (c *sdkOperationsClient) UpgradeNode(ctx context.Context, req *operationsSDK.UpgradeNodeRequest) (*operationsSDK.UpgradeNodeResponse, error) {
+	return c.sdk.Operations().UpgradeNode(ctx, req)
+}
+
+// GetUpgradeStatus reports rolling-upgrade status via the active transport.
+func (c *sdkOperationsClient) GetUpgradeStatus(ctx context.Context, req *operationsSDK.GetUpgradeStatusRequest) (*operationsSDK.GetUpgradeStatusResponse, error) {
+	return c.sdk.Operations().GetUpgradeStatus(ctx, req)
+}
+
+// =============================================================================
 // Compile-time Interface Checks
 // =============================================================================
 
@@ -1026,3 +1079,4 @@ var _ BackendClient = (*sdkBackendClient)(nil)
 var _ SafetyClient = (*sdkSafetyClient)(nil)
 var _ BackupClient = (*sdkBackupClient)(nil)
 var _ OrchestratorClient = (*sdkOrchestratorClient)(nil)
+var _ OperationsClient = (*sdkOperationsClient)(nil)

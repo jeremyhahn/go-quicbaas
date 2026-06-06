@@ -16,11 +16,9 @@
 package transactions
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -31,22 +29,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestConsistencyLevels_Put tests different consistency levels for Put operations
 func TestConsistencyLevels_Put(t *testing.T) {
 	baseURL := getEnv("QUICBAAS_NODE1_URL", "https://test-node1:8080")
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 
 	entityType := "consistency_test"
 	entityID := uint64(time.Now().UnixNano())
@@ -98,17 +87,7 @@ func TestConsistencyLevels_Put(t *testing.T) {
 // TestConsistencyLevels_Get tests different consistency levels for Get operations
 func TestConsistencyLevels_Get(t *testing.T) {
 	baseURL := getEnv("QUICBAAS_NODE1_URL", "https://test-node1:8080")
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 
 	entityType := "consistency_get_test"
 	entityID := uint64(time.Now().UnixNano())
@@ -178,17 +157,7 @@ func TestConsistencyLevels_Get(t *testing.T) {
 // TestConsistencyLevels_Delete tests different consistency levels for Delete operations
 func TestConsistencyLevels_Delete(t *testing.T) {
 	baseURL := getEnv("QUICBAAS_NODE1_URL", "https://test-node1:8080")
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 
 	entityType := "consistency_delete_test"
 
@@ -246,17 +215,7 @@ func TestConsistencyLevels_Delete(t *testing.T) {
 // TestConsistencyLevels_List tests consistency levels for list operations
 func TestConsistencyLevels_List(t *testing.T) {
 	baseURL := getEnv("QUICBAAS_NODE1_URL", "https://test-node1:8080")
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 
 	entityType := "consistency_list_test"
 

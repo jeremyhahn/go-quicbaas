@@ -169,15 +169,14 @@ func TestStringifyCanonicalMetadata(t *testing.T) {
 	}
 }
 
-// TestBuildCanonicalMTLSLogin_MissingCert returns the typed missing-cert
-// error.
-func TestBuildCanonicalMTLSLogin_MissingCert(t *testing.T) {
+// TestProveCanonicalMTLS_MissingCert returns the typed missing-cert error.
+func TestProveCanonicalMTLS_MissingCert(t *testing.T) {
 	t.Setenv("QUICBAAS_CLIENT_CERT", "")
 	t.Setenv("PLATFORMCTL_CLIENT_CERT", "")
 	t.Setenv("XKMSCTL_CLIENT_CERT", "")
 	t.Setenv("QRDB_CLIENT_CERT", "")
 	t.Setenv("HOME", t.TempDir())
-	_, err := buildCanonicalMTLSLogin(t.Context(), &canonicalAuthLoginOptions{})
+	_, _, _, err := proveCanonicalMTLS(t.Context(), &canonicalAuthLoginOptions{}, nil)
 	if err == nil {
 		t.Fatal("expected missing-cert error")
 	}
@@ -187,9 +186,10 @@ func TestBuildCanonicalMTLSLogin_MissingCert(t *testing.T) {
 	}
 }
 
-// TestBuildCanonicalMTLSLogin_RoundTrip generates a self-signed cert
-// and asserts the proof / metadata population.
-func TestBuildCanonicalMTLSLogin_RoundTrip(t *testing.T) {
+// TestProveCanonicalMTLS_RoundTrip generates a self-signed cert and asserts the
+// lookup key + metadata population. The mTLS proof has no in-band signature
+// (handshake-established); the lookup key is the certificate SHA-256.
+func TestProveCanonicalMTLS_RoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	certPath := filepath.Join(tmp, "admin.pem")
 	writeCanonicalTestCert(t, certPath)
@@ -199,27 +199,21 @@ func TestBuildCanonicalMTLSLogin_RoundTrip(t *testing.T) {
 		username:       "alice",
 		factorID:       "f1",
 	}
-	req, err := buildCanonicalMTLSLogin(t.Context(), opts)
+	lookupKey, signature, meta, err := proveCanonicalMTLS(t.Context(), opts, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if req.FactorName != "mtls" {
-		t.Errorf("expected factor mtls, got %q", req.FactorName)
+	if len(lookupKey) == 0 {
+		t.Error("expected non-empty lookup key (cert sha256)")
 	}
-	if req.Username != "alice" {
-		t.Errorf("expected user alice, got %q", req.Username)
+	if signature != nil {
+		t.Error("expected nil signature for mTLS (handshake-established possession)")
 	}
-	if req.FactorID != "f1" {
-		t.Errorf("expected factor id f1, got %q", req.FactorID)
-	}
-	if len(req.Proof) == 0 {
-		t.Error("expected non-empty proof")
-	}
-	if req.Metadata["credential_sha256"] == "" {
+	if meta["credential_sha256"] == "" {
 		t.Error("expected credential_sha256 in metadata")
 	}
-	if req.Metadata["cert_path"] != certPath {
-		t.Errorf("expected cert_path metadata; got %q", req.Metadata["cert_path"])
+	if meta["cert_path"] != certPath {
+		t.Errorf("expected cert_path metadata; got %q", meta["cert_path"])
 	}
 }
 

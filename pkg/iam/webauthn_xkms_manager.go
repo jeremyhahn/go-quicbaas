@@ -40,12 +40,21 @@ import (
 //     resolves the user via xkms and surfaces it as an iam.User so
 //     downstream OIDC issuance and audit hooks consume the same domain
 //     type they did before the migration.
-//   - The ceremony session id returned by xkms travels through the
-//     manager keyed by (tenantID, registrationID) so quicbaas's REST
-//     handlers continue to use a "user_id" key in their request bodies
-//     for the begin → finish handoff.
+//   - The registration ceremony session id travels through the manager
+//     keyed by (tenantID, userID) because FinishRegistration receives the
+//     userID back from the browser.
+//   - The login ceremony session id is keyed by (tenantID, challenge).
+//     The WebAuthn challenge is the per-ceremony random nonce that the
+//     authenticator signs over; the browser echoes it verbatim in the
+//     assertion's collected client data at FinishLogin time. Keying by
+//     challenge resolves the EXACT begin→finish session even when many
+//     users in the same tenant authenticate concurrently, and it works
+//     for the discoverable-credential flow where the browser never echoes
+//     an email back. The previous tenant-prefix first-match scan was a
+//     concurrency and security bug: two concurrent same-tenant logins
+//     could be cross-wired onto the wrong session/credential.
 //
-// The manager keeps a small in-memory map of (tenantID, lookup key) to
+// The manager keeps a small in-memory map of (tenantID, challenge) to
 // xkms session id. The map is concurrency-safe via sync.Map and lives
 // for the lifetime of the daemon; ceremony sessions self-expire on
 // xkms's side after the configured timeout.
@@ -56,8 +65,10 @@ type XKMSWebAuthnManager struct {
 	// registration ceremony.
 	regSessions sync.Map // map[string]string
 
-	// loginSessions maps tenantID:email -> xkms session id for the
-	// login ceremony.
+	// loginSessions maps tenantID:challenge -> xkms session id for the
+	// login ceremony. The challenge is the per-ceremony WebAuthn nonce, so
+	// the key uniquely identifies a single begin→finish handoff even under
+	// concurrent same-tenant logins.
 	loginSessions sync.Map // map[string]string
 
 	// aaguidAllowlist is the optional FIDO2 AAGUID enforcement gate.
@@ -111,12 +122,20 @@ func (m *XKMSWebAuthnManager) regKey(tenantID, userID string) string {
 	return tenantID + ":" + userID
 }
 
+// loginKey scopes a login handoff record by tenant and the per-ceremony
+// WebAuthn challenge. The challenge is a high-entropy random nonce, so the
+// composite key uniquely identifies one begin→finish handoff and never
+// collides across concurrent logins in the same tenant.
+func (m *XKMSWebAuthnManager) loginKey(tenantID, challenge string) string {
+	return tenantID + ":" + challenge
+}
+
 // BeginRegistration starts a WebAuthn registration ceremony for the
 // (tenantID, userID) pair, where userID is the registrant's email. The
 // xkms ceremony session id is stashed internally so FinishRegistration
 // can correlate the begin/finish handoff via the same userID.
 func (m *XKMSWebAuthnManager) BeginRegistration(ctx context.Context, tenantID, userID string) (map[string]interface{}, error) {
-	svc, err := m.factory.ServiceFor(tenantID)
+	svc, err := m.factory.ServiceFor(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +150,7 @@ func (m *XKMSWebAuthnManager) BeginRegistration(ctx context.Context, tenantID, u
 // FinishRegistration completes the registration ceremony by resolving
 // the stashed xkms session id and forwarding the parsed credential.
 func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, userID string, credential map[string]interface{}) error {
-	svc, err := m.factory.ServiceFor(tenantID)
+	svc, err := m.factory.ServiceFor(ctx, tenantID)
 	if err != nil {
 		return err
 	}
@@ -158,9 +177,12 @@ func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, 
 }
 
 // BeginLogin starts a WebAuthn assertion ceremony for the user
-// identified by email within the tenant.
+// identified by email within the tenant. The xkms ceremony session id is
+// stashed keyed by (tenantID, challenge); FinishLogin recovers the exact
+// session by matching the challenge the authenticator signs over, so the
+// begin→finish handoff is correct under concurrent same-tenant logins.
 func (m *XKMSWebAuthnManager) BeginLogin(ctx context.Context, tenantID, email string) (map[string]interface{}, error) {
-	svc, err := m.factory.ServiceFor(tenantID)
+	svc, err := m.factory.ServiceFor(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -172,18 +194,27 @@ func (m *XKMSWebAuthnManager) BeginLogin(ctx context.Context, tenantID, email st
 	if err != nil {
 		return nil, err
 	}
-	m.loginSessions.Store(m.regKey(tenantID, email), sessionID)
+	challenge := options.Response.Challenge.String()
+	if challenge == "" {
+		return nil, &WebAuthnLoginSessionError{Reason: "xkms returned a login ceremony with an empty challenge"}
+	}
+	m.loginSessions.Store(m.loginKey(tenantID, challenge), sessionID)
 	return marshalToMap(options)
 }
 
 // FinishLogin completes the assertion ceremony and surfaces the
-// authenticated user as an iam.User. The email key is mandatory at
-// FinishLogin time because quicbaas's REST handler does not receive
-// it back from the browser; we recover it from the credential's user
-// handle (xkms returns the matching User) and look up the email from
-// xkms.
+// authenticated user as an iam.User.
+//
+// The exact begin→finish session is resolved by the WebAuthn challenge
+// echoed in the assertion's collected client data — the same value the
+// authenticator signed over. This is collision-free across concurrent
+// same-tenant ceremonies and works for the discoverable-credential flow
+// where the browser never sends an email back. A missing or unknown
+// challenge fails closed before any xkms dispatch, so a forged or
+// expired/temp session handle cannot be coerced onto another user's
+// in-flight ceremony.
 func (m *XKMSWebAuthnManager) FinishLogin(ctx context.Context, tenantID string, credential map[string]interface{}) (*User, error) {
-	svc, err := m.factory.ServiceFor(tenantID)
+	svc, err := m.factory.ServiceFor(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -192,37 +223,17 @@ func (m *XKMSWebAuthnManager) FinishLogin(ctx context.Context, tenantID string, 
 		return nil, err
 	}
 
-	// Locate the corresponding xkms ceremony session id. We probe by
-	// iterating active login sessions for this tenant — the login UI
-	// may not echo the email back on FinishLogin (discoverable
-	// credentials flow), so the safest correlation is by user handle
-	// resolution after FinishLogin runs.
-	var sessionID string
-	prefix := tenantID + ":"
-	m.loginSessions.Range(func(k, v any) bool {
-		ks := k.(string)
-		if len(ks) >= len(prefix) && ks[:len(prefix)] == prefix {
-			sessionID = v.(string)
-			return false
-		}
-		return true
-	})
-	if sessionID == "" {
-		return nil, &WebAuthnFactoryConfigError{Field: "login session not found"}
+	sessionID, key, err := m.resolveLoginSession(tenantID, parsed)
+	if err != nil {
+		return nil, err
 	}
 
 	_, xkmsUser, err := svc.FinishLogin(ctx, sessionID, nil, parsed)
 	if err != nil {
 		return nil, err
 	}
-	// Best-effort cleanup of the matched session.
-	m.loginSessions.Range(func(k, v any) bool {
-		if v.(string) == sessionID {
-			m.loginSessions.Delete(k)
-			return false
-		}
-		return true
-	})
+	// Cleanup of the exact session consumed by this ceremony.
+	m.loginSessions.Delete(key)
 
 	// Map xkms's User abstraction back to iam.User. xkms's email is the
 	// qrdb username; everything else is per-tenant context.
@@ -232,6 +243,27 @@ func (m *XKMSWebAuthnManager) FinishLogin(ctx context.Context, tenantID string, 
 		Name:     xkmsUser.WebAuthnDisplayName(),
 		TenantID: tenantID,
 	}, nil
+}
+
+// resolveLoginSession maps a parsed assertion back to the exact xkms
+// session id stored at BeginLogin time, keyed by (tenantID, challenge).
+// It returns the session id and the composite cache key (so the caller can
+// delete the precise entry after a successful finish), or a typed
+// WebAuthnLoginSessionError when the challenge is absent or unknown.
+func (m *XKMSWebAuthnManager) resolveLoginSession(tenantID string, parsed *protocol.ParsedCredentialAssertionData) (string, string, error) {
+	if parsed == nil {
+		return "", "", &WebAuthnLoginSessionError{Reason: "nil assertion"}
+	}
+	challenge := parsed.Response.CollectedClientData.Challenge
+	if challenge == "" {
+		return "", "", &WebAuthnLoginSessionError{Reason: "assertion has no challenge"}
+	}
+	key := m.loginKey(tenantID, challenge)
+	v, ok := m.loginSessions.Load(key)
+	if !ok {
+		return "", "", &WebAuthnLoginSessionError{Reason: "no login session matches the assertion challenge"}
+	}
+	return v.(string), key, nil
 }
 
 // marshalToMap converts a typed protocol structure to a JSON-decoded

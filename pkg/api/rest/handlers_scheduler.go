@@ -57,27 +57,27 @@ func registerSchedulerRoutes(s *Server, r chi.Router) {
 
 // CreateSchedulerJobRESTRequest represents the JSON request body for creating a job.
 type CreateSchedulerJobRESTRequest struct {
-	Name           string            `json:"name"`
-	Description    string            `json:"description,omitempty"`
-	OwnerType      string            `json:"owner_type,omitempty"`
-	OwnerID        string            `json:"owner_id,omitempty"`
-	TargetTenantID string            `json:"target_tenant_id,omitempty"`
-	Type           string            `json:"type"`
-	Schedule       string            `json:"schedule,omitempty"`
-	ExecuteAt      string            `json:"execute_at,omitempty"`
-	DelaySeconds   int64             `json:"delay_seconds,omitempty"`
-	Delay          time.Duration     `json:"delay,omitempty"` // Alternative: accepts time.Duration directly
-	Handler        string            `json:"handler"`
-	Payload        json.RawMessage   `json:"payload,omitempty"`
-	Priority       int32             `json:"priority,omitempty"`
-	TimeoutSeconds int64             `json:"timeout_seconds,omitempty"`
-	Timeout        time.Duration     `json:"timeout,omitempty"` // Alternative: accepts time.Duration directly
-	MaxRetries     int32             `json:"max_retries,omitempty"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	OwnerType      string          `json:"owner_type,omitempty"`
+	OwnerID        string          `json:"owner_id,omitempty"`
+	TargetTenantID string          `json:"target_tenant_id,omitempty"`
+	Type           string          `json:"type"`
+	Schedule       string          `json:"schedule,omitempty"`
+	ExecuteAt      string          `json:"execute_at,omitempty"`
+	DelaySeconds   int64           `json:"delay_seconds,omitempty"`
+	Delay          time.Duration   `json:"delay,omitempty"` // Alternative: accepts time.Duration directly
+	Handler        string          `json:"handler"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	Priority       int32           `json:"priority,omitempty"`
+	TimeoutSeconds int64           `json:"timeout_seconds,omitempty"`
+	Timeout        time.Duration   `json:"timeout,omitempty"` // Alternative: accepts time.Duration directly
+	MaxRetries     int32           `json:"max_retries,omitempty"`
 	// NodeAffinity pins job execution to a specific node. Empty =
 	// cluster-wide (leader-only). Non-empty = only fires on the node
 	// whose SchedulerEngine was constructed with a matching node ID.
-	NodeAffinity   string            `json:"node_affinity,omitempty"`
-	Labels         map[string]string `json:"labels,omitempty"`
+	NodeAffinity string            `json:"node_affinity,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
 }
 
 // UpdateSchedulerJobRESTRequest represents the JSON request body for updating a job.

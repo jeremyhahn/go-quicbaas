@@ -321,7 +321,9 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := getGRPCEndpoints()
 	require.NotEmpty(t, endpoints, "gRPC endpoints must be available")
 
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Must connect to gRPC at %s", endpoints[0])
 	c.client = client
 
@@ -511,16 +513,20 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	_, err := net.Dial("unix", socketPath)
 	require.NoError(t, err, "Unix socket must be available at %s", socketPath)
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	tlsCfg.ServerName = "localhost"
+
 	// Create gRPC connection over unix socket
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	require.NoError(t, err, "Must connect to unix socket at %s", socketPath)
 	c.conn = conn
 
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		conn.Close()
 	}
@@ -699,12 +705,18 @@ type MCPJSONRPCError struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-// NewMCPDEKClient creates a new MCP DEK client.
+// NewMCPDEKClient creates a new MCP DEK client. The HTTP client trusts the
+// integration cluster's CA explicitly (QuicBaaS bans insecure TLS).
 func NewMCPDEKClient(baseURL string) (*MCPDEKClient, error) {
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("MCP DEK client: load integration CA: %w", err)
+	}
 	return &MCPDEKClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:   30 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: tlsCfg},
 		},
 	}, nil
 }
@@ -1328,18 +1340,8 @@ type RESTDEKClient struct {
 // NewRESTDEKClient creates a new REST DEK client.
 func NewRESTDEKClient(baseURL string) *RESTDEKClient {
 	return &RESTDEKClient{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
+		baseURL:    baseURL,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
 	}
 }
 
@@ -1784,11 +1786,11 @@ type QUICDEKClient struct {
 
 // NewQUICDEKClient creates a new QUIC client for DEK operations.
 func NewQUICDEKClient(addr string) (*QUICDEKClient, error) {
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // Test only - skip certificate verification
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load integration TLS config: %w", err)
 	}
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

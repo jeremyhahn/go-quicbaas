@@ -55,6 +55,19 @@ func WithBackendRegistry(registry *kms.BackendRegistry) KMSServiceOption {
 	}
 }
 
+// WithKMSAuthzEnabled enables or disables per-key authorization enforcement.
+// When enabled, every crypto operation (Encrypt, Decrypt, Sign, Verify,
+// GenerateDataKey) on the KMS service checks the stored KeyPolicy and the
+// authenticated Subject in the request context before proceeding.
+//
+// Set to false only in test or dev environments where full auth is not
+// configured. Production deployments must set this to true.
+func WithKMSAuthzEnabled(enabled bool) KMSServiceOption {
+	return func(k *kmsServiceImpl) {
+		k.authzEnabled = enabled
+	}
+}
+
 // =============================================================================
 // Context Keys for Audit Information
 // =============================================================================

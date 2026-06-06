@@ -15,14 +15,10 @@ package orchestration
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -30,19 +26,20 @@ import (
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 )
 
 // KVSessionEventLog is a SessionEventLog backed by a KVStore — PebbleDB in
 // standalone mode, Raft-replicated in cluster mode, transparently to
-// callers. Event payloads are encrypted at rest with the per-tenant DEK
-// when a TenantDEKManager is supplied.
+// callers. Event payloads are stored as plaintext JSON; confidentiality at
+// rest is provided by qrdb's StorageBarrier, which encrypts all data written
+// to the underlying store. Tenants requiring cryptographic isolation may
+// configure a dedicated per-tenant barrier sealed by any xkms hardware or
+// cloud strategy.
 //
 // Key layout (lexically sortable = chronological):
 //
 //	sessions/{tenant}/{session}/meta            → JSON-encoded SessionMeta
-//	sessions/{tenant}/{session}/events/{seq:020d} → event bytes
-//	                                               (encrypted when DEK is set)
+//	sessions/{tenant}/{session}/events/{seq:020d} → JSON-encoded SessionEvent
 //
 // The 20-digit zero-padded sequence suffix guarantees lexical order matches
 // numeric order up to 10^20 events per session — far beyond any plausible
@@ -52,14 +49,13 @@ import (
 // lock-free: the KV store handles concurrent access itself. The fan-out hub
 // is shared with the in-memory log so subscribe semantics are identical.
 type KVSessionEventLog struct {
-	kv         interfaces.KVStore
-	dek        security.TenantDEKManager // optional; when nil events are stored plaintext
-	fanout     *sessionLogFanout
-	keyPrefix  string // usually "sessions"
+	kv        interfaces.KVStore
+	fanout    *sessionLogFanout
+	keyPrefix string // usually "sessions"
 
 	// Per-session append serialization so Sequence validation stays atomic
 	// against racing writers. Keyed by tenant\x00session.
-	appendMu sync.Mutex
+	appendMu  sync.Mutex
 	appendMus map[string]*sync.Mutex
 }
 
@@ -70,14 +66,6 @@ var _ SessionEventLog = (*KVSessionEventLog)(nil)
 type KVSessionEventLogConfig struct {
 	// KVStore is required. Reads and writes are routed through it.
 	KVStore interfaces.KVStore
-
-	// DEK is optional. When provided, every event payload is encrypted at
-	// rest via the tenant's DEK — rotating the DEK rotates the at-rest
-	// encryption of all subsequent events. Pre-rotation events remain
-	// readable via the DEK's own versioning. When DEK is nil, events are
-	// stored as plaintext JSON (acceptable for development; operators
-	// auditing production must wire a real DEK manager).
-	DEK security.TenantDEKManager
 
 	// KeyPrefix overrides the default "sessions" namespace. Rarely needed;
 	// useful for tests that want isolated key spaces on a shared store.
@@ -95,7 +83,6 @@ func NewKVSessionEventLog(cfg KVSessionEventLogConfig) (*KVSessionEventLog, erro
 	}
 	return &KVSessionEventLog{
 		kv:        cfg.KVStore,
-		dek:       cfg.DEK,
 		fanout:    newSessionLogFanout(),
 		keyPrefix: prefix,
 		appendMus: map[string]*sync.Mutex{},
@@ -125,18 +112,9 @@ func (l *KVSessionEventLog) Append(ctx context.Context, event *SessionEvent) err
 		return ErrSessionLogGap
 	}
 
-	// Encode + optionally encrypt.
-	plaintext, err := json.Marshal(event)
+	payload, err := json.Marshal(event)
 	if err != nil {
 		return &SessionLogAppendError{SessionID: event.SessionID, Sequence: event.Sequence, Cause: err}
-	}
-	payload := plaintext
-	if l.dek != nil {
-		ciphertext, encErr := encryptEventPayload(ctx, l.dek, event.TenantID, event.SessionID, plaintext)
-		if encErr != nil {
-			return &SessionLogAppendError{SessionID: event.SessionID, Sequence: event.Sequence, Cause: encErr}
-		}
-		payload = prependEncryptionMarker(ciphertext)
 	}
 
 	if err := l.kv.Put(ctx, l.eventKey(event.TenantID, event.SessionID, event.Sequence), payload); err != nil {
@@ -194,11 +172,11 @@ func (l *KVSessionEventLog) Range(ctx context.Context, tenantID, sessionID strin
 			last := out[len(out)-1]
 			return out, last.Sequence + 1, nil
 		}
-		decoded, decodeErr := l.decodeEvent(ctx, tenantID, sessionID, e.value)
-		if decodeErr != nil {
-			return nil, 0, decodeErr
+		var ev SessionEvent
+		if uErr := json.Unmarshal(e.value, &ev); uErr != nil {
+			return nil, 0, fmt.Errorf("orchestration session log: unmarshal event: %w", uErr)
 		}
-		out = append(out, decoded)
+		out = append(out, &ev)
 	}
 	return out, 0, nil
 }
@@ -335,97 +313,6 @@ func (l *KVSessionEventLog) lockFor(tenantID, sessionID string) *sync.Mutex {
 		l.appendMus[key] = mu
 	}
 	return mu
-}
-
-// decodeEvent reverses the encryption-on-write path. Plaintext and encrypted
-// payloads are distinguished by a 2-byte magic prefix.
-func (l *KVSessionEventLog) decodeEvent(ctx context.Context, tenantID, sessionID string, raw []byte) (*SessionEvent, error) {
-	plaintext, err := l.stripEncryptionMarker(ctx, tenantID, sessionID, raw)
-	if err != nil {
-		return nil, err
-	}
-	var ev SessionEvent
-	if err := json.Unmarshal(plaintext, &ev); err != nil {
-		return nil, fmt.Errorf("orchestration session log: unmarshal event: %w", err)
-	}
-	return &ev, nil
-}
-
-// Encryption marker: 2 bytes 0xE1 0x07 at the start distinguishes encrypted
-// payloads from plaintext JSON (which always begins with '{'). This lets us
-// mix plaintext (from DEK-less deployments) with encrypted (from DEK-enabled
-// deployments) in the same store and recover both.
-var encryptionMarker = []byte{0xE1, 0x07}
-
-func prependEncryptionMarker(ciphertext []byte) []byte {
-	out := make([]byte, 0, len(encryptionMarker)+len(ciphertext))
-	out = append(out, encryptionMarker...)
-	out = append(out, ciphertext...)
-	return out
-}
-
-func (l *KVSessionEventLog) stripEncryptionMarker(ctx context.Context, tenantID, sessionID string, raw []byte) ([]byte, error) {
-	if len(raw) >= 2 && raw[0] == encryptionMarker[0] && raw[1] == encryptionMarker[1] {
-		if l.dek == nil {
-			return nil, errors.New("orchestration session log: encrypted event but no DEK configured to decrypt")
-		}
-		return decryptEventPayload(ctx, l.dek, tenantID, sessionID, raw[2:])
-	}
-	return raw, nil
-}
-
-// encryptEventPayload AES-256-GCM-encrypts plaintext with the tenant's DEK,
-// binding the session ID as additional authenticated data so ciphertexts
-// can't be moved between sessions within the same tenant.
-//
-// Wire format: nonce(12) || ciphertext_with_tag. Compact and self-describing
-// because the nonce is prepended by this function and consumed by decrypt.
-func encryptEventPayload(ctx context.Context, dek security.TenantDEKManager, tenantID, sessionID string, plaintext []byte) ([]byte, error) {
-	key, err := dek.GetOrCreateTenantDEK(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-	ct := gcm.Seal(nil, nonce, plaintext, []byte(sessionID))
-	out := make([]byte, 0, len(nonce)+len(ct))
-	out = append(out, nonce...)
-	out = append(out, ct...)
-	return out, nil
-}
-
-// decryptEventPayload reverses encryptEventPayload. Returns an error when
-// the AEAD tag doesn't validate — which covers both tampered ciphertexts
-// and correct ciphertexts encrypted under a different session's AAD.
-func decryptEventPayload(ctx context.Context, dek security.TenantDEKManager, tenantID, sessionID string, blob []byte) ([]byte, error) {
-	key, err := dek.GetTenantDEK(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	if len(blob) < gcm.NonceSize() {
-		return nil, errors.New("orchestration session log: truncated ciphertext")
-	}
-	nonce := blob[:gcm.NonceSize()]
-	ct := blob[gcm.NonceSize():]
-	return gcm.Open(nil, nonce, ct, []byte(sessionID))
 }
 
 // parseSequenceFromKey extracts the trailing 20-digit sequence from an

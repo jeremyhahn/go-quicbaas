@@ -56,10 +56,20 @@ func skipIfNoBinary(t *testing.T) string {
 }
 
 // runCommand executes a CLI command and returns stdout and any error.
-// The --tls-skip-verify flag is automatically added to all commands because the
-// integration test environment uses TLS with self-signed certificates.
+// Every invocation trusts the integration cluster's CA explicitly via
+// --tls-ca (--tls-skip-verify is banned project-wide).
+//
+// These bare-CLI tests address the cluster by its gRPC endpoints
+// (helpers.GetClusterEndpoints, e.g. test-node1:50051). The CLI's default
+// transport is unix (a Unix-domain-socket path), which cannot dial a TCP
+// host:port and is not reachable across the docker integration network
+// anyway. When a command supplies --address but no explicit --transport,
+// default it to grpc so the transport matches the endpoint family. Tests
+// that need a different transport (e.g. the IAM suite over REST) keep
+// passing --transport explicitly and are left untouched.
 func runCommand(ctx context.Context, binary string, args ...string) (string, error) {
-	fullArgs := append([]string{"--tls-skip-verify"}, args...)
+	fullArgs := append([]string{"--tls-ca", integrationCAPath}, args...)
+	fullArgs = defaultGRPCTransport(fullArgs)
 	cmd := exec.CommandContext(ctx, binary, fullArgs...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -72,6 +82,28 @@ func runCommand(ctx context.Context, binary string, args ...string) (string, err
 	}
 
 	return strings.TrimSpace(output), err
+}
+
+// defaultGRPCTransport appends "--transport grpc" when the argument list
+// targets a server (--address present) but does not already pin a transport.
+// This keeps every gRPC-endpoint invocation explicit without rewriting each
+// of the dozens of call sites, while preserving any caller-specified
+// transport (the IAM suite pins --transport rest).
+func defaultGRPCTransport(args []string) []string {
+	hasAddress := false
+	hasTransport := false
+	for _, a := range args {
+		switch a {
+		case "--address":
+			hasAddress = true
+		case "--transport":
+			hasTransport = true
+		}
+	}
+	if hasAddress && !hasTransport {
+		args = append(args, "--transport", "grpc")
+	}
+	return args
 }
 
 // extractJSONFromOutput extracts the JSON content from CLI output that may contain log lines.
@@ -1002,7 +1034,6 @@ func TestCLIIAMUserOperations(t *testing.T) {
 	output, err = runCommand(ctx, binary, "iam", "user", "create", email,
 		"--tenant", tenantID,
 		"--name", "Test User",
-		"--password", "TestP@ss123!",
 		"--address", serverAddr,
 		"--transport", "rest")
 	require.NoError(t, err, "IAM user create should succeed: %s", output)

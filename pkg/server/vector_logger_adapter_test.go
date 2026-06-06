@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbinterfaces "github.com/jeremyhahn/go-qrdb/pkg/interfaces"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // ---------------------------------------------------------------------------
 // qrdbLoggerAdapter — full coverage of all logging methods
 // ---------------------------------------------------------------------------
 
-func createTestLoggerAdapter(t *testing.T) qrdbinterfaces.Logger {
+func createTestLoggerAdapter(t *testing.T) qrdbsdk.Logger {
 	t.Helper()
 	log := mustCreateLogger()
 	return newQRDBLoggerAdapter(log)
@@ -153,7 +153,7 @@ func TestQRDBLoggerAdapter_WithError(t *testing.T) {
 
 func TestQRDBLoggerAdapter_InterfaceCompliance(t *testing.T) {
 	t.Run("satisfies qrdb Logger interface", func(t *testing.T) {
-		var _ qrdbinterfaces.Logger = createTestLoggerAdapter(t)
+		var _ qrdbsdk.Logger = createTestLoggerAdapter(t)
 	})
 }
 

@@ -256,9 +256,9 @@ func TestDialSSH_Success(t *testing.T) {
 	defer cancel()
 
 	spec := &Spec{
-		Host:        srv.addr(),
-		SSHUser:     "alice",
-		SSHPassword: "s3cret",
+		Host:            srv.addr(),
+		SSHUser:         "alice",
+		SSHPassword:     "s3cret",
 		InsecureHostKey: true,
 	}
 	client, err := DialSSH(ctx, spec)
@@ -306,9 +306,9 @@ func TestDialSSH_AuthFailure(t *testing.T) {
 	defer cancel()
 
 	spec := &Spec{
-		Host:        srv.addr(),
-		SSHUser:     "alice",
-		SSHPassword: "wrong",
+		Host:            srv.addr(),
+		SSHUser:         "alice",
+		SSHPassword:     "wrong",
 		InsecureHostKey: true,
 	}
 	_, err := DialSSH(ctx, spec)

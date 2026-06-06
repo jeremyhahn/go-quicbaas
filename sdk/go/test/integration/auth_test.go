@@ -24,49 +24,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// AuthTestConfig holds configuration for auth integration tests.
-type AuthTestConfig struct {
-	// TestUsername is the username for login tests.
-	TestUsername string
-	// TestPassword is the password for login tests.
-	TestPassword string
-	// AuthEnabled indicates if auth is enabled on the server.
-	AuthEnabled bool
-}
+// The SDK integration dev server (sdk/go/test/integration/docker-compose.yml)
+// runs in the stack's insecure mode: cleartext REST/gRPC and no IAM auth
+// session backend. The only authentication mechanism in the stack is PIV
+// (mTLS client cert) / WebAuthn / FIDO2 — username/password login was removed.
+//
+// These tests therefore exercise the auth-related endpoints that ARE reachable
+// without an established session on the insecure dev server:
+//
+//   - /.well-known/jwks.json                 (public JWKS)
+//   - /.well-known/openid-configuration      (public OIDC discovery)
+//   - POST /api/v1/auth/login/piv            (PIV mTLS login; rejects non-mTLS)
+//   - POST /api/v1/auth/refresh              (rejects invalid refresh tokens)
+//   - POST /api/v1/auth/validate             (rejects requests without a bearer)
+//   - POST /api/v1/auth/logout               (rejects requests without a token)
+//
+// The removed username/password login flow (/api/v1/auth/login) is intentionally
+// not tested — that route no longer exists.
 
-// getAuthTestConfig returns the auth test configuration.
-// In a real test environment, these would come from environment variables or fixtures.
-func getAuthTestConfig() AuthTestConfig {
-	return AuthTestConfig{
-		TestUsername: "admin",
-		TestPassword: "admin",
-		AuthEnabled:  false, // Server runs in insecure mode by default
-	}
-}
-
-// requireAuthEnabled asserts that auth is enabled on the test server.
-// Tests that require auth must fail when auth is not available rather than skip.
-func requireAuthEnabled(t *testing.T) {
-	t.Helper()
-	config := getAuthTestConfig()
-	require.True(t, config.AuthEnabled, "Auth must be enabled on the test server for this test")
-}
-
-// TestAuthEndpointDiscovery tests that auth endpoints are discoverable.
+// TestAuthEndpointDiscovery verifies that the public auth discovery and
+// token-management endpoints are reachable on the running server.
 func TestAuthEndpointDiscovery(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
 
-	// These endpoints should exist even if auth is disabled
 	endpoints := []struct {
 		name     string
 		path     string
 		method   string
 		wantCode []int // acceptable status codes
 	}{
-		{"jwks", "/api/v1/auth/jwks", http.MethodGet, []int{http.StatusOK, http.StatusNotFound, http.StatusUnauthorized}},
-		{"openid-config", "/api/v1/auth/.well-known/openid-configuration", http.MethodGet, []int{http.StatusOK, http.StatusNotFound}},
-		{"login-post", "/api/v1/auth/login", http.MethodPost, []int{http.StatusOK, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound}},
+		// Public OIDC/JWKS discovery endpoints are served at root level
+		// regardless of whether IAM auth is enabled (see pkg/api/rest/iam.go).
+		{"jwks", "/.well-known/jwks.json", http.MethodGet, []int{http.StatusOK}},
+		{"openid-config", "/.well-known/openid-configuration", http.MethodGet, []int{http.StatusOK}},
+		// PIV login is the canonical login route. Without a presented mTLS
+		// client certificate it must reject the request rather than 404.
+		{"login-piv", "/api/v1/auth/login/piv", http.MethodPost, []int{http.StatusBadRequest, http.StatusUnauthorized}},
 	}
 
 	for _, ep := range endpoints {
@@ -78,9 +72,10 @@ func TestAuthEndpointDiscovery(t *testing.T) {
 			var err error
 
 			if ep.method == http.MethodPost {
-				// For POST requests, send an empty JSON body
 				req, err = http.NewRequestWithContext(ctx, ep.method, GetRESTAddress()+ep.path, bytes.NewBufferString("{}"))
-				req.Header.Set("Content-Type", "application/json")
+				if err == nil {
+					req.Header.Set("Content-Type", "application/json")
+				}
 			} else {
 				req, err = http.NewRequestWithContext(ctx, ep.method, GetRESTAddress()+ep.path, nil)
 			}
@@ -95,7 +90,9 @@ func TestAuthEndpointDiscovery(t *testing.T) {
 			}
 			defer resp.Body.Close()
 
-			// Check if the response code is one of the acceptable codes
+			require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+				"endpoint %s must be registered on the server", ep.path)
+
 			found := false
 			for _, code := range ep.wantCode {
 				if resp.StatusCode == code {
@@ -105,26 +102,26 @@ func TestAuthEndpointDiscovery(t *testing.T) {
 			}
 			if !found {
 				body, _ := io.ReadAll(resp.Body)
-				t.Logf("endpoint %s returned status %d (body: %s)", ep.path, resp.StatusCode, string(body))
+				t.Errorf("endpoint %s returned status %d, want one of %v (body: %s)",
+					ep.path, resp.StatusCode, ep.wantCode, string(body))
 			}
 		})
 	}
 }
 
-// TestLoginValidation tests login request validation.
-func TestLoginValidation(t *testing.T) {
+// TestPIVLoginRejectsNonMTLS verifies that the PIV login endpoint exists and
+// rejects callers that do not present a valid mTLS client certificate. This is
+// the replacement for the removed username/password login validation: the
+// stack authenticates via PIV / WebAuthn / FIDO2 only.
+func TestPIVLoginRejectsNonMTLS(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
-	requireAuthEnabled(t)
 
-	t.Run("empty credentials returns error", func(t *testing.T) {
+	t.Run("login without client cert is rejected", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		reqBody := map[string]string{}
-		body, _ := json.Marshal(reqBody)
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/login", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/login/piv", bytes.NewBufferString("{}"))
 		if err != nil {
 			t.Fatalf("failed to create request: %v", err)
 		}
@@ -137,115 +134,53 @@ func TestLoginValidation(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		// Should return bad request or unauthorized
+		// The route must exist (not 404) and must refuse a cert-less caller.
+		require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+			"PIV login endpoint must be registered on the server")
 		if resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("expected status 400 or 401, got %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("invalid credentials returns unauthorized", func(t *testing.T) {
-		ctx, cancel := DefaultContext(t)
-		defer cancel()
-
-		reqBody := map[string]string{
-			"username": "invalid_user",
-			"password": "invalid_password",
-		}
-		body, _ := json.Marshal(reqBody)
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/login", bytes.NewBuffer(body))
-		if err != nil {
-			t.Fatalf("failed to create request: %v", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("request failed: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusUnauthorized {
 			body, _ := io.ReadAll(resp.Body)
-			t.Logf("response body: %s", string(body))
-			// Might also return 400 for validation errors
-			if resp.StatusCode != http.StatusBadRequest {
-				t.Errorf("expected status 401 or 400, got %d", resp.StatusCode)
-			}
+			t.Errorf("expected status 400 or 401 for PIV login without a client cert, got %d (body: %s)",
+				resp.StatusCode, string(body))
 		}
 	})
 }
 
-// TestLoginFlow tests the complete login flow.
-func TestLoginFlow(t *testing.T) {
-	SkipIfNoDocker(t)
-	SkipIfNoServer(t)
-	requireAuthEnabled(t)
-
-	config := getAuthTestConfig()
-
-	t.Run("successful login returns tokens", func(t *testing.T) {
-		ctx, cancel := DefaultContext(t)
-		defer cancel()
-
-		reqBody := map[string]string{
-			"username": config.TestUsername,
-			"password": config.TestPassword,
-		}
-		body, _ := json.Marshal(reqBody)
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/login", bytes.NewBuffer(body))
-		if err != nil {
-			t.Fatalf("failed to create request: %v", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("request failed: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(body))
-		}
-
-		var loginResp struct {
-			AccessToken  string `json:"access_token"`
-			RefreshToken string `json:"refresh_token"`
-			TokenType    string `json:"token_type"`
-			ExpiresIn    int    `json:"expires_in"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-
-		if loginResp.AccessToken == "" {
-			t.Error("expected non-empty access token")
-		}
-		if loginResp.RefreshToken == "" {
-			t.Error("expected non-empty refresh token")
-		}
-		if loginResp.TokenType != "Bearer" {
-			t.Errorf("expected token type 'Bearer', got '%s'", loginResp.TokenType)
-		}
-	})
-}
-
-// TestTokenValidation tests token validation.
+// TestTokenValidation verifies that the token validation endpoint exists and
+// reports failure for requests that present no bearer token or an invalid one.
 func TestTokenValidation(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
-	requireAuthEnabled(t)
 
-	t.Run("invalid token returns error", func(t *testing.T) {
+	t.Run("missing bearer token returns bad request", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, GetRESTAddress()+"/api/v1/auth/validate", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/validate", nil)
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+			"token validation endpoint must be registered on the server")
+		if resp.StatusCode != http.StatusBadRequest {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("expected status 400 for validate without a bearer token, got %d (body: %s)",
+				resp.StatusCode, string(body))
+		}
+	})
+
+	t.Run("invalid token reports not valid", func(t *testing.T) {
+		ctx, cancel := DefaultContext(t)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/validate", nil)
 		if err != nil {
 			t.Fatalf("failed to create request: %v", err)
 		}
@@ -258,17 +193,26 @@ func TestTokenValidation(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusNotFound {
-			t.Errorf("expected status 401 or 404, got %d", resp.StatusCode)
+		// ValidateToken returns 200 with {"valid": false} for an unparseable
+		// token rather than an HTTP error (see pkg/api/rest/iam_login.go).
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"validate with a malformed bearer token should return 200 with valid=false")
+
+		var result struct {
+			Valid bool `json:"valid"`
 		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			t.Fatalf("failed to decode validate response: %v", err)
+		}
+		require.False(t, result.Valid, "an invalid token must not validate")
 	})
 }
 
-// TestTokenRefresh tests token refresh functionality.
+// TestTokenRefresh verifies that the token refresh endpoint exists and rejects
+// invalid refresh tokens.
 func TestTokenRefresh(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
-	requireAuthEnabled(t)
 
 	t.Run("invalid refresh token returns error", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
@@ -277,7 +221,8 @@ func TestTokenRefresh(t *testing.T) {
 		reqBody := map[string]string{
 			"refresh_token": "invalid_refresh_token",
 		}
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/refresh", bytes.NewBuffer(body))
 		if err != nil {
@@ -292,14 +237,43 @@ func TestTokenRefresh(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		// Should return unauthorized or bad request
-		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusNotFound {
-			t.Errorf("expected status 401, 400, or 404, got %d", resp.StatusCode)
+		require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+			"token refresh endpoint must be registered on the server")
+		// An invalid token yields 401; a server without a configured auth
+		// service yields 503; a malformed body yields 400.
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusBadRequest, http.StatusServiceUnavailable:
+			// expected
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("expected status 401, 400, or 503, got %d (body: %s)", resp.StatusCode, string(body))
 		}
+	})
+
+	t.Run("missing refresh token returns bad request", func(t *testing.T) {
+		ctx, cancel := DefaultContext(t)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/refresh", bytes.NewBufferString("{}"))
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+			"refresh without a refresh_token must return 400")
 	})
 }
 
-// TestJWKS tests the JWKS endpoint.
+// TestJWKS verifies that the public JWKS endpoint is available and returns a
+// well-formed key set.
 func TestJWKS(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
@@ -308,7 +282,7 @@ func TestJWKS(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, GetRESTAddress()+"/api/v1/auth/jwks", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, GetRESTAddress()+"/.well-known/jwks.json", nil)
 		if err != nil {
 			t.Fatalf("failed to create request: %v", err)
 		}
@@ -320,15 +294,8 @@ func TestJWKS(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		// JWKS endpoint must be available when the server is running
-		require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
-			"JWKS endpoint must be available on the integration test server")
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Logf("JWKS response status %d: %s", resp.StatusCode, string(body))
-			return
-		}
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"JWKS endpoint must return 200 on the integration test server")
 
 		var jwks struct {
 			Keys []struct {
@@ -349,7 +316,8 @@ func TestJWKS(t *testing.T) {
 	})
 }
 
-// TestOpenIDConfiguration tests the OpenID Configuration discovery endpoint.
+// TestOpenIDConfiguration verifies the OpenID Configuration discovery endpoint
+// is available and advertises a non-empty issuer.
 func TestOpenIDConfiguration(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
@@ -358,7 +326,7 @@ func TestOpenIDConfiguration(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, GetRESTAddress()+"/api/v1/auth/.well-known/openid-configuration", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, GetRESTAddress()+"/.well-known/openid-configuration", nil)
 		if err != nil {
 			t.Fatalf("failed to create request: %v", err)
 		}
@@ -370,15 +338,8 @@ func TestOpenIDConfiguration(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		// OpenID Configuration endpoint must be available when the server is running
-		require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
-			"OpenID Configuration endpoint must be available on the integration test server")
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Logf("OpenID Configuration response status %d: %s", resp.StatusCode, string(body))
-			return
-		}
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"OpenID Configuration endpoint must return 200 on the integration test server")
 
 		var config struct {
 			Issuer                 string   `json:"issuer"`
@@ -392,9 +353,7 @@ func TestOpenIDConfiguration(t *testing.T) {
 			t.Fatalf("failed to decode OpenID Configuration response: %v", err)
 		}
 
-		if config.Issuer == "" {
-			t.Error("expected non-empty issuer")
-		}
+		require.NotEmpty(t, config.Issuer, "OpenID Configuration must advertise an issuer")
 
 		t.Logf("OpenID Configuration:")
 		t.Logf("  Issuer: %s", config.Issuer)
@@ -405,41 +364,13 @@ func TestOpenIDConfiguration(t *testing.T) {
 	})
 }
 
-// TestSessionManagement tests session management endpoints.
-func TestSessionManagement(t *testing.T) {
-	SkipIfNoDocker(t)
-	SkipIfNoServer(t)
-	requireAuthEnabled(t)
-
-	t.Run("list sessions without auth returns unauthorized", func(t *testing.T) {
-		ctx, cancel := DefaultContext(t)
-		defer cancel()
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, GetRESTAddress()+"/api/v1/auth/sessions", nil)
-		if err != nil {
-			t.Fatalf("failed to create request: %v", err)
-		}
-
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("request failed: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusNotFound {
-			t.Errorf("expected status 401 or 404, got %d", resp.StatusCode)
-		}
-	})
-}
-
-// TestLogout tests the logout endpoint.
+// TestLogout verifies the logout endpoint exists and rejects requests that
+// present no token.
 func TestLogout(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
-	requireAuthEnabled(t)
 
-	t.Run("logout without auth returns error", func(t *testing.T) {
+	t.Run("logout without a token returns bad request", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
@@ -455,9 +386,11 @@ func TestLogout(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		// Should return unauthorized or not found
-		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusNotFound {
-			t.Errorf("expected status 401 or 404, got %d", resp.StatusCode)
-		}
+		require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+			"logout endpoint must be registered on the server")
+		// Logout with no Authorization header and no body token returns 400
+		// (see pkg/api/rest/iam_login.go Logout).
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+			"logout without a token must return 400")
 	})
 }

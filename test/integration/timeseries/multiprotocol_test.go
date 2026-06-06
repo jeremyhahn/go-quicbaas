@@ -696,17 +696,7 @@ func (r *restTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error 
 	endpoints := helpers.GetRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
 	r.endpoint = endpoints[0]
-	r.client = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	r.client = helpers.NewHTTPClient(30 * time.Second)
 	return nil
 }
 
@@ -1008,7 +998,11 @@ func (g *grpcTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error 
 	endpoints := helpers.GetClusterEndpoints()
 	require.NotEmpty(t, endpoints, "gRPC endpoints must be available for integration tests")
 
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoints[0], Cause: err}
 	}
@@ -1156,11 +1150,11 @@ func (q *quicTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error 
 
 	addr := endpoints[0]
 
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1414,7 +1408,11 @@ func (u *unixSocketTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) 
 	testConn.Close()
 
 	// Create gRPC client over unix socket
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to create gRPC client over unix socket", Cause: err}
 	}
@@ -1573,7 +1571,6 @@ func (c *mcpTimeseriesProtocol) authenticate(ctx context.Context) error {
 	return nil
 }
 
-
 func (m *mcpTimeseriesProtocol) callMCPToolUnauthenticated(ctx context.Context, toolName string, args map[string]interface{}) (json.RawMessage, error) {
 	mcpReq := map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -1645,17 +1642,7 @@ func (m *mcpTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	m.endpoint = endpoints[0]
-	m.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	m.httpClient = helpers.NewHTTPClient(30 * time.Second)
 	m.nextID = 1
 
 	// Verify MCP endpoint via initialize
@@ -1790,7 +1777,7 @@ func (m *mcpTimeseriesProtocol) WritePoint(ctx context.Context, metric string, v
 		}
 		args["tags"] = string(tagsJSON)
 	}
-	_, err := m.callMCPTool(ctx, "quicbaas_ts_write_point", args)
+	_, err := m.callMCPTool(ctx, "qrdb_ts_write_point", args)
 	return err
 }
 
@@ -1823,7 +1810,7 @@ func (m *mcpTimeseriesProtocol) WriteBatch(ctx context.Context, points []*TimeSe
 	args := map[string]interface{}{
 		"points": string(pointsJSON),
 	}
-	_, err = m.callMCPTool(ctx, "quicbaas_ts_write_batch", args)
+	_, err = m.callMCPTool(ctx, "qrdb_ts_write_batch", args)
 	return err
 }
 
@@ -1837,7 +1824,7 @@ func (m *mcpTimeseriesProtocol) Query(ctx context.Context, metric string, start,
 		args["aggregation"] = aggregation
 	}
 
-	result, err := m.callMCPTool(ctx, "quicbaas_ts_query", args)
+	result, err := m.callMCPTool(ctx, "qrdb_ts_query", args)
 	if err != nil {
 		return nil, err
 	}
@@ -1875,7 +1862,7 @@ func (m *mcpTimeseriesProtocol) Delete(ctx context.Context, metric string, start
 		"start_time": start.UnixNano(),
 		"end_time":   end.UnixNano(),
 	}
-	_, err := m.callMCPTool(ctx, "quicbaas_ts_delete_series", args)
+	_, err := m.callMCPTool(ctx, "qrdb_ts_delete_series", args)
 	return err
 }
 
@@ -1885,7 +1872,7 @@ func (m *mcpTimeseriesProtocol) ListMetrics(ctx context.Context, prefix string) 
 		args["prefix"] = prefix
 	}
 
-	result, err := m.callMCPTool(ctx, "quicbaas_ts_list_metrics", args)
+	result, err := m.callMCPTool(ctx, "qrdb_ts_list_metrics", args)
 	if err != nil {
 		return nil, err
 	}
@@ -1905,7 +1892,7 @@ func (m *mcpTimeseriesProtocol) GetRetentionPolicy(ctx context.Context, metric s
 		"metric": metric,
 	}
 
-	result, err := m.callMCPTool(ctx, "quicbaas_ts_get_retention_policy", args)
+	result, err := m.callMCPTool(ctx, "qrdb_ts_get_retention_policy", args)
 	if err != nil {
 		return nil, err
 	}
@@ -1948,6 +1935,6 @@ func (m *mcpTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, metric s
 	if policy.Aggregation != "" {
 		args["aggregation"] = policy.Aggregation
 	}
-	_, err := m.callMCPTool(ctx, "quicbaas_ts_set_retention_policy", args)
+	_, err := m.callMCPTool(ctx, "qrdb_ts_set_retention_policy", args)
 	return err
 }

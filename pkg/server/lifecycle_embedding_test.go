@@ -43,3 +43,14 @@ func TestFTFinal_BuildEmbeddingConfig_OllamaZeroTimeoutDefaults(t *testing.T) {
 	assert.Equal(t, 3, result.MaxRetries)
 	assert.Equal(t, 1000, result.RetryBackoffMS)
 }
+
+// TestStopEmbedding_NilManagerIsNoOp covers the nil-manager early-return of
+// stopEmbedding: stopping when no manager was ever created must succeed.
+func TestStopEmbedding_NilManagerIsNoOp(t *testing.T) {
+	cfg := createFTConfig(t)
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	srv.embeddingManager = nil
+	require.NoError(t, srv.stopEmbedding(), "stopping a nil embedding manager must be a no-op")
+}

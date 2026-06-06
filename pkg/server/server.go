@@ -18,12 +18,17 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"io"
 	"net"
 	"sync"
 	"time"
 
 	ggrpc "google.golang.org/grpc"
 
+	atrestpkg "github.com/jeremyhahn/go-qrdb/pkg/atrest"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -35,7 +40,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/discovery"
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fips"
@@ -46,7 +50,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server/devcluster"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/version"
@@ -67,6 +70,14 @@ type serverOptions struct {
 	// externalCA, the server skips TLS certificate issuance and uses this
 	// certificate directly for all transport layers.
 	tlsCertificate *tls.Certificate
+
+	// sealPassphrase is the passphrase used to auto-unseal the qrdb node's
+	// software seal barrier on startup. When set alongside a passphrase seal
+	// strategy (cfg.Seal.Strategy == "passphrase"), the qrdb node builder
+	// receives node.WithSealPassphrase so the barrier is unsealed
+	// automatically during Start. The caller is responsible for wiping the
+	// slice after construction. Only consulted when cfg.Seal.Enabled is true.
+	sealPassphrase []byte
 }
 
 // ServerOption configures optional behavior on the Server during construction.
@@ -86,6 +97,24 @@ func WithCA(ca xkmssdk.TrustedCA) ServerOption {
 // both the leaf certificate and private key.
 func WithTLSCertificate(cert *tls.Certificate) ServerOption {
 	return func(o *serverOptions) { o.tlsCertificate = cert }
+}
+
+// WithSealPassphrase returns a ServerOption that injects the passphrase used
+// to auto-unseal the qrdb node's software seal barrier during server startup.
+// When supplied and cfg.Seal.Strategy is "passphrase", the qrdb node is
+// constructed with node.WithSealPassphrase so the barrier is unsealed
+// automatically — the server comes up fully operational without requiring
+// an explicit "barrier unseal" API call.
+//
+// This is the preferred injection point for the quicbaasd init path (where
+// the admin passphrase is available at boot time) and for test helpers that
+// need a fully unsealed node. For production deployments that require operator
+// intervention at every start, omit this option and use the barrier API.
+//
+// The caller is responsible for zeroing the slice after the server is
+// constructed. The server does not retain a reference beyond node creation.
+func WithSealPassphrase(passphrase []byte) ServerOption {
+	return func(o *serverOptions) { o.sealPassphrase = passphrase }
 }
 
 // Server orchestrates all QuicBaaS components.
@@ -166,18 +195,31 @@ type Server struct {
 	// type assertion on quicBaaSService.
 	iamComponents service.IAMComponents
 
+	// loginSessionIssuer is the late-bound SessionIssuer injected into the
+	// composed qrdb node so a successful unified login mints an OIDC bearer.
+	// It is created (provider unbound) before node construction and has its
+	// OIDC provider attached after IAM init completes — see
+	// buildLoginSessionIssuer / bindLoginCeremonyProvider. Nil when IAM is
+	// not compiled (the !iam stub leaves login issuance unwired).
+	loginSessionIssuer qrdbembedded.SessionIssuer
+
+	// loginFactorVerifiers are the late-bound hardware FactorVerifiers (PIV +
+	// tenant-aware WebAuthn) injected into the composed qrdb node so the
+	// in-process login ceremony can verify PIV and WebAuthn proofs. Like
+	// loginSessionIssuer they are constructed (dependencies unbound) before
+	// node construction and have their dependencies attached after IAM init
+	// via bindLoginCeremonyProvider. Empty when IAM is not compiled (the !iam
+	// stub leaves factor verification unwired). The verification crypto is
+	// always delegated to the xkms verifiers; these shells only resolve
+	// dependencies and enforce tenant isolation.
+	loginFactorVerifiers []qrdbembedded.FactorVerifier
+
 	// orchestratorDaemonClient holds the OAuth2 credentials the central uses
 	// to authenticate its outbound calls to remote agent daemons. Populated
 	// by ensureOrchestratorDaemonClient during IAM init; consumed by the
 	// orchestration layer's RemoteBackendResolver to mint JWTs for daemon
 	// RPCs. See pkg/server/iam_init.go for bootstrap details.
 	orchestratorDaemonClient *OrchestratorDaemonClient
-
-	// tenantDEKManager provides per-tenant Data Encryption Keys for
-	// at-rest encryption of session events and other tenant-scoped state.
-	// Populated during IAM init when KMS is available; nil on restricted
-	// deployments that run without a KMS backend.
-	tenantDEKManager security.TenantDEKManager
 
 	// tlsConfig holds the in-memory TLS configuration backed by OpaqueKeys.
 	// Created by initializeCA() and used by all transport layers.
@@ -186,6 +228,30 @@ type Server struct {
 	// Seal management - uses the interfaces.SealManager abstraction backed
 	// by qrdb's StorageBarrier via the BarrierSealManager adapter.
 	sealManager interfaces.SealManager
+
+	// dataPlaneBarrier is the concrete StorageBarrier used to encrypt the
+	// data-plane stores (KV, time-series, vector). Set during startService()
+	// when buildDataPlaneBarrierService succeeds. Nil when seal is disabled or
+	// the barrier could not be constructed — all stores fall back to plaintext.
+	dataPlaneBarrier *qrdbsdk.StorageBarrier
+
+	// dataPlaneEncryptor is the single atrest.Encryptor built from
+	// dataPlaneBarrier. It is threaded into every persistent Pebble store
+	// (KV shards, time-series, vector) so their sstable/WAL/manifest files
+	// are transparently encrypted at rest. A nil barrier produces a no-op
+	// Encryptor; plaintext operation is preserved when seal is not configured.
+	dataPlaneEncryptor *atrestpkg.Encryptor
+
+	// cachedDataPlaneBarrierSvc holds the BaasBarrierService built by
+	// initDataPlaneEncryptor for injection into the sharded client in
+	// startService. Avoids rebuilding the barrier twice.
+	cachedDataPlaneBarrierSvc BaasBarrierService
+
+	// dataPlaneBarrierCloser closes the PebbleDB seal sub-store that backs
+	// the data-plane StorageBarrier. Non-nil when buildDataPlaneBarrierService
+	// successfully opened the seal store in startService(). Must be closed
+	// during Shutdown to release the PebbleDB file locks.
+	dataPlaneBarrierCloser io.Closer
 
 	// ceremonyServices holds the bootstrap ceremony service stack
 	// (credential, ceremony, and the underlying core ceremony.CeremonyService).
@@ -209,11 +275,16 @@ type Server struct {
 	// requiring real Raft consensus infrastructure.
 	raftNode interfaces.RaftNode
 
+	// qrdbNode is the real embedded qrdb engine used in standalone mode.
+	// When non-nil (standalone path only), it owns the storage backend,
+	// seal barrier, at-rest encryptor, and all KV/MVCC/TS/Vector services.
+	// The data-plane encryptor, barrier, and barrier closer on this Server
+	// are NOT populated for standalone — the node owns all of those.
+	// Nil for cluster mode (until Phase C).
+	qrdbNode *qrdbnode.Node
+
 	// Service facade - used by all API servers
 	quicBaaSService service.QuicBaaS
-
-	// Bootstrap components
-	discoveryManager *discovery.Manager
 
 	// API servers
 	grpcServer       *ggrpc.Server
@@ -397,37 +468,37 @@ func (s *Server) initialize() error {
 		return err
 	}
 
-	// Initialize seal barrier if enabled (must be after storage is available)
-	if err := s.initBarrier(); err != nil {
-		return err
-	}
-
-	// Initialize vector storage if enabled
-	if s.config.Vector.Enabled {
-		if err := s.initVectorStorage(); err != nil {
-			return err
-		}
-	}
-
-	// Initialize time series storage if enabled
-	if s.config.TimeSeries.Enabled {
-		if err := s.initTimeSeriesStorage(); err != nil {
-			return err
-		}
-	}
-
-	// Initialize raft node based on server mode
+	// Initialize the engine and barrier based on server mode.
+	//
+	// Standalone mode: construct the real qrdb engine via NewStandaloneNode.
+	//   The node owns the storage backend, seal barrier, at-rest encryptor,
+	//   and all KV/MVCC/TS/Vector services. We do NOT call initBarrier or
+	//   initDataPlaneEncryptor for standalone — those would double-build a
+	//   barrier that the qrdb node already owns.
+	//
+	// Cluster mode: construct the real qrdb clustered node via
+	//   NewClusteredNode. The node owns barrier, Raft host, at-rest
+	//   encryptor, and all services. initBarrier/initDataPlaneEncryptor/
+	//   standaloneRaftNode are NOT called — the node owns all of those.
 	switch s.getEffectiveMode() {
 	case config.ServerModeCluster:
-		// Cluster mode: Raft consensus is managed externally via QuicRaft.
-		// Use a standalone raft node as the local shard transport until
-		// the cluster Raft infrastructure is fully integrated.
-		s.raftNode = newStandaloneRaftNode(s.config.Raft.NodeID, s.config.Raft.RaftAddress)
-		s.logger.Infof("Cluster mode: raft node initialized (id: %s)", s.raftNode.ID())
+		// Cluster mode: build the real qrdb clustered node. The node owns
+		// the Raft host, seal barrier, at-rest encryptor, and all services.
+		// s.raftNode is left nil — the service builder and backup manager
+		// both accept nil raftNode when qrdbClient is provided.
+		if err := s.initClusteredQRDBNode(); err != nil {
+			return err
+		}
+		s.logger.Info("Cluster mode: real qrdb clustered node started")
 	default:
-		// Standalone mode: no Raft consensus, direct storage access
-		s.raftNode = newStandaloneRaftNode(s.config.Raft.NodeID, s.config.Raft.RaftAddress)
-		s.logger.Infof("Standalone mode: raft node initialized (id: %s)", s.raftNode.ID())
+		// Standalone mode: build the real qrdb engine. The node manages its
+		// own barrier + at-rest; quicbaas does NOT duplicate those here.
+		// s.raftNode is left nil — the service builder and backup manager
+		// both accept nil raftNode when qrdbClient is provided.
+		if err := s.initStandaloneQRDBNode(); err != nil {
+			return err
+		}
+		s.logger.Info("Standalone mode: real qrdb engine started")
 	}
 
 	if err := s.startIndexes(); err != nil {
@@ -482,6 +553,15 @@ func (s *Server) initialize() error {
 	// Create QuicBaaS facade before API servers
 	if err := s.startService(); err != nil {
 		return err
+	}
+
+	// Upgrade the secrets backend to the persistent KV backend now that the
+	// qrdb SDK client is available. startSecrets() earlier used in-memory as
+	// qrdbClient was not yet set; this call replaces it with the durable store.
+	if s.qrdbNode != nil && s.qrdbClient != nil {
+		if err := s.startSecrets(); err != nil {
+			return err
+		}
 	}
 
 	// Initialize database management subsystem (requires service facade)
@@ -735,14 +815,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			s.logger.WithError(err).Error("Failed to shutdown index manager")
 		}
 
-		// Shutdown standalone raft node
+		// Shutdown raft node when present (legacy / test paths only;
+		// the qrdb-node path leaves s.raftNode nil).
 		if s.raftNode != nil {
-			s.logger.Info("Shutting down standalone raft node...")
+			s.logger.Info("Shutting down raft node...")
 			if err := s.raftNode.Close(); err != nil {
 				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to shutdown standalone raft node")
+				s.logger.WithError(err).Error("Failed to shutdown raft node")
 			} else {
-				s.logger.Info("Standalone raft node shutdown complete")
+				s.logger.Info("Raft node shutdown complete")
 			}
 		}
 
@@ -754,6 +835,35 @@ func (s *Server) Shutdown(ctx context.Context) error {
 				s.logger.WithError(err).Error("Failed to shutdown sharded qrdb client")
 			} else {
 				s.logger.Info("Sharded qrdb client shutdown complete")
+			}
+		}
+
+		// Close the standalone qrdb node (standalone mode only). The node
+		// owns the storage backend, seal barrier, and at-rest encryptor; it
+		// must be closed after the sharded client (which holds references to
+		// the node's services) and before the data-plane barrier closer
+		// (which is nil in standalone mode since the node owns the barrier).
+		if s.qrdbNode != nil {
+			s.logger.Info("Shutting down embedded qrdb node...")
+			if err := s.stopQRDBNode(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to shutdown embedded qrdb node")
+			} else {
+				s.logger.Info("Embedded qrdb node shutdown complete")
+			}
+		}
+
+		// Close the data-plane barrier's PebbleDB seal sub-store. This must
+		// happen after the sharded client is closed (the client holds the
+		// barrier service reference) so the PebbleDB file locks are released
+		// cleanly.
+		if s.dataPlaneBarrierCloser != nil {
+			s.logger.Info("Closing data-plane barrier seal store...")
+			if err := s.dataPlaneBarrierCloser.Close(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to close data-plane barrier seal store")
+			} else {
+				s.logger.Info("Data-plane barrier seal store closed")
 			}
 		}
 
@@ -785,17 +895,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 				s.logger.WithError(err).Error("Failed to shutdown DevCluster manager")
 			} else {
 				s.logger.Info("DevCluster manager shutdown complete")
-			}
-		}
-
-		// Shutdown bootstrap components
-		if s.discoveryManager != nil {
-			s.logger.Info("Shutting down bootstrap components...")
-			if err := s.stopBootstrap(); err != nil {
-				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to shutdown bootstrap components")
-			} else {
-				s.logger.Info("Bootstrap components shutdown complete")
 			}
 		}
 
@@ -855,6 +954,17 @@ func (s *Server) GetRaftNode() interfaces.RaftNode {
 // GetRESTServer returns the REST server (for health checks).
 func (s *Server) GetRESTServer() *restapi.Server {
 	return s.restServer
+}
+
+// RESTAddr returns the actual network address the REST listener is bound to,
+// or nil when REST is disabled, running in embedded mode, or not yet started.
+// Callers that configure the REST port as 0 (ephemeral) must use this to
+// learn the OS-assigned port rather than reading config.Server.REST.Port.
+func (s *Server) RESTAddr() net.Addr {
+	if s.restServer == nil {
+		return nil
+	}
+	return s.restServer.Addr()
 }
 
 // GetGRPCServer returns the gRPC server (for health checks).
@@ -952,9 +1062,109 @@ func (s *Server) GetQRDBClient() *ShardedClient {
 	return s.qrdbClient
 }
 
+// GetQRDBNodeClient returns the real qrdb SDK client exposed by the embedded
+// engine node. On the standalone and clustered node paths (Phase B/C) this is
+// the in-process client backed by the qrdb embedded transport; all KV, Admin,
+// barrier, ceremony, and credential operations route through it without network
+// round-trips.
+//
+// Returns nil when the server has not yet been started or when no qrdb node was
+// constructed (e.g. test stubs with only a mock ShardedClient). Callers should
+// prefer GetQRDBNodeClient over GetQRDBClient().ForShard(1) for barrier/ceremony
+// operations so that the SDK client is used directly rather than via the
+// BaasTransport layer.
+func (s *Server) GetQRDBNodeClient() *qrdbsdk.Client {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	return s.qrdbNode.Client()
+}
+
+// GetQRDBKVServicer returns the qrdb service.KVServicer exposed by the embedded
+// engine node's service graph. Returns nil when the node is absent.
+func (s *Server) GetQRDBKVServicer() qrdbsdk.KVServicer {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	svcs := s.qrdbNode.Services()
+	if svcs == nil {
+		return nil
+	}
+	return svcs.KV
+}
+
+// GetQRDBAdminServicer returns the qrdb service.AdminServicer exposed by the
+// embedded engine node's service graph. Returns nil when the node is absent.
+func (s *Server) GetQRDBAdminServicer() qrdbsdk.AdminServicer {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	svcs := s.qrdbNode.Services()
+	if svcs == nil {
+		return nil
+	}
+	return svcs.Admin
+}
+
+// GetQRDBUserServicer returns the qrdb user.UserServicer exposed by the
+// embedded engine node. Composers wire this into the SDK's embedded qrdb
+// transport so user-login factor enrollment can resolve a subject
+// (tenant + username) to a uint64 user id against the same user store the
+// login ceremony reads. Returns nil when the node is absent.
+func (s *Server) GetQRDBUserServicer() qrdbsdk.UserServicer {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	return s.qrdbNode.UserService()
+}
+
+// GetQRDBUserAuthFactorServicer returns the UserAuthFactor service INSTANCE
+// the embedded node's unified-login ceremony resolves against. Wiring this
+// exact instance into the SDK's embedded qrdb transport guarantees factor
+// ENROLLMENT writes land in the SAME store login READS — closing the
+// split-store gap. Returns nil when the node was built without a User
+// service (login ceremony not wired) or before Unseal completes.
+func (s *Server) GetQRDBUserAuthFactorServicer() qrdbsdk.UserAuthFactorServicer {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	return s.qrdbNode.UserAuthFactorService()
+}
+
 // Service returns the QuicBaaS facade for direct database operations.
 func (s *Server) Service() service.QuicBaaS {
 	return s.quicBaaSService
+}
+
+// GetCeremonyServices returns the bootstrap ceremony service stack composed
+// during startService() — a credential service, a ceremony service, and the
+// underlying core ceremony.CeremonyService. Returns nil when ceremony wiring
+// was skipped (for example, on a cluster that does not run the init flow or
+// when buildBootstrapCeremonyServices returned an error during startup).
+//
+// External callers (most importantly the CLI's embedded-server wrapper) use
+// this accessor to wire the qrdb-backed embedded transport for the
+// Security().Ceremony() / Security().Credentials() SDK accessors via
+// WithEmbeddedQRDB. For the barrier specifically, use GetDataPlaneBarrierService
+// which returns the real persistent data-plane barrier rather than the
+// bootstrap ceremony's ephemeral in-memory barrier.
+func (s *Server) GetCeremonyServices() *CeremonyServices {
+	return s.ceremonyServices
+}
+
+// GetDataPlaneBarrierService returns the canonical data-plane barrier service.
+// On the node path (always active), the barrier comes from the qrdb node's
+// seal subsystem and is stored in s.ceremonyServices.Barrier during
+// startService(). This is the persistent, strategy-aware barrier shared
+// across all five transports.
+//
+// Returns nil when the barrier was not constructed (seal disabled, data dir
+// absent, or construction failed). Callers must handle nil gracefully.
+func (s *Server) GetDataPlaneBarrierService() BaasBarrierService {
+	if s.ceremonyServices == nil {
+		return nil
+	}
+	return s.ceremonyServices.Barrier
 }
 
 // GetEffectiveMode returns the effective server mode for external callers.

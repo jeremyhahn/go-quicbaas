@@ -81,6 +81,8 @@ class McpAuthClient {
     async loginPIV() { return notImpl('loginPIV'); }
     async listPublicTenants() { return notImpl('listPublicTenants'); }
     async logout(_token) { return notImpl('logout'); }
+    async registerBegin(_req) { return notImpl('registerBegin'); }
+    async registerFinish(_req) { return notImpl('registerFinish'); }
 }
 // McpBarrierClient is a stub BarrierClient that throws McpNotImplementedError
 // on every call. Real MCP tool wiring will replace this stub.

@@ -214,7 +214,7 @@ func createOllamaHandler(ollamaSvc service.OllamaService) *Handler {
 	svc := &mockOllamaEnabledService{
 		ollamaSvc: ollamaSvc,
 	}
-	return NewHandler(svc, nil, nil, nil, nil, createOllamaTestLogger())
+	return NewHandler(svc, nil, nil, nil, createOllamaTestLogger())
 }
 
 // =============================================================================
@@ -256,7 +256,7 @@ func TestHandleOllamaEmbed_Success(t *testing.T) {
 }
 
 func TestHandleOllamaEmbed_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createOllamaTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createOllamaTestLogger())
 
 	payload, _ := EncodePayload(&service.OllamaEmbedRequest{
 		Text: "Hello, world!",
@@ -347,7 +347,7 @@ func TestHandleOllamaEmbedWithModel_Success(t *testing.T) {
 }
 
 func TestHandleOllamaEmbedWithModel_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createOllamaTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createOllamaTestLogger())
 
 	payload, _ := EncodePayload(&service.OllamaEmbedWithModelRequest{
 		Text:  "Hello, world!",
@@ -439,7 +439,7 @@ func TestHandleOllamaEmbedBatch_Success(t *testing.T) {
 }
 
 func TestHandleOllamaEmbedBatch_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createOllamaTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createOllamaTestLogger())
 
 	payload, _ := EncodePayload(&service.OllamaEmbedBatchRequest{
 		Texts: []string{"Hello", "World"},
@@ -527,7 +527,7 @@ func TestHandleOllamaListModels_Success(t *testing.T) {
 }
 
 func TestHandleOllamaListModels_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createOllamaTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createOllamaTestLogger())
 
 	payload, _ := EncodePayload(&service.OllamaListModelsRequest{})
 
@@ -613,7 +613,7 @@ func TestHandleOllamaGetModelInfo_Success(t *testing.T) {
 }
 
 func TestHandleOllamaGetModelInfo_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createOllamaTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createOllamaTestLogger())
 
 	payload, _ := EncodePayload(&service.OllamaGetModelInfoRequest{
 		Model: "nomic-embed-text",
@@ -704,7 +704,7 @@ func TestHandleOllamaHealth_Success(t *testing.T) {
 }
 
 func TestHandleOllamaHealth_NilService(t *testing.T) {
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createOllamaTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createOllamaTestLogger())
 
 	payload, _ := EncodePayload(&service.OllamaHealthRequest{})
 
@@ -794,7 +794,7 @@ func TestOllamaHandlers_AllOperations_Success(t *testing.T) {
 
 func TestOllamaHandlers_AllOperations_NilService(t *testing.T) {
 	// Use base mockService which returns nil for Ollama()
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, createOllamaTestLogger())
+	handler := NewHandler(&mockService{}, nil, nil, nil, createOllamaTestLogger())
 
 	tests := []struct {
 		name   string

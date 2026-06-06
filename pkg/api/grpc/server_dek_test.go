@@ -152,6 +152,9 @@ func (m *mockKMSService) SetKeyPolicy(ctx context.Context, req *service.SetKeyPo
 func (m *mockKMSService) GetKeyPolicy(ctx context.Context, req *service.GetKeyPolicyRequest) (*service.GetKeyPolicyResponse, error) {
 	return nil, nil
 }
+func (m *mockKMSService) DeleteKeyPolicy(ctx context.Context, req *service.DeleteKeyPolicyRequest) (*service.DeleteKeyPolicyResponse, error) {
+	return nil, nil
+}
 func (m *mockKMSService) StartReencryption(ctx context.Context, req *service.StartReencryptionRequest) (*service.StartReencryptionResponse, error) {
 	return nil, nil
 }
@@ -184,6 +187,18 @@ func (m *mockKMSService) SafetyReport(ctx context.Context, req *service.SafetyRe
 }
 
 func (m *mockKMSService) SetDefaultKey(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockKMSService) SetKeyRotationPolicy(ctx context.Context, req *service.SetKeyRotationPolicyRequest) (*service.SetKeyRotationPolicyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockKMSService) GetKeyRotationPolicy(ctx context.Context, req *service.GetKeyRotationPolicyRequest) (*service.GetKeyRotationPolicyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockKMSService) DeleteKeyRotationPolicy(ctx context.Context, req *service.DeleteKeyRotationPolicyRequest) (*service.DeleteKeyRotationPolicyResponse, error) {
 	return nil, nil
 }
 

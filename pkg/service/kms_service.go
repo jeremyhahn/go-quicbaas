@@ -157,6 +157,48 @@ type KMSService interface {
 	//   - error: ErrNotFound, ErrUnauthorized, ErrTimeout
 	GetKeyPolicy(ctx context.Context, req *GetKeyPolicyRequest) (*GetKeyPolicyResponse, error)
 
+	// DeleteKeyPolicy removes the access control policy for a key, restoring the
+	// default-allow-all behaviour for authenticated principals.
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Delete key policy request with key ID
+	// Returns:
+	//   - DeleteKeyPolicyResponse: Confirms deletion with timestamp
+	//   - error: ErrNotFound, ErrUnauthorized, ErrTimeout
+	DeleteKeyPolicy(ctx context.Context, req *DeleteKeyPolicyRequest) (*DeleteKeyPolicyResponse, error)
+
+	// SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+	// When AutoRotate is true, Interval must be positive (>0). NextRotation is
+	// computed from Interval relative to now when not explicitly supplied.
+	// This operation is gated by per-key authorization (key-management level).
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Set rotation policy request with key ID and policy
+	// Returns:
+	//   - SetKeyRotationPolicyResponse: Contains the stored policy with computed NextRotation
+	//   - error: ErrNotFound, ErrInvalidInput (AutoRotate with zero Interval), ErrUnauthorized
+	SetKeyRotationPolicy(ctx context.Context, req *SetKeyRotationPolicyRequest) (*SetKeyRotationPolicyResponse, error)
+
+	// GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+	// Returns (policy=nil) when no rotation policy has been configured.
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Get rotation policy request with key ID
+	// Returns:
+	//   - GetKeyRotationPolicyResponse: Contains the current policy or nil
+	//   - error: ErrNotFound, ErrUnauthorized, ErrTimeout
+	GetKeyRotationPolicy(ctx context.Context, req *GetKeyRotationPolicyRequest) (*GetKeyRotationPolicyResponse, error)
+
+	// DeleteKeyRotationPolicy removes the rotation policy for a key, disabling
+	// automatic rotation. The scheduler will no longer rotate the key.
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Delete rotation policy request with key ID
+	// Returns:
+	//   - DeleteKeyRotationPolicyResponse: Confirms removal with timestamp
+	//   - error: ErrNotFound, ErrUnauthorized, ErrTimeout
+	DeleteKeyRotationPolicy(ctx context.Context, req *DeleteKeyRotationPolicyRequest) (*DeleteKeyRotationPolicyResponse, error)
+
 	// ==========================================================================
 	// DEK (Data Encryption Key) Operations
 	// ==========================================================================

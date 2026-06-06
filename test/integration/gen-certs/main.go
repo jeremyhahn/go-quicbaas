@@ -18,6 +18,7 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -27,6 +28,13 @@ const (
 	nodeCount     = 5
 	caValidYears  = 5
 	nodeValidDays = 365
+
+	// spiffeTrustDomain is the trust domain embedded in the tenant-scoped SPIFFE
+	// URI SAN of integration client certificates. After the login hard cutover,
+	// PIV/bearer login derives the tenant from this SAN
+	// (spiffe://<td>/tenant/<id>/<kind>/<name>); the daemon leaves its pinned
+	// trust domain empty in tests, so any trust domain here is accepted.
+	spiffeTrustDomain = "quicbaas.integration"
 )
 
 // CertGenerationError represents a failure during certificate generation.
@@ -103,8 +111,9 @@ func main() {
 	for i := 1; i <= nodeCount; i++ {
 		hostname := fmt.Sprintf("test-node%d", i)
 		alias := fmt.Sprintf("node%d", i)
+		dockerAlias := fmt.Sprintf("quicbaas-node%d", i)
 
-		nodeCertDER, nodeKeyDER, err := generateNodeCert(caKey, caCert, hostname, alias)
+		nodeCertDER, nodeKeyDER, err := generateNodeCert(caKey, caCert, hostname, alias, dockerAlias)
 		if err != nil {
 			log.Fatalf("Failed to generate node%d certificate: %v", i, err)
 		}
@@ -130,7 +139,7 @@ func main() {
 	// bootstrap admin's email; the cluster's bootstrap path computes the
 	// SHA-256 thumbprint and registers it on the admin user so the PIV login
 	// endpoint can resolve the bearer.
-	adminCertDER, adminKeyDER, err := generateClientCert(caKey, caCert, "admin@integration.test", "admin")
+	adminCertDER, adminKeyDER, err := generateClientCert(caKey, caCert, "admin@integration.test", "admin", "system")
 	if err != nil {
 		log.Fatalf("Failed to generate admin client certificate: %v", err)
 	}
@@ -213,8 +222,12 @@ func generateCA() (*ecdsa.PrivateKey, []byte, *x509.Certificate, error) {
 }
 
 // generateNodeCert creates a leaf certificate signed by the CA for a cluster node.
+// hostname is the canonical hostname (e.g. "test-node1"), alias is the short name
+// (e.g. "node1"), and dockerAlias is the Docker service name (e.g. "quicbaas-node1").
+// All three are added as SANs so the certificate is valid for both local testing
+// and Docker Compose deployments.
 // It returns the DER-encoded certificate and the DER-encoded private key.
-func generateNodeCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, hostname, alias string) ([]byte, []byte, error) {
+func generateNodeCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, hostname, alias, dockerAlias string) ([]byte, []byte, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, &CertGenerationError{
@@ -247,6 +260,7 @@ func generateNodeCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, hostnam
 			"localhost",
 			hostname,
 			alias,
+			dockerAlias,
 		},
 		IPAddresses: []net.IP{
 			net.ParseIP("127.0.0.1"),
@@ -280,7 +294,7 @@ func generateNodeCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, hostnam
 // TLS client auth and PIV login: ClientAuth ExtKeyUsage, the principal's
 // email/UPN in Subject CommonName, and the email also placed in the SAN
 // EmailAddresses list so server-side identity resolvers can read it.
-func generateClientCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, email, friendlyName string) ([]byte, []byte, error) {
+func generateClientCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, email, friendlyName, tenantID string) ([]byte, []byte, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, &CertGenerationError{
@@ -309,6 +323,19 @@ func generateClientCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, email
 			x509.ExtKeyUsageClientAuth,
 		},
 		EmailAddresses: []string{email},
+	}
+
+	// After the login hard cutover, the tenant is derived from a tenant-scoped
+	// SPIFFE URI SAN. Embedding it here lets PIV/bearer login (e.g. the MCP
+	// multiprotocol client) resolve the tenant from the client certificate.
+	// Adding a URI SAN does not change the SubjectPublicKeyInfo, so the cert's
+	// SPKI thumbprint (the cert-binding identifier) is unchanged.
+	if tenantID != "" {
+		template.URIs = []*url.URL{{
+			Scheme: "spiffe",
+			Host:   spiffeTrustDomain,
+			Path:   "/tenant/" + tenantID + "/user/" + friendlyName,
+		}}
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)

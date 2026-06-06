@@ -384,17 +384,7 @@ func (c *restVectorClient) Setup(t *testing.T, ctx context.Context) error {
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
 
 	c.baseURL = endpoints[0]
-	c.client = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.client = helpers.NewHTTPClient(30 * time.Second)
 
 	// Check if vector service is available by calling the health endpoint
 	healthURL := c.baseURL + "/api/v1/vector/health"
@@ -671,7 +661,12 @@ func (c *grpcVectorClient) Setup(t *testing.T, ctx context.Context) error {
 			continue
 		}
 
-		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+		tlsCfg, err := helpers.IntegrationTLSConfig()
+		if err != nil {
+			conn.Close()
+			return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+		}
+		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
 		if err != nil {
 			conn.Close()
 			lastErr = err
@@ -870,11 +865,11 @@ func (c *quicVectorClient) Setup(t *testing.T, ctx context.Context) error {
 
 	addr := endpoints[0]
 
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // Test only
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1148,10 +1143,16 @@ func (c *unixSocketVectorClient) Setup(t *testing.T, ctx context.Context) error 
 		return &qberrors.WrappedMessageError{Message: "unix socket not available at " + socketPath, Cause: err}
 	}
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
+	tlsCfg.ServerName = "localhost"
+
 	// Create gRPC connection over unix socket
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
@@ -1159,7 +1160,7 @@ func (c *unixSocketVectorClient) Setup(t *testing.T, ctx context.Context) error 
 	}
 	c.conn = conn
 
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		conn.Close()
 		return &qberrors.WrappedMessageError{Message: "failed to create gRPC client over unix socket", Cause: err}
@@ -1323,17 +1324,7 @@ func (c *mcpVectorClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.endpoint = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 	c.nextID = 1
 
 	// Verify MCP endpoint via initialize
@@ -1393,7 +1384,6 @@ func (c *mcpVectorClient) authenticate(ctx context.Context) error {
 
 	return nil
 }
-
 
 func (c *mcpVectorClient) Teardown(t *testing.T) error {
 	c.httpClient = nil
@@ -1476,7 +1466,7 @@ func (c *mcpVectorClient) CreateNamespace(ctx context.Context, name string, dime
 	if metric != "" {
 		args["metric"] = metric
 	}
-	_, err := c.callMCPTool(ctx, "quicbaas_vector_create_namespace", args)
+	_, err := c.callMCPTool(ctx, "qrdb_vector_create_namespace", args)
 	return err
 }
 
@@ -1484,7 +1474,7 @@ func (c *mcpVectorClient) DeleteNamespace(ctx context.Context, name string) erro
 	args := map[string]interface{}{
 		"name": name,
 	}
-	_, err := c.callMCPTool(ctx, "quicbaas_vector_delete_namespace", args)
+	_, err := c.callMCPTool(ctx, "qrdb_vector_delete_namespace", args)
 	return err
 }
 
@@ -1497,7 +1487,7 @@ func (c *mcpVectorClient) UpsertVector(ctx context.Context, namespace string, id
 	if len(metadata) > 0 {
 		args["metadata"] = metadata
 	}
-	_, err := c.callMCPTool(ctx, "quicbaas_vector_upsert", args)
+	_, err := c.callMCPTool(ctx, "qrdb_vector_upsert", args)
 	return err
 }
 
@@ -1507,7 +1497,7 @@ func (c *mcpVectorClient) GetVector(ctx context.Context, namespace string, id st
 		"id":        id,
 	}
 
-	result, err := c.callMCPTool(ctx, "quicbaas_vector_get", args)
+	result, err := c.callMCPTool(ctx, "qrdb_vector_get", args)
 	if err != nil {
 		return nil, err
 	}
@@ -1537,7 +1527,7 @@ func (c *mcpVectorClient) DeleteVector(ctx context.Context, namespace string, id
 		"namespace": namespace,
 		"id":        id,
 	}
-	_, err := c.callMCPTool(ctx, "quicbaas_vector_delete", args)
+	_, err := c.callMCPTool(ctx, "qrdb_vector_delete", args)
 	return err
 }
 

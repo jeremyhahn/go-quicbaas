@@ -16,28 +16,17 @@
 package observability
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // e2eHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var e2eHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-		TLSHandshakeTimeout: 10 * time.Second,
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-	},
-}
+var e2eHTTPClient = helpers.NewHTTPClient(30 * time.Second)
 
 // TestMetricsCardinality validates that metric cardinality is within bounds
 func TestMetricsCardinality(t *testing.T) {

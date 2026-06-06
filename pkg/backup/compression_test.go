@@ -1980,13 +1980,17 @@ func TestCreateBackup_EncryptorError(t *testing.T) {
 }
 
 // TestCreateBackup_NilNodeInfo tests CreateBackup when Raft node info is nil.
+// nil GetNodeHostInfo now succeeds with zero shards (graceful degradation).
 func TestCreateBackup_NilNodeInfo(t *testing.T) {
 	manager, _, _ := setupTestBackupManager(t)
 	manager.raft = &mockRaftNodeNilInfo{}
 
 	ctx := context.Background()
-	_, err := manager.CreateBackup(ctx, BackupTypeFull)
-	assert.Error(t, err, "should fail when node info is nil")
+	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
+	assert.NoError(t, err, "nil node info should produce a zero-shard backup")
+	if err == nil {
+		assert.Equal(t, 0, backup.Metadata.NumShards)
+	}
 }
 
 // TestRestoreBackup_DecryptError tests RestoreBackup when the backup

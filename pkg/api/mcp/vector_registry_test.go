@@ -389,7 +389,7 @@ func TestVectorCreateNamespace_Success(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_create_namespace", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_create_namespace", tc.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -425,7 +425,7 @@ func TestVectorCreateNamespace_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			registry := newVectorRegistry(t)
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_create_namespace", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_create_namespace", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -453,7 +453,7 @@ func TestVectorDeleteNamespace_Success(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_delete_namespace", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_delete_namespace", tc.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -468,7 +468,7 @@ func TestVectorDeleteNamespace_MissingNamespace(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_delete_namespace", map[string]interface{}{})
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_delete_namespace", map[string]interface{}{})
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "namespace")
@@ -498,7 +498,7 @@ func TestVectorListNamespaces_Success(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_list_namespaces", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_list_namespaces", tc.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -514,7 +514,7 @@ func TestVectorGetNamespaceInfo_Success(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_get_namespace_info", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_get_namespace_info", map[string]interface{}{
 		"namespace": "test-ns",
 	})
 	require.NoError(t, err)
@@ -531,7 +531,7 @@ func TestVectorGetNamespaceInfo_MissingNamespace(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_get_namespace_info", map[string]interface{}{})
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_get_namespace_info", map[string]interface{}{})
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "namespace")
@@ -632,7 +632,7 @@ func TestVectorUpsert_Success(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_upsert", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_upsert", tc.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -682,7 +682,7 @@ func TestVectorUpsert_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			registry := newVectorRegistry(t)
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_upsert", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_upsert", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -700,7 +700,7 @@ func TestVectorBatchUpsert_Success(t *testing.T) {
 	}
 	vectorsJSON, _ := json.Marshal(vectors)
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_batch_upsert", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_batch_upsert", map[string]interface{}{
 		"namespace": "test-ns",
 		"vectors":   string(vectorsJSON),
 	})
@@ -741,7 +741,7 @@ func TestVectorBatchUpsert_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			registry := newVectorRegistry(t)
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_batch_upsert", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_batch_upsert", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -753,7 +753,7 @@ func TestVectorGet_Success(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_get", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_get", map[string]interface{}{
 		"namespace":        "test-ns",
 		"id":               "vec-1",
 		"include_vector":   true,
@@ -791,7 +791,7 @@ func TestVectorGet_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			registry := newVectorRegistry(t)
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_get", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_get", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -803,7 +803,7 @@ func TestVectorDelete_Success(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_delete", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_delete", map[string]interface{}{
 		"namespace": "test-ns",
 		"id":        "vec-1",
 	})
@@ -838,7 +838,7 @@ func TestVectorDelete_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			registry := newVectorRegistry(t)
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_delete", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_delete", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -900,7 +900,7 @@ func TestVectorUpdateMetadata_Success(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_update_metadata", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_update_metadata", tc.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -989,7 +989,7 @@ func TestVectorUpdateMetadata_Errors(t *testing.T) {
 			} else {
 				registry = newVectorRegistry(t)
 			}
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_update_metadata", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_update_metadata", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -1004,7 +1004,7 @@ func TestVectorBatchDelete_Success(t *testing.T) {
 	ids := []string{"vec-1", "vec-2", "vec-3"}
 	idsJSON, _ := json.Marshal(ids)
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_batch_delete", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_batch_delete", map[string]interface{}{
 		"namespace": "test-ns",
 		"ids":       string(idsJSON),
 	})
@@ -1044,7 +1044,7 @@ func TestVectorBatchDelete_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			registry := newVectorRegistry(t)
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_batch_delete", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_batch_delete", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -1056,7 +1056,7 @@ func TestVectorList_Success(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_list", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_list", map[string]interface{}{
 		"namespace": "test-ns",
 	})
 	require.NoError(t, err)
@@ -1071,7 +1071,7 @@ func TestVectorList_MissingNamespace(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_list", map[string]interface{}{})
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_list", map[string]interface{}{})
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "namespace")
@@ -1150,7 +1150,7 @@ func TestVectorSearchSimilar_Success(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_search_similar", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_search_similar", tc.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -1190,7 +1190,7 @@ func TestVectorSearchSimilar_Errors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			registry := newVectorRegistry(t)
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_search_similar", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_search_similar", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -1234,7 +1234,7 @@ func TestVectorSearchByID_Success(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_search_by_id", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_search_by_id", tc.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -1299,7 +1299,7 @@ func TestVectorSearchByID_Errors(t *testing.T) {
 			} else {
 				registry = newVectorRegistry(t)
 			}
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_search_by_id", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_search_by_id", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -1397,7 +1397,7 @@ func TestVectorRebuildIndex_Success(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_vector_rebuild_index", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_vector_rebuild_index", tc.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -1413,7 +1413,7 @@ func TestVectorRebuildIndex_MissingNamespace(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_rebuild_index", map[string]interface{}{})
+	result, err := registry.ExecuteTool(ctx, "qrdb_vector_rebuild_index", map[string]interface{}{})
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "namespace")
@@ -1529,14 +1529,14 @@ func TestVectorTools_ServiceUnavailable(t *testing.T) {
 	ctx := context.Background()
 
 	vectorTools := []string{
-		"quicbaas_vector_create_namespace",
-		"quicbaas_vector_delete_namespace",
-		"quicbaas_vector_list_namespaces",
-		"quicbaas_vector_get_namespace_info",
-		"quicbaas_vector_upsert",
-		"quicbaas_vector_get",
-		"quicbaas_vector_delete",
-		"quicbaas_vector_search_similar",
+		"qrdb_vector_create_namespace",
+		"qrdb_vector_delete_namespace",
+		"qrdb_vector_list_namespaces",
+		"qrdb_vector_get_namespace_info",
+		"qrdb_vector_upsert",
+		"qrdb_vector_get",
+		"qrdb_vector_delete",
+		"qrdb_vector_search_similar",
 	}
 
 	for _, toolName := range vectorTools {
@@ -1581,9 +1581,9 @@ func TestHashStringToID(t *testing.T) {
 
 func TestIsVectorTool(t *testing.T) {
 	vectorTools := []string{
-		"quicbaas_vector_upsert",
-		"quicbaas_vector_get",
-		"quicbaas_vector_search_similar",
+		"qrdb_vector_upsert",
+		"qrdb_vector_get",
+		"qrdb_vector_search_similar",
 		"quicbaas_vector_admin_compact_namespace",
 	}
 
@@ -1594,8 +1594,8 @@ func TestIsVectorTool(t *testing.T) {
 	}
 
 	nonVectorTools := []string{
-		"quicbaas_put",
-		"quicbaas_get",
+		"qrdb_put",
+		"qrdb_get",
 		"quicbaas_embedding_generate",
 	}
 

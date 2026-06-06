@@ -19,7 +19,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/vector/gpu"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -44,7 +44,7 @@ func TestGPUIndexFactory_CreateIndex_ReturnsStubError(t *testing.T) {
 	if idx != nil {
 		t.Error("expected nil VectorIndex from stub factory")
 	}
-	if !errors.Is(err, gpu.ErrGPUNotCompiled) {
+	if !errors.Is(err, qrdbsdk.ErrGPUNotCompiled) {
 		t.Errorf("expected ErrGPUNotCompiled, got: %v", err)
 	}
 }

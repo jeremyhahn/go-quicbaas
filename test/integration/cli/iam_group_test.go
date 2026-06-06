@@ -402,7 +402,7 @@ func TestIAMGroupMembership(t *testing.T) {
 		// Create a user so that it exists before adding to group.
 		createUserCmd := CommandDef{
 			Name:           fmt.Sprintf("iam user create %s", userEmail),
-			Args:           []string{"iam", "user", "create", userEmail, "--tenant", tenantID, "--name", "MembershipUser", "--password", "TestPass123!", "--output", "json"},
+			Args:           []string{"iam", "user", "create", userEmail, "--tenant", tenantID, "--name", "MembershipUser", "--output", "json"},
 			ExpectSuccess:  true,
 			Timeout:        10 * time.Second,
 			SkipTransports: iamTransportsToSkip,

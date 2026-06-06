@@ -1321,19 +1321,16 @@ func TestGRPCTLSOption_DefaultTLS(t *testing.T) {
 	savedCert := tlsCert
 	savedKey := tlsKey
 	savedCA := tlsCA
-	savedSkip := tlsSkipVerify
 	defer func() {
 		tlsCert = savedCert
 		tlsKey = savedKey
 		tlsCA = savedCA
-		tlsSkipVerify = savedSkip
 	}()
 
-	// Default: no cert, no key, no CA, no skip
+	// Default: no cert, no key, no CA
 	tlsCert = ""
 	tlsKey = ""
 	tlsCA = ""
-	tlsSkipVerify = false
 
 	opts := grpcTLSOption()
 	assert.NotEmpty(t, opts, "should return default TLS option")
@@ -1343,18 +1340,15 @@ func TestGRPCTLSOption_WithCertAndKey(t *testing.T) {
 	savedCert := tlsCert
 	savedKey := tlsKey
 	savedCA := tlsCA
-	savedSkip := tlsSkipVerify
 	defer func() {
 		tlsCert = savedCert
 		tlsKey = savedKey
 		tlsCA = savedCA
-		tlsSkipVerify = savedSkip
 	}()
 
 	tlsCert = "/path/to/cert.pem"
 	tlsKey = "/path/to/key.pem"
 	tlsCA = ""
-	tlsSkipVerify = false
 
 	opts := grpcTLSOption()
 	assert.NotEmpty(t, opts, "should return TLS option with cert/key")
@@ -1364,42 +1358,18 @@ func TestGRPCTLSOption_WithCAOnly(t *testing.T) {
 	savedCert := tlsCert
 	savedKey := tlsKey
 	savedCA := tlsCA
-	savedSkip := tlsSkipVerify
 	defer func() {
 		tlsCert = savedCert
 		tlsKey = savedKey
 		tlsCA = savedCA
-		tlsSkipVerify = savedSkip
 	}()
 
 	tlsCert = ""
 	tlsKey = ""
 	tlsCA = "/path/to/ca.pem"
-	tlsSkipVerify = false
 
 	opts := grpcTLSOption()
 	assert.NotEmpty(t, opts, "should return TLS option with CA only")
-}
-
-func TestGRPCTLSOption_SkipVerify(t *testing.T) {
-	savedCert := tlsCert
-	savedKey := tlsKey
-	savedCA := tlsCA
-	savedSkip := tlsSkipVerify
-	defer func() {
-		tlsCert = savedCert
-		tlsKey = savedKey
-		tlsCA = savedCA
-		tlsSkipVerify = savedSkip
-	}()
-
-	tlsCert = ""
-	tlsKey = ""
-	tlsCA = ""
-	tlsSkipVerify = true
-
-	opts := grpcTLSOption()
-	assert.NotEmpty(t, opts, "should return TLS option with skip verify")
 }
 
 // --------------------------------------------------------------------------

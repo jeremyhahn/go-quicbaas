@@ -237,6 +237,22 @@ func (s *testKMSService) GetPublicKey(_ context.Context, _ *service.GetPublicKey
 	return nil, nil
 }
 
+func (s *testKMSService) DeleteKeyPolicy(_ context.Context, _ *service.DeleteKeyPolicyRequest) (*service.DeleteKeyPolicyResponse, error) {
+	return nil, nil
+}
+
+func (s *testKMSService) SetKeyRotationPolicy(_ context.Context, _ *service.SetKeyRotationPolicyRequest) (*service.SetKeyRotationPolicyResponse, error) {
+	return nil, nil
+}
+
+func (s *testKMSService) GetKeyRotationPolicy(_ context.Context, _ *service.GetKeyRotationPolicyRequest) (*service.GetKeyRotationPolicyResponse, error) {
+	return nil, nil
+}
+
+func (s *testKMSService) DeleteKeyRotationPolicy(_ context.Context, _ *service.DeleteKeyRotationPolicyRequest) (*service.DeleteKeyRotationPolicyResponse, error) {
+	return nil, nil
+}
+
 // testCryptoService implements service.CryptoService for testing.
 type testCryptoService struct {
 	encryptResp *service.EncryptResponse

@@ -17,8 +17,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -26,6 +24,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,39 +32,39 @@ import (
 
 	ggrpc "google.golang.org/grpc"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 type iamComponents struct {
-	tenantManager          iam.TenantManager
-	identityStore          *iam.IdentityStore
-	policyEngine           *iam.PolicyEngine
-	appManager             *iam.AppManager
-	appStorage             iam.AppStorage
-	oidcProvider           *iam.OIDCProvider
-	federationManager      iam.FederationManager
-	mfaManager             *iam.DefaultMFAManager
-	webauthnManager        *iam.XKMSWebAuthnManager
-	auditLogger            iam.AuditLogger
-	adminManager           *iam.AdminManager
-	gdprManager            *iam.GDPRManager
-	sessionStorage         iam.SessionStorage
-	sessionManager         iam.SessionManager
-	authManager            *inMemoryAuthManagerAdapter
-	inviteStore            iam.InviteStore
+	tenantManager     iam.TenantManager
+	identityStore     *iam.IdentityStore
+	policyEngine      *iam.PolicyEngine
+	appManager        *iam.AppManager
+	appStorage        iam.AppStorage
+	oidcProvider      *iam.OIDCProvider
+	federationManager iam.FederationManager
+	mfaManager        *iam.DefaultMFAManager
+	webauthnManager   *iam.XKMSWebAuthnManager
+	auditLogger       iam.AuditLogger
+	adminManager      *iam.AdminManager
+	gdprManager       *iam.GDPRManager
+	sessionStorage    iam.SessionStorage
+	sessionManager    iam.SessionManager
+	authManager       *inMemoryAuthManagerAdapter
+	inviteStore       iam.InviteStore
 }
 
 // inMemoryAuthManagerAdapter wraps InMemoryAuthManager to implement service.AuthManagerInterface.
@@ -201,6 +200,26 @@ func (c *iamComponents) GetFederationManager() iam.FederationManager {
 	return c.federationManager
 }
 
+// OperatorSSORegistrar returns the registrar used to configure operator (system
+// tenant) external IdPs. Operator SSO is an ADDITIVE login path: operators MAY
+// log into quicbaas via an OIDC provider registered for the system tenant, but
+// the local-factor (mTLS/WebAuthn/PIV) admin login remains the always-available
+// bootstrap + break-glass path and never routes through this registrar.
+//
+// The registrar enforces the bootstrap-ordering invariant: a system-tenant IdP
+// can only be configured once the bootstrap admin exists (no admin -> can't
+// configure Okta). It returns an error when federation is unavailable or the
+// admin manager is absent.
+func (c *iamComponents) OperatorSSORegistrar() (*iam.OperatorSSORegistrar, error) {
+	if c.federationManager == nil {
+		return nil, &IAMComponentInitError{Component: "operator SSO registrar (federation unavailable)"}
+	}
+	if c.adminManager == nil {
+		return nil, &IAMComponentInitError{Component: "operator SSO registrar (admin manager unavailable)"}
+	}
+	return iam.NewOperatorSSORegistrar(c.federationManager, c.adminManager)
+}
+
 // GetMFAManager returns the MFA manager.
 func (c *iamComponents) GetMFAManager() service.MFAManager {
 	return c.mfaManager
@@ -283,38 +302,47 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 
 	s.logger.Info("Initializing IAM components...")
 
-	// Create the base in-memory storage that satisfies TenantStorage,
-	// UserStorage, GroupStorage, RoleStorage, PolicyStorage, AppStorage,
-	// and TokenStorage interfaces.
-	memStorage := iam.NewMemoryStorage()
+	// Build the IAM KVStore. When the qrdb node exposes a per-tenant
+	// StoreResolver (seal enabled with a barrier registry), every IAM
+	// operation is routed to the store backing the context tenant: a
+	// barrier-isolated tenant's IAM data (policies, apps, users, groups,
+	// roles, sessions, tokens, invites, admin assignments) lands in that
+	// tenant's own TenantBarrier-backed store (own DEK + namespace), while a
+	// prefix / system / legacy tenant uses the shared store. A sealed barrier
+	// tenant fails closed (tenant.ErrTenantSealed) with no shared fallback.
+	// When no resolver is available (seal disabled) the store is the shared
+	// platform shard, preserving prior single-store behaviour.
+	//
+	// Routing is done at the KVStore seam so the IAM BackendStorage (and the
+	// Admin / Impersonation / Invite Backend stores) need no interface change:
+	// they each see one interfaces.KVStore. The platform shard is the
+	// canonical IAM shard per the architecture docs (qbshards.PlatformShardID).
+	iamKV := s.iamTenantKVStore()
 
-	// Create tenant manager backed by the memory storage
-	tenantManager := iam.NewDefaultTenantManager(memStorage)
+	// Create the persistent IAM storage. The store satisfies TenantStorage,
+	// UserStorage, GroupStorage, RoleStorage, PolicyStorage, AppStorage, and
+	// TokenStorage so every IAM mutation survives daemon restarts.
+	backendStorage := iam.NewBackendStorage(iamKV)
 
-	// Wire the hardware-backed TenantDEKManager when KMS is available.
-	// The DEK provisioner ensures each tenant receives a dedicated DEK on
-	// creation and that the DEK is destroyed on deletion.
-	if s.kmsManager != nil {
-		// Ensure the KEK used to wrap tenant DEKs exists in KMS. On a fresh
-		// server this is the first write into the key store, so we create it
-		// lazily rather than requiring operators to run a pre-start bootstrap
-		// command. Idempotent: GetKey is only called once and any "already
-		// exists" error is swallowed.
-		if err := s.ensureTenantDEKMasterKey(context.Background()); err != nil {
-			s.logger.WithError(err).Warn("Failed to ensure tenant DEK master key — tenant provisioning will fail until this key exists")
+	// Create tenant manager backed by the persistent IAM storage
+	tenantManager := iam.NewDefaultTenantManager(backendStorage)
+
+	// Wire the qrdb engine's TenantServicer so CreateTenant/DeleteTenant
+	// initialise barrier, DEK, and quotas on the engine side BEFORE BaaS
+	// metadata is written. This is the correctness gap identified in Phase D.5:
+	// without this wiring, per-tenant barrier init and DEK lifecycle never fire.
+	if s.qrdbNode != nil {
+		if svcs := s.qrdbNode.Services(); svcs != nil && svcs.Tenant != nil {
+			tenantManager.SetQRDBTenantProvisioner(newQRDBTenantProvisionerAdapter(svcs.Tenant))
+			s.logger.Info("qrdb TenantServicer wired into IAM tenant lifecycle (barrier+DEK+quota)")
 		}
-		dekStore := s.GetKVStore(qbshards.PlatformShardID)
-		dekMgr := security.NewTenantDEKManager(s.kmsManager, dekStore, security.TenantDEKMasterKeyID, logger.NewAdapter(s.logger))
-		tenantManager.SetDEKProvisioner(security.NewTenantDEKProvisioner(dekMgr))
-		s.tenantDEKManager = dekMgr
-		s.logger.Info("TenantDEKManager wired into tenant lifecycle")
 	}
 
 	// Create identity store with storage backends
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage:  backendStorage,
+		GroupStorage: backendStorage,
+		RoleStorage:  backendStorage,
 		Tenants:      tenantManager,
 	})
 
@@ -326,22 +354,32 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		BloomFilterHashes: 7,
 	})
 	policyEngine := iam.NewPolicyEngine(iam.PolicyEngineOptions{
-		Storage: memStorage,
+		Storage: backendStorage,
 		Cache:   policyCache,
 	})
 
 	// Create app manager
-	appManager := iam.NewAppManager(memStorage, tenantManager)
+	appManager := iam.NewAppManager(backendStorage, tenantManager)
 
-	// Create audit logger with default in-memory storage
-	auditLogger, err := iam.NewAuditLogger()
+	// Create audit logger backed by the persistent, per-tenant KVStore so audit
+	// events survive daemon restarts and are encrypted-at-rest in the owning
+	// tenant's barrier (a barrier-isolated tenant's events live in its own
+	// store, never a global table). This mirrors the session/MFA backend stores
+	// above; the in-memory store remains the NewAuditLogger default for
+	// non-backend contexts (e.g. tests, embedded callers without a KVStore).
+	auditLogger, err := iam.NewAuditLogger(
+		iam.WithAuditStorage(iam.NewBackendAuditStorage(iamKV)),
+	)
 	if err != nil {
 		return nil, &IAMComponentInitError{Component: "audit logger", Cause: err}
 	}
 
-	// Create session storage (WebAuthn sessions) and extended session manager
-	sessionStorage := iam.NewMemorySessionStorage()
-	sessionExtStorage := iam.NewMemorySessionExtStorage()
+	// Create session storage (WebAuthn sessions) and extended session manager.
+	// Both route through the per-tenant KVStore so a barrier-isolated tenant's
+	// sessions are stored in its own barrier; the tenant manager enables
+	// per-tenant expiry sweeps without a global cross-tenant scan.
+	sessionStorage := iam.NewBackendSessionStorage(iamKV, tenantManager)
+	sessionExtStorage := iam.NewBackendSessionExtStorage(iamKV, tenantManager)
 	sessionManager, err := iam.NewSessionManager(
 		iam.WithSessionStorage(sessionExtStorage),
 	)
@@ -349,30 +387,50 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		return nil, &IAMComponentInitError{Component: "session manager", Cause: err}
 	}
 
-	// Create OIDC provider with an ephemeral RSA signing key.
-	// In production, the signing key should come from KMS.
+	// Create the OIDC provider with an xkms/KMS/HSM-backed ES256 signing key.
+	// The key manager performs get-or-create against xkms (the key persists in
+	// the configured keystore across restarts), derives a stable kid from the
+	// key's public SPKI, and supports rotation with a JWKS overlap window.
+	// If xkms is unavailable or the key cannot be built we log a warning and
+	// leave the OIDC provider nil (graceful degradation) rather than panic.
 	var oidcProvider *iam.OIDCProvider
-	signingKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	signingKeyManager, err := iam.NewSigningKeyManagerFromXKMS(iam.OIDCSigningKeyCN, "")
 	if err != nil {
-		s.logger.WithError(err).Warn("Failed to generate OIDC signing key, OIDC provider will be unavailable")
+		s.logger.WithError(err).Warn("Failed to initialize xkms-backed OIDC signing key, OIDC provider will be unavailable")
 	} else {
 		issuerURL := s.getIssuerURL()
+		// Per-tenant signing-key resolver: dedicated tenants are signed with
+		// their own ES256 key (own kid) under the same single broker issuer;
+		// every other tenant uses the global key. The aggregated JWKS publishes
+		// every active kid. Cache rebuilds when a tenant's settings change.
+		tenantSigningKeys, tkErr := iam.NewTenantSigningKeyResolver(
+			signingKeyManager, iam.NewTenantManagerOIDCSettings(tenantManager))
+		if tkErr != nil {
+			s.logger.WithError(tkErr).Warn("iam.oidc: per-tenant signing-key resolver unavailable; using global key only")
+		} else {
+			tenantManager.AddSettingsObserver(tenantSigningKeys)
+		}
 		oidcProvider, err = iam.NewOIDCProvider(
 			&iam.OIDCConfig{
-				Issuer:           issuerURL,
-				SigningAlgorithm: "RS256",
-				SigningKey:       signingKey,
-				AccessTokenTTL:   1 * time.Hour,
-				RefreshTokenTTL:  7 * 24 * time.Hour,
-				IDTokenTTL:       1 * time.Hour,
-				AuthCodeTTL:      10 * time.Minute,
-				PKCERequired:     true,
-				AllowedMethods:   []string{"S256"},
+				Issuer:            issuerURL,
+				SigningAlgorithm:  iam.SigningAlgorithmES256,
+				SigningKeyManager: signingKeyManager,
+				TenantSigningKeys: tenantSigningKeys,
+				// Phase 6: the platform access token is short-lived (5-15 min
+				// window). 15 minutes is the upper bound of the allowed range,
+				// balancing replay exposure against re-mint churn. Refresh and
+				// ID tokens keep their longer lifetimes.
+				AccessTokenTTL:  15 * time.Minute,
+				RefreshTokenTTL: 7 * 24 * time.Hour,
+				IDTokenTTL:      1 * time.Hour,
+				AuthCodeTTL:     10 * time.Minute,
+				PKCERequired:    true,
+				AllowedMethods:  []string{"S256"},
 			},
 			iam.OIDCDependencies{
 				IdentityStore: identityStore,
-				AppStorage:    memStorage,
-				TokenStorage:  memStorage,
+				AppStorage:    backendStorage,
+				TokenStorage:  backendStorage,
 			},
 		)
 		if err != nil {
@@ -383,8 +441,8 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 
 	// Create MFA manager with in-memory storage
 	mfaManager, err := iam.NewMFAManager(
-		iam.WithMFAStorage(iam.NewMemoryMFAStorage()),
-		iam.WithUserStorage(memStorage),
+		iam.WithMFAStorage(iam.NewBackendMFAStorage(iamKV, tenantManager)),
+		iam.WithUserStorage(backendStorage),
 	)
 	if err != nil {
 		return nil, &IAMComponentInitError{Component: "MFA manager", Cause: err}
@@ -400,13 +458,17 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 			s.logger.WithError(qrdbErr).Warn("iam.webauthn: qrdb client unavailable; WebAuthn surface disabled")
 		} else {
 			factoryParams := iam.WebAuthnFactoryParams{
-				Config: webauthnFactoryConfigFromOperator(s.config.IAM.WebAuthn),
-				QRDB:   platformQRDB,
+				Config:   webauthnFactoryConfigFromOperator(s.config.IAM.WebAuthn),
+				QRDB:     platformQRDB,
+				Settings: iam.NewTenantManagerWebAuthnSettings(tenantManager),
 			}
 			factory, fErr := iam.NewWebAuthnServiceFactory(factoryParams)
 			if fErr != nil {
 				s.logger.WithError(fErr).Warn("iam.webauthn: factory construction failed; WebAuthn surface disabled")
 			} else {
+				// Rebuild a tenant's cached WebAuthn RP service when its
+				// settings change (e.g. RPID/origin update).
+				tenantManager.AddSettingsObserver(factory)
 				mgr, mErr := iam.NewXKMSWebAuthnManager(factory)
 				if mErr != nil {
 					s.logger.WithError(mErr).Warn("iam.webauthn: manager construction failed; WebAuthn surface disabled")
@@ -424,10 +486,13 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		}
 	}
 
-	// Create admin manager
+	// Create admin manager. AdminStorage is persistent because firstBootBootstrap
+	// uses ListAssignments to detect whether init has already run — switching
+	// back to an in-memory store would break the idempotency contract across
+	// restarts and cause duplicate bootstrap admin users.
 	adminManager, err := iam.NewAdminManager(iam.AdminManagerOptions{
-		AdminStorage:         iam.NewMemoryAdminStorage(),
-		ImpersonationStorage: iam.NewMemoryImpersonationStorage(),
+		AdminStorage:         iam.NewBackendAdminStorage(iamKV),
+		ImpersonationStorage: iam.NewBackendImpersonationStorage(iamKV),
 		AuditLogger:          auditLogger,
 	})
 	if err != nil {
@@ -436,13 +501,13 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 
 	// Create GDPR manager
 	gdprManager, err := iam.NewGDPRManager(iam.GDPRManagerDependencies{
-		ConsentStorage:    iam.NewMemoryConsentStorage(),
-		DataExportStorage: iam.NewMemoryDataExportStorage(),
-		DeletionStorage:   iam.NewMemoryDeletionStorage(),
-		UserStorage:       memStorage,
+		ConsentStorage:    iam.NewBackendConsentStorage(iamKV, tenantManager),
+		DataExportStorage: iam.NewBackendDataExportStorage(iamKV, tenantManager),
+		DeletionStorage:   iam.NewBackendDeletionStorage(iamKV, tenantManager),
+		UserStorage:       backendStorage,
 		SessionStorage:    sessionStorage,
-		GroupStorage:      memStorage,
-		RoleStorage:       memStorage,
+		GroupStorage:      backendStorage,
+		RoleStorage:       backendStorage,
 	})
 	if err != nil {
 		return nil, &IAMComponentInitError{Component: "GDPR manager", Cause: err}
@@ -451,9 +516,9 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// Create federation manager
 	var fedMgr iam.FederationManager
 	fedMgr, err = iam.NewFederationManager(
-		iam.WithProviderStorage(iam.NewMemoryProviderStorage()),
-		iam.WithLinkStorage(iam.NewMemoryFederationStorage()),
-		iam.WithStateStorage(iam.NewMemoryStateStorage()),
+		iam.WithProviderStorage(iam.NewBackendProviderStorage(iamKV)),
+		iam.WithLinkStorage(iam.NewBackendFederationStorage(iamKV)),
+		iam.WithStateStorage(iam.NewBackendStateStorage(iamKV, tenantManager)),
 		iam.WithFederationIdentityStore(identityStore),
 		iam.WithFederationOIDCProvider(oidcProvider),
 		iam.WithFederationAuditLogger(auditLogger),
@@ -509,24 +574,27 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		s.orchestratorDaemonClient = orchClient
 	}
 
-	inviteStore := iam.NewMemoryInviteStore()
+	// InviteStore must be persistent: an operator may redeem the first-boot
+	// activation URL minutes or hours after the daemon starts, possibly across
+	// process restarts.
+	inviteStore := iam.NewBackendInviteStore(iamKV)
 
 	components := &iamComponents{
-		tenantManager:          tenantManager,
-		identityStore:          identityStore,
-		policyEngine:           policyEngine,
-		appManager:             appManager,
-		appStorage:             memStorage,
-		oidcProvider:           oidcProvider,
-		federationManager:      fedMgr,
-		mfaManager:             mfaManager,
-		webauthnManager:        webauthnMgr,
-		auditLogger:            auditLogger,
-		adminManager:           adminManager,
-		gdprManager:            gdprManager,
-		sessionStorage:         sessionStorage,
-		sessionManager:         sessionManager,
-		inviteStore:            inviteStore,
+		tenantManager:     tenantManager,
+		identityStore:     identityStore,
+		policyEngine:      policyEngine,
+		appManager:        appManager,
+		appStorage:        backendStorage,
+		oidcProvider:      oidcProvider,
+		federationManager: fedMgr,
+		mfaManager:        mfaManager,
+		webauthnManager:   webauthnMgr,
+		auditLogger:       auditLogger,
+		adminManager:      adminManager,
+		gdprManager:       gdprManager,
+		sessionStorage:    sessionStorage,
+		sessionManager:    sessionManager,
+		inviteStore:       inviteStore,
 	}
 
 	// Configure password-based authentication if enabled
@@ -566,40 +634,27 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// (Default tenant was created earlier, before the orchestrator
 	// daemon-client bootstrap that depends on it.)
 
-	// First-boot bootstrap: when no admin assignments exist, the seal
-	// barrier is enabled, AND password / dev auth are not enabled, create a
-	// pending admin user and print an activation invite so the operator can
-	// register their FIDO2 / PIV credential.
+	// First-boot bootstrap: when no admin assignments exist, create a
+	// pending admin user and print an activation invite so the operator
+	// can register their FIDO2 / PIV credential. Every QuicBaaS server
+	// needs an authenticated admin regardless of whether the encrypted
+	// seal barrier is in use — access control and storage encryption
+	// are independent concerns.
 	//
-	// The barrier-enabled gate matches the design intent: the SO ceremony
-	// exists to gate access to an *encrypted barrier* (and the unseal
-	// quorum that protects its master key). When the barrier is disabled
-	// — the default — there is no sealed material to gate, so the
-	// first-boot ceremony is conceptually a no-op and forcing operators
-	// through it just to bring the daemon up is friction with no
-	// security benefit.
-	//
-	// Operators who later enable the encrypted barrier flip the gate
-	// open by setting seal.enabled=true; the next boot will print the
-	// banner and run the ceremony exactly as before.
-	// The first-boot bootstrap is normally gated on the seal barrier being
-	// enabled (so the SO ceremony has something encrypted to gate). The
-	// non-interactive PIV bootstrap path (BootstrapAdminPIVCertPath) is
-	// independent of the seal barrier — when that path is configured the
-	// operator has explicitly pre-provisioned an admin identity, so run the
-	// bootstrap unconditionally.
+	// The bootstrap is skipped only when another path already provisions
+	// the admin: AllowPasswordAuth (legacy password admin), InsecureDevMode
+	// (dev-mode password admin), or BootstrapAdminPIVCertPath (non-interactive
+	// PIV pre-provisioning). The PIV path is independent of the others and
+	// always runs when configured.
 	pivBootstrap := s.config.Auth.BootstrapAdminPIVCertPath != ""
 	skipBootstrap := (s.config.Auth.AllowPasswordAuth ||
-		s.config.Auth.InsecureDevMode ||
-		!s.config.Seal.Enabled) && !pivBootstrap
+		s.config.Auth.InsecureDevMode) && !pivBootstrap
 	if !skipBootstrap {
 		if bootstrapErr := s.firstBootBootstrap(context.Background(), components); bootstrapErr != nil {
 			// Non-fatal: log the error but do not abort the server. The operator
 			// can fix the cause (e.g., corrupt storage) and restart.
 			s.logger.WithError(bootstrapErr).Warn("First-boot bootstrap failed — no admin credential will be created this boot")
 		}
-	} else if !s.config.Seal.Enabled {
-		s.logger.Info("Seal barrier is disabled — skipping first-boot SO ceremony bootstrap (no encrypted barrier to gate)")
 	}
 
 	s.logger.Info("IAM components initialized successfully")
@@ -626,28 +681,33 @@ var printFirstBootBannerFn = func(w interface{ WriteString(string) (int, error) 
 //
 // The three paths printed by the banner:
 //
-//  (a) Local: `quicbaasd init --barrier-strategy ... --so alice:csr:/path`
-//      runs the init ceremony in-process. On completion the SO certificate's
-//      SPKI thumbprint is bound to the bootstrap admin via
-//      BindAdminToSOCert; an mTLS handshake presenting the SO cert is then
-//      recognized as the admin user.
+//	(a) Local: `quicbaasd init --barrier-strategy ... --so alice:csr:/path`
+//	    runs the init ceremony in-process. On completion the SO certificate's
+//	    SPKI thumbprint is bound to the bootstrap admin via
+//	    BindAdminToSOCert; an mTLS handshake presenting the SO cert is then
+//	    recognized as the admin user.
 //
-//  (b) Remote: `quicbaas init claim-cert/claim-share` walks the operator
-//      through claiming a server-issued certificate from a separate
-//      machine. The CLI is owned by the Phase 12 split-CLI agent.
+//	(b) Remote: `quicbaas init claim-cert/claim-share` walks the operator
+//	    through claiming a server-issued certificate from a separate
+//	    machine. The CLI is owned by the Phase 12 split-CLI agent.
 //
-//  (c) WebAuthn invite URL: kept as a tertiary path for browser-only
-//      operators. The activation URL is generated and printed here; the
-//      invite remains valid for firstBootBootstrapTTL.
+//	(c) WebAuthn invite URL: kept as a tertiary path for browser-only
+//	    operators. The activation URL is generated and printed here; the
+//	    invite remains valid for firstBootBootstrapTTL.
 //
 // On every subsequent boot the admin assignment exists so the function is
 // a no-op.
 func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error {
 	// Detect first boot: any active admin assignment means a prior bootstrap ran.
-	assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{
-		ActiveOnly: true,
-		Limit:      1,
-	})
+	//
+	// On a fresh cluster, IAM init runs before raft consensus is established, so
+	// this read — and the bootstrap writes that follow — initially fail with
+	// "not leader, leader unknown". Wait for a leader to serve the read (bounded
+	// by firstBootLeaderWait) so the one-time admin bootstrap is not silently
+	// skipped on an otherwise-healthy cluster. Once the read succeeds a leader
+	// exists, so the subsequent FirstBootInitialize / PIV-bind writes also
+	// commit through raft.
+	assignments, err := s.waitForAdminAssignmentsCheck(ctx, c)
 	if err != nil {
 		return &FirstBootBootstrapError{Op: "list admin assignments", Cause: err}
 	}
@@ -656,28 +716,31 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 		return nil
 	}
 
-	// Resolve admin email from config; default to "admin@quicbaas.local".
-	// The username (URL-safe identifier) is always "admin" since the identity
-	// store username field must be alphanumeric/dash/underscore only.
-	adminEmail := s.config.Auth.BootstrapAdminUsername
-	if adminEmail == "" {
-		adminEmail = "admin@quicbaas.local"
+	// Delegate tenant + role + admin-user creation to qrdb's canonical
+	// first-boot. This is the SOLE entry point that creates the system
+	// tenant ("system"), registers the six built-in roles, and creates
+	// the platform admin user with Admin@system grant (qrdb's RBAC
+	// system-tenant rule promotes that to cross-tenant authority).
+	// quicbaas IAM-specific concerns (admin assignments, PIV/SO cert
+	// binding) layer on top after first-boot returns. Consumed via the qrdb
+	// SDK (never pkg/firstboot directly).
+	if _, err := qrdbsdk.FirstBootInitialize(ctx, qrdbsdk.FirstBootDependencies{
+		Tenants: qrdbadapter.WrapTenant(c.tenantManager),
+		Roles:   qrdbadapter.WrapRole(c.identityStore),
+		Users:   qrdbadapter.WrapUser(c.identityStore),
+		Logger:  slog.Default(),
+	}); err != nil {
+		return &FirstBootBootstrapError{Op: "firstboot.Initialize", Cause: err}
 	}
 
-	// Create the admin user in pending state inside the default tenant.
-	// The user cannot authenticate until one of the three ceremony paths
-	// completes. AuthMethods includes "mtls" so that path (a) — SO-cert
-	// SPKI binding — is reachable without a follow-up update.
-	user, err := c.identityStore.CreateUser(ctx, "default", iam.CreateUserOptions{
-		Email:        adminEmail,
-		Username:     "admin",
-		Name:         "Bootstrap Admin",
-		Roles:        []string{"admin"},
-		AuthMethods:  []string{"mtls", "webauthn", "piv"},
-		InviteExpiry: firstBootBootstrapTTL,
-	})
+	// Look up the bootstrap admin user first-boot just created (or
+	// confirmed already exists). The adapter synthesizes the email
+	// deterministically; the lookup is reliable.
+	adminTenantID := qrdbsdk.SystemTenantID
+	adminEmail := "admin@" + adminTenantID + ".qrdb.local"
+	user, err := c.identityStore.GetUserByEmail(ctx, adminEmail)
 	if err != nil {
-		return &FirstBootBootstrapError{Op: "create bootstrap admin user", Cause: err}
+		return &FirstBootBootstrapError{Op: "lookup bootstrap admin user", Cause: err}
 	}
 
 	// Grant the user a super_admin assignment so they can issue further invites
@@ -705,7 +768,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	if err := c.inviteStore.Create(ctx, &iam.InviteRecord{
 		TokenHash: iam.TokenHashExported(token),
 		UserID:    user.ID,
-		TenantID:  "default",
+		TenantID:  adminTenantID,
 		ExpiresAt: expiresAt,
 	}); err != nil {
 		return &FirstBootBootstrapError{Op: "store invite token", Cause: err}
@@ -718,7 +781,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	// BindAdminToSOCert call (path a) can find them without re-querying
 	// the identity store.
 	s.bootstrapAdminUserID = user.ID
-	s.bootstrapAdminTenantID = "default"
+	s.bootstrapAdminTenantID = adminTenantID
 
 	// Non-interactive PIV binding (path d, integration test convenience).
 	// When BootstrapAdminPIVCertPath is configured, read the cert, compute
@@ -727,7 +790,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	// for test clusters or pre-provisioned deployments where the cert is
 	// generated alongside the cluster.
 	if path := s.config.Auth.BootstrapAdminPIVCertPath; path != "" {
-		if err := bindAdminPIVCert(ctx, c.identityStore, "default", user.ID, path); err != nil {
+		if err := bindAdminPIVCert(ctx, c.identityStore, adminTenantID, user.ID, path); err != nil {
 			return &FirstBootBootstrapError{Op: "bind bootstrap admin PIV cert", Cause: err}
 		}
 		s.logger.Infof("Bootstrap admin %s bound to PIV cert at %s", user.ID, path)
@@ -739,6 +802,93 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	printFirstBootBannerFn(os.Stderr, activationURL)
 
 	return nil
+}
+
+// firstBootLeaderWait bounds how long firstBootBootstrap waits for the raft
+// shard to elect a leader before giving up. In a fresh cluster IAM init runs
+// before consensus, so the bootstrap must wait for leadership; a healthy
+// cluster elects within seconds, and an unhealthy one falls through to the
+// existing non-fatal warning after the deadline.
+const firstBootLeaderWait = 90 * time.Second
+
+// waitForAdminAssignmentsCheck lists admin assignments, retrying while the read
+// fails because the raft shard has no leader yet (the canonical
+// "not leader, leader unknown" startup condition). It returns the assignments
+// once a leader serves the read, the last error after firstBootLeaderWait
+// elapses, or ctx.Err() if the context is cancelled. Using the read itself as
+// the readiness probe means no separate leadership API is required, and once it
+// succeeds the follow-on bootstrap writes commit against the same leader.
+func (s *Server) waitForAdminAssignmentsCheck(ctx context.Context, c *iamComponents) ([]*iam.AdminAssignment, error) {
+	deadline := time.Now().Add(firstBootLeaderWait)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{
+			ActiveOnly: true,
+			Limit:      1,
+		})
+		if err == nil {
+			return assignments, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// ErrSOCertLoginEmpty indicates the certificate PEM input is empty.
+var ErrSOCertLoginEmpty = errors.New("so cert login thumbprint: empty PEM input")
+
+// ErrSOCertLoginNoPEMBlock indicates the certificate PEM input has no PEM block.
+var ErrSOCertLoginNoPEMBlock = errors.New("so cert login thumbprint: no PEM block")
+
+// SOCertLoginThumbprintError indicates the certificate PEM body could not be
+// parsed into an X.509 certificate.
+type SOCertLoginThumbprintError struct {
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *SOCertLoginThumbprintError) Error() string {
+	return "so cert login thumbprint: " + e.Reason
+}
+
+// soCertLoginThumbprint computes the canonical login lookup thumbprint for a
+// PEM-encoded certificate: hex(SHA-256(cert.Raw)). This is the SINGLE digest
+// every login path computes (pkg/service/login_service.go mtlsLookupKey,
+// pkg/api/rest/iam_login_piv.go PIVLogin, pkg/iam/oauth2_mtls.go) and the value
+// stored in the PIVCertThumbprint index read by GetUserByPIVThumbprint. It is
+// deliberately NOT the SPKI thumbprint (SOCertSPKIThumbprint): there is no
+// SPKI-keyed user index, so an SPKI digest in that column is unreachable by any
+// login lookup. Keeping one digest function here keeps bindAdminPIVCert and
+// BindAdminToSOCert from drifting apart.
+func soCertLoginThumbprint(certPEM []byte) (string, error) {
+	if len(certPEM) == 0 {
+		return "", ErrSOCertLoginEmpty
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return "", ErrSOCertLoginNoPEMBlock
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", &SOCertLoginThumbprintError{Reason: err.Error()}
+	}
+	return certRawSHA256Hex(cert), nil
+}
+
+// certRawSHA256Hex returns hex(SHA-256(cert.Raw)) — the canonical mTLS/PIV
+// login lookup key every login path computes and the value stored in the
+// PIVCertThumbprint index. It is the single digest shared by bindAdminPIVCert
+// and soCertLoginThumbprint so the two binding paths cannot drift apart.
+func certRawSHA256Hex(cert *x509.Certificate) string {
+	digest := sha256.Sum256(cert.Raw)
+	return hex.EncodeToString(digest[:])
 }
 
 // bindAdminPIVCert reads a PEM-encoded client certificate from path, computes
@@ -757,8 +907,7 @@ func bindAdminPIVCert(ctx context.Context, identityStore *iam.IdentityStore, ten
 	if err != nil {
 		return &PIVBootstrapError{Op: "parse PIV cert", Path: path, Cause: err}
 	}
-	digest := sha256.Sum256(cert.Raw)
-	thumbprint := hex.EncodeToString(digest[:])
+	thumbprint := certRawSHA256Hex(cert)
 
 	active := iam.UserStateActive
 	emptyInvite := ""
@@ -790,15 +939,25 @@ func (e *PIVBootstrapError) Error() string {
 
 func (e *PIVBootstrapError) Unwrap() error { return e.Cause }
 
-// BindAdminToSOCert pins the bootstrap admin user to an SO certificate's
-// SubjectPublicKeyInfo (SPKI) SHA-256 thumbprint. Once bound, an mTLS
-// handshake presenting the SO certificate (or any cert with the same public
-// key) is recognized as the admin user, mirroring the agent enrollment
-// pattern in pkg/api/rest/handlers_agent_register.go.
+// BindAdminToSOCert pins the bootstrap admin user to the SHA-256 thumbprint
+// of an SO certificate so that an mTLS / PIV handshake presenting that exact
+// certificate is recognized as the admin user.
 //
-// The thumbprint is computed by SOCertSPKIThumbprint over the SubjectPublicKeyInfo
-// bytes (RFC 5280 §4.1.2.7), NOT the full certificate. This binding survives
-// SO certificate renewal as long as the public key remains the same.
+// The thumbprint is hex(SHA-256(cert.Raw)) — the SAME canonical login lookup
+// key every login path computes: pkg/service/login_service.go (mtlsLookupKey),
+// pkg/api/rest/iam_login_piv.go (PIVLogin), pkg/iam/oauth2_mtls.go, and the
+// bindAdminPIVCert bootstrap convenience path above. It is written to the PIV
+// thumbprint index, which is the SINGLE thumbprint-to-user index read by
+// GetUserByPIVThumbprint and the unified login ceremony's mtls resolver.
+//
+// This DELIBERATELY does NOT use SOCertSPKIThumbprint (SHA-256 over the
+// SubjectPublicKeyInfo only). The iam.User model exposes exactly one
+// thumbprint index (PIVCertThumbprint); writing an SPKI digest there produced
+// a digest that NO login path could ever match — a user bound via the SO-cert
+// path was unfindable, and the PIV (cert.Raw) and SPKI digests collided on one
+// column. The SPKI-survives-renewal property is not reachable here because no
+// SPKI-keyed user index exists; the login lookup is over the full cert DER.
+// See soCertLoginThumbprint.
 //
 // Returns FirstBootBootstrapError on any storage failure. Returns
 // ErrBootstrapAdminMissing when no bootstrap admin exists yet (typical when
@@ -812,21 +971,23 @@ func (s *Server) BindAdminToSOCert(ctx context.Context, certPEM []byte) error {
 		return &FirstBootBootstrapError{Op: "bind admin to so cert", Cause: ErrBootstrapAdminMissing}
 	}
 
-	thumbprint, err := SOCertSPKIThumbprint(certPEM)
+	thumbprint, err := soCertLoginThumbprint(certPEM)
 	if err != nil {
-		return &FirstBootBootstrapError{Op: "compute so cert spki thumbprint", Cause: err}
+		return &FirstBootBootstrapError{Op: "compute so cert login thumbprint", Cause: err}
 	}
 
 	userID := s.bootstrapAdminUserID
 	tenantID := s.bootstrapAdminTenantID
 	if userID == "" || tenantID == "" {
-		// Fall back to the default-tenant "admin" user when the bootstrap
+		// Fall back to the system-tenant "admin" user when the bootstrap
 		// path stored no UserID (e.g., test fixtures or restart paths
-		// where firstBootBootstrap has not run in this process). ListUsers
-		// is bounded to the default tenant — a fresh server has at most
-		// the bootstrap admin and the orchestrator-daemon-client app
-		// principal, so the scan is O(1) in practice.
-		users, lookupErr := c.identityStore.ListUsers(ctx, "default", iam.ListOptions{Limit: 100})
+		// where firstBootBootstrap has not run in this process). The
+		// bootstrap admin is created in qrdbsdk.SystemTenantID by
+		// firstBootBootstrap (see adminTenantID above), NOT the "default"
+		// tenant — scanning "default" here would miss it. ListUsers is
+		// bounded to the system tenant, which holds only control-plane
+		// identities, so the scan is O(1) in practice.
+		users, lookupErr := c.identityStore.ListUsers(ctx, qrdbsdk.SystemTenantID, iam.ListOptions{Limit: 100})
 		if lookupErr != nil {
 			return &FirstBootBootstrapError{Op: "find bootstrap admin", Cause: lookupErr}
 		}
@@ -846,14 +1007,12 @@ func (s *Server) BindAdminToSOCert(ctx context.Context, certPEM []byte) error {
 			return &FirstBootBootstrapError{Op: "find bootstrap admin", Cause: ErrBootstrapAdminMissing}
 		}
 		userID = found.ID
-		tenantID = "default"
+		tenantID = qrdbsdk.SystemTenantID
 	}
 
-	// Persist the thumbprint via the canonical PIVCertThumbprint update
-	// path. The field name predates the SO-cert ceremony but is the
-	// existing thumbprint-to-user index in the identity store; reusing it
-	// keeps a single mTLS-recognition path through the codebase. Also
-	// transition the user from pending to active so subsequent mTLS
+	// Persist the cert.Raw SHA-256 thumbprint to the PIVCertThumbprint index
+	// — the single thumbprint-to-user index every login path reads. Also
+	// transition the user from pending to active so subsequent mTLS / PIV
 	// handshakes can bind to the admin record.
 	thumbprintCopy := thumbprint
 	activeState := iam.UserStateActive
@@ -1108,40 +1267,6 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	auditServer := grpcapi.NewAuditServer(auditAdapter, s.logger)
 	iampb.RegisterAuditServiceServer(grpcServer, auditServer)
 	s.logger.Info("Registered Audit gRPC service")
-}
-
-// ensureTenantDEKMasterKey lazily creates the KEK used by TenantDEKManager
-// to wrap per-tenant DEKs. On a fresh server the key store is empty, so the
-// first tenant creation fails with "key not found" unless we provision this
-// key up front. Idempotent: if the key already exists (server restart against
-// an existing data dir), GenerateKey's "already exists" error is swallowed.
-func (s *Server) ensureTenantDEKMasterKey(ctx context.Context) error {
-	if s.kmsManager == nil {
-		return fmt.Errorf("ensureTenantDEKMasterKey: kms manager unavailable")
-	}
-
-	// Fast path: key already present. The software backend returns an error
-	// when the key is missing; we rely on that rather than a sentinel.
-	if _, err := s.kmsManager.GetKey(ctx, security.TenantDEKMasterKeyID); err == nil {
-		return nil
-	}
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:                 security.TenantDEKMasterKeyID,
-		KeyType:            xkmssdk.KeyTypeEncryption,
-		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
-		StoreType:          xkmssdk.StoreSoftware,
-	}
-	if _, err := s.kmsManager.GenerateKey(ctx, attrs); err != nil {
-		// Swallow duplicate-creation races so two servers starting against
-		// the same datastore don't both fail.
-		if strings.Contains(err.Error(), "already exists") {
-			return nil
-		}
-		return fmt.Errorf("ensureTenantDEKMasterKey: generate %s: %w", security.TenantDEKMasterKeyID, err)
-	}
-	s.logger.Infof("Bootstrapped tenant DEK master key %q (symmetric AES-256-GCM)", security.TenantDEKMasterKeyID)
-	return nil
 }
 
 // OrchestratorDaemonClientAppName is the fixed OAuth2 application name the

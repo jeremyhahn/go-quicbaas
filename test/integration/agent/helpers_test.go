@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -72,13 +73,17 @@ func createTestProjectWithAgents(t *testing.T, path string, agentNames []string)
 }
 
 // newOllamaBackend creates an Ollama backend configured to use the test
-// environment's Ollama instance.
+// environment's Ollama instance. The 10-minute HTTP timeout matches what
+// pkg/server/lifecycle_orchestration.go uses in production — CPU-only
+// inference of small models (tinyllama) on cold start can run several
+// minutes, well past the 120-second default.
 func newOllamaBackend(t *testing.T) *orchestration.OllamaBackend {
 	t.Helper()
 
 	client := ollama.NewClient(ollama.ClientConfig{
 		BaseURL:    env.ollamaURL,
 		MaxRetries: 2,
+		Timeout:    10 * time.Minute,
 	})
 	chatSvc := ollama.NewChatService(client, env.ollamaModel)
 

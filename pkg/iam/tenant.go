@@ -37,6 +37,24 @@ const (
 	QuotaResourceStorage  = "storage"
 )
 
+// QRDBTenantProvisioner abstracts the qrdb engine's tenant lifecycle so the
+// IAM layer can fire engine-side tenant provisioning (barrier init, DEK, quota
+// bootstrap) without importing go-qrdb packages directly. Implementations
+// must be safe for concurrent use.
+type QRDBTenantProvisioner interface {
+	// CreateTenant provisions a new tenant in the qrdb engine. name is the
+	// human-readable display name. isolationType selects the engine
+	// isolation strategy: tenant.IsolationBarrier gives the tenant its own
+	// DEK and dedicated "{tenantID}/" namespace; an empty string defers to
+	// the engine default (prefix). The reserved system tenant must use
+	// prefix isolation.
+	CreateTenant(ctx context.Context, id, name, isolationType string) error
+
+	// DeleteTenant removes the tenant from the qrdb engine, destroying the
+	// per-tenant barrier and purging its DEK.
+	DeleteTenant(ctx context.Context, id string) error
+}
+
 // Tenant ID validation constraints.
 const (
 	TenantIDMinLength = 3
@@ -48,11 +66,39 @@ var (
 	tenantIDPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 )
 
+// TenantSettingsObserver is notified after a tenant's settings are persisted by
+// UpdateTenant so caches keyed by per-tenant settings (e.g. the per-tenant
+// WebAuthn relying-party service and the per-tenant OIDC signing key) can
+// rebuild on the next access. Implementations must be safe for concurrent use
+// and must not block.
+type TenantSettingsObserver interface {
+	// OnTenantSettingsChanged is invoked with the tenant id whose settings
+	// just changed.
+	OnTenantSettingsChanged(tenantID string)
+}
+
 // DefaultTenantManager is the default implementation of TenantManager.
 type DefaultTenantManager struct {
-	storage        TenantStorage
-	provisioner    database.TenantProvisioner
-	dekProvisioner TenantDEKProvisioner
+	storage         TenantStorage
+	provisioner     database.TenantProvisioner
+	dekProvisioner  TenantDEKProvisioner
+	qrdbProvisioner QRDBTenantProvisioner
+
+	// settingsObservers are notified after UpdateTenant persists a change so
+	// per-tenant caches can invalidate. The slice is append-only at wiring
+	// time (server init) before the manager is shared, so reads during
+	// UpdateTenant need no lock.
+	settingsObservers []TenantSettingsObserver
+}
+
+// AddSettingsObserver registers an observer notified after each successful
+// UpdateTenant. Call during server init before the manager is used
+// concurrently.
+func (m *DefaultTenantManager) AddSettingsObserver(obs TenantSettingsObserver) {
+	if obs == nil {
+		return
+	}
+	m.settingsObservers = append(m.settingsObservers, obs)
 }
 
 // NewDefaultTenantManager creates a new default tenant manager with the provided storage backend.
@@ -107,11 +153,10 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 		settings = *opts.Settings
 	}
 
-	// Initialize default quotas if not provided
+	// Initialize default BaaS-layer IAM quotas if not provided.
+	// Engine-level quotas (users, roles, storage) are set on qrdb's TenantServicer.
 	quotas := TenantQuotas{
-		MaxUsers:    10000,
 		MaxGroups:   1000,
-		MaxRoles:    100,
 		MaxPolicies: 1000,
 		MaxApps:     100,
 	}
@@ -130,8 +175,21 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 		Updated:  now,
 	}
 
-	// Store the tenant
+	// Engine-side provisioning: create the tenant in the qrdb engine FIRST
+	// so the per-tenant barrier, DEK, and quota are initialised before any
+	// BaaS-layer state is written. On failure the entire creation is aborted.
+	if m.qrdbProvisioner != nil {
+		if err := m.qrdbProvisioner.CreateTenant(ctx, tenantID, opts.Name, string(opts.IsolationType)); err != nil {
+			return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.CreateTenant", "qrdb engine tenant provisioning failed")
+		}
+	}
+
+	// Store the tenant in the BaaS-layer IAM storage.
 	if err := m.storage.CreateTenant(ctx, tenant); err != nil {
+		// Roll back the engine-side tenant creation on BaaS storage failure.
+		if m.qrdbProvisioner != nil {
+			_ = m.qrdbProvisioner.DeleteTenant(ctx, tenantID)
+		}
 		return nil, dberrors.Wrapf(err, dberrors.ErrStorage, "iam.CreateTenant", "failed to create tenant")
 	}
 
@@ -140,6 +198,9 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 		if err := m.provisioner.ProvisionTenant(ctx, tenantID); err != nil {
 			// Roll back: delete the tenant record since provisioning failed.
 			_ = m.storage.DeleteTenant(ctx, tenantID)
+			if m.qrdbProvisioner != nil {
+				_ = m.qrdbProvisioner.DeleteTenant(ctx, tenantID)
+			}
 			return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.CreateTenant", "failed to provision tenant database")
 		}
 	}
@@ -152,6 +213,9 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 				_ = m.provisioner.DeprovisionTenant(ctx, tenantID)
 			}
 			_ = m.storage.DeleteTenant(ctx, tenantID)
+			if m.qrdbProvisioner != nil {
+				_ = m.qrdbProvisioner.DeleteTenant(ctx, tenantID)
+			}
 			return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.CreateTenant", "failed to provision tenant DEK")
 		}
 	}
@@ -211,6 +275,12 @@ func (m *DefaultTenantManager) UpdateTenant(ctx context.Context, id string, opts
 		return nil, dberrors.Wrapf(err, dberrors.ErrStorage, "iam.UpdateTenant", "failed to update tenant")
 	}
 
+	// Notify per-tenant settings caches (WebAuthn RP service, OIDC signing key)
+	// so they rebuild from the new settings on next access.
+	for _, obs := range m.settingsObservers {
+		obs.OnTenantSettingsChanged(id)
+	}
+
 	return tenant, nil
 }
 
@@ -240,12 +310,20 @@ func (m *DefaultTenantManager) DeleteTenant(ctx context.Context, id string) erro
 		}
 	}
 
-	// Delete the tenant
+	// Delete the tenant from BaaS-layer IAM storage.
 	if err := m.storage.DeleteTenant(ctx, id); err != nil {
 		if dberrors.IsNotFound(err) {
 			return NewTenantNotFoundError(id)
 		}
 		return dberrors.Wrapf(err, dberrors.ErrStorage, "iam.DeleteTenant", "failed to delete tenant")
+	}
+
+	// Engine-side cleanup: delete the tenant from the qrdb engine LAST so the
+	// per-tenant barrier and DEK are destroyed after BaaS-layer state is gone.
+	if m.qrdbProvisioner != nil {
+		if err := m.qrdbProvisioner.DeleteTenant(ctx, id); err != nil {
+			return dberrors.Wrapf(err, dberrors.ErrInternal, "iam.DeleteTenant", "qrdb engine tenant deletion failed")
+		}
 	}
 
 	return nil
@@ -275,23 +353,21 @@ func (m *DefaultTenantManager) CheckQuota(ctx context.Context, tenantID string, 
 		return dberrors.Wrapf(err, dberrors.ErrStorage, "iam.CheckQuota", "failed to get quota")
 	}
 
-	// Check resource-specific quota
+	// Check BaaS-layer IAM quota only. Users, roles, and storage are
+	// engine-level quotas enforced by qrdb's TenantServicer — call
+	// qrdb's IncrementQuotaUsage for those resources instead.
 	var limit, current int64
 	switch resource {
-	case QuotaResourceUsers:
-		limit, current = quota.MaxUsers, quota.CurrentUsers
 	case QuotaResourceGroups:
 		limit, current = quota.MaxGroups, quota.CurrentGroups
-	case QuotaResourceRoles:
-		limit, current = quota.MaxRoles, quota.CurrentRoles
 	case QuotaResourcePolicies:
 		limit, current = quota.MaxPolicies, quota.CurrentPolicies
 	case QuotaResourceApps:
 		limit, current = quota.MaxApps, quota.CurrentApps
-	case QuotaResourceStorage:
-		limit, current = quota.MaxStorageBytes, quota.CurrentStorageBytes
 	default:
-		return dberrors.InvalidInputf("iam.CheckQuota", "unknown resource: %s", resource)
+		// QuotaResourceUsers, QuotaResourceRoles, QuotaResourceStorage are
+		// owned by qrdb. Unknown resources are silently allowed here.
+		return nil
 	}
 
 	// limit == 0 means unlimited

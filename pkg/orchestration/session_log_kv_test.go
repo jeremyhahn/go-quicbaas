@@ -14,9 +14,7 @@
 package orchestration
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
 	"errors"
 	"strings"
 	"sync"
@@ -24,7 +22,6 @@ import (
 	"time"
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 )
 
 // typedNotFoundKVStore is a memKVStore that returns the typed
@@ -141,67 +138,6 @@ func (s *memKVStore) Exists(_ context.Context, key string) (bool, error) {
 }
 
 // =============================================================================
-// stubDEK — deterministic TenantDEKManager for tests
-// =============================================================================
-
-type stubDEK struct {
-	mu   sync.Mutex
-	keys map[string][]byte
-}
-
-func newStubDEK() *stubDEK { return &stubDEK{keys: map[string][]byte{}} }
-
-func (s *stubDEK) GetOrCreateTenantDEK(_ context.Context, tenantID string) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if k, ok := s.keys[tenantID]; ok {
-		return append([]byte(nil), k...), nil
-	}
-	k := make([]byte, 32)
-	if _, err := rand.Read(k); err != nil {
-		return nil, err
-	}
-	s.keys[tenantID] = k
-	return append([]byte(nil), k...), nil
-}
-
-func (s *stubDEK) GetTenantDEK(_ context.Context, tenantID string) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	k, ok := s.keys[tenantID]
-	if !ok {
-		return nil, errors.New("stubDEK: no key for tenant")
-	}
-	return append([]byte(nil), k...), nil
-}
-
-func (s *stubDEK) RotateTenantDEK(ctx context.Context, tenantID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	k := make([]byte, 32)
-	if _, err := rand.Read(k); err != nil {
-		return err
-	}
-	s.keys[tenantID] = k
-	return nil
-}
-
-func (s *stubDEK) DeleteTenantDEK(_ context.Context, tenantID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.keys, tenantID)
-	return nil
-}
-
-func (s *stubDEK) GetTenantDEKStatus(_ context.Context, tenantID string) (*security.TenantDEKStatus, error) {
-	return &security.TenantDEKStatus{TenantID: tenantID, Version: 1, Algorithm: "AES-256-GCM", KeyBytes: 32}, nil
-}
-
-func (s *stubDEK) ListTenantDEKs(_ context.Context) ([]string, error) { return nil, nil }
-
-func (s *stubDEK) Close() error { return nil }
-
-// =============================================================================
 // Tests
 // =============================================================================
 
@@ -253,16 +189,18 @@ func TestKVSessionEventLog_GapDetection(t *testing.T) {
 	}
 }
 
-func TestKVSessionEventLog_EncryptedAtRest(t *testing.T) {
+// TestKVSessionEventLog_PlaintextStoredAsJSON asserts that event payloads are
+// stored as plaintext JSON. At-rest confidentiality is provided by qrdb's
+// StorageBarrier; no application-level encryption is applied.
+func TestKVSessionEventLog_PlaintextStoredAsJSON(t *testing.T) {
 	t.Parallel()
 	kv := newMemKVStore()
-	dek := newStubDEK()
-	log, _ := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv, DEK: dek})
+	log, _ := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
 	ctx := context.Background()
 
-	_ = log.Append(ctx, newPromptEvent("t", "s", 1, "very secret prompt"))
+	_ = log.Append(ctx, newPromptEvent("t", "s", 1, "a payload"))
 
-	// The raw stored bytes must NOT contain the plaintext.
+	// The stored bytes must be readable JSON (no encryption marker, no binary prefix).
 	var stored []byte
 	_ = kv.Scan(ctx, "sessions/t/s/events/", func(_ string, v []byte) error {
 		stored = v
@@ -271,48 +209,17 @@ func TestKVSessionEventLog_EncryptedAtRest(t *testing.T) {
 	if len(stored) == 0 {
 		t.Fatal("no stored payload found")
 	}
-	if bytes.Contains(stored, []byte("very secret prompt")) {
-		t.Fatalf("plaintext leaked into stored bytes: %q", stored)
-	}
-	// Must begin with the encryption marker.
-	if len(stored) < 2 || stored[0] != 0xE1 || stored[1] != 0x07 {
-		t.Errorf("encryption marker missing: % x", stored[:min(8, len(stored))])
+	if stored[0] != '{' {
+		t.Errorf("expected plaintext JSON ('{'), got first byte %x", stored[0])
 	}
 
-	// And decrypt via Range returns the plaintext.
-	page, _, _ := log.Range(ctx, "t", "s", 1, 0)
-	if len(page) != 1 || page[0].Prompt.Prompt != "very secret prompt" {
+	// Range must return the event without error.
+	page, _, err := log.Range(ctx, "t", "s", 1, 0)
+	if err != nil {
+		t.Fatalf("range: %v", err)
+	}
+	if len(page) != 1 || page[0].Prompt == nil || page[0].Prompt.Prompt != "a payload" {
 		t.Errorf("round-trip failed: %+v", page)
-	}
-}
-
-func TestKVSessionEventLog_EncryptionAADMismatch(t *testing.T) {
-	t.Parallel()
-	// Encrypt under session A, then rename the key to session B. Decrypt
-	// must fail because session ID is bound into the AEAD additional data.
-	kv := newMemKVStore()
-	dek := newStubDEK()
-	log, _ := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv, DEK: dek})
-	ctx := context.Background()
-
-	_ = log.Append(ctx, newPromptEvent("t", "sessA", 1, "secret"))
-
-	// Relocate the key under sessB's prefix.
-	var origKey string
-	var val []byte
-	_ = kv.Scan(ctx, "sessions/t/sessA/events/", func(k string, v []byte) error {
-		origKey = k
-		val = append([]byte(nil), v...)
-		return nil
-	})
-	newKey := strings.Replace(origKey, "/sessA/", "/sessB/", 1)
-	_ = kv.Put(ctx, newKey, val)
-	_ = kv.Delete(ctx, origKey)
-	// Meta still under sessA but session B now has its event; simulate
-	// "this event was tampered from session A into session B".
-	_, _, err := log.Range(ctx, "t", "sessB", 1, 0)
-	if err == nil {
-		t.Fatal("expected AEAD decrypt failure on session mismatch")
 	}
 }
 
@@ -394,7 +301,7 @@ func TestKVSessionEventLog_GetMeta_TranslatesTypedNotFound(t *testing.T) {
 	if _, err := log.GetMeta(ctx, "tenant", "missing"); !errors.Is(err, ErrSessionLogNotFound) {
 		t.Fatalf("got %v, want ErrSessionLogNotFound", err)
 	}
-	// And LatestSequence on the same store must NOT propagate the
+	// LatestSequence on the same store must NOT propagate the
 	// typed not-found — fresh sessions report seq=0.
 	seq, err := log.LatestSequence(ctx, "tenant", "missing")
 	if err != nil {
@@ -455,12 +362,4 @@ func TestKVSessionEventLog_NoKVStoreErrors(t *testing.T) {
 	if _, err := NewKVSessionEventLog(KVSessionEventLogConfig{}); err == nil {
 		t.Fatal("expected error without KV store")
 	}
-}
-
-// Tiny min used by the encryption-at-rest test.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

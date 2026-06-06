@@ -34,7 +34,10 @@ const (
 	healthCheckInterval = 3 * time.Second
 
 	// Prompt timeout accounts for cold-start model loading.
-	promptTimeout = 180 * time.Second
+	// 8 minutes accommodates CPU-only Ollama inference of tinyllama for
+	// task-decomposition prompts (3–5 min cold start is typical); the
+	// daemon's underlying Ollama HTTP client itself allows 10 min.
+	promptTimeout = 8 * time.Minute
 )
 
 // testEnv holds the shared test environment state.

@@ -228,7 +228,7 @@ func createEmbeddingTestHandler(embeddingSvc service.EmbeddingService) *Handler 
 	svc := &mockEmbeddingEnabledService{
 		embeddingSvc: embeddingSvc,
 	}
-	return NewHandler(svc, nil, nil, nil, nil, createEmbeddingTestLogger())
+	return NewHandler(svc, nil, nil, nil, createEmbeddingTestLogger())
 }
 
 // =============================================================================

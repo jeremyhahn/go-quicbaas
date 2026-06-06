@@ -17,7 +17,6 @@ package transactions
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"sync"
 	"testing"
@@ -81,8 +80,10 @@ func TestConcurrentOperations(t *testing.T) {
 
 	// Connect to QuicBaaS
 	endpoint := helpers.GetTestEndpoint()
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 	)
 	require.NoError(t, err)

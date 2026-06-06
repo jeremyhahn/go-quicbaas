@@ -75,6 +75,7 @@ const (
 // OIDC token types constants.
 const (
 	TokenTypeBearer  = "Bearer"
+	TokenTypeDPoP    = "DPoP"
 	TokenTypeAccess  = "access"
 	TokenTypeRefresh = "refresh"
 	TokenTypeID      = "id"
@@ -169,6 +170,19 @@ type TokenRequest struct {
 	// Resource is the target resource server URI (RFC 8707)
 	// This binds the token to a specific resource server via the audience claim.
 	Resource string `json:"resource" form:"resource"`
+
+	// DPoPProof is the RFC 9449 DPoP proof JWT presented in the DPoP request
+	// header. When non-empty the token endpoint verifies it and binds the
+	// resulting access token to the proof key via cnf.jkt (sender-constrained).
+	// The HTTP transport populates this from the DPoP header; it is never a
+	// form/JSON body field.
+	DPoPProof string `json:"-" form:"-"`
+
+	// HTTPMethod and HTTPURI are the request method and canonical target URI of
+	// the token endpoint, supplied by the transport for DPoP htm/htu binding.
+	// They are only consulted when DPoPProof is set.
+	HTTPMethod string `json:"-" form:"-"`
+	HTTPURI    string `json:"-" form:"-"`
 }
 
 // TokenResponse represents an OAuth2 token response.
@@ -222,6 +236,72 @@ type RevokeRequest struct {
 	ClientSecret string `json:"client_secret"`
 }
 
+// IntrospectRequest represents an RFC 7662 token introspection request.
+type IntrospectRequest struct {
+	// Token is the token whose status is being introspected.
+	Token string `json:"token"`
+
+	// TokenTypeHint hints at the token type ("access_token" or "refresh_token").
+	TokenTypeHint string `json:"token_type_hint,omitempty"`
+}
+
+// IntrospectionResponse is the RFC 7662 §2.2 introspection response. When the
+// token is not active, only the Active field is populated (all other fields
+// are omitted) so the endpoint never leaks claims for invalid/expired/revoked
+// tokens. When active, the standard claim set is returned.
+type IntrospectionResponse struct {
+	// Active indicates whether the token is currently valid (not expired and
+	// not revoked). RFC 7662 requires this field on every response.
+	Active bool `json:"active"`
+
+	// Scope is the space-separated list of scopes (RFC 7662 §2.2).
+	Scope string `json:"scope,omitempty"`
+
+	// SCP is the array-form scope list matching the platform access-token
+	// contract. Retained alongside Scope for downstream RBAC mapping.
+	SCP []string `json:"scp,omitempty"`
+
+	// ClientID is the OAuth client the token was issued to.
+	ClientID string `json:"client_id,omitempty"`
+
+	// Subject is the token subject (the qrdb user / service identifier).
+	Subject string `json:"sub,omitempty"`
+
+	// TenantID is the tenant the token is scoped to (platform contract).
+	TenantID string `json:"tenant_id,omitempty"`
+
+	// Audience is the intended audience(s) of the token.
+	Audience []string `json:"aud,omitempty"`
+
+	// Issuer is the token issuer (the single broker issuer).
+	Issuer string `json:"iss,omitempty"`
+
+	// ExpiresAt is the token expiration time (Unix seconds).
+	ExpiresAt int64 `json:"exp,omitempty"`
+
+	// IssuedAt is the token issuance time (Unix seconds).
+	IssuedAt int64 `json:"iat,omitempty"`
+
+	// NotBefore is the time before which the token is not valid (Unix seconds).
+	NotBefore int64 `json:"nbf,omitempty"`
+
+	// JTI is the unique token identifier.
+	JTI string `json:"jti,omitempty"`
+
+	// TokenType is the token type ("Bearer").
+	TokenType string `json:"token_type,omitempty"`
+
+	// Username is the human-readable subject name when available.
+	Username string `json:"username,omitempty"`
+
+	// Confirmation carries the RFC 7800 cnf claim (DPoP jkt / mTLS x5t#S256)
+	// so a resource server can enforce sender-constrained presentation.
+	Confirmation *ConfirmationClaim `json:"cnf,omitempty"`
+
+	// Roles is the list of user roles carried by the token.
+	Roles []string `json:"roles,omitempty"`
+}
+
 // UserInfoResponse represents the OIDC UserInfo endpoint response.
 type UserInfoResponse struct {
 	// Sub is the subject identifier (user ID)
@@ -247,6 +327,19 @@ type UserInfoResponse struct {
 
 	// Attributes contains custom user attributes
 	Attributes map[string]interface{} `json:"attributes,omitempty"`
+}
+
+// ConfirmationClaim is the RFC 7800 cnf claim. For DPoP sender-constrained
+// tokens (RFC 9449) it carries jkt, the base64url SHA-256 JWK thumbprint of the
+// DPoP proof-of-possession key. For mTLS-bound tokens (RFC 8705) it carries
+// x5t#S256, the client-certificate thumbprint. The two are mutually exclusive
+// on a given token.
+type ConfirmationClaim struct {
+	// Jkt is the RFC 9449 DPoP key thumbprint (base64url SHA-256 of the JWK).
+	Jkt string `json:"jkt,omitempty"`
+
+	// X5TS256 is the RFC 8705 mTLS client-certificate SHA-256 thumbprint.
+	X5TS256 string `json:"x5t#S256,omitempty"`
 }
 
 // Claims represents JWT access token claims.
@@ -290,6 +383,11 @@ type Claims struct {
 	// Scope is the space-separated list of scopes
 	Scope string `json:"scope,omitempty"`
 
+	// SCP is the array-form scope list used by the platform access-token
+	// contract (scp). It is the authoritative scope set for downstream RBAC
+	// mapping; Scope (space-separated) is retained for OIDC back-compat.
+	SCP []string `json:"scp,omitempty"`
+
 	// ClientID is the OAuth client ID
 	ClientID string `json:"client_id,omitempty"`
 
@@ -309,6 +407,11 @@ type Claims struct {
 	// ACR is the Authentication Context Class Reference.
 	// For hardware-attested logins: "urn:quicbaas:auth:hardware-attested"
 	ACR string `json:"acr,omitempty"`
+
+	// Confirmation is the RFC 7800 cnf claim binding the token to a
+	// proof-of-possession key (DPoP jkt or mTLS x5t#S256). When set, the token
+	// is sender-constrained: a presenter must prove possession of the bound key.
+	Confirmation *ConfirmationClaim `json:"cnf,omitempty"`
 }
 
 // IDTokenClaims represents OpenID Connect ID token claims.

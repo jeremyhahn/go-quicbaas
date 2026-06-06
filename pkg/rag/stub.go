@@ -30,7 +30,7 @@ var ErrRAGNotCompiled = errors.New("rag support not compiled - build with -tags 
 type System struct{}
 
 // NewSystem returns an error indicating RAG support is not compiled.
-func NewSystem(cfg config.RAGConfig) (*System, error) {
+func NewSystem(cfg config.RAGConfig, opts ...SystemOption) (*System, error) {
 	return nil, ErrRAGNotCompiled
 }
 

@@ -180,54 +180,11 @@ func TestRuntime_LoadPersistedSessions_NonExistentDirReturnsNil(t *testing.T) {
 	}
 }
 
-// TestRuntime_LoadPersistedSessions_EncryptedWithNoDEKQuarantines verifies
-// that when a session was written encrypted but the runtime has no DEK manager,
-// the file is quarantined and PersistedSessionCorruptError is returned.
-func TestRuntime_LoadPersistedSessions_EncryptedWithNoDEKQuarantines(t *testing.T) {
-	t.Parallel()
-
-	dek := newFakeDEKManager(t, "tenant-enc")
-	// First runtime has a DEK — writes encrypted session.
-	rt1, workDir := newTestRuntimeWithDEK(t, dek)
-	sess, err := rt1.Spawn(context.Background(), "tenant-enc", nil, "acp",
-		&orchestration.SpawnRequest{WorkDir: workDir})
-	if err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
-
-	// Second runtime has no DEK manager — can't decrypt.
-	rt2, err := NewRuntime(RuntimeConfig{
-		Backends: map[string]orchestration.AgentBackend{"acp": &mockBackend{}},
-		Logger:   &testLogger{t: t},
-		WorkDir:  workDir,
-		// No TenantDEKManager.
-	})
-	if err != nil {
-		t.Fatalf("NewRuntime (no DEK): %v", err)
-	}
-
-	loaded, loadErr := rt2.LoadPersistedSessions(context.Background())
-	var corruptErr *PersistedSessionCorruptError
-	if !errors.As(loadErr, &corruptErr) {
-		t.Fatalf("expected PersistedSessionCorruptError, got %T: %v", loadErr, loadErr)
-	}
-	if corruptErr.Count != 1 {
-		t.Fatalf("corrupt count: got %d want 1", corruptErr.Count)
-	}
-	if len(loaded) != 0 {
-		t.Fatalf("expected 0 loaded sessions, got %d", len(loaded))
-	}
-
-	// The encrypted file should be quarantined.
-	encPath := filepath.Join(workDir, "sessions", sess.ID+".json.enc")
-	if _, err := os.Stat(encPath + ".corrupt"); err != nil {
-		t.Fatalf("expected quarantine file: %v", err)
-	}
-}
-
-// TestRuntime_LoadPersistedSessions_IgnoresNonSessionFiles verifies that
-// files not matching the .json or .json.enc suffix are silently skipped.
-func TestRuntime_LoadPersistedSessions_IgnoresNonSessionFiles(t *testing.T) {
+// TestRuntime_LoadPersistedSessions_IgnoresNonJSONFiles verifies that files
+// not matching the .json suffix (including the old .json.enc format) are
+// silently skipped. Session records are now stored as plaintext JSON; the
+// old encrypted .json.enc format is no longer read.
+func TestRuntime_LoadPersistedSessions_IgnoresNonJSONFiles(t *testing.T) {
 	t.Parallel()
 
 	workDir := t.TempDir()
@@ -235,9 +192,11 @@ func TestRuntime_LoadPersistedSessions_IgnoresNonSessionFiles(t *testing.T) {
 	if err := os.MkdirAll(sessionsDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// Write a non-session file that should be ignored.
-	if err := os.WriteFile(filepath.Join(sessionsDir, "README.txt"), []byte("notes"), 0o600); err != nil {
-		t.Fatalf("write readme: %v", err)
+	// Write files that must be ignored: non-.json extension and old .json.enc format.
+	for _, name := range []string{"README.txt", "sess-old.json.enc", "notes.bin"} {
+		if err := os.WriteFile(filepath.Join(sessionsDir, name), []byte("ignored"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
 	}
 
 	rt, err := NewRuntime(RuntimeConfig{
@@ -258,13 +217,14 @@ func TestRuntime_LoadPersistedSessions_IgnoresNonSessionFiles(t *testing.T) {
 	}
 }
 
-// TestRuntime_LoadPersistedSessions_PlaintextRoundTrip verifies the plaintext
-// load path when no DEK manager is configured for the writing runtime.
+// TestRuntime_LoadPersistedSessions_PlaintextRoundTrip verifies that session
+// records written by one Runtime can be read back by a fresh Runtime. All
+// records are stored as plaintext JSON; at-rest confidentiality is provided
+// by qrdb's StorageBarrier.
 func TestRuntime_LoadPersistedSessions_PlaintextRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	workDir := t.TempDir()
-	// Write without DEK.
 	rt1, err := NewRuntime(RuntimeConfig{
 		Backends: map[string]orchestration.AgentBackend{"acp": &mockBackend{}},
 		Logger:   &testLogger{t: t},
@@ -279,7 +239,7 @@ func TestRuntime_LoadPersistedSessions_PlaintextRoundTrip(t *testing.T) {
 		t.Fatalf("Spawn: %v", err)
 	}
 
-	// Load on a fresh runtime (no DEK either).
+	// Load on a fresh runtime sharing the same work directory.
 	rt2, err := NewRuntime(RuntimeConfig{
 		Backends: map[string]orchestration.AgentBackend{"acp": &mockBackend{}},
 		Logger:   &testLogger{t: t},

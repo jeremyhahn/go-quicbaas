@@ -210,16 +210,16 @@ func (s *Server) startOrchestration() error {
 
 		// Wire the session event log so attachers can replay + tail
 		// session events. Backed by the same KV store used for job
-		// persistence; encrypted with the tenant DEK when available.
+		// persistence; at-rest confidentiality is provided by qrdb's
+		// StorageBarrier.
 		sessionLog, logErr := orchestration.NewKVSessionEventLog(orchestration.KVSessionEventLogConfig{
 			KVStore: jobKVStore,
-			DEK:     s.tenantDEKManager,
 		})
 		if logErr != nil {
 			s.logger.Warnf("Session event log disabled: %v", logErr)
 		} else {
 			wirer.SetSessionEventLog(sessionLog)
-			s.logger.Info("Session event log attached (KV-backed, per-tenant DEK-encrypted)")
+			s.logger.Info("Session event log attached (KV-backed, qrdb barrier-encrypted at rest)")
 		}
 
 		// Wire the remote-backend resolver so daemon-kind registrations are

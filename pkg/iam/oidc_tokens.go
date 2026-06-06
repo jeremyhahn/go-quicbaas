@@ -32,16 +32,64 @@ import (
 type TokenService struct {
 	storage    TokenStorage
 	signingKey crypto.Signer
+	// signingAlg is the JWS algorithm used to sign tokens. It is derived from
+	// the key manager (ES256) when present, otherwise from config.
+	signingAlg string
+	// currentKID is the kid stamped onto the "kid" JWT header so verifiers can
+	// select the matching public key from a multi-kid JWKS. Empty when no key
+	// manager is configured (legacy single-key path).
+	currentKID string
+	// keyManager, when set, is the authoritative xkms-backed source of signing
+	// keys; the token service re-reads the current key/kid per sign so rotation
+	// takes effect without rebuilding the service.
+	keyManager *SigningKeyManager
+	// tenantKeys, when set, resolves the signing key by the token's tenant: a
+	// dedicated tenant is signed with its own per-tenant key (own kid) under
+	// the single broker issuer, while every other tenant uses keyManager (the
+	// global key). When nil all tokens use keyManager (single-key behavior).
+	tenantKeys *TenantSigningKeyResolver
 	config     *OIDCConfig
 }
 
 // NewTokenService creates a new token service.
 func NewTokenService(storage TokenStorage, signingKey crypto.Signer, config *OIDCConfig) *TokenService {
+	alg := config.SigningAlgorithm
 	return &TokenService{
 		storage:    storage,
 		signingKey: signingKey,
+		signingAlg: alg,
 		config:     config,
 	}
+}
+
+// signingMaterial returns the signer, algorithm, and kid to use for signing a
+// token for tenantID. When a per-tenant resolver is configured it selects the
+// dedicated tenant's key (own kid) or the global key for a non-dedicated
+// tenant; a dedicated tenant whose key cannot be built FAILS CLOSED (the error
+// is returned rather than downgrading to the global key). When no resolver is
+// configured the static keyManager (or legacy SigningKey) is used.
+//
+// A key manager is consulted live so a rotation is picked up immediately.
+func (s *TokenService) signingMaterial(ctx context.Context, tenantID string) (crypto.Signer, string, string, error) {
+	km := s.keyManager
+	if s.tenantKeys != nil {
+		resolved, err := s.tenantKeys.ManagerFor(ctx, tenantID)
+		if err != nil {
+			return nil, "", "", err
+		}
+		km = resolved
+	}
+	if km != nil {
+		kid, signer, alg := km.Current()
+		if signer != nil {
+			return signer, alg, kid, nil
+		}
+	}
+	alg := s.signingAlg
+	if alg == "" {
+		alg = s.config.SigningAlgorithm
+	}
+	return s.signingKey, alg, s.currentKID, nil
 }
 
 // GenerateAccessToken generates a new JWT access token.
@@ -66,8 +114,40 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 		"auth_method":  claims.AuthMethod,
 	}
 
-	// Sign token using XKMS JWT
-	tokenString, err := xkms.JWTSignWithSigner(s.signingKey, jwtClaims, s.config.SigningAlgorithm)
+	// Emit scp (array-form scope) for the platform access-token contract. When
+	// the caller did not populate SCP, derive it from the space-separated Scope
+	// so downstream RBAC has a consistent array to map.
+	if len(claims.SCP) > 0 {
+		jwtClaims["scp"] = claims.SCP
+	} else if claims.Scope != "" {
+		jwtClaims["scp"] = parseScopes(claims.Scope)
+	}
+
+	// Emit cnf for sender-constrained tokens (DPoP jkt or mTLS x5t#S256). The
+	// claim is omitted entirely for bearer tokens so back-compat is preserved.
+	if claims.Confirmation != nil {
+		cnf := map[string]interface{}{}
+		if claims.Confirmation.Jkt != "" {
+			cnf["jkt"] = claims.Confirmation.Jkt
+		}
+		if claims.Confirmation.X5TS256 != "" {
+			cnf["x5t#S256"] = claims.Confirmation.X5TS256
+		}
+		if len(cnf) > 0 {
+			jwtClaims["cnf"] = cnf
+		}
+	}
+
+	// Sign token using XKMS JWT, stamping the current kid so verifiers can
+	// select the matching public key from the multi-kid JWKS. The signer is
+	// selected by the token's tenant: a dedicated tenant is signed with its
+	// own key (own kid), and a dedicated tenant whose key is unavailable fails
+	// closed here rather than downgrading to the global key.
+	signer, alg, kid, err := s.signingMaterial(ctx, claims.TenantID)
+	if err != nil {
+		return "", dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.GenerateAccessToken", "failed to resolve signing key")
+	}
+	tokenString, err := xkms.JWTSignWithSignerKID(signer, jwtClaims, alg, kid)
 	if err != nil {
 		return "", dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.GenerateAccessToken", "failed to sign token")
 	}
@@ -127,8 +207,13 @@ func (s *TokenService) GenerateIDToken(ctx context.Context, claims *IDTokenClaim
 		jwtClaims["attest_level"] = claims.AttestLevel
 	}
 
-	// Sign token using XKMS JWT
-	tokenString, err := xkms.JWTSignWithSigner(s.signingKey, jwtClaims, s.config.SigningAlgorithm)
+	// Sign token using XKMS JWT, stamping the current kid (per-tenant key
+	// selection mirrors GenerateAccessToken; dedicated tenants fail closed).
+	signer, alg, kid, err := s.signingMaterial(ctx, claims.TenantID)
+	if err != nil {
+		return "", dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.GenerateIDToken", "failed to resolve signing key")
+	}
+	tokenString, err := xkms.JWTSignWithSignerKID(signer, jwtClaims, alg, kid)
 	if err != nil {
 		return "", dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.GenerateIDToken", "failed to sign ID token")
 	}
@@ -225,9 +310,15 @@ func (s *TokenService) ValidateAuthCode(ctx context.Context, code string) (*Auth
 
 // RevokeToken revokes a token by its JTI or value.
 func (s *TokenService) RevokeToken(ctx context.Context, tokenValue string) error {
-	// Try to parse as JWT first (without verification to extract JTI)
+	// Try to parse as JWT first (without verification to extract JTI).
 	claims, err := xkms.JWTParse(tokenValue)
 	if err == nil && claims != nil {
+		// The token tenant is authoritative from the tenant_id claim. Inject
+		// it into the context so the tenant-scoped token index is resolved
+		// (revocation already parses the JWT, so this is free).
+		if tid, ok := claims["tenant_id"].(string); ok && tid != "" {
+			ctx = ContextWithTenant(ctx, tid)
+		}
 		// Extract JTI from JWT
 		if jti, ok := claims["jti"].(string); ok {
 			return s.storage.RevokeToken(ctx, jti)
@@ -462,7 +553,11 @@ func (s *TokenService) IssueServiceAccountTokens(ctx context.Context, opts Servi
 		},
 	}
 
-	tokenString, err := xkms.JWTSignWithSigner(s.signingKey, jwtClaims, s.config.SigningAlgorithm)
+	signer, alg, kid, err := s.signingMaterial(ctx, opts.TenantID)
+	if err != nil {
+		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.IssueServiceAccountTokens", "failed to resolve signing key")
+	}
+	tokenString, err := xkms.JWTSignWithSignerKID(signer, jwtClaims, alg, kid)
 	if err != nil {
 		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.IssueServiceAccountTokens", "failed to sign service account token")
 	}

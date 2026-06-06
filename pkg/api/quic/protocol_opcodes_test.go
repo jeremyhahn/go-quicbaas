@@ -376,7 +376,7 @@ func TestOpcodeToString_KMSExtendedKeyOps(t *testing.T) {
 	}
 }
 
-func TestOpcodeToString_DynamicSecretsAndClusterDEK(t *testing.T) {
+func TestOpcodeToString_DynamicSecrets(t *testing.T) {
 	tests := []struct {
 		opcode   byte
 		expected string
@@ -389,15 +389,6 @@ func TestOpcodeToString_DynamicSecretsAndClusterDEK(t *testing.T) {
 		{OpDynamicSecretsRenewLease, "DynamicSecretsRenewLease"},
 		{OpDynamicSecretsRevokeLease, "DynamicSecretsRevokeLease"},
 		{OpDynamicSecretsListLeases, "DynamicSecretsListLeases"},
-		{OpClusterDEKInit, "ClusterDEKInit"},
-		{OpClusterDEKStatus, "ClusterDEKStatus"},
-		{OpClusterDEKRotate, "ClusterDEKRotate"},
-		{OpClusterDEKSyncNode, "ClusterDEKSyncNode"},
-		{OpClusterDEKNodeStatus, "ClusterDEKNodeStatus"},
-		{OpClusterDEKStartReencrypt, "ClusterDEKStartReencrypt"},
-		{OpClusterDEKReencryptStatus, "ClusterDEKReencryptStatus"},
-		{OpClusterDEKCancelReencrypt, "ClusterDEKCancelReencrypt"},
-		{OpClusterDEKRecover, "ClusterDEKRecover"},
 	}
 
 	for _, tt := range tests {

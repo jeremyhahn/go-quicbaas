@@ -17,17 +17,16 @@ package secretsresolver
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 const (
@@ -44,19 +43,6 @@ var testSecrets = []string{
 	"api-key",
 	"jwt-secret",
 	"encryption-key",
-}
-
-// tlsTransport returns an http.Transport configured to skip TLS certificate verification
-// for integration tests using self-signed certificates.
-func tlsTransport() *http.Transport {
-	return &http.Transport{
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-		TLSHandshakeTimeout: 10 * time.Second,
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-	}
 }
 
 // TestMain sets up the test environment before running secrets resolver tests.
@@ -172,10 +158,7 @@ func setupSecretsEncryptionKey() error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: tlsTransport(),
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "sending request", Cause: err}
@@ -198,10 +181,7 @@ func setupSecretsEncryptionKey() error {
 // setupTestSecrets creates test secrets in KMS for resolution testing.
 func setupTestSecrets() error {
 	endpoint := getRESTEndpoint()
-	client := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: tlsTransport(),
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	for _, secretName := range testSecrets {
 		fullName := testSecretPrefix + secretName
@@ -270,10 +250,7 @@ func setupTestSecrets() error {
 // cleanupTestSecrets removes test secrets after tests complete.
 func cleanupTestSecrets() error {
 	endpoint := getRESTEndpoint()
-	client := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: tlsTransport(),
-	}
+	client := helpers.NewHTTPClient(30 * time.Second)
 
 	var lastErr error
 	for _, secretName := range testSecrets {
@@ -326,10 +303,7 @@ func keyExists(endpoint, keyID string) (bool, error) {
 		return false, &qberrors.WrappedMessageError{Message: "creating request", Cause: err}
 	}
 
-	client := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: tlsTransport(),
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, &qberrors.WrappedMessageError{Message: "sending request", Cause: err}
@@ -348,10 +322,7 @@ func secretExists(endpoint, secretID string) (bool, error) {
 		return false, &qberrors.WrappedMessageError{Message: "creating request", Cause: err}
 	}
 
-	client := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: tlsTransport(),
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, &qberrors.WrappedMessageError{Message: "sending request", Cause: err}

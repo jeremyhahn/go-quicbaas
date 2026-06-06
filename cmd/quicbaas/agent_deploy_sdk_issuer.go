@@ -90,12 +90,10 @@ func resolveServerBaseURL() (string, error) {
 }
 
 // buildIssuerTLSConfig mirrors the SDK client's TLS resolution rules so the
-// CA-issuer HTTP client respects the exact same --tls* flag surface. It
-// auto-discovers the daemon's CA chain from --data-dir/certs/ca-chain.crt
-// when no explicit --tls-ca is given, and honors --tls-skip-verify even when
-// --tls is not set (the previous early-return dropped the skip flag, which
-// caused the issuer to fall back to system roots and reject the daemon's
-// self-signed cert).
+// CA-issuer HTTP client respects the same --tls* flag surface. It auto-
+// discovers the daemon's CA chain from --data-dir/certs/ca-chain.crt when
+// no explicit --tls-ca is given. QuicBaaS bans insecure TLS — a CA must be
+// resolvable (explicit or auto-discovered) when TLS is requested.
 func buildIssuerTLSConfig() (*tls.Config, error) {
 	caFile := tlsCA
 	if caFile == "" && dataDir != "" {
@@ -107,11 +105,11 @@ func buildIssuerTLSConfig() (*tls.Config, error) {
 
 	// No TLS-related flag given and no auto-discovered CA: leave the HTTP
 	// transport at its zero value (system roots).
-	if !tlsEnabled && !tlsSkipVerify && caFile == "" && tlsCert == "" {
+	if !tlsEnabled && caFile == "" && tlsCert == "" {
 		return nil, nil
 	}
 
-	cfg := &tls.Config{InsecureSkipVerify: tlsSkipVerify} //nolint:gosec // operator opt-in via --tls-skip-verify
+	cfg := &tls.Config{MinVersion: tls.VersionTLS13}
 	if caFile != "" {
 		caPEM, err := os.ReadFile(caFile)
 		if err != nil {

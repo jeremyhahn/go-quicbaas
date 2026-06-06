@@ -469,7 +469,7 @@ func main() {
 
 	// Step 5: Invoke health check tool (public, no auth required).
 	fmt.Println("Step 5: Invoking health check tool...")
-	healthResult, err := client.CallTool("quicbaas_health", map[string]interface{}{
+	healthResult, err := client.CallTool("qrdb_health", map[string]interface{}{
 		"includeDetails": true,
 	})
 	if err != nil {
@@ -552,7 +552,7 @@ func main() {
 func demonstrateKVOperations(client *MCPClient) {
 	// Put a value.
 	fmt.Println("  Storing test value...")
-	putResult, err := client.CallTool("quicbaas_put", map[string]interface{}{
+	putResult, err := client.CallTool("qrdb_put", map[string]interface{}{
 		"entityType": "mcp_example",
 		"id":         12345,
 		"data":       "Hello from MCP client!",
@@ -566,7 +566,7 @@ func demonstrateKVOperations(client *MCPClient) {
 
 	// Get the value back.
 	fmt.Println("  Retrieving test value...")
-	getResult, err := client.CallTool("quicbaas_get", map[string]interface{}{
+	getResult, err := client.CallTool("qrdb_get", map[string]interface{}{
 		"entityType": "mcp_example",
 		"id":         12345,
 	})
@@ -579,7 +579,7 @@ func demonstrateKVOperations(client *MCPClient) {
 
 	// List entities.
 	fmt.Println("  Listing entities...")
-	listResult, err := client.CallTool("quicbaas_list", map[string]interface{}{
+	listResult, err := client.CallTool("qrdb_list", map[string]interface{}{
 		"entityType": "mcp_example",
 		"pageSize":   10,
 	})
@@ -592,7 +592,7 @@ func demonstrateKVOperations(client *MCPClient) {
 
 	// Delete the value.
 	fmt.Println("  Deleting test value...")
-	deleteResult, err := client.CallTool("quicbaas_delete", map[string]interface{}{
+	deleteResult, err := client.CallTool("qrdb_delete", map[string]interface{}{
 		"entityType": "mcp_example",
 		"id":         12345,
 	})

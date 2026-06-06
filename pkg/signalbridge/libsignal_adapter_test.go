@@ -33,7 +33,7 @@ func TestLibSignalAdapter_GenerateIdentityKeyPair(t *testing.T) {
 	if len(mat.Serialized) != 64 {
 		t.Fatalf("serialized len: %d", len(mat.Serialized))
 	}
-	if len(mat.PublicSerialized) != 33 {  // DjbType prefix + 32 bytes
+	if len(mat.PublicSerialized) != 33 { // DjbType prefix + 32 bytes
 		t.Fatalf("public len: %d", len(mat.PublicSerialized))
 	}
 }
@@ -144,6 +144,14 @@ func TestLibSignalAdapter_EncryptDecrypt_RoundTrip(t *testing.T) {
 	alice := NewLibSignalAdapter()
 	bob := NewLibSignalAdapter()
 
+	// ACI values are canonical Signal ServiceId UUIDs. libsignal rejects
+	// address names that are not valid ServiceId strings when it serializes
+	// the session, so the round-trip must use well-formed UUIDs.
+	const (
+		aliceACI = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		bobACI   = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	)
+
 	// Both parties have identities.
 	aliceMat, err := alice.GenerateIdentityKeyPair()
 	if err != nil {
@@ -153,7 +161,7 @@ func TestLibSignalAdapter_EncryptDecrypt_RoundTrip(t *testing.T) {
 	if _, err := bob.GenerateIdentityKeyPair(); err != nil {
 		t.Fatalf("bob id: %v", err)
 	}
-	bobBundle, err := bob.GeneratePreKeyBundle(SignalAccount{ACI: "bob"}, 5, 2)
+	bobBundle, err := bob.GeneratePreKeyBundle(SignalAccount{ACI: bobACI}, 5, 2)
 	if err != nil {
 		t.Fatalf("bob bundle: %v", err)
 	}
@@ -161,7 +169,7 @@ func TestLibSignalAdapter_EncryptDecrypt_RoundTrip(t *testing.T) {
 	// Alice encrypts to Bob. fetchBundle returns Bob's bundle.
 	fetch := func(aci string, dev uint32) (PreKeyBundleFetch, error) {
 		return PreKeyBundleFetch{
-			RecipientACI:    "bob",
+			RecipientACI:    bobACI,
 			DeviceID:        1,
 			RegistrationID:  77,
 			IdentityKey:     bob.identityKeyPair.PublicKey().Serialize()[1:],
@@ -175,8 +183,8 @@ func TestLibSignalAdapter_EncryptDecrypt_RoundTrip(t *testing.T) {
 			KyberPreKeySig:  bobBundle.KyberPreKeys[0].Signature,
 		}, nil
 	}
-	envs, err := alice.Encrypt(context.Background(), SignalAccount{ACI: "alice"}, OutboundMessage{
-		ConversationID: "bob",
+	envs, err := alice.Encrypt(context.Background(), SignalAccount{ACI: aliceACI, DeviceID: 1}, OutboundMessage{
+		ConversationID: bobACI,
 		Body:           "hello bob",
 		Timestamp:      12345,
 	}, fetch)
@@ -191,12 +199,12 @@ func TestLibSignalAdapter_EncryptDecrypt_RoundTrip(t *testing.T) {
 	inbound := InboundEnvelope{
 		ID:             1,
 		Type:           envs[0].EnvelopeType,
-		SourceACI:      "alice",
+		SourceACI:      aliceACI,
 		SourceDeviceID: 1,
 		Content:        envs[0].Content,
 		Timestamp:      envs[0].Timestamp,
 	}
-	msg, err := bob.Decrypt(context.Background(), SignalAccount{ACI: "bob"}, inbound)
+	msg, err := bob.Decrypt(context.Background(), SignalAccount{ACI: bobACI, DeviceID: 1}, inbound)
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
@@ -204,7 +212,6 @@ func TestLibSignalAdapter_EncryptDecrypt_RoundTrip(t *testing.T) {
 		t.Fatalf("body: %q", msg.Body)
 	}
 }
-
 
 // newTestIdentityKey produces a deterministic *identity.Key from a
 // single seed byte. Different seeds produce different fingerprints
@@ -226,7 +233,10 @@ func TestSaveIdentity_NewIdentity_ReturnsNew(t *testing.T) {
 	s := newInMemIdentityStore(nil, 1)
 	addr := protocol.NewSignalAddress("alice", 1)
 
-	got := s.SaveIdentity(addr, newTestIdentityKey(0x10))
+	got, err := s.SaveIdentity(addr, newTestIdentityKey(0x10))
+	if err != nil {
+		t.Fatalf("SaveIdentity: %v", err)
+	}
 
 	if got != store.IdentityChangeNewOrUnchanged {
 		t.Fatalf("first save: got %d, want IdentityChangeNewOrUnchanged (%d)", got, store.IdentityChangeNewOrUnchanged)
@@ -243,11 +253,14 @@ func TestSaveIdentity_SameIdentity_ReturnsNone(t *testing.T) {
 	s := newInMemIdentityStore(nil, 1)
 	addr := protocol.NewSignalAddress("alice", 1)
 
-	if got := s.SaveIdentity(addr, newTestIdentityKey(0x10)); got != store.IdentityChangeNewOrUnchanged {
-		t.Fatalf("first save: got %d, want IdentityChangeNewOrUnchanged", got)
+	if got, err := s.SaveIdentity(addr, newTestIdentityKey(0x10)); err != nil || got != store.IdentityChangeNewOrUnchanged {
+		t.Fatalf("first save: got %d err %v, want IdentityChangeNewOrUnchanged", got, err)
 	}
 
-	got := s.SaveIdentity(addr, newTestIdentityKey(0x10))
+	got, err := s.SaveIdentity(addr, newTestIdentityKey(0x10))
+	if err != nil {
+		t.Fatalf("SaveIdentity: %v", err)
+	}
 	if got != store.IdentityChangeNewOrUnchanged {
 		t.Fatalf("resave same key: got %d, want IdentityChangeNewOrUnchanged", got)
 	}
@@ -264,11 +277,14 @@ func TestSaveIdentity_RotatedKey_ReturnsReplacedExisting(t *testing.T) {
 	original := newTestIdentityKey(0x10)
 	rotated := newTestIdentityKey(0x20)
 
-	if got := s.SaveIdentity(addr, original); got != store.IdentityChangeNewOrUnchanged {
-		t.Fatalf("first save: got %d, want IdentityChangeNewOrUnchanged", got)
+	if got, err := s.SaveIdentity(addr, original); err != nil || got != store.IdentityChangeNewOrUnchanged {
+		t.Fatalf("first save: got %d err %v, want IdentityChangeNewOrUnchanged", got, err)
 	}
 
-	got := s.SaveIdentity(addr, rotated)
+	got, err := s.SaveIdentity(addr, rotated)
+	if err != nil {
+		t.Fatalf("SaveIdentity: %v", err)
+	}
 	if got != store.IdentityChangeReplacedExisting {
 		t.Fatalf("rotated save: got %d, want IdentityChangeReplacedExisting (%d)", got, store.IdentityChangeReplacedExisting)
 	}

@@ -17,7 +17,6 @@ package kms
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"testing"
 	"time"
@@ -42,7 +41,9 @@ func TestGRPCExportKey(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -150,7 +151,9 @@ func TestGRPCUnwrapKey(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -277,7 +280,9 @@ func TestGRPCSetKeySafety(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -348,7 +353,9 @@ func TestGRPCClearKeySafety(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -405,7 +412,9 @@ func TestGRPCSafetyCheck(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -495,7 +504,9 @@ func TestGRPCSafetyReport(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -538,7 +549,9 @@ func TestGRPCDEKOperations(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -667,7 +680,9 @@ func TestGRPCSetDefaultDEK(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -733,7 +748,9 @@ func TestGRPCDEKSafety(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 

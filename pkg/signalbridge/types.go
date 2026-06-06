@@ -213,12 +213,12 @@ func DefaultVerbosityPrefs() VerbosityPrefs {
 // ConversationState is the per-conversation record persisted by the
 // SessionManager.
 type ConversationState struct {
-	ConversationID string           `json:"conversation_id"`
-	Kind           ConversationKind `json:"kind"`
-	AttachedSessionID string        `json:"attached_session_id,omitempty"`
-	OperatorSubject   string        `json:"operator_subject,omitempty"`
-	OperatorTenant    string        `json:"operator_tenant,omitempty"`
-	Verbosity         VerbosityPrefs `json:"verbosity"`
+	ConversationID    string           `json:"conversation_id"`
+	Kind              ConversationKind `json:"kind"`
+	AttachedSessionID string           `json:"attached_session_id,omitempty"`
+	OperatorSubject   string           `json:"operator_subject,omitempty"`
+	OperatorTenant    string           `json:"operator_tenant,omitempty"`
+	Verbosity         VerbosityPrefs   `json:"verbosity"`
 	// LastDeliveredSeq is the highest session-event sequence number that
 	// has been successfully forwarded to this conversation. Used for
 	// exactly-once delivery on restart.

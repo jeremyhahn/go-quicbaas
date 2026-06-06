@@ -42,7 +42,7 @@ func TestHandleListNodes_Success(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	// Create request
 	payload, err := EncodePayload(&service.ClusterStatusRequest{IncludeDetails: true})
@@ -90,7 +90,7 @@ func TestHandleListNodes_ServiceError(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.ClusterStatusRequest{})
 	if err != nil {
@@ -111,7 +111,7 @@ func TestHandleListNodes_ServiceError(t *testing.T) {
 
 func TestHandleListNodes_InvalidPayload(t *testing.T) {
 	mockSvc := &mockService{}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	req := &Request{
 		Opcode:  OpListNodes,
@@ -139,7 +139,7 @@ func TestHandleRebalanceStatus_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	type RebalanceStatusRequest struct {
 		JobID string
@@ -177,7 +177,7 @@ func TestHandleRebalanceStatus_Success(t *testing.T) {
 
 func TestHandleRebalanceStatus_InvalidPayload(t *testing.T) {
 	mockSvc := &mockService{}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	req := &Request{
 		Opcode:  OpRebalanceStatus,
@@ -197,7 +197,7 @@ func TestHandleRebalanceStatus_InvalidPayload(t *testing.T) {
 
 func TestHandleRebalancePlan_Success(t *testing.T) {
 	mockSvc := &mockService{}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	type RebalancePlanRequest struct {
 		TargetShardCount uint64
@@ -264,7 +264,7 @@ func TestHandleRebalancePlan_DifferentStrategies(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mockSvc := &mockService{}
-			handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+			handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 			type RebalancePlanRequest struct {
 				TargetShardCount uint64
@@ -295,7 +295,7 @@ func TestHandleRebalancePlan_DifferentStrategies(t *testing.T) {
 
 func TestHandleRebalancePlan_InvalidPayload(t *testing.T) {
 	mockSvc := &mockService{}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	req := &Request{
 		Opcode:  OpRebalancePlan,
@@ -315,7 +315,7 @@ func TestHandleRebalancePlan_InvalidPayload(t *testing.T) {
 
 func TestHandleCancelMigration_Success(t *testing.T) {
 	mockSvc := &mockService{}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	type CancelMigrationRequest struct {
 		MigrationID string
@@ -363,7 +363,7 @@ func TestHandleCancelMigration_Success(t *testing.T) {
 
 func TestHandleCancelMigration_InvalidPayload(t *testing.T) {
 	mockSvc := &mockService{}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	req := &Request{
 		Opcode:  OpCancelMigration,
@@ -379,7 +379,7 @@ func TestHandleCancelMigration_InvalidPayload(t *testing.T) {
 
 func TestHandleCancelMigration_EmptyMigrationID(t *testing.T) {
 	mockSvc := &mockService{}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	type CancelMigrationRequest struct {
 		MigrationID string
@@ -417,7 +417,7 @@ func TestHandleNodeReplaceRequest_Success(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.ReplaceNodeRequest{
 		ShardID:    1,
@@ -462,7 +462,7 @@ func TestHandleNodeReplaceRequest_ServiceError(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.ReplaceNodeRequest{
 		ShardID:    1,
@@ -488,7 +488,7 @@ func TestHandleNodeReplaceRequest_ServiceError(t *testing.T) {
 
 func TestHandleNodeReplaceRequest_InvalidPayload(t *testing.T) {
 	mockSvc := &mockService{}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	req := &Request{
 		Opcode:  OpNodeReplaceRequest,
@@ -533,7 +533,7 @@ func TestClusterManagementOperationsIntegration(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 	ctx := context.Background()
 
 	// Step 1: List nodes
@@ -589,7 +589,7 @@ func TestClusterManagementOperations_EmptyCluster(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	payload, _ := EncodePayload(&service.ClusterStatusRequest{})
 	resp := handler.HandleRequest(context.Background(), &Request{
@@ -617,7 +617,7 @@ func TestClusterManagementOperations_EmptyCluster(t *testing.T) {
 
 func TestClusterManagementOperations_NilPayload(t *testing.T) {
 	mockSvc := &mockService{}
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	opcodes := []byte{OpListNodes, OpRebalanceStatus, OpRebalancePlan, OpCancelMigration, OpNodeReplaceRequest}
 
@@ -653,7 +653,7 @@ func TestClusterManagementOperations_Concurrent(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(mockSvc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(mockSvc, nil, nil, nil, createTestLogger())
 
 	// Run multiple operations concurrently
 	done := make(chan bool, 10)

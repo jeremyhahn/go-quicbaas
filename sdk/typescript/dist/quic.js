@@ -81,6 +81,8 @@ class QuicAuthClient {
     async loginPIV() { return notImpl('loginPIV'); }
     async listPublicTenants() { return notImpl('listPublicTenants'); }
     async logout(_token) { return notImpl('logout'); }
+    async registerBegin(_req) { return notImpl('registerBegin'); }
+    async registerFinish(_req) { return notImpl('registerFinish'); }
 }
 // QuicBarrierClient is a stub BarrierClient that throws QuicNotImplementedError
 // on every call. Real QUIC streaming wiring will replace this stub.

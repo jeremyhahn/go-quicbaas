@@ -47,6 +47,28 @@ export interface OrchestratorClient {
     inference(req: InferenceRequest): Promise<InferenceResponse>;
     inferenceStream(req: InferenceRequest, signal?: AbortSignal): AsyncIterable<InferenceChunk>;
 }
+export interface SelfRegisterBeginRequest {
+    tenant_name: string;
+    email: string;
+    display_name: string;
+    isolation_mode?: string;
+}
+export interface SelfRegisterBeginResponse {
+    public_key_credential_creation_options: Record<string, unknown>;
+    session_id: string;
+}
+export interface SelfRegisterFinishRequest {
+    session_id: string;
+    credential: Record<string, unknown>;
+}
+export interface SelfRegisterFinishResponse {
+    status: 'active' | 'pending' | 'verification_required';
+    tenant_id: string;
+    user_id: string;
+    access_token?: string;
+    refresh_token?: string;
+    message?: string;
+}
 export interface AuthClient {
     authValidate(token?: string): Promise<boolean>;
     authLogin(credentials: {
@@ -57,6 +79,8 @@ export interface AuthClient {
     webAuthnFinishLogin(tenantID: string, email: string, credential: PublicKeyCredentialJSON): Promise<AuthTokenResponse>;
     loginPIV(): Promise<AuthTokenResponse>;
     listPublicTenants(): Promise<PublicTenant[]>;
+    registerBegin(req: SelfRegisterBeginRequest): Promise<SelfRegisterBeginResponse>;
+    registerFinish(req: SelfRegisterFinishRequest): Promise<SelfRegisterFinishResponse>;
     logout(token?: string): Promise<void>;
 }
 export interface KVEntry {

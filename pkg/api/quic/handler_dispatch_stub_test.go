@@ -30,7 +30,7 @@ func TestTryHandleIAMRequest_ReturnsNilStub(t *testing.T) {
 		Component: "quic-stub-test",
 	}
 	log, _ := logger.New(logCfg)
-	handler := NewHandler(&mockService{}, nil, nil, nil, nil, log)
+	handler := NewHandler(&mockService{}, nil, nil, nil, log)
 
 	req := &Request{Opcode: 0xFF, Payload: []byte{}}
 	result := handler.tryHandleIAMRequest(context.Background(), req)

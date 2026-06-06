@@ -17,7 +17,6 @@ package messaging
 
 import (
 	"context"
-	"crypto/tls"
 
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -48,7 +47,11 @@ func (a *grpcAdapter) Name() string {
 
 // Setup initializes the gRPC client.
 func (a *grpcAdapter) Setup(ctx context.Context) error {
-	client, err := grpcclient.NewClient(a.endpoint, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return err
+	}
+	client, err := grpcclient.NewClient(a.endpoint, grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		return err
 	}
@@ -144,7 +147,11 @@ func (a *unixSocketAdapter) Name() string {
 
 // Setup initializes the gRPC client over Unix socket.
 func (a *unixSocketAdapter) Setup(ctx context.Context) error {
-	client, err := grpcclient.NewClient("unix://"+a.socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return err
+	}
+	client, err := grpcclient.NewClient("unix://"+a.socketPath, grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		return err
 	}

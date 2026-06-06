@@ -17,7 +17,6 @@ package cluster
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"strings"
 	"testing"
@@ -37,8 +36,9 @@ func TestClusterManagement_CreateShards(t *testing.T) {
 	defer cancel()
 
 	// Connect to node 1
+	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
@@ -150,8 +150,9 @@ func TestClusterManagement_Rebalancing(t *testing.T) {
 	defer cancel()
 
 	// Connect to node 1
+	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	if err != nil {
 		t.Fatalf("Failed to connect to node1: %v", err)
 	}

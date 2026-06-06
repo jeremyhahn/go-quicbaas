@@ -15,15 +15,20 @@ package service
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	stderrors "errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 
+	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -41,6 +46,16 @@ type CertificateService interface {
 	GetCABundle(ctx context.Context, req *GetCABundleRequest) (*GetCABundleResponse, error)
 	GenerateCRL(ctx context.Context, req *GenerateCRLRequest) (*GenerateCRLResponse, error)
 	IsRevoked(ctx context.Context, req *IsRevokedRequest) (*IsRevokedResponse, error)
+
+	// CAInfo returns parsed metadata describing the active issuing CA:
+	// subject/issuer/serial, validity window, key type/size, signature
+	// algorithm, plus the CA leaf PEM and the full CA bundle PEM.
+	CAInfo(ctx context.Context, req *CAInfoRequest) (*CAInfoResponse, error)
+
+	// ListCertificates enumerates certificates stored in the CA's
+	// CertStore, with optional filters for Common Name, revocation
+	// status, and expiry.
+	ListCertificates(ctx context.Context, req *ListCertificatesRequest) (*ListCertificatesResponse, error)
 }
 
 // CertificateService Request/Response types
@@ -210,7 +225,8 @@ func (s *certificateService) IssueCertificate(ctx context.Context, req *IssueCer
 		return nil, ErrCertMissingCommonName
 	}
 
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	tenantID, err := certPrepareTenantContext(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -224,6 +240,7 @@ func (s *certificateService) IssueCertificate(ctx context.Context, req *IssueCer
 		Profile:      profile,
 		Algorithm:    req.KeyAlgorithm,
 		ValidityDays: req.ValidityDays,
+		TenantID:     tenantID,
 	}
 
 	resp, err := s.caService.IssueCertificate(ctx, xkmsReq)
@@ -248,7 +265,15 @@ func (s *certificateService) SignCSR(ctx context.Context, req *SignCSRRequest) (
 		return nil, ErrCertMissingCSR
 	}
 
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	// Capture the request tenant from context (do NOT discard it). When a
+	// trust domain is configured server-side, the issuing CA stamps a
+	// tenant-scoped SPIFFE URI SAN onto the leaf so mTLS/PIV login can derive
+	// the tenant from the verified peer certificate. The TenantID flows on the
+	// transport request to every server-side CA adapter (embedded, REST, gRPC,
+	// QUIC, MCP, Unix); the trust domain and SPIFFE kind are resolved by the
+	// adapter from its operator config and the requested profile.
+	tenantID, err := certPrepareTenantContext(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -258,6 +283,7 @@ func (s *certificateService) SignCSR(ctx context.Context, req *SignCSRRequest) (
 		CSRPEM:       []byte(req.CSRPEM),
 		Profile:      profile,
 		ValidityDays: req.ValidityDays,
+		TenantID:     tenantID,
 	}
 
 	resp, err := s.caService.SignCSR(ctx, xkmsReq)
@@ -561,3 +587,311 @@ func usageToProfile(usage string) string {
 		return "server"
 	}
 }
+
+// SPIFFEKindForProfile maps an xkms certificate profile to the SPIFFE workload
+// kind used when stamping a tenant-scoped SPIFFE URI SAN.
+//
+// The "client" profile is the human-login (TLS client authentication) path, so
+// it resolves to spiffe KindUser. Every other profile — server, codesigning,
+// email, ocsp, timestamping, ca — describes a non-human service / device /
+// workload identity and resolves to KindService ("svc"). This guarantees a
+// service or device certificate is NEVER stamped as a human login subject (the
+// xkms default of empty kind -> "user" would otherwise misclassify a server
+// cert). The decision is deterministic from the profile alone; there is no
+// ambiguity given the locked profile set.
+func SPIFFEKindForProfile(profile string) string {
+	if strings.EqualFold(strings.TrimSpace(profile), "client") {
+		return qrdbspiffe.KindUser
+	}
+	return qrdbspiffe.KindService
+}
+
+// =============================================================================
+// CA Administration Surface — types & implementation
+// =============================================================================
+
+// CAInfoRequest is the input to CertificateService.CAInfo. No fields
+// today; the method returns metadata for the active issuing CA.
+type CAInfoRequest struct{}
+
+// CAInfoResponse describes the issuing CA's leaf certificate plus
+// parsed metadata extracted from the PEM (subject, issuer, serial,
+// validity, key type / size, signature algorithm). CertificatePEM and
+// CABundlePEM are included so a single CAInfo call can drive downstream
+// trust-store configuration without a separate GetCACertificate hop.
+type CAInfoResponse struct {
+	CommonName         string    `json:"common_name"`
+	Subject            string    `json:"subject"`
+	Issuer             string    `json:"issuer"`
+	SerialNumber       string    `json:"serial_number"`
+	NotBefore          time.Time `json:"not_before"`
+	NotAfter           time.Time `json:"not_after"`
+	IsCA               bool      `json:"is_ca"`
+	KeyType            string    `json:"key_type"`
+	KeyBits            int       `json:"key_bits,omitempty"`
+	SignatureAlgorithm string    `json:"signature_algorithm"`
+	CertificatePEM     string    `json:"certificate_pem"`
+	CABundlePEM        string    `json:"ca_bundle_pem"`
+}
+
+// CertificateSummary describes one certificate from a ListCertificates
+// response. The full PEM body is intentionally omitted to keep list
+// responses small.
+type CertificateSummary struct {
+	CommonName   string    `json:"common_name"`
+	Subject      string    `json:"subject"`
+	Issuer       string    `json:"issuer"`
+	SerialNumber string    `json:"serial_number"`
+	NotBefore    time.Time `json:"not_before"`
+	NotAfter     time.Time `json:"not_after"`
+	IsCA         bool      `json:"is_ca"`
+	KeyUsage     string    `json:"key_usage,omitempty"`
+	DNSNames     []string  `json:"dns_names,omitempty"`
+}
+
+// ListCertificatesRequest carries optional filters for the
+// ListCertificates operation.
+type ListCertificatesRequest struct {
+	CommonNameFilter string `json:"common_name_filter,omitempty"`
+	IncludeRevoked   bool   `json:"include_revoked,omitempty"`
+	IncludeExpired   bool   `json:"include_expired,omitempty"`
+	Limit            int    `json:"limit,omitempty"`
+}
+
+// ListCertificatesResponse contains the certificate summaries that
+// matched a ListCertificates request, plus the total unfiltered count.
+type ListCertificatesResponse struct {
+	Certificates []CertificateSummary `json:"certificates"`
+	TotalCount   int                  `json:"total_count"`
+}
+
+// CertStoreLister is the optional capability satisfied by CA service
+// adapters that can enumerate stored certificates. The quicbaas
+// caServiceAdapter (pkg/server) implements this by walking the
+// embedded TrustedCA's CertStore. CertificateService.ListCertificates
+// type-asserts its underlying caService to this interface; backends
+// that don't expose CertStore access return ErrCertListNotSupported.
+//
+// The method name (ListStoredCertificates rather than the more
+// natural ListCertificates) deliberately avoids the xkmstransport.Client
+// method of the same name, which has an incompatible signature
+// (ListCertificates(ctx, backend, opts...) returns key-store backed
+// certs, NOT CA-store entries). A type assertion would be a compile
+// error if both methods shared a name on a type that satisfied both.
+type CertStoreLister interface {
+	ListStoredCertificates(ctx context.Context) ([]*x509.Certificate, error)
+}
+
+// ErrCertListNotSupported is returned by CertificateService.ListCertificates
+// when the underlying CA service adapter does not implement
+// CertStoreLister.
+var ErrCertListNotSupported = &errors.QBError{
+	Code: errors.ErrUnimplemented,
+	Op:   "CertificateService.ListCertificates",
+	Err:  errCertListNotSupported,
+}
+
+var errCertListNotSupported = stderrors.New("CA service does not expose certificate enumeration")
+
+// CAInfo returns parsed metadata for the configured issuing CA. The
+// implementation derives the parsed fields client-side by decoding the
+// CA leaf PEM returned by GetCACertificate so that all transports get
+// the same shape without each having to teach its handlers to parse
+// X.509.
+func (s *certificateService) CAInfo(ctx context.Context, req *CAInfoRequest) (*CAInfoResponse, error) {
+	if _, err := certPrepareTenantContext(ctx); err != nil {
+		return nil, err
+	}
+
+	caResp, err := s.GetCACertificate(ctx, &GetCACertificateRequest{})
+	if err != nil {
+		return nil, err
+	}
+	if caResp == nil || caResp.CACertificatePEM == "" {
+		return nil, &errors.QBError{
+			Code: errors.ErrNotFound,
+			Op:   "CertificateService.CAInfo",
+			Err:  errCertNotInitialized,
+		}
+	}
+
+	cert, perr := decodeFirstCertPEM([]byte(caResp.CACertificatePEM))
+	if perr != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "CertificateService.CAInfo",
+			Err:  perr,
+		}
+	}
+
+	keyType, keyBits := describePublicKey(cert)
+
+	return &CAInfoResponse{
+		CommonName:         cert.Subject.CommonName,
+		Subject:            cert.Subject.String(),
+		Issuer:             cert.Issuer.String(),
+		SerialNumber:       cert.SerialNumber.Text(16),
+		NotBefore:          cert.NotBefore.UTC(),
+		NotAfter:           cert.NotAfter.UTC(),
+		IsCA:               cert.IsCA,
+		KeyType:            keyType,
+		KeyBits:            keyBits,
+		SignatureAlgorithm: cert.SignatureAlgorithm.String(),
+		CertificatePEM:     caResp.CACertificatePEM,
+		CABundlePEM:        caResp.CABundlePEM,
+	}, nil
+}
+
+// ListCertificates enumerates certificates stored in the CA's
+// CertStore. The underlying caService must implement CertStoreLister;
+// otherwise ErrCertListNotSupported is returned. Filtering is performed
+// in-process: backends do not currently push filters down to storage.
+func (s *certificateService) ListCertificates(ctx context.Context, req *ListCertificatesRequest) (*ListCertificatesResponse, error) {
+	if req == nil {
+		req = &ListCertificatesRequest{}
+	}
+	if req.Limit < 0 {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "CertificateService.ListCertificates",
+			Err:  errCertNegativeLimit,
+		}
+	}
+	if _, err := certPrepareTenantContext(ctx); err != nil {
+		return nil, err
+	}
+
+	lister, ok := s.caService.(CertStoreLister)
+	if !ok {
+		return nil, ErrCertListNotSupported
+	}
+
+	certs, err := lister.ListStoredCertificates(ctx)
+	if err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "CertificateService.ListCertificates",
+			Err:  err,
+		}
+	}
+
+	now := time.Now()
+	filter := strings.ToLower(strings.TrimSpace(req.CommonNameFilter))
+	out := make([]CertificateSummary, 0, len(certs))
+	for _, cert := range certs {
+		if cert == nil {
+			continue
+		}
+		if filter != "" && !strings.Contains(strings.ToLower(cert.Subject.CommonName), filter) {
+			continue
+		}
+		if !req.IncludeExpired && cert.NotAfter.Before(now) {
+			continue
+		}
+		if !req.IncludeRevoked {
+			revoked, _ := s.caService.IsRevoked(ctx, &xkmstransport.IsRevokedRequest{
+				SerialNumber: cert.SerialNumber.Text(16),
+			})
+			if revoked != nil && revoked.Revoked {
+				continue
+			}
+		}
+		out = append(out, summariseCertificate(cert))
+		if req.Limit > 0 && len(out) >= req.Limit {
+			break
+		}
+	}
+
+	return &ListCertificatesResponse{
+		Certificates: out,
+		TotalCount:   len(certs),
+	}, nil
+}
+
+// summariseCertificate projects an x509.Certificate into the compact
+// CertificateSummary returned by ListCertificates.
+func summariseCertificate(cert *x509.Certificate) CertificateSummary {
+	return CertificateSummary{
+		CommonName:   cert.Subject.CommonName,
+		Subject:      cert.Subject.String(),
+		Issuer:       cert.Issuer.String(),
+		SerialNumber: cert.SerialNumber.Text(16),
+		NotBefore:    cert.NotBefore.UTC(),
+		NotAfter:     cert.NotAfter.UTC(),
+		IsCA:         cert.IsCA,
+		KeyUsage:     formatKeyUsage(cert.KeyUsage),
+		DNSNames:     append([]string(nil), cert.DNSNames...),
+	}
+}
+
+// decodeFirstCertPEM parses the first CERTIFICATE block out of the
+// supplied PEM bytes. Returns errCertInvalidPEM when no CERTIFICATE
+// block is present and errCertParseFailed when the DER body is
+// malformed.
+func decodeFirstCertPEM(pemBytes []byte) (*x509.Certificate, error) {
+	rest := pemBytes
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			return nil, errCertInvalidPEM
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, errCertParseFailed
+		}
+		return cert, nil
+	}
+}
+
+// describePublicKey returns a human-readable key algorithm label and
+// the key bit length where applicable.
+func describePublicKey(cert *x509.Certificate) (string, int) {
+	switch pub := cert.PublicKey.(type) {
+	case *rsa.PublicKey:
+		return "RSA", pub.N.BitLen()
+	case *ecdsa.PublicKey:
+		if pub.Curve == nil || pub.Curve.Params() == nil {
+			return "ECDSA", 0
+		}
+		return "ECDSA", pub.Curve.Params().BitSize
+	case ed25519.PublicKey:
+		return "Ed25519", len(pub) * 8
+	default:
+		return "Unknown", 0
+	}
+}
+
+// formatKeyUsage joins enabled X509 KeyUsage flags into a human-readable
+// comma-separated string. Returns "" when no flags are set.
+func formatKeyUsage(usage x509.KeyUsage) string {
+	names := []struct {
+		flag x509.KeyUsage
+		name string
+	}{
+		{x509.KeyUsageDigitalSignature, "DigitalSignature"},
+		{x509.KeyUsageContentCommitment, "ContentCommitment"},
+		{x509.KeyUsageKeyEncipherment, "KeyEncipherment"},
+		{x509.KeyUsageDataEncipherment, "DataEncipherment"},
+		{x509.KeyUsageKeyAgreement, "KeyAgreement"},
+		{x509.KeyUsageCertSign, "CertSign"},
+		{x509.KeyUsageCRLSign, "CRLSign"},
+		{x509.KeyUsageEncipherOnly, "EncipherOnly"},
+		{x509.KeyUsageDecipherOnly, "DecipherOnly"},
+	}
+	var parts []string
+	for _, n := range names {
+		if usage&n.flag != 0 {
+			parts = append(parts, n.name)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+var (
+	errCertNotInitialized = stderrors.New("CA certificate not available")
+	errCertNegativeLimit  = stderrors.New("limit cannot be negative")
+)

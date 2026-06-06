@@ -9,11 +9,11 @@ import xkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 type Backend = xkms.Backend
 
 var (
-	GeneratePIVKey         = xkms.GeneratePIVKey
-	GetPIVCertificate      = xkms.GetPIVCertificate
-	InitializePIV          = xkms.InitializePIV
-	ListPIVSlots           = xkms.ListPIVSlots
-	StorePIVCertificate    = xkms.StorePIVCertificate
-	ErrPIVInvalidSlot      = xkms.ErrPIVInvalidSlot
-	ErrPIVNotInitialized   = xkms.ErrPIVNotInitialized
+	GeneratePIVKey       = xkms.GeneratePIVKey
+	GetPIVCertificate    = xkms.GetPIVCertificate
+	InitializePIV        = xkms.InitializePIV
+	ListPIVSlots         = xkms.ListPIVSlots
+	StorePIVCertificate  = xkms.StorePIVCertificate
+	ErrPIVInvalidSlot    = xkms.ErrPIVInvalidSlot
+	ErrPIVNotInitialized = xkms.ErrPIVNotInitialized
 )

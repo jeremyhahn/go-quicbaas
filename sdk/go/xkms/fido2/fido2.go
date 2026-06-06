@@ -7,11 +7,15 @@ package fido2
 import xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 
 type (
-	Config                       = xkmsfido2.Config
-	Device                       = xkmsfido2.Device
-	FIDO2Handler                 = xkmsfido2.FIDO2Handler
-	Handler                      = xkmsfido2.Handler
-	HIDDeviceEnumerator          = xkmsfido2.HIDDeviceEnumerator
+	AuthenticationConfig = xkmsfido2.AuthenticationConfig
+	Config               = xkmsfido2.Config
+	Device               = xkmsfido2.Device
+	EnrollmentConfig     = xkmsfido2.EnrollmentConfig
+	EnrollmentResult     = xkmsfido2.EnrollmentResult
+	FIDO2Handler         = xkmsfido2.FIDO2Handler
+	Handler              = xkmsfido2.Handler
+	HIDDeviceEnumerator  = xkmsfido2.HIDDeviceEnumerator
+	RelyingParty         = xkmsfido2.RelyingParty
 )
 
 var (

@@ -133,7 +133,6 @@ type Client interface {
 	// GenerateBackupCodes generates new backup codes for a user.
 	GenerateBackupCodes(ctx context.Context, tenantID, userID string) ([]string, error)
 
-
 	// Close closes the client and releases any resources.
 	Close() error
 }

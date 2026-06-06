@@ -72,6 +72,11 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Auth/RefreshToken":  handleRefreshToken,
 	"quicbaas.Auth/ValidateToken": handleValidateToken,
 
+	// Unified login ceremony (BeginLogin / FinishLogin) — routes through the
+	// LoginCeremony() facade. Embedded path is in-process trusted.
+	"quicbaas.Auth/BeginLogin":  handleBeginLogin,
+	"quicbaas.Auth/FinishLogin": handleFinishLogin,
+
 	// RBAC operations
 	"quicbaas.RBAC/CreateUser": handleCreateUser,
 	"quicbaas.RBAC/DeleteUser": handleDeleteUser,
@@ -159,17 +164,17 @@ var unaryHandlers = map[string]handlerFunc{
 	// under quicbaas.KMS/*. Dispatch both to the same handlers so
 	// SDK clients constructed via dek.NewClient / kms.NewClient both
 	// resolve correctly through embedded transport.
-	"quicbaas.DEK/CreateDEK":                handleKMSCreateDEK,
-	"quicbaas.DEK/GetDEK":                   handleKMSGetDEK,
-	"quicbaas.DEK/ListDEKs":                 handleKMSListDEKs,
-	"quicbaas.DEK/RotateDEK":                handleKMSRotateDEK,
-	"quicbaas.DEK/DeleteDEK":                handleKMSDeleteDEK,
-	"quicbaas.DEK/GetDEKStatus":             handleKMSGetDEKStatus,
-	"quicbaas.DEK/SetDefaultDEK":            handleKMSSetDefaultDEK,
-	"quicbaas.DEK/SetDEKSafety":             handleKMSSetDEKSafety,
-	"quicbaas.DEK/ClearDEKSafety":           handleKMSClearDEKSafety,
-	"quicbaas.DEK/StartReencryption":        handleKMSStartReencryption,
-	"quicbaas.DEK/GetReencryptionProgress":  handleKMSGetReencryptionProgress,
+	"quicbaas.DEK/CreateDEK":               handleKMSCreateDEK,
+	"quicbaas.DEK/GetDEK":                  handleKMSGetDEK,
+	"quicbaas.DEK/ListDEKs":                handleKMSListDEKs,
+	"quicbaas.DEK/RotateDEK":               handleKMSRotateDEK,
+	"quicbaas.DEK/DeleteDEK":               handleKMSDeleteDEK,
+	"quicbaas.DEK/GetDEKStatus":            handleKMSGetDEKStatus,
+	"quicbaas.DEK/SetDefaultDEK":           handleKMSSetDefaultDEK,
+	"quicbaas.DEK/SetDEKSafety":            handleKMSSetDEKSafety,
+	"quicbaas.DEK/ClearDEKSafety":          handleKMSClearDEKSafety,
+	"quicbaas.DEK/StartReencryption":       handleKMSStartReencryption,
+	"quicbaas.DEK/GetReencryptionProgress": handleKMSGetReencryptionProgress,
 
 	// Crypto operations
 	"quicbaas.Crypto/Encrypt":                handleCryptoEncrypt,
@@ -197,6 +202,8 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Certificate/IsInitialized":     handleCertIsInitialized,
 	"quicbaas.Certificate/GenerateCRL":       handleCertGenerateCRL,
 	"quicbaas.Certificate/IsRevoked":         handleCertIsRevoked,
+	"quicbaas.Certificate/CAInfo":            handleCertCAInfo,
+	"quicbaas.Certificate/ListCertificates":  handleCertListCertificates,
 
 	// Orchestrator — session operations
 	"quicbaas.Orchestrator/Inference":     handleOrchestratorInference,

@@ -33,11 +33,19 @@ type Handler struct {
 	service               service.QuicBaaS
 	kmsService            service.KMSService
 	secretsService        service.SecretsService
-	sealService           service.SealService
 	cryptoService         service.CryptoService
 	logger                *logger.Logger
 	dynamicSecretsService service.DynamicSecretsService
-	clusterDEKService     service.ClusterDEKService
+
+	// barrierService backs the OpBarrier handler tree. Wired by the QUIC
+	// server via SetBarrierService once the qrdb SDK BarrierClient is
+	// available; nil before lifecycle wiring completes.
+	barrierService service.BarrierServicer
+
+	// ceremonyService backs the OpCeremony handler tree. Wired by the QUIC
+	// server via SetCeremonyService once the qrdb SDK CeremonyClient is
+	// available; nil before lifecycle wiring completes.
+	ceremonyService service.CeremonyServicer
 
 	// ObjectTransfer registry for peer-to-peer object data transfer
 	objectTransferRegistry *ObjectTransferRegistry
@@ -74,13 +82,6 @@ func WithDynamicSecretsService(svc service.DynamicSecretsService) HandlerOption 
 	}
 }
 
-// WithClusterDEKService sets the cluster DEK service for the handler.
-func WithClusterDEKService(svc service.ClusterDEKService) HandlerOption {
-	return func(h *Handler) {
-		h.clusterDEKService = svc
-	}
-}
-
 // WithObjectTransferRegistry sets the object transfer registry for peer-to-peer operations.
 func WithObjectTransferRegistry(registry *ObjectTransferRegistry) HandlerOption {
 	return func(h *Handler) {
@@ -95,14 +96,33 @@ func WithMsgService(svc *messaging.PushService) HandlerOption {
 	}
 }
 
+// WithBarrierService installs the BarrierServicer used by the OpBarrier
+// handler tree. When nil (the default), every barrier sub-operation responds
+// with StatusUnavailable ("barrier service not available"). Lifecycle wiring
+// calls this option once the qrdb SDK BarrierClient is online.
+func WithBarrierService(svc service.BarrierServicer) HandlerOption {
+	return func(h *Handler) {
+		h.barrierService = svc
+	}
+}
+
+// WithCeremonyService installs the CeremonyServicer used by the OpCeremony
+// handler tree. When nil (the default), every ceremony sub-operation responds
+// with StatusUnavailable ("ceremony service not available"). Lifecycle wiring
+// calls this option once the qrdb SDK CeremonyClient is online.
+func WithCeremonyService(svc service.CeremonyServicer) HandlerOption {
+	return func(h *Handler) {
+		h.ceremonyService = svc
+	}
+}
+
 // NewHandler creates a new request handler with optional service dependencies.
 // Pass nil for any service that is not available.
-func NewHandler(svc service.QuicBaaS, kms service.KMSService, secrets service.SecretsService, seal service.SealService, crypto service.CryptoService, log *logger.Logger, opts ...HandlerOption) *Handler {
+func NewHandler(svc service.QuicBaaS, kms service.KMSService, secrets service.SecretsService, crypto service.CryptoService, log *logger.Logger, opts ...HandlerOption) *Handler {
 	h := &Handler{
 		service:        svc,
 		kmsService:     kms,
 		secretsService: secrets,
-		sealService:    seal,
 		cryptoService:  crypto,
 		logger:         log,
 	}
@@ -119,6 +139,10 @@ func NewHandler(svc service.QuicBaaS, kms service.KMSService, secrets service.Se
 func isPublicOperation(opcode byte) bool {
 	switch opcode {
 	case OpHealth, OpLiveness, OpReadiness:
+		return true
+	case OpAuthBeginLogin, OpAuthFinishLogin:
+		// The login ceremony authenticates the caller (mTLS handshake /
+		// signature); no bearer token is available yet.
 		return true
 	default:
 		return false
@@ -214,11 +238,16 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 	case OpMigrateData, OpReplaceNode, OpUpgradeNode:
 		return interfaces.ResourceCluster, interfaces.ActionAdmin
 
-	// Seal Operations
-	case OpSealStatus:
-		return interfaces.ResourceSeal, interfaces.ActionRead
-	case OpSealInit, OpUnseal, OpSeal, OpSealRekey:
-		return interfaces.ResourceSeal, interfaces.ActionAdmin
+	// Barrier Operations (sub-op dispatched, single top-level opcode).
+	// Wire authorization is admin-level for the dispatch opcode; per-sub-op
+	// authorization decisions are enforced by the underlying BarrierServicer
+	// facade after JSON decoding.
+	case OpBarrier:
+		return interfaces.ResourceBarrier, interfaces.ActionAdmin
+
+	// Ceremony Operations (sub-op dispatched, single top-level opcode).
+	case OpCeremony:
+		return interfaces.ResourceCeremony, interfaces.ActionAdmin
 
 	// KMS Operations - Read
 	case OpKMSGetKey, OpKMSListKeys, OpKMSKeyVersions:
@@ -350,13 +379,6 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 	case OpDynamicSecretsDeleteRole, OpDynamicSecretsRevokeLease:
 		return interfaces.ResourceSecrets, interfaces.ActionDelete
 
-	// Cluster DEK Operations - Read
-	case OpClusterDEKStatus, OpClusterDEKNodeStatus, OpClusterDEKReencryptStatus:
-		return interfaces.ResourceKMS, interfaces.ActionRead
-
-	// Cluster DEK Operations - Write/Admin
-	case OpClusterDEKInit, OpClusterDEKRotate, OpClusterDEKSyncNode, OpClusterDEKStartReencrypt, OpClusterDEKCancelReencrypt, OpClusterDEKRecover:
-		return interfaces.ResourceKMS, interfaces.ActionAdmin
 	// Certificate Operations - Read
 	case OpCertVerify, OpCertGetCA, OpCertGetTLSConfig:
 		return interfaces.ResourceCertificate, interfaces.ActionRead
@@ -394,8 +416,108 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 	}
 }
 
+// authorizeAndInject checks authorization for the request and, if authorized,
+// returns the context enriched with the authenticated Subject so that
+// service-layer per-key authorization can access the principal. On denial
+// it returns a non-nil *Response and the original ctx.
+func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context.Context, *Response) {
+	// Skip authorization for public operations
+	if isPublicOperation(req.Opcode) {
+		return ctx, nil
+	}
+
+	// If no auth service configured, allow all requests (backward compatibility)
+	if h.authzService == nil && h.authManager == nil {
+		return ctx, nil
+	}
+
+	// Check for missing token
+	if req.Token == "" {
+		return ctx, &Response{
+			Status:  StatusUnauthorized,
+			Payload: []byte("authentication required"),
+		}
+	}
+
+	// Validate token
+	var subject interfaces.Subject
+	if h.authManager != nil {
+		result, err := h.authManager.ValidateToken(ctx, req.Token)
+		if err != nil {
+			if h.logger != nil {
+				h.logger.WithError(err).Debug("Token validation failed")
+			}
+			return ctx, &Response{
+				Status:  StatusUnauthorized,
+				Payload: []byte("invalid token"),
+			}
+		}
+
+		// Extract subject from validation result
+		// The result is *auth.TokenValidationResult
+		if validationResult, ok := result.(*auth.TokenValidationResult); ok && validationResult.Valid {
+			subject = interfaces.Subject{
+				ID:            validationResult.UserID,
+				Username:      validationResult.Username,
+				Roles:         validationResult.Roles,
+				Authenticated: true,
+			}
+		} else {
+			return ctx, &Response{
+				Status:  StatusUnauthorized,
+				Payload: []byte("invalid token"),
+			}
+		}
+	} else {
+		// No auth manager, but authz service is present - use a default subject
+		// This allows testing authz without full auth setup
+		subject = interfaces.Subject{
+			ID:            "unknown",
+			Authenticated: true,
+		}
+	}
+
+	// Perform authorization check if service is available
+	if h.authzService != nil {
+		resource, action := getResourceAndAction(req.Opcode)
+
+		authzReq := &interfaces.AuthorizationRequest{
+			Subject:  subject,
+			Resource: resource,
+			Action:   action,
+		}
+
+		decision, err := h.authzService.Authorize(ctx, authzReq)
+		if err != nil {
+			if h.logger != nil {
+				h.logger.WithError(err).Error("Authorization check failed")
+			}
+			return ctx, &Response{
+				Status:  StatusInternalError,
+				Payload: []byte("authorization check failed"),
+			}
+		}
+
+		if !decision.Allowed {
+			reason := decision.Reason
+			if reason == "" {
+				reason = fmt.Sprintf("access denied to %s:%s", resource, action)
+			}
+			return ctx, &Response{
+				Status:  StatusPermissionDenied,
+				Payload: []byte(fmt.Sprintf("permission denied: %s", reason)),
+			}
+		}
+	}
+
+	// Inject Subject into context for service-layer per-key authorization.
+	ctx = auth.SubjectIntoContext(ctx, subject)
+	return ctx, nil
+}
+
 // authorize checks if the request is authorized.
 // Returns nil if authorized, or an error response if not.
+// Deprecated: use authorizeAndInject which also populates Subject in context.
 func (h *Handler) authorize(ctx context.Context, req *Request) *Response {
 	// Skip authorization for public operations
 	if isPublicOperation(req.Opcode) {
@@ -492,8 +614,11 @@ func (h *Handler) authorize(ctx context.Context, req *Request) *Response {
 // HandleRequest processes a protocol request and returns a response.
 // It routes the request to the appropriate service method based on the opcode.
 func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
-	// Perform authorization check first
-	if authResp := h.authorize(ctx, req); authResp != nil {
+	// Authorize and inject authenticated Subject into context so downstream
+	// service-layer per-key authorization can access the principal.
+	var authResp *Response
+	ctx, authResp = h.authorizeAndInject(ctx, req)
+	if authResp != nil {
 		return authResp
 	}
 
@@ -570,6 +695,12 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 	case OpValidateToken:
 		return h.handleValidateToken(ctx, req)
 
+	// Unified login ceremony (BeginLogin / FinishLogin) -> LoginCeremony facade.
+	case OpAuthBeginLogin:
+		return h.handleBeginLogin(ctx, req)
+	case OpAuthFinishLogin:
+		return h.handleFinishLogin(ctx, req)
+
 	// RBAC Operations
 	case OpCreateUser:
 		return h.handleCreateUser(ctx, req)
@@ -638,17 +769,14 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 	case OpGetUpgradeStatus:
 		return h.handleGetUpgradeStatus(ctx, req)
 
-	// Seal Operations
-	case OpSealStatus:
-		return h.handleSealStatus(ctx, req)
-	case OpSealInit:
-		return h.handleSealInit(ctx, req)
-	case OpUnseal:
-		return h.handleUnseal(ctx, req)
-	case OpSeal:
-		return h.handleSeal(ctx, req)
-	case OpSealRekey:
-		return h.handleSealRekey(ctx, req)
+	// Barrier Operations - dispatch based on sub-opcode in payload (replaces
+	// the deprecated seal-tree opcodes 0xC0-0xC4 removed in Phase 8c).
+	case OpBarrier:
+		return h.handleBarrierDispatch(ctx, req)
+
+	// Ceremony Operations - dispatch based on sub-opcode in payload.
+	case OpCeremony:
+		return h.handleCeremonyDispatch(ctx, req)
 
 	// KMS Operations
 	case OpKMSGenerateKey:
@@ -707,6 +835,14 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 		return h.handleKMSSetKeyPolicy(ctx, req)
 	case OpKMSGetKeyPolicy:
 		return h.handleKMSGetKeyPolicy(ctx, req)
+
+	// KMS Rotation Policy Operations
+	case OpKMSSetRotationPolicy:
+		return h.handleKMSSetRotationPolicy(ctx, req)
+	case OpKMSGetRotationPolicy:
+		return h.handleKMSGetRotationPolicy(ctx, req)
+	case OpKMSDeleteRotationPolicy:
+		return h.handleKMSDeleteRotationPolicy(ctx, req)
 
 	// KMS Safety Operations
 	case OpKMSSetKeySafety:
@@ -957,26 +1093,6 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 		return h.handleDynamicSecretsRevokeLease(ctx, req)
 	case OpDynamicSecretsListLeases:
 		return h.handleDynamicSecretsListLeases(ctx, req)
-
-	// Cluster DEK Operations
-	case OpClusterDEKInit:
-		return h.handleClusterDEKInit(ctx, req)
-	case OpClusterDEKStatus:
-		return h.handleClusterDEKStatus(ctx, req)
-	case OpClusterDEKRotate:
-		return h.handleClusterDEKRotate(ctx, req)
-	case OpClusterDEKSyncNode:
-		return h.handleClusterDEKSyncNode(ctx, req)
-	case OpClusterDEKNodeStatus:
-		return h.handleClusterDEKNodeStatus(ctx, req)
-	case OpClusterDEKStartReencrypt:
-		return h.handleClusterDEKStartReencrypt(ctx, req)
-	case OpClusterDEKReencryptStatus:
-		return h.handleClusterDEKReencryptStatus(ctx, req)
-	case OpClusterDEKCancelReencrypt:
-		return h.handleClusterDEKCancelReencrypt(ctx, req)
-	case OpClusterDEKRecover:
-		return h.handleClusterDEKRecover(ctx, req)
 
 	// Parameter Store Operations
 	case OpParameterGet:

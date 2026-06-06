@@ -431,10 +431,10 @@ type GrantAgentRoleRESTRequest struct {
 
 // GrantAgentRoleRESTResponse is returned after a successful role grant.
 type GrantAgentRoleRESTResponse struct {
-	ProjectID string                   `json:"project_id"`
-	AgentID   string                   `json:"agent_id"`
+	ProjectID string                    `json:"project_id"`
+	AgentID   string                    `json:"agent_id"`
 	Role      orchestration.ProjectRole `json:"role"`
-	Timestamp time.Time                `json:"timestamp"`
+	Timestamp time.Time                 `json:"timestamp"`
 }
 
 // RevokeAgentRoleRESTResponse is returned after a successful role revocation.

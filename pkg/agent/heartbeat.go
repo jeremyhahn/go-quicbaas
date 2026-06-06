@@ -551,4 +551,3 @@ func (t *CachingTokenSource) Invalidate() {
 	t.cached = ""
 	t.expiresAt = time.Time{}
 }
-

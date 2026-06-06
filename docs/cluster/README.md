@@ -1,6 +1,6 @@
 # Cluster Management
 
-QuicBaaS clusters use multi-Raft consensus for strong consistency, automatic failover, and horizontal scalability. The cluster management system handles node discovery, membership registration, health monitoring, and data distribution.
+QuicBaaS clusters use multi-Raft consensus for strong consistency, automatic failover, and horizontal scalability. Cluster formation and Raft membership are owned by go-qrdb (`pkg/cluster`); QuicBaaS consumes a qrdb cluster and adds application-level **service discovery** on top of qrdb's lease + watch + KV primitives.
 
 ## Architecture
 
@@ -19,9 +19,8 @@ QuicBaaS clusters use multi-Raft consensus for strong consistency, automatic fai
 │  └───────────────────────┬──────────────────────┘    │
 │                          │                           │
 │  ┌───────────────────────┴────────────────────────┐  │
-│  │       Membership & Discovery Service           │  │
-│  │  • Peer Discovery  • Health Monitoring         │  │
-│  │  • Lease Management  • Failure Detection       │  │
+│  │   Cluster formation + membership: go-qrdb        │  │
+│  │   Service discovery (lease+watch+KV): QuicBaaS   │  │
 │  └────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────┘
 ```
@@ -48,97 +47,31 @@ Formula: Tolerates `(N-1)/2` simultaneous failures. Always use odd number of nod
 - **Evacuating** - Data being drained before removal
 - **Removed** - No longer part of cluster
 
-## Discovery Methods
+## Discovery
 
-QuicBaaS supports multiple discovery mechanisms for different deployment environments.
+There are two distinct concerns, with distinct homes:
 
-### Static Discovery
+- **Peer discovery** — finding Raft peers to form or join a cluster
+  (static / multicast / DNS SRV / token). This lives in **go-qrdb**
+  (`pkg/discovery` + `pkg/cluster`), the layer that owns the cluster. QuicBaaS
+  is a qrdb client and does not perform peer discovery itself. See go-qrdb's
+  `docs/discovery.md` and `docs/12-configuration.md` for configuration.
+- **Service discovery** — registering service instances and resolving them by
+  name at runtime. QuicBaaS provides this via the registry, built on qrdb's
+  lease + watch + KV primitives. See [Service Discovery](discovery.md).
 
-Pre-defined peer list for fixed-size clusters.
+## Cluster Membership
 
-```yaml
-discovery:
-  methods:
-    - type: static
-      peers:
-        - "1:node1.example.internal:8001"
-        - "2:node2.example.internal:8001"
-        - "3:node3.example.internal:8001"
+Raft cluster formation and membership (peer discovery, quorum validation,
+joining the Raft group, and lease-driven dynamic add/remove) are owned by
+**go-qrdb** (`pkg/cluster`). QuicBaaS consumes a qrdb cluster rather than
+forming one. For peer discovery, bootstrap, and the opt-in dynamic membership
+manager, see go-qrdb's `docs/discovery.md`.
 
-cluster:
-  min_quorum: 2
-```
-
-Best for: Fixed infrastructure, testing environments.
-
-### DNS Discovery
-
-Dynamic peer discovery using DNS SRV records.
-
-```yaml
-discovery:
-  methods:
-    - type: dns
-      srv_record: "_quicbaas._tcp.service.example.internal"
-      refresh_interval: 30s
-```
-
-Best for: Production deployments, cloud environments with DNS.
-
-### Kubernetes Discovery
-
-Native integration with Kubernetes StatefulSets.
-
-```yaml
-discovery:
-  methods:
-    - type: kubernetes
-      namespace: default
-      service: quicbaas
-      refresh_interval: 30s
-```
-
-Best for: Kubernetes deployments, container orchestration.
-
-### Multicast Discovery
-
-LAN-based auto-discovery for local networks.
-
-```yaml
-discovery:
-  methods:
-    - type: multicast
-      group: "239.255.77.77"
-      port: 63777
-      cluster_secret: "optional-psk-for-security"
-```
-
-Best for: Development, LAN deployments, edge computing.
-
-See [Discovery Configuration](discovery.md) for detailed setup and PSK authentication.
-
-## Membership Management
-
-### Automatic Registration
-
-Nodes automatically join the cluster on startup:
-
-1. Discover peers via configured discovery method
-2. Wait for minimum quorum
-3. Register with membership service
-4. Join Raft cluster via leader
-5. Begin participating in consensus
-
-### Lease-Based Health Monitoring
-
-Each node maintains a lease in the membership registry. Failed lease renewals trigger automatic health checks and eventual removal.
-
-```yaml
-membership:
-  lease_ttl: 10s              # Registration lifetime
-  keep_alive_interval: 5s      # Renewal frequency
-  health_check_interval: 15s   # Stale member detection
-```
+For application-level **service** membership (instances of a named service
+joining and leaving at runtime), use QuicBaaS [Service Discovery](discovery.md),
+which is lease-based: each instance holds a lease and is removed automatically
+when its lease expires.
 
 ## Core Operations
 

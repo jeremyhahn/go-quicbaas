@@ -678,9 +678,9 @@ func TestGetToolResourceActionForTest(t *testing.T) {
 		expectedResource string
 		expectedAction   string
 	}{
-		{"quicbaas_get", interfaces.ResourceKeys, interfaces.ActionRead},
-		{"quicbaas_put", interfaces.ResourceKeys, interfaces.ActionWrite},
-		{"quicbaas_delete", interfaces.ResourceKeys, interfaces.ActionDelete},
+		{"qrdb_get", interfaces.ResourceKeys, interfaces.ActionRead},
+		{"qrdb_put", interfaces.ResourceKeys, interfaces.ActionWrite},
+		{"qrdb_delete", interfaces.ResourceKeys, interfaces.ActionDelete},
 		{"quicbaas_cluster_status", interfaces.ResourceCluster, interfaces.ActionRead},
 		{"unknown_tool", interfaces.ResourceCluster, interfaces.ActionAdmin},
 	}
@@ -726,7 +726,7 @@ func TestToolsCallWithAuthorizationCheck(t *testing.T) {
 			ID:      1,
 			Method:  "tools/call",
 			Params: map[string]interface{}{
-				"name":      "quicbaas_get", // Not a public tool
+				"name":      "qrdb_get", // Not a public tool
 				"arguments": map[string]interface{}{},
 			},
 		}
@@ -774,7 +774,7 @@ func TestToolsCallWithAuthorizationCheck(t *testing.T) {
 			ID:      1,
 			Method:  "tools/call",
 			Params: map[string]interface{}{
-				"name":      "quicbaas_health", // Public tool
+				"name":      "qrdb_health", // Public tool
 				"arguments": map[string]interface{}{},
 			},
 		}
@@ -838,7 +838,7 @@ func TestHTTPRequestWithToken(t *testing.T) {
 		ID:      1,
 		Method:  "tools/call",
 		Params: map[string]interface{}{
-			"name": "quicbaas_get",
+			"name": "qrdb_get",
 			"arguments": map[string]interface{}{
 				"entityType": "user",
 				"id":         float64(123),
@@ -941,7 +941,7 @@ func TestTokenValidationMapFormat(t *testing.T) {
 
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_get", "map-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_get", "map-token")
 	assert.Nil(t, err)
 }
 
@@ -1153,12 +1153,13 @@ func TestToolPrefixMappingCoverage(t *testing.T) {
 		{"quicbaas_timeseries_write_point", interfaces.ResourceTimeseries, interfaces.ActionWrite},
 		{"quicbaas_timeseries_delete_old", interfaces.ResourceTimeseries, interfaces.ActionDelete},
 
-		// Vector Operations
-		{"quicbaas_vector_search_similar", interfaces.ResourceVector, interfaces.ActionRead},
-		{"quicbaas_vector_get_by_id", interfaces.ResourceVector, interfaces.ActionRead},
-		{"quicbaas_vector_upsert_new", interfaces.ResourceVector, interfaces.ActionWrite},
+		// Vector Operations (qrdb-mirror tools use qrdb_*; quicbaas-specific
+		// extensions like insert keep the quicbaas_ prefix).
+		{"qrdb_vector_search_similar", interfaces.ResourceVector, interfaces.ActionRead},
+		{"qrdb_vector_get_by_id", interfaces.ResourceVector, interfaces.ActionRead},
+		{"qrdb_vector_upsert_new", interfaces.ResourceVector, interfaces.ActionWrite},
 		{"quicbaas_vector_insert_batch", interfaces.ResourceVector, interfaces.ActionWrite},
-		{"quicbaas_vector_delete_old", interfaces.ResourceVector, interfaces.ActionDelete},
+		{"qrdb_vector_delete_old", interfaces.ResourceVector, interfaces.ActionDelete},
 	}
 
 	for _, tc := range testCases {
@@ -1190,7 +1191,7 @@ func TestAuthorizationCheckerPermissionDeniedWithEmptyReason(t *testing.T) {
 
 	checker := NewAuthorizationChecker(mockAuthService, mockAuthManager)
 
-	err := checker.CheckToolAuthorization(context.Background(), "quicbaas_put", "valid-token")
+	err := checker.CheckToolAuthorization(context.Background(), "qrdb_put", "valid-token")
 
 	require.NotNil(t, err)
 	assert.Equal(t, AuthErrorPermissionDenied, err.Type)
@@ -1405,15 +1406,15 @@ func TestVectorToolRouting(t *testing.T) {
 
 	vectorTools := []string{
 		"quicbaas_vector_search",
-		"quicbaas_vector_upsert",
-		"quicbaas_vector_delete",
-		"quicbaas_vector_get",
+		"qrdb_vector_upsert",
+		"qrdb_vector_delete",
+		"qrdb_vector_get",
 		"quicbaas_vector_search_hybrid",
 		"quicbaas_vector_create_index",
 		"quicbaas_vector_delete_index",
 		"quicbaas_vector_list_indexes",
 		"quicbaas_vector_describe_index",
-		"quicbaas_vector_update_metadata",
+		"qrdb_vector_update_metadata",
 	}
 
 	for _, tool := range vectorTools {

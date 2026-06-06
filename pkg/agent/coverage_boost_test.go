@@ -344,39 +344,23 @@ func TestDaemon_Stop_OnFailedDaemon(t *testing.T) {
 	}
 }
 
-
 // =============================================================================
-// decryptWithTenantDEK — short blob and tenant-len-too-long paths
+// loadSessionFile — corrupt plaintext paths
 // =============================================================================
 
-// TestRuntime_DecryptWithTenantDEK_ShortBlobErrors exercises the header
-// length validation branches in decryptWithTenantDEK by writing a blob that
-// is too short for the header or that claims a tenant length longer than the
-// remaining bytes.
-func TestRuntime_DecryptWithTenantDEK_ShortBlobErrors(t *testing.T) {
+// TestRuntime_LoadPersistedSessions_MultipleCorruptFiles exercises the path
+// where several stored JSON files are corrupt and must all be quarantined.
+func TestRuntime_LoadPersistedSessions_MultipleCorruptFiles(t *testing.T) {
 	t.Parallel()
 
-	dek := newFakeDEKManager(t, "tenant-x")
-	rt, workDir := newTestRuntimeWithDEK(t, dek)
-
-	// Construct blobs that start with the magic but have invalid headers.
-	cases := []struct {
-		name string
-		blob []byte
-	}{
-		{"too short overall", persistedSessionMagic},
-		{"magic + only 1 byte", append(persistedSessionMagic, 0x01)},
-		{
-			"valid magic+len but tenant+nonce overflows",
-			func() []byte {
-				b := make([]byte, len(persistedSessionMagic)+2)
-				copy(b, persistedSessionMagic)
-				// Claim tenant_len = 255 but blob has no room.
-				b[len(persistedSessionMagic)] = 0xFF
-				b[len(persistedSessionMagic)+1] = 0x00
-				return b
-			}(),
-		},
+	workDir := t.TempDir()
+	rt, err := NewRuntime(RuntimeConfig{
+		Backends: map[string]orchestration.AgentBackend{"acp": &mockBackend{}},
+		Logger:   &testLogger{t: t},
+		WorkDir:  workDir,
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
 	}
 
 	sessionsDir := filepath.Join(workDir, "sessions")
@@ -384,27 +368,24 @@ func TestRuntime_DecryptWithTenantDEK_ShortBlobErrors(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	for i, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Write the malformed blob as a .json.enc file.
-			path := filepath.Join(sessionsDir, "bad-"+string(rune('a'+i))+".json.enc")
-			if err := os.WriteFile(path, tc.blob, 0o600); err != nil {
-				t.Fatalf("write: %v", err)
-			}
-		})
+	// Write three files that are not valid JSON.
+	for i := 0; i < 3; i++ {
+		path := filepath.Join(sessionsDir, string(rune('a'+i))+"-bad.json")
+		if err := os.WriteFile(path, []byte("{not-json"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
 	}
 
-	// LoadPersistedSessions will try each blob and quarantine all of them.
+	// LoadPersistedSessions will try each file and quarantine all of them.
 	loaded, loadErr := rt.LoadPersistedSessions(context.Background())
 	var corruptErr *PersistedSessionCorruptError
 	if !errors.As(loadErr, &corruptErr) {
 		t.Fatalf("expected PersistedSessionCorruptError, got %T: %v", loadErr, loadErr)
 	}
-	if corruptErr.Count != len(cases) {
-		t.Errorf("corrupt count: got %d, want %d", corruptErr.Count, len(cases))
+	if corruptErr.Count != 3 {
+		t.Errorf("corrupt count: got %d, want 3", corruptErr.Count)
 	}
 	if len(loaded) != 0 {
 		t.Fatalf("expected 0 valid sessions, got %d", len(loaded))
 	}
 }
-

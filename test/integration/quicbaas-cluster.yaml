@@ -1,0 +1,111 @@
+# QuicBaaS Cluster Integration Test Configuration
+# Minimal config for 3-node Raft cluster tests.
+# Auth and mTLS are disabled so tests can hit the KV API directly
+# without bearer tokens or certificate material.
+
+logging:
+  level: info
+  format: json
+
+server:
+  mode: cluster
+  grpc:
+    enabled: true
+    port: 50051
+  rest:
+    enabled: true
+    port: 8080
+  # write_timeout applies to the HTTP server's response write window.
+  # It must be larger than the effective request_timeout (= write_timeout - 5s)
+  # so the server can flush the error response before the TCP connection closes.
+  write_timeout: 45s
+  quic:
+    enabled: false
+  mcp:
+    enabled: false
+  unix:
+    enabled: false
+  # Only shard 1 exists in the qrdb clustered node. Listing additional
+  # shards would cause the readiness check to fail (those shards don't
+  # exist in the Raft host).
+  shards:
+    - 1
+
+# TLS disabled on the REST/gRPC server surface so tests can reach the API over
+# plain HTTP. The Raft inter-node transport still uses mTLS (required by quicraft).
+security:
+  tls_enabled: false
+
+# Auth disabled: tests hit KV API without bearer tokens.
+auth:
+  enabled: false
+  bootstrap_admin: false
+
+# Raft: mTLS enabled (quicraft requires it for multi-node QUIC transport).
+# Per-node node_id, raft_address, join_addresses, and TLS cert paths are
+# supplied via QUICBAAS_RAFT_* environment variables so the same config
+# file can be shared across all three nodes.
+raft:
+  mutual_tls: true
+  tls_ca_file: /etc/quicbaas/certs/ca.crt
+  tls_cert_file: /etc/quicbaas/certs/node1.crt
+  tls_key_file: /etc/quicbaas/certs/node1.key
+  # More conservative Raft timing to prevent leader oscillation in Docker.
+  # election timeout = 30 * 200ms = 6000ms = 6s (enough slack for Docker network jitter)
+  # heartbeat interval = 3 * 200ms = 600ms
+  election_rtt: 30
+  heartbeat_rtt: 3
+  rtt_millisecond: 200
+
+# Storage
+storage:
+  backend: pebble
+
+# Seal/barrier: enabled with passphrase strategy for at-rest encryption tests.
+# The passphrase is injected via QUICBAAS_SEAL_PASSPHRASE env var so the node
+# auto-initialises and unseals on startup without operator intervention.
+# QUICBAAS_SEAL_ENABLED / QUICBAAS_SEAL_STRATEGY env vars override these
+# values via viper bindings; they are provided here as documentation of intent.
+seal:
+  enabled: true
+  strategy: passphrase
+
+# KMS disabled to keep the cluster startup fast and dependency-free.
+kms:
+  enabled: false
+
+# Secrets disabled.
+secrets:
+  enabled: false
+
+# IAM disabled: no PIV cert or CA file needed.
+iam:
+  enabled: false
+
+# TimeSeries disabled (not needed for cluster KV tests).
+timeseries:
+  enabled: false
+
+# Vector disabled.
+vector:
+  enabled: false
+
+# Scheduler disabled.
+scheduler:
+  enabled: false
+
+# Orchestration disabled.
+orchestration:
+  enabled: false
+
+# Messaging disabled.
+messaging:
+  enabled: false
+
+# RAG disabled.
+rag:
+  enabled: false
+
+# Backup disabled.
+backup:
+  enabled: false

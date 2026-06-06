@@ -18,6 +18,8 @@ package iam
 import (
 	"context"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // TenantStorage defines the interface for tenant persistence operations.
@@ -240,6 +242,16 @@ type CreateTenantOptions struct {
 	// Name is the tenant name
 	Name string
 
+	// IsolationType selects the qrdb engine isolation strategy for the
+	// tenant's data: qrdbsdk.TenantIsolationBarrier gives the tenant its
+	// own DEK and a dedicated "{tenantID}/" namespace, while the prefix
+	// mode shares the system barrier with logical key prefixing. An empty
+	// value defers to qrdb's default (prefix), matching
+	// tenant.TenantInfo.EffectiveIsolationType. The reserved system tenant
+	// must remain prefix; qrdb rejects a barrier system tenant with
+	// ErrSystemTenantMustBePrefix.
+	IsolationType qrdbsdk.TenantIsolationType
+
 	// Settings contains tenant settings
 	Settings *TenantSettings
 
@@ -409,42 +421,27 @@ type UpdateRoleOptions struct {
 }
 
 // TenantQuota represents tenant resource quotas.
+// TenantQuota tracks BaaS-layer IAM quota usage. Engine-level quotas (users,
+// roles, storage bytes, etc.) are authoritative in qrdb's TenantServicer; only
+// IAM-subsystem concepts not tracked by the engine belong here.
 type TenantQuota struct {
-	// MaxUsers is the maximum number of users
-	MaxUsers int64
-
-	// MaxGroups is the maximum number of groups
+	// MaxGroups is the maximum number of IAM groups allowed.
 	MaxGroups int64
 
-	// MaxRoles is the maximum number of roles
-	MaxRoles int64
-
-	// MaxPolicies is the maximum number of policies
+	// MaxPolicies is the maximum number of ABAC policies allowed.
 	MaxPolicies int64
 
-	// MaxApps is the maximum number of applications
+	// MaxApps is the maximum number of OAuth2/OIDC applications allowed.
 	MaxApps int64
 
-	// MaxStorageBytes is the maximum storage in bytes
-	MaxStorageBytes int64
-
-	// CurrentUsers is the current number of users
-	CurrentUsers int64
-
-	// CurrentGroups is the current number of groups
+	// CurrentGroups is the current number of IAM groups.
 	CurrentGroups int64
 
-	// CurrentRoles is the current number of roles
-	CurrentRoles int64
-
-	// CurrentPolicies is the current number of policies
+	// CurrentPolicies is the current number of ABAC policies.
 	CurrentPolicies int64
 
-	// CurrentApps is the current number of applications
+	// CurrentApps is the current number of OAuth2/OIDC applications.
 	CurrentApps int64
-
-	// CurrentStorageBytes is the current storage usage in bytes
-	CurrentStorageBytes int64
 }
 
 // PolicyStorage defines the interface for policy persistence operations.

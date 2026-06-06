@@ -17,7 +17,6 @@ package batch
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"sync"
@@ -1111,8 +1110,10 @@ func setupStreamingConnection(t *testing.T, ctx context.Context) *grpc.ClientCon
 	endpoints := helpers.GetClusterEndpoints()
 	endpoint := endpoints[0]
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(64*1024*1024)), // 64MB max message
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(64*1024*1024)), // 64MB max message

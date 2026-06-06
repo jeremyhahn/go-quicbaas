@@ -120,8 +120,8 @@ func (m *MockQuicBaaS) Transaction(ctx context.Context, req *service.Transaction
 	return args.Get(0).(*service.TransactionResponse), args.Error(1)
 }
 
-func (m *MockQuicBaaS) SetSignalService(svc interface{}) {}
-func (m *MockQuicBaaS) Signal() interface{}              { return nil }
+func (m *MockQuicBaaS) SetSignalService(svc interface{})      {}
+func (m *MockQuicBaaS) Signal() interface{}                   { return nil }
 func (m *MockQuicBaaS) AgentAdmin() service.AgentAdminService { return nil }
 
 // Ensure MockQuicBaaS implements service.QuicBaaS at compile time.
@@ -243,7 +243,7 @@ func TestServerToolsCall(t *testing.T) {
 	}, nil)
 
 	resp := sendJSONRPCRequest(server, "tools/call", map[string]interface{}{
-		"name": "quicbaas_put",
+		"name": "qrdb_put",
 		"arguments": map[string]interface{}{
 			"entity_type": "test",
 			"key":         "key1",
@@ -374,7 +374,7 @@ func TestHealthCheck(t *testing.T) {
 	}, nil)
 
 	resp := sendJSONRPCRequest(server, "tools/call", map[string]interface{}{
-		"name":      "quicbaas_health",
+		"name":      "qrdb_health",
 		"arguments": map[string]interface{}{},
 	})
 	require.NotNil(t, resp)
@@ -2346,9 +2346,9 @@ func TestToolRegistry_ListTools(t *testing.T) {
 		toolNames[tool.Name] = true
 	}
 
-	assert.True(t, toolNames["quicbaas_put"])
-	assert.True(t, toolNames["quicbaas_get"])
-	assert.True(t, toolNames["quicbaas_delete"])
+	assert.True(t, toolNames["qrdb_put"])
+	assert.True(t, toolNames["qrdb_get"])
+	assert.True(t, toolNames["qrdb_delete"])
 	assert.True(t, toolNames["quicbaas_logout"])
 }
 
@@ -2510,13 +2510,13 @@ func TestToolRegistry_ExecuteTool_AllImplementedTools(t *testing.T) {
 	// Result is nil because mock returns nil response
 	assert.Nil(t, result)
 
-	// Test quicbaas_user_create (mock returns nil, nil so no error expected)
-	result, err = registry.ExecuteTool(ctx, "quicbaas_user_create", map[string]interface{}{})
+	// Test qrdb_user_create (mock returns nil, nil so no error expected)
+	result, err = registry.ExecuteTool(ctx, "qrdb_user_create", map[string]interface{}{})
 	assert.NoError(t, err)
 	assert.Nil(t, result)
 
-	// Test quicbaas_role_create (mock returns nil, nil so no error expected)
-	result, err = registry.ExecuteTool(ctx, "quicbaas_role_create", map[string]interface{}{})
+	// Test qrdb_role_create (mock returns nil, nil so no error expected)
+	result, err = registry.ExecuteTool(ctx, "qrdb_role_create", map[string]interface{}{})
 	assert.NoError(t, err)
 	assert.Nil(t, result)
 

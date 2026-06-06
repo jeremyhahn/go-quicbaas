@@ -188,9 +188,9 @@ func (e *ErrAgentStreamCloseNotImplemented) Error() string {
 // agentAdminServiceImpl implements AgentAdminService backed by an AgentRegistry.
 type agentAdminServiceImpl struct {
 	registry     orchestration.AgentRegistry
-	appRevoker   AppClientRevoker   // optional: revokes OAuth2 client on disable
-	streamCloser AgentStreamCloser  // optional: cancels active gRPC streams on disable
-	auditLogger  iam.AuditLogger    // optional: emits audit events
+	appRevoker   AppClientRevoker  // optional: revokes OAuth2 client on disable
+	streamCloser AgentStreamCloser // optional: cancels active gRPC streams on disable
+	auditLogger  iam.AuditLogger   // optional: emits audit events
 }
 
 // NewAgentAdminService creates a new AgentAdminService backed by the given registry.

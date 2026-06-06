@@ -87,6 +87,24 @@ func (h *IAMHandler) TokenMTLS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Derive the tenant for this token request and scope the context so the
+	// tenant-scoped app/token index lookups resolve correctly. The clientID
+	// encodes the tenant (app_<tenant>_<suffix>); cross-check it against the
+	// tenant derived from the client certificate's SPIFFE SAN (when present).
+	// A non-bootstrap request is never defaulted to the system tenant.
+	tenantID, derr := h.server.deriveLoginTenant(ctx, r, peerCert, "")
+	if derr != nil {
+		RespondOAuthError(w, r, http.StatusUnauthorized,
+			&OAuthError{Code: ErrInvalidClient, ErrorDescription: "tenant could not be resolved"})
+		return
+	}
+	if cidTenant := tenantFromOAuthClientID(clientID); cidTenant != "" && cidTenant != tenantID {
+		RespondOAuthError(w, r, http.StatusUnauthorized,
+			&OAuthError{Code: ErrInvalidClient, ErrorDescription: "client_id tenant does not match certificate tenant"})
+		return
+	}
+	ctx = loginContextWithTenant(ctx, tenantID)
+
 	// Authenticate the client cert against the registered authenticator.
 	// This is done before reaching the OIDC provider so a bad cert gets a
 	// deterministic 401 regardless of provider availability.

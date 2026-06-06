@@ -103,8 +103,8 @@ type SessionEventLog interface {
 // (sessionLogFanout), so subscriber semantics are identical across both.
 type MemorySessionEventLog struct {
 	mu     sync.RWMutex
-	events map[string][]*SessionEvent  // key: tenant+session
-	meta   map[string]*SessionMeta      // key: tenant+session
+	events map[string][]*SessionEvent // key: tenant+session
+	meta   map[string]*SessionMeta    // key: tenant+session
 	fanout *sessionLogFanout
 }
 

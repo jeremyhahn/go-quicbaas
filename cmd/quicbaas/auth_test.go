@@ -128,7 +128,6 @@ func (m *mockSDKAuthClient) GetOpenIDConfiguration(ctx context.Context) (*servic
 	return nil, nil
 }
 
-
 // TestAuthLogoutCommand_Success tests successful logout scenarios.
 func TestAuthLogoutCommand_Success(t *testing.T) {
 	tmpDir := t.TempDir()

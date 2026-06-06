@@ -30,3 +30,18 @@ func (m *DefaultTenantManager) SetProvisioner(p database.TenantProvisioner) {
 func (m *DefaultTenantManager) Provisioner() database.TenantProvisioner {
 	return m.provisioner
 }
+
+// SetQRDBTenantProvisioner wires the qrdb engine's tenant provisioner.
+// When set, CreateTenant calls p.CreateTenant BEFORE writing BaaS metadata or
+// firing the database provisioner, ensuring barrier init, per-tenant DEK, and
+// quota allocation all complete atomically on the engine side first. On failure
+// the BaaS-layer creation is aborted. DeleteTenant calls p.DeleteTenant AFTER
+// deprovisioning database infrastructure so the engine cleans up last.
+func (m *DefaultTenantManager) SetQRDBTenantProvisioner(p QRDBTenantProvisioner) {
+	m.qrdbProvisioner = p
+}
+
+// QRDBTenantProvisioner returns the configured qrdb tenant provisioner, or nil.
+func (m *DefaultTenantManager) QRDBProvisioner() QRDBTenantProvisioner {
+	return m.qrdbProvisioner
+}

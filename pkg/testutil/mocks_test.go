@@ -48,7 +48,6 @@ func TestNewMockQuicBaaS(t *testing.T) {
 		assert.Nil(t, m.KMSService)
 		assert.Nil(t, m.ParameterStoreSvc)
 		assert.Nil(t, m.VectorService)
-		assert.Nil(t, m.ClusterDEKSvc)
 		assert.False(t, m.DisableKMS)
 	})
 }
@@ -133,18 +132,6 @@ func TestMockQuicBaaS_Certificate_ReturnsNilByDefault(t *testing.T) {
 func TestMockQuicBaaS_DynamicSecrets_ReturnsNilByDefault(t *testing.T) {
 	m := NewMockQuicBaaS()
 	assert.Nil(t, m.DynamicSecrets())
-}
-
-func TestMockQuicBaaS_ClusterDEK_ReturnsNilByDefault(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Nil(t, m.ClusterDEK())
-}
-
-func TestMockQuicBaaS_ClusterDEK_WithOverride(t *testing.T) {
-	m := NewMockQuicBaaS()
-	override := NewMockClusterDEKService()
-	m.ClusterDEKSvc = override
-	assert.Equal(t, override, m.ClusterDEK())
 }
 
 func TestMockQuicBaaS_ObjectStorageService_ReturnsSelf(t *testing.T) {

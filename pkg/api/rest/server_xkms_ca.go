@@ -80,7 +80,7 @@ func (s *Server) SetCertificateAuthority(ca xkmssdk.TrustedCA) {
 	// newXKMSCAServicer wraps the TrustedCA so it satisfies go-xkms's
 	// transport CAService interface. go-xkms's CAHandlers then treats
 	// the adapter as a regular servicer.
-	servicer := newXKMSCAServicer(ca)
+	servicer := newXKMSCAServicer(ca, s.config.SPIFFETrustDomain)
 
 	// nil logger → CAHandlers falls back to slog.Default(), which is
 	// already configured by the server process.

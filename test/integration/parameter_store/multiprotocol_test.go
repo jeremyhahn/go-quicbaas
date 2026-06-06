@@ -18,7 +18,6 @@ package parameter_store
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -667,17 +666,7 @@ func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
 	c.baseURL = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 	return nil
 }
 
@@ -1106,8 +1095,10 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetClusterEndpoints()
 	require.NotEmpty(t, endpoints, "gRPC endpoints must be available for integration tests")
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
@@ -1540,9 +1531,11 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	require.NoError(t, err, "Unix socket must be available at %s", socketPath)
 	netConn.Close()
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
@@ -1915,19 +1908,9 @@ type MCPClient struct {
 // NewMCPClient creates a new MCP client.
 func NewMCPClient(endpoint string) *MCPClient {
 	return &MCPClient{
-		endpoint: endpoint,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
-		nextID: 1,
+		endpoint:   endpoint,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		nextID:     1,
 	}
 }
 
@@ -2006,7 +1989,6 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 	c.authenticated = true
 	return nil
 }
-
 
 // CallTool calls an MCP tool with arguments.
 func (c *MCPClient) CallTool(ctx context.Context, name string, args map[string]interface{}) (json.RawMessage, error) {

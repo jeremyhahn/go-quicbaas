@@ -156,14 +156,14 @@ func (h *HTTPTransport) CompleteRegistration(ctx context.Context, req Registrati
 func (h *HTTPTransport) UploadPreKeys(ctx context.Context, account SignalAccount, bundle PreKeyBundleUpload) error {
 	const op = "signalbridge.HTTPTransport.UploadPreKeys"
 	body := map[string]any{
-		"identityKey":   base64.StdEncoding.EncodeToString(bundle.IdentityKey),
+		"identityKey": base64.StdEncoding.EncodeToString(bundle.IdentityKey),
 		"signedPreKey": map[string]any{
 			"keyId":     bundle.SignedPreKeyID,
 			"publicKey": base64.StdEncoding.EncodeToString(bundle.SignedPreKeyPub),
 			"signature": base64.StdEncoding.EncodeToString(bundle.SignedPreKeySig),
 		},
-		"preKeys":       encodePreKeys(bundle.OneTimePreKeys),
-		"kyberPreKeys":  encodeKyberPreKeys(bundle.KyberPreKeys),
+		"preKeys":      encodePreKeys(bundle.OneTimePreKeys),
+		"kyberPreKeys": encodeKyberPreKeys(bundle.KyberPreKeys),
 	}
 	return h.do(ctx, http.MethodPut, "/v2/keys", h.authHeaders(account), body, nil)
 }
@@ -243,11 +243,11 @@ func (h *HTTPTransport) SendEnvelope(ctx context.Context, account SignalAccount,
 	const op = "signalbridge.HTTPTransport.SendEnvelope"
 	payload := map[string]any{
 		"messages": []map[string]any{{
-			"type":                 env.EnvelopeType,
-			"destinationDeviceId":  env.DestinationDevice,
-			"content":              base64.StdEncoding.EncodeToString(env.Content),
-			"timestamp":            env.Timestamp,
-			"urgent":               env.Urgent,
+			"type":                env.EnvelopeType,
+			"destinationDeviceId": env.DestinationDevice,
+			"content":             base64.StdEncoding.EncodeToString(env.Content),
+			"timestamp":           env.Timestamp,
+			"urgent":              env.Urgent,
 		}},
 		"timestamp": env.Timestamp,
 	}

@@ -247,3 +247,44 @@ func TestOverallHealthTimestampAndUptime(t *testing.T) {
 	assert.True(t, overall.Uptime >= 50*time.Millisecond)
 	assert.True(t, overall.Uptime < 1*time.Second)
 }
+
+// TestOverallHealth_SingleUnhealthyIsDegraded covers the
+// "exactly one critical component unhealthy" branch of GetOverallHealth: with a
+// healthy gRPC component and an uninitialised (unhealthy) REST component, the
+// overall status must be Degraded rather than Unhealthy (which requires two or
+// more unhealthy components).
+func TestOverallHealth_SingleUnhealthyIsDegraded(t *testing.T) {
+	s := withTempServer(t)
+
+	// gRPC healthy: server + listener present.
+	s.grpcServer = &ggrpc.Server{}
+	s.grpcListener = &dummyListener{}
+	// REST unhealthy: restServer left nil.
+	s.restServer = nil
+
+	overall := s.GetHealthChecker().GetOverallHealth()
+	require.NotNil(t, overall)
+	assert.Equal(t, HealthStatusDegraded, overall.Status,
+		"one unhealthy critical component must degrade (not fail) the overall status")
+}
+
+// TestServer_RESTAddr_WithServer covers the non-nil branch of RESTAddr: with a
+// started REST server bound to an ephemeral port, RESTAddr must return the
+// server's actual listen address (delegating to restServer.Addr()).
+func TestServer_RESTAddr_WithServer(t *testing.T) {
+	s := withTempServer(t)
+
+	mockService := testutil.NewMockQuicBaaS()
+	restCfg := rest.DefaultConfig()
+	restCfg.Address = "127.0.0.1:0"
+
+	restSrv, err := rest.NewServer(mockService, restCfg, s.logger)
+	require.NoError(t, err)
+	require.NoError(t, restSrv.Start(restCfg.Address))
+	defer restSrv.Close()
+
+	s.restServer = restSrv
+
+	addr := s.RESTAddr()
+	require.NotNil(t, addr, "RESTAddr must return the bound listener address")
+}

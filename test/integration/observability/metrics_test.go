@@ -16,28 +16,18 @@
 package observability
 
 import (
-	"crypto/tls"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // metricsHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var metricsHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-		TLSHandshakeTimeout: 10 * time.Second,
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-	},
-}
+var metricsHTTPClient = helpers.NewHTTPClient(30 * time.Second)
 
 func TestREST_MetricsExposeRoutingCounter(t *testing.T) {
 	base := os.Getenv("QUICBAAS_NODE1_URL")

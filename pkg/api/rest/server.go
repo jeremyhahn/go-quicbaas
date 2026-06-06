@@ -37,6 +37,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Config holds REST API server configuration.
@@ -117,6 +119,33 @@ type Config struct {
 	// self-service registration populate this field at server-construction
 	// time from their own config struct.
 	IAMSelfServiceRegistration config.IAMSelfServiceRegistrationConfig
+
+	// SPIFFETrustDomain is the operator-configured SPIFFE trust domain used to
+	// derive (and pin) the login tenant from a client certificate's
+	// tenant-scoped SPIFFE URI SAN. When empty, SPIFFE-SAN tenant derivation
+	// is disabled and login falls back to home-realm discovery.
+	SPIFFETrustDomain string
+
+	// HomeRealmResolver resolves a login's tenant from non-secret routing
+	// hints (SNI/host, email domain) when no SPIFFE SAN is present. It reads
+	// the shared, secret-free routing directory and is therefore usable while
+	// target tenant barriers are sealed. When nil, HRD is disabled.
+	HomeRealmResolver HomeRealmResolver
+}
+
+// HomeRealmResolver is the minimal home-realm discovery contract the REST
+// login handlers depend on. It is satisfied structurally by
+// iam.HomeRealmDirectory; declaring it here keeps the (rest-only) server.go
+// free of an iam build-tag dependency.
+type HomeRealmResolver interface {
+	Resolve(ctx context.Context, hints RealmHints) (string, error)
+}
+
+// RealmHints mirrors iam.RealmHints for the resolver contract.
+type RealmHints struct {
+	TenantHint string
+	SNIHost    string
+	Email      string
 }
 
 // PIVClientCertConfig holds PIV TLS client certificate configuration.
@@ -229,6 +258,13 @@ type Server struct {
 	// via SetBootstrapService once the trust bootstrap subsystem is online.
 	// Nil before wiring; the handlers report 503 Service Unavailable.
 	bootstrapSvc BootstrapServicer
+
+	// credentialSvc serves /v1/credentials/* endpoints. Wired by lifecycle
+	// via SetCredentialService once the qrdb credential management service
+	// is online. Nil before wiring; the handlers report 501 Not Implemented.
+	// Routes are mounted at the qrdb-canonical /v1/credentials prefix (not
+	// /api/v1) so the qrdb SDK REST client works unchanged against quicbaasd.
+	credentialSvc qrdbsdk.ServiceCredentialServicer
 
 	startTime time.Time
 	mu        sync.RWMutex
@@ -363,25 +399,28 @@ func (s *Server) setupRouter() {
 			// KMS routes
 			r.Route("/kms", func(r chi.Router) {
 				// Key management routes
-				r.Post("/keys", s.HandleGenerateKey)                    // Generate new key
-				r.Post("/keys/import", s.HandleImportKey)               // Import key
-				r.Post("/keys/unwrap", s.HandleUnwrapKey)               // Unwrap/import wrapped key
-				r.Get("/keys", s.HandleListKeys)                        // List keys
-				r.Get("/keys/{name}", s.HandleGetKey)                   // Get key metadata
-				r.Post("/keys/{name}/rotate", s.HandleRotateKey)        // Rotate key
-				r.Post("/keys/{name}/export", s.HandleExportKey)        // Export key wrapped
-				r.Put("/keys/{name}/status", s.HandleUpdateKeyStatus)   // Update key status
-				r.Put("/keys/{name}/default", s.HandleSetDefaultKey)    // Set key as system default
-				r.Put("/keys/{name}/safety", s.HandleSetKeySafety)      // Set key safety limits
-				r.Delete("/keys/{name}", s.HandleDeleteKey)             // Delete key
-				r.Delete("/keys/{name}/safety", s.HandleClearKeySafety) // Clear key safety limits
-				r.Get("/keys/{name}/versions", s.HandleListKeyVersions) // List key versions
-				r.Put("/keys/{name}/policy", s.HandleSetKeyPolicy)      // Set key access policy
-				r.Get("/keys/{name}/policy", s.HandleGetKeyPolicy)      // Get key access policy
-				r.Post("/encrypt/{name}", s.HandleKMSEncrypt)           // Encrypt data
-				r.Post("/decrypt/{name}", s.HandleKMSDecrypt)           // Decrypt data
-				r.Get("/backend/status", s.HandleBackendStatus)         // Backend status
-				r.Post("/backend/test", s.HandleBackendTest)            // Test backend
+				r.Post("/keys", s.HandleGenerateKey)                                      // Generate new key
+				r.Post("/keys/import", s.HandleImportKey)                                 // Import key
+				r.Post("/keys/unwrap", s.HandleUnwrapKey)                                 // Unwrap/import wrapped key
+				r.Get("/keys", s.HandleListKeys)                                          // List keys
+				r.Get("/keys/{name}", s.HandleGetKey)                                     // Get key metadata
+				r.Post("/keys/{name}/rotate", s.HandleRotateKey)                          // Rotate key
+				r.Post("/keys/{name}/export", s.HandleExportKey)                          // Export key wrapped
+				r.Put("/keys/{name}/status", s.HandleUpdateKeyStatus)                     // Update key status
+				r.Put("/keys/{name}/default", s.HandleSetDefaultKey)                      // Set key as system default
+				r.Put("/keys/{name}/safety", s.HandleSetKeySafety)                        // Set key safety limits
+				r.Delete("/keys/{name}", s.HandleDeleteKey)                               // Delete key
+				r.Delete("/keys/{name}/safety", s.HandleClearKeySafety)                   // Clear key safety limits
+				r.Get("/keys/{name}/versions", s.HandleListKeyVersions)                   // List key versions
+				r.Put("/keys/{name}/policy", s.HandleSetKeyPolicy)                        // Set key access policy
+				r.Get("/keys/{name}/policy", s.HandleGetKeyPolicy)                        // Get key access policy
+				r.Put("/keys/{name}/rotation-policy", s.HandleSetKeyRotationPolicy)       // Set auto-rotation policy
+				r.Get("/keys/{name}/rotation-policy", s.HandleGetKeyRotationPolicy)       // Get auto-rotation policy
+				r.Delete("/keys/{name}/rotation-policy", s.HandleDeleteKeyRotationPolicy) // Remove auto-rotation policy
+				r.Post("/encrypt/{name}", s.HandleKMSEncrypt)                             // Encrypt data
+				r.Post("/decrypt/{name}", s.HandleKMSDecrypt)                             // Decrypt data
+				r.Get("/backend/status", s.HandleBackendStatus)                           // Backend status
+				r.Post("/backend/test", s.HandleBackendTest)                              // Test backend
 
 				// Safety monitoring routes
 				r.Get("/safety/check", s.HandleSafetyCheck)   // Check keys approaching limits
@@ -477,7 +516,6 @@ func (s *Server) setupRouter() {
 				r.Post("/authorized/verify", s.HandleVerifyAuthorized)
 			})
 
-
 			// Seal routes (LEGACY — superseded by /api/v1/barrier/*).
 			// Each handler stamps Deprecation/Sunset/Link headers per
 			// RFC 8594 + draft-ietf-httpapi-deprecation-header. See
@@ -506,10 +544,6 @@ func (s *Server) setupRouter() {
 				r.Post("/shamir/initialize", s.HandleBarrierShamirInitialize)
 				r.Post("/shamir/unseal-share", s.HandleBarrierShamirUnsealShare)
 				r.Post("/shamir/unseal-shares", s.HandleBarrierShamirUnsealShares)
-				r.Get("/shamir/shares", s.HandleBarrierShamirListShares)
-				r.Delete("/shamir/shares", s.HandleBarrierShamirDeleteAllShares)
-				r.Delete("/shamir/shares/{index}", s.HandleBarrierShamirDeleteShare)
-				r.Post("/shamir/verify", s.HandleBarrierShamirVerify)
 
 				r.Post("/rekey", s.HandleBarrierRekey)
 
@@ -650,9 +684,6 @@ func (s *Server) setupRouter() {
 			// Dynamic secrets service routes
 			registerDynamicSecretsRoutes(s, r)
 
-			// Cluster DEK service routes
-			registerClusterDEKRoutes(s, r)
-
 			// Scheduler routes
 			registerSchedulerRoutes(s, r)
 
@@ -697,6 +728,66 @@ func (s *Server) setupRouter() {
 			// Backup management routes
 			registerBackupRoutes(s, r)
 		})
+	})
+
+	// Credential management routes mirror the qrdb /v1/credentials/* wire
+	// contract so a qrdb SDK REST client works unchanged against quicbaasd.
+	// Registered at the root (NOT under /api/v1) because the qrdb SDK
+	// transport hardcodes the /v1/credentials prefix.
+	r.Route("/v1/credentials", func(r chi.Router) {
+		r.Get("/", s.HandleCredentialList)
+		r.Get("/strategy", s.HandleCredentialStrategy)
+		r.Post("/submit", s.HandleCredentialSubmit)
+		r.Delete("/{name}", s.HandleCredentialDelete)
+		r.Post("/{name}/rotate", s.HandleCredentialRotate)
+		r.Post("/{name}/gc", s.HandleCredentialGCExpired)
+		r.Get("/{name}/versions", s.HandleCredentialListVersions)
+		r.Get("/{name}/versions/{version}", s.HandleCredentialRetrieveVersion)
+	})
+
+	// Barrier routes mirror the qrdb /v1/barrier/* wire contract so a qrdb
+	// SDK REST client works unchanged against quicbaasd. Registered at the
+	// root (NOT under /api/v1) because the qrdb SDK transport hardcodes the
+	// /v1/barrier prefix. These bind the same Handle* methods as the
+	// /api/v1/barrier surface; both mounts remain available.
+	r.Route("/v1/barrier", func(r chi.Router) {
+		r.Get("/status", s.HandleBarrierStatus)
+		r.Post("/initialize", s.HandleBarrierInitialize)
+		r.Post("/unseal", s.HandleBarrierUnseal)
+		r.Post("/seal", s.HandleBarrierSeal)
+
+		r.Post("/shamir/initialize", s.HandleBarrierShamirInitialize)
+		r.Post("/shamir/unseal-share", s.HandleBarrierShamirUnsealShare)
+		r.Post("/shamir/unseal-shares", s.HandleBarrierShamirUnsealShares)
+
+		r.Post("/rekey", s.HandleBarrierRekey)
+
+		r.Post("/recovery/generate", s.HandleBarrierRecoveryGenerate)
+		r.Post("/recovery/recover", s.HandleBarrierRecoveryRecover)
+		r.Delete("/recovery", s.HandleBarrierRecoveryDelete)
+		r.Get("/recovery/status", s.HandleBarrierRecoveryStatus)
+
+		r.Post("/root-token", s.HandleBarrierRootToken)
+	})
+
+	// Ceremony routes mirror the qrdb CeremonyClient wire contract so a qrdb
+	// SDK REST client works unchanged against quicbaasd. The qrdb client
+	// requests the lifecycle verbs under /v1/ceremony/* but routes
+	// enroll-external-officer under /v1/init/* (see go-qrdb
+	// transport_ceremony.go). Registered at the root (NOT under /api/v1)
+	// because the qrdb SDK transport hardcodes those prefixes. These bind the
+	// same Handle* methods as the /api/v1/init surface.
+	r.Route("/v1/ceremony", func(r chi.Router) {
+		r.Get("/status", s.HandleCeremonyStatus)
+		r.Get("/officers", s.HandleCeremonyListOfficers)
+		r.Post("/initialize", s.HandleCeremonyInitialize)
+		r.Post("/claim-cert/begin", s.HandleCeremonyClaimCertBegin)
+		r.Post("/claim-cert/complete", s.HandleCeremonyClaimCertComplete)
+		r.Post("/claim-share", s.HandleCeremonyClaimShare)
+		r.Post("/sign-csr", s.HandleCeremonySignCSR)
+	})
+	r.Route("/v1/init", func(r chi.Router) {
+		r.Post("/enroll-external-officer", s.HandleCeremonyEnrollExternalOfficer)
 	})
 
 	// IAM routes (no-op when iam build tag is not set)
@@ -872,6 +963,16 @@ func (s *Server) SetBootstrapService(svc BootstrapServicer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bootstrapSvc = svc
+}
+
+// SetCredentialService installs the credential management facade used by
+// /v1/credentials/* handlers. Lifecycle wiring calls this once the qrdb
+// credential service is available. Passing nil disables the surface
+// (handlers report 501 Not Implemented).
+func (s *Server) SetCredentialService(svc qrdbsdk.ServiceCredentialServicer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.credentialSvc = svc
 }
 
 // SetAuthorizationService sets the authorization service and token validator after construction.
@@ -1083,6 +1184,19 @@ func (s *Server) Close() error {
 // GetRouter returns the underlying chi router (for testing).
 func (s *Server) GetRouter() *chi.Mux {
 	return s.router
+}
+
+// Addr returns the actual network address the server's listener is bound
+// to, or nil if the server has not been started. This is the canonical way
+// to discover the OS-assigned port when the server was configured to listen
+// on port 0 (ephemeral), since the configured Address still reads ":0".
+func (s *Server) Addr() net.Addr {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
 }
 
 // IsStarted returns true if the server is started.

@@ -73,6 +73,17 @@ type Client interface {
 	// GetKeyPolicy retrieves the access control policy for a key.
 	GetKeyPolicy(ctx context.Context, keyID string) (*KeyPolicy, error)
 
+	// SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+	// When AutoRotate is true, IntervalSeconds must be positive.
+	SetKeyRotationPolicy(ctx context.Context, req *SetKeyRotationPolicyRequest) (*KeyRotationPolicy, error)
+
+	// GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+	// Returns (nil, nil) when no rotation policy has been configured.
+	GetKeyRotationPolicy(ctx context.Context, keyID string) (*KeyRotationPolicy, error)
+
+	// DeleteKeyRotationPolicy removes the rotation policy for a key, disabling auto-rotation.
+	DeleteKeyRotationPolicy(ctx context.Context, keyID string) error
+
 	// GetSupportedAlgorithms returns the list of supported algorithms.
 	GetSupportedAlgorithms(ctx context.Context) (*SupportedAlgorithmsResponse, error)
 
@@ -443,6 +454,43 @@ type SetKeyPolicyRequest struct {
 	Policy *KeyPolicy
 }
 
+// KeyRotationPolicy defines the automatic cryptoperiod rotation settings for a key.
+type KeyRotationPolicy struct {
+	// Enabled indicates if the policy is active.
+	Enabled bool
+
+	// AutoRotate enables fully automatic rotation without manual intervention.
+	// When true, IntervalSeconds must be positive.
+	AutoRotate bool
+
+	// IntervalSeconds is the rotation frequency in seconds.
+	IntervalSeconds int64
+
+	// NextRotationAt is when the next rotation is scheduled.
+	NextRotationAt time.Time
+
+	// RetainVersions is how many old key versions to keep after rotation.
+	RetainVersions int
+}
+
+// SetKeyRotationPolicyRequest is a request to set a key's automatic rotation policy.
+type SetKeyRotationPolicyRequest struct {
+	// KeyID is the key to configure rotation for.
+	KeyID string
+
+	// AutoRotate enables automatic rotation. Requires IntervalSeconds > 0.
+	AutoRotate bool
+
+	// IntervalSeconds is the rotation interval in seconds.
+	IntervalSeconds int64
+
+	// RetainVersions is how many old versions to keep.
+	RetainVersions int
+
+	// Enabled marks the policy as enabled.
+	Enabled bool
+}
+
 // SupportedAlgorithmsResponse contains the list of supported algorithms.
 type SupportedAlgorithmsResponse struct {
 	Algorithms []string
@@ -553,6 +601,28 @@ type getKeyPolicyRequest struct {
 // setKeyPolicyResponse is the internal set key policy response.
 type setKeyPolicyResponse struct{}
 
+// setKeyRotationPolicyRequest is the internal set rotation policy request.
+type setKeyRotationPolicyRequest struct {
+	KeyID           string `json:"key_id"`
+	AutoRotate      bool   `json:"auto_rotate"`
+	IntervalSeconds int64  `json:"interval_seconds"`
+	RetainVersions  int    `json:"retain_versions,omitempty"`
+	Enabled         bool   `json:"enabled"`
+}
+
+// getKeyRotationPolicyRequest is the internal get rotation policy request.
+type getKeyRotationPolicyRequest struct {
+	KeyID string `json:"key_id"`
+}
+
+// deleteKeyRotationPolicyRequest is the internal delete rotation policy request.
+type deleteKeyRotationPolicyRequest struct {
+	KeyID string `json:"key_id"`
+}
+
+// deleteKeyRotationPolicyResponse is the internal delete rotation policy response.
+type deleteKeyRotationPolicyResponse struct{}
+
 // getSupportedAlgorithmsRequest is the internal get supported algorithms request.
 type getSupportedAlgorithmsRequest struct{}
 
@@ -639,19 +709,20 @@ func (c *client) GetKey(ctx context.Context, keyID string) (*KeyInfo, error) {
 	case *KeyInfo:
 		return r, nil
 	case *service.GetKeyResponse:
-		keyInfo := &KeyInfo{
-			KeyID: r.Metadata.KeyID,
+		if r.Metadata == nil {
+			return nil, errors.NewInternal("kms.GetKey", "response missing key metadata")
 		}
-		if r.Metadata != nil {
-			keyInfo.Name = r.Metadata.Name
-			keyInfo.Algorithm = serviceAlgToSDKAlg(r.Metadata.Algorithm)
-			keyInfo.Version = int(r.Metadata.Version)
-			keyInfo.CreatedAt = r.Metadata.CreatedAt
-			keyInfo.RotatedAt = r.Metadata.UpdatedAt
-			keyInfo.Usage = make([]KeyUsage, len(r.Metadata.Usage))
-			for i, u := range r.Metadata.Usage {
-				keyInfo.Usage[i] = serviceUsageToSDKUsage(u)
-			}
+		keyInfo := &KeyInfo{
+			KeyID:     r.Metadata.KeyID,
+			Name:      r.Metadata.Name,
+			Algorithm: serviceAlgToSDKAlg(r.Metadata.Algorithm),
+			Version:   int(r.Metadata.Version),
+			CreatedAt: r.Metadata.CreatedAt,
+			RotatedAt: r.Metadata.UpdatedAt,
+			Usage:     make([]KeyUsage, len(r.Metadata.Usage)),
+		}
+		for i, u := range r.Metadata.Usage {
+			keyInfo.Usage[i] = serviceUsageToSDKUsage(u)
 		}
 		return keyInfo, nil
 	default:
@@ -1231,6 +1302,123 @@ func (c *client) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (*UnwrapK
 		}, nil
 	default:
 		return nil, errors.NewInternal("kms.UnwrapKey", "invalid response type")
+	}
+}
+
+// SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+func (c *client) SetKeyRotationPolicy(ctx context.Context, req *SetKeyRotationPolicyRequest) (*KeyRotationPolicy, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("kms.SetKeyRotationPolicy", "request is required")
+	}
+	if req.KeyID == "" {
+		return nil, errors.NewInvalidInput("kms.SetKeyRotationPolicy", "key ID is required")
+	}
+	if req.AutoRotate && req.IntervalSeconds <= 0 {
+		return nil, errors.NewInvalidInput("kms.SetKeyRotationPolicy", "interval_seconds must be positive when auto_rotate is true")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.SetKeyRotationPolicy", "context is required")
+	}
+
+	internalReq := &setKeyRotationPolicyRequest{
+		KeyID:           req.KeyID,
+		AutoRotate:      req.AutoRotate,
+		IntervalSeconds: req.IntervalSeconds,
+		RetainVersions:  req.RetainVersions,
+		Enabled:         req.Enabled,
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "SetKeyRotationPolicy", internalReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("kms.SetKeyRotationPolicy", "nil response from server")
+	}
+
+	switch r := resp.(type) {
+	case *KeyRotationPolicy:
+		return r, nil
+	case *service.SetKeyRotationPolicyResponse:
+		return serviceRotationPolicyToSDK(r.Policy), nil
+	default:
+		return nil, errors.NewInternal("kms.SetKeyRotationPolicy", "invalid response type")
+	}
+}
+
+// GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+func (c *client) GetKeyRotationPolicy(ctx context.Context, keyID string) (*KeyRotationPolicy, error) {
+	if keyID == "" {
+		return nil, errors.NewInvalidInput("kms.GetKeyRotationPolicy", "key ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("kms.GetKeyRotationPolicy", "context is required")
+	}
+
+	req := &getKeyRotationPolicyRequest{KeyID: keyID}
+
+	resp, err := c.transport.Request(ctx, serviceName, "GetKeyRotationPolicy", req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Nil response or nil policy means no policy is configured — return nil without error.
+	if resp == nil {
+		return nil, nil
+	}
+
+	switch r := resp.(type) {
+	case *KeyRotationPolicy:
+		return r, nil
+	case *service.GetKeyRotationPolicyResponse:
+		return serviceRotationPolicyToSDK(r.Policy), nil
+	default:
+		return nil, errors.NewInternal("kms.GetKeyRotationPolicy", "invalid response type")
+	}
+}
+
+// DeleteKeyRotationPolicy removes the rotation policy for a key.
+func (c *client) DeleteKeyRotationPolicy(ctx context.Context, keyID string) error {
+	if keyID == "" {
+		return errors.NewInvalidInput("kms.DeleteKeyRotationPolicy", "key ID is required")
+	}
+	if ctx == nil {
+		return errors.NewInvalidInput("kms.DeleteKeyRotationPolicy", "context is required")
+	}
+
+	req := &deleteKeyRotationPolicyRequest{KeyID: keyID}
+
+	resp, err := c.transport.Request(ctx, serviceName, "DeleteKeyRotationPolicy", req)
+	if err != nil {
+		return err
+	}
+
+	if resp == nil {
+		return nil
+	}
+
+	switch resp.(type) {
+	case *deleteKeyRotationPolicyResponse:
+		return nil
+	case *service.DeleteKeyRotationPolicyResponse:
+		return nil
+	default:
+		return errors.NewInternal("kms.DeleteKeyRotationPolicy", "invalid response type")
+	}
+}
+
+// serviceRotationPolicyToSDK converts a service RotationPolicy to the SDK type.
+func serviceRotationPolicyToSDK(p *service.RotationPolicy) *KeyRotationPolicy {
+	if p == nil {
+		return nil
+	}
+	return &KeyRotationPolicy{
+		Enabled:         p.Enabled,
+		AutoRotate:      p.AutoRotate,
+		IntervalSeconds: int64(p.Interval / time.Second),
+		NextRotationAt:  p.NextRotation,
+		RetainVersions:  p.RetainVersions,
 	}
 }
 

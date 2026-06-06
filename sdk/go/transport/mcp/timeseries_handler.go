@@ -546,23 +546,23 @@ func isMCPTimeseriesService(service string) bool {
 func mapTimeseriesMethodToTool(method string) string {
 	timeseriesToolMap := map[string]string{
 		// SDK client methods
-		"Write": "quicbaas_ts_write_point",
-		"Query": "quicbaas_ts_query",
+		"Write": "qrdb_ts_write_point",
+		"Query": "qrdb_ts_query",
 		// CLI interface methods
-		"TSWritePoint":         "quicbaas_ts_write_point",
-		"TSWriteBatch":         "quicbaas_ts_write_batch",
-		"TSQuery":              "quicbaas_ts_query",
-		"TSDeleteSeries":       "quicbaas_ts_delete_series",
-		"TSGetRetentionPolicy": "quicbaas_ts_get_retention_policy",
-		"TSSetRetentionPolicy": "quicbaas_ts_set_retention_policy",
-		"TSListMetrics":        "quicbaas_ts_list_metrics",
+		"TSWritePoint":         "qrdb_ts_write_point",
+		"TSWriteBatch":         "qrdb_ts_write_batch",
+		"TSQuery":              "qrdb_ts_query",
+		"TSDeleteSeries":       "qrdb_ts_delete_series",
+		"TSGetRetentionPolicy": "qrdb_ts_get_retention_policy",
+		"TSSetRetentionPolicy": "qrdb_ts_set_retention_policy",
+		"TSListMetrics":        "qrdb_ts_list_metrics",
 		// Alternative method names
-		"WritePoint":         "quicbaas_ts_write_point",
-		"WriteBatch":         "quicbaas_ts_write_batch",
-		"DeleteSeries":       "quicbaas_ts_delete_series",
-		"GetRetentionPolicy": "quicbaas_ts_get_retention_policy",
-		"SetRetentionPolicy": "quicbaas_ts_set_retention_policy",
-		"ListMetrics":        "quicbaas_ts_list_metrics",
+		"WritePoint":         "qrdb_ts_write_point",
+		"WriteBatch":         "qrdb_ts_write_batch",
+		"DeleteSeries":       "qrdb_ts_delete_series",
+		"GetRetentionPolicy": "qrdb_ts_get_retention_policy",
+		"SetRetentionPolicy": "qrdb_ts_set_retention_policy",
+		"ListMetrics":        "qrdb_ts_list_metrics",
 	}
 
 	if toolName, ok := timeseriesToolMap[method]; ok {

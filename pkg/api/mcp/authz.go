@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -56,6 +58,9 @@ var publicTools = map[string]bool{
 	"quicbaas_version":   true,
 	"quicbaas_liveness":  true,
 	"quicbaas_readiness": true,
+	// qrdb-mirror health tool (Health.Check is exposed as qrdb_health — see
+	// pkg/api/mcp/CLAUDE.md). Liveness/readiness stay quicbaas_*.
+	"qrdb_health": true,
 }
 
 // toolResourceActionMap maps tool names to their required resource and action.
@@ -137,6 +142,22 @@ var toolResourceMapping = map[string]resourceAction{
 	"quicbaas_role_list":   {interfaces.ResourceRoles, interfaces.ActionRead},
 	"quicbaas_role_assign": {interfaces.ResourceRoles, interfaces.ActionWrite},
 	"quicbaas_role_revoke": {interfaces.ResourceRoles, interfaces.ActionWrite},
+
+	// qrdb-mirror exact tools (data plane owned by go-qrdb; identical semantics
+	// to their quicbaas_* counterparts — see pkg/api/mcp/CLAUDE.md).
+	"qrdb_get":    {interfaces.ResourceKeys, interfaces.ActionRead},
+	"qrdb_list":   {interfaces.ResourceKeys, interfaces.ActionRead},
+	"qrdb_put":    {interfaces.ResourceKeys, interfaces.ActionWrite},
+	"qrdb_delete": {interfaces.ResourceKeys, interfaces.ActionDelete},
+
+	"qrdb_user_create": {interfaces.ResourceUsers, interfaces.ActionWrite},
+	"qrdb_user_delete": {interfaces.ResourceUsers, interfaces.ActionDelete},
+	"qrdb_user_list":   {interfaces.ResourceUsers, interfaces.ActionRead},
+
+	"qrdb_role_create": {interfaces.ResourceRoles, interfaces.ActionWrite},
+	"qrdb_role_delete": {interfaces.ResourceRoles, interfaces.ActionDelete},
+	"qrdb_role_list":   {interfaces.ResourceRoles, interfaces.ActionRead},
+	"qrdb_role_assign": {interfaces.ResourceRoles, interfaces.ActionWrite},
 
 	// Cache Operations
 	"quicbaas_cache_stats": {interfaces.ResourceKeys, interfaces.ActionRead},
@@ -255,6 +276,48 @@ var toolPrefixMapping = map[string]resourceAction{
 	"quicbaas_parameter_batch_set":    {interfaces.ResourceParameters, interfaces.ActionWrite},
 	"quicbaas_parameter_batch_delete": {interfaces.ResourceParameters, interfaces.ActionDelete},
 	"quicbaas_parameter_search":       {interfaces.ResourceParameters, interfaces.ActionRead},
+
+	// qrdb-mirror prefix tools (data plane owned by go-qrdb). Ordering within
+	// the prefix map does not matter for correctness because getToolResourceAction
+	// uses HasPrefix; the more specific prefixes (e.g. *_search/*_get → Read,
+	// *_delete → Delete) are listed so they match before broader fallbacks.
+
+	// Vector (mirror set)
+	"qrdb_vector_search":       {interfaces.ResourceVector, interfaces.ActionRead},
+	"qrdb_vector_get":          {interfaces.ResourceVector, interfaces.ActionRead},
+	"qrdb_vector_list":         {interfaces.ResourceVector, interfaces.ActionRead},
+	"qrdb_vector_upsert":       {interfaces.ResourceVector, interfaces.ActionWrite},
+	"qrdb_vector_update":       {interfaces.ResourceVector, interfaces.ActionWrite},
+	"qrdb_vector_batch_upsert": {interfaces.ResourceVector, interfaces.ActionWrite},
+	"qrdb_vector_create":       {interfaces.ResourceVector, interfaces.ActionWrite},
+	"qrdb_vector_rebuild":      {interfaces.ResourceVector, interfaces.ActionWrite},
+	"qrdb_vector_delete":       {interfaces.ResourceVector, interfaces.ActionDelete},
+	"qrdb_vector_batch_delete": {interfaces.ResourceVector, interfaces.ActionDelete},
+
+	// Timeseries
+	"qrdb_ts_query":  {interfaces.ResourceTimeseries, interfaces.ActionRead},
+	"qrdb_ts_list":   {interfaces.ResourceTimeseries, interfaces.ActionRead},
+	"qrdb_ts_get":    {interfaces.ResourceTimeseries, interfaces.ActionRead},
+	"qrdb_ts_write":  {interfaces.ResourceTimeseries, interfaces.ActionWrite},
+	"qrdb_ts_set":    {interfaces.ResourceTimeseries, interfaces.ActionWrite},
+	"qrdb_ts_delete": {interfaces.ResourceTimeseries, interfaces.ActionDelete},
+
+	// Barrier lifecycle (privileged)
+	"qrdb_barrier_status":          {interfaces.ResourceBarrier, interfaces.ActionRead},
+	"qrdb_barrier_recovery_status": {interfaces.ResourceBarrier, interfaces.ActionRead},
+	"qrdb_barrier_root_token":      {interfaces.ResourceBarrier, interfaces.ActionAdmin},
+	"qrdb_barrier":                 {interfaces.ResourceBarrier, interfaces.ActionAdmin},
+
+	// Ceremony lifecycle (privileged)
+	"qrdb_ceremony_status": {interfaces.ResourceCeremony, interfaces.ActionRead},
+	"qrdb_ceremony":        {interfaces.ResourceCeremony, interfaces.ActionAdmin},
+
+	// Credentials (versioned named-credential rotation)
+	"qrdb_credential_list":     {interfaces.ResourceSecrets, interfaces.ActionRead},
+	"qrdb_credential_retrieve": {interfaces.ResourceSecrets, interfaces.ActionRead},
+	"qrdb_credential_strategy": {interfaces.ResourceSecrets, interfaces.ActionRead},
+	"qrdb_credential_delete":   {interfaces.ResourceSecrets, interfaces.ActionDelete},
+	"qrdb_credential":          {interfaces.ResourceSecrets, interfaces.ActionWrite},
 }
 
 // IsPublicTool returns true if the tool does not require authentication.
@@ -458,6 +521,60 @@ func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, tool
 	}
 
 	return nil
+}
+
+// CheckToolAuthorizationWithContext validates authorization for the given tool and,
+// on success, returns a context enriched with the authenticated Subject and the
+// caller's tenant so that service-layer per-key authorization can access the
+// principal. MCP authenticates via bearer token (not mTLS / peer cert), so the
+// tenant is sourced from the validated token's tenant claim. A missing tenant
+// claim is not an error here — tenant enforcement is not this method's job.
+// On denial it returns the original ctx and a non-nil *AuthorizationError.
+func (ac *AuthorizationChecker) CheckToolAuthorizationWithContext(ctx context.Context, toolName, token string) (context.Context, *AuthorizationError) {
+	// Reuse existing logic for auth check.
+	if authErr := ac.CheckToolAuthorization(ctx, toolName, token); authErr != nil {
+		return ctx, authErr
+	}
+
+	// CheckToolAuthorization succeeded — rebuild Subject from token and capture the
+	// tenant from the SAME validated result, then inject both into the context for
+	// downstream service-layer per-key authorization and tenant isolation.
+	var subject interfaces.Subject
+	var tenantID string
+	if token != "" {
+		if ac.oidcProvider != nil {
+			if claims, err := ac.oidcProvider.ValidateAccessToken(ctx, token); err == nil && claims != nil {
+				subject = interfaces.Subject{
+					ID:            claims.GetSubject(),
+					Username:      claims.GetName(),
+					Roles:         claims.GetRoles(),
+					Authenticated: true,
+				}
+				tenantID = claims.GetTenantID()
+			}
+		}
+		if !subject.Authenticated && ac.authManager != nil {
+			if result, err := ac.authManager.ValidateToken(ctx, token); err == nil {
+				// Type-assert the result; handle both concrete and map forms.
+				if tvr, ok := result.(*auth.TokenValidationResult); ok && tvr.Valid {
+					subject = interfaces.Subject{
+						ID:            tvr.UserID,
+						Username:      tvr.Username,
+						Roles:         tvr.Roles,
+						Authenticated: true,
+					}
+					tenantID = tvr.GetTenantID()
+				}
+			}
+		}
+	}
+	if subject.Authenticated {
+		ctx = auth.SubjectIntoContext(ctx, subject)
+	}
+	if tenantID != "" {
+		ctx = iam.ContextWithTenant(ctx, tenantID)
+	}
+	return ctx, nil
 }
 
 // Helper functions to extract fields from interface{} safely

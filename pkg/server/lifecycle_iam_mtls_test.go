@@ -374,3 +374,116 @@ func isError[T any](err error, target *T) bool {
 	}
 	return false
 }
+
+// TestLoadCertPool_ParseError covers the certificate-parse error branch: a PEM
+// block typed CERTIFICATE whose DER body is not a valid certificate must
+// surface a typed CertPoolParseError.
+func TestLoadCertPool_ParseError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "garbage.pem")
+	garbage := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: []byte("this is not valid DER"),
+	})
+	if err := os.WriteFile(path, garbage, 0o600); err != nil {
+		t.Fatalf("write garbage cert: %v", err)
+	}
+
+	_, err := loadCertPool(path)
+	if err == nil {
+		t.Fatal("expected a parse error for an undecodable CERTIFICATE block")
+	}
+	var parseErr *CertPoolParseError
+	if !isError(err, &parseErr) {
+		t.Errorf("expected CertPoolParseError, got %T: %v", err, err)
+	}
+}
+
+// TestLoadCertPool_SkipsNonCertificateBlocks covers the non-CERTIFICATE skip
+// branch: a foreign PEM block preceding a valid certificate is silently skipped,
+// and the pool is still built from the real certificate.
+func TestLoadCertPool_SkipsNonCertificateBlocks(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _ := writeCertPEM(t, dir, "real-ca")
+	certBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read cert: %v", err)
+	}
+
+	foreign := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: []byte("ignored")})
+	mixedPath := filepath.Join(dir, "mixed.pem")
+	if err := os.WriteFile(mixedPath, append(foreign, certBytes...), 0o600); err != nil {
+		t.Fatalf("write mixed pem: %v", err)
+	}
+
+	pool, err := loadCertPool(mixedPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pool == nil {
+		t.Fatal("expected a non-nil pool built from the valid certificate")
+	}
+}
+
+// TestAppendPIVClientCAs_NilTLSConfigIsNoOp covers the nil-tlsConfig guard:
+// appendPIVClientCAs must return nil without dereferencing a nil config.
+func TestAppendPIVClientCAs_NilTLSConfigIsNoOp(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.IAM.PIVLogin.Enabled = true
+	s := &Server{config: cfg, logger: buildTestLogger(t)}
+
+	if err := s.appendPIVClientCAs(nil); err != nil {
+		t.Fatalf("nil tls.Config must be a no-op, got: %v", err)
+	}
+}
+
+// TestAppendPIVClientCAs_EmptyPEMFile covers the AppendCertsFromPEM-failure
+// branch: a ca_file that exists but contains no usable certificate makes
+// AppendCertsFromPEM return false, yielding a typed configuration error.
+func TestAppendPIVClientCAs_EmptyPEMFile(t *testing.T) {
+	dir := t.TempDir()
+	caFile := filepath.Join(dir, "no-certs.pem")
+	if err := os.WriteFile(caFile, []byte("# not a certificate\n"), 0o600); err != nil {
+		t.Fatalf("write ca file: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cfg.IAM.PIVLogin.Enabled = true
+	cfg.IAM.PIVLogin.CAFile = caFile
+	s := &Server{config: cfg, logger: buildTestLogger(t)}
+
+	err := s.appendPIVClientCAs(&tls.Config{})
+	if err == nil {
+		t.Fatal("expected an error for a PEM file with no certificates")
+	}
+	var qbErr *qberrors.QBError
+	if !isError(err, &qbErr) {
+		t.Errorf("expected *qberrors.QBError, got %T: %v", err, err)
+	}
+}
+
+// TestAppendOperatorClientCAs_EmptyPEMFile covers the AppendCertsFromPEM-failure
+// branch of appendOperatorClientCAs: a ca_file with no usable certificate makes
+// AppendCertsFromPEM return false, yielding a typed configuration error. The
+// nil ClientCAs pool is also allocated on this path (370-371).
+func TestAppendOperatorClientCAs_EmptyPEMFile(t *testing.T) {
+	dir := t.TempDir()
+	caFile := filepath.Join(dir, "no-certs.pem")
+	if err := os.WriteFile(caFile, []byte("# not a certificate\n"), 0o600); err != nil {
+		t.Fatalf("write ca file: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cfg.IAM.MTLS.TLSClientAuthCAFile = caFile
+	s := &Server{config: cfg, logger: buildTestLogger(t)}
+
+	// Pass a tls.Config with a nil ClientCAs so the pool-allocation branch runs.
+	err := s.appendOperatorClientCAs(&tls.Config{})
+	if err == nil {
+		t.Fatal("expected an error for a PEM file with no certificates")
+	}
+	var qbErr *qberrors.QBError
+	if !isError(err, &qbErr) {
+		t.Errorf("expected *qberrors.QBError, got %T: %v", err, err)
+	}
+}

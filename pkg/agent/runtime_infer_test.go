@@ -292,7 +292,7 @@ func (b *fakeOllamaBackend) Capabilities() orchestration.BackendCapabilities {
 		PersistentSessions: false,
 	}
 }
-func (b *fakeOllamaBackend) Type() string        { return "fake-ollama" }
+func (b *fakeOllamaBackend) Type() string         { return "fake-ollama" }
 func (b *fakeOllamaBackend) ToolGuidance() string { return "" }
 
 // fakeACPBackend simulates an ACP-session backend (PersistentSessions=true).
@@ -315,7 +315,7 @@ func (b *fakeACPBackend) Capabilities() orchestration.BackendCapabilities {
 		ACP:                true,
 	}
 }
-func (b *fakeACPBackend) Type() string        { return "fake-acp" }
+func (b *fakeACPBackend) Type() string         { return "fake-acp" }
 func (b *fakeACPBackend) ToolGuidance() string { return "" }
 
 // newInferTestRuntime creates a minimal Runtime wired with the given backends

@@ -40,19 +40,19 @@ type orchestratorResponseConverter func(data []byte) (interface{}, error)
 // orchestratorResponseConverters maps method names to their response converters
 // for O(1) dispatch, following the same pattern as embeddingResponseConverters.
 var orchestratorResponseConverters = map[string]orchestratorResponseConverter{
-	"SpawnSession":   convertSpawnSessionResponse,
-	"PromptSession":  convertPromptSessionResponse,
-	"SessionStatus":  convertSessionStatusResponse,
-	"CloseSession":   convertCloseSessionResponse,
-	"ListSessions":   convertListSessionsResponse,
-	"CreateTask":     convertCreateTaskResponse,
-	"GetTask":        convertGetTaskResponse,
-	"ListTasks":      convertListTasksResponse,
-	"ClaimTask":      convertClaimTaskResponse,
-	"CompleteTask":   convertCompleteTaskResponse,
-	"ListBackends":   convertListBackendsResponse,
-	"Health":         convertHealthResponse,
-	"Inference":      convertInferenceResponse,
+	"SpawnSession":  convertSpawnSessionResponse,
+	"PromptSession": convertPromptSessionResponse,
+	"SessionStatus": convertSessionStatusResponse,
+	"CloseSession":  convertCloseSessionResponse,
+	"ListSessions":  convertListSessionsResponse,
+	"CreateTask":    convertCreateTaskResponse,
+	"GetTask":       convertGetTaskResponse,
+	"ListTasks":     convertListTasksResponse,
+	"ClaimTask":     convertClaimTaskResponse,
+	"CompleteTask":  convertCompleteTaskResponse,
+	"ListBackends":  convertListBackendsResponse,
+	"Health":        convertHealthResponse,
+	"Inference":     convertInferenceResponse,
 }
 
 // decodeOrchestratorResponse decodes raw wire bytes into the appropriate SDK

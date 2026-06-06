@@ -146,6 +146,10 @@ func (m *AuthzMiddleware) Authorize(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, UserRolesKey, result.Roles)
 		ctx = context.WithValue(ctx, usernameKey, result.Username)
 
+		// Inject the full Subject so service-layer per-key authorization can
+		// access the principal without re-parsing the token.
+		ctx = auth.SubjectIntoContext(ctx, subject)
+
 		// Continue with the request
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -192,6 +196,10 @@ var publicEndpoints = []string{
 	// Hardware-attested login endpoints (WebAuthn + PIV) — tokens are not yet available here.
 	"/api/v1/auth/webauthn",
 	"/api/v1/auth/login/piv",
+	// Unified login ceremony (mtls / fido2 / piv) — the ceremony itself
+	// authenticates; no bearer is available yet.
+	"/api/v1/auth/login/begin",
+	"/api/v1/auth/login/finish",
 	// Public tenant listing for the login UI tenant selector — no token available yet.
 	"/api/v1/iam/tenants/public",
 	// Health and metrics endpoints

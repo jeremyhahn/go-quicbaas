@@ -17,7 +17,6 @@ package scheduler
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"strconv"
 	"testing"
@@ -31,6 +30,7 @@ import (
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestKMSGracePeriodWorkflow tests the complete grace period workflow:
@@ -58,7 +58,9 @@ func TestKMSGracePeriodWorkflow(t *testing.T) {
 func testGRPCGracePeriodWorkflow(t *testing.T, ctx context.Context) {
 	// KMS operations via gRPC
 	grpcEndpoints := getGRPCEndpoints()
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg1, tlsErr1 := helpers.IntegrationTLSConfig()
+	require.NoError(t, tlsErr1, "load integration TLS config")
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg1))
 	require.NoError(t, err, "gRPC server must be available")
 	defer grpcClient.Close()
 
@@ -177,7 +179,9 @@ func testRESTGracePeriodWorkflow(t *testing.T, ctx context.Context) {
 	// For REST, we need to use gRPC for KMS operations since the REST KMS client
 	// may not be fully implemented. We'll use REST for scheduler operations.
 	grpcEndpoints := getGRPCEndpoints()
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg2, tlsErr2 := helpers.IntegrationTLSConfig()
+	require.NoError(t, tlsErr2, "load integration TLS config")
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg2))
 	require.NoError(t, err, "gRPC server must be available")
 	defer grpcClient.Close()
 
@@ -263,7 +267,9 @@ func TestGracePeriodJobCancellation(t *testing.T) {
 
 	// KMS operations via gRPC
 	grpcEndpoints := getGRPCEndpoints()
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg3, tlsErr3 := helpers.IntegrationTLSConfig()
+	require.NoError(t, tlsErr3, "load integration TLS config")
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg3))
 	require.NoError(t, err, "must connect to gRPC server for cancellation test")
 	defer grpcClient.Close()
 
@@ -365,7 +371,9 @@ func TestMultipleGracePeriodRotations(t *testing.T) {
 
 	// KMS via gRPC
 	grpcEndpoints := getGRPCEndpoints()
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg4, tlsErr4 := helpers.IntegrationTLSConfig()
+	require.NoError(t, tlsErr4, "load integration TLS config")
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg4))
 	require.NoError(t, err, "gRPC server must be available")
 	defer grpcClient.Close()
 
@@ -474,7 +482,9 @@ func TestGracePeriodWithEncryption(t *testing.T) {
 
 	// KMS via gRPC
 	grpcEndpoints := getGRPCEndpoints()
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg5, tlsErr5 := helpers.IntegrationTLSConfig()
+	require.NoError(t, tlsErr5, "load integration TLS config")
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg5))
 	require.NoError(t, err, "gRPC server must be available")
 	defer grpcClient.Close()
 

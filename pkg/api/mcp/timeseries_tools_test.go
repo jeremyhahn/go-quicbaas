@@ -26,13 +26,13 @@ func TestTimeSeriesTools_Registration(t *testing.T) {
 	tools := registry.ListTools()
 
 	expectedTimeSeriesTools := []string{
-		"quicbaas_ts_write_point",
-		"quicbaas_ts_write_batch",
-		"quicbaas_ts_query",
-		"quicbaas_ts_delete_series",
-		"quicbaas_ts_get_retention_policy",
-		"quicbaas_ts_set_retention_policy",
-		"quicbaas_ts_list_metrics",
+		"qrdb_ts_write_point",
+		"qrdb_ts_write_batch",
+		"qrdb_ts_query",
+		"qrdb_ts_delete_series",
+		"qrdb_ts_get_retention_policy",
+		"qrdb_ts_set_retention_policy",
+		"qrdb_ts_list_metrics",
 	}
 
 	for _, expectedTool := range expectedTimeSeriesTools {
@@ -70,37 +70,37 @@ func TestTimeSeriesTools_SchemaValidation(t *testing.T) {
 		optionalFields []string
 	}{
 		{
-			toolName:       "quicbaas_ts_write_point",
+			toolName:       "qrdb_ts_write_point",
 			requiredFields: []string{"metric", "value"},
 			optionalFields: []string{"timestamp", "tags"},
 		},
 		{
-			toolName:       "quicbaas_ts_write_batch",
+			toolName:       "qrdb_ts_write_batch",
 			requiredFields: []string{"points"},
 			optionalFields: []string{},
 		},
 		{
-			toolName:       "quicbaas_ts_query",
+			toolName:       "qrdb_ts_query",
 			requiredFields: []string{"metric", "start_time", "end_time"},
 			optionalFields: []string{"tags", "aggregation", "interval_seconds", "group_by", "limit", "percentile"},
 		},
 		{
-			toolName:       "quicbaas_ts_delete_series",
+			toolName:       "qrdb_ts_delete_series",
 			requiredFields: []string{"metric"},
 			optionalFields: []string{"tags", "start_time", "end_time"},
 		},
 		{
-			toolName:       "quicbaas_ts_get_retention_policy",
+			toolName:       "qrdb_ts_get_retention_policy",
 			requiredFields: []string{"metric"},
 			optionalFields: []string{},
 		},
 		{
-			toolName:       "quicbaas_ts_set_retention_policy",
+			toolName:       "qrdb_ts_set_retention_policy",
 			requiredFields: []string{"metric", "duration_seconds"},
 			optionalFields: []string{"resolution_seconds", "aggregation"},
 		},
 		{
-			toolName:       "quicbaas_ts_list_metrics",
+			toolName:       "qrdb_ts_list_metrics",
 			requiredFields: []string{},
 			optionalFields: []string{"prefix", "tags", "limit", "cursor"},
 		},
@@ -141,10 +141,10 @@ func TestTimeSeriesTools_ToolNamingConvention(t *testing.T) {
 
 	timeSeriesToolCount := 0
 	for _, tool := range tools {
-		if strings.HasPrefix(tool.Name, "quicbaas_ts_") {
+		if strings.HasPrefix(tool.Name, "qrdb_ts_") {
 			timeSeriesToolCount++
 			// All TimeSeries tools should start with quicbaas_ts_ and have content after
-			assert.True(t, len(tool.Name) > len("quicbaas_ts_"), "Tool %s should have content after prefix", tool.Name)
+			assert.True(t, len(tool.Name) > len("qrdb_ts_"), "Tool %s should have content after prefix", tool.Name)
 		}
 	}
 
@@ -162,7 +162,7 @@ func TestTimeSeriesTools_AllToolsHaveDescriptions(t *testing.T) {
 	tools := registry.ListTools()
 
 	for _, tool := range tools {
-		if strings.HasPrefix(tool.Name, "quicbaas_ts_") {
+		if strings.HasPrefix(tool.Name, "qrdb_ts_") {
 			assert.NotEmpty(t, tool.Name, "Tool should have a name")
 			assert.NotEmpty(t, tool.Description, "Tool %s should have a description", tool.Name)
 			assert.NotNil(t, tool.InputSchema, "Tool %s should have an input schema", tool.Name)
@@ -205,13 +205,13 @@ func TestTimeSeriesTools_ProtoServiceParity(t *testing.T) {
 		toolMap[tool.Name] = true
 	}
 
-	assert.True(t, toolMap["quicbaas_ts_write_point"], "Should have write_point tool")
-	assert.True(t, toolMap["quicbaas_ts_write_batch"], "Should have write_batch tool")
-	assert.True(t, toolMap["quicbaas_ts_query"], "Should have query tool")
-	assert.True(t, toolMap["quicbaas_ts_delete_series"], "Should have delete_series tool")
-	assert.True(t, toolMap["quicbaas_ts_get_retention_policy"], "Should have get_retention_policy tool")
-	assert.True(t, toolMap["quicbaas_ts_set_retention_policy"], "Should have set_retention_policy tool")
-	assert.True(t, toolMap["quicbaas_ts_list_metrics"], "Should have list_metrics tool")
+	assert.True(t, toolMap["qrdb_ts_write_point"], "Should have write_point tool")
+	assert.True(t, toolMap["qrdb_ts_write_batch"], "Should have write_batch tool")
+	assert.True(t, toolMap["qrdb_ts_query"], "Should have query tool")
+	assert.True(t, toolMap["qrdb_ts_delete_series"], "Should have delete_series tool")
+	assert.True(t, toolMap["qrdb_ts_get_retention_policy"], "Should have get_retention_policy tool")
+	assert.True(t, toolMap["qrdb_ts_set_retention_policy"], "Should have set_retention_policy tool")
+	assert.True(t, toolMap["qrdb_ts_list_metrics"], "Should have list_metrics tool")
 }
 
 // =============================================================================
@@ -255,7 +255,7 @@ func TestTimeSeriesWritePoint_ExecuteSuccess(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_ts_write_point", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_point", tc.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 		})
@@ -279,7 +279,7 @@ func TestTimeSeriesWritePoint_ExecuteErrors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_ts_write_point", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_point", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -291,7 +291,7 @@ func TestTimeSeriesWriteBatch_ExecuteSuccess(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_write_batch", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_batch", map[string]interface{}{
 		"points": `[{"metric":"cpu","value":"85.5"},{"metric":"mem","value":"1024","timestamp":1700000000000000000,"tags":{"host":"n1"}}]`,
 	})
 	require.NoError(t, err)
@@ -316,7 +316,7 @@ func TestTimeSeriesWriteBatch_ExecuteErrors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_ts_write_batch", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_batch", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -328,7 +328,7 @@ func TestTimeSeriesQuery_ExecuteSuccess(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_query", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
 		"metric":     "cpu.usage",
 		"start_time": float64(1700000000000000000),
 		"end_time":   float64(1700000001000000000),
@@ -341,7 +341,7 @@ func TestTimeSeriesQuery_MissingMetric(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_query", map[string]interface{}{})
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{})
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "metric")
@@ -351,7 +351,7 @@ func TestTimeSeriesDeleteSeries_ExecuteSuccess(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_delete_series", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
 		"metric": "old.metric",
 	})
 	require.NoError(t, err)
@@ -362,7 +362,7 @@ func TestTimeSeriesDeleteSeries_MissingMetric(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_delete_series", map[string]interface{}{})
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{})
 	require.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -371,7 +371,7 @@ func TestTimeSeriesRetention_GetSuccess(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_get_retention_policy", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_get_retention_policy", map[string]interface{}{
 		"metric": "cpu.usage",
 	})
 	require.NoError(t, err)
@@ -382,7 +382,7 @@ func TestTimeSeriesRetention_GetMissingMetric(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_get_retention_policy", map[string]interface{}{})
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_get_retention_policy", map[string]interface{}{})
 	require.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -391,7 +391,7 @@ func TestTimeSeriesRetention_SetSuccess(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_set_retention_policy", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_set_retention_policy", map[string]interface{}{
 		"metric":           "cpu.usage",
 		"duration_seconds": float64(86400),
 	})
@@ -415,7 +415,7 @@ func TestTimeSeriesRetention_SetMissingFields(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_ts_set_retention_policy", tc.args)
+			result, err := registry.ExecuteTool(ctx, "qrdb_ts_set_retention_policy", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.errContains)
@@ -428,7 +428,7 @@ func TestTimeSeriesRetention_SetWithZeroDuration(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_set_retention_policy", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_set_retention_policy", map[string]interface{}{
 		"metric": "cpu.usage",
 		// duration_seconds not provided, defaults to 0
 	})
@@ -441,22 +441,22 @@ func TestTimeSeriesListMetrics_ExecuteSuccess(t *testing.T) {
 	registry := newTSRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_list_metrics", map[string]interface{}{})
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_list_metrics", map[string]interface{}{})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 }
 
 func TestIsTimeSeriesTool_Coverage(t *testing.T) {
 	tsTools := []string{
-		"quicbaas_ts_write_point", "quicbaas_ts_write_batch",
-		"quicbaas_ts_query", "quicbaas_ts_delete_series",
-		"quicbaas_ts_get_retention_policy", "quicbaas_ts_set_retention_policy",
-		"quicbaas_ts_list_metrics",
+		"qrdb_ts_write_point", "qrdb_ts_write_batch",
+		"qrdb_ts_query", "qrdb_ts_delete_series",
+		"qrdb_ts_get_retention_policy", "qrdb_ts_set_retention_policy",
+		"qrdb_ts_list_metrics",
 	}
 	for _, name := range tsTools {
 		assert.True(t, isTimeSeriesTool(name))
 	}
-	assert.False(t, isTimeSeriesTool("quicbaas_put"))
+	assert.False(t, isTimeSeriesTool("qrdb_put"))
 	assert.False(t, isTimeSeriesTool(""))
 }
 
@@ -539,7 +539,7 @@ func TestTimeSeriesQuery_WithGroupByInvalidJSON(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_query", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
 		"metric":     "cpu.usage",
 		"start_time": float64(1700000000000000000),
 		"end_time":   float64(1700000001000000000),
@@ -555,7 +555,7 @@ func TestTimeSeriesQuery_WithInvalidPercentile(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_query", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
 		"metric":     "cpu.usage",
 		"start_time": float64(1700000000000000000),
 		"end_time":   float64(1700000001000000000),
@@ -571,7 +571,7 @@ func TestTimeSeriesQuery_WithAllOptionalParams(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_query", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
 		"metric":           "cpu.usage",
 		"start_time":       float64(1700000000000000000),
 		"end_time":         float64(1700000001000000000),
@@ -590,7 +590,7 @@ func TestTimeSeriesQuery_MissingStartTime(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_query", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
 		"metric":   "cpu.usage",
 		"end_time": float64(1700000001000000000),
 	})
@@ -603,7 +603,7 @@ func TestTimeSeriesQuery_MissingEndTime(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_query", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
 		"metric":     "cpu.usage",
 		"start_time": float64(1700000000000000000),
 	})
@@ -616,7 +616,7 @@ func TestTimeSeriesQuery_InvalidTagsJSON(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_query", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
 		"metric":     "cpu.usage",
 		"start_time": float64(1700000000000000000),
 		"end_time":   float64(1700000001000000000),
@@ -635,7 +635,7 @@ func TestTimeSeriesDeleteSeries_WithTimeRange(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_delete_series", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
 		"metric":     "old.metric",
 		"start_time": float64(1700000000000000000),
 		"end_time":   float64(1700000001000000000),
@@ -648,7 +648,7 @@ func TestTimeSeriesDeleteSeries_WithTags(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_delete_series", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
 		"metric": "old.metric",
 		"tags":   `{"host":"decommissioned-server"}`,
 	})
@@ -660,7 +660,7 @@ func TestTimeSeriesDeleteSeries_WithInvalidTags(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_delete_series", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
 		"metric": "old.metric",
 		"tags":   "{invalid-json",
 	})
@@ -673,7 +673,7 @@ func TestTimeSeriesDeleteSeries_WithOnlyStartTime(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_delete_series", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
 		"metric":     "old.metric",
 		"start_time": float64(1700000000000000000),
 	})
@@ -685,7 +685,7 @@ func TestTimeSeriesDeleteSeries_WithOnlyEndTime(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_delete_series", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
 		"metric":   "old.metric",
 		"end_time": float64(1700000001000000000),
 	})
@@ -701,7 +701,7 @@ func TestTimeSeriesListMetrics_WithAllParams(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_list_metrics", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_list_metrics", map[string]interface{}{
 		"prefix": "cpu.",
 		"tags":   `{"host":"server-1"}`,
 		"limit":  float64(50),
@@ -715,7 +715,7 @@ func TestTimeSeriesListMetrics_WithInvalidTags(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_list_metrics", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_list_metrics", map[string]interface{}{
 		"tags": "{not-valid-json",
 	})
 	require.Error(t, err)
@@ -731,7 +731,7 @@ func TestTimeSeriesSetRetentionPolicy_WithAllOptions(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_set_retention_policy", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_set_retention_policy", map[string]interface{}{
 		"metric":             "cpu.usage",
 		"duration_seconds":   float64(86400 * 30), // 30 days
 		"resolution_seconds": float64(60),
@@ -1072,7 +1072,7 @@ func TestTimeSeriesWritePoint_EmptyValue(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_write_point", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_point", map[string]interface{}{
 		"metric": "cpu.usage",
 		"value":  "",
 	})
@@ -1088,7 +1088,7 @@ func TestTimeSeriesWriteBatch_WithTagsInPoints(t *testing.T) {
 	registry := newTSRegistryForCoverage(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_write_batch", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_batch", map[string]interface{}{
 		"points": `[
 			{"metric":"cpu","value":"85.5","tags":{"host":"server-1","region":"us-east"}},
 			{"metric":"mem","value":"1024","timestamp":1700000000000000000}
@@ -1103,7 +1103,7 @@ func TestTimeSeriesWriteBatch_InvalidTagsInPoint(t *testing.T) {
 	ctx := context.Background()
 
 	// Tags as non-map value should cause an error or be ignored
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ts_write_batch", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_batch", map[string]interface{}{
 		"points": `[{"metric":"cpu","value":"85.5","tags":"not-a-map"}]`,
 	})
 	// Depending on implementation, this may succeed with tags ignored

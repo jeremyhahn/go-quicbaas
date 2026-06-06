@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	stdlog "log"
@@ -645,22 +644,23 @@ func createOllamaGRPCClient() (*grpc.Client, error) {
 		grpc.WithMaxRetryBackoff(5 * time.Second),
 	}
 
-	// Add TLS configuration
+	// Add TLS configuration. QuicBaaS bans insecure TLS — explicit CA
+	// trust required.
 	switch {
 	case tlsEnabled && tlsCert != "" && tlsKey != "":
 		opts = append(opts, grpc.WithTLS(tlsCert, tlsKey, tlsCA))
 	case tlsEnabled && tlsCA != "":
-		opts = append(opts, grpc.WithTLS("", "", tlsCA))
-	case tlsSkipVerify:
-		opts = append(opts, grpc.WithTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // G402: user explicitly requested --tls-skip-verify
-			MinVersion:         tls.VersionTLS13,
-		}))
+		opt, err := grpcCAOnlyTLSOption(tlsCA)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrConfiguration,
+				"createOllamaGRPCClient", "failed to load --tls-ca")
+		}
+		opts = append(opts, opt)
 	default:
 		return nil, errors.Newf(
 			errors.ErrConfiguration,
 			"createOllamaGRPCClient",
-			"TLS is required for gRPC connections (use --tls-cert, --tls-key, and --tls-ca, or --tls-skip-verify flags)",
+			"TLS is required for gRPC connections (use --tls-cert, --tls-key, and --tls-ca)",
 		)
 	}
 

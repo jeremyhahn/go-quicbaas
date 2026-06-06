@@ -17,7 +17,6 @@ package kms
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"os"
 	"testing"
@@ -60,7 +59,9 @@ func TestKMSAvailability(t *testing.T) {
 		endpoints := getGRPCEndpoints()
 		for _, endpoint := range endpoints {
 			t.Run(endpoint, func(t *testing.T) {
-				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+				tlsCfg, err := helpers.IntegrationTLSConfig()
+				require.NoError(t, err, "load integration TLS config")
+				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
 				require.NoError(t, err, "gRPC service must be available at %s", endpoint)
 				defer client.Close()
 
@@ -101,7 +102,9 @@ func TestKMSHealthCheck(t *testing.T) {
 
 	t.Run("gRPC health check", func(t *testing.T) {
 		endpoints := getGRPCEndpoints()
-		client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+		tlsCfg, err := helpers.IntegrationTLSConfig()
+		require.NoError(t, err, "load integration TLS config")
+		client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 		require.NoError(t, err, "gRPC service must be available")
 		defer client.Close()
 
@@ -138,7 +141,9 @@ func TestKMSKeyLifecycle(t *testing.T) {
 // testGRPCKeyLifecycle tests key lifecycle via gRPC.
 func testGRPCKeyLifecycle(t *testing.T, ctx context.Context) {
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "gRPC service must be available")
 	defer client.Close()
 

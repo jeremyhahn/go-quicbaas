@@ -18,7 +18,6 @@ package kms
 import (
 	"context"
 	"crypto/elliptic"
-	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"testing"
@@ -30,6 +29,7 @@ import (
 
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestGRPCKeyGeneration tests key generation operations through gRPC.
@@ -38,7 +38,9 @@ func TestGRPCKeyGeneration(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -135,7 +137,9 @@ func TestGRPCKeyRetrieval(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -206,7 +210,9 @@ func TestGRPCKeyListing(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -280,7 +286,9 @@ func TestGRPCKeyRotation(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -344,7 +352,9 @@ func TestGRPCKeyDeletion(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -421,7 +431,9 @@ func TestGRPCEncryptionDecryption(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -586,7 +598,9 @@ func TestGRPCConcurrentOperations(t *testing.T) {
 	defer cancel()
 
 	endpoints := getGRPCEndpoints()
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -729,13 +743,15 @@ func TestGRPCClusterConsistency(t *testing.T) {
 	require.GreaterOrEqual(t, len(endpoints), 2,
 		"Cluster consistency test requires at least 2 nodes, got %d", len(endpoints))
 
-	client1, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client1, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "gRPC node 1 must be available at %s", endpoints[0])
 	defer client1.Close()
 
 	requireKMSAvailable(t, client1, ctx)
 
-	client2, err := grpcclient.NewClient(endpoints[1], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	client2, err := grpcclient.NewClient(endpoints[1], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "gRPC node 2 must be available at %s", endpoints[1])
 	defer client2.Close()
 

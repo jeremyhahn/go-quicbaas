@@ -1318,3 +1318,473 @@ func TestValidationErrorContext(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// CA Administration Surface Tests
+// =============================================================================
+
+func TestClient_CAInfo_NilContext(t *testing.T) {
+	client := NewClient(&mockTransport{})
+	_, err := client.CAInfo(nil, &CAInfoRequest{})
+	if err == nil {
+		t.Fatal("expected error for nil context")
+	}
+	if errors.Code(err) != errors.CodeInvalidInput {
+		t.Errorf("expected CodeInvalidInput, got %v", errors.Code(err))
+	}
+}
+
+func TestClient_CAInfo_NilRequestIsAllowed(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(_ context.Context, _ string, _ string, _ interface{}) (interface{}, error) {
+			return &CAInfoResponse{CommonName: "root"}, nil
+		},
+	}
+	client := NewClient(mockT)
+	resp, err := client.CAInfo(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if resp == nil || resp.CommonName != "root" {
+		t.Errorf("expected CommonName=root, got %#v", resp)
+	}
+}
+
+func TestClient_CAInfo_TransportError(t *testing.T) {
+	want := errors.NewInternal("transport.test", "boom")
+	mockT := &mockTransport{
+		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+			return nil, want
+		},
+	}
+	client := NewClient(mockT)
+	if _, err := client.CAInfo(context.Background(), &CAInfoRequest{}); err == nil {
+		t.Fatal("expected transport error to propagate")
+	}
+}
+
+func TestClient_CAInfo_NilResponse(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+			return nil, nil
+		},
+	}
+	client := NewClient(mockT)
+	_, err := client.CAInfo(context.Background(), &CAInfoRequest{})
+	if err == nil {
+		t.Fatal("expected nil-response error")
+	}
+}
+
+func TestClient_CAInfo_InvalidResponseType(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+			return "not a *CAInfoResponse", nil
+		},
+	}
+	client := NewClient(mockT)
+	_, err := client.CAInfo(context.Background(), &CAInfoRequest{})
+	if err == nil {
+		t.Fatal("expected type error")
+	}
+}
+
+func TestClient_CAInfo_FullResponse(t *testing.T) {
+	now := time.Now().UTC()
+	mockT := &mockTransport{
+		requestFn: func(_ context.Context, svc string, method string, _ interface{}) (interface{}, error) {
+			if svc != "quicbaas.Certificate" || method != "CAInfo" {
+				t.Errorf("unexpected dispatch svc=%s method=%s", svc, method)
+			}
+			return &CAInfoResponse{
+				CommonName:         "Root",
+				Subject:            "CN=Root",
+				Issuer:             "CN=Root",
+				SerialNumber:       "ff",
+				NotBefore:          now,
+				NotAfter:           now.Add(24 * time.Hour),
+				IsCA:               true,
+				KeyType:            "RSA",
+				KeyBits:            2048,
+				SignatureAlgorithm: "SHA256-RSA",
+				CertificatePEM:     "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n",
+				CABundlePEM:        "-----BEGIN CERTIFICATE-----\nb\n-----END CERTIFICATE-----\n",
+			}, nil
+		},
+	}
+	client := NewClient(mockT)
+	resp, err := client.CAInfo(context.Background(), &CAInfoRequest{})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if !resp.IsCA || resp.KeyBits != 2048 || resp.SerialNumber != "ff" {
+		t.Errorf("response fields wrong: %#v", resp)
+	}
+}
+
+func TestClient_ListCertificates_NegativeLimit(t *testing.T) {
+	client := NewClient(&mockTransport{})
+	_, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{Limit: -1})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if errors.Code(err) != errors.CodeInvalidInput {
+		t.Errorf("expected CodeInvalidInput, got %v", errors.Code(err))
+	}
+}
+
+func TestClient_ListCertificates_NilContext(t *testing.T) {
+	client := NewClient(&mockTransport{})
+	if _, err := client.ListCertificates(nil, nil); err == nil {
+		t.Fatal("expected nil-context error")
+	}
+}
+
+func TestClient_ListCertificates_Roundtrip(t *testing.T) {
+	now := time.Now().UTC()
+	mockT := &mockTransport{
+		requestFn: func(_ context.Context, _ string, method string, req interface{}) (interface{}, error) {
+			if method != "ListCertificates" {
+				t.Errorf("unexpected method %s", method)
+			}
+			r, ok := req.(*ListCertificatesRequest)
+			if !ok {
+				t.Fatalf("expected *ListCertificatesRequest, got %T", req)
+			}
+			if r.CommonNameFilter != "api" || !r.IncludeRevoked || r.Limit != 10 {
+				t.Errorf("request not preserved: %#v", r)
+			}
+			return &ListCertificatesResponse{
+				Certificates: []CertificateSummary{{
+					CommonName: "api.example.com", SerialNumber: "ab", NotBefore: now, NotAfter: now.Add(time.Hour),
+					KeyUsage: "DigitalSignature, KeyEncipherment", DNSNames: []string{"api.example.com"},
+				}},
+				TotalCount: 1,
+			}, nil
+		},
+	}
+	client := NewClient(mockT)
+	resp, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{
+		CommonNameFilter: "api",
+		IncludeRevoked:   true,
+		Limit:            10,
+	})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if resp.TotalCount != 1 || len(resp.Certificates) != 1 {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if resp.Certificates[0].DNSNames[0] != "api.example.com" {
+		t.Errorf("DNSNames not propagated")
+	}
+}
+
+func TestClient_ListCertificates_NilResponse(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+			return nil, nil
+		},
+	}
+	client := NewClient(mockT)
+	_, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{})
+	if err == nil {
+		t.Fatal("expected nil-response error")
+	}
+}
+
+func TestClient_ListCertificates_TransportError(t *testing.T) {
+	want := errors.NewInternal("test", "fail")
+	mockT := &mockTransport{
+		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+			return nil, want
+		},
+	}
+	client := NewClient(mockT)
+	if _, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{}); err == nil {
+		t.Fatal("expected transport error")
+	}
+}
+
+func TestClient_ListCertificates_InvalidResponseType(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+			return 42, nil
+		},
+	}
+	client := NewClient(mockT)
+	if _, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{}); err == nil {
+		t.Fatal("expected type error")
+	}
+}
+
+// =============================================================================
+// GetCABundle
+// =============================================================================
+
+func TestClient_GetCABundle(t *testing.T) {
+	t.Run("happy path", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(_ context.Context, _, method string, _ interface{}) (interface{}, error) {
+				if method != "GetCABundle" {
+					t.Errorf("expected method GetCABundle, got %q", method)
+				}
+				return &GetCABundleResponse{BundlePEM: "-----BEGIN CERTIFICATE-----"}, nil
+			},
+		}
+		client := NewClient(mockT)
+		resp, err := client.GetCABundle(context.Background(), &GetCABundleRequest{StoreType: "tls"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.BundlePEM == "" {
+			t.Error("expected non-empty bundle PEM")
+		}
+	})
+
+	t.Run("nil request defaults", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(_ context.Context, _, _ string, req interface{}) (interface{}, error) {
+				if req == nil {
+					t.Error("expected non-nil defaulted request")
+				}
+				return &GetCABundleResponse{BundlePEM: "x"}, nil
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.GetCABundle(context.Background(), nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("nil context", func(t *testing.T) {
+		client := NewClient(&mockTransport{})
+		if _, err := client.GetCABundle(nil, &GetCABundleRequest{}); err == nil {
+			t.Fatal("expected nil-context error")
+		}
+	})
+
+	t.Run("transport error", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				return nil, errors.NewInternal("test", "boom")
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.GetCABundle(context.Background(), &GetCABundleRequest{}); err == nil {
+			t.Fatal("expected transport error")
+		}
+	})
+
+	t.Run("nil response", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				return nil, nil
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.GetCABundle(context.Background(), &GetCABundleRequest{}); err == nil {
+			t.Fatal("expected nil-response error")
+		}
+	})
+
+	t.Run("invalid response type", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				return "not-a-bundle", nil
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.GetCABundle(context.Background(), &GetCABundleRequest{}); err == nil {
+			t.Fatal("expected invalid-response-type error")
+		}
+	})
+}
+
+// =============================================================================
+// GenerateCRL
+// =============================================================================
+
+func TestClient_GenerateCRL(t *testing.T) {
+	t.Run("happy path", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(_ context.Context, _, method string, _ interface{}) (interface{}, error) {
+				if method != "GenerateCRL" {
+					t.Errorf("expected method GenerateCRL, got %q", method)
+				}
+				return &GenerateCRLResponse{CRLPEM: "-----BEGIN X509 CRL-----"}, nil
+			},
+		}
+		client := NewClient(mockT)
+		resp, err := client.GenerateCRL(context.Background(), &GenerateCRLRequest{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.CRLPEM == "" {
+			t.Error("expected non-empty CRL PEM")
+		}
+	})
+
+	t.Run("nil request defaults", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(_ context.Context, _, _ string, req interface{}) (interface{}, error) {
+				if req == nil {
+					t.Error("expected non-nil defaulted request")
+				}
+				return &GenerateCRLResponse{CRLPEM: "x"}, nil
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.GenerateCRL(context.Background(), nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("nil context", func(t *testing.T) {
+		client := NewClient(&mockTransport{})
+		if _, err := client.GenerateCRL(nil, &GenerateCRLRequest{}); err == nil {
+			t.Fatal("expected nil-context error")
+		}
+	})
+
+	t.Run("transport error", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				return nil, errors.NewInternal("test", "boom")
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.GenerateCRL(context.Background(), &GenerateCRLRequest{}); err == nil {
+			t.Fatal("expected transport error")
+		}
+	})
+
+	t.Run("nil response", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				return nil, nil
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.GenerateCRL(context.Background(), &GenerateCRLRequest{}); err == nil {
+			t.Fatal("expected nil-response error")
+		}
+	})
+
+	t.Run("invalid response type", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				return 99, nil
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.GenerateCRL(context.Background(), &GenerateCRLRequest{}); err == nil {
+			t.Fatal("expected invalid-response-type error")
+		}
+	})
+}
+
+// =============================================================================
+// IsRevoked
+// =============================================================================
+
+func TestClient_IsRevoked_Validation(t *testing.T) {
+	client := NewClient(&mockTransport{})
+
+	t.Run("nil request", func(t *testing.T) {
+		if _, err := client.IsRevoked(context.Background(), nil); err == nil {
+			t.Fatal("expected validation error for nil request")
+		}
+	})
+
+	t.Run("empty serial number", func(t *testing.T) {
+		if _, err := client.IsRevoked(context.Background(), &IsRevokedRequest{}); err == nil {
+			t.Fatal("expected validation error for empty serial number")
+		}
+	})
+}
+
+func TestClient_IsRevoked(t *testing.T) {
+	t.Run("happy path revoked", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(_ context.Context, _, method string, _ interface{}) (interface{}, error) {
+				if method != "IsRevoked" {
+					t.Errorf("expected method IsRevoked, got %q", method)
+				}
+				return &IsRevokedResponse{Revoked: true, Reason: 1, Message: "keyCompromise"}, nil
+			},
+		}
+		client := NewClient(mockT)
+		resp, err := client.IsRevoked(context.Background(), &IsRevokedRequest{SerialNumber: "abc123"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !resp.Revoked {
+			t.Error("expected revoked=true")
+		}
+	})
+
+	t.Run("nil context", func(t *testing.T) {
+		client := NewClient(&mockTransport{})
+		if _, err := client.IsRevoked(nil, &IsRevokedRequest{SerialNumber: "abc"}); err == nil {
+			t.Fatal("expected nil-context error")
+		}
+	})
+
+	t.Run("transport error", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				return nil, errors.NewInternal("test", "boom")
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.IsRevoked(context.Background(), &IsRevokedRequest{SerialNumber: "abc"}); err == nil {
+			t.Fatal("expected transport error")
+		}
+	})
+
+	t.Run("nil response", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				return nil, nil
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.IsRevoked(context.Background(), &IsRevokedRequest{SerialNumber: "abc"}); err == nil {
+			t.Fatal("expected nil-response error")
+		}
+	})
+
+	t.Run("invalid response type", func(t *testing.T) {
+		mockT := &mockTransport{
+			requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				return "nope", nil
+			},
+		}
+		client := NewClient(mockT)
+		if _, err := client.IsRevoked(context.Background(), &IsRevokedRequest{SerialNumber: "abc"}); err == nil {
+			t.Fatal("expected invalid-response-type error")
+		}
+	})
+}
+
+// TestClient_ListCertificates_NilRequestDefaults covers the req==nil default
+// branch of ListCertificates (and validateListCertificatesRequest).
+func TestClient_ListCertificates_NilRequestDefaults(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(_ context.Context, _, _ string, req interface{}) (interface{}, error) {
+			if req == nil {
+				t.Error("expected non-nil defaulted request")
+			}
+			return &ListCertificatesResponse{Certificates: nil, TotalCount: 0}, nil
+		},
+	}
+	client := NewClient(mockT)
+	resp, err := client.ListCertificates(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.TotalCount != 0 {
+		t.Errorf("expected total count 0, got %d", resp.TotalCount)
+	}
+}

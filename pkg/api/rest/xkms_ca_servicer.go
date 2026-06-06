@@ -22,6 +22,8 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -45,6 +47,13 @@ import (
 // that production-tested code.
 type xkmsCAServicer struct {
 	ca xkmssdk.TrustedCA
+
+	// spiffeTrustDomain is the operator-configured SPIFFE trust domain. When
+	// non-empty alongside a request TenantID, the adapter instructs the
+	// embedded CA to stamp a tenant-scoped SPIFFE URI SAN onto the issued
+	// leaf so mTLS/PIV login can derive the tenant from the verified peer
+	// certificate. Empty disables SPIFFE SAN synthesis.
+	spiffeTrustDomain string
 }
 
 // Compile-time guarantee that the adapter satisfies the exported
@@ -56,11 +65,11 @@ var _ xkmstransport.CAService = (*xkmsCAServicer)(nil)
 
 // newXKMSCAServicer wires the adapter around an initialized TrustedCA.
 // Returns nil when ca is nil so callers can skip handler registration.
-func newXKMSCAServicer(ca xkmssdk.TrustedCA) *xkmsCAServicer {
+func newXKMSCAServicer(ca xkmssdk.TrustedCA, spiffeTrustDomain string) *xkmsCAServicer {
 	if ca == nil {
 		return nil
 	}
-	return &xkmsCAServicer{ca: ca}
+	return &xkmsCAServicer{ca: ca, spiffeTrustDomain: spiffeTrustDomain}
 }
 
 // GetCABundle returns the CA bundle as PEM bytes plus individual DER
@@ -130,10 +139,7 @@ func (a *xkmsCAServicer) SignCSR(_ context.Context, req *xkmstransport.SignCSRRe
 		return nil, ErrXKMSCAMissingCSR
 	}
 
-	opts := &xkmssdk.TrustedCASignOptions{
-		Profile:      req.Profile,
-		ValidityDays: req.ValidityDays,
-	}
+	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID)
 
 	cert, err := a.ca.SignCSR(req.CSRPEM, opts)
 	if err != nil {
@@ -162,6 +168,39 @@ func (a *xkmsCAServicer) SignCSR(_ context.Context, req *xkmstransport.SignCSRRe
 	}, nil
 }
 
+// applyKeypairSPIFFE folds the operator-configured SPIFFE trust domain, the
+// request tenant, and the profile-derived SPIFFE workload kind onto a keypair-
+// issuance CertificateRequest. It is the generate-and-distribute counterpart of
+// signOptionsWithSPIFFE: the CA forwards these request fields into the same
+// spiffe.BuildURI synthesis site SignCSR uses. When the trust domain or tenant
+// is empty no SPIFFE SAN is requested (single-domain / pre-broker mode).
+func (a *xkmsCAServicer) applyKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificateRequest, profile, tenantID string) {
+	if a.spiffeTrustDomain == "" || tenantID == "" {
+		return
+	}
+	certReq.SPIFFETrustDomain = a.spiffeTrustDomain
+	certReq.TenantID = tenantID
+	certReq.SPIFFEKind = service.SPIFFEKindForProfile(profile)
+}
+
+// signOptionsWithSPIFFE builds the TrustedCASignOptions for a CSR signing
+// operation, folding in the operator-configured SPIFFE trust domain, the
+// request tenant, and the SPIFFE workload kind derived from the certificate
+// profile. When the trust domain or tenant is empty the CA omits the SPIFFE
+// SAN (single-domain / pre-broker mode).
+func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int, tenantID string) *xkmssdk.TrustedCASignOptions {
+	opts := &xkmssdk.TrustedCASignOptions{
+		Profile:      profile,
+		ValidityDays: validityDays,
+	}
+	if a.spiffeTrustDomain != "" && tenantID != "" {
+		opts.SPIFFETrustDomain = a.spiffeTrustDomain
+		opts.TenantID = tenantID
+		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
+	}
+	return opts
+}
+
 // IssueCertificate generates a fresh keypair, signs the certificate, and
 // returns cert/chain/private-key PEM. Mirrors XKMSService.IssueCertificate
 // in go-xkms so REST clients see a consistent surface.
@@ -182,6 +221,13 @@ func (a *xkmsCAServicer) IssueCertificate(_ context.Context, req *xkmstransport.
 		SANS:  sans,
 		Valid: req.ValidityDays,
 	}
+
+	// Stamp the tenant-scoped SPIFFE URI SAN on the generate-and-distribute
+	// (keypair) path, symmetric with signOptionsWithSPIFFE on the CSR-sign
+	// path. The CertificateRequest SPIFFE fields are forwarded by the CA into
+	// the same spiffe.BuildURI synthesis site SignCSR uses, so both paths emit
+	// the identical canonical SAN.
+	a.applyKeypairSPIFFE(certReq, req.Profile, req.TenantID)
 
 	// Route through IssueCertificateWithProfile when a profile is named so
 	// the CA picks up the profile's KeyUsage/ExtKeyUsage/validity defaults.

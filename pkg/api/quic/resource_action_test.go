@@ -327,19 +327,19 @@ func TestGetResourceAndAction_OperationsManagement(t *testing.T) {
 	}
 }
 
-// TestGetResourceAndAction_SealOperations tests all seal operation opcodes
-func TestGetResourceAndAction_SealOperations(t *testing.T) {
+// TestGetResourceAndAction_BarrierCeremonyOperations replaces the deprecated
+// SealOperations test. After Phase 8c the QUIC layer routes barrier and
+// ceremony traffic through the single OpBarrier (0xC0) and OpCeremony (0xC1)
+// dispatchers, each mapped to its dedicated resource and ActionAdmin.
+func TestGetResourceAndAction_BarrierCeremonyOperations(t *testing.T) {
 	tests := []struct {
 		name             string
 		opcode           byte
 		expectedResource string
 		expectedAction   string
 	}{
-		{"OpSealStatus", OpSealStatus, interfaces.ResourceSeal, interfaces.ActionRead},
-		{"OpSealInit", OpSealInit, interfaces.ResourceSeal, interfaces.ActionAdmin},
-		{"OpUnseal", OpUnseal, interfaces.ResourceSeal, interfaces.ActionAdmin},
-		{"OpSeal", OpSeal, interfaces.ResourceSeal, interfaces.ActionAdmin},
-		{"OpSealRekey", OpSealRekey, interfaces.ResourceSeal, interfaces.ActionAdmin},
+		{"OpBarrier", OpBarrier, interfaces.ResourceBarrier, interfaces.ActionAdmin},
+		{"OpCeremony", OpCeremony, interfaces.ResourceCeremony, interfaces.ActionAdmin},
 	}
 
 	for _, tt := range tests {
@@ -788,43 +788,6 @@ func TestGetResourceAndAction_DynamicSecretsOperations(t *testing.T) {
 		// Delete operations
 		{"OpDynamicSecretsDeleteRole", OpDynamicSecretsDeleteRole, interfaces.ResourceSecrets, interfaces.ActionDelete},
 		{"OpDynamicSecretsRevokeLease", OpDynamicSecretsRevokeLease, interfaces.ResourceSecrets, interfaces.ActionDelete},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resource, action := GetResourceAndActionForTest(tt.opcode)
-			if resource != tt.expectedResource {
-				t.Errorf("expected resource %q, got %q", tt.expectedResource, resource)
-			}
-			if action != tt.expectedAction {
-				t.Errorf("expected action %q, got %q", tt.expectedAction, action)
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Cluster DEK Operations Tests
-// =============================================================================
-
-func TestGetResourceAndAction_ClusterDEKOperations(t *testing.T) {
-	tests := []struct {
-		name             string
-		opcode           byte
-		expectedResource string
-		expectedAction   string
-	}{
-		// Read operations
-		{"OpClusterDEKStatus", OpClusterDEKStatus, interfaces.ResourceKMS, interfaces.ActionRead},
-		{"OpClusterDEKNodeStatus", OpClusterDEKNodeStatus, interfaces.ResourceKMS, interfaces.ActionRead},
-		{"OpClusterDEKReencryptStatus", OpClusterDEKReencryptStatus, interfaces.ResourceKMS, interfaces.ActionRead},
-		// Admin operations
-		{"OpClusterDEKInit", OpClusterDEKInit, interfaces.ResourceKMS, interfaces.ActionAdmin},
-		{"OpClusterDEKRotate", OpClusterDEKRotate, interfaces.ResourceKMS, interfaces.ActionAdmin},
-		{"OpClusterDEKSyncNode", OpClusterDEKSyncNode, interfaces.ResourceKMS, interfaces.ActionAdmin},
-		{"OpClusterDEKStartReencrypt", OpClusterDEKStartReencrypt, interfaces.ResourceKMS, interfaces.ActionAdmin},
-		{"OpClusterDEKCancelReencrypt", OpClusterDEKCancelReencrypt, interfaces.ResourceKMS, interfaces.ActionAdmin},
-		{"OpClusterDEKRecover", OpClusterDEKRecover, interfaces.ResourceKMS, interfaces.ActionAdmin},
 	}
 
 	for _, tt := range tests {

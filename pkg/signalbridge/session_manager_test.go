@@ -126,11 +126,11 @@ func TestFileStateStore_RoundTrip(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	want := &ConversationState{
-		ConversationID:   "c",
-		Kind:             ConversationDM,
+		ConversationID:    "c",
+		Kind:              ConversationDM,
 		AttachedSessionID: "sess",
-		LastDeliveredSeq: 42,
-		Verbosity:        DefaultVerbosityPrefs(),
+		LastDeliveredSeq:  42,
+		Verbosity:         DefaultVerbosityPrefs(),
 	}
 	if err := s.SaveConversation(want); err != nil {
 		t.Fatalf("save: %v", err)

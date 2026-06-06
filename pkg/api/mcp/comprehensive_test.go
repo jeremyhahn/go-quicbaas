@@ -28,7 +28,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -497,10 +496,6 @@ func (m *mockService) DynamicSecrets() service.DynamicSecretsService {
 	return nil
 }
 
-func (m *mockService) ClusterDEK() service.ClusterDEKService {
-	return nil
-}
-
 func (m *mockService) ParameterStoreService() service.ParameterStoreService {
 	return nil
 }
@@ -553,12 +548,13 @@ func (m *mockService) SetQRDBClient(provider service.QRDBClientProvider) {
 	// No-op for mock
 }
 
+func (m *mockService) LoginCeremony() service.LoginServicer { return nil }
+
+func (m *mockService) SetLoginService(svc service.LoginServicer) {}
+
 func (m *mockService) WatchManager() *watch.Manager {
 	return nil
 }
-
-// SetTenantIsolationManager is a no-op for the mock.
-func (m *mockService) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
 
 // SetSealService is a no-op for the mock.
 func (m *mockService) SetSealService(_ service.SealService) {}
@@ -713,12 +709,12 @@ func TestComprehensive_handleToolsList(t *testing.T) {
 
 	// Verify specific tools exist
 	expectedTools := []string{
-		"quicbaas_put", "quicbaas_get", "quicbaas_delete", "quicbaas_list",
+		"qrdb_put", "qrdb_get", "qrdb_delete", "qrdb_list",
 		"quicbaas_batch_put", "quicbaas_batch_get", "quicbaas_batch_delete",
 		"quicbaas_transaction", "quicbaas_query", "quicbaas_scan_index",
 		"quicbaas_cluster_status", "quicbaas_get_leader", "quicbaas_add_node",
-		"quicbaas_backup_create", "quicbaas_user_create",
-		"quicbaas_health", "quicbaas_cache_stats",
+		"quicbaas_backup_create", "qrdb_user_create",
+		"qrdb_health", "quicbaas_cache_stats",
 	}
 
 	for _, expectedTool := range expectedTools {
@@ -735,8 +731,8 @@ func TestComprehensive_handleToolsCall(t *testing.T) {
 		setup    func(*mockService)
 	}{
 		{
-			name:     "quicbaas_put success",
-			toolName: "quicbaas_put",
+			name:     "qrdb_put success",
+			toolName: "qrdb_put",
 			args: map[string]interface{}{
 				"entityType": "user",
 				"id":         float64(1),
@@ -745,8 +741,8 @@ func TestComprehensive_handleToolsCall(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:     "quicbaas_get success",
-			toolName: "quicbaas_get",
+			name:     "qrdb_get success",
+			toolName: "qrdb_get",
 			args: map[string]interface{}{
 				"entityType": "user",
 				"id":         float64(1),
@@ -754,8 +750,8 @@ func TestComprehensive_handleToolsCall(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:     "quicbaas_delete success",
-			toolName: "quicbaas_delete",
+			name:     "qrdb_delete success",
+			toolName: "qrdb_delete",
 			args: map[string]interface{}{
 				"entityType": "user",
 				"id":         float64(1),
@@ -763,8 +759,8 @@ func TestComprehensive_handleToolsCall(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:     "quicbaas_list success",
-			toolName: "quicbaas_list",
+			name:     "qrdb_list success",
+			toolName: "qrdb_list",
 			args: map[string]interface{}{
 				"entityType": "user",
 			},
@@ -834,36 +830,36 @@ func TestComprehensive_handleToolsCall(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:     "quicbaas_user_delete success",
-			toolName: "quicbaas_user_delete",
+			name:     "qrdb_user_delete success",
+			toolName: "qrdb_user_delete",
 			args: map[string]interface{}{
 				"username": "testuser",
 			},
 			wantErr: false,
 		},
 		{
-			name:     "quicbaas_user_list success",
-			toolName: "quicbaas_user_list",
+			name:     "qrdb_user_list success",
+			toolName: "qrdb_user_list",
 			args:     map[string]interface{}{},
 			wantErr:  false,
 		},
 		{
-			name:     "quicbaas_role_delete success",
-			toolName: "quicbaas_role_delete",
+			name:     "qrdb_role_delete success",
+			toolName: "qrdb_role_delete",
 			args: map[string]interface{}{
 				"roleName": "admin",
 			},
 			wantErr: false,
 		},
 		{
-			name:     "quicbaas_role_list success",
-			toolName: "quicbaas_role_list",
+			name:     "qrdb_role_list success",
+			toolName: "qrdb_role_list",
 			args:     map[string]interface{}{},
 			wantErr:  false,
 		},
 		{
-			name:     "quicbaas_role_assign success",
-			toolName: "quicbaas_role_assign",
+			name:     "qrdb_role_assign success",
+			toolName: "qrdb_role_assign",
 			args: map[string]interface{}{
 				"username": "testuser",
 				"roleName": "admin",
@@ -894,8 +890,8 @@ func TestComprehensive_handleToolsCall(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:     "quicbaas_health success",
-			toolName: "quicbaas_health",
+			name:     "qrdb_health success",
+			toolName: "qrdb_health",
 			args:     map[string]interface{}{},
 			wantErr:  false,
 		},

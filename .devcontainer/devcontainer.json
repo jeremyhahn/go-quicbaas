@@ -78,7 +78,14 @@
     "QUICBAAS_SERVER_QUIC_PORT": "4433",
     "QUICBAAS_SERVER_UNIX_SOCKET": "/tmp/quicbaas.sock",
     "OLLAMA_URL": "http://localhost:11434",
-    "OLLAMA_HOST": "0.0.0.0:11434"
+    "OLLAMA_HOST": "0.0.0.0:11434",
+    "SOFTHSM2_CONF": "/etc/softhsm/softhsm2.conf",
+    "SOFTHSM2_LIB": "/usr/local/lib/softhsm/libsofthsm2.so",
+    "PKCS11_LIBRARY": "/usr/local/lib/softhsm/libsofthsm2.so",
+    "TPM_USE_SIMULATOR": "true",
+    "TPM_SIMULATOR_HOST": "localhost",
+    "TPM_SIMULATOR_PORT": "2321",
+    "SWTPM_HOST": "localhost"
   },
   "mounts": [
     "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
@@ -90,7 +97,7 @@
   "workspaceMount": "",
   "remoteUser": "quicbaas",
   "postCreateCommand": "go mod download && go build -tags 'iam,l2_redis' ./...",
-  "postStartCommand": "git config --global --add safe.directory /workspace && /workspace/.devcontainer/start-ollama.sh && /workspace/.devcontainer/start-quicbaas.sh",
+  "postStartCommand": "git config --global --add safe.directory /workspace && /workspace/.devcontainer/init-hardware.sh && /workspace/.devcontainer/start-ollama.sh && /workspace/.devcontainer/start-quicbaas.sh",
   "forwardPorts": [8080, 9090, 4433, 2345, 6379, 63000, 11434],
   "portsAttributes": {
     "8080": {

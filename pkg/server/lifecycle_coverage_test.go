@@ -400,7 +400,8 @@ func TestLC_StartMessaging_WithService(t *testing.T) {
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	// Create service first (messaging needs it)
 	require.NoError(t, srv.startService())
@@ -440,7 +441,8 @@ func TestLC_StartService_StandaloneMemory(t *testing.T) {
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	assert.NoError(t, err)
@@ -453,13 +455,19 @@ func TestLC_StartService_InvalidMode(t *testing.T) {
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
 	cfg.Server.Mode = "bogus-mode"
+	cfg.Storage.Backend = config.StorageBackendMemory
+
+	stubIAMSeam()
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
+	// Phase E: startService requires a real qrdb node. An unrecognised mode
+	// string is treated as standalone for node construction purposes.
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
-	assert.Error(t, err)
-	assert.Error(t, err)
+	assert.NoError(t, err, "bogus mode string is now accepted by the service builder")
 }
 
 func TestLC_StartService_WithCacheEnabled(t *testing.T) {
@@ -478,7 +486,8 @@ func TestLC_StartService_WithCacheEnabled(t *testing.T) {
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	assert.NoError(t, err)
@@ -542,7 +551,8 @@ func TestLC_StartDatabases_WithService(t *testing.T) {
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	require.NoError(t, srv.startService())
 	require.NotNil(t, srv.quicBaaSService)
@@ -566,7 +576,8 @@ func TestLC_StartDatabases_DefaultDataDir(t *testing.T) {
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	require.NoError(t, srv.startService())
 
@@ -683,7 +694,8 @@ func TestLC_StartBackupManager_GzipCompression(t *testing.T) {
 	srv.config.Backup.DefaultCompression = "gzip"
 	srv.config.Backup.DefaultEncryption = "none"
 	srv.config.Storage.DataDir = t.TempDir()
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err := srv.startBackupManager()
 	assert.NoError(t, err)
@@ -699,7 +711,8 @@ func TestLC_StartBackupManager_ZstdCompression(t *testing.T) {
 	srv.config.Backup.DefaultCompression = "zstd"
 	srv.config.Backup.DefaultEncryption = "none"
 	srv.config.Storage.DataDir = t.TempDir()
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err := srv.startBackupManager()
 	assert.NoError(t, err)
@@ -715,7 +728,8 @@ func TestLC_StartBackupManager_NoCompression(t *testing.T) {
 	srv.config.Backup.DefaultCompression = "none"
 	srv.config.Backup.DefaultEncryption = "none"
 	srv.config.Storage.DataDir = t.TempDir()
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err := srv.startBackupManager()
 	assert.NoError(t, err)
@@ -731,7 +745,8 @@ func TestLC_StartBackupManager_AES256GCMNoKey(t *testing.T) {
 	srv.config.Backup.DefaultEncryption = "aes-256-gcm"
 	srv.config.Backup.EncryptionKey = "" // no key provided
 	srv.config.Storage.DataDir = t.TempDir()
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	// Should succeed but disable encryption (logs a warning)
 	err := srv.startBackupManager()
@@ -749,7 +764,8 @@ func TestLC_StartBackupManager_CustomWorkDir(t *testing.T) {
 	srv.config.Backup.WorkDir = workDir
 	srv.config.Backup.DefaultEncryption = "none"
 	srv.config.Storage.DataDir = t.TempDir()
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err := srv.startBackupManager()
 	assert.NoError(t, err)
@@ -769,7 +785,8 @@ func TestLC_StartBackupManager_CustomTimeout(t *testing.T) {
 	srv.config.Backup.Timeout = 10 * time.Minute
 	srv.config.Backup.DefaultEncryption = "none"
 	srv.config.Storage.DataDir = t.TempDir()
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err := srv.startBackupManager()
 	assert.NoError(t, err)
@@ -785,7 +802,8 @@ func TestLC_StartBackupManager_DefaultCompressionEmpty(t *testing.T) {
 	srv.config.Backup.DefaultCompression = "" // defaults to zstd
 	srv.config.Backup.DefaultEncryption = ""  // defaults to none
 	srv.config.Storage.DataDir = t.TempDir()
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err := srv.startBackupManager()
 	assert.NoError(t, err)
@@ -801,7 +819,8 @@ func TestLC_StartBackupManager_UnknownCompressionDefaultsZstd(t *testing.T) {
 	srv.config.Backup.DefaultCompression = "unknown-algo"
 	srv.config.Backup.DefaultEncryption = "unknown-enc" // defaults to none
 	srv.config.Storage.DataDir = t.TempDir()
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err := srv.startBackupManager()
 	assert.NoError(t, err)
@@ -821,7 +840,8 @@ func TestLC_StopBackupManager_WithBackupStorage(t *testing.T) {
 	srv.config.Backup.Enabled = true
 	srv.config.Backup.DefaultEncryption = "none"
 	srv.config.Storage.DataDir = t.TempDir()
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	require.NoError(t, srv.startBackupManager())
 	require.NotNil(t, srv.backupManager)
@@ -945,7 +965,8 @@ func TestLC_StartService_WithScheduler(t *testing.T) {
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	assert.NoError(t, err)
@@ -1009,7 +1030,8 @@ func TestLC_StartMessaging_WithBufferConfig(t *testing.T) {
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	require.NoError(t, srv.startService())
 	require.NotNil(t, srv.quicBaaSService)
@@ -1037,7 +1059,8 @@ func TestLC_StartService_WithVectorEnabled(t *testing.T) {
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	assert.NoError(t, err)
@@ -1058,7 +1081,8 @@ func TestLC_StartService_WithTimeSeriesEnabled(t *testing.T) {
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
-	srv.raftNode = newStandaloneRaftNode(1, "127.0.0.1:63001")
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	assert.NoError(t, err)

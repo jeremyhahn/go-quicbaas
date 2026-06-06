@@ -18,10 +18,8 @@ package messaging
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -45,18 +43,8 @@ func newRESTAdapter() *restAdapter {
 		baseURL = endpoints[0]
 	}
 	return &restAdapter{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
+		baseURL:    baseURL,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
 	}
 }
 

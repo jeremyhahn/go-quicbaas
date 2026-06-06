@@ -183,8 +183,8 @@ func TestTransport_Request(t *testing.T) {
 			case "tools/call":
 				params, _ := req.Params.(map[string]interface{})
 				toolName, _ := params["name"].(string)
-				if toolName != "quicbaas_put" {
-					t.Errorf("expected tool name quicbaas_put, got %s", toolName)
+				if toolName != "qrdb_put" {
+					t.Errorf("expected tool name qrdb_put, got %s", toolName)
 				}
 				resp = map[string]interface{}{
 					"content": []interface{}{
@@ -679,17 +679,17 @@ func TestTransport_MapToToolName(t *testing.T) {
 		expected string
 	}{
 		// KV operations
-		{"quicbaas.KV", "Put", "quicbaas_put"},
-		{"quicbaas.KV", "Get", "quicbaas_get"},
-		{"quicbaas.KV", "Delete", "quicbaas_delete"},
-		{"quicbaas.KV", "List", "quicbaas_list"},
+		{"quicbaas.KV", "Put", "qrdb_put"},
+		{"quicbaas.KV", "Get", "qrdb_get"},
+		{"quicbaas.KV", "Delete", "qrdb_delete"},
+		{"quicbaas.KV", "List", "qrdb_list"},
 
 		// Batch operations
 		{"quicbaas.Batch", "Put", "quicbaas_batch_put"},
 		{"quicbaas.Batch", "Get", "quicbaas_batch_get"},
 
 		// Health operations
-		{"quicbaas.Health", "Check", "quicbaas_health"},
+		{"quicbaas.Health", "Check", "qrdb_health"},
 		{"quicbaas.Health", "Liveness", "quicbaas_liveness"},
 		{"quicbaas.Health", "Readiness", "quicbaas_readiness"},
 		{"quicbaas.Health", "Status", "quicbaas_health_status"},
@@ -715,8 +715,8 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.Crypto", "Verify", "quicbaas_crypto_verify"},
 
 		// RBAC operations
-		{"quicbaas.RBAC", "CreateUser", "quicbaas_user_create"},
-		{"quicbaas.RBAC", "AssignRole", "quicbaas_role_assign"},
+		{"quicbaas.RBAC", "CreateUser", "qrdb_user_create"},
+		{"quicbaas.RBAC", "AssignRole", "qrdb_role_assign"},
 
 		// Auth operations
 		{"quicbaas.Auth", "Login", "quicbaas_login"},
@@ -731,7 +731,7 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.Cache", "Clear", "quicbaas_cache_clear"},
 
 		// Vector operations
-		{"quicbaas.Vector", "Upsert", "quicbaas_vector_upsert"},
+		{"quicbaas.Vector", "Upsert", "qrdb_vector_upsert"},
 		{"quicbaas.Vector", "Search", "quicbaas_vector_search"},
 
 		// Embedding operations
@@ -743,8 +743,8 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.Embedding", "GetCacheStats", "quicbaas_embedding_cache_stats"},
 		{"quicbaas.Embedding", "ClearCache", "quicbaas_embedding_cache_clear"},
 		// Timeseries operations
-		{"quicbaas.Timeseries", "Write", "quicbaas_ts_write_point"},
-		{"quicbaas.TimeSeries", "Query", "quicbaas_ts_query"},
+		{"quicbaas.Timeseries", "Write", "qrdb_ts_write_point"},
+		{"quicbaas.TimeSeries", "Query", "qrdb_ts_query"},
 
 		// Operations service
 		{"quicbaas.Operations", "Migrate", "quicbaas_migrate"},
@@ -817,8 +817,8 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.IAM.Audit", "Log", "quicbaas_iam_audit_log"},
 
 		// Without package prefix
-		{"KV", "Put", "quicbaas_put"},
-		{"Health", "Check", "quicbaas_health"},
+		{"KV", "Put", "qrdb_put"},
+		{"Health", "Check", "qrdb_health"},
 
 		// Unknown service (default mapping)
 		{"quicbaas.Unknown", "Test", "quicbaas_unknown_test"},

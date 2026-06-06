@@ -157,10 +157,10 @@ type prettyAttachRenderer struct {
 // This keeps the SDK (and the CLI that imports it) free of an
 // orchestration-package dependency.
 type genericEvent struct {
-	Sequence  uint64  `json:"sequence"`
-	Timestamp string  `json:"timestamp"`
-	Source    string  `json:"source,omitempty"`
-	Kind      string  `json:"kind"`
+	Sequence  uint64 `json:"sequence"`
+	Timestamp string `json:"timestamp"`
+	Source    string `json:"source,omitempty"`
+	Kind      string `json:"kind"`
 	Prompt    *struct {
 		Prompt string `json:"prompt"`
 		Model  string `json:"model,omitempty"`

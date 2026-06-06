@@ -18,10 +18,8 @@ package rest
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -81,18 +79,7 @@ type DeleteResponse struct {
 
 // newTLSHTTPClient creates an HTTP client configured for self-signed TLS certs.
 func newTLSHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			ForceAttemptHTTP2:   false,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	return helpers.NewHTTPClient(timeout)
 }
 
 // TestRESTBatchPutSuccess tests successful atomic batch put via REST API

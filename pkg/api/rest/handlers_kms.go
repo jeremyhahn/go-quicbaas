@@ -36,6 +36,14 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
+// kmsListServiceFetchLimit is the upper bound the REST list handler passes to
+// the KMS service. The handler must filter system keys after the service
+// returns; passing the caller's limit directly would let the service truncate
+// before the filter ran and produce an empty operator-visible page (see
+// TestRESTKeyListing/list_with_limit). 10000 is well above any realistic
+// per-tenant key count while still bounding memory.
+const kmsListServiceFetchLimit = 10000
+
 // isSystemKey returns true for keys that are internal cryptographic materials
 // managed by the daemon itself (CA, TLS server certs, agent identity certs).
 // These keys are not operator-managed and are excluded from the KMS list API
@@ -346,6 +354,43 @@ type GetKeyPolicyRESTResponse struct {
 	Timestamp int64              `json:"timestamp"`
 }
 
+// RotationPolicyRESTRequest is the JSON body for set-rotation-policy.
+type RotationPolicyRESTRequest struct {
+	Enabled         bool  `json:"enabled"`
+	IntervalSeconds int64 `json:"interval_seconds"`
+	RetainVersions  int   `json:"retain_versions,omitempty"`
+	AutoRotate      bool  `json:"auto_rotate"`
+}
+
+// RotationPolicyRESTResponse represents a rotation policy in REST responses.
+type RotationPolicyRESTResponse struct {
+	Enabled          bool  `json:"enabled"`
+	IntervalSeconds  int64 `json:"interval_seconds"`
+	NextRotationUnix int64 `json:"next_rotation_unix,omitempty"`
+	RetainVersions   int   `json:"retain_versions,omitempty"`
+	AutoRotate       bool  `json:"auto_rotate"`
+}
+
+// SetKeyRotationPolicyRESTResponse is the JSON response for setting a rotation policy.
+type SetKeyRotationPolicyRESTResponse struct {
+	KeyID     string                      `json:"key_id"`
+	Policy    *RotationPolicyRESTResponse `json:"policy"`
+	Timestamp int64                       `json:"timestamp"`
+}
+
+// GetKeyRotationPolicyRESTResponse is the JSON response for getting a rotation policy.
+type GetKeyRotationPolicyRESTResponse struct {
+	KeyID     string                      `json:"key_id"`
+	Policy    *RotationPolicyRESTResponse `json:"policy,omitempty"`
+	Timestamp int64                       `json:"timestamp"`
+}
+
+// DeleteKeyRotationPolicyRESTResponse is the JSON response for deleting a rotation policy.
+type DeleteKeyRotationPolicyRESTResponse struct {
+	KeyID     string `json:"key_id"`
+	Timestamp int64  `json:"timestamp"`
+}
+
 // =============================================================================
 // Handler Functions
 // =============================================================================
@@ -612,8 +657,13 @@ func (s *Server) HandleListKeys(w http.ResponseWriter, r *http.Request) {
 			filter["prefix"] = prefix
 		}
 
+		// System keys (CA, TLS, agent identity) are filtered out here at the REST
+		// boundary. If we paginate inside the service, the visible result can be
+		// short or empty when system keys sort first (see TestRESTKeyListing/list_with_limit).
+		// Request a high upper bound so the service does not truncate before
+		// filtering; final pagination is applied below on the filtered slice.
 		svcReq := &service.ListKeysRequest{
-			Limit:  limit,
+			Limit:  kmsListServiceFetchLimit,
 			Filter: filter,
 		}
 
@@ -623,23 +673,26 @@ func (s *Server) HandleListKeys(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		allKeys := make([]*KeyHandleResponse, 0, len(svcResp.Keys))
+		keys := make([]*KeyHandleResponse, 0, len(svcResp.Keys))
 		for _, kh := range svcResp.Keys {
-			allKeys = append(allKeys, svcKeyHandleToResponse(kh))
+			h := svcKeyHandleToResponse(kh)
+			if !isSystemKey(h.KeyID, h.Algorithm) {
+				keys = append(keys, h)
+			}
 		}
 
-		keys := make([]*KeyHandleResponse, 0, len(allKeys))
-		for _, k := range allKeys {
-			if !isSystemKey(k.KeyID, k.Algorithm) {
-				keys = append(keys, k)
-			}
+		totalCount := len(keys)
+		hasMore := svcResp.HasMore
+		if limit > 0 && limit < len(keys) {
+			keys = keys[:limit]
+			hasMore = true
 		}
 
 		resp := &ListKeysRESTResponse{
 			Keys:       keys,
 			NextCursor: svcResp.NextCursor,
-			HasMore:    svcResp.HasMore,
-			TotalCount: len(keys),
+			HasMore:    hasMore,
+			TotalCount: totalCount,
 			Timestamp:  svcResp.Timestamp.Unix(),
 		}
 		RespondJSON(w, r, http.StatusOK, resp)
@@ -1653,6 +1706,144 @@ func (s *Server) HandleGetKeyPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
+}
+
+// HandleSetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+// PUT /api/v1/kms/keys/{name}/rotation-policy.
+func (s *Server) HandleSetKeyRotationPolicy(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	keyID := chi.URLParam(r, "name")
+	if keyID == "" {
+		RespondBadRequest(w, r, "key name is required")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondBadRequest(w, r, "failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var reqBody RotationPolicyRESTRequest
+	if err := json.Unmarshal(body, &reqBody); err != nil {
+		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+
+	kmsService := s.service.KMS()
+	if kmsService == nil {
+		RespondError(w, r, http.StatusInternalServerError, ErrKMSServiceUnavailable)
+		return
+	}
+
+	policy := &service.RotationPolicy{
+		Enabled:        reqBody.Enabled,
+		Interval:       time.Duration(reqBody.IntervalSeconds) * time.Second,
+		RetainVersions: reqBody.RetainVersions,
+		AutoRotate:     reqBody.AutoRotate,
+	}
+
+	svcReq := &service.SetKeyRotationPolicyRequest{
+		KeyID:  keyID,
+		Policy: policy,
+	}
+
+	resp, err := kmsService.SetKeyRotationPolicy(ctx, svcReq)
+	if err != nil {
+		s.handleKMSError(w, r, err)
+		return
+	}
+
+	restResp := &SetKeyRotationPolicyRESTResponse{
+		KeyID:     resp.KeyID,
+		Policy:    serviceToRESTRotationPolicy(resp.Policy),
+		Timestamp: resp.Timestamp.Unix(),
+	}
+	RespondJSON(w, r, http.StatusOK, restResp)
+}
+
+// HandleGetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+// GET /api/v1/kms/keys/{name}/rotation-policy.
+func (s *Server) HandleGetKeyRotationPolicy(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	keyID := chi.URLParam(r, "name")
+	if keyID == "" {
+		RespondBadRequest(w, r, "key name is required")
+		return
+	}
+
+	kmsService := s.service.KMS()
+	if kmsService == nil {
+		RespondError(w, r, http.StatusInternalServerError, ErrKMSServiceUnavailable)
+		return
+	}
+
+	svcReq := &service.GetKeyRotationPolicyRequest{KeyID: keyID}
+
+	resp, err := kmsService.GetKeyRotationPolicy(ctx, svcReq)
+	if err != nil {
+		s.handleKMSError(w, r, err)
+		return
+	}
+
+	restResp := &GetKeyRotationPolicyRESTResponse{
+		KeyID:     resp.KeyID,
+		Policy:    serviceToRESTRotationPolicy(resp.Policy),
+		Timestamp: resp.Timestamp.Unix(),
+	}
+	RespondJSON(w, r, http.StatusOK, restResp)
+}
+
+// HandleDeleteKeyRotationPolicy removes the rotation policy for a key, disabling auto-rotation.
+// DELETE /api/v1/kms/keys/{name}/rotation-policy.
+func (s *Server) HandleDeleteKeyRotationPolicy(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	keyID := chi.URLParam(r, "name")
+	if keyID == "" {
+		RespondBadRequest(w, r, "key name is required")
+		return
+	}
+
+	kmsService := s.service.KMS()
+	if kmsService == nil {
+		RespondError(w, r, http.StatusInternalServerError, ErrKMSServiceUnavailable)
+		return
+	}
+
+	svcReq := &service.DeleteKeyRotationPolicyRequest{KeyID: keyID}
+
+	resp, err := kmsService.DeleteKeyRotationPolicy(ctx, svcReq)
+	if err != nil {
+		s.handleKMSError(w, r, err)
+		return
+	}
+
+	restResp := &DeleteKeyRotationPolicyRESTResponse{
+		KeyID:     resp.KeyID,
+		Timestamp: resp.Timestamp.Unix(),
+	}
+	RespondJSON(w, r, http.StatusOK, restResp)
+}
+
+// serviceToRESTRotationPolicy converts a service RotationPolicy to the REST response type.
+func serviceToRESTRotationPolicy(p *service.RotationPolicy) *RotationPolicyRESTResponse {
+	if p == nil {
+		return nil
+	}
+	resp := &RotationPolicyRESTResponse{
+		Enabled:         p.Enabled,
+		IntervalSeconds: int64(p.Interval / time.Second),
+		RetainVersions:  p.RetainVersions,
+		AutoRotate:      p.AutoRotate,
+	}
+	if !p.NextRotation.IsZero() {
+		resp.NextRotationUnix = p.NextRotation.Unix()
+	}
+	return resp
 }
 
 // =============================================================================

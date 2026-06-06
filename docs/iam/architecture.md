@@ -1,5 +1,27 @@
 # QuicBaaS IAM Architecture
 
+## Delegation to go-qrdb (locked)
+
+QuicBaaS **composes** go-qrdb and go-xkms through the qrdb SDK (`go-qrdb/sdk/go`) and adds multi-protocol transports plus OIDC / OAuth2 on top. It does **not** own a user model, mTLS cert-binding scheme, barrier, or bootstrap — those are qrdb's, consumed via the SDK:
+
+| Capability | Owner | quicbaas consumes via |
+|------------|-------|------------------------|
+| User/identity model (`User`, RoleBindings, ABAC, factors) | go-qrdb `pkg/user` | `sdk.User` / `sdk/go/types_user.go` |
+| mTLS cert-binding identifier (SPKI SHA-256 thumbprint) | go-qrdb | `sdk.ComputeSPKIThumbprint` |
+| First-boot + admin-mTLS enrollment | go-qrdb `pkg/firstboot` | `sdk.FirstBootInitialize` |
+| Barrier (none/passphrase/shamir; system + per-tenant) | go-qrdb `pkg/seal` | `Security().Barrier()` |
+| Ceremony (Shamir M-of-N) | go-qrdb `pkg/ceremony` | `Security().Ceremony()` |
+| Hardware factors + CA | go-xkms | registered into qrdb via composer; `Security().Auth()` / `.Certificate()` |
+
+What QuicBaaS adds on top of the qrdb user:
+
+- **OIDC / OAuth2** — token issuance/consumer flows whose subjects are qrdb users; OAuth2 clients are a principal kind on the qrdb tenant model.
+- **Multi-protocol transports** — REST / gRPC / QUIC / MCP / Unix surfacing the qrdb barrier/ceremony/credentials and the auth model.
+- **ABAC policy engine + PEP** — evaluated over the qrdb user's `Attributes`.
+
+QuicBaaS's identity store implements qrdb's `CertBinder` and user-store seams; admin/tenant-admin certs are bound by the qrdb SPKI thumbprint (the old `SOCertSPKIThumbprint` fork was deleted). Admin enrollment is cert-based (CSR-sign or generate-and-distribute) — no invite tokens. The system admin provisions a tenant minimally (control plane); the tenant admin self-bootstraps their own barrier and data plane.
+
+
 ## System Overview
 
 ```

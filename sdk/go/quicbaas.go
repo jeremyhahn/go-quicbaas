@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/auth"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/backup"
@@ -25,7 +26,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cache"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/clusterdek"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/crypto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/dek"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/dynamicsecrets"
@@ -99,7 +99,6 @@ type Client interface {
 	RBAC() RBACClient
 	DynamicSecrets() DynamicSecretsClient
 	Certificate() CertificateClient
-	ClusterDEK() ClusterDEKClient
 	DEK() DEKClient
 
 	// IAM operations (backward compatible)
@@ -131,13 +130,16 @@ type Client interface {
 	// Orchestrator operations (agent fleet management)
 	Orchestrator() OrchestratorClient
 
-	// Barrier ceremony operations (delegate to QRDB transport)
-	Barrier() (QRDBBarrierClient, error)
-	BarrierCeremony() (QRDBCeremonyClient, error)
+	// Barrier + ceremony moved to Security().Barrier() / .Ceremony() —
+	// the single canonical SDK entry point for crypto/auth surfaces.
 	SealStore() (QRDBSealStoreClient, error)
 	TenantMgmt() (QRDBTenantClient, error)
 	CustodianGroup() (QRDBCustodianGroupClient, error)
 	Share() (QRDBShareClient, error)
+
+	// Discovery returns the service-discovery registry, built on the QRDB
+	// lease + watch + KV primitives (register/renew/deregister/resolve/watch).
+	Discovery() (*registry.Registry, error)
 
 	// DataStore returns a KVStore suitable for constructing DAOs.
 	// Uses the QRDB transport layer.
@@ -925,69 +927,6 @@ type (
 	GetTLSConfigResponse = certificate.GetTLSConfigResponse
 )
 
-// =============================================================================
-// ClusterDEK Client Type Aliases
-// =============================================================================
-
-// ClusterDEKClient is an alias for the clusterdek.Client interface.
-type ClusterDEKClient = clusterdek.Client
-
-// ClusterDEK request/response type aliases
-type (
-	// InitClusterDEKRequest is an alias for clusterdek.InitClusterDEKRequest.
-	InitClusterDEKRequest = clusterdek.InitClusterDEKRequest
-	// InitClusterDEKResponse is an alias for clusterdek.InitClusterDEKResponse.
-	InitClusterDEKResponse = clusterdek.InitClusterDEKResponse
-	// ClusterDEKStatusResponse is an alias for clusterdek.ClusterDEKStatusResponse.
-	ClusterDEKStatusResponse = clusterdek.ClusterDEKStatusResponse
-	// RotateClusterDEKRequest is an alias for clusterdek.RotateClusterDEKRequest.
-	RotateClusterDEKRequest = clusterdek.RotateClusterDEKRequest
-	// RotateClusterDEKResponse is an alias for clusterdek.RotateClusterDEKResponse.
-	RotateClusterDEKResponse = clusterdek.RotateClusterDEKResponse
-	// SyncNodeDEKRequest is an alias for clusterdek.SyncNodeDEKRequest.
-	SyncNodeDEKRequest = clusterdek.SyncNodeDEKRequest
-	// SyncNodeDEKResponse is an alias for clusterdek.SyncNodeDEKResponse.
-	SyncNodeDEKResponse = clusterdek.SyncNodeDEKResponse
-	// GetNodeDEKStatusRequest is an alias for clusterdek.GetNodeDEKStatusRequest.
-	GetNodeDEKStatusRequest = clusterdek.GetNodeDEKStatusRequest
-	// GetNodeDEKStatusResponse is an alias for clusterdek.GetNodeDEKStatusResponse.
-	GetNodeDEKStatusResponse = clusterdek.GetNodeDEKStatusResponse
-	// StartReencryptionRequest is an alias for clusterdek.StartReencryptionRequest.
-	StartReencryptionRequest = clusterdek.StartReencryptionRequest
-	// StartReencryptionResponse is an alias for clusterdek.StartReencryptionResponse.
-	StartReencryptionResponse = clusterdek.StartReencryptionResponse
-	// ReencryptionStatusResponse is an alias for clusterdek.ReencryptionStatusResponse.
-	ReencryptionStatusResponse = clusterdek.ReencryptionStatusResponse
-	// RecoverDEKRequest is an alias for clusterdek.RecoverDEKRequest.
-	RecoverDEKRequest = clusterdek.RecoverDEKRequest
-	// RecoverDEKResponse is an alias for clusterdek.RecoverDEKResponse.
-	RecoverDEKResponse = clusterdek.RecoverDEKResponse
-	// DEKRotationPolicy is an alias for clusterdek.DEKRotationPolicy.
-	DEKRotationPolicy = clusterdek.DEKRotationPolicy
-	// NodeDEKInfo is an alias for clusterdek.NodeDEKInfo.
-	NodeDEKInfo = clusterdek.NodeDEKInfo
-	// DEKVersionInfo is an alias for clusterdek.DEKVersionInfo.
-	DEKVersionInfo = clusterdek.DEKVersionInfo
-	// EnsureTenantDEKRequest is an alias for clusterdek.EnsureTenantDEKRequest.
-	EnsureTenantDEKRequest = clusterdek.EnsureTenantDEKRequest
-	// EnsureTenantDEKResponse is an alias for clusterdek.EnsureTenantDEKResponse.
-	EnsureTenantDEKResponse = clusterdek.EnsureTenantDEKResponse
-	// DeleteTenantDEKRequest is an alias for clusterdek.DeleteTenantDEKRequest.
-	DeleteTenantDEKRequest = clusterdek.DeleteTenantDEKRequest
-	// DeleteTenantDEKResponse is an alias for clusterdek.DeleteTenantDEKResponse.
-	DeleteTenantDEKResponse = clusterdek.DeleteTenantDEKResponse
-)
-
-// ClusterDEK status constants
-type (
-	// NodeDEKSyncStatus is an alias for clusterdek.NodeDEKSyncStatus.
-	NodeDEKSyncStatus = clusterdek.NodeDEKSyncStatus
-	// ReencryptionState is an alias for clusterdek.ReencryptionState.
-	ReencryptionState = clusterdek.ReencryptionState
-	// RecoveryMethod is an alias for clusterdek.RecoveryMethod.
-	RecoveryMethod = clusterdek.RecoveryMethod
-)
-
 // DEKClient is an alias for the dek.Client interface.
 type DEKClient = dek.Client
 
@@ -1022,30 +961,6 @@ type DeleteDEKSDKResponse = dek.DeleteDEKResponse
 
 // DEKStatusResponse is an alias for dek.DEKStatusResponse.
 type DEKStatusResponse = dek.DEKStatusResponse
-
-// Node DEK sync status constants
-const (
-	NodeDEKSynced     = clusterdek.NodeDEKSynced
-	NodeDEKOutOfDate  = clusterdek.NodeDEKOutOfDate
-	NodeDEKMissing    = clusterdek.NodeDEKMissing
-	NodeDEKSyncFailed = clusterdek.NodeDEKSyncFailed
-)
-
-// Re-encryption state constants
-const (
-	ReencryptionRunning   = clusterdek.ReencryptionRunning
-	ReencryptionPaused    = clusterdek.ReencryptionPaused
-	ReencryptionCompleted = clusterdek.ReencryptionCompleted
-	ReencryptionFailed    = clusterdek.ReencryptionFailed
-	ReencryptionCancelled = clusterdek.ReencryptionCancelled
-)
-
-// Recovery method constants
-const (
-	RecoveryMethodKeys   = clusterdek.RecoveryMethodKeys
-	RecoveryMethodBackup = clusterdek.RecoveryMethodBackup
-	RecoveryMethodManual = clusterdek.RecoveryMethodManual
-)
 
 // =============================================================================
 // ObjectStorage Client Type Aliases
@@ -1623,7 +1538,6 @@ type client struct {
 	rbacClient               RBACClient
 	dynamicSecretsClient     DynamicSecretsClient
 	certificateClient        CertificateClient
-	clusterDEKClient         ClusterDEKClient
 	dekClient                DEKClient
 	objectStorageClient      ObjectStorageClient
 	objectStorageAdminClient ObjectStorageAdminClient
@@ -1698,17 +1612,11 @@ func NewClient(address string, opts ...Option) (Client, error) {
 }
 
 // resolveTLSConfig returns the effective TLS config based on client options.
-// If an explicit TLS config is set, it is returned as-is.
-// If no TLS config is set and insecure mode is enabled, a config with
-// InsecureSkipVerify is returned.
+// QuicBaaS bans insecure TLS — the only way to get a TLS-configured client is
+// via WithTLSConfig with explicit CA trust. The legacy opts.insecure path is
+// dead.
 func resolveTLSConfig(opts *clientOptions) *tls.Config {
-	if opts.tlsConfig != nil {
-		return opts.tlsConfig
-	}
-	if opts.insecure {
-		return &tls.Config{InsecureSkipVerify: true} //nolint:gosec // G402: user explicitly requested insecure mode
-	}
-	return nil
+	return opts.tlsConfig
 }
 
 // createTransport creates the appropriate transport based on options.
@@ -2235,24 +2143,6 @@ func (c *client) Certificate() CertificateClient {
 	return c.certificateClient
 }
 
-// ClusterDEK returns the ClusterDEK client for cluster DEK management.
-func (c *client) ClusterDEK() ClusterDEKClient {
-	c.mu.RLock()
-	if c.clusterDEKClient != nil {
-		c.mu.RUnlock()
-		return c.clusterDEKClient
-	}
-	c.mu.RUnlock()
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.clusterDEKClient == nil {
-		c.clusterDEKClient = newClusterDEKClient(c.transport)
-	}
-	return c.clusterDEKClient
-}
-
 // DEK returns the DEK client for data encryption key management.
 func (c *client) DEK() DEKClient {
 	c.mu.RLock()
@@ -2490,7 +2380,6 @@ func newOperationsClient(t Transport) OperationsClient         { return operatio
 func newRBACClient(t Transport) RBACClient                     { return rbac.NewClient(t) }
 func newDynamicSecretsClient(t Transport) DynamicSecretsClient { return dynamicsecrets.NewClient(t) }
 func newCertificateClient(t Transport) CertificateClient       { return certificate.NewClient(t) }
-func newClusterDEKClient(t Transport) ClusterDEKClient         { return clusterdek.NewClient(t) }
 func newDEKClient(t Transport) DEKClient                       { return dek.NewClient(t) }
 func newObjectStorageClient(t Transport) ObjectStorageClient   { return objectstorage.NewClient(t) }
 func newObjectStorageAdminClient(t Transport) ObjectStorageAdminClient {

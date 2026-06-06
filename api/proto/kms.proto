@@ -57,6 +57,10 @@ service KeyManagement {
   // GetKeyPolicy retrieves the access control policy for a key.
   rpc GetKeyPolicy(GetKeyPolicyRequest) returns (GetKeyPolicyResponse);
 
+  // DeleteKeyPolicy removes the access control policy for a key, restoring
+  // the default-allow-all behaviour for authenticated principals.
+  rpc DeleteKeyPolicy(DeleteKeyPolicyRequest) returns (DeleteKeyPolicyResponse);
+
   // GetSupportedAlgorithms returns the list of cryptographic algorithms
   // supported by the current backend. Use this to check if specific algorithms
   // like ChaCha20-Poly1305 are available before attempting operations.
@@ -533,6 +537,17 @@ message GetKeyPolicyRequest {
 
 message GetKeyPolicyResponse {
   KeyPolicy policy = 1;
+  int64 timestamp = 2;
+}
+
+// DeleteKeyPolicyRequest removes the access control policy for a key.
+message DeleteKeyPolicyRequest {
+  string key_id = 1;
+}
+
+// DeleteKeyPolicyResponse confirms that the policy was removed.
+message DeleteKeyPolicyResponse {
+  string key_id = 1;
   int64 timestamp = 2;
 }
 

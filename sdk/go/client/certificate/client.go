@@ -57,6 +57,16 @@ type Client interface {
 
 	// IsRevoked checks whether a certificate serial number is revoked.
 	IsRevoked(ctx context.Context, req *IsRevokedRequest) (*IsRevokedResponse, error)
+
+	// CAInfo returns parsed metadata for the active issuing CA: subject,
+	// issuer, serial, validity window, key type/size, signature
+	// algorithm, the CA leaf PEM and the full bundle PEM.
+	CAInfo(ctx context.Context, req *CAInfoRequest) (*CAInfoResponse, error)
+
+	// ListCertificates enumerates certificates stored in the CA's
+	// certificate store, optionally filtered by Common Name substring
+	// and revocation / expiration status.
+	ListCertificates(ctx context.Context, req *ListCertificatesRequest) (*ListCertificatesResponse, error)
 }
 
 // IssueCertificateRequest contains parameters for certificate issuance.
@@ -593,6 +603,205 @@ func validateIsRevokedRequest(req *IsRevokedRequest) error {
 	}
 	if req.SerialNumber == "" {
 		return errors.NewInvalidInput("certificate.IsRevoked", "serial number is required")
+	}
+	return nil
+}
+
+// =============================================================================
+// CA Administration Surface
+// =============================================================================
+//
+// The following types and methods extend the certificate client with
+// CA-administration primitives that back the canonical `quicbaas ca` CLI
+// verb set (info, bundle, list, issue, revoke, export-bundle). Issue and
+// Revoke are deliberately re-used from the existing IssueCertificate and
+// RevokeCertificate methods above — the CA admin surface focuses on
+// inspection (CAInfo, ListCertificates) and bulk-export operations
+// (ExportBundle) that have no analogue on the per-certificate methods.
+
+// CAInfoRequest is the request payload for CAInfo. No fields today; the
+// server returns metadata about the configured issuing CA.
+type CAInfoRequest struct{}
+
+// CAInfoResponse describes the issuing CA's leaf certificate, its
+// trust-chain bundle, and parsed metadata extracted from the certificate
+// (subject, issuer, serial, validity window, key type, signature
+// algorithm, IsCA flag).
+type CAInfoResponse struct {
+	// CommonName is the CA leaf certificate's Common Name.
+	CommonName string `json:"common_name"`
+
+	// Subject is the full RFC 4514 subject distinguished name.
+	Subject string `json:"subject"`
+
+	// Issuer is the full RFC 4514 issuer distinguished name. Equal to
+	// Subject when the CA is self-signed.
+	Issuer string `json:"issuer"`
+
+	// SerialNumber is the issuing CA certificate's serial number,
+	// hex-encoded (no 0x prefix).
+	SerialNumber string `json:"serial_number"`
+
+	// NotBefore is the start of the CA certificate validity window
+	// (UTC, RFC 3339).
+	NotBefore time.Time `json:"not_before"`
+
+	// NotAfter is the end of the CA certificate validity window
+	// (UTC, RFC 3339).
+	NotAfter time.Time `json:"not_after"`
+
+	// IsCA reports whether the BasicConstraints extension marks this
+	// certificate as a CA.
+	IsCA bool `json:"is_ca"`
+
+	// KeyType describes the public key algorithm ("RSA", "ECDSA",
+	// "Ed25519", "Unknown").
+	KeyType string `json:"key_type"`
+
+	// KeyBits is the public key size in bits (e.g. 2048 for RSA, 256
+	// for P-256 ECDSA). Zero when not applicable.
+	KeyBits int `json:"key_bits,omitempty"`
+
+	// SignatureAlgorithm describes the algorithm used to sign the CA
+	// certificate ("SHA256-RSA", "ECDSA-SHA384", ...).
+	SignatureAlgorithm string `json:"signature_algorithm"`
+
+	// CertificatePEM is the PEM-encoded CA leaf certificate.
+	CertificatePEM string `json:"certificate_pem"`
+
+	// CABundlePEM is the PEM-encoded CA trust chain (issuer-first).
+	// Equal to CertificatePEM when the CA is a single self-signed root.
+	CABundlePEM string `json:"ca_bundle_pem"`
+}
+
+// CertificateSummary is a compact description of a single certificate as
+// returned by ListCertificates. The full PEM body is omitted to keep
+// list responses small; callers that need the PEM should issue a
+// follow-up GetCACertificate / dedicated retrieval call.
+type CertificateSummary struct {
+	// CommonName is the certificate's Common Name. Used as the
+	// CertStore lookup key by the underlying backend.
+	CommonName string `json:"common_name"`
+
+	// Subject is the full RFC 4514 subject distinguished name.
+	Subject string `json:"subject"`
+
+	// Issuer is the full RFC 4514 issuer distinguished name.
+	Issuer string `json:"issuer"`
+
+	// SerialNumber is the certificate's serial number hex-encoded.
+	SerialNumber string `json:"serial_number"`
+
+	// NotBefore is the start of the certificate's validity window.
+	NotBefore time.Time `json:"not_before"`
+
+	// NotAfter is the end of the certificate's validity window.
+	NotAfter time.Time `json:"not_after"`
+
+	// IsCA reports whether this certificate is itself a CA.
+	IsCA bool `json:"is_ca"`
+
+	// KeyUsage is a comma-joined string of the key usage flags
+	// ("DigitalSignature, KeyEncipherment, ...").
+	KeyUsage string `json:"key_usage,omitempty"`
+
+	// DNSNames lists the DNS SAN entries (may be empty).
+	DNSNames []string `json:"dns_names,omitempty"`
+}
+
+// ListCertificatesRequest contains optional filters for ListCertificates.
+type ListCertificatesRequest struct {
+	// CommonNameFilter, when non-empty, restricts the response to
+	// certificates whose Subject Common Name contains the filter
+	// substring (case-insensitive). Empty matches everything.
+	CommonNameFilter string `json:"common_name_filter,omitempty"`
+
+	// IncludeRevoked, when true, includes revoked certificates in the
+	// response. Defaults to false (only currently-valid certificates).
+	IncludeRevoked bool `json:"include_revoked,omitempty"`
+
+	// IncludeExpired, when true, includes certificates that have
+	// already expired (NotAfter < now). Defaults to false.
+	IncludeExpired bool `json:"include_expired,omitempty"`
+
+	// Limit caps the response size. Zero means "no caller-supplied
+	// limit"; the server may still apply a hard maximum.
+	Limit int `json:"limit,omitempty"`
+}
+
+// ListCertificatesResponse is the response payload for ListCertificates.
+type ListCertificatesResponse struct {
+	// Certificates is the (possibly empty) list of certificate
+	// summaries that matched the request filters.
+	Certificates []CertificateSummary `json:"certificates"`
+
+	// TotalCount is the unfiltered total number of certificates in the
+	// CertStore. Useful to display "showing N of M" in UIs.
+	TotalCount int `json:"total_count"`
+}
+
+// CAInfo returns parsed metadata for the active issuing CA, including
+// subject/issuer/validity, key type/size, signature algorithm, the CA
+// leaf PEM, and the full CA bundle PEM. Equivalent to GetCACertificate
+// plus client-side parsing, but performed once on the server so all
+// transports return the same parsed shape.
+func (c *client) CAInfo(ctx context.Context, req *CAInfoRequest) (*CAInfoResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("certificate.CAInfo", "context is required")
+	}
+	if req == nil {
+		req = &CAInfoRequest{}
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "CAInfo", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("certificate.CAInfo", "nil response from server")
+	}
+	infoResp, ok := resp.(*CAInfoResponse)
+	if !ok {
+		return nil, errors.NewInternal("certificate.CAInfo", "invalid response type")
+	}
+	return infoResp, nil
+}
+
+// ListCertificates enumerates certificates currently stored in the CA's
+// certificate store. Returns summaries (Subject/Issuer/Serial/validity)
+// rather than full PEM bodies to keep responses compact.
+func (c *client) ListCertificates(ctx context.Context, req *ListCertificatesRequest) (*ListCertificatesResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("certificate.ListCertificates", "context is required")
+	}
+	if req == nil {
+		req = &ListCertificatesRequest{}
+	}
+	if err := validateListCertificatesRequest(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "ListCertificates", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("certificate.ListCertificates", "nil response from server")
+	}
+	listResp, ok := resp.(*ListCertificatesResponse)
+	if !ok {
+		return nil, errors.NewInternal("certificate.ListCertificates", "invalid response type")
+	}
+	return listResp, nil
+}
+
+func validateListCertificatesRequest(req *ListCertificatesRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("certificate.ListCertificates", "request is required")
+	}
+	if req.Limit < 0 {
+		return errors.NewInvalidInput("certificate.ListCertificates", "limit cannot be negative").
+			WithContext("limit", req.Limit)
 	}
 	return nil
 }

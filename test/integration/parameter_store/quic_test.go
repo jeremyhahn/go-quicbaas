@@ -29,6 +29,7 @@ import (
 	quicpkg "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // ParameterStoreQUICClient wraps QUIC connection for parameter store testing.
@@ -42,11 +43,11 @@ type ParameterStoreQUICClient struct {
 
 // NewParameterStoreQUICClient creates a new QUIC client for parameter store operations.
 func NewParameterStoreQUICClient(addr string) (*ParameterStoreQUICClient, error) {
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // Test only - skip certificate verification
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return nil, &qberrors.WrappedMessageError{Message: "failed to load integration TLS config", Cause: err}
 	}
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

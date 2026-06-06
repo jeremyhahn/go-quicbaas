@@ -89,17 +89,17 @@ type hookTestLogger struct {
 	mu       sync.Mutex
 }
 
-func (l *hookTestLogger) Debug(_ string, _ ...any)                    {}
+func (l *hookTestLogger) Debug(_ string, _ ...any)          {}
 func (l *hookTestLogger) Debugf(_ string, _ ...interface{}) {}
-func (l *hookTestLogger) Info(_ string, _ ...any)                     {}
+func (l *hookTestLogger) Info(_ string, _ ...any)           {}
 func (l *hookTestLogger) Infof(_ string, _ ...interface{})  {}
-func (l *hookTestLogger) Warn(_ string, _ ...any)                     {}
+func (l *hookTestLogger) Warn(_ string, _ ...any)           {}
 func (l *hookTestLogger) Warnf(format string, _ ...interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.warnings = append(l.warnings, format)
 }
-func (l *hookTestLogger) Error(_ string, _ ...any)                                        {}
+func (l *hookTestLogger) Error(_ string, _ ...any)                              {}
 func (l *hookTestLogger) Errorf(_ string, _ ...interface{})                     {}
 func (l *hookTestLogger) Fatal(_ string)                                        {}
 func (l *hookTestLogger) Fatalf(_ string, _ ...interface{})                     {}

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
@@ -41,14 +43,6 @@ type authRESTHandler struct {
 // newAuthRESTHandler creates a new Auth REST handler.
 func newAuthRESTHandler(t *Transport) *authRESTHandler {
 	return &authRESTHandler{transport: t}
-}
-
-// loginRequest is the internal request type used by the auth client.
-type authLoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	MFACode  string `json:"mfa_code,omitempty"`
-	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // loginResponse represents the REST API login response.
@@ -92,74 +86,25 @@ func (h *authRESTHandler) handleRequest(ctx context.Context, svc, method string,
 		return h.handleRefreshToken(ctx, req)
 	case "ValidateToken":
 		return h.handleValidateToken(ctx, req)
+	case "BeginLogin":
+		return h.handleBeginLogin(ctx, req)
+	case "FinishLogin":
+		return h.handleFinishLogin(ctx, req)
 	default:
 		return nil, errors.NewUnimplemented("authRESTHandler.handleRequest",
 			"unsupported method: "+method)
 	}
 }
 
-// handleLogin handles Login requests.
-func (h *authRESTHandler) handleLogin(ctx context.Context, req interface{}) (interface{}, error) {
-	// Build the request body
-	var loginReq authLoginRequest
-
-	switch r := req.(type) {
-	case *service.ExtendedLoginRequest:
-		// TODO: Password-based login was removed from ExtendedLoginRequest; auth must now
-		// flow through WebAuthn or PIV smartcard. Pass an empty password until the REST
-		// payload schema carries the new credential evidence.
-		loginReq = authLoginRequest{
-			Username: r.Username,
-			Password: "",
-			MFACode:  r.MFACode,
-			TenantID: r.TenantID,
-		}
-	case map[string]interface{}:
-		// Handle map[string]interface{} from SDK
-		loginReq = authLoginRequest{
-			Username: getString(r, "username"),
-			Password: getString(r, "password"),
-			MFACode:  getString(r, "mfa_code"),
-			TenantID: getString(r, "tenant_id"),
-		}
-	default:
-		// Try to extract from the internal loginRequest type
-		reqMap, err := toMap(req)
-		if err != nil {
-			return nil, errors.NewInvalidInput("authRESTHandler.handleLogin",
-				"invalid request type")
-		}
-		loginReq = authLoginRequest{
-			Username: getString(reqMap, "username"),
-			Password: getString(reqMap, "password"),
-			MFACode:  getString(reqMap, "mfa_code"),
-			TenantID: getString(reqMap, "tenant_id"),
-		}
-	}
-
-	// Make the HTTP request
-	var resp authLoginResponse
-	err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/auth/login", loginReq, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse expires_at timestamp
-	expiresAt, err := time.Parse(time.RFC3339, resp.ExpiresAt)
-	if err != nil {
-		// Fallback: calculate from expires_in
-		expiresAt = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
-	}
-
-	// Convert to SDK response type
-	return &service.ExtendedLoginResponse{
-		AccessToken:  resp.AccessToken,
-		RefreshToken: resp.RefreshToken,
-		TokenType:    resp.TokenType,
-		ExpiresAt:    expiresAt,
-		MFARequired:  false,
-		MFAChallenge: nil,
-	}, nil
+// handleLogin is the retired legacy username/password login verb. The locked
+// architecture has no passwords; authentication is cert/factor-based. This
+// path previously submitted an empty password to the server, which is unsafe.
+// It now fails closed with a typed PasswordLoginUnsupportedError directing the
+// caller to the unified login ceremony (BeginLogin/FinishLogin) with an mtls,
+// fido2, or piv factor. The method is retained so the router and downstream
+// callers keep compiling; it never reaches the network.
+func (h *authRESTHandler) handleLogin(_ context.Context, _ interface{}) (interface{}, error) {
+	return nil, errors.NewPasswordLoginUnsupported("authRESTHandler.handleLogin")
 }
 
 // handleLogout handles Logout requests.
@@ -276,4 +221,115 @@ func (h *authRESTHandler) handleValidateToken(ctx context.Context, req interface
 		Roles:     resp.Roles,
 		ExpiresAt: expiresAt,
 	}, nil
+}
+
+// =============================================================================
+// Unified Login Ceremony (REST client)
+// =============================================================================
+
+// restBeginLoginRequest is the JSON body for POST /api/v1/auth/login/begin.
+type restBeginLoginRequest struct {
+	Type     string `json:"type"`
+	Hint     string `json:"hint,omitempty"`
+	TenantID string `json:"tenant_id,omitempty"`
+}
+
+// restBeginLoginResponse mirrors transport.BeginLoginResponse over JSON.
+type restBeginLoginResponse struct {
+	SessionID         string            `json:"session_id"`
+	Nonce             []byte            `json:"nonce"`
+	ChallengeMetadata map[string]string `json:"challenge_metadata,omitempty"`
+	ExpiresAt         string            `json:"expires_at"`
+}
+
+// restFinishLoginRequest is the JSON body for POST /api/v1/auth/login/finish.
+type restFinishLoginRequest struct {
+	SessionID      string            `json:"session_id"`
+	Type           string            `json:"type"`
+	LookupKey      []byte            `json:"lookup_key,omitempty"`
+	Signature      []byte            `json:"signature,omitempty"`
+	MethodMetadata map[string]string `json:"method_metadata,omitempty"`
+}
+
+// restLoginIdentity mirrors transport.Identity over JSON.
+type restLoginIdentity struct {
+	Subject  string   `json:"subject"`
+	TenantID string   `json:"tenant_id"`
+	Roles    []string `json:"roles,omitempty"`
+}
+
+// restFinishLoginResponse mirrors transport.FinishLoginResponse over JSON.
+type restFinishLoginResponse struct {
+	Bearer    string             `json:"bearer"`
+	Identity  *restLoginIdentity `json:"identity,omitempty"`
+	ExpiresAt string             `json:"expires_at"`
+	FactorID  string             `json:"factor_id,omitempty"`
+}
+
+// handleBeginLogin posts a BeginLogin request to the REST login-begin endpoint.
+func (h *authRESTHandler) handleBeginLogin(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*qrdbtransport.BeginLoginRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("authRESTHandler.handleBeginLogin",
+			"invalid request type, expected *transport.BeginLoginRequest")
+	}
+	body := restBeginLoginRequest{
+		Type:     string(r.Type),
+		Hint:     r.Hint,
+		TenantID: r.TenantID,
+	}
+	var resp restBeginLoginResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/auth/login/begin", body, &resp); err != nil {
+		return nil, err
+	}
+	out := &qrdbtransport.BeginLoginResponse{
+		SessionID:         resp.SessionID,
+		Nonce:             resp.Nonce,
+		ChallengeMetadata: resp.ChallengeMetadata,
+	}
+	if resp.ExpiresAt != "" {
+		if parsed, perr := time.Parse(time.RFC3339Nano, resp.ExpiresAt); perr == nil {
+			out.ExpiresAt = parsed
+		}
+	}
+	return out, nil
+}
+
+// handleFinishLogin posts a FinishLogin request to the REST login-finish
+// endpoint. For an mtls factor the server derives the lookup key from the
+// verified TLS peer certificate; the lookup_key sent here is ignored for mtls.
+func (h *authRESTHandler) handleFinishLogin(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*qrdbtransport.FinishLoginRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("authRESTHandler.handleFinishLogin",
+			"invalid request type, expected *transport.FinishLoginRequest")
+	}
+	body := restFinishLoginRequest{
+		SessionID:      r.SessionID,
+		Type:           string(r.Type),
+		LookupKey:      r.LookupKey,
+		Signature:      r.Signature,
+		MethodMetadata: r.MethodMetadata,
+	}
+	var resp restFinishLoginResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/auth/login/finish", body, &resp); err != nil {
+		return nil, err
+	}
+	out := &qrdbtransport.FinishLoginResponse{
+		Bearer:   resp.Bearer,
+		FactorID: resp.FactorID,
+	}
+	if resp.ExpiresAt != "" {
+		if parsed, perr := time.Parse(time.RFC3339Nano, resp.ExpiresAt); perr == nil {
+			out.ExpiresAt = parsed
+		}
+	}
+	if resp.Identity != nil {
+		out.Identity = &qrdbtransport.Identity{
+			Subject:  resp.Identity.Subject,
+			TenantID: resp.Identity.TenantID,
+			Roles:    resp.Identity.Roles,
+		}
+	}
+	return out, nil
 }

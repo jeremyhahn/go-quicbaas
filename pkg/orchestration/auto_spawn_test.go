@@ -221,13 +221,13 @@ func TestCreateTask_AutoSpawnTrue_NoOnlineAgents(t *testing.T) {
 
 	// Register an agent that is offline.
 	offlineAgent := &AgentRegistration{
-		ID:       "agent-offline",
-		TenantID: "tenant-1",
-		Name:     "worker-1",
-		Host:     "host-1",
-		Backend:  "ollama",
+		ID:        "agent-offline",
+		TenantID:  "tenant-1",
+		Name:      "worker-1",
+		Host:      "host-1",
+		Backend:   "ollama",
 		AgentType: "worker",
-		Status:   AgentStatusOffline,
+		Status:    AgentStatusOffline,
 	}
 	if regErr := registry.RegisterAgent(context.Background(), offlineAgent); regErr != nil {
 		t.Fatalf("failed to register agent: %v", regErr)

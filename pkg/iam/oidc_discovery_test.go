@@ -74,10 +74,10 @@ func TestGetConfiguration_MTLSAuthMethods(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		iam.AuthMethodClientSecretBasic:         true,
-		iam.AuthMethodClientSecretPost:          true,
-		iam.AuthMethodTLSClientAuth:             true,
-		iam.AuthMethodSelfSignedTLSClientAuth:   true,
+		iam.AuthMethodClientSecretBasic:       true,
+		iam.AuthMethodClientSecretPost:        true,
+		iam.AuthMethodTLSClientAuth:           true,
+		iam.AuthMethodSelfSignedTLSClientAuth: true,
 	}
 
 	for _, m := range methods {
@@ -162,17 +162,19 @@ func (m *memTokenStorage) StoreAuthCode(_ context.Context, _ *iam.AuthCodeData) 
 func (m *memTokenStorage) GetAuthCode(_ context.Context, _ string) (*iam.AuthCodeData, error) {
 	return nil, iam.ErrMTLSClientNotFound
 }
-func (m *memTokenStorage) DeleteAuthCode(_ context.Context, _ string) error    { return nil }
-func (m *memTokenStorage) StoreToken(_ context.Context, _ *iam.Token) error    { return nil }
+func (m *memTokenStorage) DeleteAuthCode(_ context.Context, _ string) error { return nil }
+func (m *memTokenStorage) StoreToken(_ context.Context, _ *iam.Token) error { return nil }
 func (m *memTokenStorage) GetToken(_ context.Context, _ string) (*iam.Token, error) {
 	return nil, iam.ErrMTLSClientNotFound
 }
 func (m *memTokenStorage) GetTokenByValue(_ context.Context, _ string) (*iam.Token, error) {
 	return nil, iam.ErrMTLSClientNotFound
 }
-func (m *memTokenStorage) RevokeToken(_ context.Context, _ string) error             { return nil }
-func (m *memTokenStorage) IsTokenRevoked(_ context.Context, _ string) (bool, error)  { return false, nil }
-func (m *memTokenStorage) DeleteExpiredTokens(_ context.Context) error               { return nil }
+func (m *memTokenStorage) RevokeToken(_ context.Context, _ string) error { return nil }
+func (m *memTokenStorage) IsTokenRevoked(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+func (m *memTokenStorage) DeleteExpiredTokens(_ context.Context) error { return nil }
 func (m *memTokenStorage) ListTokensByUser(_ context.Context, _ string) ([]*iam.Token, error) {
 	return nil, nil
 }

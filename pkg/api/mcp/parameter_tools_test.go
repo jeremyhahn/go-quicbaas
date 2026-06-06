@@ -337,6 +337,6 @@ func TestIsParameterTool(t *testing.T) {
 	for _, name := range paramTools {
 		assert.True(t, isParameterTool(name))
 	}
-	assert.False(t, isParameterTool("quicbaas_put"))
+	assert.False(t, isParameterTool("qrdb_put"))
 	assert.False(t, isParameterTool(""))
 }

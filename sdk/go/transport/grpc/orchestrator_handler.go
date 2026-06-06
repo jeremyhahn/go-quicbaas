@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"io"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -106,7 +107,12 @@ func handleOrchestratorGetSessionHistory(ctx context.Context, conn *grpc.ClientC
 	for {
 		var env pb.SessionEventEnvelope
 		if err := cs.RecvMsg(&env); err != nil {
-			break // EOF ends the history page
+			if err == io.EOF {
+				break // EOF ends the history page normally
+			}
+			// A genuine stream error must surface, not be silently treated
+			// as end-of-page (which would return a truncated history).
+			return nil, convertGRPCError(err, "grpc.orchestrator.GetSessionHistory")
 		}
 		item := &orchestrator.SessionEventEnvelope{
 			SessionID:   env.SessionId,

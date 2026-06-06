@@ -154,6 +154,25 @@ type AuditActor struct {
 
 	// ImpersonatingUsername is the admin's username when impersonating
 	ImpersonatingUsername string `json:"impersonating_username,omitempty"`
+
+	// ServiceIdentity is the verified transport-level service identity that
+	// presented the request: the client certificate's tenant-scoped SPIFFE URI
+	// SAN when present, otherwise the certificate Subject DN. It is recorded
+	// alongside the user identity so an audit entry captures BOTH the service
+	// that carried the call and the user the token authorizes (AU-2/AU-3:
+	// who = service + user).
+	ServiceIdentity string `json:"service_identity,omitempty"`
+
+	// JTI is the access-token identifier the user identity was carried on.
+	// It links the audit entry to a specific issued token for revocation and
+	// session-correlation forensics.
+	JTI string `json:"jti,omitempty"`
+
+	// Scopes is the array-form scope set (scp) carried by the user's token.
+	Scopes []string `json:"scopes,omitempty"`
+
+	// Roles is the role set carried by the user's token.
+	Roles []string `json:"roles,omitempty"`
 }
 
 // AuditResource represents a resource affected by an action.

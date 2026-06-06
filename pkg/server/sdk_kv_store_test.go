@@ -1,27 +1,54 @@
 //go:build !integration
 
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
 package server
 
 import (
 	"context"
 	"testing"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
-// createTestSDKKVStore creates an sdkKVStore backed by an in-memory
-// baasTransport for unit testing. This exercises the real sdkKVStore code
-// path through the qrdb SDK without requiring a running server.
+// createTestSDKKVStore creates an sdkKVStore backed by a real qrdb
+// standalone node (memory backend) for unit testing. This exercises the
+// real sdkKVStore code path through the qrdb SDK without requiring a
+// running networked server.
+//
+// TODO Phase F: consolidate with the real-engine integration tests once the
+// Phase F test harness is in place.
 func createTestSDKKVStore(t *testing.T) *sdkKVStore {
 	t.Helper()
-	memStore := NewMemoryKVStore()
-	bt := newBaasTransport(memStore, nil, nil, nil, nil)
-	client, err := qrdbsdk.NewClient(bt)
-	require.NoError(t, err)
+
+	ctx := context.Background()
+	cfg := &qrdbconfig.Config{}
+	cfg.Databases = []qrdbconfig.DatabaseConfig{
+		{Name: "default", Engine: "mvcc", Backend: "memory"},
+	}
+	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
+	require.NoError(t, err, "standalone node construction must succeed for sdkKVStore unit tests")
+	t.Cleanup(func() { _ = node.Close() })
+
+	client := node.Client()
 	store := newSDKKVStore(client, 1)
 	return store.(*sdkKVStore)
 }
@@ -168,3 +195,7 @@ func TestSDKKVStore_Exists(t *testing.T) {
 		assert.False(t, ok)
 	})
 }
+
+// compiletimeCheck ensures sdkKVStore still satisfies the KV interface expected
+// by callers that receive it as an interfaces.KVStore.
+var _ = (*qrdbsdk.Client)(nil) // verify import is live

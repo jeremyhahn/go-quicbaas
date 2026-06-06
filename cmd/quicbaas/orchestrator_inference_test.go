@@ -285,3 +285,23 @@ func TestExtractText_Empty(t *testing.T) {
 type mockOrchError struct{ msg string }
 
 func (e *mockOrchError) Error() string { return e.msg }
+
+// TestRunOrchInference_FactoryError exercises the top-level
+// runOrchInference factory error branch.
+func TestRunOrchInference_FactoryError(t *testing.T) {
+	withFailingOrchestratorFactory(t, stderrors_NewForInference("factory boom"))
+	err := runOrchInference(newOrchInferenceCommand(), nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+// stderrors_NewForInference avoids name clashes with the existing test
+// file's local errors helper by using a unique name.
+func stderrors_NewForInference(msg string) error {
+	return localErrInference(msg)
+}
+
+type localErrInference string
+
+func (e localErrInference) Error() string { return string(e) }

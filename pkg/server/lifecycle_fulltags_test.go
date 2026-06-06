@@ -35,9 +35,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	quicbaasseal "github.com/jeremyhahn/go-quicbaas/pkg/seal"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
@@ -388,24 +386,6 @@ func TestCovP7_StartTimeSeries_WithNilStorage(t *testing.T) {
 
 // TestCovP7_StartVector_NilStorage covers lifecycle_vector.go L77-103
 // (startVector when vectorStorage is nil and vector is enabled).
-func TestCovP7_StartVector_WithVectorEnabled(t *testing.T) {
-	cfg := createTestConfig(t)
-	t.Cleanup(func() { cleanupTestData(t, cfg) })
-
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 2
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	// With nil vectorStorage, startVector should handle gracefully
-	srv.vectorStorage = nil
-	err = srv.startVector()
-	// Will either succeed (creating local storage) or return nil
-	if err != nil {
-		t.Logf("startVector error (expected if no storage): %v", err)
-	}
-}
-
 // =============================================================================
 // Shared test helpers for full-tags coverage tests.
 // These are used by coverage_fulltags_phase2_test.go and coverage_push_91_phase*_test.go.
@@ -593,62 +573,10 @@ func TestP9_RegisterEmbeddingProviders_UnknownProvider(t *testing.T) {
 // Covers lifecycle_vector.go L89-158 (inline storage creation + service creation)
 // =============================================================================
 
-func TestP9_StartVector_ValidConfig(t *testing.T) {
-	cfg := createFTConfig(t)
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 2
-	cfg.Vector.StoragePath = filepath.Join(t.TempDir(), "vector-valid")
-	cfg.Vector.HNSW = &config.HNSWConfig{
-		M:              16,
-		EfConstruction: 200,
-		MaxElements:    10000,
-		Ml:             1.0 / 16.0,
-	}
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	srv.vectorStorage = nil
-	err = srv.startVector()
-	require.NoError(t, err)
-	assert.NotNil(t, srv.vectorStorage)
-	assert.NotNil(t, srv.vectorService)
-
-	// Clean up
-	if srv.vectorStorage != nil {
-		srv.vectorStorage.Close()
-	}
-}
-
 // =============================================================================
 // 6. initVectorStorage success path
 // Covers lifecycle_vector.go L33-70
 // =============================================================================
-
-func TestP9_InitVectorStorage(t *testing.T) {
-	cfg := createFTConfig(t)
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 2
-	cfg.Vector.StoragePath = filepath.Join(t.TempDir(), "vector-init")
-	cfg.Vector.HNSW = &config.HNSWConfig{
-		M:              16,
-		EfConstruction: 200,
-		MaxElements:    10000,
-		Ml:             1.0 / 16.0,
-	}
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.initVectorStorage()
-	require.NoError(t, err)
-	assert.NotNil(t, srv.vectorStorage)
-
-	// Clean up
-	if srv.vectorStorage != nil {
-		srv.vectorStorage.Close()
-	}
-}
 
 // =============================================================================
 // 7. startEmbedding - NewManager fails then provider registration
@@ -726,46 +654,6 @@ func TestP9_Shutdown_WithEmbeddingManager(t *testing.T) {
 // Covers server.go L592-596 (gRPC shutdown path)
 // =============================================================================
 
-func TestP9_Shutdown_WithGRPCServer(t *testing.T) {
-	saveAndRestoreSeams(t)
-	cfg := createFTConfig(t)
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendMemory
-
-	seamMu.Lock()
-	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
-	validateRoutingFn = func(_ []uint64, _ map[string]uint64) error { return nil }
-	seamMu.Unlock()
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	// Set raft node required by service builder
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
-
-	// Start service first
-	err = srv.startService()
-	require.NoError(t, err)
-
-	// Enable gRPC
-	srv.config.Server.GRPC.Enabled = true
-	srv.config.Server.GRPC.Port = getFreePort(t)
-	srv.config.Server.Unix.Socket = ""
-	srv.config.Security.TLSEnabled = false
-	srv.config.Server.Embedded = false
-
-	err = srv.startGRPCServer()
-	require.NoError(t, err)
-	assert.NotNil(t, srv.grpcServer)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	err = srv.Shutdown(ctx)
-	assert.NoError(t, err)
-}
-
 // =============================================================================
 // 12. startService with vector shard already in shards list
 // Covers lifecycle.go L1007-1017 (vectorShardExists check)
@@ -787,7 +675,8 @@ func TestP9_StartService_VectorShardAlreadyIncluded(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	require.NoError(t, err)
@@ -815,7 +704,8 @@ func TestP9_StartService_VectorShardNotIncluded(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	require.NoError(t, err)
@@ -897,7 +787,8 @@ func TestP9_StartService_SchedulerEnabled(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
 	require.NoError(t, err)
@@ -922,7 +813,8 @@ func TestP9_StartService_WithEmbeddingManager(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	srv.raftNode = newStandaloneRaftNode(cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	// Start embedding before startService
 	err = srv.startEmbedding()
@@ -982,47 +874,6 @@ func TestP10_Initialize_StartStorageError(t *testing.T) {
 	assert.Error(t, err) // startStorage fails => covers L290-292
 }
 
-func TestP10_Initialize_InitVectorStorageError(t *testing.T) {
-	saveAndRestoreSeams(t)
-	cfg := createFTConfig(t)
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendMemory
-	cfg.Security.TLSEnabled = false
-	cfg.Vector.Enabled = true
-	// HNSW.M=1 is out of the valid 2-100 range and survives ApplyDefaults
-	// (non-nil HNSW is preserved). ShardID=0 no longer works because
-	// ApplyDefaults normalizes it to defaultVectorShardID before Validate.
-	cfg.Vector.HNSW = &config.HNSWConfig{M: 1}
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.initialize()
-	assert.Error(t, err) // initVectorStorage fails => covers L300-302
-}
-
-func TestP10_Initialize_StartVectorError(t *testing.T) {
-	saveAndRestoreSeams(t)
-	cfg := createFTConfig(t)
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendMemory
-	cfg.Security.TLSEnabled = false
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 2
-	cfg.Vector.StoragePath = "/proc/nonexistent/vector" // Storage creation fails
-
-	seamMu.Lock()
-	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	seamMu.Unlock()
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	// startVector will fail when trying to validate + create storage
-	err = srv.initialize()
-	assert.Error(t, err) // covers L364-366
-}
-
 func TestP10_Initialize_StartGRPCError(t *testing.T) {
 	saveAndRestoreSeams(t)
 	cfg := createFTConfig(t)
@@ -1046,34 +897,10 @@ func TestP10_Initialize_StartGRPCError(t *testing.T) {
 	assert.Error(t, err) // No listeners configured => covers L405-407
 }
 
-
 // =============================================================================
 // 8. Shutdown covering timeseries error path
 // Covers server.go L652-655
 // =============================================================================
-
-func TestP10_Shutdown_TimeSeriesStorageCloseSuccess(t *testing.T) {
-	saveAndRestoreSeams(t)
-	cfg := createFTConfig(t)
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendMemory
-
-	seamMu.Lock()
-	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	seamMu.Unlock()
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.initTimeSeriesStorage()
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	err = srv.Shutdown(ctx)
-	assert.NoError(t, err)
-}
 
 // =============================================================================
 // 12. Shutdown covering Shutdown paths for backup, catalog, worker, backend mgrs
@@ -1333,36 +1160,6 @@ func TestP11_SaveServerCert_InvalidDir(t *testing.T) {
 
 // TestP15_Initialize_InitBarrierError covers server.go L295-297
 // (initBarrier returns error when seal manager creation fails).
-func TestP15_Initialize_InitBarrierError(t *testing.T) {
-	saveAndRestoreSeams(t)
-	tmpDir := t.TempDir()
-	cfg := createFTConfig(t)
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendMemory
-	cfg.Storage.DataDir = filepath.Join(tmpDir, "barrier-err")
-	cfg.Security.TLSEnabled = false
-	cfg.Seal.Enabled = true
-	cfg.Seal.Mode = "shamir"
-	cfg.Seal.Threshold = 2
-	cfg.Seal.TotalShares = 3
-
-	seamMu.Lock()
-	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
-	newSealManagerFn = func(_ *quicbaasseal.Config, _ *logger.Logger, _ string) (interfaces.SealManager, error) {
-		return nil, errors.New("injected seal manager error")
-	}
-	seamMu.Unlock()
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.initialize()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "seal manager")
-	t.Logf("initialize error (expected): %v", err)
-}
-
 // TestP15_Initialize_StartSecretsError covers server.go L359-361
 // (startSecrets returns error when secrets manager creation fails).
 func TestP15_Initialize_StartSecretsError(t *testing.T) {
@@ -1688,72 +1485,8 @@ func TestP15_StopTimeSeries_NilStorage(t *testing.T) {
 
 // TestP15_StartVector_PreCreatedStorage covers lifecycle_vector.go L88-155
 // (startVector with pre-created vectorStorage skips local creation).
-func TestP15_StartVector_PreCreatedStorage(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := createFTConfig(t)
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendMemory
-	cfg.Storage.DataDir = tmpDir
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 50
-	cfg.Vector.StoragePath = filepath.Join(tmpDir, "vector-storage")
-	cfg.Vector.HNSW = &config.HNSWConfig{
-		M:              16,
-		EfConstruction: 200,
-		MaxElements:    10000,
-		Ml:             1.0,
-	}
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	// First initialize vector storage (required by startVector)
-	err = srv.initVectorStorage()
-	require.NoError(t, err)
-	require.NotNil(t, srv.vectorStorage)
-
-	// Now call startVector which uses the pre-created storage
-	// This covers the "vecStorage != nil" path and "raftNode == nil" path
-	err = srv.startVector()
-	if err != nil {
-		t.Logf("startVector error (may be expected): %v", err)
-	}
-}
-
 // TestP15_StartVector_CreateLocalStorage covers lifecycle_vector.go L89-122
 // (startVector with nil vectorStorage creates local storage).
-func TestP15_StartVector_CreateLocalStorage(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := createFTConfig(t)
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendMemory
-	cfg.Storage.DataDir = tmpDir
-	cfg.Vector.Enabled = true
-	cfg.Vector.ShardID = 50
-	cfg.Vector.StoragePath = filepath.Join(tmpDir, "vector-local")
-	cfg.Vector.HNSW = &config.HNSWConfig{
-		M:              16,
-		EfConstruction: 200,
-		MaxElements:    10000,
-		Ml:             1.0,
-	}
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	// Do NOT call initVectorStorage so vectorStorage is nil
-	// startVector should create local storage itself
-	err = srv.startVector()
-	if err != nil {
-		t.Logf("startVector error (may be expected): %v", err)
-	}
-	// If succeeded, vectorStorage should be set
-	if err == nil {
-		assert.NotNil(t, srv.vectorStorage)
-		assert.NotNil(t, srv.vectorService)
-	}
-}
-
 // -----------------------------------------------------------------------------
 // lifecycle_rag.go: stopRAG path (L70-72)
 // -----------------------------------------------------------------------------
@@ -2023,4 +1756,20 @@ func (m *mockSessionStorageF91) UpdateSession(_ context.Context, _ *iam.Session)
 func (m *mockSessionStorageF91) DeleteSession(_ context.Context, _ string) error       { return nil }
 func (m *mockSessionStorageF91) DeleteExpiredSessions(_ context.Context) (int, error) {
 	return 0, nil
+}
+
+// TestInitVectorStorage_EnabledIsNoOp covers the enabled branch of
+// initVectorStorage: when vector storage is enabled, the qrdb node owns the
+// store, so initVectorStorage logs and returns nil without building a duplicate
+// standalone PebbleDB store.
+func TestInitVectorStorage_EnabledIsNoOp(t *testing.T) {
+	saveAndRestoreSeams(t)
+	cfg := createFTConfig(t)
+	cfg.Vector.Enabled = true
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	require.NoError(t, srv.initVectorStorage(),
+		"vector storage init must be a clean no-op since the node owns the store")
 }

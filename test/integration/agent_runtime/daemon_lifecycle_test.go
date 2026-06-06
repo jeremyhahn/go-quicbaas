@@ -130,7 +130,7 @@ func TestIntegration_DaemonLifecycle(t *testing.T) {
 			require.NoError(t, err)
 
 			d, err := agent.NewDaemon(&agent.Config{
-				ServerAddr:     mc.URL(),
+				ServerAddr:      mc.URL(),
 				TenantID:        tenantID,
 				BindAddr:        "127.0.0.1:0",
 				WorkDir:         workDir,
@@ -248,7 +248,7 @@ func TestIntegration_DaemonLifecycle(t *testing.T) {
 
 		// Use a very short heartbeat interval so the test loop fires quickly.
 		d, err := agent.NewDaemon(&agent.Config{
-			ServerAddr:       mc.URL(),
+			ServerAddr:        mc.URL(),
 			TenantID:          tenantID,
 			BindAddr:          "127.0.0.1:0",
 			WorkDir:           t.TempDir(),

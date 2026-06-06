@@ -17,7 +17,6 @@ package cluster
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"strings"
 	"sync"
@@ -153,8 +152,9 @@ func TestDataDistributionRebalancing(t *testing.T) {
 	defer cancel()
 
 	// Connect to node 1 via gRPC
+	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
@@ -268,8 +268,9 @@ func TestRebalancingWithConcurrentWrites(t *testing.T) {
 	defer cancel()
 
 	// Connect to node 1 via gRPC
+	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
@@ -395,8 +396,9 @@ func TestRebalancingMultipleShards(t *testing.T) {
 	defer cancel()
 
 	// Connect to node 1 via gRPC
+	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
@@ -488,8 +490,9 @@ func TestRebalancingIdempotency(t *testing.T) {
 	defer cancel()
 
 	// Connect to node 1 via gRPC
+	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 

@@ -1,4 +1,4 @@
-//go:build vector
+//go:build vector && qrdb_vector
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -100,13 +100,13 @@ func newMockEmbeddingLogger() *mockEmbeddingLogger {
 	}
 }
 
-func (l *mockEmbeddingLogger) Debug(msg string, args ...any)                                           {}
+func (l *mockEmbeddingLogger) Debug(msg string, args ...any)                              {}
 func (l *mockEmbeddingLogger) Debugf(format string, args ...interface{})                  {}
-func (l *mockEmbeddingLogger) Info(msg string, args ...any)                                            {}
+func (l *mockEmbeddingLogger) Info(msg string, args ...any)                               {}
 func (l *mockEmbeddingLogger) Infof(format string, args ...interface{})                   {}
-func (l *mockEmbeddingLogger) Warn(msg string, args ...any)                                            {}
+func (l *mockEmbeddingLogger) Warn(msg string, args ...any)                               {}
 func (l *mockEmbeddingLogger) Warnf(format string, args ...interface{})                   {}
-func (l *mockEmbeddingLogger) Error(msg string, args ...any)                                           {}
+func (l *mockEmbeddingLogger) Error(msg string, args ...any)                              {}
 func (l *mockEmbeddingLogger) Errorf(format string, args ...interface{})                  {}
 func (l *mockEmbeddingLogger) Fatal(msg string)                                           {}
 func (l *mockEmbeddingLogger) Fatalf(format string, args ...interface{})                  {}
@@ -243,15 +243,13 @@ func TestEmbeddingService_GenerateEmbedding_WithDefaultProvider(t *testing.T) {
 }
 
 func TestEmbeddingService_GenerateEmbedding_NilRequest(t *testing.T) {
-	// NOTE: Current implementation panics on nil request - this test verifies
-	// that behavior. Ideally this should return an error instead.
 	mgr, _ := createTestManager(t, "openai")
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	assert.Panics(t, func() {
-		_, _ = svc.GenerateEmbedding(context.Background(), nil)
-	}, "nil request should cause panic (known implementation behavior)")
+	resp, err := svc.GenerateEmbedding(context.Background(), nil)
+	assert.Error(t, err, "nil request must return a validation error, not panic")
+	assert.Nil(t, resp)
 }
 
 func TestEmbeddingService_GenerateEmbedding_EmptyText(t *testing.T) {
@@ -444,15 +442,13 @@ func TestEmbeddingService_BatchGenerateEmbeddings_Success(t *testing.T) {
 }
 
 func TestEmbeddingService_BatchGenerateEmbeddings_NilRequest(t *testing.T) {
-	// NOTE: Current implementation panics on nil request - this test verifies
-	// that behavior. Ideally this should return an error instead.
 	mgr, _ := createTestManager(t, "openai")
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	assert.Panics(t, func() {
-		_, _ = svc.BatchGenerateEmbeddings(context.Background(), nil)
-	}, "nil request should cause panic (known implementation behavior)")
+	resp, err := svc.BatchGenerateEmbeddings(context.Background(), nil)
+	assert.Error(t, err, "nil request must return a validation error, not panic")
+	assert.Nil(t, resp)
 }
 
 func TestEmbeddingService_BatchGenerateEmbeddings_EmptyItems(t *testing.T) {
@@ -674,15 +670,13 @@ func TestEmbeddingService_GetProviderInfo_Success(t *testing.T) {
 }
 
 func TestEmbeddingService_GetProviderInfo_NilRequest(t *testing.T) {
-	// NOTE: Current implementation panics on nil request - this test verifies
-	// that behavior. Ideally this should return an error instead.
 	mgr, _ := createTestManager(t, "openai")
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	assert.Panics(t, func() {
-		_, _ = svc.GetProviderInfo(context.Background(), nil)
-	}, "nil request should cause panic (known implementation behavior)")
+	resp, err := svc.GetProviderInfo(context.Background(), nil)
+	assert.Error(t, err, "nil request must return a validation error, not panic")
+	assert.Nil(t, resp)
 }
 
 func TestEmbeddingService_GetProviderInfo_EmptyProvider(t *testing.T) {
@@ -752,15 +746,13 @@ func TestEmbeddingService_SetDefaultProvider_Success(t *testing.T) {
 }
 
 func TestEmbeddingService_SetDefaultProvider_NilRequest(t *testing.T) {
-	// NOTE: Current implementation panics on nil request - this test verifies
-	// that behavior. Ideally this should return an error instead.
 	mgr, _ := createTestManager(t, "openai")
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	assert.Panics(t, func() {
-		_, _ = svc.SetDefaultProvider(context.Background(), nil)
-	}, "nil request should cause panic (known implementation behavior)")
+	resp, err := svc.SetDefaultProvider(context.Background(), nil)
+	assert.Error(t, err, "nil request must return a validation error, not panic")
+	assert.Nil(t, resp)
 }
 
 func TestEmbeddingService_SetDefaultProvider_EmptyProvider(t *testing.T) {

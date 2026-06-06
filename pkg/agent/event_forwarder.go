@@ -54,9 +54,9 @@ import (
 // sequence-number inspection and re-range to backfill.
 type EventForwarder struct {
 	serverAddr string
-	tokens      oauth2.TokenSource
-	tlsConfig   *tls.Config
-	logger      interfaces.Logger
+	tokens     oauth2.TokenSource
+	tlsConfig  *tls.Config
+	logger     interfaces.Logger
 
 	// sequence generator per session. Uses atomic.Uint64 for lock-free
 	// monotonic increments — the spawn path can call Next(sessionID) from
@@ -119,14 +119,14 @@ func NewEventForwarder(cfg EventForwarderConfig) (*EventForwarder, error) {
 	}
 	return &EventForwarder{
 		serverAddr: cfg.ServerAddr,
-		tokens:      cfg.TokenSource,
-		tlsConfig:   cfg.TLSConfig,
-		logger:      cfg.Logger,
-		seqs:        map[string]*atomic.Uint64{},
-		acked:       map[string]uint64{},
-		queue:       make(chan *forwarderEntry, size),
-		stopCh:      make(chan struct{}),
-		doneCh:      make(chan struct{}),
+		tokens:     cfg.TokenSource,
+		tlsConfig:  cfg.TLSConfig,
+		logger:     cfg.Logger,
+		seqs:       map[string]*atomic.Uint64{},
+		acked:      map[string]uint64{},
+		queue:      make(chan *forwarderEntry, size),
+		stopCh:     make(chan struct{}),
+		doneCh:     make(chan struct{}),
 	}, nil
 }
 

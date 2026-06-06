@@ -11,6 +11,8 @@
 //  2. Commercial License
 //     Contact licensing@automatethethings.com for commercial licensing options.
 
+//go:build quicbaas_signal
+
 // Package main provides CLI subcommands that drive the Signal
 // orchestrator bot (pkg/signalbridge). Three verbs are exposed:
 //
@@ -40,12 +42,12 @@ import (
 )
 
 var (
-	sbConfigPath    string
-	sbBotIdentity   string
-	sbGoSignalURL   string
-	sbDeviceName    string
-	sbPasswordSeed  string
-	sbStatePath     string
+	sbConfigPath   string
+	sbBotIdentity  string
+	sbGoSignalURL  string
+	sbDeviceName   string
+	sbPasswordSeed string
+	sbStatePath    string
 )
 
 // newSignalBridgeCommand builds the `quicbaas signalbridge` subtree.
@@ -135,7 +137,7 @@ func runSignalBridgeServe(cmd *cobra.Command, args []string) error {
 	httpT, err := signalbridge.NewHTTPTransport(signalbridge.HTTPTransportConfig{
 		BaseURL:         cfg.GoSignalURL,
 		TLSClientConfig: tlsCfg,
-		Logger: asInterfaceLogger(log),
+		Logger:          asInterfaceLogger(log),
 	})
 	if err != nil {
 		return err
@@ -146,7 +148,7 @@ func runSignalBridgeServe(cmd *cobra.Command, args []string) error {
 		Account:                 *account,
 		Transport:               httpT,
 		Protocol:                adapter,
-		Logger: asInterfaceLogger(log),
+		Logger:                  asInterfaceLogger(log),
 		RateLimit:               cfg.RateLimit,
 		PreKeyRotationThreshold: cfg.PreKeyRotationThreshold,
 		PreKeyCheckInterval:     cfg.PreKeyCheckInterval,
@@ -196,7 +198,7 @@ func runSignalBridgeServe(cmd *cobra.Command, args []string) error {
 		Manager:      manager,
 		Translator:   translator,
 		Parser:       signalbridge.NewIntentParser(),
-		Logger: asInterfaceLogger(log),
+		Logger:       asInterfaceLogger(log),
 	})
 	if err != nil {
 		return err
@@ -253,7 +255,7 @@ func runSignalBridgeRegister(cmd *cobra.Command, args []string) error {
 		ServerURL: sbGoSignalURL,
 		Transport: httpT,
 		Protocol:  adapter,
-		Logger: asInterfaceLogger(log),
+		Logger:    asInterfaceLogger(log),
 	})
 	if err != nil {
 		return err

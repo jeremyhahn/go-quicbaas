@@ -1,5 +1,6 @@
-# QuicBaaS Reusable 3-Node Cluster
-# A standalone 3-node Raft cluster that can be started independently for testing.
+# QuicBaaS Reusable 3+1-Node Cluster
+# A standalone 3-node Raft cluster (plus an optional 4th joiner) that can be
+# started independently for testing.
 #
 # Usage:
 #   Start cluster:    docker compose -f docker-compose.cluster.yml up -d
@@ -9,48 +10,81 @@
 #   Check health:     docker compose -f docker-compose.cluster.yml ps
 #
 # The cluster provides:
-#   - 3 QuicBaaS nodes with Raft consensus
-#   - REST API on ports 8081, 8082, 8083 (host)
-#   - gRPC on ports 50051, 50052, 50053 (host)
-#   - QUIC on ports 4433, 4434, 4435 (host)
-#   - Metrics on ports 9091, 9092, 9093 (host)
+#   - 3 QuicBaaS nodes with Raft consensus (nodes 1-3, always started)
+#   - 1 optional dynamic-membership joiner (node 4)
+#   - REST API on ports 8081, 8082, 8083, 8084 (host)
+#   - gRPC on ports 50051, 50052, 50053, 50054 (host)
+#   - QUIC on ports 4433, 4434, 4435, 4436 (host, node4 UDP)
+#   - Metrics on ports 9091, 9092, 9093, 9094 (host)
+#
+# At-rest encryption:
+#   All nodes run with seal.enabled=true and strategy=passphrase. The passphrase
+#   is injected via QUICBAAS_SEAL_PASSPHRASE. The node auto-initialises its
+#   barrier on first boot and unseals on restart without operator intervention.
+#   Data dirs are HOST BIND MOUNTS so the integration test runner can walk .sst
+#   and .vlog files and assert the plaintext sentinel is absent on every node.
+#
+# Dynamic membership (node4):
+#   quicbaas-node4 starts with QUICBAAS_RAFT_JOIN=true so it joins the existing
+#   3-node cluster as a non-bootstrapping replica. The Makefile calls the
+#   AddNode REST API on the leader to add node4 before starting the membership
+#   integration test.
+#
+# Prerequisites:
+#   Cluster certificates must exist at test/integration/cluster-certs/.
+#   Generate them once with:
+#     cd /home/jhahn/sources/go-quicbaas
+#     go run test/integration/gen-cluster-certs/main.go test/integration/cluster-certs/
 
 services:
   # Node 1 - Initial leader
   quicbaas-node1:
     build:
       context: ../..
+      additional_contexts:
+        workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
     hostname: quicbaas-node1
     container_name: quicbaas-cluster-node1
     environment:
       - CGO_ENABLED=0
+      # Increase WriteTimeout above RequestTimeout (25s) so the server
+      # can flush the 503 response after a Raft proposal times out.
+      - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
+      # Disable PebbleDB fsync in the MVCC state machine to avoid proposal
+      # timeouts caused by Docker overlay2 filesystem fsync latency.
+      # This is acceptable for integration tests; never use in production.
+      - QRDB_NOSYNC_WRITES=1
       - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_DEPLOYMENT_ID=42
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node1:63001
-      - QUICBAAS_RAFT_JOIN_ADDRESSES=quicbaas-node2:63002,quicbaas-node3:63003
+      # All 3 bootstrap nodes listed in id=addr format so buildClusterMembers
+      # creates a proper 3-member initial Raft group (bootstrap mode, Join=false).
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=quicbaas-node1:63001,2=quicbaas-node2:63002,3=quicbaas-node3:63003
+      # Per-node mTLS cert material overrides the yaml defaults.
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node1.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node1.key
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
-      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
       - QUICBAAS_SERVER_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
-      - QUICBAAS_SERVER_QUIC_PORT=4433
-      - QUICBAAS_SERVER_ENABLE_TCP=true
-      - QUICBAAS_SERVER_ENABLE_REST=true
-      - QUICBAAS_SERVER_UNIX_SOCKET=
-      - QUICBAAS_METRICS_PORT=9090
       - QUICBAAS_ENABLE_DEBUG_ROUTES=1
-      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
-      - QUICBAAS_SECURITY_TLS_ENABLED=false
+      # At-rest encryption: passphrase strategy, auto-unsealed on startup.
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=cluster-integration-test-passphrase
     volumes:
-      - cluster-data-node1:/data
-      - cluster-logs-node1:/var/log/quicbaas
-      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      # HOST BIND MOUNTS — the test runner walks these for at-rest encryption check.
+      - ./cluster-data/node1:/data
+      - ./cluster-logs/node1:/var/log/quicbaas
+      - ./quicbaas-cluster.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - ./cluster-certs:/etc/quicbaas/certs:ro
     ports:
       - "8081:8080"      # REST API
       - "50051:50051"    # gRPC
-      - "4433:4433/udp"  # QUIC
       - "9091:9090"      # Metrics
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
@@ -61,8 +95,8 @@ services:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
-      retries: 10
-      start_period: 15s
+      retries: 20
+      start_period: 20s
     restart: unless-stopped
     stop_grace_period: 10s
 
@@ -70,37 +104,40 @@ services:
   quicbaas-node2:
     build:
       context: ../..
+      additional_contexts:
+        workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
     hostname: quicbaas-node2
     container_name: quicbaas-cluster-node2
     environment:
       - CGO_ENABLED=0
+      - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
+      - QRDB_NOSYNC_WRITES=1
       - QUICBAAS_RAFT_NODE_ID=2
+      - QUICBAAS_RAFT_DEPLOYMENT_ID=42
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node2:63002
-      - QUICBAAS_RAFT_JOIN_ADDRESSES=quicbaas-node1:63001,quicbaas-node3:63003
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=quicbaas-node1:63001,2=quicbaas-node2:63002,3=quicbaas-node3:63003
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node2.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node2.key
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
-      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
       - QUICBAAS_SERVER_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
-      - QUICBAAS_SERVER_QUIC_PORT=4433
-      - QUICBAAS_SERVER_ENABLE_TCP=true
-      - QUICBAAS_SERVER_ENABLE_REST=true
-      - QUICBAAS_SERVER_UNIX_SOCKET=
-      - QUICBAAS_METRICS_PORT=9090
       - QUICBAAS_ENABLE_DEBUG_ROUTES=1
-      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
-      - QUICBAAS_SECURITY_TLS_ENABLED=false
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=cluster-integration-test-passphrase
     volumes:
-      - cluster-data-node2:/data
-      - cluster-logs-node2:/var/log/quicbaas
-      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - ./cluster-data/node2:/data
+      - ./cluster-logs/node2:/var/log/quicbaas
+      - ./quicbaas-cluster.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - ./cluster-certs:/etc/quicbaas/certs:ro
     ports:
       - "8082:8080"      # REST API
       - "50052:50051"    # gRPC
-      - "4434:4433/udp"  # QUIC
       - "9092:9090"      # Metrics
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
@@ -114,8 +151,8 @@ services:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
-      retries: 10
-      start_period: 15s
+      retries: 20
+      start_period: 20s
     restart: unless-stopped
     stop_grace_period: 10s
 
@@ -123,37 +160,40 @@ services:
   quicbaas-node3:
     build:
       context: ../..
+      additional_contexts:
+        workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
     hostname: quicbaas-node3
     container_name: quicbaas-cluster-node3
     environment:
       - CGO_ENABLED=0
+      - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
+      - QRDB_NOSYNC_WRITES=1
       - QUICBAAS_RAFT_NODE_ID=3
+      - QUICBAAS_RAFT_DEPLOYMENT_ID=42
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node3:63003
-      - QUICBAAS_RAFT_JOIN_ADDRESSES=quicbaas-node1:63001,quicbaas-node2:63002
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=quicbaas-node1:63001,2=quicbaas-node2:63002,3=quicbaas-node3:63003
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node3.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node3.key
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
-      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
       - QUICBAAS_SERVER_HOST=0.0.0.0
       - QUICBAAS_SERVER_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
-      - QUICBAAS_SERVER_QUIC_PORT=4433
-      - QUICBAAS_SERVER_ENABLE_TCP=true
-      - QUICBAAS_SERVER_ENABLE_REST=true
-      - QUICBAAS_SERVER_UNIX_SOCKET=
-      - QUICBAAS_METRICS_PORT=9090
       - QUICBAAS_ENABLE_DEBUG_ROUTES=1
-      - QUICBAAS_SERVER_EXPOSE_SHARD_HEADER=1
-      - QUICBAAS_SECURITY_TLS_ENABLED=false
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=cluster-integration-test-passphrase
     volumes:
-      - cluster-data-node3:/data
-      - cluster-logs-node3:/var/log/quicbaas
-      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - ./cluster-data/node3:/data
+      - ./cluster-logs/node3:/var/log/quicbaas
+      - ./quicbaas-cluster.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - ./cluster-certs:/etc/quicbaas/certs:ro
     ports:
       - "8083:8080"      # REST API
       - "50053:50051"    # gRPC
-      - "4435:4433/udp"  # QUIC
       - "9093:9090"      # Metrics
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
@@ -169,8 +209,78 @@ services:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
-      retries: 10
-      start_period: 15s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+  # Node 4 — dynamic membership joiner.
+  # This node is NOT part of the bootstrap group. It joins the running 3-node
+  # cluster via QUICBAAS_RAFT_JOIN=true (join=true passed to host.StartShard).
+  # The Makefile calls POST /api/v1/cluster/nodes on the leader to add node4
+  # before the TestQRDBCluster_DynamicMembership test runs.
+  quicbaas-node4:
+    build:
+      context: ../..
+      additional_contexts:
+        workspace: ../../..
+      dockerfile: test/integration/Dockerfile.node
+    hostname: quicbaas-node4
+    container_name: quicbaas-cluster-node4
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
+      - QRDB_NOSYNC_WRITES=1
+      - QUICBAAS_RAFT_NODE_ID=4
+      - QUICBAAS_RAFT_DEPLOYMENT_ID=42
+      - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node4:63004
+      # JoinAddresses for a joining node: the existing 3 members let quicraft
+      # route the initial AppendEntries to the right peers. Node4 is NOT in
+      # the bootstrap list so the cluster doesn't wait for it to form quorum.
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=quicbaas-node1:63001,2=quicbaas-node2:63002,3=quicbaas-node3:63003
+      # join=true: this node is joining an existing cluster, not bootstrapping.
+      - QUICBAAS_RAFT_JOIN=true
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node4.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node4.key
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_ENABLE_DEBUG_ROUTES=1
+      - QUICBAAS_SEAL_ENABLED=true
+      - QUICBAAS_SEAL_STRATEGY=passphrase
+      - QUICBAAS_SEAL_PASSPHRASE=cluster-integration-test-passphrase
+    volumes:
+      - ./cluster-data/node4:/data
+      - ./cluster-logs/node4:/var/log/quicbaas
+      - ./quicbaas-cluster.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - ./cluster-certs:/etc/quicbaas/certs:ro
+    ports:
+      - "8084:8080"      # REST API
+      - "50054:50051"    # gRPC
+      - "4436:4433/udp"  # QUIC
+      - "9094:9090"      # Metrics
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      quicbaas-cluster:
+        aliases:
+          - node4
+    depends_on:
+      quicbaas-node1:
+        condition: service_started
+      quicbaas-node2:
+        condition: service_started
+      quicbaas-node3:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
     restart: unless-stopped
     stop_grace_period: 10s
 
@@ -178,17 +288,3 @@ networks:
   quicbaas-cluster:
     driver: bridge
     name: quicbaas-cluster-network
-
-volumes:
-  cluster-data-node1:
-    driver: local
-  cluster-data-node2:
-    driver: local
-  cluster-data-node3:
-    driver: local
-  cluster-logs-node1:
-    driver: local
-  cluster-logs-node2:
-    driver: local
-  cluster-logs-node3:
-    driver: local

@@ -34,10 +34,10 @@ import (
 
 // VersionResponse is the JSON shape of GET /api/v1/version.
 type VersionResponse struct {
-	Version    string `json:"version"`
-	BuildTime  string `json:"build_time,omitempty"`
-	GitCommit  string `json:"git_commit,omitempty"`
-	GoVersion  string `json:"go_version,omitempty"`
+	Version   string `json:"version"`
+	BuildTime string `json:"build_time,omitempty"`
+	GitCommit string `json:"git_commit,omitempty"`
+	GoVersion string `json:"go_version,omitempty"`
 }
 
 // HandleVersion returns the daemon's build info. Open endpoint — no

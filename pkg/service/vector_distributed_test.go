@@ -27,13 +27,13 @@ import (
 // distTestLogger is a no-op logger for distributed search tests.
 type distTestLogger struct{}
 
-func (l *distTestLogger) Debug(msg string, args ...any)                                    {}
+func (l *distTestLogger) Debug(msg string, args ...any)                       {}
 func (l *distTestLogger) Debugf(format string, args ...interface{})           {}
-func (l *distTestLogger) Info(msg string, args ...any)                                     {}
+func (l *distTestLogger) Info(msg string, args ...any)                        {}
 func (l *distTestLogger) Infof(format string, args ...interface{})            {}
-func (l *distTestLogger) Warn(msg string, args ...any)                                     {}
+func (l *distTestLogger) Warn(msg string, args ...any)                        {}
 func (l *distTestLogger) Warnf(format string, args ...interface{})            {}
-func (l *distTestLogger) Error(msg string, args ...any)                                    {}
+func (l *distTestLogger) Error(msg string, args ...any)                       {}
 func (l *distTestLogger) Errorf(format string, args ...interface{})           {}
 func (l *distTestLogger) Fatal(msg string)                                    {}
 func (l *distTestLogger) Fatalf(format string, args ...interface{})           {}

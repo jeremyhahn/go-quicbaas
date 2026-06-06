@@ -853,7 +853,9 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetClusterEndpoints()
 	require.NotEmpty(t, endpoints, "gRPC endpoints must be available for integration tests")
 
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Failed to connect to gRPC endpoint %s", endpoints[0])
 	c.client = client
 
@@ -1010,15 +1012,19 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	require.NoError(t, err, "Unix socket must be available at %s for integration tests", socketPath)
 
 	// Create gRPC connection over unix socket
+	tlsCfgConn, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfgConn)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	require.NoError(t, err, "Failed to connect to unix socket at %s", socketPath)
 	c.conn = conn
 
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfgClient, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfgClient))
 	require.NoError(t, err, "Failed to create gRPC client over unix socket at %s", socketPath)
 	c.client = client
 
@@ -1668,18 +1674,8 @@ type ServiceSchedulerRESTClient struct {
 // NewServiceSchedulerRESTClient creates a new scheduler REST client.
 func NewServiceSchedulerRESTClient(baseURL string) *ServiceSchedulerRESTClient {
 	return &ServiceSchedulerRESTClient{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
+		baseURL:    baseURL,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
 	}
 }
 
@@ -2114,11 +2110,11 @@ type SchedulerQUICClient struct {
 
 // NewSchedulerQUICClient creates a new QUIC client for scheduler operations.
 func NewSchedulerQUICClient(addr string) (*SchedulerQUICClient, error) {
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // Test only
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load integration TLS config: %w", err)
 	}
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -2417,19 +2413,9 @@ type SchedulerMCPClient struct {
 // NewSchedulerMCPClient creates a new scheduler MCP client.
 func NewSchedulerMCPClient(endpoint string) *SchedulerMCPClient {
 	return &SchedulerMCPClient{
-		endpoint: endpoint,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
-		nextID: 1,
+		endpoint:   endpoint,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		nextID:     1,
 	}
 }
 
@@ -2491,7 +2477,6 @@ func (c *SchedulerMCPClient) authenticate(ctx context.Context) error {
 	c.authenticated = true
 	return nil
 }
-
 
 func (c *SchedulerMCPClient) call(ctx context.Context, req JSONRPCRequest) (json.RawMessage, error) {
 	bodyBytes, err := json.Marshal(req)

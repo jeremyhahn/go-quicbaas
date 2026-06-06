@@ -16,13 +16,13 @@
 package transactions
 
 import (
-	"crypto/tls"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestMain sets up and tears down the test environment.
@@ -43,17 +43,7 @@ func TestMain(m *testing.M) {
 // waitForClusterReady waits for the QuicBaaS cluster to be ready.
 func waitForClusterReady() bool {
 	endpoint := getRESTEndpoint()
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(5 * time.Second)
 
 	deadline := time.Now().Add(3 * time.Minute)
 	for time.Now().Before(deadline) {

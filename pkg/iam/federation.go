@@ -109,6 +109,16 @@ type DefaultFederationManager struct {
 
 	// State nonce expiry
 	stateExpiry time.Duration
+
+	// ID-token validator cache (keyed by providerID). Each entry validates the
+	// UPSTREAM IdP's ID token (JWKS/iss/aud), distinct from the quicbaas
+	// platformtoken validator.
+	idTokenValidators   map[string]*IDTokenValidator
+	idTokenValidatorsMu sync.RWMutex
+
+	// now is the clock used for ID-token freshness and JWKS-cache expiry. It is
+	// injectable for deterministic tests.
+	now func() time.Time
 }
 
 // FederationManagerOption configures the federation manager.
@@ -177,13 +187,25 @@ func WithStateExpiry(expiry time.Duration) FederationManagerOption {
 	}
 }
 
+// WithFederationClock sets the clock used for ID-token freshness and JWKS-cache
+// expiry. It is primarily used by tests for deterministic behaviour.
+func WithFederationClock(now func() time.Time) FederationManagerOption {
+	return func(m *DefaultFederationManager) {
+		if now != nil {
+			m.now = now
+		}
+	}
+}
+
 // NewFederationManager creates a new federation manager.
 func NewFederationManager(opts ...FederationManagerOption) (*DefaultFederationManager, error) {
 	m := &DefaultFederationManager{
-		httpClient:  http.DefaultClient,
-		clientCache: make(map[string]*oauthClientCacheEntry),
-		cacheTTL:    1 * time.Hour,
-		stateExpiry: 5 * time.Minute,
+		httpClient:        http.DefaultClient,
+		clientCache:       make(map[string]*oauthClientCacheEntry),
+		idTokenValidators: make(map[string]*IDTokenValidator),
+		cacheTTL:          1 * time.Hour,
+		stateExpiry:       5 * time.Minute,
+		now:               time.Now,
 	}
 
 	for _, opt := range opts {
@@ -401,10 +423,20 @@ func (m *DefaultFederationManager) BeginLogin(ctx context.Context, tenantID, pro
 			"failed to generate state token", err)
 	}
 
+	// Generate a distinct OIDC nonce for ID-token replay protection. The state
+	// token above is the CSRF state; the OIDC nonce is echoed back in the ID
+	// token's `nonce` claim and checked at callback (OIDC core 3.1.2.7).
+	oidcNonce, err := generateSecureNonce(32)
+	if err != nil {
+		return nil, NewIAMError(ErrFederationStateInvalid, "iam.federation.begin_login",
+			"failed to generate OIDC nonce", err)
+	}
+
 	// Store state
-	now := time.Now()
+	now := m.now()
 	state := &FederationCallbackState{
 		Nonce:       stateNonce,
+		OIDCNonce:   oidcNonce,
 		ProviderID:  provider.ID,
 		TenantID:    tenantID,
 		RedirectURI: redirectURI,
@@ -416,8 +448,10 @@ func (m *DefaultFederationManager) BeginLogin(ctx context.Context, tenantID, pro
 			"failed to store state", err)
 	}
 
-	// Generate authorization URL
-	authURL := oauthConfig.AuthCodeURL(stateNonce, oauth2.AccessTypeOffline)
+	// Generate authorization URL. Include the OIDC nonce so the IdP echoes it in
+	// the ID token.
+	authURL := oauthConfig.AuthCodeURL(stateNonce, oauth2.AccessTypeOffline,
+		oauth2.SetAuthURLParam("nonce", oidcNonce))
 
 	return &LoginRedirect{
 		AuthURL:   authURL,
@@ -448,8 +482,9 @@ func (m *DefaultFederationManager) HandleCallback(ctx context.Context, stateToke
 		_ = m.stateStorage.DeleteState(ctx, stateToken)
 	}()
 
-	// Check expiry (5-minute window)
-	if state.IsExpired() {
+	// Check expiry (5-minute window) against the manager clock so freshness is
+	// deterministic in tests and consistent with state creation in BeginLogin.
+	if m.now().After(state.ExpiresAt) {
 		return nil, ErrFederationStateExpired
 	}
 
@@ -479,9 +514,12 @@ func (m *DefaultFederationManager) HandleCallback(ctx context.Context, stateToke
 			"token exchange failed", err)
 	}
 
-	// Extract claims from ID token or userinfo
-	claims, err := m.extractClaims(ctx, provider, token)
+	// Extract claims from the verified ID token (fail-closed). The state carries
+	// the OIDC nonce the ID token must echo.
+	claims, err := m.extractClaims(ctx, provider, token, state)
 	if err != nil {
+		m.logAuthEvent(ctx, state.TenantID, nil, provider, "callback", false,
+			map[string]interface{}{"error": err.Error()})
 		return nil, err
 	}
 
@@ -531,8 +569,10 @@ func (m *DefaultFederationManager) LinkAccount(ctx context.Context, userID, tena
 	// Create OAuth2 token from the external token string
 	oauthToken := &oauth2.Token{AccessToken: externalToken}
 
-	// Extract claims
-	claims, err := m.extractClaims(ctx, provider, oauthToken)
+	// Extract claims. Account linking presents an access token (not an OIDC
+	// authorize result), so there is no ID-token nonce to verify; claims are
+	// sourced from the provider userinfo endpoint.
+	claims, err := m.extractClaims(ctx, provider, oauthToken, nil)
 	if err != nil {
 		return err
 	}
@@ -772,20 +812,47 @@ func (m *DefaultFederationManager) discoverOIDC(ctx context.Context, issuerURL s
 	return &discovery, nil
 }
 
-// extractClaims extracts user claims from the OAuth2 token.
-func (m *DefaultFederationManager) extractClaims(ctx context.Context, provider *ExternalProvider, token *oauth2.Token) (map[string]interface{}, error) {
+// extractClaims extracts user claims from the OAuth2 token. When an OIDC ID
+// token is present it is fully verified (signature via the provider JWKS, exact
+// iss, aud containing the client ID, exp/iat freshness, and nonce match against
+// the login state) before its claims are trusted. Verification failure is
+// fatal and fails closed — there is no fall-through to the unverified payload.
+//
+// state may be nil only on the account-linking path, which presents an access
+// token rather than an OIDC authorize result; in that case claims are sourced
+// from the userinfo endpoint.
+func (m *DefaultFederationManager) extractClaims(ctx context.Context, provider *ExternalProvider, token *oauth2.Token, state *FederationCallbackState) (map[string]interface{}, error) {
 	claims := make(map[string]interface{})
 
-	// Try to extract from ID token if present (OIDC)
+	// Verify and use the ID token when present (OIDC authorize result).
 	if idToken, ok := token.Extra("id_token").(string); ok && idToken != "" {
-		idClaims, err := m.parseIDToken(idToken)
-		if err == nil {
-			for k, v := range idClaims {
-				claims[k] = v
-			}
-			return claims, nil
+		validator, err := m.idTokenValidator(ctx, provider)
+		if err != nil {
+			return nil, err
 		}
-		// Fall through to userinfo if ID token parsing fails
+
+		validated, err := validator.Validate(ctx, idToken)
+		if err != nil {
+			// Fail closed: a forged/unsigned/expired/wrong-iss/wrong-aud token
+			// is rejected outright. No fall-through to an unverified payload.
+			return nil, NewIAMError(ErrOIDCTokenExchangeFailed, "iam.federation.claims",
+				"ID token verification failed", err)
+		}
+
+		// Replay protection: the ID token nonce MUST equal the OIDC nonce we
+		// stashed at BeginLogin. Skipped only on the linking path (state == nil),
+		// which never carries an ID token via the authorize flow.
+		if state != nil && state.OIDCNonce != "" {
+			if validated.Nonce != state.OIDCNonce {
+				return nil, NewIAMError(ErrOIDCTokenExchangeFailed, "iam.federation.claims",
+					"ID token nonce mismatch", &IDTokenNonceError{})
+			}
+		}
+
+		for k, v := range validated.Raw {
+			claims[k] = v
+		}
+		return claims, nil
 	}
 
 	// Fetch userinfo
@@ -838,29 +905,56 @@ func (m *DefaultFederationManager) extractClaims(ctx context.Context, provider *
 	return claims, nil
 }
 
-// parseIDToken parses a JWT ID token without full verification.
-// In production, this should verify the token signature.
-func (m *DefaultFederationManager) parseIDToken(idToken string) (map[string]interface{}, error) {
-	parts := strings.Split(idToken, ".")
-	if len(parts) != 3 {
-		return nil, &IDTokenFormatError{}
+// idTokenValidator returns a cached per-provider ID-token validator, building it
+// (and resolving the JWKS URL from the provider config or OIDC discovery) on
+// first use. Each provider has its own issuer/JWKS/clientID.
+func (m *DefaultFederationManager) idTokenValidator(ctx context.Context, provider *ExternalProvider) (*IDTokenValidator, error) {
+	m.idTokenValidatorsMu.RLock()
+	v, ok := m.idTokenValidators[provider.ID]
+	m.idTokenValidatorsMu.RUnlock()
+	if ok {
+		return v, nil
 	}
 
-	// Decode payload (second part)
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	// Resolve the JWKS URL: explicit override, cached discovery, or fresh
+	// discovery from the issuer.
+	jwksURL := provider.JWKSURL
+	if jwksURL == "" {
+		m.clientCacheMu.RLock()
+		entry, cached := m.clientCache[provider.ID]
+		m.clientCacheMu.RUnlock()
+		if cached && entry.discovery != nil {
+			jwksURL = entry.discovery.JwksURI
+		}
+	}
+	// If still unknown, the validator discovers it lazily from the issuer.
+
+	validator, err := NewIDTokenValidator(IDTokenValidatorConfig{
+		Issuer:     provider.IssuerURL,
+		Audience:   provider.ClientID,
+		JWKSURL:    jwksURL,
+		CacheTTL:   m.cacheTTL,
+		HTTPClient: m.httpClient,
+		Now:        m.now,
+	})
 	if err != nil {
-		return nil, &IDTokenDecodeError{Cause: err}
+		return nil, NewIAMError(ErrProviderInvalid, "iam.federation.idtoken",
+			"failed to build ID token validator", err)
 	}
 
-	var claims map[string]interface{}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil, &IDTokenClaimsError{Cause: err}
+	m.idTokenValidatorsMu.Lock()
+	if existing, ok := m.idTokenValidators[provider.ID]; ok {
+		validator = existing
+	} else {
+		m.idTokenValidators[provider.ID] = validator
 	}
+	m.idTokenValidatorsMu.Unlock()
 
-	return claims, nil
+	return validator, nil
 }
 
-// processAuthentication handles user provisioning and linking.
+// processAuthentication handles user provisioning, account linking, and
+// per-login role synchronization from the IdP claims.
 func (m *DefaultFederationManager) processAuthentication(ctx context.Context, provider *ExternalProvider, claims map[string]interface{}, state *FederationCallbackState) (*FederationResult, error) {
 	// Extract claims using mappings
 	externalID := m.extractClaim(claims, provider.ClaimMappings.Subject, DefaultSubjectClaim)
@@ -872,6 +966,54 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 			"external ID not found in claims", nil)
 	}
 
+	// Email-based linking and email-based JIT both key off the IdP-asserted
+	// email. When either is in play we enforce the email security controls on
+	// the verified IdP claims BEFORE touching any user record (fail-closed):
+	//
+	//   1. The email claim MUST be present (no silent substitution of the
+	//      external subject ID).
+	//   2. The IdP MUST report email_verified == true (linking/JIT on an
+	//      unverified address is an account-takeover vector).
+	//   3. When AllowedEmailDomains is configured, the email's domain MUST be in
+	//      the allowlist.
+	emailBased := provider.AllowLinking || provider.AutoProvision
+	if emailBased {
+		if email == "" {
+			return nil, NewIAMError(ErrMissingEmailClaim, "iam.federation.process",
+				"email claim missing from IdP token", &MissingEmailClaimError{})
+		}
+		if !claimEmailVerified(claims) {
+			return nil, NewIAMError(ErrEmailNotVerified, "iam.federation.process",
+				"IdP email is not verified", &EmailNotVerifiedError{Email: email})
+		}
+		if !emailDomainAllowed(provider.AllowedEmailDomains, email) {
+			return nil, NewIAMError(ErrEmailDomainNotAllowed, "iam.federation.process",
+				"IdP email domain is not in the provider allowlist",
+				&EmailDomainNotAllowedError{Domain: emailDomain(email)})
+		}
+	}
+
+	// Resolve the tenant roles from the IdP groups/roles claims BEFORE touching
+	// any user record. This fails closed: if claim->role mappings are configured
+	// but the IdP values match none, the login is denied here (no user is
+	// provisioned, no roles are synced).
+	resolution, err := resolveRoles(provider, claims)
+	if err != nil {
+		return nil, NewIAMError(ErrOIDCClaimMappingFailed, "iam.federation.process",
+			"federated login denied by claim mapping", err)
+	}
+
+	// Fail-closed role posture: when the provider requires an explicit role
+	// mapping, a login that resolved to zero roles (no GroupRoleMapping matched
+	// AND no DefaultRoles configured) is denied. No zero-role user is ever
+	// provisioned or linked.
+	if provider.RequireExplicitRoleMapping && len(resolution.RoleIDs) == 0 {
+		return nil, NewIAMError(ErrNoRolesResolvable, "iam.federation.process",
+			"federated login denied: no roles resolvable", &NoRolesResolvableError{ProviderID: provider.ID})
+	}
+
+	now := m.now()
+
 	// Try to find existing identity link
 	identity, err := m.linkStorage.GetLinkByExternal(ctx, provider.ID, externalID)
 	if err == nil && identity != nil {
@@ -882,9 +1024,14 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 				"linked user not found", err)
 		}
 
+		// Re-sync roles from the current IdP groups on every login.
+		if err := m.syncUserRoles(ctx, state.TenantID, user.ID, resolution); err != nil {
+			return nil, err
+		}
+
 		// Update last login and claims
-		identity.LastLogin = time.Now()
-		identity.Updated = time.Now()
+		identity.LastLogin = now
+		identity.Updated = now
 		identity.Claims = claims
 		_ = m.linkStorage.UpdateLink(ctx, identity)
 
@@ -896,8 +1043,12 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 	if provider.AllowLinking && email != "" {
 		user, err := m.identityStore.GetUserByEmail(ctx, email)
 		if err == nil && user != nil && user.TenantID == state.TenantID {
+			// Re-sync roles from the current IdP groups.
+			if err := m.syncUserRoles(ctx, state.TenantID, user.ID, resolution); err != nil {
+				return nil, err
+			}
+
 			// Link to existing user
-			now := time.Now()
 			identity = &FederatedIdentity{
 				ID:            uuid.New().String(),
 				UserID:        user.ID,
@@ -926,14 +1077,13 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 		return nil, ErrJITProvisioningDisabled
 	}
 
-	// JIT user provisioning
-	user, err := m.provisionUser(ctx, provider, state.TenantID, externalID, email, name, claims)
+	// JIT user provisioning with the resolved roles.
+	user, err := m.provisionUser(ctx, provider, state.TenantID, externalID, email, name, resolution)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create identity link
-	now := time.Now()
 	identity = &FederatedIdentity{
 		ID:            uuid.New().String(),
 		UserID:        user.ID,
@@ -956,8 +1106,63 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 	return m.generateTokenResult(ctx, user, identity, true)
 }
 
-// provisionUser creates a new user from external identity claims.
-func (m *DefaultFederationManager) provisionUser(ctx context.Context, provider *ExternalProvider, tenantID, externalID, email, name string, claims map[string]interface{}) (*User, error) {
+// syncUserRoles reconciles a user's role assignments to exactly the set the IdP
+// claims resolved to. Stale federation-assigned roles are revoked and newly
+// resolved roles are assigned. When the resolution used static DefaultRoles
+// (no claim->role mappings configured), existing roles are left intact and the
+// defaults are additively ensured, preserving locally-granted roles.
+func (m *DefaultFederationManager) syncUserRoles(ctx context.Context, tenantID, userID string, resolution *RoleResolution) error {
+	if resolution == nil {
+		return nil
+	}
+
+	if resolution.UsedDefaults {
+		// Additive: ensure default roles are present without revoking others.
+		for _, roleID := range resolution.RoleIDs {
+			if err := m.identityStore.AssignRole(ctx, tenantID, userID, roleID); err != nil {
+				return NewIAMError(ErrUserInvalid, "iam.federation.sync_roles",
+					"failed to assign default role", err)
+			}
+		}
+		return nil
+	}
+
+	// Claim-mapped: the IdP is authoritative. Reconcile to exactly RoleIDs.
+	want := make(map[string]struct{}, len(resolution.RoleIDs))
+	for _, r := range resolution.RoleIDs {
+		want[r] = struct{}{}
+	}
+
+	current, err := m.identityStore.GetUserRoles(ctx, tenantID, userID)
+	if err != nil {
+		return NewIAMError(ErrUserInvalid, "iam.federation.sync_roles",
+			"failed to read current roles", err)
+	}
+	have := make(map[string]struct{}, len(current))
+	for _, role := range current {
+		have[role.ID] = struct{}{}
+		if _, keep := want[role.ID]; !keep {
+			if err := m.identityStore.RevokeRole(ctx, tenantID, userID, role.ID); err != nil {
+				return NewIAMError(ErrUserInvalid, "iam.federation.sync_roles",
+					"failed to revoke stale role", err)
+			}
+		}
+	}
+	for roleID := range want {
+		if _, ok := have[roleID]; ok {
+			continue
+		}
+		if err := m.identityStore.AssignRole(ctx, tenantID, userID, roleID); err != nil {
+			return NewIAMError(ErrUserInvalid, "iam.federation.sync_roles",
+				"failed to assign mapped role", err)
+		}
+	}
+	return nil
+}
+
+// provisionUser creates a new user from external identity claims and assigns the
+// roles resolved from the IdP claim mappings (or DefaultRoles fallback).
+func (m *DefaultFederationManager) provisionUser(ctx context.Context, provider *ExternalProvider, tenantID, externalID, email, name string, resolution *RoleResolution) (*User, error) {
 	// Generate username from email or external ID
 	username := email
 	if username == "" {
@@ -985,19 +1190,17 @@ func (m *DefaultFederationManager) provisionUser(ctx context.Context, provider *
 			"failed to create user", err)
 	}
 
-	// Assign default roles
-	for _, roleID := range provider.DefaultRoles {
-		if err := m.identityStore.AssignRole(ctx, tenantID, user.ID, roleID); err != nil {
-			// Log but don't fail on role assignment errors
-			continue
-		}
+	// Assign the resolved roles. Failure here is fatal: a provisioned user with
+	// the wrong roles is a privilege-boundary violation, so we fail closed.
+	if err := m.syncUserRoles(ctx, tenantID, user.ID, resolution); err != nil {
+		return nil, err
 	}
 
 	// Assign default groups
 	for _, groupID := range provider.DefaultGroups {
 		if err := m.identityStore.AddUserToGroup(ctx, tenantID, groupID, user.ID); err != nil {
-			// Log but don't fail on group assignment errors
-			continue
+			return nil, NewIAMError(ErrUserInvalid, "iam.federation.provision",
+				"failed to assign default group", err)
 		}
 	}
 
@@ -1008,7 +1211,7 @@ func (m *DefaultFederationManager) provisionUser(ctx context.Context, provider *
 func (m *DefaultFederationManager) generateTokenResult(ctx context.Context, user *User, identity *FederatedIdentity, provisioned bool) (*FederationResult, error) {
 	// Generate QuicBaaS tokens using OIDC provider if available
 	if m.oidcProvider != nil {
-		tokenResp, err := m.oidcProvider.generateTokenResponse(ctx, user, "", []string{"openid", "profile", "email"}, "", "")
+		tokenResp, err := m.oidcProvider.generateTokenResponse(ctx, user, "", []string{"openid", "profile", "email"}, "", "", nil)
 		if err != nil {
 			return nil, NewIAMError(ErrOIDCTokenExchangeFailed, "iam.federation.tokens",
 				"failed to generate tokens", err)
@@ -1053,11 +1256,16 @@ func (m *DefaultFederationManager) extractClaim(claims map[string]interface{}, m
 	return ""
 }
 
-// invalidateClientCache removes a provider from the OAuth client cache.
+// invalidateClientCache removes a provider from the OAuth client cache and the
+// ID-token validator cache so config changes (issuer/JWKS/clientID) take effect.
 func (m *DefaultFederationManager) invalidateClientCache(providerID string) {
 	m.clientCacheMu.Lock()
 	delete(m.clientCache, providerID)
 	m.clientCacheMu.Unlock()
+
+	m.idTokenValidatorsMu.Lock()
+	delete(m.idTokenValidators, providerID)
+	m.idTokenValidatorsMu.Unlock()
 }
 
 // generateSecureNonce generates a cryptographically secure nonce.

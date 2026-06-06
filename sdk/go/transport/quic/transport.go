@@ -260,6 +260,87 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 		isOrchestrator = true
 	}
 
+	// Detect Barrier and Ceremony services — both use a single dispatch
+	// opcode (OpBarrier / OpCeremony) with the sub-operation byte prepended
+	// to the JSON payload. Identical wire pattern to Orchestrator.
+	isBarrier := isBarrierService(svc)
+	isCeremony := isCeremonyService(svc)
+
+	// Detect Backup service. It uses distinct per-method opcodes
+	// (OpBackupCreate, OpBackupList, ...) and needs no request transform; only
+	// the response must be decoded into the canonical service.*BackupResponse
+	// types so callers get the same shape as every other transport.
+	isBackup := isBackupService(svc)
+
+	// Detect the credential / crypto services. Each uses distinct per-method
+	// opcodes and needs no request transform; only the response must be decoded
+	// into the canonical service.*Response types so callers receive the same
+	// shape every other transport returns.
+	isKMS := isKMSService(svc)
+	isDEK := isDEKService(svc)
+	isCrypto := isCryptoService(svc)
+	isSecrets := isSecretsService(svc)
+
+	// Detect the Certificate and ObjectStorage services. Both use distinct
+	// per-method opcodes and require no request transform — their SDK request
+	// structs encode to the same wire shape the server unmarshals (Certificate
+	// shares snake_case JSON tags with the server; ObjectStorage shares the
+	// server's untagged PascalCase fields). Only the response must be decoded
+	// into the bespoke SDK types so callers get the same shape every other
+	// transport returns.
+	isCertificate := isCertificateService(svc)
+	isObjectStorage := isObjectStorageService(svc)
+
+	// Detect the unified login ceremony (quicbaas.Auth/BeginLogin |
+	// FinishLogin). Both use distinct per-method opcodes (OpAuthBeginLogin /
+	// OpAuthFinishLogin) and need no request transform — the qrdb transport
+	// request structs encode directly via JSON. Only the response must be
+	// decoded into the canonical qrdb transport types.
+	isLogin := isLoginCeremonyMethod(svc, method)
+
+	// Detect the TimeSeries service. The high-level client sends "Write"/"Query"
+	// with its own request structs (int aggregate enums, duration intervals); the
+	// server decodes service.WritePointRequest / service.TSQueryRequest. We
+	// re-encode the request into the server wire shape here.
+	isTimeseries := isTimeseriesService(svc)
+	if isTimeseries {
+		var err error
+		transformedReq, err = transformTimeseriesRequest(method, req)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Detect the Messaging service. The server dispatches every messaging method
+	// on the OpMsg (0x00) opcode with a sub-operation code in payload[0] (range
+	// 0x20-0x2F, disjoint from Scheduler's 0x01-0x1F). The SDK messaging client
+	// sends PascalCase request structs that differ from the server's snake_case
+	// Msg*Request types, so we re-encode the request into the server wire shape
+	// here. Keyed on the service name so it never collides with Scheduler.
+	isMessaging := isMessagingService(svc)
+	if isMessaging {
+		var err error
+		transformedReq, err = transformMessagingRequest(method, req)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Detect the Scheduler service. The server dispatches every scheduler method
+	// on a single opcode (OpScheduler = 0x00) with the per-method sub-operation
+	// code in payload[0], followed by the JSON-encoded request. The SDK scheduler
+	// client sends its own request structs whose field names and enum encodings
+	// differ from the canonical service.*Request types the server unmarshals, so
+	// we re-encode the request into the server wire shape here.
+	isScheduler := isSchedulerService(svc)
+	if isScheduler {
+		var err error
+		transformedReq, err = transformSchedulerRequest(method, req)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Encode request payload
 	payload, err := EncodePayload(transformedReq)
 	if err != nil {
@@ -281,6 +362,69 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 		if !ok {
 			return nil, errors.NewInvalidInput("quic.doRequest",
 				"unknown orchestrator method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
+	// For Barrier operations the server uses OpBarrier (0xC0) as the
+	// top-level opcode with the sub-operation code in payload[0]. Same
+	// wire pattern as Orchestrator above.
+	if isBarrier {
+		subOp, ok := BarrierMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown barrier method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
+	// For Ceremony operations the server uses OpCeremony (0xC1) as the
+	// top-level opcode with the sub-operation code in payload[0].
+	if isCeremony {
+		subOp, ok := CeremonyMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown ceremony method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
+	// For Scheduler operations the server uses OpScheduler (0x00) as the
+	// top-level opcode with the sub-operation code in payload[0]. The scheduler
+	// sub-op range (0x01-0x1F) is disjoint from the messaging (0x20-0x2F) and
+	// extended-vector (0x40-0x4F) ranges that share the same OpScheduler dispatch
+	// byte on the server, so keying on the service name keeps dispatch unambiguous.
+	if isScheduler {
+		subOp, ok := SchedulerMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown scheduler method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
+	// For Messaging operations the server uses OpMsg (0x00) as the top-level
+	// opcode with the sub-operation code in payload[0]. The messaging sub-op
+	// range (0x20-0x2F) is disjoint from the scheduler range that shares the same
+	// 0x00 dispatch byte, so keying on the service name keeps dispatch
+	// unambiguous on the wire.
+	if isMessaging {
+		subOp, ok := MessagingMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown messaging method: "+method)
 		}
 		withSubOp := make([]byte, 1+len(payload))
 		withSubOp[0] = subOp
@@ -358,6 +502,15 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 
 	// Decode response payload
 	if len(resp.Payload) == 0 {
+		// Several services accept a nil response as success (void methods like
+		// messaging Publish/Delete). Route the empty payload through their decoder
+		// so the caller's type expectations are met instead of a bare nil.
+		if isTimeseries {
+			return decodeTimeseriesResponse(method, resp.Payload)
+		}
+		if isMessaging {
+			return decodeMessagingResponse(method, resp.Payload)
+		}
 		return nil, nil
 	}
 
@@ -366,6 +519,50 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	// through the generic map[string]interface{} path to handle both shapes.
 	if isOrchestrator {
 		return decodeOrchestratorResponse(method, resp.Payload)
+	}
+
+	// Barrier / Ceremony responses are decoded by domain-specific helpers
+	// so per-method converters can be registered without touching the core
+	// transport loop. Both helpers fall back to a generic map decode for
+	// methods that do not yet have a typed converter.
+	if isBarrier {
+		return decodeBarrierResponse(method, resp.Payload)
+	}
+	if isCeremony {
+		return decodeCeremonyResponse(method, resp.Payload)
+	}
+	if isBackup {
+		return decodeBackupResponse(method, resp.Payload)
+	}
+	if isKMS {
+		return decodeKMSResponse(method, resp.Payload)
+	}
+	if isDEK {
+		return decodeDEKResponse(method, resp.Payload)
+	}
+	if isCrypto {
+		return decodeCryptoResponse(method, resp.Payload)
+	}
+	if isSecrets {
+		return decodeSecretsResponse(method, resp.Payload)
+	}
+	if isScheduler {
+		return decodeSchedulerResponse(method, resp.Payload)
+	}
+	if isTimeseries {
+		return decodeTimeseriesResponse(method, resp.Payload)
+	}
+	if isMessaging {
+		return decodeMessagingResponse(method, resp.Payload)
+	}
+	if isCertificate {
+		return decodeCertificateResponse(method, resp.Payload)
+	}
+	if isObjectStorage {
+		return decodeObjectStorageResponse(method, resp.Payload)
+	}
+	if isLogin {
+		return decodeLoginResponse(method, resp.Payload)
 	}
 
 	var decoded map[string]interface{}

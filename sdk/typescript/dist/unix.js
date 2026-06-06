@@ -81,6 +81,8 @@ class UnixAuthClient {
     async loginPIV() { return notImpl('loginPIV'); }
     async listPublicTenants() { return notImpl('listPublicTenants'); }
     async logout(_token) { return notImpl('logout'); }
+    async registerBegin(_req) { return notImpl('registerBegin'); }
+    async registerFinish(_req) { return notImpl('registerFinish'); }
 }
 // UnixClient is the stub entry point for the Unix domain socket transport.
 export class UnixClient {

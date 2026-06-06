@@ -16,8 +16,9 @@
 package server
 
 import (
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // gpuIndexFactory is the stub factory when GPU support is not compiled.
@@ -30,5 +31,5 @@ func NewGPUIndexFactory() *gpuIndexFactory {
 
 // CreateIndex always returns ErrGPUNotCompiled when GPU is not compiled in.
 func (f *gpuIndexFactory) CreateIndex(_ *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
-	return nil, xkmssdk.QRDBErrGPUNotCompiled
+	return nil, qrdbsdk.ErrGPUNotCompiled
 }

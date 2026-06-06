@@ -18,7 +18,7 @@ package server
 import (
 	"strconv"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -135,14 +135,14 @@ func (a *hnswVectorIndexAdapter) Close() error {
 
 // createHNSWIndex creates an HNSW index wrapped in a VectorIndex adapter.
 func createHNSWIndex(config *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
-	hnswConfig := &xkmssdk.QRDBHNSWIndexConfig{
+	hnswConfig := &qrdbsdk.HNSWIndexConfig{
 		M:              config.M,
 		MMax:           config.MMax,
 		EfConstruction: config.EfConstruction,
 		EfSearch:       config.EfSearch,
 		DistanceMetric: parseDistanceMetric(config.DistanceMetric),
 	}
-	index, err := xkmssdk.QRDBNewHNSWIndexImpl(hnswConfig)
+	index, err := qrdbsdk.NewHNSWIndexImpl(hnswConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func createHNSWIndex(config *interfaces.VectorIndexConfig) (interfaces.VectorInd
 
 // flatIndexAdapter wraps a go-qrdb flat.Index to satisfy VectorIndex.
 type flatIndexAdapter struct {
-	index *xkmssdk.QRDBFlatIndex
+	index *qrdbsdk.FlatIndex
 }
 
 // Insert adds a vector with the given ID.
@@ -224,7 +224,7 @@ func (a *flatIndexAdapter) Close() error {
 // createFlatIndex creates a flat brute-force index wrapped in a VectorIndex adapter.
 func createFlatIndex(config *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
 	distMetric := parseDistanceMetric(config.DistanceMetric)
-	index := xkmssdk.QRDBNewFlatIndex(distMetric)
+	index := qrdbsdk.NewFlatIndex(distMetric)
 	return &flatIndexAdapter{index: index}, nil
 }
 
@@ -233,30 +233,30 @@ func createFlatIndex(config *interfaces.VectorIndexConfig) (interfaces.VectorInd
 // =============================================================================
 
 // ivfDistanceMetricMap maps string distance metrics to IVF DistanceMetric constants.
-var ivfDistanceMetricMap = map[string]xkmssdk.QRDBIVFDistanceMetric{
-	"l2":          xkmssdk.QRDBIVFL2Distance,
-	"L2":          xkmssdk.QRDBIVFL2Distance,
-	"euclidean":   xkmssdk.QRDBIVFL2Distance,
-	"EUCLIDEAN":   xkmssdk.QRDBIVFL2Distance,
-	"cosine":      xkmssdk.QRDBIVFCosineDistance,
-	"COSINE":      xkmssdk.QRDBIVFCosineDistance,
-	"dot_product": xkmssdk.QRDBIVFDotProductDistance,
-	"DOT_PRODUCT": xkmssdk.QRDBIVFDotProductDistance,
+var ivfDistanceMetricMap = map[string]qrdbsdk.IVFDistanceMetric{
+	"l2":          qrdbsdk.IVFL2Distance,
+	"L2":          qrdbsdk.IVFL2Distance,
+	"euclidean":   qrdbsdk.IVFL2Distance,
+	"EUCLIDEAN":   qrdbsdk.IVFL2Distance,
+	"cosine":      qrdbsdk.IVFCosineDistance,
+	"COSINE":      qrdbsdk.IVFCosineDistance,
+	"dot_product": qrdbsdk.IVFDotProductDistance,
+	"DOT_PRODUCT": qrdbsdk.IVFDotProductDistance,
 }
 
 // parseIVFDistanceMetric converts a string metric to an IVF DistanceMetric.
-func parseIVFDistanceMetric(metric string) xkmssdk.QRDBIVFDistanceMetric {
+func parseIVFDistanceMetric(metric string) qrdbsdk.IVFDistanceMetric {
 	if dm, ok := ivfDistanceMetricMap[metric]; ok {
 		return dm
 	}
-	return xkmssdk.QRDBIVFL2Distance
+	return qrdbsdk.IVFL2Distance
 }
 
 // ivfFlatAdapter wraps a go-qrdb IVF index to satisfy VectorIndex.
 // IVF indexes use string IDs internally, so this adapter converts
 // uint64 IDs to strings and vice versa.
 type ivfFlatAdapter struct {
-	index      xkmssdk.QRDBIVFIndex
+	index      qrdbsdk.IVFIndex
 	dimensions int
 }
 
@@ -347,7 +347,7 @@ func createIVFFlatIndex(config *interfaces.VectorIndexConfig) (interfaces.Vector
 		dims = 128 // reasonable default
 	}
 
-	ivfConfig := &xkmssdk.QRDBIVFConfig{
+	ivfConfig := &qrdbsdk.IVFConfig{
 		NumCentroids:   nlist,
 		Dimensions:     dims,
 		MaxIterations:  25,
@@ -357,7 +357,7 @@ func createIVFFlatIndex(config *interfaces.VectorIndexConfig) (interfaces.Vector
 		DistanceMetric: parseIVFDistanceMetric(config.DistanceMetric),
 	}
 
-	index, err := xkmssdk.QRDBNewIVFIndex(ivfConfig)
+	index, err := qrdbsdk.NewIVFIndex(ivfConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +384,7 @@ func createIVFPQIndex(config *interfaces.VectorIndexConfig) (interfaces.VectorIn
 		dims = 128
 	}
 
-	ivfConfig := &xkmssdk.QRDBIVFConfig{
+	ivfConfig := &qrdbsdk.IVFConfig{
 		NumCentroids:    nlist,
 		Dimensions:      dims,
 		MaxIterations:   25,
@@ -397,7 +397,7 @@ func createIVFPQIndex(config *interfaces.VectorIndexConfig) (interfaces.VectorIn
 		DistanceMetric:  parseIVFDistanceMetric(config.DistanceMetric),
 	}
 
-	index, err := xkmssdk.QRDBNewIVFIndex(ivfConfig)
+	index, err := qrdbsdk.NewIVFIndex(ivfConfig)
 	if err != nil {
 		return nil, err
 	}

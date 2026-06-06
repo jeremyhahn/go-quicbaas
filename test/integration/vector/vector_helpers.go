@@ -17,7 +17,6 @@ package vector
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"math"
@@ -62,13 +61,18 @@ func NewVectorCluster(t *testing.T) *VectorCluster {
 		grpcPorts: [3]int{50051, 50052, 50053},
 	}
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		t.Fatalf("load integration TLS config: %v", err)
+	}
+
 	// Connect to each node's gRPC endpoint
 	for i := 0; i < 3; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		conn, err := googlegrpc.DialContext(
 			ctx,
 			endpoints[i],
-			googlegrpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			googlegrpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 			googlegrpc.WithBlock(),
 		)
 		cancel()
@@ -94,7 +98,7 @@ func NewVectorCluster(t *testing.T) *VectorCluster {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := cluster.clients[0].ListNamespaces(ctx, &pb.ListNamespacesRequest{})
+	_, err = cluster.clients[0].ListNamespaces(ctx, &pb.ListNamespacesRequest{})
 	if err != nil {
 		// Clean up connections before failing
 		for i := range cluster.conns {

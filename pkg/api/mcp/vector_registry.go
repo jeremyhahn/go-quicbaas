@@ -42,7 +42,7 @@ func (r *ToolRegistry) registerVectorTools() {
 	// Also register the simplified search alias for compatibility
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_vector_search",
-		Description: "Perform k-NN similarity search to find nearest neighbors (alias for quicbaas_vector_search_similar)",
+		Description: "Perform k-NN similarity search to find nearest neighbors (alias for qrdb_vector_search_similar)",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -66,7 +66,7 @@ func (r *ToolRegistry) registerVectorTools() {
 
 // isVectorTool returns true if the tool name is a vector database tool.
 func isVectorTool(name string) bool {
-	return strings.HasPrefix(name, "quicbaas_vector_")
+	return strings.HasPrefix(name, "quicbaas_vector_") || strings.HasPrefix(name, "qrdb_vector_")
 }
 
 // executeVectorTool executes a vector database tool and returns the result.
@@ -78,37 +78,37 @@ func (r *ToolRegistry) executeVectorTool(ctx context.Context, name string, args 
 
 	switch name {
 	// Namespace operations
-	case "quicbaas_vector_create_namespace":
+	case "qrdb_vector_create_namespace":
 		return r.handleVectorCreateNamespace(ctx, vectorService, args)
-	case "quicbaas_vector_delete_namespace":
+	case "qrdb_vector_delete_namespace":
 		return r.handleVectorDeleteNamespace(ctx, vectorService, args)
-	case "quicbaas_vector_list_namespaces":
+	case "qrdb_vector_list_namespaces":
 		return r.handleVectorListNamespaces(ctx, vectorService, args)
-	case "quicbaas_vector_get_namespace_info":
+	case "qrdb_vector_get_namespace_info":
 		return r.handleVectorGetNamespaceInfo(ctx, vectorService, args)
 	case "quicbaas_vector_update_namespace":
 		return r.handleVectorUpdateNamespace(ctx, vectorService, args)
 
 	// Vector CRUD operations
-	case "quicbaas_vector_upsert":
+	case "qrdb_vector_upsert":
 		return r.handleVectorUpsert(ctx, vectorService, args)
-	case "quicbaas_vector_batch_upsert":
+	case "qrdb_vector_batch_upsert":
 		return r.handleVectorBatchUpsert(ctx, vectorService, args)
-	case "quicbaas_vector_get":
+	case "qrdb_vector_get":
 		return r.handleVectorGet(ctx, vectorService, args)
-	case "quicbaas_vector_delete":
+	case "qrdb_vector_delete":
 		return r.handleVectorDelete(ctx, vectorService, args)
-	case "quicbaas_vector_update_metadata":
+	case "qrdb_vector_update_metadata":
 		return r.handleVectorUpdateMetadata(ctx, vectorService, args)
-	case "quicbaas_vector_batch_delete":
+	case "qrdb_vector_batch_delete":
 		return r.handleVectorBatchDelete(ctx, vectorService, args)
-	case "quicbaas_vector_list":
+	case "qrdb_vector_list":
 		return r.handleVectorList(ctx, vectorService, args)
 
 	// Search operations
-	case "quicbaas_vector_search", "quicbaas_vector_search_similar":
+	case "quicbaas_vector_search", "qrdb_vector_search_similar":
 		return r.handleVectorSearchSimilar(ctx, vectorService, args)
-	case "quicbaas_vector_search_by_id":
+	case "qrdb_vector_search_by_id":
 		return r.handleVectorSearchByID(ctx, vectorService, args)
 
 	// Stats and health operations
@@ -118,7 +118,7 @@ func (r *ToolRegistry) executeVectorTool(ctx context.Context, name string, args 
 		return r.handleVectorHealth(ctx, vectorService, args)
 
 	// Index operations
-	case "quicbaas_vector_rebuild_index":
+	case "qrdb_vector_rebuild_index":
 		return r.handleVectorRebuildIndex(ctx, vectorService, args)
 	case "quicbaas_vector_get_index_progress":
 		return r.handleVectorGetIndexProgress(ctx, vectorService, args)

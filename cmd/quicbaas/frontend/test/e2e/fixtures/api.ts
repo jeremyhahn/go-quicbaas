@@ -228,13 +228,18 @@ export async function getInviteMetadata(token: string): Promise<InviteMetadata |
   return resp.json() as Promise<InviteMetadata>;
 }
 
-// CreateUserResponse mirrors the daemon's POST /api/v1/tenants/{id}/users response.
+// CreateUserResponse mirrors the daemon's POST /api/v1/tenants/{id}/users
+// response. The daemon returns the canonical iam.User object (id, name,
+// email, tenant_id, ...) with invite_url appended. invite_token and
+// invite_expires_at are carried on the user record itself.
 export interface CreateUserResponse {
-  user_id: string;
+  id: string;
+  tenant_id: string;
   email: string;
+  name?: string;
   invite_token: string;
   invite_url: string;
-  expires_at: string;
+  invite_expires_at: string;
 }
 
 // deleteTestUser removes a user from the given tenant by user ID.

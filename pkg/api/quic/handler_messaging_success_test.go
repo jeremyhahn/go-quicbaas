@@ -50,7 +50,7 @@ func createStartedPushService(t *testing.T) *messaging.PushService {
 func createHandlerWithStartedMsgService(t *testing.T) (*Handler, func()) {
 	t.Helper()
 	msgSvc := createStartedPushService(t)
-	h := NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger(), WithMsgService(msgSvc))
+	h := NewHandler(&mockService{}, nil, nil, nil, createTestLogger(), WithMsgService(msgSvc))
 	cleanup := func() {
 		msgSvc.Stop(context.Background())
 	}

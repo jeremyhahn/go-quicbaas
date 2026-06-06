@@ -15,7 +15,6 @@ package grpc
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"testing"
 	"time"
@@ -24,9 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -160,91 +157,6 @@ func TestUnaryErrorHandlerInterceptor(t *testing.T) {
 	resp, err := interceptor(context.Background(), "request", info, handler)
 	assert.Error(t, err)
 	assert.Nil(t, resp)
-}
-
-func TestUnaryFIPSInterceptor(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	tests := []struct {
-		name        string
-		fipsEnabled bool
-		ctx         context.Context
-		expectError bool
-		errorCode   codes.Code
-	}{
-		{
-			name:        "FIPS disabled - no TLS",
-			fipsEnabled: false,
-			ctx:         context.Background(),
-			expectError: false,
-		},
-		{
-			name:        "FIPS enabled - no peer info",
-			fipsEnabled: true,
-			ctx:         context.Background(),
-			expectError: true,
-			errorCode:   codes.FailedPrecondition,
-		},
-		{
-			name:        "FIPS enabled - FIPS-compliant TLS",
-			fipsEnabled: true,
-			ctx:         createContextWithTLS(tls.VersionTLS13, tls.TLS_AES_256_GCM_SHA384),
-			expectError: false,
-		},
-		{
-			name:        "FIPS enabled - non-FIPS cipher suite",
-			fipsEnabled: true,
-			ctx:         createContextWithTLS(tls.VersionTLS13, tls.TLS_CHACHA20_POLY1305_SHA256),
-			expectError: true,
-			errorCode:   codes.FailedPrecondition,
-		},
-		{
-			name:        "FIPS enabled - old TLS version",
-			fipsEnabled: true,
-			ctx:         createContextWithTLS(tls.VersionTLS12, tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384),
-			expectError: true,
-			errorCode:   codes.FailedPrecondition,
-		},
-		{
-			name:        "FIPS enabled - TLS 1.3 with AES-128-GCM",
-			fipsEnabled: true,
-			ctx:         createContextWithTLS(tls.VersionTLS13, tls.TLS_AES_128_GCM_SHA256),
-			expectError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			interceptor := UnaryFIPSInterceptor(tt.fipsEnabled, log)
-
-			info := &grpc.UnaryServerInfo{
-				FullMethod: "/quicbaas.QuicBaaS/Put",
-			}
-
-			handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-				return "response", nil
-			}
-
-			resp, err := interceptor(tt.ctx, "request", info, handler)
-
-			if tt.expectError {
-				assert.Error(t, err)
-				st, ok := status.FromError(err)
-				assert.True(t, ok)
-				assert.Equal(t, tt.errorCode, st.Code())
-				assert.Contains(t, st.Message(), "FIPS compliance validation failed")
-				assert.Nil(t, resp)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, "response", resp)
-			}
-		})
-	}
 }
 
 func TestUnaryTimeoutInterceptor(t *testing.T) {
@@ -436,113 +348,6 @@ func TestUnaryRequestIDInterceptor(t *testing.T) {
 	assert.Equal(t, "response", resp)
 }
 
-func TestValidateFIPSCompliance(t *testing.T) {
-	tests := []struct {
-		name          string
-		ctx           context.Context
-		expectError   bool
-		errorContains string
-	}{
-		{
-			name:          "no peer information",
-			ctx:           context.Background(),
-			expectError:   true,
-			errorContains: "no peer information",
-		},
-		{
-			name:          "peer without TLS",
-			ctx:           createContextWithNonTLSPeer(),
-			expectError:   true,
-			errorContains: "TLS not enabled",
-		},
-		{
-			name:          "TLS 1.2 - insufficient version",
-			ctx:           createContextWithTLS(tls.VersionTLS12, tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384),
-			expectError:   true,
-			errorContains: "insufficient TLS version",
-		},
-		{
-			name:          "TLS 1.3 with non-FIPS cipher",
-			ctx:           createContextWithTLS(tls.VersionTLS13, tls.TLS_CHACHA20_POLY1305_SHA256),
-			expectError:   true,
-			errorContains: "non-FIPS cipher suite",
-		},
-		{
-			name:        "TLS 1.3 with AES-256-GCM - valid",
-			ctx:         createContextWithTLS(tls.VersionTLS13, tls.TLS_AES_256_GCM_SHA384),
-			expectError: false,
-		},
-		{
-			name:        "TLS 1.3 with AES-128-GCM - valid",
-			ctx:         createContextWithTLS(tls.VersionTLS13, tls.TLS_AES_128_GCM_SHA256),
-			expectError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateFIPSCompliance(tt.ctx)
-
-			if tt.expectError {
-				assert.NotNil(t, err)
-				assert.Contains(t, err.Error(), tt.errorContains)
-			} else {
-				assert.Nil(t, err)
-			}
-		})
-	}
-}
-
-func TestFIPSValidationError(t *testing.T) {
-	t.Run("with detail", func(t *testing.T) {
-		err := &FIPSValidationError{
-			Reason: "test reason",
-			Detail: "test detail",
-		}
-		assert.Contains(t, err.Error(), "test reason")
-		assert.Contains(t, err.Error(), "test detail")
-	})
-
-	t.Run("without detail", func(t *testing.T) {
-		err := &FIPSValidationError{
-			Reason: "test reason",
-		}
-		assert.Contains(t, err.Error(), "test reason")
-		assert.NotContains(t, err.Error(), "()")
-	})
-}
-
-func TestIsFIPSApprovedCipherSuite(t *testing.T) {
-	tests := []struct {
-		name        string
-		cipherSuite uint16
-		expected    bool
-	}{
-		{"TLS_AES_128_GCM_SHA256", tls.TLS_AES_128_GCM_SHA256, true},
-		{"TLS_AES_256_GCM_SHA384", tls.TLS_AES_256_GCM_SHA384, true},
-		{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, true},
-		{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, true},
-		{"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, true},
-		{"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, true},
-		{"TLS_CHACHA20_POLY1305_SHA256 (not FIPS)", tls.TLS_CHACHA20_POLY1305_SHA256, false},
-		{"Unknown cipher", 0x9999, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsFIPSApprovedCipherSuite(tt.cipherSuite)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestGetFIPSApprovedCipherSuiteNames(t *testing.T) {
-	names := GetFIPSApprovedCipherSuiteNames()
-	assert.Len(t, names, len(FIPSApprovedCipherSuites))
-	assert.Contains(t, names, "TLS_AES_128_GCM_SHA256")
-	assert.Contains(t, names, "TLS_AES_256_GCM_SHA384")
-}
-
 func BenchmarkUnaryLoggingInterceptor(b *testing.B) {
 	log, err := logger.New(logger.LogConfig{
 		Level:  "error",
@@ -613,15 +418,6 @@ func BenchmarkInterceptorChain(b *testing.B) {
 	}
 }
 
-func BenchmarkFIPSValidation(b *testing.B) {
-	ctx := createContextWithTLS(tls.VersionTLS13, tls.TLS_AES_256_GCM_SHA384)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = validateFIPSCompliance(ctx)
-	}
-}
-
 func BenchmarkStreamTimeoutInterceptor(b *testing.B) {
 	interceptor := StreamTimeoutInterceptor(5 * time.Minute)
 
@@ -640,35 +436,6 @@ func BenchmarkStreamTimeoutInterceptor(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = interceptor(nil, stream, info, handler)
 	}
-}
-
-// Helper functions for creating test contexts
-
-// createContextWithTLS creates a context with TLS peer information.
-func createContextWithTLS(version uint16, cipherSuite uint16) context.Context {
-	tlsInfo := credentials.TLSInfo{
-		State: tls.ConnectionState{
-			Version:     version,
-			CipherSuite: cipherSuite,
-		},
-	}
-	p := &peer.Peer{
-		AuthInfo: tlsInfo,
-	}
-	return peer.NewContext(context.Background(), p)
-}
-
-// nonTLSAuthInfo is an AuthInfo that is not TLS.
-type nonTLSAuthInfo struct{}
-
-func (nonTLSAuthInfo) AuthType() string { return "non-tls" }
-
-// createContextWithNonTLSPeer creates a context with a peer that has non-TLS auth.
-func createContextWithNonTLSPeer() context.Context {
-	p := &peer.Peer{
-		AuthInfo: nonTLSAuthInfo{},
-	}
-	return peer.NewContext(context.Background(), p)
 }
 
 // --- Merged from interceptors_extended_test.go ---
@@ -855,82 +622,6 @@ func TestStreamErrorHandlerInterceptor(t *testing.T) {
 	})
 }
 
-func TestStreamFIPSInterceptorDisabled(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	interceptor := StreamFIPSInterceptor(false, log)
-
-	stream := &testServerStream{ctx: context.Background()}
-	info := &grpc.StreamServerInfo{
-		FullMethod: "/test.Service/Method",
-	}
-
-	handler := func(srv interface{}, ss grpc.ServerStream) error {
-		return nil
-	}
-
-	err = interceptor(nil, stream, info, handler)
-	assert.NoError(t, err)
-}
-
-func TestStreamFIPSInterceptorEnabledNoTLS(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	interceptor := StreamFIPSInterceptor(true, log)
-
-	// Create context without TLS - should fail FIPS validation
-	stream := &testServerStream{ctx: context.Background()}
-	info := &grpc.StreamServerInfo{
-		FullMethod: "/test.Service/Method",
-	}
-
-	handler := func(srv interface{}, ss grpc.ServerStream) error {
-		return nil
-	}
-
-	err = interceptor(nil, stream, info, handler)
-	assert.Error(t, err)
-	st, ok := status.FromError(err)
-	assert.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-	assert.Contains(t, st.Message(), "FIPS compliance validation failed")
-}
-
-func TestStreamFIPSInterceptorEnabledWithFIPSTLS(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	interceptor := StreamFIPSInterceptor(true, log)
-
-	// Create context with FIPS-compliant TLS
-	ctx := createFIPSCompliantTLSContext()
-	stream := &testServerStream{ctx: ctx}
-	info := &grpc.StreamServerInfo{
-		FullMethod: "/test.Service/Method",
-	}
-
-	handler := func(srv interface{}, ss grpc.ServerStream) error {
-		return nil
-	}
-
-	err = interceptor(nil, stream, info, handler)
-	assert.NoError(t, err)
-}
-
 func TestStreamInterceptorChainOrdering(t *testing.T) {
 	callOrder := []string{}
 
@@ -1073,46 +764,4 @@ func TestStreamMetricsInterceptorWithNonStatusError(t *testing.T) {
 
 	err := interceptor(nil, stream, info, handler)
 	assert.Error(t, err)
-}
-
-// createFIPSCompliantTLSContext creates a context with FIPS-compliant TLS peer info.
-func createFIPSCompliantTLSContext() context.Context {
-	tlsInfo := credentials.TLSInfo{
-		State: tls.ConnectionState{
-			Version:     tls.VersionTLS13,
-			CipherSuite: tls.TLS_AES_256_GCM_SHA384,
-		},
-	}
-	p := &peer.Peer{
-		AuthInfo: tlsInfo,
-	}
-	return peer.NewContext(context.Background(), p)
-}
-
-// createNonFIPSCipherTLSContext creates a context with TLS 1.3 but non-FIPS cipher.
-func createNonFIPSCipherTLSContext() context.Context {
-	tlsInfo := credentials.TLSInfo{
-		State: tls.ConnectionState{
-			Version:     tls.VersionTLS13,
-			CipherSuite: tls.TLS_CHACHA20_POLY1305_SHA256, // Not FIPS-approved
-		},
-	}
-	p := &peer.Peer{
-		AuthInfo: tlsInfo,
-	}
-	return peer.NewContext(context.Background(), p)
-}
-
-// createOldTLSVersionContext creates a context with TLS 1.2.
-func createOldTLSVersionContext() context.Context {
-	tlsInfo := credentials.TLSInfo{
-		State: tls.ConnectionState{
-			Version:     tls.VersionTLS12,
-			CipherSuite: tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		},
-	}
-	p := &peer.Peer{
-		AuthInfo: tlsInfo,
-	}
-	return peer.NewContext(context.Background(), p)
 }

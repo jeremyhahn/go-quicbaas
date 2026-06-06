@@ -127,14 +127,14 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request
 	var req struct {
-		ID               string                 `json:"id,omitempty"`
-		Email            string                 `json:"email"`
-		Username         string                 `json:"username,omitempty"`
-		Name             string                 `json:"name,omitempty"`
-		Attributes       map[string]interface{} `json:"attributes,omitempty"`
-		Enabled          bool                   `json:"enabled"`
-		AuthMethods      []string               `json:"auth_methods,omitempty"`
-		InviteExpiryHours int                   `json:"invite_expiry_hours,omitempty"`
+		ID                string                 `json:"id,omitempty"`
+		Email             string                 `json:"email"`
+		Username          string                 `json:"username,omitempty"`
+		Name              string                 `json:"name,omitempty"`
+		Attributes        map[string]interface{} `json:"attributes,omitempty"`
+		Enabled           bool                   `json:"enabled"`
+		AuthMethods       []string               `json:"auth_methods,omitempty"`
+		InviteExpiryHours int                    `json:"invite_expiry_hours,omitempty"`
 	}
 
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -184,25 +184,10 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check tenant quota before creating user
-	tenantMgr, tenantOk := h.server.service.(interface {
-		GetTenantManager(ctx context.Context) (TenantManager, error)
-	})
-	if tenantOk {
-		mgr, err := tenantMgr.GetTenantManager(ctx)
-		if err == nil {
-			tenant, err := mgr.GetTenant(ctx, tenantID)
-			if err == nil && tenant.Quotas.MaxUsers > 0 {
-				// Count current users
-				users, _ := store.ListUsers(ctx, tenantID, iam.ListUsersOptions{Limit: tenant.Quotas.MaxUsers + 1})
-				if len(users) >= tenant.Quotas.MaxUsers {
-					RespondIAMError(w, r, http.StatusForbidden,
-						NewIAMAPIError(ErrForbidden, "user quota exceeded"))
-					return
-				}
-			}
-		}
-	}
+	// User quota (max users per tenant) is enforced by qrdb's TenantServicer.
+	// qrdb will return a quota-exceeded error if the limit is reached; the
+	// service layer propagates that as a 403 Forbidden through the normal error
+	// path below. No BaaS-local count is maintained here.
 
 	// Create user
 	inviteExpiry := time.Duration(req.InviteExpiryHours) * time.Hour
@@ -253,7 +238,8 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		InviteExpiresAt: func() **time.Time { p := &expiresAt; return &p }(),
 	}
 
-	if _, updateErr := store.UpdateUser(ctx, tenantID, user.ID, updateOpts); updateErr != nil {
+	updatedUser, updateErr := store.UpdateUser(ctx, tenantID, user.ID, updateOpts)
+	if updateErr != nil {
 		// Non-fatal: user was created; just cannot issue invite. Log and continue.
 		h.logAuditEvent(ctx, tenantID,
 			iam.AuditEventUserManagement,
@@ -263,6 +249,8 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 			&iam.AuditResource{Type: "user", ID: user.ID, Name: user.Email},
 			map[string]interface{}{"email": user.Email, "error": updateErr.Error()},
 		)
+	} else if updatedUser != nil {
+		user = updatedUser
 	}
 
 	// Derive invite URL. Use X-Forwarded-Host or Host header.
@@ -286,15 +274,18 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		map[string]interface{}{"email": user.Email, "auth_methods": req.AuthMethods},
 	)
 
-	// Return user + one-time invite. The token is NOT stored in cleartext after this response.
-	resp := map[string]interface{}{
-		"user_id":      user.ID,
-		"email":        user.Email,
-		"invite_token": inviteToken,
-		"invite_url":   inviteURL,
-		"expires_at":   expiresAt,
-	}
-	RespondJSON(w, r, http.StatusCreated, resp)
+	// Return the canonical user object (matches the shape returned by GetUser/
+	// UpdateUser/ListUsers) with invite_url appended. invite_token and
+	// invite_expires_at are carried on the user record itself. This is the
+	// only place the cleartext invite token is exposed; it is cleared from
+	// the user record at activation time.
+	RespondJSON(w, r, http.StatusCreated, struct {
+		*iam.User
+		InviteURL string `json:"invite_url,omitempty"`
+	}{
+		User:      user,
+		InviteURL: inviteURL,
+	})
 }
 
 // GetUser handles GET /api/v1/tenants/{tenant_id}/users/{user_id} - Get a specific user.

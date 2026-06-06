@@ -7,7 +7,7 @@
 # source of truth for cross-module resolution — same model as local dev.
 # No `.deps/` staging or replace-directive rewriting required.
 
-ARG BUILD_TAGS="local quic raft rest rag timeseries vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio"
+ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio"
 
 # ============================================================================
 # Stage 1: Build binaries inside a Go workspace mirroring the host layout.
@@ -15,6 +15,11 @@ ARG BUILD_TAGS="local quic raft rest rag timeseries vector iam mcp quicbaas_sign
 FROM golang:1.26-alpine AS builder
 
 ARG BUILD_TAGS
+# COVER: when set to "1", build the daemon with Go coverage instrumentation
+# (-cover -coverpkg=.../pkg/server) so that running the daemon in the cluster
+# emits coverage data to GOCOVERDIR. Production builds leave COVER empty and
+# get an ordinary, uninstrumented binary.
+ARG COVER=""
 
 # Install build dependencies
 RUN apk add --no-cache \
@@ -36,6 +41,8 @@ COPY --from=workspace go-quicraft   ./go-quicraft
 COPY --from=workspace go-signal     ./go-signal
 COPY --from=workspace go-truststrap ./go-truststrap
 COPY --from=workspace go-xkms       ./go-xkms
+COPY --from=workspace go-codec      ./go-codec
+COPY --from=workspace go-frost       ./go-frost
 
 # go-quicbaas itself comes from the default context (project root).
 COPY . ./go-quicbaas
@@ -46,7 +53,7 @@ COPY . ./go-quicbaas
 # single source of truth means individual go.mod files do not need any
 # Docker-specific replace shimming.
 RUN { \
-        echo 'go 1.26.3'; \
+        echo 'go 1.26.4'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \
@@ -59,6 +66,8 @@ RUN { \
         echo '	./go-quicraft'; \
         echo '	./go-signal'; \
         echo '	./go-xkms'; \
+        echo '	./go-codec'; \
+        echo '	./go-frost'; \
         echo '	./go-xkms/sdk/go'; \
         echo '	./go-xkms/xkey'; \
         echo ')'; \
@@ -73,6 +82,9 @@ RUN { \
         echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
         echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
         echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
         echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
         echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
         echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
@@ -88,8 +100,19 @@ WORKDIR /workspace/go-quicbaas
 RUN rm -f go.sum sdk/go/go.sum
 
 # Build node + CLI. go.work at /workspace/go.work resolves every sibling.
-RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
-    go build -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd && \
+# When COVER=1 the daemon is built with coverage instrumentation scoped to
+# pkg/server; -ldflags "-w -s" is dropped because stripping is incompatible
+# with the coverage runtime's need to emit a meta-data file at exit.
+RUN if [ "${COVER}" = "1" ]; then \
+        echo "Building coverage-instrumented quicbaasd (-coverpkg=pkg/server, covermode=atomic)"; \
+        CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+        go build -cover -covermode=atomic \
+            -coverpkg=github.com/jeremyhahn/go-quicbaas/pkg/server,github.com/jeremyhahn/go-quicbaas/cmd/quicbaasd \
+            -tags "coverage ${BUILD_TAGS}" -o bin/quicbaasd ./cmd/quicbaasd; \
+    else \
+        CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+        go build -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd; \
+    fi && \
     CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
     go build -tags "${BUILD_TAGS}" -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
 
@@ -112,8 +135,9 @@ RUN apk add --no-cache \
 RUN addgroup -g 1000 quicbaas && \
     adduser -D -u 1000 -G quicbaas -s /bin/bash quicbaas
 
-RUN mkdir -p /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas && \
-    chown -R quicbaas:quicbaas /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas
+RUN mkdir -p /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas /covdata && \
+    chown -R quicbaas:quicbaas /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas /covdata && \
+    chmod 0777 /covdata
 
 # Copy built binaries from the workspace builder stage
 COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd

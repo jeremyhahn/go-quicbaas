@@ -163,13 +163,13 @@ type dekProviderMockLogger struct {
 	fields      map[string]interface{}
 }
 
-func (m *dekProviderMockLogger) Debug(msg string, args ...any)                          { m.debugCalled = true }
+func (m *dekProviderMockLogger) Debug(msg string, args ...any)             { m.debugCalled = true }
 func (m *dekProviderMockLogger) Debugf(format string, args ...interface{}) {}
-func (m *dekProviderMockLogger) Info(msg string, args ...any)                           {}
+func (m *dekProviderMockLogger) Info(msg string, args ...any)              {}
 func (m *dekProviderMockLogger) Infof(format string, args ...interface{})  {}
-func (m *dekProviderMockLogger) Warn(msg string, args ...any)                           {}
+func (m *dekProviderMockLogger) Warn(msg string, args ...any)              {}
 func (m *dekProviderMockLogger) Warnf(format string, args ...interface{})  {}
-func (m *dekProviderMockLogger) Error(msg string, args ...any)                          {}
+func (m *dekProviderMockLogger) Error(msg string, args ...any)             {}
 func (m *dekProviderMockLogger) Errorf(format string, args ...interface{}) {}
 func (m *dekProviderMockLogger) Fatal(msg string)                          {}
 func (m *dekProviderMockLogger) Fatalf(format string, args ...interface{}) {}

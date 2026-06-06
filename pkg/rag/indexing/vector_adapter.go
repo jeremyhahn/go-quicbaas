@@ -16,50 +16,120 @@
 package indexing
 
 import (
+	"context"
+
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag"
 )
 
+// VectorIndexOption configures VectorIndex creation with optional dependencies.
+type VectorIndexOption func(*vectorIndexOptions)
+
+// vectorIndexOptions holds optional parameters for VectorIndex construction.
+type vectorIndexOptions struct {
+	vectorClient   qrdbtransport.VectorClient
+	tenantID       string
+	distanceMetric string
+}
+
+// WithVectorClient injects a qrdb VectorClient so that "qrdb" and "auto" index
+// types can delegate to the persistent, tenant-safe HNSW vector primitive.
+func WithVectorClient(client qrdbtransport.VectorClient) VectorIndexOption {
+	return func(o *vectorIndexOptions) {
+		o.vectorClient = client
+	}
+}
+
+// WithTenantID sets the tenant ID used to prefix the physical namespace in qrdb,
+// providing per-tenant data isolation. When empty the logical namespace is used
+// as-is (system/single-tenant operation).
+func WithTenantID(tenantID string) VectorIndexOption {
+	return func(o *vectorIndexOptions) {
+		o.tenantID = tenantID
+	}
+}
+
+// WithDistanceMetric overrides the distance metric for the qrdb index.
+// Accepted values: "cosine", "euclidean", "dot_product". Defaults to "cosine".
+func WithDistanceMetric(metric string) VectorIndexOption {
+	return func(o *vectorIndexOptions) {
+		o.distanceMetric = metric
+	}
+}
+
 // indexTypeHandlers maps index type names to their factory functions for O(1) dispatch.
-var indexTypeHandlers = map[string]func(cfg IndexingConfig, dimensions int) (rag.VectorIndex, error){
+// Each handler receives the config, dimensions, a context, and the resolved options.
+var indexTypeHandlers = map[string]func(ctx context.Context, cfg IndexingConfig, dimensions int, opts *vectorIndexOptions) (rag.VectorIndex, error){
 	"auto":   newAutoIndex,
 	"memory": newMemoryIndex,
-	"hnsw":   newHNSWOrMemoryIndex,
+	"hnsw":   newHNSWOrQRDBIndex,
+	"qrdb":   newQRDBIndex,
 }
 
 // NewVectorIndexFromConfig creates a VectorIndex based on the provided configuration.
-// It selects the appropriate backend ("auto", "memory", or "hnsw") and returns
-// a configured index with the given dimensionality.
-func NewVectorIndexFromConfig(cfg IndexingConfig, dimensions int) (rag.VectorIndex, error) {
+// It selects the appropriate backend ("auto", "memory", "hnsw", or "qrdb") and
+// returns a configured index with the given dimensionality.
+//
+// When opts include a WithVectorClient, "auto" and "hnsw" resolve to the qrdb-backed
+// HNSW index for persistent, barrier-encrypted storage. Without a VectorClient they
+// fall back to the in-memory brute-force implementation.
+func NewVectorIndexFromConfig(cfg IndexingConfig, dimensions int, opts ...VectorIndexOption) (rag.VectorIndex, error) {
 	if cfg.GPUAccelerated {
 		return nil, &GPUUnavailableError{}
+	}
+
+	o := &vectorIndexOptions{}
+	for _, opt := range opts {
+		opt(o)
 	}
 
 	handler, ok := indexTypeHandlers[cfg.IndexType]
 	if !ok {
 		return nil, &UnsupportedIndexTypeError{IndexType: cfg.IndexType}
 	}
-	return handler(cfg, dimensions)
+	return handler(context.Background(), cfg, dimensions, o)
 }
 
-// newAutoIndex tries HNSW first, then falls back to memory.
-func newAutoIndex(cfg IndexingConfig, dimensions int) (rag.VectorIndex, error) {
-	// HNSW is not yet available as a standalone package,
-	// so "auto" currently resolves to the in-memory brute-force index.
-	return newMemoryIndex(cfg, dimensions)
+// newAutoIndex selects the qrdb HNSW index when a VectorClient is available;
+// otherwise falls back to the in-memory brute-force index.
+func newAutoIndex(ctx context.Context, cfg IndexingConfig, dimensions int, opts *vectorIndexOptions) (rag.VectorIndex, error) {
+	if opts.vectorClient != nil {
+		return newQRDBIndex(ctx, cfg, dimensions, opts)
+	}
+	return newMemoryIndex(ctx, cfg, dimensions, opts)
 }
 
 // newMemoryIndex creates an in-memory brute-force vector index.
-func newMemoryIndex(_ IndexingConfig, dimensions int) (rag.VectorIndex, error) {
+// This backend is retained as an explicit dev/test option (index_type: "memory").
+func newMemoryIndex(_ context.Context, _ IndexingConfig, dimensions int, _ *vectorIndexOptions) (rag.VectorIndex, error) {
 	return rag.NewVectorIndex(&rag.VectorIndexConfig{
 		Dimensions:     dimensions,
 		DistanceMetric: rag.CosineDistance,
 	})
 }
 
-// newHNSWOrMemoryIndex creates an HNSW index when the qrdb HNSW adapter is
-// available, otherwise falls back to the in-memory brute-force index. The HNSW
-// adapter will be wired in when the qrdb vector package exposes a standalone
-// HNSW constructor compatible with the rag.VectorIndex interface.
-func newHNSWOrMemoryIndex(cfg IndexingConfig, dimensions int) (rag.VectorIndex, error) {
-	return newMemoryIndex(cfg, dimensions)
+// newHNSWOrQRDBIndex creates a qrdb-backed HNSW index when a VectorClient is
+// available, otherwise falls back to the in-memory brute-force index.
+func newHNSWOrQRDBIndex(ctx context.Context, cfg IndexingConfig, dimensions int, opts *vectorIndexOptions) (rag.VectorIndex, error) {
+	if opts.vectorClient != nil {
+		return newQRDBIndex(ctx, cfg, dimensions, opts)
+	}
+	return newMemoryIndex(ctx, cfg, dimensions, opts)
+}
+
+// newQRDBIndex creates a persistent qrdb-backed HNSW vector index.
+// It requires a VectorClient to have been provided via WithVectorClient.
+func newQRDBIndex(ctx context.Context, cfg IndexingConfig, dimensions int, opts *vectorIndexOptions) (rag.VectorIndex, error) {
+	if opts.vectorClient == nil {
+		return nil, &QRDBVectorClientNilError{}
+	}
+	idxCfg := qrdbVectorIndexConfig{
+		Client:         opts.vectorClient,
+		Namespace:      cfg.Namespace,
+		TenantID:       opts.tenantID,
+		Dimension:      dimensions,
+		DistanceMetric: opts.distanceMetric,
+	}
+	return newQRDBVectorIndex(ctx, idxCfg)
 }

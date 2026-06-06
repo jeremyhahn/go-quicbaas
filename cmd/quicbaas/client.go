@@ -118,11 +118,22 @@ func buildSDKClientOptions() ([]quicbaas.Option, error) {
 	case "embedded":
 		// Embedded transport uses an in-process QuicBaaS server.
 		// Get or create the embedded server and use its service.
-		svc, err := getEmbeddedService()
+		es, err := getOrCreateEmbeddedServer()
 		if err != nil {
 			return nil, err
 		}
-		opts = append(opts, quicbaas.WithEmbedded(svc))
+		opts = append(opts, quicbaas.WithEmbedded(es.service))
+		// Wire the qrdb sub-client to dispatch in-process against the
+		// embedded server's per-shard baasTransport (via the BaaS KV +
+		// Admin adapters) plus the bootstrap ceremony services. Without
+		// WithEmbeddedQRDB, the qrdb sub-client has no listener to dial
+		// in embedded mode and Security().Ceremony() / Security().Barrier()
+		// would fail with a "produced zero addresses" transport error.
+		qrdbOpt, err := embeddedQRDBOption(es)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, qrdbOpt)
 	case "grpc", "":
 		// gRPC is the default transport, no option needed
 	default:
@@ -134,18 +145,15 @@ func buildSDKClientOptions() ([]quicbaas.Option, error) {
 		opts = append(opts, quicbaas.WithTimeout(globalTimeout))
 	}
 
-	// TLS configuration
-	if tlsSkipVerify {
-		opts = append(opts, quicbaas.WithInsecure())
-	} else {
-		// Build TLS config from flags or auto-discover from data directory
-		tlsCfg, err := buildTLSConfig()
-		if err != nil {
-			return nil, err
-		}
-		if tlsCfg != nil {
-			opts = append(opts, quicbaas.WithTLSConfig(tlsCfg))
-		}
+	// TLS configuration. QuicBaaS does not support insecure TLS — every
+	// client must trust the cluster's CA (auto-discovered from data-dir
+	// or set via --tls-ca).
+	tlsCfg, err := buildTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	if tlsCfg != nil {
+		opts = append(opts, quicbaas.WithTLSConfig(tlsCfg))
 	}
 
 	return opts, nil

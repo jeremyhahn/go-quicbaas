@@ -1,0 +1,120 @@
+# QuicBaaS Cloud-Seal Integration Test Environment
+#
+# A lightweight, self-contained harness for the cloud-backed barrier sealing
+# strategies (awskms, vault) that go-xkms supplies and quicbaas composes via
+# the build-tagged seal factories (pkg/server/seal_factory_<backend>.go).
+#
+# Unlike docker-compose.integration.yml (a 3-node Raft cluster), this file
+# brings up ONLY the emulators the cloud seal strategies need plus a single
+# test runner that:
+#
+#   * builds quicbaasd WITH the cloud seal tags (awskms vault), and
+#   * spawns a fresh, per-test daemon configured with each cloud strategy
+#     pointed at the emulator, then drives the barrier init -> seal -> unseal
+#     round-trip through the CLI (see test/integration/seal/).
+#
+# Pure-docker emulators (no real cloud credentials):
+#   * localstack  — AWS KMS emulator for the awskms strategy.
+#   * vault       — HashiCorp Vault dev server (Transit) for the vault strategy.
+#
+# gcpkms / azurekv have no faithful local KMS-key-wrapping emulator (the GCS /
+# Azurite emulators only cover object storage, not the KMS/Key-Vault key
+# operations the seal backends invoke); they require real cloud projects. See
+# test/integration/seal/README.md for the exact real-cloud requirements.
+
+services:
+  # AWS KMS emulator for the awskms seal strategy.
+  localstack:
+    image: localstack/localstack:latest
+    hostname: localstack
+    environment:
+      - SERVICES=kms
+      - DEBUG=0
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    networks:
+      - seal-test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
+    restart: on-failure
+
+  # HashiCorp Vault dev server (Transit engine) for the vault seal strategy.
+  # A dev server boots unsealed with an in-memory store and a fixed root token,
+  # so no unseal ceremony is required. IPC_LOCK lets Vault mlock its memory.
+  vault:
+    image: hashicorp/vault:latest
+    hostname: vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=root
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+      - VAULT_ADDR=http://127.0.0.1:8200
+    command: ["vault", "server", "-dev"]
+    networks:
+      - seal-test-network
+    healthcheck:
+      # `vault status` exits 0 when initialized+unsealed (dev server) and
+      # non-zero while still booting.
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+    restart: on-failure
+
+  # Cloud-seal integration test runner. Builds quicbaasd WITH the cloud seal
+  # tags (awskms vault) baked into the image, then runs the tagged seal tests
+  # which spawn per-test daemons against the emulators above.
+  seal-test:
+    build:
+      context: ../..
+      additional_contexts:
+        workspace: ../../..
+      dockerfile: test/integration/Dockerfile.seal
+      args:
+        # The seal factories + the seal tests are both gated on these tags.
+        SEAL_TAGS: "awskms vault"
+        BUILD_TAGS: "${SEAL_BUILD_TAGS:-local quic raft rest iam mcp hashicorpmetrics codec_json codec_yaml awskms vault}"
+    hostname: seal-test
+    user: "0:0"
+    mem_limit: 4g
+    memswap_limit: 4g
+    environment:
+      - QUICBAAS_TEST_MODE=integration
+      - INTEGRATION_TEST=1
+      - CGO_ENABLED=0
+      - QUICBAASD_BINARY=/usr/local/bin/quicbaasd
+      - QUICBAAS_BINARY=/usr/local/bin/quicbaas
+      # LocalStack KMS endpoint + dummy creds (awskms_test.go).
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      # Vault dev server (vault_test.go).
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=root
+    networks:
+      - seal-test-network
+    depends_on:
+      localstack:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    working_dir: /workspace/go-quicbaas
+    command: >
+      bash -c "
+        set -o pipefail;
+        rm -f go.sum sdk/go/go.sum;
+        echo 'Cloud seal integration tests — tags: integration awskms vault';
+        go test -v -p 1 -tags 'integration awskms vault' -timeout 20m ./test/integration/seal/...
+      "
+
+networks:
+  seal-test-network:
+    driver: bridge

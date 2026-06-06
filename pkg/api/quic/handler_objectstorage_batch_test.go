@@ -83,7 +83,7 @@ func createExtendedOSHandler(osSvc *extendedMockOSService) *Handler {
 	svc := &extendedMockOSEnabledService{
 		osSvc: osSvc,
 	}
-	return NewHandler(svc, nil, nil, nil, nil, createOSTestLogger())
+	return NewHandler(svc, nil, nil, nil, createOSTestLogger())
 }
 
 // =============================================================================

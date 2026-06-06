@@ -7,7 +7,7 @@
 # source of truth for cross-module resolution — same model as local dev.
 # No `.deps/` staging or replace-directive rewriting required.
 
-ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp quicbaas_signal hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio"
+ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio"
 
 # ============================================================================
 # Stage 1: Build server binary inside a Go workspace mirroring host layout
@@ -28,13 +28,15 @@ COPY --from=workspace go-quicraft   ./go-quicraft
 COPY --from=workspace go-signal     ./go-signal
 COPY --from=workspace go-truststrap ./go-truststrap
 COPY --from=workspace go-xkms       ./go-xkms
+COPY --from=workspace go-codec      ./go-codec
+COPY --from=workspace go-frost       ./go-frost
 
 # go-quicbaas itself comes from the default context (project root).
 COPY . ./go-quicbaas
 
 # Pruned go.work — see Dockerfile.node for rationale.
 RUN { \
-        echo 'go 1.26.3'; \
+        echo 'go 1.26.4'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \
@@ -47,6 +49,8 @@ RUN { \
         echo '	./go-quicraft'; \
         echo '	./go-signal'; \
         echo '	./go-xkms'; \
+        echo '	./go-codec'; \
+        echo '	./go-frost'; \
         echo '	./go-xkms/sdk/go'; \
         echo '	./go-xkms/xkey'; \
         echo ')'; \
@@ -61,6 +65,9 @@ RUN { \
         echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
         echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
         echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
         echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
         echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
         echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
@@ -123,10 +130,12 @@ COPY --from=workspace go-quicraft   ./go-quicraft
 COPY --from=workspace go-signal     ./go-signal
 COPY --from=workspace go-truststrap ./go-truststrap
 COPY --from=workspace go-xkms       ./go-xkms
+COPY --from=workspace go-codec      ./go-codec
+COPY --from=workspace go-frost       ./go-frost
 COPY . ./go-quicbaas
 
 RUN { \
-        echo 'go 1.26.3'; \
+        echo 'go 1.26.4'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \
@@ -139,6 +148,8 @@ RUN { \
         echo '	./go-quicraft'; \
         echo '	./go-signal'; \
         echo '	./go-xkms'; \
+        echo '	./go-codec'; \
+        echo '	./go-frost'; \
         echo '	./go-xkms/sdk/go'; \
         echo '	./go-xkms/xkey'; \
         echo ')'; \
@@ -153,6 +164,9 @@ RUN { \
         echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
         echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
         echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
         echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
         echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
         echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \

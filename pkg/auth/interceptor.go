@@ -118,6 +118,10 @@ func UnaryAuthInterceptorWithConfig(config *InterceptorConfig) grpc.UnaryServerI
 			}
 		}
 
+		// Inject authenticated Subject into context so service-layer per-key
+		// authorization can access the principal without re-parsing the token.
+		ctx = InjectSubjectIntoContext(ctx, config, token)
+
 		// Proceed with the request
 		return handler(ctx, req)
 	}
@@ -236,6 +240,21 @@ func authorizeWithService(ctx context.Context, config *InterceptorConfig, token,
 	}
 
 	return nil
+}
+
+// InjectSubjectIntoContext injects the authenticated Subject derived from token
+// into ctx so downstream service-layer per-key authorization can access the
+// principal without re-parsing credentials.
+//
+// This is called by the gRPC unary and stream interceptors immediately after
+// successful authentication. It is exported so REST, QUIC, and MCP middleware
+// can reuse the same Subject derivation logic.
+func InjectSubjectIntoContext(ctx context.Context, config *InterceptorConfig, token string) context.Context {
+	subject, err := buildSubjectFromToken(ctx, config.AuthManager, token)
+	if err != nil || subject == nil {
+		return ctx
+	}
+	return SubjectIntoContext(ctx, *subject)
 }
 
 // validateTenantHeader validates that the x-tenant-id header matches the token's tenant.

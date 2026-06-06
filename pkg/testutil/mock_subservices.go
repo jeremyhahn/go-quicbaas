@@ -202,6 +202,12 @@ func (m *MockQuicBaaS) GetKeyPolicy(ctx context.Context, req *service.GetKeyPoli
 	return resp, args.Error(1)
 }
 
+func (m *MockQuicBaaS) DeleteKeyPolicy(ctx context.Context, req *service.DeleteKeyPolicyRequest) (*service.DeleteKeyPolicyResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.DeleteKeyPolicyResponse)
+	return resp, args.Error(1)
+}
+
 func (m *MockQuicBaaS) CreateDEK(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error) {
 	args := m.Called(ctx, req)
 	resp, _ := args.Get(0).(*service.CreateDEKResponse)
@@ -577,57 +583,6 @@ func (m *MockQuicBaaS) RevokeLease(ctx context.Context, req *service.RevokeLease
 func (m *MockQuicBaaS) ListLeases(ctx context.Context, req *service.ListLeasesRequest) (*service.ListLeasesResponse, error) {
 	args := m.Called(ctx, req)
 	resp, _ := args.Get(0).(*service.ListLeasesResponse)
-	return resp, args.Error(1)
-}
-
-// =============================================================================
-// Cluster DEK Service Methods (returned by ClusterDEK() accessor)
-// =============================================================================
-
-func (m *MockQuicBaaS) InitializeClusterDEK(ctx context.Context, req *service.InitClusterDEKRequest) (*service.InitClusterDEKResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.InitClusterDEKResponse)
-	return resp, args.Error(1)
-}
-
-func (m *MockQuicBaaS) GetClusterDEKStatus(ctx context.Context) (*service.ClusterDEKStatusResponse, error) {
-	args := m.Called(ctx)
-	resp, _ := args.Get(0).(*service.ClusterDEKStatusResponse)
-	return resp, args.Error(1)
-}
-
-func (m *MockQuicBaaS) RotateClusterDEK(ctx context.Context, req *service.RotateClusterDEKRequest) (*service.RotateClusterDEKResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.RotateClusterDEKResponse)
-	return resp, args.Error(1)
-}
-
-func (m *MockQuicBaaS) SyncNodeDEK(ctx context.Context, req *service.SyncNodeDEKRequest) (*service.SyncNodeDEKResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.SyncNodeDEKResponse)
-	return resp, args.Error(1)
-}
-
-func (m *MockQuicBaaS) GetNodeDEKStatus(ctx context.Context, req *service.GetNodeDEKStatusRequest) (*service.GetNodeDEKStatusResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.GetNodeDEKStatusResponse)
-	return resp, args.Error(1)
-}
-
-func (m *MockQuicBaaS) GetReencryptionStatus(ctx context.Context) (*service.ReencryptionStatusResponse, error) {
-	args := m.Called(ctx)
-	resp, _ := args.Get(0).(*service.ReencryptionStatusResponse)
-	return resp, args.Error(1)
-}
-
-func (m *MockQuicBaaS) CancelReencryption(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
-func (m *MockQuicBaaS) RecoverDEK(ctx context.Context, req *service.RecoverDEKRequest) (*service.RecoverDEKResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.RecoverDEKResponse)
 	return resp, args.Error(1)
 }
 

@@ -68,10 +68,15 @@ func (s *Server) startQUICServer() error {
 		}
 	}
 
-	// Use the CA-backed in-memory TLS config
+	// Use the CA-backed in-memory TLS config. Advertise both the native
+	// quicbaas-quic ALPN and the qrdb-quic ALPN so the qrdb SDK QUIC
+	// client can reach the credential management surface composed into
+	// the same listener. The QUIC server's per-connection dispatcher
+	// reads the negotiated ALPN and routes streams to the appropriate
+	// wire-format handler.
 	tlsConfig := s.tlsConfig.Clone()
 	tlsConfig.MinVersion = tls.VersionTLS13
-	tlsConfig.NextProtos = []string{"quicbaas-quic"}
+	tlsConfig.NextProtos = []string{"quicbaas-quic", quicapi.QRDBALPN}
 	s.logger.Info("Using CA-backed TLS certificates for QUIC")
 
 	// Create QUIC server configuration
@@ -98,6 +103,38 @@ func (s *Server) startQUICServer() error {
 			Op:   "server.startQUICServer",
 			Err:  &api.OperationFailedError{Operation: "create QUIC server", Cause: err},
 		}
+	}
+
+	// Wire the qrdb credential management service into the QUIC server
+	// so the qrdb-quic ALPN stream dispatcher can serve credential RPCs
+	// against the same in-process service the embedded SDK transport uses.
+	if s.ceremonyServices != nil && s.ceremonyServices.Credential != nil {
+		quicServer.SetQRDBCredentialService(s.ceremonyServices.Credential)
+		s.logger.Info("Credential service wired into QUIC server (qrdb-quic ALPN)")
+	}
+
+	// Wire the barrier and ceremony facades into the QUIC server so the
+	// qrdb-quic ALPN dispatcher can serve barrier.* and ceremony.* RPCs.
+	// These are the SAME facades the gRPC transport registers — built via
+	// buildBarrierCeremonyServices() — so barrier/ceremony behaviour is
+	// identical across every transport. Without this wiring the qrdb SDK
+	// sub-client the quicbaas SDK builds would still reach admin.Health
+	// (always served) but every barrier.Status / ceremony.* call would
+	// fail with the not-configured error.
+	barrierSvc, ceremonySvc := s.buildBarrierCeremonyServices()
+	quicServer.SetBarrierService(barrierSvc)
+	quicServer.SetCeremonyService(ceremonySvc)
+	s.logger.Info("Barrier and Ceremony services wired into QUIC server (qrdb-quic ALPN)")
+
+	// Wire the best-effort tenant-derivation hook. It derives the caller's
+	// tenant from the verified mTLS peer certificate (pinned SPIFFE trust
+	// domain, then home-realm discovery) and stamps it onto the request context
+	// so tenant-scoped operations observe it. It is nil in non-iam builds, in
+	// which case the QUIC handler simply proceeds without a tenant. It never
+	// rejects a request for lack of a tenant.
+	if resolve := s.tenantContextFunc(); resolve != nil {
+		quicServer.SetTenantResolver(quicapi.TenantContextFunc(resolve))
+		s.logger.Info("Tenant resolver wired into QUIC server")
 	}
 
 	// Start QUIC server

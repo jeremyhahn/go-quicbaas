@@ -255,8 +255,12 @@ func TestOIDCGetJWKS(t *testing.T) {
 	}
 
 	key := jwks.Keys[0]
-	if key.KeyID != "default" {
-		t.Errorf("GetJWKS() key ID = %s, want default", key.KeyID)
+	wantKID, err := computeKID(privateKey.Public())
+	if err != nil {
+		t.Fatalf("computeKID() error = %v", err)
+	}
+	if key.KeyID != wantKID {
+		t.Errorf("GetJWKS() key ID = %s, want derived kid %s", key.KeyID, wantKID)
 	}
 
 	if key.Algorithm != string(jose.RS256) {
@@ -815,7 +819,6 @@ func TestOIDCRevoke(t *testing.T) {
 
 // Test UserInfo function
 func TestOIDCUserInfo(t *testing.T) {
-	//t.Skip("TODO: Fix user storage setup - GetUser fails in test environment")
 	provider, _, _, _, memStorage := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -1172,7 +1175,7 @@ func TestOIDCGenerateJWKS(t *testing.T) {
 		t.Fatalf("failed to generate RSA key: %v", err)
 	}
 
-	jwks, err := generateJWKS(privateKey)
+	jwks, err := generateJWKS(privateKey, "RS256")
 	if err != nil {
 		t.Fatalf("generateJWKS() error = %v", err)
 	}
@@ -1185,9 +1188,20 @@ func TestOIDCGenerateJWKS(t *testing.T) {
 		t.Errorf("generateJWKS() keys count = %d, want 1", len(jwks.Keys))
 	}
 
+	// The kid is derived from the key's public SPKI (stable across restarts),
+	// not a hardcoded "default".
+	wantKID, err := computeKID(privateKey.Public())
+	if err != nil {
+		t.Fatalf("computeKID() error = %v", err)
+	}
+
 	key := jwks.Keys[0]
-	if key.KeyID != "default" {
-		t.Errorf("generateJWKS() key ID = %s, want default", key.KeyID)
+	if key.KeyID != wantKID {
+		t.Errorf("generateJWKS() key ID = %s, want derived kid %s", key.KeyID, wantKID)
+	}
+
+	if key.Algorithm != "RS256" {
+		t.Errorf("generateJWKS() algorithm = %s, want RS256", key.Algorithm)
 	}
 
 	if key.Use != "sig" {

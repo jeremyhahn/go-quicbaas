@@ -19,12 +19,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +32,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // Test environment configuration
@@ -42,17 +42,7 @@ var (
 	testNode1MCP    = getEnv("QUICBAAS_NODE1_MCP", "https://test-node1:8888")
 	testMCPEndpoint = getEnv("QUICBAAS_MCP_ENDPOINT", "https://test-node1:8888/mcp")
 	testTimeout     = 60 * time.Second
-	httpClient      = &http.Client{
-		Timeout: testTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	httpClient      = helpers.NewHTTPClient(testTimeout)
 )
 
 func getEnv(key, fallback string) string {

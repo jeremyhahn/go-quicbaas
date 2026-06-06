@@ -31,13 +31,13 @@ import (
 // testLogger implements interfaces.Logger for testing.
 type testLogger struct{}
 
-func (l *testLogger) Debug(msg string, args ...any)                          {}
+func (l *testLogger) Debug(msg string, args ...any)             {}
 func (l *testLogger) Debugf(format string, args ...interface{}) {}
-func (l *testLogger) Info(msg string, args ...any)                           {}
+func (l *testLogger) Info(msg string, args ...any)              {}
 func (l *testLogger) Infof(format string, args ...interface{})  {}
-func (l *testLogger) Warn(msg string, args ...any)                           {}
+func (l *testLogger) Warn(msg string, args ...any)              {}
 func (l *testLogger) Warnf(format string, args ...interface{})  {}
-func (l *testLogger) Error(msg string, args ...any)                          {}
+func (l *testLogger) Error(msg string, args ...any)             {}
 func (l *testLogger) Errorf(format string, args ...interface{}) {}
 func (l *testLogger) Fatal(msg string)                          {}
 func (l *testLogger) Fatalf(format string, args ...interface{}) {}

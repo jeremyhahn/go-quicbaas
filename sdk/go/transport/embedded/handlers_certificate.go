@@ -294,3 +294,119 @@ func handleCertIsRevoked(ctx context.Context, svc service.QuicBaaS, req interfac
 	}
 	return certSvc.IsRevoked(ctx, svcReq)
 }
+
+func handleCertCAInfo(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	certSvc := svc.Certificate()
+	if certSvc == nil {
+		return nil, NewServiceNotConfiguredError("Certificate")
+	}
+
+	// Accept service type directly.
+	if r, ok := req.(*service.CAInfoRequest); ok {
+		svcResp, err := certSvc.CAInfo(ctx, r)
+		if err != nil {
+			return nil, err
+		}
+		return convertCAInfoResponse(svcResp), nil
+	}
+
+	// Accept SDK client type.
+	if _, ok := req.(*certclient.CAInfoRequest); ok {
+		svcResp, err := certSvc.CAInfo(ctx, &service.CAInfoRequest{})
+		if err != nil {
+			return nil, err
+		}
+		return convertCAInfoResponse(svcResp), nil
+	}
+
+	return nil, NewInvalidRequestTypeError(
+		"quicbaas.Certificate", "CAInfo",
+		"*service.CAInfoRequest or *certificate.CAInfoRequest",
+		reflect.TypeOf(req).String(),
+	)
+}
+
+func handleCertListCertificates(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	certSvc := svc.Certificate()
+	if certSvc == nil {
+		return nil, NewServiceNotConfiguredError("Certificate")
+	}
+
+	// Accept service type directly.
+	if r, ok := req.(*service.ListCertificatesRequest); ok {
+		svcResp, err := certSvc.ListCertificates(ctx, r)
+		if err != nil {
+			return nil, err
+		}
+		return convertListCertificatesResponse(svcResp), nil
+	}
+
+	// Accept SDK client type and convert.
+	sdkReq, ok := req.(*certclient.ListCertificatesRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError(
+			"quicbaas.Certificate", "ListCertificates",
+			"*service.ListCertificatesRequest or *certificate.ListCertificatesRequest",
+			reflect.TypeOf(req).String(),
+		)
+	}
+	svcReq := &service.ListCertificatesRequest{
+		CommonNameFilter: sdkReq.CommonNameFilter,
+		IncludeRevoked:   sdkReq.IncludeRevoked,
+		IncludeExpired:   sdkReq.IncludeExpired,
+		Limit:            sdkReq.Limit,
+	}
+	svcResp, err := certSvc.ListCertificates(ctx, svcReq)
+	if err != nil {
+		return nil, err
+	}
+	return convertListCertificatesResponse(svcResp), nil
+}
+
+// convertCAInfoResponse translates the service-layer response into the
+// SDK wire type returned over the embedded transport.
+func convertCAInfoResponse(svcResp *service.CAInfoResponse) *certclient.CAInfoResponse {
+	if svcResp == nil {
+		return nil
+	}
+	return &certclient.CAInfoResponse{
+		CommonName:         svcResp.CommonName,
+		Subject:            svcResp.Subject,
+		Issuer:             svcResp.Issuer,
+		SerialNumber:       svcResp.SerialNumber,
+		NotBefore:          svcResp.NotBefore,
+		NotAfter:           svcResp.NotAfter,
+		IsCA:               svcResp.IsCA,
+		KeyType:            svcResp.KeyType,
+		KeyBits:            svcResp.KeyBits,
+		SignatureAlgorithm: svcResp.SignatureAlgorithm,
+		CertificatePEM:     svcResp.CertificatePEM,
+		CABundlePEM:        svcResp.CABundlePEM,
+	}
+}
+
+// convertListCertificatesResponse translates the service-layer response
+// into the SDK wire type returned over the embedded transport.
+func convertListCertificatesResponse(svcResp *service.ListCertificatesResponse) *certclient.ListCertificatesResponse {
+	if svcResp == nil {
+		return nil
+	}
+	out := &certclient.ListCertificatesResponse{
+		Certificates: make([]certclient.CertificateSummary, 0, len(svcResp.Certificates)),
+		TotalCount:   svcResp.TotalCount,
+	}
+	for _, c := range svcResp.Certificates {
+		out.Certificates = append(out.Certificates, certclient.CertificateSummary{
+			CommonName:   c.CommonName,
+			Subject:      c.Subject,
+			Issuer:       c.Issuer,
+			SerialNumber: c.SerialNumber,
+			NotBefore:    c.NotBefore,
+			NotAfter:     c.NotAfter,
+			IsCA:         c.IsCA,
+			KeyUsage:     c.KeyUsage,
+			DNSNames:     append([]string(nil), c.DNSNames...),
+		})
+	}
+	return out
+}

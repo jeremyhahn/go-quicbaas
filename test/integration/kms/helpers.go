@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -401,7 +400,9 @@ func skipIfProtocolUnavailable(t *testing.T, protocol string, endpoint string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+		tlsCfg, err := helpers.IntegrationTLSConfig()
+		require.NoError(t, err, "load integration TLS config")
+		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
 		if err != nil {
 			require.NoError(t, err, "%s service must be available at %s", protocol, endpoint)
 		}
@@ -410,17 +411,7 @@ func skipIfProtocolUnavailable(t *testing.T, protocol string, endpoint string) {
 		skipIfKMSUnavailable(t, client, ctx)
 
 	case "rest":
-		client := &http.Client{
-			Timeout: 5 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		}
+		client := helpers.NewHTTPClient(5 * time.Second)
 		resp, err := client.Get(fmt.Sprintf("%s/health", endpoint))
 		if err != nil {
 			require.NoError(t, err, "%s service must be available at %s", protocol, endpoint)
@@ -468,18 +459,8 @@ type RESTClient struct {
 // NewRESTClient creates a new REST client.
 func NewRESTClient(baseURL string) *RESTClient {
 	return &RESTClient{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
+		baseURL:    baseURL,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
 	}
 }
 
@@ -638,6 +619,7 @@ func convertRESTListKeysResponse(restResp *RESTListKeysResponse) *service.ListKe
 	}
 
 	resp := &service.ListKeysResponse{
+		Keys:       make([]*service.KeyHandle, 0, len(restResp.Keys)),
 		NextCursor: restResp.NextCursor,
 		HasMore:    restResp.HasMore,
 		TotalCount: restResp.TotalCount,
@@ -1265,11 +1247,11 @@ type QUICClient struct {
 
 // NewQUICClient creates a new QUIC client for KMS operations.
 func NewQUICClient(addr string) (*QUICClient, error) {
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // Test only - skip certificate verification
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return nil, err
 	}
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -1663,19 +1645,9 @@ type MCPClient struct {
 // NewMCPClient creates a new MCP client.
 func NewMCPClient(endpoint string) *MCPClient {
 	return &MCPClient{
-		endpoint: endpoint,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
-		nextID: 1,
+		endpoint:   endpoint,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		nextID:     1,
 	}
 }
 

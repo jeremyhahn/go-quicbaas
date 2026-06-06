@@ -97,7 +97,7 @@ func buildXKMSWebAuthnDispatcher(factory *iam.WebAuthnServiceFactory) http.Handl
 			http.Error(w, "tenant_id is required", http.StatusBadRequest)
 			return
 		}
-		svc, err := factory.ServiceFor(tenantID)
+		svc, err := factory.ServiceFor(r.Context(), tenantID)
 		if err != nil {
 			http.Error(w, "tenant webauthn service unavailable", http.StatusServiceUnavailable)
 			return

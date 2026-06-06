@@ -140,16 +140,16 @@ type SessionEvent struct {
 	Kind SessionEventKind `json:"kind"`
 
 	// Exactly one of these is populated; the rest are nil.
-	Prompt         *PromptSubmittedPayload  `json:"prompt,omitempty"`
-	AssistantChunk *AssistantChunkPayload   `json:"assistant_chunk,omitempty"`
-	ToolInvocation *ToolInvocationPayload   `json:"tool_invocation,omitempty"`
-	ToolResult     *ToolResultPayload       `json:"tool_result,omitempty"`
-	FileOp         *FileOpPayload           `json:"file_op,omitempty"`
-	System         *SystemMessagePayload    `json:"system,omitempty"`
-	OperatorJoined *OperatorJoinedPayload   `json:"operator_joined,omitempty"`
-	OperatorLeft   *OperatorLeftPayload     `json:"operator_left,omitempty"`
-	Closed         *SessionClosedPayload    `json:"closed,omitempty"`
-	Resumed        *SessionResumedPayload   `json:"resumed,omitempty"`
+	Prompt         *PromptSubmittedPayload `json:"prompt,omitempty"`
+	AssistantChunk *AssistantChunkPayload  `json:"assistant_chunk,omitempty"`
+	ToolInvocation *ToolInvocationPayload  `json:"tool_invocation,omitempty"`
+	ToolResult     *ToolResultPayload      `json:"tool_result,omitempty"`
+	FileOp         *FileOpPayload          `json:"file_op,omitempty"`
+	System         *SystemMessagePayload   `json:"system,omitempty"`
+	OperatorJoined *OperatorJoinedPayload  `json:"operator_joined,omitempty"`
+	OperatorLeft   *OperatorLeftPayload    `json:"operator_left,omitempty"`
+	Closed         *SessionClosedPayload   `json:"closed,omitempty"`
+	Resumed        *SessionResumedPayload  `json:"resumed,omitempty"`
 }
 
 // PromptSubmittedPayload is the payload for KindPromptSubmitted.
@@ -293,18 +293,18 @@ type SessionResumedPayload struct {
 // immutable fields (CreatedAt, CreatedBy, Backend, Model) are set once at
 // session start.
 type SessionMeta struct {
-	SessionID      string        `json:"session_id"`
-	TenantID       string        `json:"tenant_id"`
-	ProjectID      string        `json:"project_id,omitempty"`
-	Backend        string        `json:"backend"`
-	Model          string        `json:"model,omitempty"`
-	Host           string        `json:"host,omitempty"`      // reachable agent daemon host, when remote
-	Status         SessionState  `json:"status"`
-	CreatedAt      time.Time     `json:"created_at"`
-	CreatedBy      string        `json:"created_by,omitempty"`
-	LastActivity   time.Time     `json:"last_activity"`
-	LatestSequence uint64        `json:"latest_sequence"`
-	EventCount     uint64        `json:"event_count"`
+	SessionID      string            `json:"session_id"`
+	TenantID       string            `json:"tenant_id"`
+	ProjectID      string            `json:"project_id,omitempty"`
+	Backend        string            `json:"backend"`
+	Model          string            `json:"model,omitempty"`
+	Host           string            `json:"host,omitempty"` // reachable agent daemon host, when remote
+	Status         SessionState      `json:"status"`
+	CreatedAt      time.Time         `json:"created_at"`
+	CreatedBy      string            `json:"created_by,omitempty"`
+	LastActivity   time.Time         `json:"last_activity"`
+	LatestSequence uint64            `json:"latest_sequence"`
+	EventCount     uint64            `json:"event_count"`
 	Labels         map[string]string `json:"labels,omitempty"`
 }
 

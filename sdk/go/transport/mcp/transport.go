@@ -304,7 +304,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	toolName := t.mapToToolName(service, method)
 
 	// Ensure authenticated for non-public tools
-	// Public tools: quicbaas_login, quicbaas_health, quicbaas_liveness, quicbaas_readiness
+	// Public tools: quicbaas_login, qrdb_health, quicbaas_liveness, quicbaas_readiness
 	if !t.isPublicTool(toolName) {
 		if err := t.ensureAuthenticated(ctx); err != nil {
 			return nil, err
@@ -320,6 +320,9 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	isEmbedding := isMCPEmbeddingService(service)
 	isIAM := isMCPIAMService(service)
 	isOrchestrator := isMCPOrchestratorService(service)
+	isCertificate := isMCPCertificateService(service)
+	isMessaging := isMCPMessagingService(service)
+	isObjectStorage := isMCPObjectStorageService(service)
 	var arguments map[string]interface{}
 	var err error
 
@@ -364,6 +367,24 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		// apply field name transformations for MCP tool handlers
 		ih := newIAMHandler(t)
 		arguments, err = ih.transformRequest(service, method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+	} else if isCertificate {
+		ch := newCertificateHandler(t)
+		arguments, err = ch.transformRequest(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+	} else if isMessaging {
+		mh := newMessagingHandler(t)
+		arguments, err = mh.transformRequest(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+	} else if isObjectStorage {
+		oh := newObjectStorageHandler(t)
+		arguments, err = oh.transformRequest(method, reqBody)
 		if err != nil {
 			return nil, err
 		}
@@ -423,6 +444,25 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// the strongly-typed *orchestrator.InferenceResponse.
 	if isOrchestrator {
 		oh := newOrchestratorMCPHandler()
+		return oh.transformResponse(method, result)
+	}
+
+	// Transform response for Certificate service into the concrete SDK
+	// response types the certificate client expects.
+	if isCertificate {
+		ch := newCertificateHandler(t)
+		return ch.transformResponse(method, reqBody, result)
+	}
+
+	// Transform response for Messaging service.
+	if isMessaging {
+		mh := newMessagingHandler(t)
+		return mh.transformResponse(method, result)
+	}
+
+	// Transform response for ObjectStorage service.
+	if isObjectStorage {
+		oh := newObjectStorageHandler(t)
 		return oh.transformResponse(method, result)
 	}
 
@@ -559,10 +599,12 @@ func (t *Transport) extractAccessToken(content []contentItem) (string, error) {
 // isPublicTool returns true if the tool doesn't require authentication.
 func (t *Transport) isPublicTool(toolName string) bool {
 	publicTools := map[string]bool{
-		"quicbaas_login":     true,
-		"quicbaas_health":    true,
-		"quicbaas_liveness":  true,
-		"quicbaas_readiness": true,
+		"quicbaas_login":        true,
+		"quicbaas_login_begin":  true,
+		"quicbaas_login_finish": true,
+		"qrdb_health":           true,
+		"quicbaas_liveness":     true,
+		"quicbaas_readiness":    true,
 	}
 	return publicTools[toolName]
 }
@@ -704,10 +746,10 @@ func (t *Transport) sendRPC(ctx context.Context, method string, params interface
 // mapToToolName maps a service/method combination to an MCP tool name.
 // Pattern: quicbaas_<lowercase_operation>
 func (t *Transport) mapToToolName(service, method string) string {
-	// If method is already a fully-formed tool name (starts with "quicbaas_"),
-	// return it as-is. This handles cases where the CLI passes pre-constructed
-	// tool names directly.
-	if strings.HasPrefix(method, "quicbaas_") {
+	// If method is already a fully-formed tool name (starts with "quicbaas_"
+	// or "qrdb_"), return it as-is. This handles cases where the CLI passes
+	// pre-constructed tool names directly.
+	if strings.HasPrefix(method, "quicbaas_") || strings.HasPrefix(method, "qrdb_") {
 		return method
 	}
 
@@ -735,14 +777,21 @@ func (t *Transport) mapToToolName(service, method string) string {
 	// All tool names use snake_case: quicbaas_<service>_<method_in_snake_case>
 	switch serviceName {
 	case "KV":
-		// KV tools use simple lowercase: quicbaas_get, quicbaas_put, quicbaas_delete
-		return "quicbaas_" + strings.ToLower(method)
+		// Core KV operations are qrdb-mirror tools (canonical qrdb_*).
+		// Quicbaas-specific methods (ListEntityTypes, Watch, etc.) keep
+		// the quicbaas_ prefix.
+		switch method {
+		case "Put", "Get", "Delete", "List", "Scan":
+			return "qrdb_" + strings.ToLower(method)
+		default:
+			return "quicbaas_" + strings.ToLower(method)
+		}
 	case "Batch":
 		return "quicbaas_batch_" + camelToSnake(method)
 	case "Health":
 		switch method {
 		case "Check":
-			return "quicbaas_health"
+			return "qrdb_health"
 		case "Liveness":
 			return "quicbaas_liveness"
 		case "Readiness":
@@ -769,15 +818,15 @@ func (t *Transport) mapToToolName(service, method string) string {
 		return "quicbaas_crypto_" + camelToSnake(method)
 	case "RBAC":
 		rbacToolMap := map[string]string{
-			"CreateUser": "quicbaas_user_create",
-			"DeleteUser": "quicbaas_user_delete",
-			"ListUsers":  "quicbaas_user_list",
+			"CreateUser": "qrdb_user_create",
+			"DeleteUser": "qrdb_user_delete",
+			"ListUsers":  "qrdb_user_list",
 			"GetUser":    "quicbaas_user_get",
 			"UpdateUser": "quicbaas_user_update",
-			"CreateRole": "quicbaas_role_create",
-			"DeleteRole": "quicbaas_role_delete",
-			"ListRoles":  "quicbaas_role_list",
-			"AssignRole": "quicbaas_role_assign",
+			"CreateRole": "qrdb_role_create",
+			"DeleteRole": "qrdb_role_delete",
+			"ListRoles":  "qrdb_role_list",
+			"AssignRole": "qrdb_role_assign",
 			"RevokeRole": "quicbaas_role_revoke",
 		}
 		if toolName, ok := rbacToolMap[method]; ok {
@@ -785,7 +834,14 @@ func (t *Transport) mapToToolName(service, method string) string {
 		}
 		return "quicbaas_rbac_" + camelToSnake(method)
 	case "Auth":
-		return "quicbaas_" + strings.ToLower(method)
+		switch method {
+		case "BeginLogin":
+			return "quicbaas_login_begin"
+		case "FinishLogin":
+			return "quicbaas_login_finish"
+		default:
+			return "quicbaas_" + strings.ToLower(method)
+		}
 	case "Backup":
 		return "quicbaas_backup_" + camelToSnake(method)
 	case "Cache":
@@ -796,14 +852,29 @@ func (t *Transport) mapToToolName(service, method string) string {
 			return "quicbaas_cache_" + camelToSnake(method)
 		}
 	case "Vector":
-		return "quicbaas_vector_" + camelToSnake(method)
+		return mapVectorMethodToTool(method)
 	case "Timeseries", "TimeSeries":
 		// TimeSeries tools use the pattern: quicbaas_ts_<operation>
 		// Maps SDK method names to MCP tool names
 		return mapTimeseriesMethodToTool(method)
 	case "Operations":
 		return "quicbaas_" + strings.ToLower(method)
-	case "ObjectStorage", "ObjectStorageAdmin":
+	case "Certificate":
+		if toolName, ok := mapCertificateMethodToTool(method); ok {
+			return toolName
+		}
+		return "quicbaas_certificate_" + camelToSnake(method)
+	case "Messaging":
+		if toolName, ok := mapMessagingMethodToTool(method); ok {
+			return toolName
+		}
+		return "quicbaas_msg_" + camelToSnake(method)
+	case "ObjectStorage":
+		if toolName, ok := mapObjectStorageMethodToTool(method); ok {
+			return toolName
+		}
+		return "quicbaas_object_" + camelToSnake(method)
+	case "ObjectStorageAdmin":
 		return "quicbaas_object_" + camelToSnake(method)
 	case "Scheduler":
 		return "quicbaas_scheduler_" + camelToSnake(method)
@@ -836,6 +907,34 @@ func mapEmbeddingMethodToTool(method string) string {
 
 	// Fallback for unknown methods
 	return "quicbaas_embedding_" + camelToSnake(method)
+}
+
+// mapVectorMethodToTool maps Vector SDK method names to MCP tool names. Methods
+// that mirror the qrdb Vector surface route to qrdb_vector_*; quicbaas-specific
+// methods (HybridSearch, SearchByMetadata, GetStats, etc.) keep the
+// quicbaas_vector_ prefix.
+func mapVectorMethodToTool(method string) string {
+	vectorToolMap := map[string]string{
+		"CreateNamespace":  "qrdb_vector_create_namespace",
+		"DeleteNamespace":  "qrdb_vector_delete_namespace",
+		"ListNamespaces":   "qrdb_vector_list_namespaces",
+		"GetNamespaceInfo": "qrdb_vector_get_namespace_info",
+		"Upsert":           "qrdb_vector_upsert",
+		"Get":              "qrdb_vector_get",
+		"Delete":           "qrdb_vector_delete",
+		"BatchUpsert":      "qrdb_vector_batch_upsert",
+		"BatchDelete":      "qrdb_vector_batch_delete",
+		"SearchSimilar":    "qrdb_vector_search_similar",
+		"SearchByID":       "qrdb_vector_search_by_id",
+		"RebuildIndex":     "qrdb_vector_rebuild_index",
+		"List":             "qrdb_vector_list",
+		"UpdateMetadata":   "qrdb_vector_update_metadata",
+	}
+	if toolName, ok := vectorToolMap[method]; ok {
+		return toolName
+	}
+	// Quicbaas-specific vector methods fall through to the legacy prefix.
+	return "quicbaas_vector_" + camelToSnake(method)
 }
 
 // camelToSnake converts a CamelCase string to snake_case.

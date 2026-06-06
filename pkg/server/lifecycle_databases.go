@@ -86,13 +86,6 @@ func (s *Server) startDatabases() error {
 	s.quicBaaSService.SetDatabaseService(dbSvc)
 	s.logger.Info("DatabaseService attached to service facade")
 
-	// Wire into the ShardedClient transport store so that SDK-level
-	// database operations route through the service layer.
-	if s.qrdbClient != nil && s.qrdbClient.transportStore != nil {
-		s.qrdbClient.transportStore.dbService = dbSvc
-		s.logger.Info("DatabaseService attached to transport store")
-	}
-
 	s.logger.Info("Database management subsystem initialized")
 	return nil
 }

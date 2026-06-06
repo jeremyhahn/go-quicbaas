@@ -93,8 +93,8 @@ func (e *stubEnroller) enrollCalls() int {
 
 // stubHeartbeat records heartbeats for assertion and optionally injects errors.
 type stubHeartbeat struct {
-	beats    atomic.Int32
-	beatsCh  chan agent.HeartbeatStatus
+	beats     atomic.Int32
+	beatsCh   chan agent.HeartbeatStatus
 	injectErr error
 }
 
@@ -196,7 +196,7 @@ func (b *stubAgentBackend) Capabilities() orchestration.BackendCapabilities {
 	}
 }
 
-func (b *stubAgentBackend) Type() string    { return b.backendType }
+func (b *stubAgentBackend) Type() string         { return b.backendType }
 func (b *stubAgentBackend) ToolGuidance() string { return "" }
 
 // ----------------------------------------------------------------------------
@@ -440,7 +440,7 @@ func newTestDaemon(t *testing.T, cfg testDaemonConfig) (*agent.Daemon, *stubEnro
 	workDir := t.TempDir()
 
 	daemonCfg := &agent.Config{
-		ServerAddr:     cfg.centralURL,
+		ServerAddr:      cfg.centralURL,
 		TenantID:        cfg.tenantID,
 		BindAddr:        "127.0.0.1:0",
 		SandboxPolicy:   cfg.sandboxPolicy,

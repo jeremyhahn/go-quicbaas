@@ -1,147 +1,80 @@
-# quicbaas seal
+# quicbaas seal (deprecated)
 
-Seal management commands for QuicBaaS encryption seal.
+> **Status:** Deprecated alias. New work should use
+> [`quicbaas barrier`](barrier.md). Every `seal` verb prints a
+> deprecation warning to stderr and forwards to the equivalent
+> `barrier` verb.
 
-## Overview
+The legacy `seal` tree is retained for operator-runbook compatibility
+through at least the next major release. The verb and flag surface
+matches the original; behaviour matches the canonical `barrier`
+surface bit-for-bit because both share the same SDK
+`Security().Barrier()` backend.
 
-The seal protects the master encryption key using Shamir's Secret Sharing. QuicBaaS must be unsealed after startup before it can process requests.
+Source:
+[`cmd/quicbaas/seal.go`](../../cmd/quicbaas/seal.go) (the forwarding
+shim) and
+[`cmd/quicbaas/barrier.go`](../../cmd/quicbaas/barrier.go) (the
+canonical implementation).
 
-## Commands
+## Migration table
 
-### status
+| Deprecated `seal` verb | Canonical `barrier` verb |
+|------------------------|--------------------------|
+| `quicbaas seal status` | `quicbaas barrier status` |
+| `quicbaas seal init --shares N --threshold M` | `quicbaas barrier init` (single passphrase) or `quicbaas barrier init-shamir --secret <s> --total N --threshold M` |
+| `quicbaas seal unseal --share <s>` | `quicbaas barrier unseal --share <s>` (or `--secret` for password-based) |
+| `quicbaas seal seal` | `quicbaas barrier seal` |
+| `quicbaas seal rekey --shares N --threshold M` | `quicbaas barrier rekey --total N --threshold M` |
 
-Check the current seal status.
+The flag rename `--shares` → `--total` keeps `barrier` aligned with
+`xkmsctl barrier` so operators have a single consistent surface
+across the four canonical binaries (qrdb, xkmsctl, quicbaas,
+platformctl).
 
-```bash
-quicbaas seal status
-```
+## Why the rename
 
-#### Flags
-- `--output string`: Output format (json, yaml, table) (default: "table")
+The original surface used "seal" for both "the encryption mechanism"
+(the seal) and "the operation that locks the mechanism" (sealing).
+The unification spec §6 renames the mechanism to "barrier" so the
+nouns and verbs are unambiguous:
 
-#### Examples
+| Concept | Old name | New name |
+|---------|----------|----------|
+| The encryption mechanism | "seal" | "barrier" |
+| The action of locking the barrier | "seal" | "seal" (verb, on `barrier`) |
+| The action of unlocking the barrier | "unseal" | "unseal" |
 
-```bash
-# Check seal status
-quicbaas seal status
+So the command tree reads `quicbaas barrier seal` / `quicbaas barrier
+unseal` — verb on the noun. The old `quicbaas seal seal` /
+`quicbaas seal unseal` redundancy was the immediate motivation for
+the rename.
 
-# Check status as JSON
-quicbaas seal status --output json
-```
+## Behavioural notes
 
-### init
+- **Recovery keys** (`--recovery-shares` / `--recovery-threshold` on
+  the legacy `seal init`): the canonical `barrier` surface does not
+  ship a separate recovery-key concept. Disaster recovery uses the
+  same Shamir share material; operators retain shares per their
+  organisational policy. The legacy flags are still parsed by the
+  forwarding shim but emit a deprecation warning indicating the new
+  mechanism.
+- **Confirmation prompt** on `seal`: forwarded verbatim. Pass
+  `--assume-yes` to skip it.
+- **JSON output** on `status` / `init-shamir` / `rekey`: identical
+  schemas between `seal` and `barrier`.
 
-Initialize the seal with Shamir's Secret Sharing.
+## Removal timeline
 
-```bash
-quicbaas seal init
-```
+The deprecation warning ships in the current release. The
+forwarding shim will be retained through at least one major version
+to give operator runbooks time to migrate. There is no scheduled
+removal date.
 
-#### Flags
-- `--shares int`: Number of unseal key shares (default: 5)
-- `--threshold int`: Number of shares required to unseal (default: 3)
-- `--recovery-shares int`: Number of recovery key shares
-- `--recovery-threshold int`: Number of recovery keys required
+## See also
 
-#### Examples
-
-```bash
-# Initialize with 5 shares, 3 required to unseal
-quicbaas seal init --shares 5 --threshold 3
-
-# Initialize with recovery keys
-quicbaas seal init --shares 5 --threshold 3 --recovery-shares 3 --recovery-threshold 2
-```
-
-### unseal
-
-Provide an unseal key share to unseal QuicBaaS.
-
-```bash
-quicbaas seal unseal
-```
-
-#### Flags
-- `--share string`: Unseal key share (base64 encoded)
-
-#### Examples
-
-```bash
-# Provide share via stdin (recommended)
-quicbaas seal unseal
-
-# Provide share via flag (less secure)
-quicbaas seal unseal --share base64:encoded-share
-```
-
-### seal
-
-Seal QuicBaaS to prevent access to encrypted data.
-
-```bash
-quicbaas seal seal
-```
-
-#### Examples
-
-```bash
-# Seal the system (with confirmation)
-quicbaas seal seal
-```
-
-### rekey
-
-Generate new unseal keys while keeping the same master key.
-
-```bash
-quicbaas seal rekey
-```
-
-#### Flags
-- `--shares int`: Number of new unseal key shares (default: 5)
-- `--threshold int`: Number of new shares required to unseal (default: 3)
-
-#### Examples
-
-```bash
-# Rekey with new configuration
-quicbaas seal rekey --shares 7 --threshold 4
-```
-
-## Seal Process
-
-### Initialization
-1. Generate master encryption key
-2. Split key into shares using Shamir's Secret Sharing
-3. Generate root token
-4. Optionally generate recovery keys
-5. Return shares and token to operator
-
-### Unsealing
-1. Collect unseal shares from operators
-2. Reconstruct master key when threshold is met
-3. Decrypt encryption keys
-4. Enable database operations
-
-### Sealing
-1. Clear master key from memory
-2. Disable database operations
-3. Require unsealing to resume
-
-## Security Considerations
-
-- Store unseal shares securely and separately
-- Distribute shares among multiple operators
-- Use recovery keys for disaster recovery
-- Rekey periodically to rotate unseal keys
-- Monitor seal status for security events
-
-## Important Notes
-
-- **Store unseal shares securely** - They cannot be recovered if lost
-- Initialization can only be done once unless seal is destroyed
-- Unsealing requires threshold number of shares (e.g., 3 of 5)
-- Sealing immediately locks the database
-- Rekeying generates new shares but keeps the same master key
-- Recovery keys can be used if unseal shares are lost
-- Shares are provided as base64-encoded strings
+- [`docs/cli/barrier.md`](barrier.md) — canonical barrier verbs.
+- [`docs/architecture/barrier.md`](../architecture/barrier.md) —
+  StorageBarrier design.
+- [`docs/sdk/security.md`](../sdk/security.md) —
+  `Security().Barrier()` SDK accessor.

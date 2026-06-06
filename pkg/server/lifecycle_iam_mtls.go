@@ -22,8 +22,8 @@ import (
 	"os"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // appendOperatorClientCAsFn is the seam that wires the operator's CA pool (from

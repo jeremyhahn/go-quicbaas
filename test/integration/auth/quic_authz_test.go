@@ -137,7 +137,6 @@ func newTestQUICContext(t *testing.T) *testQUICContext {
 		nil, // QuicBaaS service - nil for auth-only testing
 		nil, // KMS service
 		nil, // Secrets service
-		nil, // Seal service
 		nil, // Crypto service
 		log,
 		quic.WithHandlerAuthManager(authAdapter),
@@ -486,10 +485,11 @@ func TestQUICOpcodeToResourceActionMapping(t *testing.T) {
 		{quic.OpCreateBackup, interfaces.ResourceBackups, interfaces.ActionWrite, "CreateBackup -> backups:write"},
 		{quic.OpDeleteBackup, interfaces.ResourceBackups, interfaces.ActionDelete, "DeleteBackup -> backups:delete"},
 
-		// Seal operations
-		{quic.OpSealStatus, interfaces.ResourceSeal, interfaces.ActionRead, "SealStatus -> seal:read"},
-		{quic.OpSealInit, interfaces.ResourceSeal, interfaces.ActionAdmin, "SealInit -> seal:admin"},
-		{quic.OpUnseal, interfaces.ResourceSeal, interfaces.ActionAdmin, "Unseal -> seal:admin"},
+		// Barrier/Ceremony operations: each uses a single dispatch opcode with
+		// the sub-op carried in the payload, so authorization is enforced at the
+		// dispatch-opcode granularity (seal/unseal/rekey are barrier sub-ops).
+		{quic.OpBarrier, interfaces.ResourceBarrier, interfaces.ActionAdmin, "Barrier -> barrier:admin"},
+		{quic.OpCeremony, interfaces.ResourceCeremony, interfaces.ActionAdmin, "Ceremony -> ceremony:admin"},
 
 		// KMS operations
 		{quic.OpKMSGetKey, interfaces.ResourceKMS, interfaces.ActionRead, "KMSGetKey -> kms:read"},

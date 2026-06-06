@@ -82,11 +82,6 @@ func TestMockDynamicSecretsServiceImplementsInterface(t *testing.T) {
 	var _ service.DynamicSecretsService = (*MockDynamicSecretsService)(nil)
 }
 
-// TestMockClusterDEKServiceImplementsInterface verifies MockClusterDEKService implements service.ClusterDEKService.
-func TestMockClusterDEKServiceImplementsInterface(t *testing.T) {
-	var _ service.ClusterDEKService = (*MockClusterDEKService)(nil)
-}
-
 // TestMockObjectStorageServiceImplementsInterface verifies MockObjectStorageService implements service.ObjectStorageService.
 func TestMockObjectStorageServiceImplementsInterface(t *testing.T) {
 	var _ service.ObjectStorageService = (*MockObjectStorageService)(nil)
@@ -308,9 +303,6 @@ func TestMockQuicBaaSWithAllSubservices(t *testing.T) {
 	}
 	if mock.DynamicSecrets() == nil {
 		t.Error("DynamicSecrets() should not be nil when created with all subservices")
-	}
-	if mock.ClusterDEK() == nil {
-		t.Error("ClusterDEK() should not be nil when created with all subservices")
 	}
 	if mock.ObjectStorageService() == nil {
 		t.Error("ObjectStorageService() should not be nil when created with all subservices")

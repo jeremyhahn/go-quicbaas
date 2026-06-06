@@ -24,16 +24,19 @@
 //
 // Tool Name Mapping:
 //
-// The transport maps SDK service/method names to MCP tool names using the pattern:
-//
-//	quicbaas_<lowercase_operation>
+// The transport maps SDK service/method names to MCP tool names. qrdb-mirror
+// services (KV, Vector, Timeseries, Health.Check, RBAC user/role lifecycle,
+// Barrier, Ceremony) are routed to canonical qrdb_* tools; quicbaas-specific
+// surfaces (KMS, Crypto, Orchestrator, Scheduler, Agent, etc.) keep the
+// quicbaas_ prefix.
 //
 // Examples:
-//   - "quicbaas.KV/Put" -> "quicbaas_put"
-//   - "quicbaas.KV/Get" -> "quicbaas_get"
-//   - "quicbaas.KV/Delete" -> "quicbaas_delete"
+//   - "quicbaas.KV/Put" -> "qrdb_put"
+//   - "quicbaas.KV/Get" -> "qrdb_get"
+//   - "quicbaas.KV/Delete" -> "qrdb_delete"
 //   - "quicbaas.Cluster/Status" -> "quicbaas_cluster_status"
-//   - "quicbaas.Health/Check" -> "quicbaas_health"
+//   - "quicbaas.Health/Check" -> "qrdb_health"
+//   - "quicbaas.KMS/GenerateKey" -> "quicbaas_kms_generate_key"
 //
 // Usage:
 //

@@ -81,8 +81,8 @@ func TestIsGUIOnly_GlobalFlagsWithValues(t *testing.T) {
 		{"quicbaas", "--log-file=/tmp/x.log"},
 		{"quicbaas", "--address", "localhost:9090", "--tenant", "default"},
 		{"quicbaas", "--config", "/etc/quicbaas.yaml", "--log-level", "debug"},
-		{"quicbaas", "--fips"},                    // bool flag
-		{"quicbaas", "--tls", "--tls-skip-verify"}, // two bool flags
+		{"quicbaas", "--fips"},                         // bool flag
+		{"quicbaas", "--tls"},                          // single bool flag
 		{"quicbaas", "--log-level", "debug", "--fips"}, // mixed
 	}
 	for _, args := range guiForms {

@@ -289,31 +289,71 @@ func TestClient_KMSClearKeySafety_NilRequest(t *testing.T) {
 }
 
 // =============================================================================
-// Seal Operations - Nil Request Tests
+// Barrier Operations - Nil Request Tests (replaces deprecated Seal tests).
 // =============================================================================
 
-func TestClient_SealInit_NilRequest(t *testing.T) {
+func TestClient_BarrierInitialize_NilRequest(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
-	_, err := client.SealInit(context.Background(), nil)
-	verifyNilRequestError(t, err, "SealInit")
+	err := client.BarrierInitialize(context.Background(), nil)
+	verifyNilRequestError(t, err, "BarrierInitialize")
 }
 
-func TestClient_Unseal_NilRequest(t *testing.T) {
+func TestClient_BarrierUnseal_NilRequest(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
-	_, err := client.Unseal(context.Background(), nil)
-	verifyNilRequestError(t, err, "Unseal")
+	err := client.BarrierUnseal(context.Background(), nil)
+	verifyNilRequestError(t, err, "BarrierUnseal")
 }
 
-func TestClient_Rekey_NilRequest(t *testing.T) {
+func TestClient_BarrierRekey_NilRequest(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
-	_, err := client.Rekey(context.Background(), nil)
-	verifyNilRequestError(t, err, "Rekey")
+	_, err := client.BarrierRekey(context.Background(), nil)
+	verifyNilRequestError(t, err, "BarrierRekey")
+}
+
+func TestClient_BarrierShamirInitialize_NilRequest(t *testing.T) {
+	client := createTestClient(t)
+	defer client.Close()
+
+	_, err := client.BarrierShamirInitialize(context.Background(), nil)
+	verifyNilRequestError(t, err, "BarrierShamirInitialize")
+}
+
+func TestClient_BarrierRootToken_NilRequest(t *testing.T) {
+	client := createTestClient(t)
+	defer client.Close()
+
+	_, err := client.BarrierGenerateRootToken(context.Background(), nil)
+	verifyNilRequestError(t, err, "BarrierGenerateRootToken")
+}
+
+func TestClient_CeremonyInitialize_NilRequest(t *testing.T) {
+	client := createTestClient(t)
+	defer client.Close()
+
+	_, err := client.CeremonyInitialize(context.Background(), nil)
+	verifyNilRequestError(t, err, "CeremonyInitialize")
+}
+
+func TestClient_CeremonyClaimCertBegin_NilRequest(t *testing.T) {
+	client := createTestClient(t)
+	defer client.Close()
+
+	_, err := client.CeremonyClaimCertBegin(context.Background(), nil)
+	verifyNilRequestError(t, err, "CeremonyClaimCertBegin")
+}
+
+func TestClient_CeremonySignCSR_NilRequest(t *testing.T) {
+	client := createTestClient(t)
+	defer client.Close()
+
+	_, err := client.CeremonySignCSR(context.Background(), nil)
+	verifyNilRequestError(t, err, "CeremonySignCSR")
 }
 
 // =============================================================================
@@ -674,21 +714,31 @@ func TestClient_KMSBackendTest_ClosedConnection(t *testing.T) {
 	}
 }
 
-func TestClient_SealStatus_ClosedConnection(t *testing.T) {
+func TestClient_BarrierStatus_ClosedConnection(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
-	_, err := client.SealStatus(context.Background())
+	_, err := client.BarrierStatus(context.Background())
 	if err == nil {
 		t.Fatal("expected error for closed connection")
 	}
 }
 
-func TestClient_Seal_ClosedConnection(t *testing.T) {
+func TestClient_BarrierSeal_ClosedConnection(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
-	err := client.Seal(context.Background())
+	err := client.BarrierSeal(context.Background())
+	if err == nil {
+		t.Fatal("expected error for closed connection")
+	}
+}
+
+func TestClient_CeremonyStatus_ClosedConnection(t *testing.T) {
+	client := createTestClient(t)
+	defer client.Close()
+
+	_, err := client.CeremonyStatus(context.Background())
 	if err == nil {
 		t.Fatal("expected error for closed connection")
 	}
@@ -931,31 +981,31 @@ func TestClient_KMSClearKeySafety_ClosedConnection(t *testing.T) {
 	}
 }
 
-func TestClient_SealInit_ClosedConnection(t *testing.T) {
+func TestClient_BarrierInitialize_ClosedConnection(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
-	_, err := client.SealInit(context.Background(), &service.SealInitRequest{})
+	err := client.BarrierInitialize(context.Background(), &BarrierInitializeRequest{Secret: "pw"})
 	if err == nil {
 		t.Fatal("expected error for closed connection")
 	}
 }
 
-func TestClient_Unseal_ClosedConnection(t *testing.T) {
+func TestClient_BarrierUnseal_ClosedConnection(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
-	_, err := client.Unseal(context.Background(), &service.UnsealRequest{Share: []byte("test")})
+	err := client.BarrierUnseal(context.Background(), &BarrierUnsealRequest{Secret: "pw"})
 	if err == nil {
 		t.Fatal("expected error for closed connection")
 	}
 }
 
-func TestClient_Rekey_ClosedConnection(t *testing.T) {
+func TestClient_BarrierRekey_ClosedConnection(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
-	_, err := client.Rekey(context.Background(), &service.RekeyRequest{})
+	_, err := client.BarrierRekey(context.Background(), &BarrierRekeyRequest{})
 	if err == nil {
 		t.Fatal("expected error for closed connection")
 	}

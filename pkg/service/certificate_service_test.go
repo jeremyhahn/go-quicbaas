@@ -899,3 +899,222 @@ func TestCertificateService_IssueCertificate_RSAKeyAlgorithm(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.NotEmpty(t, resp.CertificatePEM)
 }
+
+// =============================================================================
+// CA Administration Surface Tests
+// =============================================================================
+
+// mockListerCAService is mockCAService extended with a
+// ListStoredCertificates implementation so it satisfies CertStoreLister.
+type mockListerCAService struct {
+	mockCAService
+	listFunc func(ctx context.Context) ([]*x509.Certificate, error)
+}
+
+func (m *mockListerCAService) ListStoredCertificates(ctx context.Context) ([]*x509.Certificate, error) {
+	if m.listFunc != nil {
+		return m.listFunc(ctx)
+	}
+	return nil, nil
+}
+
+// generateTestCert creates a self-signed test certificate for use in
+// service-level CAInfo/ListCertificates tests.
+func generateTestCert(t *testing.T, cn string, notAfter time.Time) (*x509.Certificate, string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: cn, Organization: []string{"Acme"}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     notAfter,
+		IsCA:         false,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		DNSNames:     []string{cn},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}))
+	return cert, pemStr
+}
+
+func TestCertificateService_CAInfo_Success(t *testing.T) {
+	_, certPEM := generateTestCert(t, "Test Root CA", time.Now().Add(365*24*time.Hour))
+	mock := &mockCAService{
+		getCACertificateFunc: func(_ context.Context, _ *xkmstransport.GetCACertificateRequest) (*xkmstransport.GetCACertificateResponse, error) {
+			return &xkmstransport.GetCACertificateResponse{
+				CertificatePEM: []byte(certPEM),
+				Subject:        "CN=Test Root CA,O=Acme",
+				Issuer:         "CN=Test Root CA,O=Acme",
+				SerialNumber:   "feed",
+			}, nil
+		},
+		getCABundleFunc: func(_ context.Context, _ *xkmstransport.GetCABundleRequest) (*xkmstransport.GetCABundleResponse, error) {
+			return &xkmstransport.GetCABundleResponse{BundlePEM: []byte(certPEM)}, nil
+		},
+	}
+	svc := NewCertificateService(mock)
+	resp, err := svc.CAInfo(context.Background(), &CAInfoRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, "Test Root CA", resp.CommonName)
+	assert.Equal(t, "ECDSA", resp.KeyType)
+	assert.Equal(t, 256, resp.KeyBits)
+	assert.NotEmpty(t, resp.SignatureAlgorithm)
+	assert.NotEmpty(t, resp.CertificatePEM)
+	assert.NotEmpty(t, resp.CABundlePEM)
+}
+
+func TestCertificateService_CAInfo_GetCACertificateError(t *testing.T) {
+	want := stderrors.New("boom")
+	mock := &mockCAService{
+		getCACertificateFunc: func(_ context.Context, _ *xkmstransport.GetCACertificateRequest) (*xkmstransport.GetCACertificateResponse, error) {
+			return nil, want
+		},
+	}
+	svc := NewCertificateService(mock)
+	_, err := svc.CAInfo(context.Background(), &CAInfoRequest{})
+	require.Error(t, err)
+}
+
+func TestCertificateService_CAInfo_EmptyCertPEM(t *testing.T) {
+	mock := &mockCAService{
+		getCACertificateFunc: func(_ context.Context, _ *xkmstransport.GetCACertificateRequest) (*xkmstransport.GetCACertificateResponse, error) {
+			return &xkmstransport.GetCACertificateResponse{CertificatePEM: nil}, nil
+		},
+		getCABundleFunc: func(_ context.Context, _ *xkmstransport.GetCABundleRequest) (*xkmstransport.GetCABundleResponse, error) {
+			return &xkmstransport.GetCABundleResponse{}, nil
+		},
+	}
+	svc := NewCertificateService(mock)
+	_, err := svc.CAInfo(context.Background(), &CAInfoRequest{})
+	require.Error(t, err)
+}
+
+func TestCertificateService_CAInfo_MalformedPEM(t *testing.T) {
+	mock := &mockCAService{
+		getCACertificateFunc: func(_ context.Context, _ *xkmstransport.GetCACertificateRequest) (*xkmstransport.GetCACertificateResponse, error) {
+			return &xkmstransport.GetCACertificateResponse{CertificatePEM: []byte("not-a-pem")}, nil
+		},
+		getCABundleFunc: func(_ context.Context, _ *xkmstransport.GetCABundleRequest) (*xkmstransport.GetCABundleResponse, error) {
+			return &xkmstransport.GetCABundleResponse{}, nil
+		},
+	}
+	svc := NewCertificateService(mock)
+	_, err := svc.CAInfo(context.Background(), &CAInfoRequest{})
+	require.Error(t, err)
+}
+
+func TestCertificateService_ListCertificates_NotSupportedByAdapter(t *testing.T) {
+	// Plain mockCAService does NOT implement CertStoreLister.
+	mock := &mockCAService{}
+	svc := NewCertificateService(mock)
+	_, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrCertListNotSupported)
+}
+
+func TestCertificateService_ListCertificates_NegativeLimit(t *testing.T) {
+	mock := &mockCAService{}
+	svc := NewCertificateService(mock)
+	_, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{Limit: -1})
+	require.Error(t, err)
+}
+
+func TestCertificateService_ListCertificates_Success(t *testing.T) {
+	certA, _ := generateTestCert(t, "api.example.com", time.Now().Add(24*time.Hour))
+	certB, _ := generateTestCert(t, "client-1.example.com", time.Now().Add(24*time.Hour))
+	mock := &mockListerCAService{
+		mockCAService: mockCAService{
+			isRevokedFunc: func(_ context.Context, _ *xkmstransport.IsRevokedRequest) (*xkmstransport.IsRevokedResponse, error) {
+				return &xkmstransport.IsRevokedResponse{Revoked: false}, nil
+			},
+		},
+		listFunc: func(_ context.Context) ([]*x509.Certificate, error) {
+			return []*x509.Certificate{certA, certB}, nil
+		},
+	}
+	svc := NewCertificateService(mock)
+	resp, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{
+		CommonNameFilter: "api",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, resp.TotalCount)
+	require.Len(t, resp.Certificates, 1)
+	assert.Equal(t, "api.example.com", resp.Certificates[0].CommonName)
+	assert.Contains(t, resp.Certificates[0].KeyUsage, "DigitalSignature")
+}
+
+func TestCertificateService_ListCertificates_RespectsLimit(t *testing.T) {
+	cert1, _ := generateTestCert(t, "one.example.com", time.Now().Add(24*time.Hour))
+	cert2, _ := generateTestCert(t, "two.example.com", time.Now().Add(24*time.Hour))
+	cert3, _ := generateTestCert(t, "three.example.com", time.Now().Add(24*time.Hour))
+	mock := &mockListerCAService{
+		mockCAService: mockCAService{
+			isRevokedFunc: func(_ context.Context, _ *xkmstransport.IsRevokedRequest) (*xkmstransport.IsRevokedResponse, error) {
+				return &xkmstransport.IsRevokedResponse{Revoked: false}, nil
+			},
+		},
+		listFunc: func(_ context.Context) ([]*x509.Certificate, error) {
+			return []*x509.Certificate{cert1, cert2, cert3}, nil
+		},
+	}
+	svc := NewCertificateService(mock)
+	resp, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{Limit: 2})
+	require.NoError(t, err)
+	assert.Len(t, resp.Certificates, 2)
+	assert.Equal(t, 3, resp.TotalCount)
+}
+
+func TestCertificateService_ListCertificates_ExcludesExpired(t *testing.T) {
+	expired, _ := generateTestCert(t, "expired.example.com", time.Now().Add(-time.Minute))
+	valid, _ := generateTestCert(t, "valid.example.com", time.Now().Add(24*time.Hour))
+	mock := &mockListerCAService{
+		mockCAService: mockCAService{
+			isRevokedFunc: func(_ context.Context, _ *xkmstransport.IsRevokedRequest) (*xkmstransport.IsRevokedResponse, error) {
+				return &xkmstransport.IsRevokedResponse{Revoked: false}, nil
+			},
+		},
+		listFunc: func(_ context.Context) ([]*x509.Certificate, error) {
+			return []*x509.Certificate{expired, valid}, nil
+		},
+	}
+	svc := NewCertificateService(mock)
+	resp, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Certificates, 1)
+	assert.Equal(t, "valid.example.com", resp.Certificates[0].CommonName)
+}
+
+func TestCertificateService_ListCertificates_IncludesExpiredWhenAsked(t *testing.T) {
+	expired, _ := generateTestCert(t, "expired.example.com", time.Now().Add(-time.Minute))
+	valid, _ := generateTestCert(t, "valid.example.com", time.Now().Add(24*time.Hour))
+	mock := &mockListerCAService{
+		mockCAService: mockCAService{
+			isRevokedFunc: func(_ context.Context, _ *xkmstransport.IsRevokedRequest) (*xkmstransport.IsRevokedResponse, error) {
+				return &xkmstransport.IsRevokedResponse{Revoked: false}, nil
+			},
+		},
+		listFunc: func(_ context.Context) ([]*x509.Certificate, error) {
+			return []*x509.Certificate{expired, valid}, nil
+		},
+	}
+	svc := NewCertificateService(mock)
+	resp, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{IncludeExpired: true})
+	require.NoError(t, err)
+	assert.Len(t, resp.Certificates, 2)
+}
+
+func TestCertificateService_ListCertificates_BackendError(t *testing.T) {
+	want := stderrors.New("boom")
+	mock := &mockListerCAService{
+		listFunc: func(_ context.Context) ([]*x509.Certificate, error) {
+			return nil, want
+		},
+	}
+	svc := NewCertificateService(mock)
+	_, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{})
+	require.Error(t, err)
+}

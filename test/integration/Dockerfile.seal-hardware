@@ -1,0 +1,244 @@
+# QuicBaaS Hardware-Seal Integration Test Runner Dockerfile
+#
+# Builds quicbaasd AND the quicbaas CLI WITH the hardware seal build tags
+# (tpm2 pkcs11) so the seal factories are compiled in, then ships the full
+# Go toolchain + workspace so the tagged seal integration tests can run.
+#
+# Unlike Dockerfile.seal (cloud backends, CGO_ENABLED=0), this image:
+#   * enables CGO_ENABLED=1 — required by miekg/pkcs11 for the pkcs11 backend.
+#   * builds SoftHSM2 v2.6.1 from source (same configuration as
+#     test/integration/docker/softhsm/Dockerfile) so the library at
+#     /usr/local/lib/softhsm/libsofthsm2.so is ABI-compatible with the
+#     Alpine pkcs11 CGO binary.
+#   * ships softhsm2-util for per-test token initialization.
+#   * does NOT install swtpm — the tpm2 backend connects to the external
+#     swtpm1 container over TCP via the go-xkms TCP transport path.
+#
+# Both stages use golang:1.26-alpine (ships Go 1.26.4, matching go.work).
+# Alpine supports CGO via apk gcc + musl-dev.
+
+ARG BUILD_TAGS="local quic raft rest iam mcp hashicorpmetrics codec_json codec_yaml tpm2 pkcs11"
+
+# ============================================================================
+# Stage 0: Build SoftHSM2 v2.6.1 from source (matches the softhsm Dockerfile)
+# ============================================================================
+FROM alpine:3.22.1 AS softhsm-builder
+
+RUN apk add --no-cache \
+    git \
+    build-base \
+    automake \
+    autoconf \
+    libtool \
+    openssl-dev \
+    sqlite-dev \
+    p11-kit-dev
+
+WORKDIR /build
+RUN git clone https://github.com/opendnssec/SoftHSMv2.git && \
+    cd SoftHSMv2 && \
+    git checkout 2.6.1 && \
+    sh autogen.sh && \
+    ./configure \
+        --prefix=/usr/local \
+        --disable-gost \
+        --with-crypto-backend=openssl \
+        --with-objectstore-backend-db \
+        --with-sqlite3=/usr && \
+    make -j$(nproc) && \
+    make install DESTDIR=/build/softhsm-install
+
+# ============================================================================
+# Stage 1: Build quicbaasd + quicbaas CLI inside a workspace mirroring host
+# ============================================================================
+FROM golang:1.26-alpine AS builder
+
+ARG BUILD_TAGS
+
+# Build toolchain: git, make, bash (for go.work heredoc), gcc + musl-dev for
+# CGO (pkcs11 uses miekg/pkcs11), openssl-dev + sqlite-dev for SoftHSM.
+RUN apk add --no-cache \
+    git make bash ca-certificates \
+    gcc musl-dev \
+    openssl-dev sqlite-dev
+
+# Install SoftHSM2 runtime + headers from the softhsm-builder stage so the
+# CGO build can link against the same library the tests will use.
+COPY --from=softhsm-builder /build/softhsm-install/usr/local /usr/local
+
+WORKDIR /workspace
+
+COPY --from=workspace go-libsignal  ./go-libsignal
+COPY --from=workspace go-objstore   ./go-objstore
+COPY --from=workspace go-qrdb       ./go-qrdb
+COPY --from=workspace go-quicraft   ./go-quicraft
+COPY --from=workspace go-signal     ./go-signal
+COPY --from=workspace go-truststrap ./go-truststrap
+COPY --from=workspace go-xkms       ./go-xkms
+COPY --from=workspace go-codec      ./go-codec
+COPY --from=workspace go-frost      ./go-frost
+
+COPY . ./go-quicbaas
+
+RUN { \
+        echo 'go 1.26.4'; \
+        echo ''; \
+        echo 'use ('; \
+        echo '	./go-libsignal'; \
+        echo '	./go-objstore'; \
+        echo '	./go-objstore/api/sdks/go'; \
+        echo '	./go-qrdb'; \
+        echo '	./go-qrdb/sdk/go'; \
+        echo '	./go-quicbaas'; \
+        echo '	./go-quicbaas/sdk/go'; \
+        echo '	./go-quicraft'; \
+        echo '	./go-signal'; \
+        echo '	./go-xkms'; \
+        echo '	./go-codec'; \
+        echo '	./go-frost'; \
+        echo '	./go-xkms/sdk/go'; \
+        echo '	./go-xkms/xkey'; \
+        echo ')'; \
+        echo ''; \
+        echo 'replace ('; \
+        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
+        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
+        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
+        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
+        echo ')'; \
+    } > go.work
+
+WORKDIR /workspace/go-quicbaas
+
+RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
+RUN rm -f go.sum sdk/go/go.sum
+
+# Build the daemon WITH the hardware seal tags so the seal factories compile in.
+# CGO_ENABLED=1 is required for the pkcs11 tag (miekg/pkcs11 C binding).
+RUN CGO_ENABLED=1 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
+
+# Build the CLI (same tags) so the seal tests can drive the barrier verbs.
+RUN CGO_ENABLED=1 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
+
+# ============================================================================
+# Stage 2: Test runtime — full Go toolchain, workspace, built binaries,
+#           SoftHSM2 runtime + CLI for PKCS#11 token management
+# ============================================================================
+FROM golang:1.26-alpine
+
+ARG BUILD_TAGS
+
+LABEL maintainer="Jeremy Hahn"
+LABEL description="QuicBaaS hardware-seal integration test runner (tpm2 + pkcs11)"
+
+# Runtime dependencies:
+#   - bash, coreutils, curl, jq, ca-certificates, tzdata: standard test harness.
+#   - netcat-openbsd (nc): used by the test harness for TCP readiness probing.
+#   - gcc musl-dev: CGO runtime for the `go test` compiler invocation.
+#   - openssl sqlite-libs p11-kit: SoftHSM2 runtime shared library dependencies.
+RUN apk add --no-cache \
+    bash \
+    coreutils \
+    curl \
+    wget \
+    jq \
+    ca-certificates \
+    tzdata \
+    netcat-openbsd \
+    git \
+    make \
+    gcc \
+    musl-dev \
+    openssl \
+    sqlite-libs \
+    p11-kit
+
+# Install SoftHSM2 built from source (same config as test/integration/docker/
+# softhsm/Dockerfile): library at /usr/local/lib/softhsm/libsofthsm2.so,
+# utility at /usr/local/bin/softhsm2-util.
+COPY --from=softhsm-builder /build/softhsm-install/usr/local /usr/local
+
+# Verify softhsm2-util is usable.
+RUN softhsm2-util --version
+
+WORKDIR /workspace
+
+COPY --from=workspace go-libsignal  ./go-libsignal
+COPY --from=workspace go-objstore   ./go-objstore
+COPY --from=workspace go-qrdb       ./go-qrdb
+COPY --from=workspace go-quicraft   ./go-quicraft
+COPY --from=workspace go-signal     ./go-signal
+COPY --from=workspace go-truststrap ./go-truststrap
+COPY --from=workspace go-xkms       ./go-xkms
+COPY --from=workspace go-codec      ./go-codec
+COPY --from=workspace go-frost      ./go-frost
+COPY . ./go-quicbaas
+
+RUN { \
+        echo 'go 1.26.4'; \
+        echo ''; \
+        echo 'use ('; \
+        echo '	./go-libsignal'; \
+        echo '	./go-objstore'; \
+        echo '	./go-objstore/api/sdks/go'; \
+        echo '	./go-qrdb'; \
+        echo '	./go-qrdb/sdk/go'; \
+        echo '	./go-quicbaas'; \
+        echo '	./go-quicbaas/sdk/go'; \
+        echo '	./go-quicraft'; \
+        echo '	./go-signal'; \
+        echo '	./go-xkms'; \
+        echo '	./go-codec'; \
+        echo '	./go-frost'; \
+        echo '	./go-xkms/sdk/go'; \
+        echo '	./go-xkms/xkey'; \
+        echo ')'; \
+        echo ''; \
+        echo 'replace ('; \
+        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
+        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
+        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
+        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
+        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
+        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
+        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
+        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
+        echo ')'; \
+    } > go.work
+
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaas  /usr/local/bin/quicbaas
+RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas
+
+WORKDIR /workspace/go-quicbaas
+
+ENV QUICBAAS_TEST_MODE=integration \
+    CGO_ENABLED=1 \
+    GO111MODULE=on \
+    GOSUMDB=off \
+    GOINSECURE=github.com/jeremyhahn/* \
+    PATH="/usr/local/bin:${PATH}" \
+    SEAL_HW_BUILD_TAGS="${BUILD_TAGS}" \
+    SOFTHSM2_LIB=/usr/local/lib/softhsm/libsofthsm2.so
+
+CMD ["bash", "-c", "rm -f go.sum sdk/go/go.sum && go test -v -p 1 -tags 'integration tpm2 pkcs11 codec_json codec_yaml' -timeout 20m ./test/integration/seal/..."]

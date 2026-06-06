@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbtimeseries "github.com/jeremyhahn/go-qrdb/pkg/timeseries"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -91,7 +91,7 @@ func TestLC_ConvertToQRDBQueryRequest(t *testing.T) {
 	assert.Equal(t, "cpu.usage", result.Metric)
 	assert.Equal(t, start, result.StartTime)
 	assert.Equal(t, end, result.EndTime)
-	assert.Equal(t, qrdbtimeseries.AggFunc(interfaces.AggAvg), result.Aggregation)
+	assert.Equal(t, qrdbsdk.TimeSeriesAggFunc(interfaces.AggAvg), result.Aggregation)
 	assert.Equal(t, 5*time.Minute, result.Interval)
 	assert.Equal(t, []string{"host"}, result.GroupBy)
 	assert.Equal(t, 100, result.Limit)
@@ -117,11 +117,11 @@ func TestLC_ConvertFromQRDBQueryResult(t *testing.T) {
 
 	now := time.Now()
 	aggVal := float64Ptr(42.5)
-	qrdbResult := &qrdbtimeseries.QueryResult{
+	qrdbResult := &qrdbsdk.TimeSeriesQueryResult{
 		Metric:          "cpu.usage",
 		Tags:            map[string]string{"host": "server1"},
 		AggregatedValue: aggVal,
-		Points: []*qrdbtimeseries.DataPoint{
+		Points: []*qrdbsdk.TimeSeriesDataPoint{
 			{
 				Metric:    "cpu.usage",
 				Value:     40.0,
@@ -151,7 +151,7 @@ func TestLC_ConvertFromQRDBQueryResult_NilPoints(t *testing.T) {
 	t.Parallel()
 
 	aggVal := float64Ptr(1024.0)
-	qrdbResult := &qrdbtimeseries.QueryResult{
+	qrdbResult := &qrdbsdk.TimeSeriesQueryResult{
 		Metric:          "mem.free",
 		AggregatedValue: aggVal,
 		Points:          nil,
@@ -167,14 +167,14 @@ func TestLC_ConvertFromQRDBQueryResult_WithGroupedResults(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
-	qrdbResult := &qrdbtimeseries.QueryResult{
+	qrdbResult := &qrdbsdk.TimeSeriesQueryResult{
 		Metric:          "cpu.usage",
 		AggregatedValue: float64Ptr(50.0),
-		GroupedResults: []*qrdbtimeseries.GroupedResult{
+		GroupedResults: []*qrdbsdk.TimeSeriesGroupedResult{
 			{
 				Tags:            map[string]string{"host": "server1"},
 				AggregatedValue: float64Ptr(40.0),
-				Points: []*qrdbtimeseries.DataPoint{
+				Points: []*qrdbsdk.TimeSeriesDataPoint{
 					{
 						Metric:    "cpu.usage",
 						Value:     40.0,
@@ -210,7 +210,7 @@ func TestLC_ConvertFromQRDBQueryResult_WithGroupedResults(t *testing.T) {
 func TestLC_ConvertFromQRDBQueryResult_EmptyGroupedResults(t *testing.T) {
 	t.Parallel()
 
-	qrdbResult := &qrdbtimeseries.QueryResult{
+	qrdbResult := &qrdbsdk.TimeSeriesQueryResult{
 		Metric:         "net.bytes",
 		GroupedResults: nil,
 	}
@@ -228,14 +228,18 @@ func TestLC_StartTimeSeries_NilStorage(t *testing.T) {
 	t.Parallel()
 	srv := withTempServer(t)
 	srv.timeSeriesStorage = nil
-	// When storage is nil, startTimeSeries calls initTimeSeriesStorage
-	// which needs a real directory - provide one
 	srv.config.TimeSeries.StoragePath = t.TempDir()
+
+	// startTimeSeries is a no-op when qrdbNode is nil and timeSeriesStorage
+	// is nil (time series disabled). The storage is NOT initialized here;
+	// initTimeSeriesStorage must be called explicitly on the legacy path.
 	err := srv.startTimeSeries()
 	assert.NoError(t, err)
-	assert.NotNil(t, srv.timeSeriesStorage)
+	// Storage remains nil since neither qrdbNode nor pre-existing storage
+	// is available in this test path.
+	assert.Nil(t, srv.timeSeriesStorage)
 
-	// Cleanup
+	// stopTimeSeries with nil storage is a no-op.
 	require.NoError(t, srv.stopTimeSeries())
 }
 
@@ -244,44 +248,4 @@ func TestLC_StopTimeSeries_NilStorage(t *testing.T) {
 	srv := withTempServer(t)
 	srv.timeSeriesStorage = nil
 	assert.NoError(t, srv.stopTimeSeries())
-}
-
-func TestLC_InitTimeSeriesStorage_Success(t *testing.T) {
-	t.Parallel()
-	srv := withTempServer(t)
-	srv.config.TimeSeries.StoragePath = t.TempDir()
-
-	err := srv.initTimeSeriesStorage()
-	assert.NoError(t, err)
-	assert.NotNil(t, srv.timeSeriesStorage)
-
-	// Cleanup
-	require.NoError(t, srv.stopTimeSeries())
-}
-
-func TestLC_InitTimeSeriesStorage_DefaultPath(t *testing.T) {
-	t.Parallel()
-	srv := withTempServer(t)
-	srv.config.TimeSeries.StoragePath = ""
-	srv.config.Storage.DataDir = t.TempDir()
-
-	err := srv.initTimeSeriesStorage()
-	assert.NoError(t, err)
-	assert.NotNil(t, srv.timeSeriesStorage)
-
-	// Cleanup
-	require.NoError(t, srv.stopTimeSeries())
-}
-
-func TestLC_StopTimeSeries_WithStorage(t *testing.T) {
-	t.Parallel()
-	srv := withTempServer(t)
-	srv.config.TimeSeries.StoragePath = t.TempDir()
-
-	require.NoError(t, srv.initTimeSeriesStorage())
-	require.NotNil(t, srv.timeSeriesStorage)
-
-	err := srv.stopTimeSeries()
-	assert.NoError(t, err)
-	assert.Nil(t, srv.timeSeriesStorage)
 }

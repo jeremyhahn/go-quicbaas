@@ -16,6 +16,7 @@ package quicbaas
 import (
 	"sync"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -61,7 +62,6 @@ type SecurityService interface {
 	Crypto() CryptoClient
 	Certificate() CertificateClient
 	CertificateExt() CertificateExtensions
-	ClusterDEK() ClusterDEKClient
 	DEK() DEKClient
 	DynamicSecrets() DynamicSecretsClient
 	RBAC() RBACClient
@@ -74,6 +74,27 @@ type SecurityService interface {
 	// Trust exposes DANE TLSA publication, cross-signed root pools, and
 	// AIA-driven root import.
 	Trust() TrustService
+
+	// Barrier exposes the qrdb StorageBarrier lifecycle (initialize,
+	// unseal, seal, status, rekey, Shamir share management). This is
+	// the single canonical SDK entry point — there is no flat
+	// Client.Barrier() shortcut, in keeping with the spec's "one
+	// canonical home per capability" rule.
+	Barrier() (QRDBBarrierClient, error)
+
+	// Ceremony exposes the qrdb initialization ceremony (Shamir M-of-N
+	// share enrollment, officer cert claims, share claims, CSR
+	// signing). This is the single canonical SDK entry point — there
+	// is no flat Client.BarrierCeremony() shortcut.
+	Ceremony() (QRDBCeremonyClient, error)
+
+	// Credentials exposes the qrdb named-credential service:
+	// non-versioned (Submit/Strategy/Delete) + versioned-rotation
+	// (List/Rotate/RetrieveVersion/ListVersions/GCExpired). Backed by
+	// the canonical CredentialClient implementation in qrdb across all
+	// six transports (embedded, REST, gRPC, QUIC, MCP, Unix) — no
+	// transport returns NotImplementedError.
+	Credentials() (QRDBCredentialClient, error)
 }
 
 // IdentityService provides identity and access management operations.
@@ -191,7 +212,6 @@ func (s *securityService) KMS() KMSClient                       { return s.c.KMS
 func (s *securityService) Secrets() SecretsClient               { return s.c.Secrets() }
 func (s *securityService) Crypto() CryptoClient                 { return s.c.Crypto() }
 func (s *securityService) Certificate() CertificateClient       { return s.c.Certificate() }
-func (s *securityService) ClusterDEK() ClusterDEKClient         { return s.c.ClusterDEK() }
 func (s *securityService) DEK() DEKClient                       { return s.c.DEK() }
 func (s *securityService) DynamicSecrets() DynamicSecretsClient { return s.c.DynamicSecrets() }
 func (s *securityService) RBAC() RBACClient                     { return s.c.RBAC() }
@@ -212,6 +232,36 @@ func (s *securityService) Trust() TrustService {
 		s.trustSvc = newTrustService(s.c.transport)
 	})
 	return s.trustSvc
+}
+
+// Barrier returns the QRDB BarrierClient. The QRDB transport is
+// lazily initialized on first call (delegated to client.qrdbClient).
+func (s *securityService) Barrier() (QRDBBarrierClient, error) {
+	qrdbClient, err := s.c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	return qrdbClient.Barrier(), nil
+}
+
+// Ceremony returns the QRDB CeremonyClient. The QRDB transport is
+// lazily initialized on first call (delegated to client.qrdbClient).
+func (s *securityService) Ceremony() (QRDBCeremonyClient, error) {
+	qrdbClient, err := s.c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	return qrdbClient.Ceremony(), nil
+}
+
+// Credentials returns the QRDB CredentialClient. The QRDB transport
+// is lazily initialized on first call (delegated to client.qrdbClient).
+func (s *securityService) Credentials() (QRDBCredentialClient, error) {
+	qrdbClient, err := s.c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	return qrdbClient.Credentials(), nil
 }
 
 func (s *securityService) CertificateExt() CertificateExtensions {
@@ -273,7 +323,11 @@ type barrierCeremonyService struct {
 }
 
 func (s *barrierCeremonyService) Ceremony() (QRDBCeremonyClient, error) {
-	return s.c.BarrierCeremony()
+	qrdbClient, err := s.c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	return qrdbClient.Ceremony(), nil
 }
 
 func (s *barrierCeremonyService) CustodianGroup() (QRDBCustodianGroupClient, error) {
@@ -310,7 +364,7 @@ func (c *client) ClusterMgmt() ClusterManagementService {
 }
 
 // Security returns the SecurityService sub-interface providing organized
-// access to Auth, Seal, KMS, Secrets, Crypto, Certificate, ClusterDEK,
+// access to Auth, Seal, KMS, Secrets, Crypto, Certificate,
 // DynamicSecrets, RBAC, SealStore, ACME, Trust, and CertificateExt operations.
 func (c *client) Security() SecurityService {
 	return c.securitySvc()
@@ -371,26 +425,6 @@ func (c *client) TenantMgmtService() TenantService {
 	return &tenantService{c: c}
 }
 
-// Barrier returns the QRDB BarrierClient for cryptographic barrier
-// operations. The QRDB client is lazily initialized on first call.
-func (c *client) Barrier() (QRDBBarrierClient, error) {
-	qrdbClient, err := c.qrdbClient()
-	if err != nil {
-		return nil, err
-	}
-	return qrdbClient.Barrier(), nil
-}
-
-// BarrierCeremony returns the QRDB CeremonyClient for managing the barrier
-// ceremony lifecycle. The QRDB client is lazily initialized on first call.
-func (c *client) BarrierCeremony() (QRDBCeremonyClient, error) {
-	qrdbClient, err := c.qrdbClient()
-	if err != nil {
-		return nil, err
-	}
-	return qrdbClient.Ceremony(), nil
-}
-
 // SealStore returns the QRDB SealStoreClient for managing
 // platform-local sealed credentials. The QRDB client is lazily
 // initialized on first call.
@@ -411,6 +445,17 @@ func (c *client) TenantMgmt() (QRDBTenantClient, error) {
 		return nil, err
 	}
 	return qrdbClient.Tenants(), nil
+}
+
+// Discovery returns the service-discovery registry, built on the QRDB
+// lease + watch + KV primitives. The QRDB client is lazily initialized on
+// first call.
+func (c *client) Discovery() (*registry.Registry, error) {
+	qrdbClient, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	return registry.NewFromClient(qrdbClient), nil
 }
 
 // CustodianGroup returns the QRDB CustodianGroupClient for managing

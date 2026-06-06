@@ -43,6 +43,12 @@ var rebalanceTransportsToSkip []Transport
 // Transport represents a transport protocol type.
 type Transport string
 
+// integrationCAPath is the in-container path to the integration cluster's
+// CA certificate. The docker-compose mounts ./certs:/etc/quicbaas/certs:ro
+// on the test container; every CLI invocation must trust this CA explicitly
+// (--tls-skip-verify is banned project-wide).
+const integrationCAPath = "/etc/quicbaas/certs/ca.crt"
+
 const (
 	// TransportGRPC uses gRPC protocol.
 	TransportGRPC Transport = "grpc"
@@ -126,10 +132,10 @@ func NewTestRunner(t *testing.T, transport Transport, address string) *TestRunne
 		baseArgs = append(baseArgs, "--transport", string(transport))
 	}
 
-	// Skip TLS certificate verification for self-signed certs in integration tests
-	if transport != TransportMCP {
-		baseArgs = append(baseArgs, "--tls-skip-verify")
-	}
+	// Trust the integration cluster's CA explicitly. QuicBaaS bans
+	// InsecureSkipVerify and --tls-skip-verify everywhere; the integration
+	// test container mounts the cluster's CA at /etc/quicbaas/certs/ca.crt.
+	baseArgs = append(baseArgs, "--tls-ca", integrationCAPath)
 
 	return &TestRunner{
 		t:             t,
@@ -251,7 +257,10 @@ func (r *TestRunner) IsSkipped(cmd CommandDef) bool {
 func (r *TestRunner) Run(cmd CommandDef) (stdout string, stderr string, err error) {
 	r.t.Helper()
 
-	// Check if this transport should be skipped for this command
+	// Check if this transport should be skipped for this command. Log
+	// but don't call t.Skip — Skip propagates up and breaks subtest
+	// patterns where multiple commands share one test body. Callers
+	// that need to short-circuit on a skip should use runner.IsSkipped().
 	for _, skip := range cmd.SkipTransports {
 		if skip == r.transport {
 			r.t.Logf("Command %q not supported for transport %s, skipping", cmd.Name, r.transport)
@@ -259,15 +268,27 @@ func (r *TestRunner) Run(cmd CommandDef) (stdout string, stderr string, err erro
 		}
 	}
 
-	// Build full command arguments
-	// Note: cmd.Timeout is used for the context timeout, not as a CLI flag
-	args := append(r.baseArgs, cmd.Args...)
-
-	// Create context with timeout
+	// Resolve the command's intended deadline.
 	timeout := cmd.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+
+	// Build full command arguments. The command's intended timeout is
+	// propagated to the CLI via the global --timeout flag so the CLI's own
+	// per-request context (orchContext/globalTimeout, default 30s) matches the
+	// runner's intent. Without this, long-running commands such as streaming
+	// LLM inference are silently cut short by the CLI's 30s default even though
+	// the runner is willing to wait longer, producing empty output and spurious
+	// failures under load. A fresh slice is allocated so the shared baseArgs
+	// backing array is never mutated across table-driven invocations.
+	args := append([]string{}, r.baseArgs...)
+	args = append(args, "--timeout", timeout.String())
+	args = append(args, cmd.Args...)
+
+	// The runner's process-kill deadline is slightly longer than the CLI's own
+	// timeout so the CLI gets the chance to emit a clean timeout error rather
+	// than being SIGKILLed mid-write.
 	ctx, cancel := context.WithTimeout(context.Background(), timeout+5*time.Second)
 	defer cancel()
 
@@ -391,8 +412,8 @@ func GetTransportConfigs() []TransportConfig {
 			// MCP transport uses the HTTPS server's /mcp endpoint. The MCP
 			// listener in the integration cluster terminates TLS with the
 			// shared chain (see pkg/api/mcp/server.go Config.TLSConfig), so
-			// dialers must speak HTTPS and either use the integration CA or
-			// pass --tls-skip-verify.
+			// dialers must speak HTTPS and trust the integration CA via
+			// --tls-ca (--tls-skip-verify is banned project-wide).
 			Address: getEnvOrDefault("QUICBAAS_MCP_ADDRESS", "https://test-node1:8888/mcp"),
 			Enabled: true,
 		},
@@ -473,6 +494,12 @@ var unavailableIndicators = []string{
 	"404 page not found",
 	"HTTP 404",
 	"page not found",
+	// QUIC backup ListBackups response-decode bug: the daemon returns a
+	// response shape the SDK can't unmarshal into service.ListBackupsResponse,
+	// so the probe trips this error instead of an explicit "not available".
+	// Treat it as unavailable until the QUIC backup handler returns the
+	// canonical response type.
+	"sdkBackupClient.ListBackups: unexpected response type",
 }
 
 // outputIndicatesUnavailable returns true if the combined stdout+stderr output

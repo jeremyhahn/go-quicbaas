@@ -379,6 +379,14 @@ type IAMConfig struct {
 
 	// SelfServiceRegistration controls the self-service tenant registration surface.
 	SelfServiceRegistration IAMSelfServiceRegistrationConfig `mapstructure:"self_service_registration"`
+
+	// SPIFFETrustDomain is the operator-configured SPIFFE trust domain. When
+	// set, broker-issued client certificates carry a tenant-scoped SPIFFE URI
+	// SAN (spiffe://<trust-domain>/tenant/<tenantID>/<kind>/<name>) and login
+	// derives (and pins) the tenant from it. When empty, login relies solely
+	// on home-realm discovery. This value is also propagated to the embedded
+	// qrdb mTLS authenticator and the xkms CA at startup.
+	SPIFFETrustDomain string `mapstructure:"spiffe_trust_domain"`
 }
 
 // Config represents the complete QuicBaaS configuration.
@@ -921,7 +929,15 @@ type MCPDynamicRegistrationConfig struct {
 
 // RaftConfig contains QuicRaft cluster configuration.
 type RaftConfig struct {
-	NodeID              uint64        `mapstructure:"node_id"`
+	NodeID uint64 `mapstructure:"node_id"`
+	// DeploymentID uniquely identifies the quicbaas cluster. All nodes in a
+	// cluster MUST share the same DeploymentID so quicraft can isolate them
+	// from other clusters on the same network. If unset (0), buildQRDBConfig
+	// derives it from NodeID (or falls back to 1) for single-node dev/test;
+	// in production, set an explicit non-zero value that is the same across
+	// all nodes. Supported format: any uint64 > 0 (e.g. 1, 42, or a
+	// hash of the cluster name).
+	DeploymentID        uint64        `mapstructure:"deployment_id"`
 	ElectionRTT         uint64        `mapstructure:"election_rtt"`
 	HeartbeatRTT        uint64        `mapstructure:"heartbeat_rtt"`
 	SnapshotEntries     uint64        `mapstructure:"snapshot_entries"`
@@ -951,6 +967,15 @@ type RaftConfig struct {
 	LeaderWaitTimeout time.Duration `mapstructure:"leader_wait_timeout"` // How long to wait for leader election
 	JoinTimeout       time.Duration `mapstructure:"join_timeout"`        // How long to wait when joining existing cluster
 	MinNodes          int           `mapstructure:"min_nodes"`           // Minimum nodes required for quorum
+
+	// Join indicates that this node is joining an existing Raft cluster rather
+	// than bootstrapping a new one. When true, StartShard is called with
+	// join=true so quicraft does not require the node to be present in the
+	// initial members map. Set QUICBAAS_RAFT_JOIN=true for dynamic membership
+	// (adding a node to a running cluster after initial bootstrap).
+	// Default: false (bootstrap mode — all members in JoinAddresses form the
+	// initial cluster together).
+	Join bool `mapstructure:"join"`
 
 	// Raft-specific TLS certificate paths for inter-node mTLS.
 	// When set, these override the server Security TLS paths for Raft transport.
@@ -1188,6 +1213,29 @@ type SealConfig struct {
 	// Default: false
 	Enabled bool `mapstructure:"enabled"`
 
+	// Strategy is the canonical sealing strategy name.
+	// Matches the StrategyID constants defined in go-quicraft/pkg/seal and
+	// re-exported by go-qrdb/pkg/seal: "none", "passphrase", "shamir", "tpm2",
+	// "pkcs11", "awskms", "gcpkms", "azurekv", "vault".
+	//
+	// "none"       — identity passthrough (no encryption); dev/test only.
+	// "passphrase" — Argon2id or PBKDF2-SHA256 (FIPS) key derivation (default).
+	// "shamir"     — Shamir M-of-N secret sharing over the passphrase strategy.
+	// Hardware strategies (tpm2, pkcs11, cloud KMS) require the corresponding
+	// go-xkms strategy to be registered via XKMSCryptoOptions.
+	//
+	// Default: "passphrase"
+	Strategy string `mapstructure:"strategy"`
+
+	// StrategyExplicit is a runtime-only flag (never serialized) set by the
+	// daemon entry point when the operator explicitly supplied a seal strategy
+	// via config file or environment. When true the configured Strategy wins
+	// over any barrier strategy persisted by `quicbaasd init` in the data dir.
+	// When false (the default) the persisted init strategy is authoritative for
+	// an already-initialised data dir. See pkg/server/init_marker.go
+	// (resolveBarrierStrategy) for the precedence rules.
+	StrategyExplicit bool `mapstructure:"-"`
+
 	// Mode specifies manual (Shamir shares) or auto (TPM/Cloud KMS) unseal.
 	// Options: "manual", "auto"
 	// Default: "manual"
@@ -1206,8 +1254,8 @@ type SealConfig struct {
 	BarrierDir string `mapstructure:"barrier_dir"`
 
 	// PreferenceOrder is the strategy preference order for sealing.
-	// Options: "software", "tpm2", "pkcs11", "awskms", "gcpkms", "azurekv"
-	// Default: ["software"]
+	// Options: "passphrase", "tpm2", "pkcs11", "awskms", "gcpkms", "azurekv"
+	// Default: ["passphrase"]
 	PreferenceOrder []string `mapstructure:"preference_order"`
 
 	// RecoveryEnabled enables generation of recovery keys.
@@ -1221,6 +1269,30 @@ type SealConfig struct {
 	// RecoveryTotal is the total recovery keys to generate.
 	// Default: 5
 	RecoveryTotal int `mapstructure:"recovery_total"`
+
+	// AWSKMS configures the AWS KMS sealing strategy (strategy "awskms").
+	// Consulted only when Strategy is "awskms". See AWSSealConfig.
+	AWSKMS AWSSealConfig `mapstructure:"awskms"`
+
+	// GCPKMS configures the Google Cloud KMS sealing strategy (strategy "gcpkms").
+	// Consulted only when Strategy is "gcpkms". See GCPSealConfig.
+	GCPKMS GCPSealConfig `mapstructure:"gcpkms"`
+
+	// AzureKV configures the Azure Key Vault sealing strategy (strategy "azurekv").
+	// Consulted only when Strategy is "azurekv". See AzureSealConfig.
+	AzureKV AzureSealConfig `mapstructure:"azurekv"`
+
+	// Vault configures the HashiCorp Vault Transit sealing strategy (strategy "vault").
+	// Consulted only when Strategy is "vault". See VaultSealConfig.
+	Vault VaultSealConfig `mapstructure:"vault"`
+
+	// TPM2 configures the TPM 2.0 sealing strategy (strategy "tpm2").
+	// Consulted only when Strategy is "tpm2". See TPM2SealConfig.
+	TPM2 TPM2SealConfig `mapstructure:"tpm2"`
+
+	// PKCS11 configures the PKCS#11 HSM sealing strategy (strategy "pkcs11").
+	// Consulted only when Strategy is "pkcs11". See PKCS11SealConfig.
+	PKCS11 PKCS11SealConfig `mapstructure:"pkcs11"`
 }
 
 // CAConfig contains Certificate Authority configuration for TLS bootstrap.

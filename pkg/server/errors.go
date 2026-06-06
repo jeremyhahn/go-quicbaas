@@ -126,6 +126,79 @@ func (e *InsecureBootstrapPasswordError) Unwrap() error {
 	return ErrInsecureBootstrapPassword
 }
 
+// NilLoginIdentityError is returned by the OIDC session issuer when the login
+// ceremony attempts to issue a bearer for a nil resolved identity.
+type NilLoginIdentityError struct{}
+
+// Error implements the error interface.
+func (e *NilLoginIdentityError) Error() string {
+	return "quicbaas/server: cannot issue session token for nil login identity"
+}
+
+// LoginCeremonyUnavailableError is returned by the OIDC session issuer when a
+// login ceremony operation runs before the OIDC provider has been bound (i.e.
+// before IAM initialization completes). It fails closed rather than minting an
+// unsigned or anonymous bearer.
+type LoginCeremonyUnavailableError struct{}
+
+// Error implements the error interface.
+func (e *LoginCeremonyUnavailableError) Error() string {
+	return "quicbaas/server: login ceremony unavailable (OIDC provider not yet bound)"
+}
+
+// EmptyLoginTenantError is returned by the tenant-aware WebAuthn login
+// verifier when a challenge or verification is attempted without a tenant id.
+// WebAuthn proofs MUST be verified against the exact login tenant's
+// relying-party configuration, so an empty tenant fails closed rather than
+// falling back to a default tenant (which would break tenant isolation).
+type EmptyLoginTenantError struct {
+	// Op names the verifier operation that rejected the empty tenant
+	// ("BeginChallenge" or "VerifyTenant").
+	Op string
+}
+
+// Error implements the error interface.
+func (e *EmptyLoginTenantError) Error() string {
+	if e == nil || e.Op == "" {
+		return "quicbaas/server: login tenant id is required for webauthn verification"
+	}
+	return "quicbaas/server: login tenant id is required for webauthn " + e.Op
+}
+
+// UnboundWebAuthnFactoryError is returned by the tenant-aware WebAuthn login
+// verifier when a challenge or verification runs before the per-tenant
+// WebAuthn service factory has been bound (i.e. before IAM initialization
+// completes). It fails closed rather than verifying against no service.
+type UnboundWebAuthnFactoryError struct{}
+
+// Error implements the error interface.
+func (e *UnboundWebAuthnFactoryError) Error() string {
+	return "quicbaas/server: webauthn login verifier unavailable (per-tenant service factory not yet bound)"
+}
+
+// NonTenantWebAuthnVerifyError is returned by the tenant-aware WebAuthn login
+// verifier's non-tenant Verify entry point. WebAuthn verification requires the
+// login tenant's relying-party service, so the verifier refuses to verify on
+// the tenant-less path and directs callers to the tenant-scoped path
+// (VerifyTenant). It never silently verifies against a default tenant.
+type NonTenantWebAuthnVerifyError struct{}
+
+// Error implements the error interface.
+func (e *NonTenantWebAuthnVerifyError) Error() string {
+	return "quicbaas/server: webauthn login verification requires a tenant; use the tenant-scoped login ceremony"
+}
+
+// UnboundPIVVerifierError is returned by the PIV login verifier when a
+// verification runs before the xkms PIV verifier has been built from the CA
+// trust roots (i.e. before the CA is initialized or IAM init completes). It
+// fails closed rather than verifying against absent trust roots.
+type UnboundPIVVerifierError struct{}
+
+// Error implements the error interface.
+func (e *UnboundPIVVerifierError) Error() string {
+	return "quicbaas/server: piv login verifier unavailable (trust roots not yet bound)"
+}
+
 // ShardedClientClosedError is returned when ForShard is called after Close.
 type ShardedClientClosedError struct{}
 
@@ -380,3 +453,38 @@ func (e UpdateCANotReadyError) Error() string {
 func (e UpdateCANotReadyError) Unwrap() error {
 	return ErrUpdateCANotReady
 }
+
+// RaftMTLSLoadError indicates a failure loading PEM certificate material
+// from the Raft TLS file paths for inter-node mTLS.
+type RaftMTLSLoadError struct {
+	File  string
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *RaftMTLSLoadError) Error() string {
+	if e.Cause == nil {
+		return "raft mtls: failed to load file " + e.File
+	}
+	return "raft mtls: failed to load file " + e.File + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause for errors.Is/As traversal.
+func (e *RaftMTLSLoadError) Unwrap() error { return e.Cause }
+
+// ClusterMembersError indicates a failure building the cluster members map
+// from the configured peer list.
+type ClusterMembersError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *ClusterMembersError) Error() string {
+	if e.Cause == nil {
+		return "cluster members: invalid peer configuration"
+	}
+	return "cluster members: invalid peer configuration: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause for errors.Is/As traversal.
+func (e *ClusterMembersError) Unwrap() error { return e.Cause }

@@ -308,13 +308,13 @@ func newMockLogger() *mockLogger {
 	}
 }
 
-func (l *mockLogger) Debug(msg string, args ...any)                                           {}
+func (l *mockLogger) Debug(msg string, args ...any)                              {}
 func (l *mockLogger) Debugf(format string, args ...interface{})                  {}
-func (l *mockLogger) Info(msg string, args ...any)                                            {}
+func (l *mockLogger) Info(msg string, args ...any)                               {}
 func (l *mockLogger) Infof(format string, args ...interface{})                   {}
-func (l *mockLogger) Warn(msg string, args ...any)                                            {}
+func (l *mockLogger) Warn(msg string, args ...any)                               {}
 func (l *mockLogger) Warnf(format string, args ...interface{})                   {}
-func (l *mockLogger) Error(msg string, args ...any)                                           {}
+func (l *mockLogger) Error(msg string, args ...any)                              {}
 func (l *mockLogger) Errorf(format string, args ...interface{})                  {}
 func (l *mockLogger) Fatal(msg string)                                           {}
 func (l *mockLogger) Fatalf(format string, args ...interface{})                  {}
@@ -1135,6 +1135,9 @@ func TestKMSService_SetKeyPolicy_NilPolicy(t *testing.T) {
 }
 
 func TestKMSService_SetKeyPolicy_NoAllowedOperations(t *testing.T) {
+	// Empty AllowedOperations is now valid: it means "all operations are permitted
+	// for any principal passing AllowedPrincipals checks". A key-not-found error
+	// is expected because the mock manager has no key "test-key-123" by default.
 	mockManager := newMockKMSManager()
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
@@ -1147,11 +1150,11 @@ func TestKMSService_SetKeyPolicy_NoAllowedOperations(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetKeyPolicy(context.Background(), req)
-
+	_, err := svc.SetKeyPolicy(context.Background(), req)
+	// The validator now accepts empty AllowedOperations; the error comes from
+	// the key lookup failing (key does not exist in the mock manager).
 	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "at least one allowed operation is required")
+	assert.Contains(t, err.Error(), "key not found")
 }
 
 // =============================================================================
@@ -1179,7 +1182,9 @@ func TestKMSService_GetKeyPolicy_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Equal(t, "test-key-123", resp.Policy.KeyID)
-	assert.NotEmpty(t, resp.Policy.AllowedOperations)
+	// No policy stored → default open policy has empty AllowedOperations (allow all).
+	// AllowedOperations being empty means all operations are permitted.
+	assert.NotNil(t, resp.Policy)
 }
 
 func TestKMSService_GetKeyPolicy_NilRequest(t *testing.T) {
@@ -4703,15 +4708,16 @@ func TestKMSService_ValidateSetKeyPolicyRequest(t *testing.T) {
 			errContains: "policy is required",
 		},
 		{
-			name: "empty allowed operations returns error",
+			// Empty AllowedOperations is now valid: an empty slice means "permit all
+			// operations for any principal passing AllowedPrincipals checks".
+			name: "empty allowed operations returns no error",
 			req: &SetKeyPolicyRequest{
 				KeyID: "test-key",
 				Policy: &KeyPolicy{
 					AllowedOperations: []KeyUsage{},
 				},
 			},
-			wantErr:     true,
-			errContains: "at least one allowed operation is required",
+			wantErr: false,
 		},
 		{
 			name: "valid request returns no error",

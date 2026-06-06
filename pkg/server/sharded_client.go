@@ -20,8 +20,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // ShardedClientOption configures a ShardedClient.
@@ -35,138 +33,71 @@ func WithTransportConfig(cfg *config.QRDBConfig) ShardedClientOption {
 }
 
 // WithStorageConfig sets the storage configuration for the sharded client.
-// This determines which backend (memory, file, pebble) is used for embedded
-// mode per-shard stores.
+// Retained for call-site compatibility; the storage config is no longer used
+// for embedded per-shard stores (the qrdb node owns storage for all modes).
 func WithStorageConfig(cfg *config.StorageConfig) ShardedClientOption {
 	return func(sc *ShardedClient) {
 		sc.storageCfg = cfg
 	}
 }
 
-// WithVectorStorage sets the vector storage backend for the sharded client.
-// When provided, the embedded transport for the vector shard will delegate
-// vector write operations to this storage so that writes are visible to
-// the vectorService read path, eliminating the write-read storage mismatch.
-func WithVectorStorage(vs interfaces.VectorStorage, shardID uint64) ShardedClientOption {
+// WithVectorStorage is a no-op retained for call-site compatibility.
+// The qrdb node owns vector storage; quicbaas does not manage per-shard
+// vector stores directly.
+func WithVectorStorage(vs interface{}, shardID uint64) ShardedClientOption {
 	return func(sc *ShardedClient) {
-		sc.vectorStorage = vs
 		sc.vectorShardID = shardID
 	}
 }
 
-// WithTimeSeriesStorage sets the time series storage backend for the sharded
-// client. When provided, the embedded transport for the timeseries shard will
-// delegate timeseries operations to this storage so that writes are visible
-// to the timeSeriesService read path, eliminating the write-read storage mismatch.
-func WithTimeSeriesStorage(ts interfaces.TimeSeriesStorage, shardID uint64) ShardedClientOption {
+// WithTimeSeriesStorage is a no-op retained for call-site compatibility.
+// The qrdb node owns time-series storage; quicbaas does not manage per-shard
+// time-series stores directly.
+func WithTimeSeriesStorage(ts interface{}, shardID uint64) ShardedClientOption {
 	return func(sc *ShardedClient) {
-		sc.timeSeriesStorage = ts
 		sc.timeSeriesShardID = shardID
 	}
 }
 
-// WithDatabaseService sets the database service for the sharded client.
-// When provided, the embedded transport will delegate database management
-// operations to this service instead of returning BaasTransportNotSupportedError.
-func WithDatabaseService(dbSvc service.DatabaseService) ShardedClientOption {
-	return func(sc *ShardedClient) {
-		sc.dbService = dbSvc
-	}
+// WithDatabaseService is a no-op retained for call-site compatibility.
+// Database management operations are handled by the qrdb node's service graph.
+func WithDatabaseService(_ interface{}) ShardedClientOption {
+	return func(_ *ShardedClient) {}
 }
 
-// WithLockService sets the lock service for the sharded client.
-// When provided, the embedded transport will delegate lock operations
-// to this service instead of returning BaasTransportNotSupportedError.
-func WithLockService(lockSvc BaasLockService) ShardedClientOption {
-	return func(sc *ShardedClient) {
-		sc.lockService = lockSvc
-	}
-}
-
-// WithCeremonyService sets the ceremony lifecycle service for the sharded
-// client. When provided, the embedded transport will delegate ceremony
-// operations to this service instead of returning BaasTransportNotSupportedError.
-func WithCeremonyService(svc BasCeremonyService) ShardedClientOption {
-	return func(sc *ShardedClient) {
-		sc.ceremonySvc = svc
-	}
-}
-
-// WithCeremonyCA sets the ceremony CA for the sharded client. The CA is
-// forwarded to CeremonyInitialize calls. Both a ceremony service and a CA
-// must be set for CeremonyInitialize to succeed.
-func WithCeremonyCA(ca qrdbsdk.CeremonyCA) ShardedClientOption {
-	return func(sc *ShardedClient) {
-		sc.ceremonyCA = ca
-	}
-}
-
-// WithCredentialService sets the credential management service for the sharded
-// client. When provided, the embedded transport will delegate credential
-// operations to this service instead of returning BaasTransportNotSupportedError.
-func WithCredentialService(svc BaasCredentialService) ShardedClientOption {
-	return func(sc *ShardedClient) {
-		sc.credentialSvc = svc
-	}
-}
-
-// WithCustodianGroupService sets the custodian group service for the sharded
-// client. When provided, the embedded transport will delegate custodian group
-// operations to this service instead of returning BaasTransportNotSupportedError.
-func WithCustodianGroupService(svc BaasCustodianGroupService) ShardedClientOption {
-	return func(sc *ShardedClient) {
-		sc.custodianGroupSvc = svc
-	}
-}
-
-// WithShareService sets the Shamir share service for the sharded client.
-// When provided, the embedded transport will delegate share operations to this
-// service instead of returning BaasTransportNotSupportedError.
-func WithShareService(svc BaasShareService) ShardedClientOption {
-	return func(sc *ShardedClient) {
-		sc.shareSvc = svc
-	}
-}
-
-// WithTenantService sets the multi-tenant lifecycle service for the sharded
-// client. When provided, the embedded transport will delegate per-tenant
-// barrier operations (Init/Unseal/Seal/Status) to this service instead of
-// returning BaasTransportNotSupportedError.
-func WithTenantService(svc BaasTenantService) ShardedClientOption {
-	return func(sc *ShardedClient) {
-		sc.tenantSvc = svc
-	}
-}
-
-// ShardedClient manages per-shard SDK clients. QuicBaaS operates as a
-// BaaS client and connects through the qrdb SDK. For embedded transport,
-// each shard gets an SDK client backed by a per-shard baasTransport
-// (memory, file, or PebbleDB). For network transports, each shard gets
-// its own connection through the transport factory.
+// ShardedClient manages per-shard SDK clients. QuicBaaS routes all
+// data-plane operations through the qrdb node's SDK client. For embedded
+// (standalone/clustered) mode the qrdb engine runs in-process and
+// nodeClient is always set; ForShard returns nodeClient for every shard ID.
+// For network transports, each shard gets its own connection through the
+// transport factory on first access.
+//
+// When nodeClient is non-nil (standalone/clustered mode), ForShard returns
+// nodeClient for every shard ID. The node owns the client's lifetime;
+// Close is a no-op for the node-owned path.
 type ShardedClient struct {
 	factory           *transportFactory
 	transportCfg      *config.QRDBConfig
 	storageCfg        *config.StorageConfig
-	vectorStorage     interfaces.VectorStorage
 	vectorShardID     uint64
-	timeSeriesStorage interfaces.TimeSeriesStorage
 	timeSeriesShardID uint64
-	dbService         service.DatabaseService
-	lockService       BaasLockService
-	ceremonySvc       BasCeremonyService
-	ceremonyCA        qrdbsdk.CeremonyCA
-	credentialSvc     BaasCredentialService
-	custodianGroupSvc BaasCustodianGroupService
-	shareSvc          BaasShareService
-	tenantSvc         BaasTenantService
-	transportStore    *baasTransportStore // per-shard stores for embedded mode
-	clients           sync.Map            // map[uint64]*qrdbsdk.Client
-	closed            atomic.Bool
+	clients           sync.Map // map[uint64]*qrdbsdk.Client
+
+	// nodeClient is the SDK client from the real qrdb engine node. When
+	// non-nil (standalone/clustered mode), ForShard returns this client for
+	// every shard ID. The node owns the client's lifetime; Close skips
+	// closing it.
+	nodeClient *qrdbsdk.Client
+	// nodeOwned marks that nodeClient is owned by the qrdb node, not this
+	// ShardedClient — Close must not call nodeClient.Close().
+	nodeOwned bool
+
+	closed atomic.Bool
 }
 
-// NewShardedClient creates a new ShardedClient. The serviceHost parameter
-// provides access to the embedded service layer and may be nil for network
-// transports. Options configure transport selection, TLS, and storage backend.
+// NewShardedClient creates a new ShardedClient. The serviceHost parameter is
+// accepted for interface compatibility but is not used on the node path.
+// Options configure transport selection, TLS, and storage backend.
 func NewShardedClient(serviceHost interface{}, opts ...ShardedClientOption) *ShardedClient {
 	sc := &ShardedClient{}
 
@@ -176,70 +107,30 @@ func NewShardedClient(serviceHost interface{}, opts ...ShardedClientOption) *Sha
 
 	sc.factory = newTransportFactory(sc.transportCfg, serviceHost, nil)
 
-	// Initialize per-shard transport store for embedded mode.
-	if sc.factory.isEmbedded() {
-		sc.transportStore = newBaasTransportStore(sc.storageCfg)
-		// Inject vector storage into the transport store so that the
-		// vector shard transport delegates writes to the real storage.
-		if sc.vectorStorage != nil {
-			sc.transportStore.vectorStorage = sc.vectorStorage
-			sc.transportStore.vectorShardID = sc.vectorShardID
-		}
-		// Inject timeseries storage into the transport store so that the
-		// timeseries shard transport delegates operations to the real storage.
-		if sc.timeSeriesStorage != nil {
-			sc.transportStore.timeSeriesStorage = sc.timeSeriesStorage
-			sc.transportStore.timeSeriesShardID = sc.timeSeriesShardID
-		}
-		if sc.dbService != nil {
-			sc.transportStore.dbService = sc.dbService
-		}
-		if sc.lockService != nil {
-			sc.transportStore.lockService = sc.lockService
-		}
-		if sc.ceremonySvc != nil {
-			sc.transportStore.ceremonySvc = sc.ceremonySvc
-		}
-		if sc.ceremonyCA != nil {
-			sc.transportStore.ceremonyCA = sc.ceremonyCA
-		}
-		if sc.credentialSvc != nil {
-			sc.transportStore.credentialSvc = sc.credentialSvc
-		}
-		if sc.custodianGroupSvc != nil {
-			sc.transportStore.custodianGroupSvc = sc.custodianGroupSvc
-		}
-		if sc.shareSvc != nil {
-			sc.transportStore.shareSvc = sc.shareSvc
-		}
-		if sc.tenantSvc != nil {
-			sc.transportStore.tenantSvc = sc.tenantSvc
-		}
-	}
-
 	return sc
 }
 
-// ForShard returns an SDK client for the given shard. For embedded
-// transport, clients are backed by per-shard in-memory stores and
-// created on first access. For network transports, clients are created
-// via the transport factory on first access. All clients are cached for
-// subsequent calls.
+// ForShard returns an SDK client for the given shard. When nodeClient is
+// set (standalone/clustered mode), the node client is returned for every
+// shard ID — the qrdb engine handles internal shard routing. For network
+// transports, clients are created via the transport factory on first access
+// and cached for subsequent calls.
 // Returns ShardedClientClosedError if Close has been called.
 func (sc *ShardedClient) ForShard(shardID uint64) (*qrdbsdk.Client, error) {
 	if sc.closed.Load() {
 		return nil, &ShardedClientClosedError{}
 	}
 
+	// Node mode: all shard IDs resolve to the real qrdb engine client.
+	// The engine handles internal routing; quicbaas does not need per-shard
+	// stores for this path.
+	if sc.nodeClient != nil {
+		return sc.nodeClient, nil
+	}
+
 	// Check for a cached client first.
 	if existing, ok := sc.clients.Load(shardID); ok {
 		return existing.(*qrdbsdk.Client), nil //nolint:errcheck // type guaranteed by map contract
-	}
-
-	// For embedded transport, create an SDK client backed by the
-	// per-shard baasTransport (in-memory KV store).
-	if sc.IsEmbedded() {
-		return sc.createEmbeddedClient(shardID)
 	}
 
 	// Create a network client via the transport factory.
@@ -260,40 +151,21 @@ func (sc *ShardedClient) ForShard(shardID uint64) (*qrdbsdk.Client, error) {
 	return client, nil
 }
 
-// createEmbeddedClient creates an SDK client backed by a per-shard
-// baasTransport for the given shard. The transport is backed by the
-// configured storage backend (memory, file, or PebbleDB). The client
-// is cached in the clients map. Thread-safe via LoadOrStore.
-func (sc *ShardedClient) createEmbeddedClient(shardID uint64) (*qrdbsdk.Client, error) {
-	t, err := sc.transportStore.transportForShard(shardID)
-	if err != nil {
-		return nil, &TransportCreationError{Transport: "embedded", Cause: err}
-	}
-	client, err := qrdbsdk.NewClient(t)
-	if err != nil {
-		return nil, &TransportCreationError{Transport: "embedded", Cause: err}
-	}
-
-	// Store the client for future use. If another goroutine stored one
-	// first, use theirs and close ours.
-	actual, loaded := sc.clients.LoadOrStore(shardID, client)
-	if loaded {
-		_ = client.Close()
-		return actual.(*qrdbsdk.Client), nil //nolint:errcheck // type guaranteed by map contract
-	}
-
-	return client, nil
-}
-
-// Close closes all cached SDK clients and per-shard stores, then marks
-// the ShardedClient as closed. Close is idempotent; subsequent calls
-// return nil.
+// Close closes all cached SDK clients, then marks the ShardedClient as
+// closed. Close is idempotent; subsequent calls return nil. When the client
+// is node-owned (standalone/clustered mode), Close is a no-op — the node
+// manages the client's lifetime.
 func (sc *ShardedClient) Close() error {
 	if sc.closed.Swap(true) {
 		return nil
 	}
 
-	// Close SDK clients first (they reference the transports).
+	// Node-owned path: the qrdb node closes its own client during node.Close().
+	if sc.nodeOwned {
+		return nil
+	}
+
+	// Close SDK clients (they reference the transports).
 	sc.clients.Range(func(key, value any) bool {
 		client := value.(*qrdbsdk.Client) //nolint:errcheck // type guaranteed by map contract
 		_ = client.Close()
@@ -301,16 +173,11 @@ func (sc *ShardedClient) Close() error {
 		return true
 	})
 
-	// Close per-shard stores (PebbleDB, File) to flush and release resources.
-	if sc.transportStore != nil {
-		return sc.transportStore.Close()
-	}
-
 	return nil
 }
 
 // IsEmbedded returns true if the transport configuration indicates
-// embedded (in-process) mode where no real Raft consensus is running.
+// embedded (in-process) mode.
 func (sc *ShardedClient) IsEmbedded() bool {
 	return sc.factory.isEmbedded()
 }

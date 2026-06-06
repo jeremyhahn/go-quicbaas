@@ -100,14 +100,6 @@ func TestQuicBaaS_DynamicSecretsAccessor_ReturnsNilWhenNotConfigured(t *testing.
 	assert.Nil(t, result)
 }
 
-func TestQuicBaaS_ClusterDEKAccessor_ReturnsNilWhenNotConfigured(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	result := svc.ClusterDEK()
-	assert.Nil(t, result)
-}
-
 func TestQuicBaaS_ObjectStorageServiceAccessor_ReturnsNilWhenNotConfigured(t *testing.T) {
 	svc := createTestService(t)
 	defer svc.Close()

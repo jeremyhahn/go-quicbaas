@@ -556,18 +556,7 @@ func (h *IAMHandler) BeginFederatedLogin(w http.ResponseWriter, r *http.Request)
 	ctx := r.Context()
 
 	tenantID := chi.URLParam(r, "tenant_id")
-	if tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
-		return
-	}
-
 	providerName := chi.URLParam(r, "provider_name")
-	if providerName == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "provider name is required"))
-		return
-	}
 
 	// Parse query parameters
 	redirectURI := r.URL.Query().Get("redirect_uri")
@@ -582,6 +571,37 @@ func (h *IAMHandler) BeginFederatedLogin(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
+	}
+
+	// Home-realm discovery: when no explicit tenant is supplied (or the
+	// placeholder "_"/"auto" is used), resolve the tenant from non-secret
+	// routing hints (X-Tenant header, TLS SNI/Host, or the login_hint email
+	// domain). Fail closed if HRD cannot resolve a tenant.
+	if isAutoSelector(tenantID) {
+		resolved, rerr := h.resolveFederationTenant(ctx, r)
+		if rerr != nil {
+			// The caller supplied no tenant and home-realm discovery could not
+			// route the request. This is a client error: supply a tenant or
+			// register a home-realm domain/host.
+			RespondIAMError(w, r, http.StatusBadRequest,
+				NewIAMAPIError(ErrBadRequest, "tenant ID is required (home-realm discovery could not resolve a tenant)"))
+			return
+		}
+		tenantID = resolved
+	}
+
+	// Multi-provider selection: a tenant may have several providers (Okta +
+	// Cognito + ...). When no explicit provider is named, auto-select the
+	// tenant's single enabled provider; if more than one exists the caller must
+	// name one.
+	if isAutoSelector(providerName) {
+		selected, serr := h.selectTenantProvider(ctx, mgr, tenantID)
+		if serr != nil {
+			RespondIAMError(w, r, http.StatusBadRequest,
+				NewIAMAPIError(ErrBadRequest, "provider name is required ("+serr.Error()+")"))
+			return
+		}
+		providerName = selected
 	}
 
 	// Begin login flow - iam.FederationManager.BeginLogin takes (ctx, tenantID, providerName, redirectURI)

@@ -18,7 +18,6 @@ package grpc
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"sync"
@@ -389,9 +388,12 @@ func setupGRPCConnection(t *testing.T, ctx context.Context) *grpc.ClientConn {
 	endpoints := helpers.GetClusterEndpoints()
 	endpoint := endpoints[0]
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+
 	// Create connection without WithBlock() to prevent indefinite hanging
 	conn, err := grpc.DialContext(ctx, endpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	require.NoError(t, err, "Failed to dial gRPC server at %s", endpoint)

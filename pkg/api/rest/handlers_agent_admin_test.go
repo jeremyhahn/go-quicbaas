@@ -208,3 +208,26 @@ func TestHandleEnableAgent_NotDisabled(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
 	}
 }
+
+func enableAgentReq(agentID, query string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+agentID+"/enable"+query, nil)
+	chiCtx := chi.NewRouteContext()
+	chiCtx.URLParams.Add("id", agentID)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chiCtx))
+}
+
+func TestHandleEnableAgent_MissingParams(t *testing.T) {
+	s := newAgentAdminTestServer(&mocks.MockAgentAdminService{})
+
+	w := httptest.NewRecorder()
+	s.HandleEnableAgent(w, enableAgentReq("", "?tenant_id=t1"))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("missing id: status = %d, want 400", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	s.HandleEnableAgent(w, enableAgentReq("agent-1", ""))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("missing tenant: status = %d, want 400", w.Code)
+	}
+}

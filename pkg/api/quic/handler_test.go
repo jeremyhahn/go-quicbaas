@@ -24,7 +24,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
 	schedulerpkg "github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
@@ -37,6 +36,7 @@ import (
 // =============================================================================
 
 type mockService struct {
+	loginSvc service.LoginServicer
 	// KV Operations
 	putFn    func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	getFn    func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
@@ -576,10 +576,6 @@ func (m *mockService) DynamicSecrets() service.DynamicSecretsService {
 	return nil
 }
 
-func (m *mockService) ClusterDEK() service.ClusterDEKService {
-	return nil
-}
-
 func (m *mockService) ObjectStorageService() service.ObjectStorageService {
 	return nil
 }
@@ -646,6 +642,10 @@ func (m *mockService) SetDatabaseService(ds service.DatabaseService) {
 func (m *mockService) SetQRDBClient(provider service.QRDBClientProvider) {
 }
 
+func (m *mockService) LoginCeremony() service.LoginServicer { return m.loginSvc }
+
+func (m *mockService) SetLoginService(svc service.LoginServicer) { m.loginSvc = svc }
+
 func (m *mockService) Close() error {
 	return nil
 }
@@ -656,9 +656,6 @@ func (m *mockService) ListEntityTypes(ctx context.Context, req *service.ListEnti
 	}
 	return nil, errors.New("not implemented")
 }
-
-// SetTenantIsolationManager is a no-op for the mock.
-func (m *mockService) SetTenantIsolationManager(_ security.TenantIsolationManager) {}
 
 // SetSealService is a no-op for the mock.
 func (m *mockService) SetSealService(_ service.SealService) {}
@@ -716,7 +713,7 @@ func createTestLogger() *logger.Logger {
 }
 
 func createTestHandler() *Handler {
-	return NewHandler(&mockService{}, nil, nil, nil, nil, createTestLogger())
+	return NewHandler(&mockService{}, nil, nil, nil, createTestLogger())
 }
 
 // =============================================================================
@@ -751,7 +748,7 @@ func TestHandler_HandleRequest_Put_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.PutRequest{
 		EntityType: "user",
@@ -778,7 +775,7 @@ func TestHandler_HandleRequest_Put_Error(t *testing.T) {
 			return nil, errors.New("put failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.PutRequest{
 		EntityType: "user",
@@ -809,7 +806,7 @@ func TestHandler_HandleRequest_Get_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetRequest{
 		EntityType: "user",
@@ -835,7 +832,7 @@ func TestHandler_HandleRequest_Get_Error(t *testing.T) {
 			return nil, errors.New("get failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.GetRequest{
 		EntityType: "user",
@@ -863,7 +860,7 @@ func TestHandler_HandleRequest_Delete_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.DeleteRequest{
 		EntityType: "user",
@@ -889,7 +886,7 @@ func TestHandler_HandleRequest_Delete_Error(t *testing.T) {
 			return nil, errors.New("delete failed")
 		},
 	}
-	handler := NewHandler(svc, nil, nil, nil, nil, createTestLogger())
+	handler := NewHandler(svc, nil, nil, nil, createTestLogger())
 
 	payload, err := EncodePayload(&service.DeleteRequest{
 		EntityType: "user",

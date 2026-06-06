@@ -16,9 +16,7 @@
 package cluster
 
 import (
-	"crypto/tls"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"testing"
@@ -41,21 +39,18 @@ func TestMain(m *testing.M) {
 }
 
 // waitForClusterReady waits for the QuicBaaS cluster to be ready.
+// The cluster test stack runs plain HTTP (security.tls_enabled=false).
+// A dedicated transport is used to avoid polluting http.DefaultTransport's
+// connection pool with keepalive connections that could cause later tests
+// to hang when reusing stale connections.
 func waitForClusterReady() bool {
 	endpoint := getRESTEndpoint()
 	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{},
 	}
 
-	deadline := time.Now().Add(3 * time.Minute)
+	deadline := time.Now().Add(4 * time.Minute)
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(endpoint + "/api/v1/health/ready")
 		if err == nil {

@@ -1115,9 +1115,8 @@ func TestHandleXKMSFinishRegistration_NotInitialized(t *testing.T) {
 	defer cleanup()
 
 	body, _ := json.Marshal(transportTypes.FinishRegistrationRequest{
-		Username:     "testuser",
-		CredentialID: "Y3JlZC0xMjM=",
-		PublicKey:    "cHViLWtleQ==",
+		SessionID:       "sess-123",
+		AttestationJSON: `{"id":"cred-1"}`,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/fido2/register/finish", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -1169,9 +1168,9 @@ func TestHandleXKMSFinishAuthentication_NotInitialized(t *testing.T) {
 	defer cleanup()
 
 	body, _ := json.Marshal(transportTypes.FinishAuthenticationRequest{
-		Username:     "testuser",
-		CredentialID: "Y3JlZC0xMjM=",
-		Signature:    "c2lnbmF0dXJl",
+		SessionID:     "sess-123",
+		Username:      "testuser",
+		AssertionJSON: `{"id":"cred-1"}`,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/fido2/authenticate/finish", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -3126,9 +3125,8 @@ func TestXKMS91_FinishRegistration(t *testing.T) {
 
 	t.Run("valid request returns 501", func(t *testing.T) {
 		body, _ := json.Marshal(transportTypes.FinishRegistrationRequest{
-			Username:     "testuser",
-			CredentialID: "cred-id",
-			PublicKey:    "pub-key",
+			SessionID:       "sess-123",
+			AttestationJSON: `{"id":"cred-1"}`,
 		})
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/fido2/register/finish", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -3200,9 +3198,9 @@ func TestXKMS91_FinishAuthentication(t *testing.T) {
 
 	t.Run("valid request returns 501", func(t *testing.T) {
 		body, _ := json.Marshal(transportTypes.FinishAuthenticationRequest{
-			Username:     "testuser",
-			CredentialID: "cred-id",
-			Signature:    "sig",
+			SessionID:     "sess-123",
+			Username:      "testuser",
+			AssertionJSON: `{"id":"cred-1"}`,
 		})
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/fido2/authenticate/finish", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")

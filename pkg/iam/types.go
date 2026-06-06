@@ -110,23 +110,69 @@ type TenantSettings struct {
 	// must force SandboxPolicyRequired regardless of the host daemon's
 	// configured policy.
 	SandboxPolicy string `json:"sandbox_policy,omitempty" yaml:"sandbox_policy,omitempty"`
+
+	// WebAuthn overrides the global/server WebAuthn relying-party configuration
+	// for this tenant. Each field falls back to the global config when empty so
+	// a tenant served from its own virtual host can pin its own RPID/origins
+	// while tenants that configure nothing keep today's global default. Nil
+	// defers entirely to the global config.
+	WebAuthn *TenantWebAuthnConfig `json:"webauthn,omitempty" yaml:"webauthn,omitempty"`
+
+	// OIDC carries the tenant's OIDC issuance overrides. Nil defers entirely to
+	// the global/server defaults (single broker issuer, shared signing key).
+	OIDC *TenantOIDCConfig `json:"oidc,omitempty" yaml:"oidc,omitempty"`
 }
 
-// TenantQuotas defines resource limits for a tenant.
-type TenantQuotas struct {
-	// MaxUsers is the maximum number of users
-	MaxUsers int `json:"max_users,omitempty" yaml:"max_users,omitempty"`
+// TenantWebAuthnConfig is the per-tenant WebAuthn relying-party override. Each
+// field falls back to the global/server WebAuthn config when empty (per-field
+// fallback), mirroring the DisplayName->Name / SandboxPolicy->server-default
+// idiom: an empty RPID inherits the global RPID, empty origins inherit the
+// global origins, etc.
+type TenantWebAuthnConfig struct {
+	// RPID is the relying-party identifier (effective domain). Empty inherits
+	// the global RPID.
+	RPID string `json:"rp_id,omitempty" yaml:"rp_id,omitempty"`
 
-	// MaxGroups is the maximum number of groups
+	// RPDisplayName is the human-readable relying-party name shown by the
+	// authenticator. Empty inherits the global display name.
+	RPDisplayName string `json:"rp_display_name,omitempty" yaml:"rp_display_name,omitempty"`
+
+	// RPOrigins is the list of allowed WebAuthn origins. Empty (nil or
+	// zero-length) inherits the global origins.
+	RPOrigins []string `json:"rp_origins,omitempty" yaml:"rp_origins,omitempty"`
+}
+
+// TenantOIDCConfig carries a tenant's OIDC issuance overrides. The single
+// broker issuer + tenant_id claim is the default; per-tenant cryptographic
+// isolation is opt-in via DedicatedSigningKey.
+type TenantOIDCConfig struct {
+	// DedicatedSigningKey, when true, makes the broker sign this tenant's
+	// tokens with a dedicated per-tenant ES256 key (its own kid) under the
+	// SAME single broker issuer. The validator still trusts one issuer and one
+	// JWKS (now publishing multiple kids), and kid-aware validation resolves
+	// the right key. When false (default) the tenant's tokens are signed with
+	// the shared global signing key.
+	DedicatedSigningKey bool `json:"dedicated_signing_key,omitempty" yaml:"dedicated_signing_key,omitempty"`
+
+	// IssuerURL seam: a per-tenant ISSUER URL (a distinct trust anchor) is
+	// intentionally OUT OF SCOPE here -- it would break the single-anchor
+	// validator contract. A future phase may add it behind an explicit flag;
+	// until then the broker always uses its single issuer.
+	// IssuerURL string `json:"issuer_url,omitempty" yaml:"issuer_url,omitempty"`
+}
+
+// TenantQuotas defines BaaS-layer resource limits for a tenant.
+// Engine-level quotas (users, roles, storage, databases, keys, etc.) are owned
+// and enforced exclusively by qrdb's TenantServicer. Only IAM-subsystem concepts
+// that are not engine primitives belong here.
+type TenantQuotas struct {
+	// MaxGroups is the maximum number of IAM groups (BaaS-only concept).
 	MaxGroups int `json:"max_groups,omitempty" yaml:"max_groups,omitempty"`
 
-	// MaxRoles is the maximum number of roles
-	MaxRoles int `json:"max_roles,omitempty" yaml:"max_roles,omitempty"`
-
-	// MaxPolicies is the maximum number of policies
+	// MaxPolicies is the maximum number of ABAC policies (BaaS-only concept).
 	MaxPolicies int `json:"max_policies,omitempty" yaml:"max_policies,omitempty"`
 
-	// MaxApps is the maximum number of OAuth applications
+	// MaxApps is the maximum number of OAuth2/OIDC applications (BaaS-only concept).
 	MaxApps int `json:"max_apps,omitempty" yaml:"max_apps,omitempty"`
 }
 

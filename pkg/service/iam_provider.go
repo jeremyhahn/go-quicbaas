@@ -152,7 +152,6 @@ func (p *iamServiceAdapter) GetAuthManager(_ context.Context) (AuthManagerInterf
 	return p.components.GetAuthManager(), nil
 }
 
-
 // initializeIAMProvider initializes the IAM provider for REST handlers.
 // This is the iam version that returns nil because IAM components
 // are initialized separately by the server and provided via SetIAMProvider().

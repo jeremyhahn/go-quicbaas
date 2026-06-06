@@ -16,8 +16,6 @@ package database
 import (
 	"errors"
 	"testing"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
 func TestSystemDatabaseName(t *testing.T) {
@@ -84,50 +82,8 @@ func TestPlatformTenantKey_Empty(t *testing.T) {
 	}
 }
 
-func TestShardAllocator_Allocate(t *testing.T) {
-	a, err := NewShardAllocator(shards.TenantShardMin)
-	if err != nil {
-		t.Fatalf("NewShardAllocator() error = %v", err)
-	}
-
-	first := a.Allocate()
-	if first != shards.TenantShardMin+1 {
-		t.Errorf("first Allocate() = %d, want %d", first, shards.TenantShardMin+1)
-	}
-
-	second := a.Allocate()
-	if second != first+1 {
-		t.Errorf("second Allocate() = %d, want %d", second, first+1)
-	}
-}
-
-func TestShardAllocator_BelowMin(t *testing.T) {
-	a, err := NewShardAllocator(10)
-	if err != nil {
-		t.Fatalf("NewShardAllocator(10) error = %v", err)
-	}
-
-	first := a.Allocate()
-	if first < shards.TenantShardMin {
-		t.Errorf("Allocate() = %d, want >= %d", first, shards.TenantShardMin)
-	}
-}
-
-func TestShardAllocator_Current(t *testing.T) {
-	a, err := NewShardAllocator(shards.TenantShardMin)
-	if err != nil {
-		t.Fatalf("NewShardAllocator() error = %v", err)
-	}
-
-	if got := a.Current(); got != shards.TenantShardMin {
-		t.Errorf("Current() before allocate = %d, want %d", got, shards.TenantShardMin)
-	}
-
-	id := a.Allocate()
-	if got := a.Current(); got != id {
-		t.Errorf("Current() after allocate = %d, want %d", got, id)
-	}
-}
+// ShardAllocator was removed in Phase D: shard allocation is now owned by
+// qrdb's DatabaseServicer. Tests for the removed type are deleted here.
 
 func TestDatabaseRecord_Fields(t *testing.T) {
 	r := DatabaseRecord{

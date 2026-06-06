@@ -18,7 +18,6 @@ package backup
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -302,17 +301,7 @@ func (c *restBackupClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 
 	// Probe to verify backup feature is available
 	url := fmt.Sprintf("%s/api/v1/backups", c.baseURL)
@@ -405,8 +394,12 @@ func (c *grpcBackupClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no gRPC endpoints available"}
 	}
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
 	conn, err := grpc.DialContext(ctx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -494,11 +487,11 @@ func (c *quicBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	}
 	c.addr = endpoints[0]
 
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -650,9 +643,13 @@ func (c *unixSocketBackupClient) Setup(t *testing.T, ctx context.Context) error 
 		return &qberrors.MessageError{Message: "no Unix socket path available"}
 	}
 
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+	}
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return net.DialTimeout("unix", socketPath, 10*time.Second)
@@ -742,17 +739,7 @@ func (c *mcpBackupClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no MCP endpoints available"}
 	}
 	c.endpoint = endpoints[0]
-	c.httpClient = &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: integration test with self-signed certs
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
 	c.nextID = 1
 
 	// Verify MCP endpoint is reachable via initialize
@@ -809,6 +796,32 @@ func (c *mcpBackupClient) Setup(t *testing.T, ctx context.Context) error {
 
 // authenticate performs login with the MCP server using bootstrap admin credentials.
 func (c *mcpBackupClient) authenticate(ctx context.Context) error {
+	if c.authenticated {
+		return nil
+	}
+
+	// Acquire a bearer token via the REST PIV login endpoint. The legacy
+	// quicbaas_login MCP tool was retired in the PIV/mTLS migration —
+	// it used username/password against the deleted /api/v1/auth/login
+	// route. Every transport now relies on AuthPIVContext to mint a
+	// bearer using the integration cluster's admin client cert.
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
+	}
+	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
+	}
+	c.accessToken = bearer
+	c.authenticated = true
+	return nil
+}
+
+// authenticateLegacyDISABLED is the retired quicbaas_login flow. Kept as
+// dead code for one release so callers porting from older branches can
+// see what the migration removed. Not called.
+func (c *mcpBackupClient) authenticateLegacyDISABLED(ctx context.Context) error {
 	if c.authenticated {
 		return nil
 	}

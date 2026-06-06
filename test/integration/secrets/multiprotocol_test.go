@@ -1650,17 +1650,7 @@ func (c *restProtocolClient) GetSecret(ctx context.Context, req *service.GetSecr
 		return nil, err
 	}
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -1715,17 +1705,7 @@ func (c *restProtocolClient) ListSecrets(ctx context.Context, req *service.ListS
 		return nil, err
 	}
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -1794,17 +1774,7 @@ func (c *restProtocolClient) UpdateSecretStatus(ctx context.Context, req *servic
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -1849,7 +1819,11 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	}
 	c.conn = conn
 
-	client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return fmt.Errorf("load integration TLS config: %w", err)
+	}
+	client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("failed to create gRPC client: %w", err)
@@ -1922,11 +1896,9 @@ func (c *quicProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	addr := endpoints[0]
 
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // Test only - skip certificate verification
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
-	}
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -2171,9 +2143,13 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	}
 
 	// Create gRPC connection over unix socket
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		return fmt.Errorf("load integration TLS config: %w", err)
+	}
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
@@ -2181,7 +2157,7 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	}
 	c.conn = conn
 
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("failed to create gRPC client over unix socket: %w", err)

@@ -18,7 +18,6 @@ package raft
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"testing"
@@ -81,8 +80,10 @@ func TestRaftClusterFormation(t *testing.T) {
 	for i, endpoint := range endpoints {
 		t.Logf("Connecting to node %d at %s", i+1, endpoint)
 
+		tlsCfg1, tlsErr1 := helpers.IntegrationTLSConfig()
+		require.NoError(t, tlsErr1, "load integration TLS config")
 		conn, err := grpc.DialContext(ctx, endpoint,
-			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg1)),
 			grpc.WithBlock(),
 		)
 		require.NoError(t, err, "Failed to connect to node %d", i+1)
@@ -110,8 +111,10 @@ func TestRaftClusterLeaderElection(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetClusterEndpoints()
+	tlsCfg2, tlsErr2 := helpers.IntegrationTLSConfig()
+	require.NoError(t, tlsErr2, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg2)),
 		grpc.WithBlock(),
 	)
 	require.NoError(t, err)
@@ -150,8 +153,10 @@ func TestRaftDataReplication(t *testing.T) {
 	endpoints := helpers.GetClusterEndpoints()
 
 	// Connect to node 1 (primary write target)
+	tlsCfg3, tlsErr3 := helpers.IntegrationTLSConfig()
+	require.NoError(t, tlsErr3, "load integration TLS config")
 	conn1, err := grpc.DialContext(ctx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg3)),
 		grpc.WithBlock(),
 	)
 	require.NoError(t, err)
@@ -198,8 +203,10 @@ func TestRaftDataReplication(t *testing.T) {
 			// Reuse the existing connection for node 1
 			conn = conn1
 		} else {
+			tlsCfg4, tlsErr4 := helpers.IntegrationTLSConfig()
+			require.NoError(t, tlsErr4, "load integration TLS config")
 			conn, err = grpc.DialContext(ctx, endpoint,
-				grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+				grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg4)),
 				grpc.WithBlock(),
 			)
 			require.NoError(t, err, "Failed to connect to node %d", i+1)
@@ -267,8 +274,10 @@ func TestRaftConsistentReads(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetClusterEndpoints()
+	tlsCfg5, tlsErr5 := helpers.IntegrationTLSConfig()
+	require.NoError(t, tlsErr5, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg5)),
 		grpc.WithBlock(),
 	)
 	require.NoError(t, err)
@@ -347,8 +356,10 @@ func TestRaftDeleteOperation(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetClusterEndpoints()
+	tlsCfg6, tlsErr6 := helpers.IntegrationTLSConfig()
+	require.NoError(t, tlsErr6, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoints[0],
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg6)),
 		grpc.WithBlock(),
 	)
 	require.NoError(t, err)

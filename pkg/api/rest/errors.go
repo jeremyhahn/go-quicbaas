@@ -43,9 +43,6 @@ var (
 	// ErrKMSDEKServiceUnavailable indicates the KMS DEK service is not available.
 	ErrKMSDEKServiceUnavailable = errors.New("KMS service not available")
 
-	// ErrClusterDEKServiceUnavailable indicates the cluster DEK service is not available.
-	ErrClusterDEKServiceUnavailable = errors.New("cluster DEK service not available")
-
 	// ErrParameterStoreUnavailable indicates the parameter store service is not available.
 	ErrParameterStoreUnavailable = errors.New("parameter store service not available")
 

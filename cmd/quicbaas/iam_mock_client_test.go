@@ -862,10 +862,10 @@ func (m *testMockPolicyClient) GetEffectivePermissions(ctx context.Context, tena
 
 // testMockInviteClient implements iam.InviteClient for testing.
 type testMockInviteClient struct {
-	GetInviteFunc            func(ctx context.Context, token string) (*iam.InviteMetadata, error)
-	ActivateFIDO2BeginFunc   func(ctx context.Context, token string) (map[string]interface{}, error)
-	ActivateFIDO2FinishFunc  func(ctx context.Context, token string, credential map[string]interface{}) (*iam.ActivationResponse, error)
-	ActivatePIVFunc          func(ctx context.Context, token, certPEM string) (*iam.ActivationResponse, error)
+	GetInviteFunc           func(ctx context.Context, token string) (*iam.InviteMetadata, error)
+	ActivateFIDO2BeginFunc  func(ctx context.Context, token string) (map[string]interface{}, error)
+	ActivateFIDO2FinishFunc func(ctx context.Context, token string, credential map[string]interface{}) (*iam.ActivationResponse, error)
+	ActivatePIVFunc         func(ctx context.Context, token, certPEM string) (*iam.ActivationResponse, error)
 }
 
 func (m *testMockInviteClient) GetInvite(ctx context.Context, token string) (*iam.InviteMetadata, error) {
@@ -928,7 +928,6 @@ type testMockIAMClient struct {
 	DisableMFAFunc            func(ctx context.Context, tenantID, userID string) error
 	GetBackupCodeStatusFunc   func(ctx context.Context, tenantID, userID string) (*cli.BackupCodeStatus, error)
 	GenerateBackupCodesFunc   func(ctx context.Context, tenantID, userID string) ([]string, error)
-
 }
 
 func (m *testMockIAMClient) Tenant() iam.TenantClient   { return m.tenantClient }

@@ -47,14 +47,14 @@ type SignalIO interface {
 // BotConfigRuntime carries the assembled runtime dependencies that the
 // CLI build layer (`cmd/quicbaas/signalbridge.go`) injects.
 type BotConfigRuntime struct {
-	Config        *BotConfig
-	Signal        SignalIO
-	Orchestrator  OrchestratorSDK
-	Auth          AuthBridge
-	Manager       *SessionManager
-	Translator    *EventTranslator
-	Parser        *IntentParser
-	Logger        interfaces.Logger
+	Config       *BotConfig
+	Signal       SignalIO
+	Orchestrator OrchestratorSDK
+	Auth         AuthBridge
+	Manager      *SessionManager
+	Translator   *EventTranslator
+	Parser       *IntentParser
+	Logger       interfaces.Logger
 }
 
 // OrchestratorBot is the top-level runtime. Run blocks until Stop is

@@ -62,6 +62,26 @@ func (s *Server) startMCPServer() error {
 	// while still allowing public tools (like quicbaas_login) to work without auth.
 	s.configureMCPAuth(mcpServer)
 
+	// Wire the qrdb credential management service into the MCP server so
+	// the qrdb_credential_* tools serve real responses against the same
+	// in-process service used by the embedded SDK transport.
+	if s.ceremonyServices != nil && s.ceremonyServices.Credential != nil {
+		mcpServer.SetCredentialService(s.ceremonyServices.Credential)
+		s.logger.Info("Credential service wired into MCP server")
+	}
+
+	// Wire the qrdb barrier and ceremony service facades into the MCP server
+	// so the qrdb_barrier_* / qrdb_ceremony_* tools serve real responses. The
+	// facades are built identically to the gRPC transport (see
+	// buildBarrierCeremonyServices) so behaviour is symmetric across every
+	// transport. When the qrdb client is not yet online the facades carry a
+	// nil transport and each tool short-circuits with a typed
+	// service-unavailable error instead of a nil-pointer panic.
+	barrierSvc, ceremonySvc := s.buildBarrierCeremonyServices()
+	mcpServer.SetBarrierService(barrierSvc)
+	mcpServer.SetCeremonyService(ceremonySvc)
+	s.logger.Info("Barrier and Ceremony services wired into MCP server")
+
 	// Start MCP server in a goroutine (non-blocking for HTTP transport)
 	go func() {
 		if err := mcpServer.Start(); err != nil {

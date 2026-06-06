@@ -110,16 +110,16 @@ type translatorHandler func(ctx context.Context, t *EventTranslator, conversatio
 // a no-op because new kinds added upstream should not break older
 // bots.
 var eventHandlers = map[orchestration.SessionEventKind]translatorHandler{
-	orchestration.KindAssistantChunk: handleAssistantChunk,
-	orchestration.KindToolInvocation: handleToolInvocation,
-	orchestration.KindToolResult:     handleToolResult,
-	orchestration.KindFileOp:         handleFileOp,
-	orchestration.KindSystemMessage:  handleSystemMessage,
-	orchestration.KindOperatorJoined: handleOperatorJoined,
-	orchestration.KindOperatorLeft:   handleOperatorLeft,
-	orchestration.KindSessionClosed:  handleSessionClosed,
+	orchestration.KindAssistantChunk:  handleAssistantChunk,
+	orchestration.KindToolInvocation:  handleToolInvocation,
+	orchestration.KindToolResult:      handleToolResult,
+	orchestration.KindFileOp:          handleFileOp,
+	orchestration.KindSystemMessage:   handleSystemMessage,
+	orchestration.KindOperatorJoined:  handleOperatorJoined,
+	orchestration.KindOperatorLeft:    handleOperatorLeft,
+	orchestration.KindSessionClosed:   handleSessionClosed,
 	orchestration.KindPromptSubmitted: handlePromptSubmitted,
-	orchestration.KindSessionResumed: handleSessionResumed,
+	orchestration.KindSessionResumed:  handleSessionResumed,
 }
 
 // handleAssistantChunk coalesces streamed chunks into a single rolling

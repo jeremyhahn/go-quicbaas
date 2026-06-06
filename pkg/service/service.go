@@ -42,7 +42,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
 
@@ -114,10 +113,6 @@ type QuicBaaS interface {
 	// DynamicSecrets returns the Dynamic Secrets service (returns nil if not configured)
 	// Dynamic secrets handle credential generation with lease-based TTL management.
 	DynamicSecrets() DynamicSecretsService
-
-	// ClusterDEK returns the Cluster DEK service (returns nil if not configured)
-	// ClusterDEK handles cluster-wide Data Encryption Key management.
-	ClusterDEK() ClusterDEKService
 
 	// ObjectStorageService returns the Object Storage service (returns nil if not configured)
 	ObjectStorageService() ObjectStorageService
@@ -194,11 +189,6 @@ type QuicBaaS interface {
 	// This is called after the ShardedClient is initialized.
 	SetQRDBClient(provider QRDBClientProvider)
 
-	// SetTenantIsolationManager replaces the tenant isolation manager at runtime.
-	// This is called by the server when barrier mode is configured and the
-	// BarrierRegistry has been initialized with the system barrier.
-	SetTenantIsolationManager(m security.TenantIsolationManager)
-
 	// SetSealService wires the SealService into the facade at runtime.
 	// This is called by the server after the seal manager has been initialized
 	// so that the REST/gRPC handlers can reach the seal subsystem.
@@ -207,6 +197,17 @@ type QuicBaaS interface {
 	// SealService operations promoted directly onto the facade so that REST
 	// handlers can reach them via a single type assertion on s.service.
 	SealService
+
+	// LoginCeremony returns the unified login-ceremony facade
+	// (BeginLogin / FinishLogin). It forwards to the composed go-qrdb node's
+	// in-process LoginClient and is the single home for the mTLS anti-spoofing
+	// security model. Returns nil only before SetLoginService has been called.
+	LoginCeremony() LoginServicer
+
+	// SetLoginService wires the unified login-ceremony facade into the service
+	// at runtime. Called by the server once the qrdb node (which hosts the
+	// in-process LoginClient) is constructed.
+	SetLoginService(svc LoginServicer)
 
 	// Close gracefully shuts down the service and all backend components
 	Close() error
@@ -1530,6 +1531,12 @@ type ServiceConfig struct {
 
 	// SchedulerMaxConcurrentJobs limits parallel job execution (default: 10)
 	SchedulerMaxConcurrentJobs int
+
+	// KMSRotationScanInterval controls how often the KMS rotation scheduler
+	// checks for keys whose cryptoperiod has expired (PCI DSS 3.6).
+	// When zero, defaultRotationScanInterval (5 minutes) is used.
+	// Only active when the KMS service is configured.
+	KMSRotationScanInterval time.Duration
 
 	// TimeSeriesShardID is the Raft shard used for time series write operations.
 	// When zero, defaults to 1.

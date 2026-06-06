@@ -1,9 +1,29 @@
 # Multi-Tenant BaaS Architecture
 
-QuicBaaS implements a 3-tier multi-tenant Backend-as-a-Service (BaaS)
-architecture that provides strong isolation between tenants through
-dedicated databases, per-database encryption, and platform-level access
-control.
+QuicBaaS implements a multi-tenant Backend-as-a-Service (BaaS) architecture
+where **tenant identity, isolation, barriers, DEKs, and engine-level quotas
+are owned exclusively by qrdb's TenantServicer**. QuicBaaS adds a thin
+BaaS extension layer: `TenantSettings` (MFA policy, session/token TTLs,
+branding, named-networks, sandbox policy), IAM-subsystem quotas
+(`MaxGroups`, `MaxPolicies`, `MaxApps`), and `pkg/orchestration` Projects.
+
+## Ownership Boundary
+
+| Capability | Owner | Notes |
+|---|---|---|
+| Tenant identity, name, timestamps | qrdb TenantServicer | authoritative |
+| IsolationType, per-tenant barrier, DEK | qrdb TenantServicer | authoritative |
+| Engine quotas (users, roles, storage, DBs, keys, certs, etc.) | qrdb TenantServicer | authoritative |
+| Usage tracking (IncrementQuotaUsage) | qrdb TenantServicer | moved from BaaS in Phase D |
+| TenantSettings (MFA/session/branding/sandbox) | QuicBaaS IAM | BaaS product concern |
+| IAM group/policy/app quotas | QuicBaaS IAM | BaaS concept, not an engine primitive |
+| Federation/OIDC/MFA/groups/policies/apps | QuicBaaS IAM | BaaS-only, not in qrdb |
+| Projects (workspace/git/agent) | QuicBaaS orchestration | BaaS-only |
+
+QuicBaaS `CreateTenant` calls qrdb's `TenantServicer.CreateTenant` (which
+handles identity + barrier + DEK + engine quotas) then runs provisioner hooks
+and stores BaaS-only metadata. No duplicate barrier or isolation management
+exists in QuicBaaS after Phase D.
 
 ## 3-Tier Model
 
@@ -80,15 +100,9 @@ Shard IDs are allocated from a central registry in `pkg/shards/`:
 | 2-99 | Reserved | Future platform services (`ReservedMax = 100`) |
 | 100+ | Tenant | Tenant databases (`TenantShardMin = 100`) |
 
-The `ShardAllocator` in `pkg/database/shard_allocator.go` provides
-lock-free, monotonically increasing shard ID allocation using
-`atomic.Uint64`. On startup, the allocator is initialized from the highest
-shard ID found across existing databases.
-
-```go
-allocator, _ := NewShardAllocator(100) // starts at TenantShardMin
-shardID := allocator.Allocate()        // returns 101, 102, ...
-```
+Shard allocation is owned by qrdb's `DatabaseServicer`. The BaaS-local
+`ShardAllocator` was removed in Phase D; shard IDs for new tenant databases
+are assigned by qrdb's database creation API.
 
 ### Shard Classification
 
@@ -186,10 +200,108 @@ databases:
   tenant_shard_min: 100      # minimum shard ID for tenant databases
 ```
 
+## Vector Namespaces and Tenant Isolation
+
+go-qrdb provides persistent distributed vector storage via tenant-partitioned
+vector namespaces. When using vector operations through the qrdb SDK:
+
+- **Namespace creation** must include tenant context to ensure vectors for one
+  tenant cannot collide with or be accessed by another tenant.
+- **Tenant isolation** of vectors is enforced by tenant-partitioned namespace
+  keys in qrdb — tenant A cannot address, collide with, or read tenant B's
+  namespaces.
+- **Barrier encryption at rest**: qrdb encrypts the vector store under the
+  cluster `StorageBarrier` (the same seal that protects KV/MVCC), not a
+  per-tenant vector DEK. Confidentiality at rest requires the cluster barrier
+  unsealed; cross-tenant isolation is the namespace partitioning above.
+- **Multi-tenancy is not optional** — the vector namespace interface enforces
+  tenant context, and quicbaas must pass the current tenant ID when creating or
+  querying namespaces.
+
+This is a locked architecture boundary: quicbaas does **not** maintain a
+separate in-memory per-process vector index. Vector data is persisted and
+encrypted within qrdb shards, leveraging the same multi-tenant isolation as
+other KV operations.
+
+See [Vector Database Architecture](vector.md) for the vector operations API
+and [Embedding Provider Integration](../embedding/README.md) for how the SDK
+embedding providers are consumed.
+
+## Agent Session Log and State Encryption
+
+Agent session logs (`pkg/orchestration/KVSessionEventLog`) and persisted agent
+session records (`pkg/agent/Runtime`) are stored as **plaintext JSON inside
+qrdb**. All at-rest confidentiality is delegated to **qrdb's `StorageBarrier`**,
+which encrypts every byte written to the underlying store before it touches disk.
+
+No application-level envelope DEK is applied on top of qrdb's barrier:
+
+- The former `security.TenantDEKManager` KMS-wrapped per-tenant DEK (used to
+  re-encrypt session events and session state before they were handed to qrdb)
+  was removed in Phase 3. It was redundant for the disk-level threat
+  (superseded by qrdb's barrier) and ineffective for the online-insider threat
+  (the same process that served the data also unwrapped it).
+
+- **Tenant-level crypto-shred and operator key isolation** — the controls that
+  actually matter for multi-tenant confidentiality — are provided by configuring
+  a **dedicated per-tenant qrdb barrier** sealed by any `go-xkms` hardware or
+  cloud KMS strategy. This is an operator configuration choice, not hardcoded.
+
+- **Per-key KMS authorization** (Phase 3) enforces fine-grained access control
+  at the service layer, orthogonal to at-rest encryption.
+
+## Intra-Tenant KMS Key Isolation
+
+Within a single tenant, multiple KMS keys may exist for different purposes (e.g.,
+a separate KEK per database, per service, or per classification level). Each key
+is cryptographically isolated — only principals explicitly authorised for a given key
+may perform cryptographic operations with it. This satisfies the compliance requirement:
+*"intra-tenant multiple keys, each cryptographically isolated so only principals
+authorized for a given key may perform operations with it."*
+
+Authorization is enforced at the **service layer** (`cryptoService`/`kmsServiceImpl`),
+not inside a transport-specific interceptor, so all transports — gRPC, REST, QUIC, MCP,
+and the embedded SDK path — share the same gate uniformly.
+
+### Key Model
+
+```
+Tenant
+ └─ Barrier (tenant DEK, qrdb-owned)
+     └─ Key A: KeyPolicy { AllowedPrincipals: ["alice"], AllowedOps: ["encrypt","decrypt"] }
+     └─ Key B: KeyPolicy { AllowedPrincipals: ["service-account-payments"], AllowedOps: ["sign"] }
+     └─ Key C: (no policy = default-allow any authenticated principal)
+```
+
+Policies are stored in the Raft-replicated KVStore under `kms:policy:<keyID>` so every
+node enforces the same rules without TTL drift. An empty policy entry is treated as
+"allow all" so existing keys are unaffected until an operator explicitly sets a policy.
+
+### Subject Propagation
+
+Authentication middleware at each transport boundary:
+- validates the bearer token
+- constructs an `interfaces.Subject` (ID, Username, Roles, TenantID)
+- injects it into the request context via `auth.SubjectIntoContext`
+
+The service layer extracts the Subject with `auth.SubjectFromContext` and evaluates it
+against the key policy. Requests that arrive at the service layer without an authenticated
+Subject are denied fail-closed unless `auth.IsSystemContext` returns true (for internal
+daemon operations only; this mark cannot be forged by external callers).
+
+### Key-Use Audit (AU-2)
+
+Every cryptographic call records a key-use audit event (principal, keyID, operation,
+allow/deny, timestamp) via `KMSKeyUseAuditLogger.LogKeyUse`. Both allow and deny
+outcomes are captured, regardless of which transport delivered the request.
+
 ## Cross-References
 
+- [KMS Security](../security/kms.md)
 - [Shard ID Allocation](shard-ids.md)
 - [Multi-Tenancy Keyspace](multi-tenancy.md)
 - [Per-Database Encryption](../security/per-database-encryption.md)
+- [Vector Database Architecture](vector.md)
+- [Embedding Provider Integration](../embedding/README.md)
 - [Database API Reference](../api/database.md)
 - [Database CLI Reference](../cli/database.md)

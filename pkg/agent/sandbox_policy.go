@@ -25,9 +25,9 @@ import (
 // OllamaBackend. A SandboxModeViolationError returned here is sent back to
 // the control plane as a PERMISSION_DENIED gRPC status code.
 type SandboxResolver struct {
-	policy           orchestration.SandboxPolicy
-	tenantOverride   *orchestration.SandboxPolicy
-	hasContainerRT   bool
+	policy         orchestration.SandboxPolicy
+	tenantOverride *orchestration.SandboxPolicy
+	hasContainerRT bool
 }
 
 // NewSandboxResolver builds a resolver from the daemon's effective policy.

@@ -1167,13 +1167,13 @@ func newCoverageTestLogger() *coverageTestLogger {
 	}
 }
 
-func (l *coverageTestLogger) Debug(msg string, args ...any)                          { l.log("debug", msg) }
+func (l *coverageTestLogger) Debug(msg string, args ...any)             { l.log("debug", msg) }
 func (l *coverageTestLogger) Debugf(format string, args ...interface{}) { l.log("debug", format) }
-func (l *coverageTestLogger) Info(msg string, args ...any)                           { l.log("info", msg) }
+func (l *coverageTestLogger) Info(msg string, args ...any)              { l.log("info", msg) }
 func (l *coverageTestLogger) Infof(format string, args ...interface{})  { l.log("info", format) }
-func (l *coverageTestLogger) Warn(msg string, args ...any)                           { l.log("warn", msg) }
+func (l *coverageTestLogger) Warn(msg string, args ...any)              { l.log("warn", msg) }
 func (l *coverageTestLogger) Warnf(format string, args ...interface{})  { l.log("warn", format) }
-func (l *coverageTestLogger) Error(msg string, args ...any)                          { l.log("error", msg) }
+func (l *coverageTestLogger) Error(msg string, args ...any)             { l.log("error", msg) }
 func (l *coverageTestLogger) Errorf(format string, args ...interface{}) { l.log("error", format) }
 func (l *coverageTestLogger) Fatal(msg string)                          { l.log("fatal", msg) }
 func (l *coverageTestLogger) Fatalf(format string, args ...interface{}) { l.log("fatal", format) }

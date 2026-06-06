@@ -17,11 +17,9 @@
 package cluster
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"testing"
@@ -31,18 +29,23 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// newInsecureHTTPClient creates an HTTP client configured for self-signed TLS certs.
+// newInsecureHTTPClient returns an HTTP client with a DEDICATED transport
+// (connection pool) for cluster integration tests. Using a dedicated transport
+// prevents stale keepalive connections from prior tests from being reused by
+// later tests, which could cause hangs when the server closes the connection.
+//
+// The cluster test stack runs plain HTTP (security.tls_enabled=false). When
+// the integration CA cert IS available (TLS cluster), helpers.NewHTTPClient
+// is preferred; otherwise a plain client with a fresh transport is returned.
 func newInsecureHTTPClient(timeout time.Duration) *http.Client {
+	if _, err := helpers.IntegrationTLSConfig(); err == nil {
+		return helpers.NewHTTPClient(timeout)
+	}
+	// Plain HTTP with a dedicated transport so each caller gets its own
+	// connection pool and cannot be affected by another caller's stale connections.
 	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
+		Timeout:   timeout,
+		Transport: &http.Transport{},
 	}
 }
 

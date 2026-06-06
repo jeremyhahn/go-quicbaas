@@ -100,11 +100,14 @@ const (
 	OpBackupDelete  byte = 0x53
 	OpBackupVerify  byte = 0x54
 
-	// Auth Operations (0x60-0x63).
+	// Auth Operations (0x60-0x65).
 	OpAuthLogin         byte = 0x60
 	OpAuthLogout        byte = 0x61
 	OpAuthRefreshToken  byte = 0x62
 	OpAuthValidateToken byte = 0x63
+	// Unified login ceremony (0x78-0x79, free on both SDK and server).
+	OpAuthBeginLogin  byte = 0x78
+	OpAuthFinishLogin byte = 0x79
 
 	// RBAC Operations (0x70-0x77).
 	OpRBACCreateUser byte = 0x70
@@ -122,20 +125,33 @@ const (
 	OpCacheGetConfig    byte = 0x82
 	OpCacheUpdateConfig byte = 0x83
 
+	// Certificate Operations (0x84-0x89) - matching server pkg/api/quic/protocol.go.
+	OpCertIssue        byte = 0x84
+	OpCertSignCSR      byte = 0x85
+	OpCertRevoke       byte = 0x86
+	OpCertVerify       byte = 0x87
+	OpCertGetCA        byte = 0x88
+	OpCertGetTLSConfig byte = 0x89
+
 	// Health Operations (0x90-0x92).
 	OpHealth    byte = 0x90
 	OpLiveness  byte = 0x91
 	OpReadiness byte = 0x92
 
-	// TimeSeries Operations (0xA0-0xA7).
-	OpTSWritePoint         byte = 0xA0
-	OpTSWriteBatch         byte = 0xA1
-	OpTSQuery              byte = 0xA2
-	OpTSAggregate          byte = 0xA3
-	OpTSDeleteSeries       byte = 0xA4
-	OpTSGetRetentionPolicy byte = 0xA5
-	OpTSSetRetentionPolicy byte = 0xA6
-	OpTSListMetrics        byte = 0xA7
+	// TimeSeries Operations (0xA0-0xA8) - matching server pkg/api/quic/protocol.go.
+	// The server reserves 0xA0/0xA1 for the legacy Aggregate / TimeSeriesQuery
+	// opcodes and assigns the modern TS verbs 0xA2-0xA8. The SDK MUST mirror these
+	// values exactly; an earlier revision shifted them down by two (0xA0-0xA7),
+	// which mis-routed every TimeSeries call on the wire.
+	OpAggregate            byte = 0xA0
+	OpTimeSeriesQuery      byte = 0xA1
+	OpTSWritePoint         byte = 0xA2
+	OpTSWriteBatch         byte = 0xA3
+	OpTSQuery              byte = 0xA4
+	OpTSDeleteSeries       byte = 0xA5
+	OpTSGetRetentionPolicy byte = 0xA6
+	OpTSSetRetentionPolicy byte = 0xA7
+	OpTSListMetrics        byte = 0xA8
 
 	// Operations/Migration Operations (0xB0-0xB4).
 	OpMigrateData          byte = 0xB0
@@ -148,37 +164,61 @@ const (
 	// Note: Opcodes 0xC0-0xC4 are reserved for Seal operations
 	// Note: Opcodes 0xC5-0xC7 are reserved for IAM App operations
 	// Note: Opcodes 0xC8-0xCE are reserved for IAM Policy operations
-	OpKMSGenerateKey       byte = 0xD0
-	OpKMSImportKey         byte = 0xD1
-	OpKMSGetKey            byte = 0xD2
-	OpKMSListKeys          byte = 0xD3
-	OpKMSRotateKey         byte = 0xD4
-	OpKMSDeleteKey         byte = 0xD5
-	OpKMSEncrypt           byte = 0xD6
-	OpKMSDecrypt           byte = 0xD7
-	OpKMSCreateDEK         byte = 0xD8
-	OpKMSGetDEK            byte = 0xD9
-	OpKMSListDEKs          byte = 0xDA
-	OpKMSRotateDEK         byte = 0xDB
-	OpKMSDeleteDEK         byte = 0xDC
-	OpKMSGetDEKStatus      byte = 0xDD
-	OpKMSSetDefaultDEK     byte = 0xDE
-	OpKMSSetDEKSafety      byte = 0xDF
-	OpKMSClearDEKSafety    byte = 0xE7
-	OpKMSBackendStatus     byte = 0xE8
-	OpKMSBackendTest       byte = 0xE9
-	OpKMSKeyVersions       byte = 0xEA
-	OpKMSKeyStatus         byte = 0xEB
-	OpKMSExportKey         byte = 0x09
-	OpKMSUnwrapKey         byte = 0x0A
-	OpKMSGetKeyMetadata    byte = 0x0B
-	OpKMSUpdateKeyMetadata byte = 0x0C
-	OpKMSSetKeyPolicy      byte = 0x0D
-	OpKMSGetKeyPolicy      byte = 0x0E
-	OpKMSSetKeySafety      byte = 0x0F
-	OpKMSClearKeySafety    byte = 0x13
-	OpKMSSafetyCheck       byte = 0x14
-	OpKMSSafetyReport      byte = 0x15
+	OpKMSGenerateKey    byte = 0xD0
+	OpKMSImportKey      byte = 0xD1
+	OpKMSGetKey         byte = 0xD2
+	OpKMSListKeys       byte = 0xD3
+	OpKMSRotateKey      byte = 0xD4
+	OpKMSDeleteKey      byte = 0xD5
+	OpKMSEncrypt        byte = 0xD6
+	OpKMSDecrypt        byte = 0xD7
+	OpKMSCreateDEK      byte = 0xD8
+	OpKMSGetDEK         byte = 0xD9
+	OpKMSListDEKs       byte = 0xDA
+	OpKMSRotateDEK      byte = 0xDB
+	OpKMSDeleteDEK      byte = 0xDC
+	OpKMSGetDEKStatus   byte = 0xDD
+	OpKMSSetDefaultDEK  byte = 0xDE
+	OpKMSSetDEKSafety   byte = 0xDF
+	OpKMSClearDEKSafety byte = 0xE7
+
+	// DEK Re-encryption Operations (0x07-0x08) - matching server protocol.go.
+	OpKMSDEKStartReencryption    byte = 0x07
+	OpKMSDEKGetReencryptProgress byte = 0x08
+	OpKMSBackendStatus           byte = 0xE8
+	OpKMSBackendTest             byte = 0xE9
+	OpKMSKeyVersions             byte = 0xEA
+	OpKMSKeyStatus               byte = 0xEB
+	OpKMSExportKey               byte = 0x09
+	OpKMSUnwrapKey               byte = 0x0A
+	OpKMSGetKeyMetadata          byte = 0x0B
+	OpKMSUpdateKeyMetadata       byte = 0x0C
+	OpKMSSetKeyPolicy            byte = 0x0D
+	OpKMSGetKeyPolicy            byte = 0x0E
+	OpKMSSetKeySafety            byte = 0x0F
+	OpKMSClearKeySafety          byte = 0x13
+	OpKMSSafetyCheck             byte = 0x14
+	OpKMSSafetyReport            byte = 0x15
+
+	// ObjectStorage Operations (0x28-0x3B) - matching server pkg/api/quic/protocol.go.
+	OpOSPutObject            byte = 0x28
+	OpOSGetObject            byte = 0x29
+	OpOSDeleteObject         byte = 0x2A
+	OpOSHeadObject           byte = 0x2B
+	OpOSListObjects          byte = 0x2C
+	OpOSListByTag            byte = 0x2D
+	OpOSListByTenant         byte = 0x2E
+	OpOSCopyObject           byte = 0x2F
+	OpOSReplicateObject      byte = 0x32
+	OpOSMigrateObject        byte = 0x33
+	OpOSArchiveObject        byte = 0x34
+	OpOSRestoreObject        byte = 0x35
+	OpOSVerifyObject         byte = 0x36
+	OpOSGetObjectMetadata    byte = 0x37
+	OpOSUpdateObjectMetadata byte = 0x38
+	OpOSGetStorageStats      byte = 0x39
+	OpOSSetLifecyclePolicy   byte = 0x3A
+	OpOSGetLifecyclePolicy   byte = 0x3B
 
 	// ObjectStorageAdmin Operations (0xE1-0xEE, avoiding conflict with KMS at 0xE7-0xEB).
 	OpOSACreateBackend                byte = 0xE1
@@ -191,18 +231,47 @@ const (
 	OpOSARepairObject                 byte = 0xED
 	OpOSACompactBackend               byte = 0xEE
 
-	// Scheduler Operations (0xF0-0xFA).
-	OpSchedulerCreateJob     byte = 0xF0
-	OpSchedulerGetJob        byte = 0xF1
-	OpSchedulerUpdateJob     byte = 0xF2
-	OpSchedulerDeleteJob     byte = 0xF3
-	OpSchedulerListJobs      byte = 0xF4
-	OpSchedulerTriggerJob    byte = 0xF5
-	OpSchedulerPauseJob      byte = 0xF6
-	OpSchedulerResumeJob     byte = 0xF7
-	OpSchedulerCancelJob     byte = 0xF8
-	OpSchedulerGetJobHistory byte = 0xF9
-	OpSchedulerGetStatus     byte = 0xFA
+	// Secrets Operations (0xE0-0xEF) - matching server protocol.go.
+	OpSecretsStore        byte = 0xE0
+	OpSecretsGet          byte = 0xE1
+	OpSecretsList         byte = 0xE2
+	OpSecretsDelete       byte = 0xE3
+	OpSecretsListVersions byte = 0xE4
+	OpSecretsRollback     byte = 0xE5
+	OpSecretsRotate       byte = 0xE6
+	OpSecretsGetVersion   byte = 0xEC
+	OpSecretsSetRotation  byte = 0xED
+	OpSecretsGetRotation  byte = 0xEE
+	OpSecretsUpdateStatus byte = 0xEF
+
+	// Crypto (transit) Operations (0xF0-0xF9) - matching server protocol.go.
+	OpCryptoEncrypt    byte = 0xF0
+	OpCryptoDecrypt    byte = 0xF1
+	OpCryptoRewrap     byte = 0xF2
+	OpCryptoSign       byte = 0xF3
+	OpCryptoVerify     byte = 0xF4
+	OpCryptoHash       byte = 0xF5
+	OpCryptoRandom     byte = 0xF6
+	OpCryptoDataKey    byte = 0xF7
+	OpCryptoHMAC       byte = 0xF8
+	OpCryptoVerifyHMAC byte = 0xF9
+
+	// Scheduler Operations - uses OpScheduler (0x00) as the dispatch opcode
+	// with the sub-operation code in the first byte of the payload, mirroring
+	// the server (pkg/api/quic/protocol.go OpScheduler + pkg/api/quic/handler.go
+	// handleSchedulerDispatch). The legacy per-method opcodes (0xF0-0xFA) were
+	// removed: they collided with the Crypto/transit opcodes (OpCryptoEncrypt..
+	// OpCryptoVerifyHMAC = 0xF0-0xF9) and the server never dispatched scheduler
+	// on those values.
+	OpScheduler byte = 0x00
+
+	// Messaging Operations - uses OpMsg (0x00) as the dispatch opcode with the
+	// sub-operation code in the first byte of the payload. The messaging sub-op
+	// range (0x20-0x2F) is disjoint from the scheduler (0x01-0x1F) and
+	// extended-vector (0x40-0x4F) ranges that share the same 0x00 dispatch byte
+	// on the server, so the server distinguishes them by the sub-op value.
+	// Matches server-side OpMsg in pkg/api/quic/protocol.go.
+	OpMsg byte = 0x00
 
 	// IAM Tenant Operations (0x95-0x99).
 	OpIAMCreateTenant byte = 0x95
@@ -262,6 +331,17 @@ const (
 	// Matches server-side OpOrchestrator in pkg/api/quic/protocol.go.
 	// Wire format: [0x8F][tokenLen][token][payloadLen][subOp:1][body...].
 	OpOrchestrator byte = 0x8F
+
+	// Barrier Operations - uses OpBarrier (0xC0) as the dispatch opcode with
+	// sub-operation code in the first byte of payload. Mirrors the QuicBaaS
+	// /api/v1/barrier surface (17 sub-ops). Phase 8c replacement for the
+	// deprecated seal-tree opcodes (0xC0-0xC4).
+	OpBarrier byte = 0xC0
+
+	// Ceremony Operations - uses OpCeremony (0xC1) as the dispatch opcode
+	// with sub-operation code in the first byte of payload. Mirrors the
+	// QuicBaaS /api/v1/init surface (8 sub-ops).
+	OpCeremony byte = 0xC1
 
 	// Vector Operations (0x16-0x27).
 	OpVectorCreateNamespace       byte = 0x16
@@ -328,19 +408,19 @@ const (
 // codes for O(1) lookup. All entries use OpOrchestrator (0x8F) as the wire opcode
 // with the SubOp byte prepended to the payload.
 var orchestratorMethodToSubOp = map[string]byte{
-	"SpawnSession":   SubOpOrchestratorSpawn,
-	"PromptSession":  SubOpOrchestratorPrompt,
-	"SessionStatus":  SubOpOrchestratorSessionStatus,
-	"CloseSession":   SubOpOrchestratorCloseSession,
-	"ListSessions":   SubOpOrchestratorListSessions,
-	"CreateTask":     SubOpOrchestratorCreateTask,
-	"GetTask":        SubOpOrchestratorGetTask,
-	"ListTasks":      SubOpOrchestratorListTasks,
-	"ClaimTask":      SubOpOrchestratorClaimTask,
-	"CompleteTask":   SubOpOrchestratorCompleteTask,
-	"ListBackends":   SubOpOrchestratorListBackends,
-	"Health":         SubOpOrchestratorHealth,
-	"Inference":      SubOpOrchestratorInference,
+	"SpawnSession":  SubOpOrchestratorSpawn,
+	"PromptSession": SubOpOrchestratorPrompt,
+	"SessionStatus": SubOpOrchestratorSessionStatus,
+	"CloseSession":  SubOpOrchestratorCloseSession,
+	"ListSessions":  SubOpOrchestratorListSessions,
+	"CreateTask":    SubOpOrchestratorCreateTask,
+	"GetTask":       SubOpOrchestratorGetTask,
+	"ListTasks":     SubOpOrchestratorListTasks,
+	"ClaimTask":     SubOpOrchestratorClaimTask,
+	"CompleteTask":  SubOpOrchestratorCompleteTask,
+	"ListBackends":  SubOpOrchestratorListBackends,
+	"Health":        SubOpOrchestratorHealth,
+	"Inference":     SubOpOrchestratorInference,
 }
 
 // OrchestratorMethodToSubOp converts an Orchestrator method name to its sub-operation code.
@@ -387,6 +467,171 @@ var mfaMethodToSubOp = map[string]byte{
 // MFAMethodToSubOp converts an MFA method name to a sub-operation code.
 func MFAMethodToSubOp(method string) (byte, bool) {
 	subOp, ok := mfaMethodToSubOp[method]
+	return subOp, ok
+}
+
+// Scheduler sub-operation codes (used in payload[0] when OpScheduler is the
+// main opcode). Must stay in lock-step with pkg/api/quic/protocol.go.
+// Sub-opcode range: 0x01-0x1F (the server reserves 0x20-0x2F for messaging and
+// 0x40-0x4F for extended vector ops on the same OpScheduler=0x00 dispatch byte).
+const (
+	SubOpSchedulerCreateJob     byte = 0x01
+	SubOpSchedulerGetJob        byte = 0x02
+	SubOpSchedulerUpdateJob     byte = 0x03
+	SubOpSchedulerDeleteJob     byte = 0x04
+	SubOpSchedulerListJobs      byte = 0x05
+	SubOpSchedulerTriggerJob    byte = 0x06
+	SubOpSchedulerPauseJob      byte = 0x07
+	SubOpSchedulerResumeJob     byte = 0x08
+	SubOpSchedulerCancelJob     byte = 0x09
+	SubOpSchedulerGetJobHistory byte = 0x0A
+	SubOpSchedulerGetStatus     byte = 0x0B
+)
+
+// schedulerMethodToSubOp maps Scheduler service methods to their sub-operation
+// codes for O(1) lookup. The wire opcode is OpScheduler (0x00) for every entry;
+// the SubOp byte is prepended to the JSON request payload before sending, and
+// the server's handleSchedulerDispatch reads payload[0] then unmarshals the
+// remaining bytes as the request body.
+var schedulerMethodToSubOp = map[string]byte{
+	"CreateJob":     SubOpSchedulerCreateJob,
+	"GetJob":        SubOpSchedulerGetJob,
+	"UpdateJob":     SubOpSchedulerUpdateJob,
+	"DeleteJob":     SubOpSchedulerDeleteJob,
+	"ListJobs":      SubOpSchedulerListJobs,
+	"TriggerJob":    SubOpSchedulerTriggerJob,
+	"PauseJob":      SubOpSchedulerPauseJob,
+	"ResumeJob":     SubOpSchedulerResumeJob,
+	"CancelJob":     SubOpSchedulerCancelJob,
+	"GetJobHistory": SubOpSchedulerGetJobHistory,
+	"GetStatus":     SubOpSchedulerGetStatus,
+}
+
+// SchedulerMethodToSubOp converts a Scheduler method name to a sub-operation code.
+// Returns false if the method is not a known Scheduler sub-operation.
+func SchedulerMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := schedulerMethodToSubOp[method]
+	return subOp, ok
+}
+
+// Messaging sub-operation codes (used in payload[0] when OpMsg is the main
+// opcode). Must stay in lock-step with pkg/api/quic/handler_messaging.go.
+// Sub-opcode range: 0x20-0x2F (disjoint from scheduler 0x01-0x1F and
+// extended-vector 0x40-0x4F on the same OpMsg=0x00 dispatch byte).
+const (
+	SubOpMsgCreateChannel byte = 0x20
+	SubOpMsgDeleteChannel byte = 0x21
+	SubOpMsgGetChannel    byte = 0x22
+	SubOpMsgListChannels  byte = 0x23
+	SubOpMsgSubscribe     byte = 0x24
+	SubOpMsgUnsubscribe   byte = 0x25
+	SubOpMsgPublish       byte = 0x26
+	SubOpMsgPublishDelta  byte = 0x27
+	SubOpMsgGetStats      byte = 0x28
+	SubOpMsgDedupStats    byte = 0x29
+)
+
+// messagingMethodToSubOp maps Messaging service methods to their sub-operation
+// codes for O(1) lookup. The wire opcode is OpMsg (0x00) for every entry; the
+// SubOp byte is prepended to the JSON request payload before sending.
+//
+// GetChannelStats and GetDedupStats both route to SubOpMsgDedupStats: the server
+// derives channel statistics from the deduplication store, and GetDedupStats is
+// the only stats-by-channel sub-op the QUIC handler exposes.
+var messagingMethodToSubOp = map[string]byte{
+	"CreateChannel":   SubOpMsgCreateChannel,
+	"DeleteChannel":   SubOpMsgDeleteChannel,
+	"GetChannel":      SubOpMsgGetChannel,
+	"ListChannels":    SubOpMsgListChannels,
+	"Subscribe":       SubOpMsgSubscribe,
+	"Unsubscribe":     SubOpMsgUnsubscribe,
+	"Publish":         SubOpMsgPublish,
+	"PublishDelta":    SubOpMsgPublishDelta,
+	"GetStats":        SubOpMsgGetStats,
+	"GetDedupStats":   SubOpMsgDedupStats,
+	"GetChannelStats": SubOpMsgDedupStats,
+}
+
+// MessagingMethodToSubOp converts a Messaging method name to a sub-operation code.
+// Returns false if the method is not a known Messaging sub-operation.
+func MessagingMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := messagingMethodToSubOp[method]
+	return subOp, ok
+}
+
+// Barrier sub-operation codes (used in payload[0] when OpBarrier is the
+// main opcode). Must stay in lock-step with pkg/api/quic/protocol.go.
+const (
+	SubOpBarrierStatus             byte = 0x01
+	SubOpBarrierInitialize         byte = 0x02
+	SubOpBarrierUnseal             byte = 0x03
+	SubOpBarrierSeal               byte = 0x04
+	SubOpBarrierShamirInitialize   byte = 0x05
+	SubOpBarrierShamirUnsealShare  byte = 0x06
+	SubOpBarrierShamirUnsealShares byte = 0x07
+	// 0x08-0x0B retired with persisted Shamir share management; left unassigned.
+	SubOpBarrierRekey            byte = 0x0C
+	SubOpBarrierRecoveryGenerate byte = 0x0D
+	SubOpBarrierRecoveryRecover  byte = 0x0E
+	SubOpBarrierRecoveryDelete   byte = 0x0F
+	SubOpBarrierRecoveryStatus   byte = 0x10
+	SubOpBarrierRootToken        byte = 0x11
+)
+
+// Ceremony sub-operation codes (used in payload[0] when OpCeremony is the
+// main opcode). Must stay in lock-step with pkg/api/quic/protocol.go.
+const (
+	SubOpCeremonyInitialize            byte = 0x01
+	SubOpCeremonyStatus                byte = 0x02
+	SubOpCeremonyClaimCertBegin        byte = 0x03
+	SubOpCeremonyClaimCertComplete     byte = 0x04
+	SubOpCeremonyClaimShare            byte = 0x05
+	SubOpCeremonySignCSR               byte = 0x06
+	SubOpCeremonyListOfficers          byte = 0x07
+	SubOpCeremonyEnrollExternalOfficer byte = 0x08
+)
+
+// barrierMethodToSubOp maps Barrier service methods to their sub-operation
+// codes for O(1) lookup. The wire opcode is OpBarrier (0xC0) for every
+// entry; the SubOp byte is prepended to the JSON payload before sending.
+var barrierMethodToSubOp = map[string]byte{
+	"BarrierStatus":             SubOpBarrierStatus,
+	"BarrierInitialize":         SubOpBarrierInitialize,
+	"BarrierUnseal":             SubOpBarrierUnseal,
+	"BarrierSeal":               SubOpBarrierSeal,
+	"BarrierShamirInitialize":   SubOpBarrierShamirInitialize,
+	"BarrierShamirUnsealShare":  SubOpBarrierShamirUnsealShare,
+	"BarrierShamirUnsealShares": SubOpBarrierShamirUnsealShares,
+	"BarrierRekey":              SubOpBarrierRekey,
+	"BarrierRecoveryGenerate":   SubOpBarrierRecoveryGenerate,
+	"BarrierRecoveryRecover":    SubOpBarrierRecoveryRecover,
+	"BarrierRecoveryDelete":     SubOpBarrierRecoveryDelete,
+	"BarrierRecoveryStatus":     SubOpBarrierRecoveryStatus,
+	"BarrierRootToken":          SubOpBarrierRootToken,
+}
+
+// BarrierMethodToSubOp converts a Barrier method name to a sub-operation code.
+func BarrierMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := barrierMethodToSubOp[method]
+	return subOp, ok
+}
+
+// ceremonyMethodToSubOp maps Ceremony service methods to their sub-operation
+// codes for O(1) lookup. The wire opcode is OpCeremony (0xC1).
+var ceremonyMethodToSubOp = map[string]byte{
+	"CeremonyInitialize":            SubOpCeremonyInitialize,
+	"CeremonyStatus":                SubOpCeremonyStatus,
+	"CeremonyClaimCertBegin":        SubOpCeremonyClaimCertBegin,
+	"CeremonyClaimCertComplete":     SubOpCeremonyClaimCertComplete,
+	"CeremonyClaimShare":            SubOpCeremonyClaimShare,
+	"CeremonySignCSR":               SubOpCeremonySignCSR,
+	"CeremonyListOfficers":          SubOpCeremonyListOfficers,
+	"CeremonyEnrollExternalOfficer": SubOpCeremonyEnrollExternalOfficer,
+}
+
+// CeremonyMethodToSubOp converts a Ceremony method name to a sub-operation code.
+func CeremonyMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := ceremonyMethodToSubOp[method]
 	return subOp, ok
 }
 
@@ -784,11 +1029,36 @@ var methodToOpcode = map[string]byte{
 	"TimeSeries/WritePoint":         OpTSWritePoint,
 	"TimeSeries/WriteBatch":         OpTSWriteBatch,
 	"TimeSeries/Query":              OpTSQuery,
-	"TimeSeries/Aggregate":          OpTSAggregate,
+	"TimeSeries/Aggregate":          OpAggregate,
 	"TimeSeries/DeleteSeries":       OpTSDeleteSeries,
 	"TimeSeries/GetRetentionPolicy": OpTSGetRetentionPolicy,
 	"TimeSeries/SetRetentionPolicy": OpTSSetRetentionPolicy,
 	"TimeSeries/ListMetrics":        OpTSListMetrics,
+
+	// Certificate Operations (legacy)
+	"Certificate/IssueCertificate":  OpCertIssue,
+	"Certificate/SignCSR":           OpCertSignCSR,
+	"Certificate/RevokeCertificate": OpCertRevoke,
+	"Certificate/VerifyCertificate": OpCertVerify,
+	"Certificate/GetCACertificate":  OpCertGetCA,
+	"Certificate/GetTLSConfig":      OpCertGetTLSConfig,
+
+	// ObjectStorage Operations (legacy)
+	"ObjectStorage/PutObject":       OpOSPutObject,
+	"ObjectStorage/GetObject":       OpOSGetObject,
+	"ObjectStorage/DeleteObject":    OpOSDeleteObject,
+	"ObjectStorage/HeadObject":      OpOSHeadObject,
+	"ObjectStorage/ListObjects":     OpOSListObjects,
+	"ObjectStorage/ListByTag":       OpOSListByTag,
+	"ObjectStorage/ListByTenant":    OpOSListByTenant,
+	"ObjectStorage/CopyObject":      OpOSCopyObject,
+	"ObjectStorage/ReplicateObject": OpOSReplicateObject,
+	"ObjectStorage/MigrateObject":   OpOSMigrateObject,
+	"ObjectStorage/ArchiveObject":   OpOSArchiveObject,
+	"ObjectStorage/RestoreObject":   OpOSRestoreObject,
+	"ObjectStorage/VerifyObject":    OpOSVerifyObject,
+	"ObjectStorage/SetObjectPolicy": OpOSUpdateObjectMetadata,
+	"ObjectStorage/GetObjectPolicy": OpOSGetLifecyclePolicy,
 
 	// Operations/Migration Operations (legacy)
 	"Operations/MigrateData":          OpMigrateData,
@@ -842,17 +1112,20 @@ var methodToOpcode = map[string]byte{
 	"ObjectStorageAdmin/CompactBackend":               OpOSACompactBackend,
 
 	// Scheduler Operations (legacy)
-	"Scheduler/CreateJob":     OpSchedulerCreateJob,
-	"Scheduler/GetJob":        OpSchedulerGetJob,
-	"Scheduler/UpdateJob":     OpSchedulerUpdateJob,
-	"Scheduler/DeleteJob":     OpSchedulerDeleteJob,
-	"Scheduler/ListJobs":      OpSchedulerListJobs,
-	"Scheduler/TriggerJob":    OpSchedulerTriggerJob,
-	"Scheduler/PauseJob":      OpSchedulerPauseJob,
-	"Scheduler/ResumeJob":     OpSchedulerResumeJob,
-	"Scheduler/CancelJob":     OpSchedulerCancelJob,
-	"Scheduler/GetJobHistory": OpSchedulerGetJobHistory,
-	"Scheduler/GetStatus":     OpSchedulerGetStatus,
+	// Scheduler operations all map to the single dispatch opcode OpScheduler
+	// (0x00); the per-method sub-op byte is prepended to the payload at send
+	// time. See schedulerMethodToSubOp.
+	"Scheduler/CreateJob":     OpScheduler,
+	"Scheduler/GetJob":        OpScheduler,
+	"Scheduler/UpdateJob":     OpScheduler,
+	"Scheduler/DeleteJob":     OpScheduler,
+	"Scheduler/ListJobs":      OpScheduler,
+	"Scheduler/TriggerJob":    OpScheduler,
+	"Scheduler/PauseJob":      OpScheduler,
+	"Scheduler/ResumeJob":     OpScheduler,
+	"Scheduler/CancelJob":     OpScheduler,
+	"Scheduler/GetJobHistory": OpScheduler,
+	"Scheduler/GetStatus":     OpScheduler,
 
 	// IAM Operations (legacy)
 	"IAM.Tenant/Create": OpIAMCreateTenant,
@@ -978,6 +1251,8 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.Auth/Logout":        OpAuthLogout,
 	"quicbaas.Auth/RefreshToken":  OpAuthRefreshToken,
 	"quicbaas.Auth/ValidateToken": OpAuthValidateToken,
+	"quicbaas.Auth/BeginLogin":    OpAuthBeginLogin,
+	"quicbaas.Auth/FinishLogin":   OpAuthFinishLogin,
 
 	// RBAC Operations
 	"quicbaas.RBAC/CreateUser": OpRBACCreateUser,
@@ -1000,15 +1275,53 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.Health/Liveness":  OpLiveness,
 	"quicbaas.Health/Readiness": OpReadiness,
 
-	// TimeSeries Operations
+	// TimeSeries Operations. The high-level TimeSeries SDK client
+	// (sdk/go/client/timeseries) sends the short method names "Write" and
+	// "Query"; the server registers WritePoint / TSQuery on opcodes 0xA2 / 0xA4.
+	// Both spellings are mapped so the CLI's TS verbs and any direct callers
+	// reach the correct opcode.
+	"quicbaas.TimeSeries/Write":              OpTSWritePoint,
 	"quicbaas.TimeSeries/WritePoint":         OpTSWritePoint,
 	"quicbaas.TimeSeries/WriteBatch":         OpTSWriteBatch,
 	"quicbaas.TimeSeries/Query":              OpTSQuery,
-	"quicbaas.TimeSeries/Aggregate":          OpTSAggregate,
+	"quicbaas.TimeSeries/TSQuery":            OpTSQuery,
+	"quicbaas.TimeSeries/Aggregate":          OpAggregate,
+	"quicbaas.TimeSeries/TimeSeriesQuery":    OpTimeSeriesQuery,
 	"quicbaas.TimeSeries/DeleteSeries":       OpTSDeleteSeries,
 	"quicbaas.TimeSeries/GetRetentionPolicy": OpTSGetRetentionPolicy,
 	"quicbaas.TimeSeries/SetRetentionPolicy": OpTSSetRetentionPolicy,
 	"quicbaas.TimeSeries/ListMetrics":        OpTSListMetrics,
+
+	// Certificate Operations. Only the six verbs the server wires over QUIC are
+	// mapped (Issue / SignCSR / Revoke / Verify / GetCA / GetTLSConfig); the
+	// remaining client methods (GetCABundle, IsInitialized, GenerateCRL,
+	// IsRevoked, CAInfo, ListCertificates) have no QUIC opcode and surface as
+	// "unknown method" rather than being silently misrouted.
+	"quicbaas.Certificate/IssueCertificate":  OpCertIssue,
+	"quicbaas.Certificate/SignCSR":           OpCertSignCSR,
+	"quicbaas.Certificate/RevokeCertificate": OpCertRevoke,
+	"quicbaas.Certificate/VerifyCertificate": OpCertVerify,
+	"quicbaas.Certificate/GetCACertificate":  OpCertGetCA,
+	"quicbaas.Certificate/GetTLSConfig":      OpCertGetTLSConfig,
+
+	// ObjectStorage Operations (0x28-0x3B). SetObjectPolicy/GetObjectPolicy reuse
+	// the server's UpdateObjectMetadata / GetLifecyclePolicy handlers, which
+	// decode service.SetObjectPolicyRequest / service.GetObjectPolicyRequest.
+	"quicbaas.ObjectStorage/PutObject":       OpOSPutObject,
+	"quicbaas.ObjectStorage/GetObject":       OpOSGetObject,
+	"quicbaas.ObjectStorage/DeleteObject":    OpOSDeleteObject,
+	"quicbaas.ObjectStorage/HeadObject":      OpOSHeadObject,
+	"quicbaas.ObjectStorage/ListObjects":     OpOSListObjects,
+	"quicbaas.ObjectStorage/ListByTag":       OpOSListByTag,
+	"quicbaas.ObjectStorage/ListByTenant":    OpOSListByTenant,
+	"quicbaas.ObjectStorage/CopyObject":      OpOSCopyObject,
+	"quicbaas.ObjectStorage/ReplicateObject": OpOSReplicateObject,
+	"quicbaas.ObjectStorage/MigrateObject":   OpOSMigrateObject,
+	"quicbaas.ObjectStorage/ArchiveObject":   OpOSArchiveObject,
+	"quicbaas.ObjectStorage/RestoreObject":   OpOSRestoreObject,
+	"quicbaas.ObjectStorage/VerifyObject":    OpOSVerifyObject,
+	"quicbaas.ObjectStorage/SetObjectPolicy": OpOSUpdateObjectMetadata,
+	"quicbaas.ObjectStorage/GetObjectPolicy": OpOSGetLifecyclePolicy,
 
 	// Operations/Migration Operations
 	"quicbaas.Operations/MigrateData":          OpMigrateData,
@@ -1038,6 +1351,7 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.KMS/BackendStatus":     OpKMSBackendStatus,
 	"quicbaas.KMS/BackendTest":       OpKMSBackendTest,
 	"quicbaas.KMS/KeyVersions":       OpKMSKeyVersions,
+	"quicbaas.KMS/ListKeyVersions":   OpKMSKeyVersions,
 	"quicbaas.KMS/KeyStatus":         OpKMSKeyStatus,
 	"quicbaas.KMS/ExportKey":         OpKMSExportKey,
 	"quicbaas.KMS/UnwrapKey":         OpKMSUnwrapKey,
@@ -1050,6 +1364,21 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.KMS/SafetyCheck":       OpKMSSafetyCheck,
 	"quicbaas.KMS/SafetyReport":      OpKMSSafetyReport,
 
+	// DEK Operations (server OpKMSDEK* range). The DEK SDK service shares the
+	// server's KMS DEK opcodes; these aliases let the DEK client resolve them
+	// under its own quicbaas.DEK service name.
+	"quicbaas.DEK/CreateDEK":               OpKMSCreateDEK,
+	"quicbaas.DEK/GetDEK":                  OpKMSGetDEK,
+	"quicbaas.DEK/ListDEKs":                OpKMSListDEKs,
+	"quicbaas.DEK/RotateDEK":               OpKMSRotateDEK,
+	"quicbaas.DEK/DeleteDEK":               OpKMSDeleteDEK,
+	"quicbaas.DEK/GetDEKStatus":            OpKMSGetDEKStatus,
+	"quicbaas.DEK/SetDefaultDEK":           OpKMSSetDefaultDEK,
+	"quicbaas.DEK/SetDEKSafety":            OpKMSSetDEKSafety,
+	"quicbaas.DEK/ClearDEKSafety":          OpKMSClearDEKSafety,
+	"quicbaas.DEK/StartReencryption":       OpKMSDEKStartReencryption,
+	"quicbaas.DEK/GetReencryptionProgress": OpKMSDEKGetReencryptProgress,
+
 	// ObjectStorageAdmin Operations
 	"quicbaas.ObjectStorageAdmin/CreateBackend":                OpOSACreateBackend,
 	"quicbaas.ObjectStorageAdmin/UpdateBackend":                OpOSAUpdateBackend,
@@ -1061,18 +1390,85 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.ObjectStorageAdmin/RepairObject":                 OpOSARepairObject,
 	"quicbaas.ObjectStorageAdmin/CompactBackend":               OpOSACompactBackend,
 
-	// Scheduler Operations
-	"quicbaas.Scheduler/CreateJob":     OpSchedulerCreateJob,
-	"quicbaas.Scheduler/GetJob":        OpSchedulerGetJob,
-	"quicbaas.Scheduler/UpdateJob":     OpSchedulerUpdateJob,
-	"quicbaas.Scheduler/DeleteJob":     OpSchedulerDeleteJob,
-	"quicbaas.Scheduler/ListJobs":      OpSchedulerListJobs,
-	"quicbaas.Scheduler/TriggerJob":    OpSchedulerTriggerJob,
-	"quicbaas.Scheduler/PauseJob":      OpSchedulerPauseJob,
-	"quicbaas.Scheduler/ResumeJob":     OpSchedulerResumeJob,
-	"quicbaas.Scheduler/CancelJob":     OpSchedulerCancelJob,
-	"quicbaas.Scheduler/GetJobHistory": OpSchedulerGetJobHistory,
-	"quicbaas.Scheduler/GetStatus":     OpSchedulerGetStatus,
+	// Secrets Operations. "Ensure" is intentionally absent: the server does not
+	// support EnsureSecret over QUIC (ErrEnsureSecretUnsupportedQUIC), so it must
+	// surface as an unknown method rather than be silently rerouted.
+	"quicbaas.Secrets/Store":             OpSecretsStore,
+	"quicbaas.Secrets/Get":               OpSecretsGet,
+	"quicbaas.Secrets/List":              OpSecretsList,
+	"quicbaas.Secrets/Delete":            OpSecretsDelete,
+	"quicbaas.Secrets/ListVersions":      OpSecretsListVersions,
+	"quicbaas.Secrets/Rollback":          OpSecretsRollback,
+	"quicbaas.Secrets/Rotate":            OpSecretsRotate,
+	"quicbaas.Secrets/GetVersion":        OpSecretsGetVersion,
+	"quicbaas.Secrets/SetRotationPolicy": OpSecretsSetRotation,
+	"quicbaas.Secrets/GetRotationPolicy": OpSecretsGetRotation,
+	"quicbaas.Secrets/UpdateStatus":      OpSecretsUpdateStatus,
+
+	// Crypto (transit) Operations.
+	"quicbaas.Crypto/Encrypt":         OpCryptoEncrypt,
+	"quicbaas.Crypto/Decrypt":         OpCryptoDecrypt,
+	"quicbaas.Crypto/Rewrap":          OpCryptoRewrap,
+	"quicbaas.Crypto/Sign":            OpCryptoSign,
+	"quicbaas.Crypto/Verify":          OpCryptoVerify,
+	"quicbaas.Crypto/Hash":            OpCryptoHash,
+	"quicbaas.Crypto/GenerateRandom":  OpCryptoRandom,
+	"quicbaas.Crypto/GenerateDataKey": OpCryptoDataKey,
+	"quicbaas.Crypto/GenerateHMAC":    OpCryptoHMAC,
+	"quicbaas.Crypto/VerifyHMAC":      OpCryptoVerifyHMAC,
+
+	"quicbaas.Scheduler/CreateJob":     OpScheduler,
+	"quicbaas.Scheduler/GetJob":        OpScheduler,
+	"quicbaas.Scheduler/UpdateJob":     OpScheduler,
+	"quicbaas.Scheduler/DeleteJob":     OpScheduler,
+	"quicbaas.Scheduler/ListJobs":      OpScheduler,
+	"quicbaas.Scheduler/TriggerJob":    OpScheduler,
+	"quicbaas.Scheduler/PauseJob":      OpScheduler,
+	"quicbaas.Scheduler/ResumeJob":     OpScheduler,
+	"quicbaas.Scheduler/CancelJob":     OpScheduler,
+	"quicbaas.Scheduler/GetJobHistory": OpScheduler,
+	"quicbaas.Scheduler/GetStatus":     OpScheduler,
+
+	// Messaging Operations - all map to OpMsg (0x00); the SubOp byte is prepended
+	// to the payload at send time. See messagingMethodToSubOp. The sub-op range
+	// (0x20-0x2F) keeps these disjoint from Scheduler (0x01-0x1F) on the wire.
+	"quicbaas.Messaging/CreateChannel":   OpMsg,
+	"quicbaas.Messaging/DeleteChannel":   OpMsg,
+	"quicbaas.Messaging/GetChannel":      OpMsg,
+	"quicbaas.Messaging/ListChannels":    OpMsg,
+	"quicbaas.Messaging/Subscribe":       OpMsg,
+	"quicbaas.Messaging/Unsubscribe":     OpMsg,
+	"quicbaas.Messaging/Publish":         OpMsg,
+	"quicbaas.Messaging/PublishDelta":    OpMsg,
+	"quicbaas.Messaging/GetStats":        OpMsg,
+	"quicbaas.Messaging/GetDedupStats":   OpMsg,
+	"quicbaas.Messaging/GetChannelStats": OpMsg,
+
+	// Barrier operations - all map to OpBarrier (0xC0); the SubOp byte is
+	// prepended to the payload at send time. See barrierMethodToSubOp.
+	"quicbaas.Barrier/BarrierStatus":             OpBarrier,
+	"quicbaas.Barrier/BarrierInitialize":         OpBarrier,
+	"quicbaas.Barrier/BarrierUnseal":             OpBarrier,
+	"quicbaas.Barrier/BarrierSeal":               OpBarrier,
+	"quicbaas.Barrier/BarrierShamirInitialize":   OpBarrier,
+	"quicbaas.Barrier/BarrierShamirUnsealShare":  OpBarrier,
+	"quicbaas.Barrier/BarrierShamirUnsealShares": OpBarrier,
+	"quicbaas.Barrier/BarrierRekey":              OpBarrier,
+	"quicbaas.Barrier/BarrierRecoveryGenerate":   OpBarrier,
+	"quicbaas.Barrier/BarrierRecoveryRecover":    OpBarrier,
+	"quicbaas.Barrier/BarrierRecoveryDelete":     OpBarrier,
+	"quicbaas.Barrier/BarrierRecoveryStatus":     OpBarrier,
+	"quicbaas.Barrier/BarrierRootToken":          OpBarrier,
+
+	// Ceremony operations - all map to OpCeremony (0xC1).
+	"quicbaas.Ceremony/CeremonyInitialize":            OpCeremony,
+	"quicbaas.Ceremony/CeremonyStatus":                OpCeremony,
+	"quicbaas.Ceremony/CeremonyClaimCertBegin":        OpCeremony,
+	"quicbaas.Ceremony/CeremonyClaimCertComplete":     OpCeremony,
+	"quicbaas.Ceremony/CeremonyClaimShare":            OpCeremony,
+	"quicbaas.Ceremony/CeremonySignCSR":               OpCeremony,
+	"quicbaas.Ceremony/CeremonyListOfficers":          OpCeremony,
+	"quicbaas.Ceremony/CeremonyEnrollExternalOfficer": OpCeremony,
 
 	// IAM Tenant Operations
 	"quicbaas.IAM.Tenant/Create": OpIAMCreateTenant,
@@ -1178,34 +1574,34 @@ var methodToOpcode = map[string]byte{
 
 	// Orchestrator Operations - all map to OpOrchestrator (0x8F); the SubOp byte is
 	// prepended to the payload by the transport layer before sending on the wire.
-	"quicbaas.Orchestrator/SpawnSession":   OpOrchestrator,
-	"quicbaas.Orchestrator/PromptSession":  OpOrchestrator,
-	"quicbaas.Orchestrator/SessionStatus":  OpOrchestrator,
-	"quicbaas.Orchestrator/CloseSession":   OpOrchestrator,
-	"quicbaas.Orchestrator/ListSessions":   OpOrchestrator,
-	"quicbaas.Orchestrator/CreateTask":     OpOrchestrator,
-	"quicbaas.Orchestrator/GetTask":        OpOrchestrator,
-	"quicbaas.Orchestrator/ListTasks":      OpOrchestrator,
-	"quicbaas.Orchestrator/ClaimTask":      OpOrchestrator,
-	"quicbaas.Orchestrator/CompleteTask":   OpOrchestrator,
-	"quicbaas.Orchestrator/ListBackends":   OpOrchestrator,
-	"quicbaas.Orchestrator/Health":         OpOrchestrator,
-	"quicbaas.Orchestrator/Inference":      OpOrchestrator,
+	"quicbaas.Orchestrator/SpawnSession":  OpOrchestrator,
+	"quicbaas.Orchestrator/PromptSession": OpOrchestrator,
+	"quicbaas.Orchestrator/SessionStatus": OpOrchestrator,
+	"quicbaas.Orchestrator/CloseSession":  OpOrchestrator,
+	"quicbaas.Orchestrator/ListSessions":  OpOrchestrator,
+	"quicbaas.Orchestrator/CreateTask":    OpOrchestrator,
+	"quicbaas.Orchestrator/GetTask":       OpOrchestrator,
+	"quicbaas.Orchestrator/ListTasks":     OpOrchestrator,
+	"quicbaas.Orchestrator/ClaimTask":     OpOrchestrator,
+	"quicbaas.Orchestrator/CompleteTask":  OpOrchestrator,
+	"quicbaas.Orchestrator/ListBackends":  OpOrchestrator,
+	"quicbaas.Orchestrator/Health":        OpOrchestrator,
+	"quicbaas.Orchestrator/Inference":     OpOrchestrator,
 
 	// Legacy short-form Orchestrator keys (without quicbaas. prefix).
-	"Orchestrator/SpawnSession":   OpOrchestrator,
-	"Orchestrator/PromptSession":  OpOrchestrator,
-	"Orchestrator/SessionStatus":  OpOrchestrator,
-	"Orchestrator/CloseSession":   OpOrchestrator,
-	"Orchestrator/ListSessions":   OpOrchestrator,
-	"Orchestrator/CreateTask":     OpOrchestrator,
-	"Orchestrator/GetTask":        OpOrchestrator,
-	"Orchestrator/ListTasks":      OpOrchestrator,
-	"Orchestrator/ClaimTask":      OpOrchestrator,
-	"Orchestrator/CompleteTask":   OpOrchestrator,
-	"Orchestrator/ListBackends":   OpOrchestrator,
-	"Orchestrator/Health":         OpOrchestrator,
-	"Orchestrator/Inference":      OpOrchestrator,
+	"Orchestrator/SpawnSession":  OpOrchestrator,
+	"Orchestrator/PromptSession": OpOrchestrator,
+	"Orchestrator/SessionStatus": OpOrchestrator,
+	"Orchestrator/CloseSession":  OpOrchestrator,
+	"Orchestrator/ListSessions":  OpOrchestrator,
+	"Orchestrator/CreateTask":    OpOrchestrator,
+	"Orchestrator/GetTask":       OpOrchestrator,
+	"Orchestrator/ListTasks":     OpOrchestrator,
+	"Orchestrator/ClaimTask":     OpOrchestrator,
+	"Orchestrator/CompleteTask":  OpOrchestrator,
+	"Orchestrator/ListBackends":  OpOrchestrator,
+	"Orchestrator/Health":        OpOrchestrator,
+	"Orchestrator/Inference":     OpOrchestrator,
 }
 
 // opcodeToMethod maps opcodes to service/method combinations for O(1) reverse lookup.
@@ -1265,6 +1661,8 @@ var opcodeToMethod = map[byte]string{
 	OpAuthLogout:        "quicbaas.Auth/Logout",
 	OpAuthRefreshToken:  "quicbaas.Auth/RefreshToken",
 	OpAuthValidateToken: "quicbaas.Auth/ValidateToken",
+	OpAuthBeginLogin:    "quicbaas.Auth/BeginLogin",
+	OpAuthFinishLogin:   "quicbaas.Auth/FinishLogin",
 
 	// RBAC Operations
 	OpRBACCreateUser: "quicbaas.RBAC/CreateUser",
@@ -1287,15 +1685,42 @@ var opcodeToMethod = map[byte]string{
 	OpLiveness:  "quicbaas.Health/Liveness",
 	OpReadiness: "quicbaas.Health/Readiness",
 
-	// TimeSeries Operations
-	OpTSWritePoint:         "quicbaas.TimeSeries/WritePoint",
+	// TimeSeries Operations. Reverse map uses the high-level client method names
+	// (Write / Query) since those are what the SDK client emits.
+	OpTSWritePoint:         "quicbaas.TimeSeries/Write",
 	OpTSWriteBatch:         "quicbaas.TimeSeries/WriteBatch",
 	OpTSQuery:              "quicbaas.TimeSeries/Query",
-	OpTSAggregate:          "quicbaas.TimeSeries/Aggregate",
+	OpAggregate:            "quicbaas.TimeSeries/Aggregate",
+	OpTimeSeriesQuery:      "quicbaas.TimeSeries/TimeSeriesQuery",
 	OpTSDeleteSeries:       "quicbaas.TimeSeries/DeleteSeries",
 	OpTSGetRetentionPolicy: "quicbaas.TimeSeries/GetRetentionPolicy",
 	OpTSSetRetentionPolicy: "quicbaas.TimeSeries/SetRetentionPolicy",
 	OpTSListMetrics:        "quicbaas.TimeSeries/ListMetrics",
+
+	// Certificate Operations
+	OpCertIssue:        "quicbaas.Certificate/IssueCertificate",
+	OpCertSignCSR:      "quicbaas.Certificate/SignCSR",
+	OpCertRevoke:       "quicbaas.Certificate/RevokeCertificate",
+	OpCertVerify:       "quicbaas.Certificate/VerifyCertificate",
+	OpCertGetCA:        "quicbaas.Certificate/GetCACertificate",
+	OpCertGetTLSConfig: "quicbaas.Certificate/GetTLSConfig",
+
+	// ObjectStorage Operations
+	OpOSPutObject:            "quicbaas.ObjectStorage/PutObject",
+	OpOSGetObject:            "quicbaas.ObjectStorage/GetObject",
+	OpOSDeleteObject:         "quicbaas.ObjectStorage/DeleteObject",
+	OpOSHeadObject:           "quicbaas.ObjectStorage/HeadObject",
+	OpOSListObjects:          "quicbaas.ObjectStorage/ListObjects",
+	OpOSListByTag:            "quicbaas.ObjectStorage/ListByTag",
+	OpOSListByTenant:         "quicbaas.ObjectStorage/ListByTenant",
+	OpOSCopyObject:           "quicbaas.ObjectStorage/CopyObject",
+	OpOSReplicateObject:      "quicbaas.ObjectStorage/ReplicateObject",
+	OpOSMigrateObject:        "quicbaas.ObjectStorage/MigrateObject",
+	OpOSArchiveObject:        "quicbaas.ObjectStorage/ArchiveObject",
+	OpOSRestoreObject:        "quicbaas.ObjectStorage/RestoreObject",
+	OpOSVerifyObject:         "quicbaas.ObjectStorage/VerifyObject",
+	OpOSUpdateObjectMetadata: "quicbaas.ObjectStorage/SetObjectPolicy",
+	OpOSGetLifecyclePolicy:   "quicbaas.ObjectStorage/GetObjectPolicy",
 
 	// Operations/Migration Operations
 	OpMigrateData:          "quicbaas.Operations/MigrateData",
@@ -1348,18 +1773,26 @@ var opcodeToMethod = map[byte]string{
 	OpOSARepairObject:                 "quicbaas.ObjectStorageAdmin/RepairObject",
 	OpOSACompactBackend:               "quicbaas.ObjectStorageAdmin/CompactBackend",
 
-	// Scheduler Operations
-	OpSchedulerCreateJob:     "quicbaas.Scheduler/CreateJob",
-	OpSchedulerGetJob:        "quicbaas.Scheduler/GetJob",
-	OpSchedulerUpdateJob:     "quicbaas.Scheduler/UpdateJob",
-	OpSchedulerDeleteJob:     "quicbaas.Scheduler/DeleteJob",
-	OpSchedulerListJobs:      "quicbaas.Scheduler/ListJobs",
-	OpSchedulerTriggerJob:    "quicbaas.Scheduler/TriggerJob",
-	OpSchedulerPauseJob:      "quicbaas.Scheduler/PauseJob",
-	OpSchedulerResumeJob:     "quicbaas.Scheduler/ResumeJob",
-	OpSchedulerCancelJob:     "quicbaas.Scheduler/CancelJob",
-	OpSchedulerGetJobHistory: "quicbaas.Scheduler/GetJobHistory",
-	OpSchedulerGetStatus:     "quicbaas.Scheduler/GetStatus",
+	// Scheduler / Messaging / Barrier / Ceremony are sub-op dispatched on a single
+	// opcode (OpScheduler=0x00 shared with OpMsg, OpBarrier=0xC0, OpCeremony=0xC1)
+	// and therefore have no 1:1 opcode->method reverse mapping; they are
+	// intentionally omitted here. OpScheduler (0x00) is reverse-mapped to the
+	// scheduler dispatch name below.
+	OpScheduler: "quicbaas.Scheduler",
+
+	// Crypto (transit) Operations (0xF0-0xF9). These were previously shadowed
+	// in this reverse map by the stale per-method Scheduler opcodes (0xF0-0xFA);
+	// with those removed the canonical Crypto names are restored.
+	OpCryptoEncrypt:    "quicbaas.Crypto/Encrypt",
+	OpCryptoDecrypt:    "quicbaas.Crypto/Decrypt",
+	OpCryptoRewrap:     "quicbaas.Crypto/Rewrap",
+	OpCryptoSign:       "quicbaas.Crypto/Sign",
+	OpCryptoVerify:     "quicbaas.Crypto/Verify",
+	OpCryptoHash:       "quicbaas.Crypto/Hash",
+	OpCryptoRandom:     "quicbaas.Crypto/GenerateRandom",
+	OpCryptoDataKey:    "quicbaas.Crypto/GenerateDataKey",
+	OpCryptoHMAC:       "quicbaas.Crypto/GenerateHMAC",
+	OpCryptoVerifyHMAC: "quicbaas.Crypto/VerifyHMAC",
 
 	// IAM Tenant Operations
 	OpIAMCreateTenant: "quicbaas.IAM.Tenant/Create",

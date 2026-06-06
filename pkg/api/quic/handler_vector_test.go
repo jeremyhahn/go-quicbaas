@@ -365,7 +365,7 @@ func createVectorTestHandler(vectorSvc service.VectorService) *Handler {
 	svc := &mockVectorEnabledService{
 		vectorSvc: vectorSvc,
 	}
-	return NewHandler(svc, nil, nil, nil, nil, createVectorTestLogger())
+	return NewHandler(svc, nil, nil, nil, createVectorTestLogger())
 }
 
 // =============================================================================
@@ -2109,7 +2109,7 @@ func createExtendedVectorHandler(vectorSvc *extendedMockVectorService) *Handler 
 	svc := &extendedMockVectorEnabledService{
 		vectorSvc: vectorSvc,
 	}
-	return NewHandler(svc, nil, nil, nil, nil, createVectorTestLogger())
+	return NewHandler(svc, nil, nil, nil, createVectorTestLogger())
 }
 
 // =============================================================================

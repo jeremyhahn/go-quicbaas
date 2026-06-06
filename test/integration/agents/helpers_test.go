@@ -18,7 +18,6 @@ package agents
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -27,6 +26,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // Sentinel errors for agent E2E integration test infrastructure.
@@ -87,12 +88,7 @@ func (e *HTTPResponseError) Unwrap() error {
 
 // newTLSClient creates an HTTP client with TLS skip verify and the given timeout.
 func newTLSClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // integration test only
-		},
-	}
+	return helpers.NewHTTPClient(timeout)
 }
 
 // postJSON sends an HTTP POST request with a JSON body and returns the response.

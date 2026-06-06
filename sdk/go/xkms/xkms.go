@@ -36,6 +36,52 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
+// ObjectStorage re-exports — the canonical object/blob storage interface and
+// supporting types travel through the alias chain:
+//
+//	go-objstore/pkg/common.Storage
+//	  → go-xkms/sdk/go.ObjectStorage
+//	    → go-quicbaas/sdk/go/xkms.ObjectStorage   (here)
+//
+// go-trusted-platform (and any other quicbaas consumer) imports only this
+// package; it never needs go-objstore or go-xkms in its own go.mod for
+// object-storage work.
+type (
+	// ObjectStorage is the canonical object/blob storage interface.
+	ObjectStorage = xkmssdk.ObjectStorage
+
+	// ObjectMetadata holds object-level metadata re-exported through the alias chain.
+	ObjectMetadata = xkmssdk.ObjectMetadata
+
+	// ObjectListOptions configures paginated object listing.
+	ObjectListOptions = xkmssdk.ObjectListOptions
+
+	// ObjectInfo holds key and metadata for a single listed object.
+	ObjectInfo = xkmssdk.ObjectInfo
+
+	// ObjectListResult is the paginated result returned by ObjectStorage.ListWithOptions.
+	ObjectListResult = xkmssdk.ObjectListResult
+
+	// ObjectArchiver is the destination interface used by ObjectStorage.Archive.
+	ObjectArchiver = xkmssdk.ObjectArchiver
+
+	// ObjectLifecyclePolicy configures retention and expiry rules on a storage backend.
+	ObjectLifecyclePolicy = xkmssdk.ObjectLifecyclePolicy
+)
+
+// Object-storage constructors re-exported from go-xkms (which in turn
+// re-exports them from go-objstore). Use these instead of calling
+// go-objstore or go-xkms constructors directly.
+var (
+	// NewObjectStorageLocal constructs a filesystem-backed ObjectStorage
+	// implementation rooted at the given directory.
+	NewObjectStorageLocal = xkmssdk.NewObjectStorageLocal
+
+	// NewObjectStorageMemory constructs an in-memory ObjectStorage
+	// implementation suitable for testing and embedded use.
+	NewObjectStorageMemory = xkmssdk.NewObjectStorageMemory
+)
+
 // IsRSAPSS reports whether the supplied x509.SignatureAlgorithm
 // uses RSA-PSS padding. xkms's SDK doesn't re-export this from
 // pkg/types so we promote it here directly — quote-verification
@@ -43,82 +89,80 @@ import (
 // rsa.VerifyPKCS1v15.
 var IsRSAPSS = xkmstypes.IsRSAPSS
 
-
 // ---------------------------------------------------------
 // Type aliases
 // ---------------------------------------------------------
 
 type (
-	AKProfile = xkmssdk.AKProfile
-	BackendType = xkmssdk.BackendType
-	CanSealResponse = xkmssdk.CanSealResponse
-	Capabilities = xkmssdk.Capabilities
+	AKProfile                 = xkmssdk.AKProfile
+	BackendType               = xkmssdk.BackendType
+	CanSealResponse           = xkmssdk.CanSealResponse
+	Capabilities              = xkmssdk.Capabilities
 	CertificateStorageAdapter = xkmssdk.CertificateStorageAdapter
-	CertifyResult = xkmssdk.CertifyResult
-	CertStore = xkmssdk.CertStore
-	CertStoreConfig = xkmssdk.CertStoreConfig
-	ECCAttributes = xkmssdk.ECCAttributes
-	ECCConfig = xkmssdk.ECCConfig
-	EKConfig = xkmssdk.EKConfig
-	FSExtension = xkmssdk.FSExtension
-	GetKeyResponse = xkmssdk.GetKeyResponse
-	KeyAlgorithmString = xkmssdk.KeyAlgorithmString
-	KeyAttributes = xkmssdk.KeyAttributes
-	KeyConfig = xkmssdk.KeyConfig
-	KeyInfo = xkmssdk.KeyInfo
-	KeyProvider = xkmssdk.KeyProvider
-	KeyRSAConfig = xkmssdk.KeyRSAConfig
-	NVIndexInfo = xkmssdk.NVIndexInfo
-	Password = xkmssdk.Password
-	PasswordCacheConfig = xkmssdk.PasswordCacheConfig
-	PCR = xkmssdk.PCR
-	PCRBank = xkmssdk.PCRBank
-	PINBackend = xkmssdk.PINBackend
-	PINManager = xkmssdk.PINManager
-	PIVAttestRequest = xkmssdk.PIVAttestRequest
-	PIVResetDeviceRequest = xkmssdk.PIVResetDeviceRequest
-	PIVSignRequest = xkmssdk.PIVSignRequest
-	PKCS8BackendConfig = xkmssdk.PKCS8BackendConfig
-	PlatformKeyStorer = xkmssdk.PlatformKeyStorer
-	PlatformPassword = xkmssdk.PlatformPassword
-	PlatformSRKConfig = xkmssdk.PlatformSRKConfig
-	ProdCaData = xkmssdk.ProdCaData
-	PropertiesFixed = xkmssdk.PropertiesFixed
-	Quote = xkmssdk.Quote
-	RSAAttributes = xkmssdk.RSAAttributes
-	RSAConfig = xkmssdk.RSAConfig
-	SealedData = xkmssdk.SealedData
-	SealOptions = xkmssdk.SealOptions
-	ServiceBackend = xkmssdk.ServiceBackend
-	ServiceBackendConfig = xkmssdk.ServiceBackendConfig
-	ServiceConfig = xkmssdk.ServiceConfig
-	SignatureAlgorithmName = xkmssdk.SignatureAlgorithmName
-	SignerOpts = xkmssdk.SignerOpts
-	SoftwareBackend = xkmssdk.SoftwareBackend
-	SoftwareBackendConfig = xkmssdk.SoftwareBackendConfig
-	SRKConfig = xkmssdk.SRKConfig
-	StorageBackend = xkmssdk.StorageBackend
-	StoreType = xkmssdk.StoreType
-	SymmetricAlgorithm = xkmssdk.SymmetricAlgorithm
-	SymmetricEncrypter = xkmssdk.SymmetricEncrypter
-	SymmetricKey = xkmssdk.SymmetricKey
-	TCG_CSR_IDEVID = xkmssdk.TCG_CSR_IDEVID
+	CertifyResult             = xkmssdk.CertifyResult
+	CertStore                 = xkmssdk.CertStore
+	CertStoreConfig           = xkmssdk.CertStoreConfig
+	ECCAttributes             = xkmssdk.ECCAttributes
+	ECCConfig                 = xkmssdk.ECCConfig
+	EKConfig                  = xkmssdk.EKConfig
+	FSExtension               = xkmssdk.FSExtension
+	GetKeyResponse            = xkmssdk.GetKeyResponse
+	KeyAlgorithmString        = xkmssdk.KeyAlgorithmString
+	KeyAttributes             = xkmssdk.KeyAttributes
+	KeyConfig                 = xkmssdk.KeyConfig
+	KeyInfo                   = xkmssdk.KeyInfo
+	KeyProvider               = xkmssdk.KeyProvider
+	KeyRSAConfig              = xkmssdk.KeyRSAConfig
+	NVIndexInfo               = xkmssdk.NVIndexInfo
+	Password                  = xkmssdk.Password
+	PasswordCacheConfig       = xkmssdk.PasswordCacheConfig
+	PCR                       = xkmssdk.PCR
+	PCRBank                   = xkmssdk.PCRBank
+	PINBackend                = xkmssdk.PINBackend
+	PIVAttestRequest          = xkmssdk.PIVAttestRequest
+	PIVResetDeviceRequest     = xkmssdk.PIVResetDeviceRequest
+	PIVSignRequest            = xkmssdk.PIVSignRequest
+	PKCS8BackendConfig        = xkmssdk.PKCS8BackendConfig
+	PlatformKeyStorer         = xkmssdk.PlatformKeyStorer
+	PlatformPassword          = xkmssdk.PlatformPassword
+	PlatformSRKConfig         = xkmssdk.PlatformSRKConfig
+	ProdCaData                = xkmssdk.ProdCaData
+	PropertiesFixed           = xkmssdk.PropertiesFixed
+	Quote                     = xkmssdk.Quote
+	RSAAttributes             = xkmssdk.RSAAttributes
+	RSAConfig                 = xkmssdk.RSAConfig
+	SealedData                = xkmssdk.SealedData
+	SealOptions               = xkmssdk.SealOptions
+	ServiceBackend            = xkmssdk.ServiceBackend
+	ServiceBackendConfig      = xkmssdk.ServiceBackendConfig
+	ServiceConfig             = xkmssdk.ServiceConfig
+	SignatureAlgorithmName    = xkmssdk.SignatureAlgorithmName
+	SignerOpts                = xkmssdk.SignerOpts
+	SoftwareBackend           = xkmssdk.SoftwareBackend
+	SoftwareBackendConfig     = xkmssdk.SoftwareBackendConfig
+	SRKConfig                 = xkmssdk.SRKConfig
+	StorageBackend            = xkmssdk.StorageBackend
+	StoreType                 = xkmssdk.StoreType
+	SymmetricAlgorithm        = xkmssdk.SymmetricAlgorithm
+	SymmetricEncrypter        = xkmssdk.SymmetricEncrypter
+	SymmetricKey              = xkmssdk.SymmetricKey
+	TCG_CSR_IDEVID            = xkmssdk.TCG_CSR_IDEVID
 	TPM2BackendExternalConfig = xkmssdk.TPM2BackendExternalConfig
-	TPMAttributes = xkmssdk.TPMAttributes
-	TPMCertificateStorer = xkmssdk.TPMCertificateStorer
-	TPMConfig = xkmssdk.TPMConfig
-	TPMEvent = xkmssdk.TPMEvent
-	TPMHandle = xkmssdk.TPMHandle
-	TPMKeyBackend = xkmssdk.TPMKeyBackend
-	TPMParams = xkmssdk.TPMParams
-	TPMSealPolicy = xkmssdk.TPMSealPolicy
-	TPMSignerOpts = xkmssdk.TPMSignerOpts
-	TrustedCA = xkmssdk.TrustedCA
-	TrustedPlatformModule = xkmssdk.TrustedPlatformModule
-	UNPACKED_TCG_CSR_IDEVID = xkmssdk.UNPACKED_TCG_CSR_IDEVID
-	UnsealOptions = xkmssdk.UnsealOptions
-	UnsealRequest = xkmssdk.UnsealRequest
-	UnsealResponse = xkmssdk.UnsealResponse
+	TPMAttributes             = xkmssdk.TPMAttributes
+	TPMCertificateStorer      = xkmssdk.TPMCertificateStorer
+	TPMConfig                 = xkmssdk.TPMConfig
+	TPMEvent                  = xkmssdk.TPMEvent
+	TPMHandle                 = xkmssdk.TPMHandle
+	TPMKeyBackend             = xkmssdk.TPMKeyBackend
+	TPMParams                 = xkmssdk.TPMParams
+	TPMSealPolicy             = xkmssdk.TPMSealPolicy
+	TPMSignerOpts             = xkmssdk.TPMSignerOpts
+	TrustedCA                 = xkmssdk.TrustedCA
+	TrustedPlatformModule     = xkmssdk.TrustedPlatformModule
+	UNPACKED_TCG_CSR_IDEVID   = xkmssdk.UNPACKED_TCG_CSR_IDEVID
+	UnsealOptions             = xkmssdk.UnsealOptions
+	UnsealRequest             = xkmssdk.UnsealRequest
+	UnsealResponse            = xkmssdk.UnsealResponse
 )
 
 // ---------------------------------------------------------
@@ -126,29 +170,29 @@ type (
 // ---------------------------------------------------------
 
 const (
-	BackendTypeTPM2 = xkmssdk.BackendTypeTPM2
-	DEFAULT_PASSWORD = xkmssdk.DEFAULT_PASSWORD
-	KeyTypeEncryption = xkmssdk.KeyTypeEncryption
-	KeyTypeHMAC = xkmssdk.KeyTypeHMAC
-	KeyTypeIDevID = xkmssdk.KeyTypeIDevID
-	KeyTypeSigning = xkmssdk.KeyTypeSigning
-	KeyTypeStorage = xkmssdk.KeyTypeStorage
-	KeyTypeTLS = xkmssdk.KeyTypeTLS
-	StoreAWSKMS = xkmssdk.StoreAWSKMS
-	StoreAzureKV = xkmssdk.StoreAzureKV
-	StoreGCPKMS = xkmssdk.StoreGCPKMS
-	StorePKCS11 = xkmssdk.StorePKCS11
-	StoreSoftware = xkmssdk.StoreSoftware
-	StoreTPM2 = xkmssdk.StoreTPM2
-	StoreUnknown = xkmssdk.StoreUnknown
-	StoreVault = xkmssdk.StoreVault
-	SymmetricAES128GCM = xkmssdk.SymmetricAES128GCM
-	SymmetricAES192GCM = xkmssdk.SymmetricAES192GCM
-	SymmetricAES256GCM = xkmssdk.SymmetricAES256GCM
-	SymmetricChaCha20Poly1305 = xkmssdk.SymmetricChaCha20Poly1305
+	BackendTypeTPM2            = xkmssdk.BackendTypeTPM2
+	DEFAULT_PASSWORD           = xkmssdk.DEFAULT_PASSWORD
+	KeyTypeEncryption          = xkmssdk.KeyTypeEncryption
+	KeyTypeHMAC                = xkmssdk.KeyTypeHMAC
+	KeyTypeIDevID              = xkmssdk.KeyTypeIDevID
+	KeyTypeSigning             = xkmssdk.KeyTypeSigning
+	KeyTypeStorage             = xkmssdk.KeyTypeStorage
+	KeyTypeTLS                 = xkmssdk.KeyTypeTLS
+	StoreAWSKMS                = xkmssdk.StoreAWSKMS
+	StoreAzureKV               = xkmssdk.StoreAzureKV
+	StoreGCPKMS                = xkmssdk.StoreGCPKMS
+	StorePKCS11                = xkmssdk.StorePKCS11
+	StoreSoftware              = xkmssdk.StoreSoftware
+	StoreTPM2                  = xkmssdk.StoreTPM2
+	StoreUnknown               = xkmssdk.StoreUnknown
+	StoreVault                 = xkmssdk.StoreVault
+	SymmetricAES128GCM         = xkmssdk.SymmetricAES128GCM
+	SymmetricAES192GCM         = xkmssdk.SymmetricAES192GCM
+	SymmetricAES256GCM         = xkmssdk.SymmetricAES256GCM
+	SymmetricChaCha20Poly1305  = xkmssdk.SymmetricChaCha20Poly1305
 	SymmetricXChaCha20Poly1305 = xkmssdk.SymmetricXChaCha20Poly1305
-	TPMHTPersistent = xkmssdk.TPMHTPersistent
-	TPMRHOwner = xkmssdk.TPMRHOwner
+	TPMHTPersistent            = xkmssdk.TPMHTPersistent
+	TPMRHOwner                 = xkmssdk.TPMRHOwner
 )
 
 // ---------------------------------------------------------
@@ -156,62 +200,62 @@ const (
 // ---------------------------------------------------------
 
 var (
-	AttestPIV = xkmssdk.AttestPIV
-	CertToString = xkmssdk.CertToString
-	DebugKeyAttributes = xkmssdk.DebugKeyAttributes
-	DecodePCRs = xkmssdk.DecodePCRs
-	DefaultTPMConfig = xkmssdk.DefaultTPMConfig
-	DiscoverPlatformAttributes = xkmssdk.DiscoverPlatformAttributes
-	EncodePubKeyPEM = xkmssdk.EncodePubKeyPEM
-	ErrCertNotFound = xkmssdk.ErrCertNotFound
-	ErrInvalidKeyAlgorithm = xkmssdk.ErrInvalidKeyAlgorithm
-	ErrInvalidKeyStore = xkmssdk.ErrInvalidKeyStore
-	ErrTPMEndorsementCertNotFound = xkmssdk.ErrTPMEndorsementCertNotFound
+	AttestPIV                         = xkmssdk.AttestPIV
+	CertToString                      = xkmssdk.CertToString
+	DebugKeyAttributes                = xkmssdk.DebugKeyAttributes
+	DecodePCRs                        = xkmssdk.DecodePCRs
+	DefaultTPMConfig                  = xkmssdk.DefaultTPMConfig
+	DiscoverPlatformAttributes        = xkmssdk.DiscoverPlatformAttributes
+	EncodePubKeyPEM                   = xkmssdk.EncodePubKeyPEM
+	ErrCertNotFound                   = xkmssdk.ErrCertNotFound
+	ErrInvalidKeyAlgorithm            = xkmssdk.ErrInvalidKeyAlgorithm
+	ErrInvalidKeyStore                = xkmssdk.ErrInvalidKeyStore
+	ErrTPMEndorsementCertNotFound     = xkmssdk.ErrTPMEndorsementCertNotFound
 	ErrTPMInvalidActivationCredential = xkmssdk.ErrTPMInvalidActivationCredential
-	ErrTPMNotInitialized = xkmssdk.ErrTPMNotInitialized
-	ErrTPMStoreCertNotFound = xkmssdk.ErrTPMStoreCertNotFound
-	IDevIDAttributesFromConfig = xkmssdk.IDevIDAttributesFromConfig
-	KeyAttributesFromConfig = xkmssdk.KeyAttributesFromConfig
-	MinimalInstallOptions = xkmssdk.MinimalInstallOptions
-	NewCertStore = xkmssdk.NewCertStore
-	NewFileBackend = xkmssdk.NewFileBackend
-	NewFileStorageBackend = xkmssdk.NewFileStorageBackend
-	NewJWTSigningMethodSigner = xkmssdk.NewJWTSigningMethodSigner
-	NewPassword = xkmssdk.NewPassword
-	NewPasswordFromString = xkmssdk.NewPasswordFromString
-	NewPKCS8Backend = xkmssdk.NewPKCS8Backend
-	NewPlatformPassword = xkmssdk.NewPlatformPassword
-	NewServiceBackend = xkmssdk.NewServiceBackend
-	NewSoftwareBackend = xkmssdk.NewSoftwareBackend
-	NewStorageCertAdapter = xkmssdk.NewStorageCertAdapter
-	NewStorageMemory = xkmssdk.NewStorageMemory
-	NewTPM2 = xkmssdk.NewTPM2
-	NewTPM2BackendWithTPM = xkmssdk.NewTPM2BackendWithTPM
-	OpenUnixSocketTransport = xkmssdk.OpenUnixSocketTransport
-	PackIDevIDCSR = xkmssdk.PackIDevIDCSR
-	PackProdCaData = xkmssdk.PackProdCaData
-	ParseCurve = xkmssdk.ParseCurve
-	ParseHash = xkmssdk.ParseHash
-	ParseKeyAlgorithm = xkmssdk.ParseKeyAlgorithm
-	ParseSignatureAlgorithm = xkmssdk.ParseSignatureAlgorithm
-	ParseStoreType = xkmssdk.ParseStoreType
-	ResetPIV = xkmssdk.ResetPIV
-	RSASRKTemplate = xkmssdk.RSASRKTemplate
-	ServiceClose = xkmssdk.ServiceClose
-	ServiceDeleteKey = xkmssdk.ServiceDeleteKey
-	ServiceDeleteKeyByID = xkmssdk.ServiceDeleteKeyByID
-	ServiceGenerateKey = xkmssdk.ServiceGenerateKey
-	ServiceGenerateKeyWithBackend = xkmssdk.ServiceGenerateKeyWithBackend
-	ServiceGetBackend = xkmssdk.ServiceGetBackend
-	ServiceInitialize = xkmssdk.ServiceInitialize
-	ServiceIsInitialized = xkmssdk.ServiceIsInitialized
-	ServiceKey = xkmssdk.ServiceKey
-	ServiceKeyByID = xkmssdk.ServiceKeyByID
-	ServiceReset = xkmssdk.ServiceReset
-	ServiceSaveCertificate = xkmssdk.ServiceSaveCertificate
-	ServiceSignerByID = xkmssdk.ServiceSignerByID
-	SignPIV = xkmssdk.SignPIV
-	UnpackProdCaData = xkmssdk.UnpackProdCaData
+	ErrTPMNotInitialized              = xkmssdk.ErrTPMNotInitialized
+	ErrTPMStoreCertNotFound           = xkmssdk.ErrTPMStoreCertNotFound
+	IDevIDAttributesFromConfig        = xkmssdk.IDevIDAttributesFromConfig
+	KeyAttributesFromConfig           = xkmssdk.KeyAttributesFromConfig
+	MinimalInstallOptions             = xkmssdk.MinimalInstallOptions
+	NewCertStore                      = xkmssdk.NewCertStore
+	NewFileBackend                    = xkmssdk.NewFileBackend
+	NewFileStorageBackend             = xkmssdk.NewFileStorageBackend
+	NewJWTSigningMethodSigner         = xkmssdk.NewJWTSigningMethodSigner
+	NewPassword                       = xkmssdk.NewPassword
+	NewPasswordFromString             = xkmssdk.NewPasswordFromString
+	NewPKCS8Backend                   = xkmssdk.NewPKCS8Backend
+	NewPlatformPassword               = xkmssdk.NewPlatformPassword
+	NewServiceBackend                 = xkmssdk.NewServiceBackend
+	NewSoftwareBackend                = xkmssdk.NewSoftwareBackend
+	NewStorageCertAdapter             = xkmssdk.NewStorageCertAdapter
+	NewStorageMemory                  = xkmssdk.NewStorageMemory
+	NewTPM2                           = xkmssdk.NewTPM2
+	NewTPM2BackendWithTPM             = xkmssdk.NewTPM2BackendWithTPM
+	OpenUnixSocketTransport           = xkmssdk.OpenUnixSocketTransport
+	PackIDevIDCSR                     = xkmssdk.PackIDevIDCSR
+	PackProdCaData                    = xkmssdk.PackProdCaData
+	ParseCurve                        = xkmssdk.ParseCurve
+	ParseHash                         = xkmssdk.ParseHash
+	ParseKeyAlgorithm                 = xkmssdk.ParseKeyAlgorithm
+	ParseSignatureAlgorithm           = xkmssdk.ParseSignatureAlgorithm
+	ParseStoreType                    = xkmssdk.ParseStoreType
+	ResetPIV                          = xkmssdk.ResetPIV
+	RSASRKTemplate                    = xkmssdk.RSASRKTemplate
+	ServiceClose                      = xkmssdk.ServiceClose
+	ServiceDeleteKey                  = xkmssdk.ServiceDeleteKey
+	ServiceDeleteKeyByID              = xkmssdk.ServiceDeleteKeyByID
+	ServiceGenerateKey                = xkmssdk.ServiceGenerateKey
+	ServiceGenerateKeyWithBackend     = xkmssdk.ServiceGenerateKeyWithBackend
+	ServiceGetBackend                 = xkmssdk.ServiceGetBackend
+	ServiceInitialize                 = xkmssdk.ServiceInitialize
+	ServiceIsInitialized              = xkmssdk.ServiceIsInitialized
+	ServiceKey                        = xkmssdk.ServiceKey
+	ServiceKeyByID                    = xkmssdk.ServiceKeyByID
+	ServiceReset                      = xkmssdk.ServiceReset
+	ServiceSaveCertificate            = xkmssdk.ServiceSaveCertificate
+	ServiceSignerByID                 = xkmssdk.ServiceSignerByID
+	SignPIV                           = xkmssdk.SignPIV
+	UnpackProdCaData                  = xkmssdk.UnpackProdCaData
 )
 
 // ---------------------------------------------------------
@@ -220,60 +264,60 @@ var (
 // ---------------------------------------------------------
 
 type (
-	BackendConfig                  = xkmssdk.BackendConfig
-	BackendInfo                    = xkmssdk.BackendInfo
-	BeginAuthenticationRequest     = xkmssdk.BeginAuthenticationRequest
-	BeginAuthenticationResponse    = xkmssdk.BeginAuthenticationResponse
-	BeginRegistrationRequest       = xkmssdk.BeginRegistrationRequest
-	BeginRegistrationResponse      = xkmssdk.BeginRegistrationResponse
-	Client                         = xkmssdk.Client
-	CopyKeyRequest                 = xkmssdk.CopyKeyRequest
-	CopyKeyResponse                = xkmssdk.CopyKeyResponse
-	DecryptRequest                 = xkmssdk.DecryptRequest
-	DecryptResponse                = xkmssdk.DecryptResponse
-	DeleteKeyResponse              = xkmssdk.DeleteKeyResponse
-	EncryptAsymRequest             = xkmssdk.EncryptAsymRequest
-	EncryptAsymResponse            = xkmssdk.EncryptAsymResponse
-	EncryptRequest                 = xkmssdk.EncryptRequest
-	EncryptResponse                = xkmssdk.EncryptResponse
-	ExportKeyRequest               = xkmssdk.ExportKeyRequest
-	ExportKeyResponse              = xkmssdk.ExportKeyResponse
-	FinishAuthenticationRequest    = xkmssdk.FinishAuthenticationRequest
-	FinishAuthenticationResponse   = xkmssdk.FinishAuthenticationResponse
-	FinishRegistrationRequest      = xkmssdk.FinishRegistrationRequest
-	FinishRegistrationResponse     = xkmssdk.FinishRegistrationResponse
-	GenerateKeyRequest             = xkmssdk.GenerateKeyRequest
-	GenerateKeyResponse            = xkmssdk.GenerateKeyResponse
-	GetCertificateChainResponse    = xkmssdk.GetCertificateChainResponse
-	GetCertificateResponse         = xkmssdk.GetCertificateResponse
-	GetImportParametersRequest     = xkmssdk.GetImportParametersRequest
-	GetImportParametersResponse    = xkmssdk.GetImportParametersResponse
-	GetTLSCertificateResponse      = xkmssdk.GetTLSCertificateResponse
-	GetUserResponse                = xkmssdk.GetUserResponse
-	HealthResponse                 = xkmssdk.HealthResponse
-	ImportKeyRequest               = xkmssdk.ImportKeyRequest
-	ImportKeyResponse              = xkmssdk.ImportKeyResponse
-	ListBackendsResponse           = xkmssdk.ListBackendsResponse
-	ListCertificatesResponse       = xkmssdk.ListCertificatesResponse
-	ListKeysResponse               = xkmssdk.ListKeysResponse
-	ListUserCredentialsResponse    = xkmssdk.ListUserCredentialsResponse
-	ListUsersResponse              = xkmssdk.ListUsersResponse
-	Protocol                       = xkmssdk.Protocol
-	RotateKeyRequest               = xkmssdk.RotateKeyRequest
-	RotateKeyResponse              = xkmssdk.RotateKeyResponse
-	SaveCertificateChainRequest    = xkmssdk.SaveCertificateChainRequest
-	SaveCertificateRequest         = xkmssdk.SaveCertificateRequest
-	SealRequest                    = xkmssdk.SealRequest
-	SealResponse                   = xkmssdk.SealResponse
-	SignRequest                    = xkmssdk.SignRequest
-	SignResponse                   = xkmssdk.SignResponse
-	UnwrapKeyRequest               = xkmssdk.UnwrapKeyRequest
-	UnwrapKeyResponse              = xkmssdk.UnwrapKeyResponse
-	VerifyRequest                  = xkmssdk.VerifyRequest
-	VerifyResponse                 = xkmssdk.VerifyResponse
-	WrapKeyRequest                 = xkmssdk.WrapKeyRequest
-	WrapKeyResponse                = xkmssdk.WrapKeyResponse
-	XKMSServicer                   = xkmssdk.XKMSServicer
+	BackendConfig                = xkmssdk.BackendConfig
+	BackendInfo                  = xkmssdk.BackendInfo
+	BeginAuthenticationRequest   = xkmssdk.BeginAuthenticationRequest
+	BeginAuthenticationResponse  = xkmssdk.BeginAuthenticationResponse
+	BeginRegistrationRequest     = xkmssdk.BeginRegistrationRequest
+	BeginRegistrationResponse    = xkmssdk.BeginRegistrationResponse
+	Client                       = xkmssdk.Client
+	CopyKeyRequest               = xkmssdk.CopyKeyRequest
+	CopyKeyResponse              = xkmssdk.CopyKeyResponse
+	DecryptRequest               = xkmssdk.DecryptRequest
+	DecryptResponse              = xkmssdk.DecryptResponse
+	DeleteKeyResponse            = xkmssdk.DeleteKeyResponse
+	EncryptAsymRequest           = xkmssdk.EncryptAsymRequest
+	EncryptAsymResponse          = xkmssdk.EncryptAsymResponse
+	EncryptRequest               = xkmssdk.EncryptRequest
+	EncryptResponse              = xkmssdk.EncryptResponse
+	ExportKeyRequest             = xkmssdk.ExportKeyRequest
+	ExportKeyResponse            = xkmssdk.ExportKeyResponse
+	FinishAuthenticationRequest  = xkmssdk.FinishAuthenticationRequest
+	FinishAuthenticationResponse = xkmssdk.FinishAuthenticationResponse
+	FinishRegistrationRequest    = xkmssdk.FinishRegistrationRequest
+	FinishRegistrationResponse   = xkmssdk.FinishRegistrationResponse
+	GenerateKeyRequest           = xkmssdk.GenerateKeyRequest
+	GenerateKeyResponse          = xkmssdk.GenerateKeyResponse
+	GetCertificateChainResponse  = xkmssdk.GetCertificateChainResponse
+	GetCertificateResponse       = xkmssdk.GetCertificateResponse
+	GetImportParametersRequest   = xkmssdk.GetImportParametersRequest
+	GetImportParametersResponse  = xkmssdk.GetImportParametersResponse
+	GetTLSCertificateResponse    = xkmssdk.GetTLSCertificateResponse
+	GetUserResponse              = xkmssdk.GetUserResponse
+	HealthResponse               = xkmssdk.HealthResponse
+	ImportKeyRequest             = xkmssdk.ImportKeyRequest
+	ImportKeyResponse            = xkmssdk.ImportKeyResponse
+	ListBackendsResponse         = xkmssdk.ListBackendsResponse
+	ListCertificatesResponse     = xkmssdk.ListCertificatesResponse
+	ListKeysResponse             = xkmssdk.ListKeysResponse
+	ListUserCredentialsResponse  = xkmssdk.ListUserCredentialsResponse
+	ListUsersResponse            = xkmssdk.ListUsersResponse
+	Protocol                     = xkmssdk.Protocol
+	RotateKeyRequest             = xkmssdk.RotateKeyRequest
+	RotateKeyResponse            = xkmssdk.RotateKeyResponse
+	SaveCertificateChainRequest  = xkmssdk.SaveCertificateChainRequest
+	SaveCertificateRequest       = xkmssdk.SaveCertificateRequest
+	SealRequest                  = xkmssdk.SealRequest
+	SealResponse                 = xkmssdk.SealResponse
+	SignRequest                  = xkmssdk.SignRequest
+	SignResponse                 = xkmssdk.SignResponse
+	UnwrapKeyRequest             = xkmssdk.UnwrapKeyRequest
+	UnwrapKeyResponse            = xkmssdk.UnwrapKeyResponse
+	VerifyRequest                = xkmssdk.VerifyRequest
+	VerifyResponse               = xkmssdk.VerifyResponse
+	WrapKeyRequest               = xkmssdk.WrapKeyRequest
+	WrapKeyResponse              = xkmssdk.WrapKeyResponse
+	XKMSServicer                 = xkmssdk.XKMSServicer
 )
 
 const (

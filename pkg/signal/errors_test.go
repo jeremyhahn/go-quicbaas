@@ -139,3 +139,36 @@ func TestInvalidConfigError_AsInterface(t *testing.T) {
 		t.Fatalf("unexpected field/reason: %s/%s", target.Field, target.Reason)
 	}
 }
+
+func TestKeyGenerationError_Message(t *testing.T) {
+	cause := errors.New("entropy source unavailable")
+	err := &KeyGenerationError{KeyType: "identity", Err: cause}
+	got := err.Error()
+	expected := "signal: failed to generate identity key: entropy source unavailable"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestKeyGenerationError_WrapsCause(t *testing.T) {
+	cause := errors.New("prekey failure")
+	err := &KeyGenerationError{KeyType: "prekey", Err: cause}
+	if !errors.Is(err, cause) {
+		t.Fatal("expected errors.Is to match wrapped cause")
+	}
+	if got := err.Unwrap(); got != cause {
+		t.Fatalf("expected Unwrap to return the wrapped cause, got %v", got)
+	}
+}
+
+func TestKeyGenerationError_AsInterface(t *testing.T) {
+	var target *KeyGenerationError
+	cause := errors.New("boom")
+	err := error(&KeyGenerationError{KeyType: "signed-prekey", Err: cause})
+	if !errors.As(err, &target) {
+		t.Fatal("expected errors.As to match KeyGenerationError")
+	}
+	if target.KeyType != "signed-prekey" {
+		t.Fatalf("expected KeyType signed-prekey, got %s", target.KeyType)
+	}
+}

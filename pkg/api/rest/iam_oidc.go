@@ -206,6 +206,15 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 		clientSecret = r.FormValue("client_secret")
 	}
 
+	// Scope the context to the tenant encoded in the clientID
+	// (app_<tenant>_<suffix>) so the tenant-scoped app/token index lookups the
+	// OIDC provider performs resolve correctly. The clientID is the
+	// authoritative tenant binding for the client-credentials / code grants on
+	// this endpoint.
+	if cidTenant := tenantFromOAuthClientID(clientID); cidTenant != "" {
+		ctx = loginContextWithTenant(ctx, cidTenant)
+	}
+
 	// Build token request
 	req := &iam.TokenRequest{
 		GrantType:    r.FormValue("grant_type"),
@@ -221,6 +230,17 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 	// Parse scope
 	if scopeParam := r.FormValue("scope"); scopeParam != "" {
 		req.Scope = strings.Fields(scopeParam)
+	}
+
+	// RFC 9449 DPoP: when the client presents a proof in the DPoP request
+	// header, sender-constrain the issued token to the proof key (cnf.jkt). The
+	// issuer verifies the proof's htm/htu against this endpoint's method and
+	// absolute URI, so capture the externally-visible token endpoint URL. No
+	// header means a plain bearer; an invalid proof fails closed in the issuer.
+	if proof := r.Header.Get("DPoP"); proof != "" {
+		req.DPoPProof = proof
+		req.HTTPMethod = r.Method
+		req.HTTPURI = requestAbsoluteURI(r)
 	}
 
 	// Validate required parameters
@@ -271,7 +291,53 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Dual-identity audit (AU-2/AU-3): the token endpoint just minted a bearer
+	// for a user. Record BOTH the service that presented the request (verified
+	// client cert, when mTLS) and the user identity carried by the issued
+	// access token. The issued token is validated locally to extract the
+	// authoritative sub/tenant_id/scp/jti without trusting request inputs.
+	if tokenResp != nil && tokenResp.AccessToken != "" {
+		if claims, vErr := provider.ValidateAccessToken(ctx, tokenResp.AccessToken); vErr == nil && claims != nil {
+			id := iam.DualIdentity{
+				Subject:         claims.Subject,
+				Username:        claims.Name,
+				TenantID:        claims.TenantID,
+				ClientID:        claims.ClientID,
+				JTI:             claims.JTI,
+				Scopes:          claims.SCP,
+				Roles:           claims.Roles,
+				ServiceIdentity: iam.ServiceIdentityFromCert(verifiedPeerCertFromRequest(r)),
+			}
+			if id.ClientID == "" {
+				id.ClientID = clientID
+			}
+			h.auditAuthentication(ctx, id, "oauth2.token", iam.AuditOutcomeSuccess, map[string]interface{}{
+				"grant_type": req.GrantType,
+			})
+		}
+	}
+
 	RespondJSON(w, r, http.StatusOK, tokenResp)
+}
+
+// requestAbsoluteURI reconstructs the externally-visible absolute request URI
+// (scheme://host/path) used as the RFC 9449 DPoP htu. It honors the reverse-proxy
+// forwarding headers so the htu matches the URL the client dialed when a
+// TLS-terminating proxy fronts the service. Query and fragment are not included;
+// the DPoP verifier canonicalizes both sides to scheme+host+path regardless.
+func requestAbsoluteURI(r *http.Request) string {
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
+		scheme = fwd
+	}
+	host := r.Host
+	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
+		host = fwd
+	}
+	return scheme + "://" + host + r.URL.Path
 }
 
 // UserInfo handles GET /oauth2/userinfo - OIDC UserInfo endpoint.

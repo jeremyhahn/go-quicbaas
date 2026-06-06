@@ -87,6 +87,14 @@ type clientOptions struct {
 	// (service.QuicBaaS) is checked when creating the transport.
 	embeddedService interface{}
 
+	// Embedded QRDB settings — populated by WithEmbeddedQRDB. When set
+	// alongside transportType == TransportEmbedded, the qrdb sub-client
+	// is constructed against the qrdb in-process embedded transport
+	// instead of falling through to a network transport. Required for
+	// Security().Barrier(), Security().Ceremony(), Security().Credentials(),
+	// and other qrdb-backed accessors to function under WithEmbedded.
+	embeddedQRDB *QRDBEmbeddedServicers
+
 	// MCP authentication settings
 	mcpUsername  string
 	mcpPassword  string
@@ -192,13 +200,16 @@ func WithTLSConfig(cfg *tls.Config) Option {
 	}
 }
 
-// WithInsecure disables TLS certificate verification.
-// This is useful for development and testing with self-signed certificates.
-// WARNING: Do not use in production - this disables security checks.
+// WithInsecure is REMOVED. QuicBaaS bans insecure TLS — use WithTLSConfig
+// with a tls.Config that has RootCAs set to the QuicBaaS CA. The SDK no
+// longer offers a way to bypass certificate verification.
+//
+// Deprecated: This function exists only to flag remaining callers at compile
+// time. Replace with WithTLSConfig(cfg) where cfg loads the CA from disk.
 func WithInsecure() Option {
 	return func(o *clientOptions) error {
-		o.insecure = true
-		return nil
+		return errors.NewInvalidInput("WithInsecure",
+			"WithInsecure is banned — QuicBaaS requires explicit CA trust. Use WithTLSConfig(cfg) with cfg.RootCAs set.")
 	}
 }
 
@@ -272,6 +283,12 @@ func WithUnix(socketPath string) Option {
 // WithEmbedded configures the client for in-process service access.
 // The svc parameter should be of type service.QuicBaaS but uses interface{}
 // to avoid import cycles. Type checking is performed when creating the transport.
+//
+// WithEmbedded covers the quicbaas service surface (KV, IAM, secrets, etc.)
+// but does NOT wire the qrdb sub-client. To enable embedded dispatch for
+// Security().Barrier(), Security().Ceremony(), Security().Credentials(),
+// and other qrdb-backed accessors, pair WithEmbedded with WithEmbeddedQRDB
+// and pass the qrdb servicers explicitly.
 func WithEmbedded(svc interface{}) Option {
 	return func(o *clientOptions) error {
 		if svc == nil {
@@ -279,6 +296,42 @@ func WithEmbedded(svc interface{}) Option {
 		}
 		o.transportType = TransportEmbedded
 		o.embeddedService = svc
+		return nil
+	}
+}
+
+// WithEmbeddedQRDB configures the qrdb sub-client to run in-process against
+// the supplied qrdb service implementations. It is the qrdb-side companion
+// to WithEmbedded: the latter installs the quicbaas facade for non-qrdb
+// surface area, this one installs the qrdb embedded transport so accessors
+// like Security().Barrier(), Security().Ceremony(), and
+// Security().Credentials() dispatch directly to the in-process qrdb services
+// instead of resolving a network address.
+//
+// At minimum, servicers.KV and servicers.Admin must be non-nil — those are
+// positional arguments to the qrdb embedded transport. Every other field is
+// optional: the qrdb embedded transport returns a typed NilServiceError for
+// any operation against an absent servicer.
+//
+// Calling WithEmbeddedQRDB without WithEmbedded is allowed and useful for
+// SDK clients that talk to quicbaas over the network but dispatch qrdb
+// calls in-process. When both are set, the qrdb sub-client always uses the
+// in-process embedded transport regardless of the quicbaas transport
+// selection. When only WithEmbedded is set (no qrdb servicers), the qrdb
+// sub-client cannot fall through to the network and a configuration error
+// is returned on first qrdb-backed accessor call.
+func WithEmbeddedQRDB(servicers QRDBEmbeddedServicers) Option {
+	return func(o *clientOptions) error {
+		if servicers.KV == nil {
+			return errors.NewInvalidInput("WithEmbeddedQRDB",
+				"servicers.KV (qrdb KVServicer) is required")
+		}
+		if servicers.Admin == nil {
+			return errors.NewInvalidInput("WithEmbeddedQRDB",
+				"servicers.Admin (qrdb AdminServicer) is required")
+		}
+		snapshot := servicers
+		o.embeddedQRDB = &snapshot
 		return nil
 	}
 }

@@ -96,9 +96,6 @@ type (
 	// DynamicSecretsService handles dynamic credential generation.
 	DynamicSecretsService = pkgservice.DynamicSecretsService
 
-	// ClusterDEKService handles cluster-wide Data Encryption Key management.
-	ClusterDEKService = pkgservice.ClusterDEKService
-
 	// ObjectStorageService provides object storage operations.
 	ObjectStorageService = pkgservice.ObjectStorageService
 
@@ -1035,28 +1032,10 @@ type (
 )
 
 // =============================================================================
-// Cluster DEK Types
+// KMS Re-encryption Types (shared between KMS DEK service and transports)
 // =============================================================================
 
 type (
-	InitClusterDEKRequest      = pkgservice.InitClusterDEKRequest
-	InitClusterDEKResponse     = pkgservice.InitClusterDEKResponse
-	ClusterDEKStatusResponse   = pkgservice.ClusterDEKStatusResponse
-	RotateClusterDEKRequest    = pkgservice.RotateClusterDEKRequest
-	RotateClusterDEKResponse   = pkgservice.RotateClusterDEKResponse
-	SyncNodeDEKRequest         = pkgservice.SyncNodeDEKRequest
-	SyncNodeDEKResponse        = pkgservice.SyncNodeDEKResponse
-	GetNodeDEKStatusRequest    = pkgservice.GetNodeDEKStatusRequest
-	GetNodeDEKStatusResponse   = pkgservice.GetNodeDEKStatusResponse
-	StartReencryptionRequest   = pkgservice.StartReencryptionRequest
-	StartReencryptionResponse  = pkgservice.StartReencryptionResponse
-	ReencryptionStatusResponse = pkgservice.ReencryptionStatusResponse
-	RecoverDEKRequest          = pkgservice.RecoverDEKRequest
-	RecoverDEKResponse         = pkgservice.RecoverDEKResponse
-	DEKRotationPolicy          = pkgservice.DEKRotationPolicy
-	NodeDEKInfo                = pkgservice.NodeDEKInfo
-	DEKVersionInfo             = pkgservice.DEKVersionInfo
-	NodeDEKSyncStatus          = pkgservice.NodeDEKSyncStatus
-	ReencryptionState          = pkgservice.ReencryptionState
-	RecoveryMethod             = pkgservice.RecoveryMethod
+	StartReencryptionRequest  = pkgservice.StartReencryptionRequest
+	StartReencryptionResponse = pkgservice.StartReencryptionResponse
 )

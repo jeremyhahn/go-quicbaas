@@ -38,12 +38,12 @@ type StateStore interface {
 // serialized under a single mutex — the bot does not need high
 // throughput on state reads; correctness is the priority.
 type FileStateStore struct {
-	mu             sync.Mutex
-	path           string
-	conversations  map[string]*ConversationState
-	account        *SignalAccount
-	dirty          bool
-	flushOnWrite   bool
+	mu            sync.Mutex
+	path          string
+	conversations map[string]*ConversationState
+	account       *SignalAccount
+	dirty         bool
+	flushOnWrite  bool
 }
 
 // NewFileStateStore opens (or creates) a state file at path. When

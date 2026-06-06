@@ -1006,6 +1006,19 @@ func (h *iamRESTHandler) handleGDPRRequest(ctx context.Context, method string, r
 		if body == nil {
 			body = reqMap
 		}
+		// The typed SDK sends ScheduledFor (absolute time); the server's
+		// REST handler reads grace_period_days. Translate so the server
+		// applies the operator's grace window instead of triggering
+		// immediate async deletion (gracePeriodDays==0).
+		if _, hasGrace := body["grace_period_days"]; !hasGrace {
+			if scheduledStr := getString(body, "scheduled_for"); scheduledStr != "" {
+				if t, perr := time.Parse(time.RFC3339Nano, scheduledStr); perr == nil {
+					if days := int(time.Until(t).Hours() / 24); days > 0 {
+						body["grace_period_days"] = days
+					}
+				}
+			}
+		}
 		return h.doRequest(ctx, http.MethodPost, basePath+"/deletion", body)
 
 	case "CancelDeletion":

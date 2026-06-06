@@ -19,10 +19,12 @@ import (
 	"context"
 	"crypto"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -34,8 +36,28 @@ type OIDCConfig struct {
 	// SigningAlgorithm is the JWT signing algorithm (RS256, RS384, RS512)
 	SigningAlgorithm string
 
-	// SigningKey is the private key for signing tokens
+	// SigningKey is the private key for signing tokens.
+	//
+	// Deprecated for production use: prefer SigningKeyManager, which is
+	// xkms/HSM/TPM-backed and supports kid derivation, rotation overlap, and
+	// a multi-kid JWKS. SigningKey is retained for back-compatibility and
+	// tests; when SigningKeyManager is non-nil it is authoritative.
 	SigningKey crypto.Signer
+
+	// SigningKeyManager is the authoritative source of OIDC signing keys when
+	// set. It derives kids from the public key, publishes a multi-kid JWKS,
+	// and keeps previous keys valid across a rotation overlap window. When
+	// non-nil it overrides SigningAlgorithm/SigningKey for signing and JWKS.
+	SigningKeyManager *SigningKeyManager
+
+	// TenantSigningKeys, when set, selects the signing key by the token's
+	// tenant: a tenant that opted in to a dedicated key is signed with its own
+	// per-tenant ES256 key (own kid) under the SAME single broker issuer; every
+	// other tenant uses SigningKeyManager (the global key). The published JWKS
+	// aggregates the global key and all active dedicated tenant keys so the
+	// single-anchor validator verifies any of them by kid. When nil all tokens
+	// use SigningKeyManager (single-key behavior).
+	TenantSigningKeys *TenantSigningKeyResolver
 
 	// SigningKeyFile is the path to the signing key file (alternative to SigningKey)
 	SigningKeyFile string
@@ -66,6 +88,9 @@ type OIDCProvider struct {
 	appStorage    AppStorage
 	tokenService  *TokenService
 	jwks          *jose.JSONWebKeySet
+	// dpopReplay tracks DPoP proof jti values presented at the token endpoint
+	// so a captured proof cannot be replayed to mint multiple bound tokens.
+	dpopReplay dpop.ReplayCache
 }
 
 // NewOIDCProvider creates a new OIDC provider with the given configuration and dependencies.
@@ -82,21 +107,53 @@ func NewOIDCProvider(config *OIDCConfig, deps OIDCDependencies) (*OIDCProvider, 
 	if deps.TokenStorage == nil {
 		return nil, &OIDCConfigRequiredError{Field: "token storage"}
 	}
-	if config.SigningKey == nil {
+	if config.SigningKeyManager == nil && config.SigningKey == nil {
 		return nil, &OIDCConfigRequiredError{Field: "signing key"}
+	}
+
+	// When a SigningKeyManager is configured it is authoritative: the token
+	// service signs with the manager's current key (and its derived kid) and
+	// the published JWKS is the manager's multi-kid set. Otherwise fall back
+	// to the legacy single SigningKey path (used by tests and callers that
+	// inject a raw crypto.Signer).
+	signingKey := config.SigningKey
+	signingAlg := config.SigningAlgorithm
+	currentKID := ""
+
+	if config.SigningKeyManager != nil {
+		kid, mgrSigner, mgrAlg := config.SigningKeyManager.Current()
+		if mgrSigner == nil {
+			return nil, &SigningKeyUnavailableError{}
+		}
+		signingKey = mgrSigner
+		signingAlg = mgrAlg
+		currentKID = kid
+		// Keep config.SigningAlgorithm consistent so discovery metadata and
+		// validation advertise the manager's algorithm.
+		config.SigningAlgorithm = mgrAlg
 	}
 
 	// Create token service
 	tokenService := &TokenService{
 		storage:    deps.TokenStorage,
-		signingKey: config.SigningKey,
+		signingKey: signingKey,
+		signingAlg: signingAlg,
+		currentKID: currentKID,
+		keyManager: config.SigningKeyManager,
+		tenantKeys: config.TenantSigningKeys,
 		config:     config,
 	}
 
-	// Generate JWKS
-	jwks, err := generateJWKS(config.SigningKey)
-	if err != nil {
-		return nil, &JWKSGenerationError{Cause: err}
+	// Build the published JWKS.
+	var jwks *jose.JSONWebKeySet
+	if config.SigningKeyManager != nil {
+		jwks = config.SigningKeyManager.JWKS()
+	} else {
+		var err error
+		jwks, err = generateJWKS(config.SigningKey, signingAlg)
+		if err != nil {
+			return nil, &JWKSGenerationError{Cause: err}
+		}
 	}
 
 	return &OIDCProvider{
@@ -105,6 +162,7 @@ func NewOIDCProvider(config *OIDCConfig, deps OIDCDependencies) (*OIDCProvider, 
 		appStorage:    deps.AppStorage,
 		tokenService:  tokenService,
 		jwks:          jwks,
+		dpopReplay:    dpop.NewMemoryReplayCache(nil),
 	}, nil
 }
 
@@ -118,6 +176,7 @@ func (p *OIDCProvider) GetConfiguration() map[string]interface{} {
 		"jwks_uri":                              p.config.Issuer + "/.well-known/jwks.json",
 		"registration_endpoint":                 p.config.Issuer + "/oauth2/register",
 		"revocation_endpoint":                   p.config.Issuer + "/oauth2/revoke",
+		"introspection_endpoint":                p.config.Issuer + "/oauth2/introspect",
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token"},
 		"subject_types_supported":               []string{"public"},
@@ -142,8 +201,18 @@ func (p *OIDCProvider) GetConfiguration() map[string]interface{} {
 	}
 }
 
-// GetJWKS returns the JSON Web Key Set for token verification.
+// GetJWKS returns the JSON Web Key Set for token verification. When a per-tenant
+// signing-key resolver is configured the set aggregates the global key and every
+// active dedicated tenant key (each addressable by its derived kid) so the
+// single-anchor validator can verify any tenant's token; otherwise it is the
+// single signing key manager's (or legacy single key's) JWKS.
 func (p *OIDCProvider) GetJWKS() *jose.JSONWebKeySet {
+	if p.config.TenantSigningKeys != nil {
+		return p.config.TenantSigningKeys.JWKS(context.Background())
+	}
+	if p.config.SigningKeyManager != nil {
+		return p.config.SigningKeyManager.JWKS()
+	}
 	return p.jwks
 }
 
@@ -166,6 +235,9 @@ type OAuthASMetadata struct {
 
 	// RevocationEndpoint is the URL of the token revocation endpoint.
 	RevocationEndpoint string `json:"revocation_endpoint,omitempty"`
+
+	// IntrospectionEndpoint is the URL of the RFC 7662 token introspection endpoint.
+	IntrospectionEndpoint string `json:"introspection_endpoint,omitempty"`
 
 	// ResponseTypesSupported is a list of OAuth 2.0 response_type values.
 	ResponseTypesSupported []string `json:"response_types_supported"`
@@ -200,12 +272,13 @@ type OAuthASMetadata struct {
 // provides OAuth 2.0 specific metadata for MCP clients.
 func (p *OIDCProvider) GetOAuthASMetadata() *OAuthASMetadata {
 	return &OAuthASMetadata{
-		Issuer:                p.config.Issuer,
-		AuthorizationEndpoint: p.config.Issuer + "/oauth2/authorize",
-		TokenEndpoint:         p.config.Issuer + "/oauth2/token",
-		JWKSURI:               p.config.Issuer + "/.well-known/jwks.json",
-		RegistrationEndpoint:  p.config.Issuer + "/oauth2/register",
-		RevocationEndpoint:    p.config.Issuer + "/oauth2/revoke",
+		Issuer:                 p.config.Issuer,
+		AuthorizationEndpoint:  p.config.Issuer + "/oauth2/authorize",
+		TokenEndpoint:          p.config.Issuer + "/oauth2/token",
+		JWKSURI:                p.config.Issuer + "/.well-known/jwks.json",
+		RegistrationEndpoint:   p.config.Issuer + "/oauth2/register",
+		RevocationEndpoint:     p.config.Issuer + "/oauth2/revoke",
+		IntrospectionEndpoint:  p.config.Issuer + "/oauth2/introspect",
 		ResponseTypesSupported: []string{"code"},
 		GrantTypesSupported:    []string{"authorization_code", "client_credentials", "refresh_token"},
 		TokenEndpointAuthMethodsSupported: []string{
@@ -287,6 +360,38 @@ func (p *OIDCProvider) Token(ctx context.Context, req *TokenRequest) (*TokenResp
 	default:
 		return nil, NewOAuthError(ErrOAuthUnsupportedGrantType, "unsupported grant_type")
 	}
+}
+
+// bindDPoP verifies a DPoP proof presented on a token request and returns the
+// cnf claim binding the issued token to the proof key (RFC 9449). It returns
+// (nil, nil) when no proof was presented so the caller issues a plain bearer
+// token (back-compat). A presented-but-invalid proof is a hard failure: the
+// token endpoint must fail closed with invalid_dpop_proof rather than silently
+// downgrade to a bearer.
+func (p *OIDCProvider) bindDPoP(req *TokenRequest) (*ConfirmationClaim, error) {
+	if req.DPoPProof == "" {
+		return nil, nil
+	}
+	verified, err := dpop.VerifyProof(req.DPoPProof, dpop.VerifyOptions{
+		HTM:         req.HTTPMethod,
+		HTU:         req.HTTPURI,
+		ReplayCache: p.dpopReplay,
+	})
+	if err != nil {
+		return nil, NewOAuthError(ErrOAuthInvalidDPoPProof, "invalid DPoP proof")
+	}
+	return &ConfirmationClaim{Jkt: verified.Jkt}, nil
+}
+
+// tokenTypeForConfirmation returns the OAuth token_type for an issued access
+// token: "DPoP" (RFC 9449 §5) when the token is sender-constrained via cnf.jkt,
+// otherwise "Bearer". Downstream services key on this to decide whether a DPoP
+// proof must accompany the token.
+func tokenTypeForConfirmation(cnf *ConfirmationClaim) string {
+	if cnf != nil && cnf.Jkt != "" {
+		return TokenTypeDPoP
+	}
+	return TokenTypeBearer
 }
 
 // MTLSTokenRequest carries the parameters needed to issue a token for a
@@ -389,6 +494,124 @@ func (p *OIDCProvider) Revoke(ctx context.Context, req *RevokeRequest) error {
 	return nil
 }
 
+// Introspect implements RFC 7662 token introspection. It verifies the token
+// signature, derives the tenant from the token's tenant_id claim (so the
+// per-tenant revocation lookup resolves without any global token table), and
+// checks the revocation store. It returns an inactive response (Active=false,
+// no claims) for any token that fails signature verification, is expired, or
+// has been revoked, per RFC 7662 §2.2 (fail-closed: never leak claims for an
+// invalid token). Caller authentication is enforced at the transport before
+// this method is reached (RFC 7662 §2.1).
+func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (*IntrospectionResponse, error) {
+	if req == nil || req.Token == "" {
+		return nil, NewOAuthError(ErrOAuthInvalidRequest, "token is required")
+	}
+
+	// Verify the token signature and parse claims WITHOUT the revocation check
+	// first, so we can derive the tenant from the verified claim and route the
+	// revocation lookup to the correct tenant store.
+	claims, err := p.parseVerifiedAccessTokenClaims(req.Token)
+	if err != nil {
+		// Signature/parse failure: the token is not active. RFC 7662 says
+		// respond active=false rather than surface an error to the caller.
+		return &IntrospectionResponse{Active: false}, nil
+	}
+
+	// Reject expired tokens (active=false). exp is in Unix seconds.
+	now := time.Now()
+	if !claims.ExpiresAt.IsZero() && now.After(claims.ExpiresAt.Time) {
+		return &IntrospectionResponse{Active: false}, nil
+	}
+	if !claims.NotBefore.IsZero() && now.Before(claims.NotBefore.Time) {
+		return &IntrospectionResponse{Active: false}, nil
+	}
+
+	// Derive the tenant from the verified claim and scope the context so the
+	// per-tenant revocation lookup resolves. There is no global token table;
+	// the tenant_id claim is the authoritative routing key.
+	if claims.TenantID != "" {
+		ctx = ContextWithTenant(ctx, claims.TenantID)
+	}
+
+	revoked, err := p.tokenService.storage.IsTokenRevoked(ctx, claims.JTI)
+	if err == nil && revoked {
+		return &IntrospectionResponse{Active: false}, nil
+	}
+
+	scope := claims.Scope
+	if scope == "" && len(claims.SCP) > 0 {
+		scope = strings.Join(claims.SCP, " ")
+	}
+
+	resp := &IntrospectionResponse{
+		Active:       true,
+		Scope:        scope,
+		SCP:          claims.SCP,
+		ClientID:     claims.ClientID,
+		Subject:      claims.Subject,
+		TenantID:     claims.TenantID,
+		Audience:     claims.Audience,
+		Issuer:       claims.Issuer,
+		JTI:          claims.JTI,
+		TokenType:    "Bearer",
+		Username:     claims.Name,
+		Confirmation: claims.Confirmation,
+		Roles:        claims.Roles,
+	}
+	if !claims.ExpiresAt.IsZero() {
+		resp.ExpiresAt = claims.ExpiresAt.Unix()
+	}
+	if !claims.IssuedAt.IsZero() {
+		resp.IssuedAt = claims.IssuedAt.Unix()
+	}
+	if !claims.NotBefore.IsZero() {
+		resp.NotBefore = claims.NotBefore.Unix()
+	}
+	return resp, nil
+}
+
+// parseVerifiedAccessTokenClaims verifies a token signature and returns its
+// parsed claims WITHOUT performing the revocation check. It is the shared
+// signature-verification + claim-parsing path used by ValidateAccessToken and
+// Introspect so the crypto lives in exactly one place.
+func (p *OIDCProvider) parseVerifiedAccessTokenClaims(tokenString string) (*Claims, error) {
+	publicKey, err := p.resolveVerificationKey(tokenString)
+	if err != nil {
+		return nil, err
+	}
+
+	jwtClaims, err := xkms.JWTVerifyWithKeyAndClaims(tokenString, publicKey, p.config.SigningAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+
+	var claims Claims
+	claimsBytes, err := json.Marshal(jwtClaims)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(claimsBytes, &claims); err != nil {
+		return nil, err
+	}
+	return &claims, nil
+}
+
+// AuthenticateClient validates a registered confidential client's credentials.
+// It is the caller-authentication primitive RFC 7662 §2.1 requires for the
+// introspection endpoint when the resource server authenticates with a
+// client_id/client_secret pair (as opposed to mTLS). It returns nil when the
+// secret is valid and an invalid_client OAuth error otherwise (fail-closed).
+func (p *OIDCProvider) AuthenticateClient(ctx context.Context, clientID, clientSecret string) error {
+	if clientID == "" {
+		return NewOAuthError(ErrOAuthInvalidClient, "client_id is required")
+	}
+	valid, err := p.appStorage.ValidateClientSecret(ctx, clientID, clientSecret)
+	if err != nil || !valid {
+		return NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+	}
+	return nil
+}
+
 // UserInfo returns user information for the given access token.
 func (p *OIDCProvider) UserInfo(ctx context.Context, accessToken string) (*UserInfoResponse, error) {
 	// Validate access token
@@ -417,23 +640,17 @@ func (p *OIDCProvider) UserInfo(ctx context.Context, accessToken string) (*UserI
 
 // ValidateAccessToken validates an access token and returns its claims.
 func (p *OIDCProvider) ValidateAccessToken(ctx context.Context, tokenString string) (*Claims, error) {
-	// Get public key from signing key
-	publicKey := p.config.SigningKey.Public()
-
-	// Verify token using XKMS JWT
-	jwtClaims, err := xkms.JWTVerifyWithKeyAndClaims(tokenString, publicKey, p.config.SigningAlgorithm)
+	// Verify the signature and parse claims using the shared verification path
+	// (kid-aware key resolution lives there). The crypto is not duplicated.
+	claims, err := p.parseVerifiedAccessTokenClaims(tokenString)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse custom claims
-	var claims Claims
-	claimsBytes, err := json.Marshal(jwtClaims)
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(claimsBytes, &claims); err != nil {
-		return nil, err
+	// Scope the revocation lookup to the tenant carried by the verified claim
+	// so the per-tenant token store resolves; there is no global token table.
+	if claims.TenantID != "" {
+		ctx = ContextWithTenant(ctx, claims.TenantID)
 	}
 
 	// Check if token is revoked
@@ -442,13 +659,16 @@ func (p *OIDCProvider) ValidateAccessToken(ctx context.Context, tokenString stri
 		return nil, &TokenRevokedError{}
 	}
 
-	return &claims, nil
+	return claims, nil
 }
 
 // ValidateIDToken validates an ID token and returns its claims.
 func (p *OIDCProvider) ValidateIDToken(ctx context.Context, tokenString string) (*IDTokenClaims, error) {
-	// Get public key from signing key
-	publicKey := p.config.SigningKey.Public()
+	// Resolve the verification key (kid-aware when a key manager is present).
+	publicKey, err := p.resolveVerificationKey(tokenString)
+	if err != nil {
+		return nil, err
+	}
 
 	// Verify token using XKMS JWT
 	jwtClaims, err := xkms.JWTVerifyWithKeyAndClaims(tokenString, publicKey, p.config.SigningAlgorithm)
@@ -467,6 +687,69 @@ func (p *OIDCProvider) ValidateIDToken(ctx context.Context, tokenString string) 
 	}
 
 	return &claims, nil
+}
+
+// resolveVerificationKey selects the public key used to verify a token. When a
+// SigningKeyManager is configured, the token's "kid" header picks the matching
+// public key (current key or a previous key still inside the rotation overlap),
+// which keeps tokens minted by a superseded key valid until they expire. When
+// no kid is present, or no manager is configured, it falls back to the legacy
+// single SigningKey.
+func (p *OIDCProvider) resolveVerificationKey(tokenString string) (crypto.PublicKey, error) {
+	// When a per-tenant resolver is configured the kid in the token header
+	// selects the matching public key from the aggregated JWKS (global or any
+	// dedicated tenant key). This keeps the OIDC provider able to verify its
+	// own per-tenant-signed tokens by kid.
+	if p.config.TenantSigningKeys != nil {
+		kid, _ := xkms.JWTExtractKID(tokenString)
+		if kid != "" {
+			if pub := publicForKIDInJWKS(p.config.TenantSigningKeys.JWKS(context.Background()), kid); pub != nil {
+				return pub, nil
+			}
+			return nil, &UnknownKeyIDError{KID: kid}
+		}
+		_, signer, _ := p.config.TenantSigningKeys.Global().Current()
+		if signer != nil {
+			return signer.Public(), nil
+		}
+	}
+	if p.config.SigningKeyManager != nil {
+		kid, _ := xkms.JWTExtractKID(tokenString)
+		if kid != "" {
+			pub, err := p.config.SigningKeyManager.PublicForKID(kid)
+			if err != nil {
+				return nil, err
+			}
+			return pub, nil
+		}
+		// No kid header: verify against the manager's current key.
+		_, signer, _ := p.config.SigningKeyManager.Current()
+		if signer != nil {
+			return signer.Public(), nil
+		}
+	}
+	if p.config.SigningKey == nil {
+		return nil, &SigningKeyUnavailableError{}
+	}
+	return p.config.SigningKey.Public(), nil
+}
+
+// publicForKIDInJWKS extracts the public key for kid from a JWKS, returning nil
+// when no entry matches.
+func publicForKIDInJWKS(jwks *jose.JSONWebKeySet, kid string) crypto.PublicKey {
+	if jwks == nil {
+		return nil
+	}
+	for i := range jwks.Keys {
+		if jwks.Keys[i].KeyID == kid {
+			k := jwks.Keys[i]
+			if k.IsPublic() {
+				return k.Key
+			}
+			return k.Public().Key
+		}
+	}
+	return nil
 }
 
 // Helper methods
@@ -528,8 +811,14 @@ func (p *OIDCProvider) handleAuthorizationCodeGrant(ctx context.Context, req *To
 		return nil, NewOAuthError(ErrOAuthInvalidGrant, "resource mismatch")
 	}
 
+	// Bind a presented DPoP proof (RFC 9449) into cnf.jkt. No proof => bearer.
+	cnf, err := p.bindDPoP(req)
+	if err != nil {
+		return nil, err
+	}
+
 	// Generate tokens with resource in audience (RFC 8707)
-	return p.generateTokenResponse(ctx, user, authCode.ClientID, authCode.Scope, authCode.Nonce, resource)
+	return p.generateTokenResponse(ctx, user, authCode.ClientID, authCode.Scope, authCode.Nonce, resource, cnf)
 }
 
 func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
@@ -553,19 +842,26 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 	// Build audience with resource indicator (RFC 8707)
 	audience := BuildAudience(p.config.Issuer, req.Resource)
 
+	// Bind a presented DPoP proof (RFC 9449) into cnf.jkt. No proof => bearer.
+	cnf, err := p.bindDPoP(req)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create service account claims
 	now := time.Now()
 	claims := &Claims{
-		Issuer:    p.config.Issuer,
-		Subject:   req.ClientID,
-		Audience:  audience,
-		ExpiresAt: NewUnixTime(now.Add(p.config.AccessTokenTTL)),
-		IssuedAt:  NewUnixTime(now),
-		NotBefore: NewUnixTime(now),
-		JTI:       generateJTI(),
-		TenantID:  app.TenantID,
-		ClientID:  req.ClientID,
-		Scope:     joinScopes(req.Scope),
+		Issuer:       p.config.Issuer,
+		Subject:      req.ClientID,
+		Audience:     audience,
+		ExpiresAt:    NewUnixTime(now.Add(p.config.AccessTokenTTL)),
+		IssuedAt:     NewUnixTime(now),
+		NotBefore:    NewUnixTime(now),
+		JTI:          generateJTI(),
+		TenantID:     app.TenantID,
+		ClientID:     req.ClientID,
+		Scope:        joinScopes(req.Scope),
+		Confirmation: cnf,
 	}
 
 	// Generate access token
@@ -576,7 +872,7 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 
 	return &TokenResponse{
 		AccessToken: accessToken,
-		TokenType:   TokenTypeBearer,
+		TokenType:   tokenTypeForConfirmation(cnf),
 		ExpiresIn:   int64(p.config.AccessTokenTTL.Seconds()),
 		Scope:       joinScopes(req.Scope),
 	}, nil
@@ -621,11 +917,17 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 		scopes = token.Scopes
 	}
 
+	// Bind a presented DPoP proof (RFC 9449) into cnf.jkt. No proof => bearer.
+	cnf, err := p.bindDPoP(req)
+	if err != nil {
+		return nil, err
+	}
+
 	// Refresh tokens inherit audience from original token (no resource param)
-	return p.generateTokenResponse(ctx, user, token.ClientID, scopes, "", "")
+	return p.generateTokenResponse(ctx, user, token.ClientID, scopes, "", "", cnf)
 }
 
-func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, clientID string, scopes []string, nonce string, resource string) (*TokenResponse, error) {
+func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, clientID string, scopes []string, nonce string, resource string, cnf *ConfirmationClaim) (*TokenResponse, error) {
 	now := time.Now()
 
 	// Build audience with resource indicator (RFC 8707)
@@ -633,20 +935,21 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 
 	// Generate access token
 	accessClaims := &Claims{
-		Issuer:    p.config.Issuer,
-		Subject:   user.ID,
-		Audience:  audience,
-		ExpiresAt: NewUnixTime(now.Add(p.config.AccessTokenTTL)),
-		IssuedAt:  NewUnixTime(now),
-		NotBefore: NewUnixTime(now),
-		JTI:       generateJTI(),
-		TenantID:  user.TenantID,
-		Roles:     user.Roles,
-		Groups:    user.Groups,
-		Email:     user.Email,
-		Name:      user.Name,
-		ClientID:  clientID,
-		Scope:     joinScopes(scopes),
+		Issuer:       p.config.Issuer,
+		Subject:      user.ID,
+		Audience:     audience,
+		ExpiresAt:    NewUnixTime(now.Add(p.config.AccessTokenTTL)),
+		IssuedAt:     NewUnixTime(now),
+		NotBefore:    NewUnixTime(now),
+		JTI:          generateJTI(),
+		TenantID:     user.TenantID,
+		Roles:        user.Roles,
+		Groups:       user.Groups,
+		Email:        user.Email,
+		Name:         user.Name,
+		ClientID:     clientID,
+		Scope:        joinScopes(scopes),
+		Confirmation: cnf,
 	}
 
 	accessToken, err := p.tokenService.GenerateAccessToken(ctx, accessClaims)
@@ -662,7 +965,7 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 
 	response := &TokenResponse{
 		AccessToken:  accessToken,
-		TokenType:    TokenTypeBearer,
+		TokenType:    tokenTypeForConfirmation(cnf),
 		ExpiresIn:    int64(p.config.AccessTokenTTL.Seconds()),
 		RefreshToken: refreshToken,
 		Scope:        joinScopes(scopes),
@@ -707,11 +1010,22 @@ func (p *OIDCProvider) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 
 // Helper functions
 
-func generateJWKS(key crypto.Signer) (*jose.JSONWebKeySet, error) {
+// generateJWKS builds a single-key JWKS for the legacy (non-manager) signing
+// path. The kid is derived from the key's public SPKI so it is stable across
+// restarts and matches the kid stamped onto tokens, rather than a hardcoded
+// "default".
+func generateJWKS(key crypto.Signer, algorithm string) (*jose.JSONWebKeySet, error) {
+	kid, err := computeKID(key.Public())
+	if err != nil {
+		return nil, err
+	}
+	if algorithm == "" {
+		algorithm = string(jose.RS256)
+	}
 	jwk := jose.JSONWebKey{
 		Key:       key.Public(),
-		KeyID:     "default",
-		Algorithm: string(jose.RS256),
+		KeyID:     kid,
+		Algorithm: algorithm,
 		Use:       "sig",
 	}
 

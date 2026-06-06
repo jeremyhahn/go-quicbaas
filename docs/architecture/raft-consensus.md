@@ -1,12 +1,102 @@
 # Raft Consensus
 
-QuicBaaS uses [QuicRaft](https://github.com/jeremyhahn/go-quicraft) for distributed consensus and replication.
+QuicBaaS uses [go-qrdb](https://github.com/jeremyhahn/go-qrdb) as its
+embedded Raft engine. In clustered mode each QuicBaaS node embeds a real
+qrdb `*node.Node` (via `sdk/go/node.NewClusteredNode`) that starts a
+[QuicRaft](https://github.com/jeremyhahn/go-quicraft) host internally.
+QuicBaaS reimplements no Raft logic.
 
-## Overview
+## Architecture: qrdb as the Raft engine
 
-Raft ensures multiple nodes agree on a sequence of log entries despite failures. QuicBaaS uses a multi-raft architecture where multiple independent Raft groups run on the same cluster.
+```
+QuicBaaS process
+  └── pkg/server.Server (mode = "cluster")
+        └── initClusteredQRDBNode()
+              └── qrdb/sdk/go/node.NewClusteredNode(cfg, members, opts)
+                    ├── quicraft.Host  (QUIC/mTLS transport, multi-group Raft)
+                    ├── MVCC state machine factory (store.NewMVCCCreateFuncWith)
+                    ├── lifecycle.BuildServices (KV/MVCC/TS/Vector/…)
+                    └── server.New (qrdb multi-protocol server, embedded transport)
+```
 
-QuicRaft provides QUIC transport with mandatory mTLS, LeaseRead support, internal session management, and a cleaner API. Sessions are managed internally, eliminating manual session lifecycle management.
+QuicBaaS uses qrdb's own discovery (`config.Discovery`) for peer resolution.
+It does not build a separate discovery layer. Peer configuration flows from
+quicbaas `config.RaftConfig` → `buildQRDBConfig(cfg, clusterMode=true)` →
+qrdb `config.DiscoveryConfig`.
+
+## Server Modes
+
+| Mode | `server.mode` | Engine |
+|------|--------------|--------|
+| Standalone | `standalone` | `qrdb.NewStandaloneNode` — LocalBackend, no Raft |
+| Clustered | `cluster` | `qrdb.NewClusteredNode` — quicraft host, real Raft |
+| DevCluster | `devcluster` | local multi-node dev cluster (3-node in-process) |
+
+## Clustered Mode Bootstrap
+
+```go
+// QuicBaaS wires clustered mode like this (simplified):
+qcfg := buildQRDBConfig(cfg, true) // Raft + Discovery populated
+members := buildClusterMembers(cfg) // map[replicaID]raftAddress
+serverOpts := XKMSCryptoOptions(composeCfg) // hardware crypto
+nodeOpts := []node.NodeOption{
+    node.WithLogger(logger),
+    node.WithRaftMTLS(mtls), // PEM cert material for inter-node mTLS
+}
+qrdbNode = node.NewClusteredNode(ctx, qcfg, members, serverOpts, nodeOpts...)
+```
+
+## Peer Configuration
+
+Peers are configured in quicbaas config as `raft.join_addresses` in
+`"replicaID=host:port"` format. Example for a 3-node cluster:
+
+```yaml
+raft:
+  node_id: 1
+  raft_address: "10.0.0.1:63101"
+  join_addresses:
+    - "1=10.0.0.1:63101"
+    - "2=10.0.0.2:63101"
+    - "3=10.0.0.3:63101"
+
+discovery:
+  type: "static"   # or "multicast", "dns", "token"
+```
+
+When no `id=`-prefixed addresses are present, QuicBaaS falls back to a
+single-node clustered mode (`WithoutTransport`) which is suitable for
+development and testing.
+
+## mTLS Configuration
+
+Inter-node communication uses mandatory mTLS (quicraft enforces it for all
+multi-node clusters). Provide PEM certificate paths in the quicbaas Raft
+config:
+
+```yaml
+raft:
+  tls_cert_file: /etc/quicbaas/raft/node.crt
+  tls_key_file:  /etc/quicbaas/raft/node.key
+  tls_ca_file:   /etc/quicbaas/raft/ca.crt
+```
+
+All cluster nodes must trust the same CA. The CA used for Raft mTLS is
+typically the same CA used for API TLS (issued via xkmsCA). Single-node
+development clusters (no join_addresses with id= prefix) skip mTLS
+entirely — QuicRaft's `WithoutTransport` option bypasses network I/O.
+
+## Discovery Methods
+
+QuicBaaS maps its discovery config to qrdb's discovery engine:
+
+| quicbaas `discovery.type` | qrdb `discovery.method` | Use case |
+|--------------------------|------------------------|----------|
+| `static` | `static` | Fixed peer list (production) |
+| `multicast` | `multicast` | Zero-config LAN clusters |
+| `dns` | `dns` | DNS SRV-based discovery |
+| `token` | `token` | Token-service discovery |
+| `kubernetes`, `consul` | `static` | External orchestrator uses static IPs |
 
 ## Multi-Raft Architecture
 
@@ -27,9 +117,28 @@ func (r *Router) Route(entityType string, id uint64) uint64 {
 }
 ```
 
-## QuicRaft Integration
+## Phase F: 3-Node Integration Tests
 
-### Node Host Setup
+Full 3-node cluster replication, failover, at-rest encryption, and dynamic
+membership integration tests are planned for Phase F. Skeleton tests live in
+`test/integration/cluster/qrdb_cluster_test.go`. They require the
+`docker-compose.cluster.yml` environment.
+
+## Legacy (pre-Phase C): deleted paths
+
+Before Phase C, clustered mode used a no-op `standaloneRaftNode` and a
+`baasTransport`-backed `ShardedClient` — no real Raft consensus ever ran.
+Phase C replaced that path with `initClusteredQRDBNode`. The
+`baasTransport*.go` files still compile (they are unreachable in cluster
+mode) and will be deleted in Phase E.
+
+## Original QuicRaft Integration Reference (pre-Phase C)
+
+The original quicraft API notes are preserved below for the Phase F
+docker-compose test setup that will drive multi-node test clusters directly
+via the quicraft host API.
+
+### Node Host Setup (Phase F reference)
 
 ```go
 import "github.com/jeremyhahn/go-quicraft"
@@ -49,7 +158,7 @@ if err != nil {
 }
 ```
 
-### Starting a Raft Group
+### Starting a Raft Group (Phase F reference)
 
 ```go
 // Raft configuration

@@ -156,7 +156,7 @@ func TestExtendedList_Success(t *testing.T) {
 	registry := newExtendedRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_list", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_list", map[string]interface{}{
 		"entity_type": "users",
 	})
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestExtendedList_WithLimit(t *testing.T) {
 	registry := newExtendedRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_list", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "qrdb_list", map[string]interface{}{
 		"entity_type": "users",
 		"limit":       float64(50),
 	})

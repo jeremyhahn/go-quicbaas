@@ -843,6 +843,39 @@ func DefaultBackend() (xkmssdk.ServiceBackend, error) {
 	return xkmssdk.ServiceDefaultBackend()
 }
 
+// DefaultBackendName returns the registered name (StoreType) of the default
+// backend. The underlying go-xkms service does not export the default backend's
+// name directly, so this resolves it by matching the default backend instance
+// against the named registrations. This name is the StoreType callers must set
+// on KeyAttributes for backends (e.g. the software keystore) that require an
+// explicit store type during key generation.
+func DefaultBackendName() (string, error) {
+	if err := checkInitialized(); err != nil {
+		return "", err
+	}
+
+	def, err := xkmssdk.ServiceDefaultBackend()
+	if err != nil {
+		return "", err
+	}
+
+	names := xkmssdk.ServiceBackends()
+	// Single-backend setups are unambiguous.
+	if len(names) == 1 {
+		return names[0], nil
+	}
+	for _, name := range names {
+		b, getErr := xkmssdk.ServiceGetBackend(name)
+		if getErr != nil {
+			continue
+		}
+		if b == def {
+			return name, nil
+		}
+	}
+	return "", &api.ConfigurationError{Action: "resolve default xkms backend name"}
+}
+
 // BackendFor returns the appropriate backend for the given key attributes.
 func BackendFor(attrs *xkmssdk.KeyAttributes) (xkmssdk.ServiceBackend, error) {
 	if err := checkInitialized(); err != nil {
@@ -1232,6 +1265,34 @@ func JWTSignWithSigner(signer crypto.Signer, claims JWTClaims, algorithm string)
 	}
 
 	token := jwt.NewWithClaims(method, claims)
+	tokenString, err := token.SignedString(signer)
+	if err != nil {
+		return "", &api.JWTSigningError{Cause: err}
+	}
+
+	return tokenString, nil
+}
+
+// JWTSignWithSignerKID signs a JWT with the given signer and sets the "kid"
+// (Key ID) header so verifiers can select the matching public key from a
+// multi-key JWKS. This is required for key rotation: tokens signed by the
+// current key carry its kid, and a JWKS publishing both current and previous
+// keys lets validators verify either during the rotation overlap window.
+// An empty kid behaves identically to JWTSignWithSigner (no kid header).
+//
+// Example:
+//
+//	token, err := xkms.JWTSignWithSignerKID(signer, claims, "ES256", kid)
+func JWTSignWithSignerKID(signer crypto.Signer, claims JWTClaims, algorithm, kid string) (string, error) {
+	method := jwt.GetSigningMethod(algorithm)
+	if method == nil {
+		return "", &api.JWTSigningError{Detail: "unsupported algorithm: " + algorithm}
+	}
+
+	token := jwt.NewWithClaims(method, claims)
+	if kid != "" {
+		token.Header["kid"] = kid
+	}
 	tokenString, err := token.SignedString(signer)
 	if err != nil {
 		return "", &api.JWTSigningError{Cause: err}

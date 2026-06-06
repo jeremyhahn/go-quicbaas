@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1218,22 +1217,23 @@ func createObjectStorageGRPCClient() (*grpc.Client, error) {
 		grpc.WithMaxRetryBackoff(5 * time.Second),
 	}
 
-	// Add TLS configuration if enabled.
+	// Add TLS configuration. QuicBaaS bans insecure TLS — explicit CA
+	// trust required (via --tls-ca or mTLS via --tls-cert/--tls-key).
 	switch {
 	case objectTLSEnabled && objectTLSCert != "" && objectTLSKey != "":
 		opts = append(opts, grpc.WithTLS(objectTLSCert, objectTLSKey, objectTLSCA))
 	case objectTLSEnabled && objectTLSCA != "":
-		opts = append(opts, grpc.WithTLS("", "", objectTLSCA))
-	case tlsSkipVerify:
-		opts = append(opts, grpc.WithTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // G402: user explicitly requested --tls-skip-verify
-			MinVersion:         tls.VersionTLS13,
-		}))
+		opt, err := grpcCAOnlyTLSOption(objectTLSCA)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrConfiguration,
+				"createObjectStorageGRPCClient", "failed to load --tls-ca")
+		}
+		opts = append(opts, opt)
 	default:
 		return nil, errors.Newf(
 			errors.ErrConfiguration,
 			"createObjectStorageGRPCClient",
-			"TLS is required for gRPC connections (use --tls-cert, --tls-key, and --tls-ca, or --tls-skip-verify flags)",
+			"TLS is required for gRPC connections (use --tls-cert, --tls-key, and --tls-ca)",
 		)
 	}
 

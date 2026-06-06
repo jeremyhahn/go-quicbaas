@@ -451,7 +451,6 @@ func TestRemoteBackendRPCError(t *testing.T) {
 	})
 }
 
-
 // =============================================================================
 // Tier 2: Setter/getter methods — orchestrator.go
 // =============================================================================
@@ -1476,7 +1475,6 @@ func TestAgentServiceError(t *testing.T) {
 		}
 	})
 }
-
 
 // =============================================================================
 // Tier 2: EffectiveKind — agent_registry_types.go line 66
@@ -2553,11 +2551,11 @@ func TestPeerMessagingStore_Poll_AfterSend(t *testing.T) {
 	ctx := context.Background()
 
 	msg := &PeerMessage{
-		ID:     "msg-poll-1",
-		From:   "agent-sender",
-		To:     "agent-recv",
-		Action: "task",
-		Content: "hello peer",
+		ID:       "msg-poll-1",
+		From:     "agent-sender",
+		To:       "agent-recv",
+		Action:   "task",
+		Content:  "hello peer",
 		Metadata: map[string]string{"tenant_id": "default"},
 	}
 
@@ -4696,11 +4694,11 @@ func TestPeerMessagingStore_Send_MaxMessageSize(t *testing.T) {
 
 	// A message with content larger than 10 bytes when marshalled.
 	err := svc.Send(ctx, &PeerMessage{
-		ID:      "big-msg",
-		From:    "a",
-		To:      "b",
-		Action:  "payload",
-		Content: "this content is much longer than ten bytes for sure",
+		ID:       "big-msg",
+		From:     "a",
+		To:       "b",
+		Action:   "payload",
+		Content:  "this content is much longer than ten bytes for sure",
 		Metadata: map[string]string{"tenant_id": "t-size"},
 	})
 	if err == nil {
@@ -6041,7 +6039,6 @@ func TestOrchestrator_ClaimTask_EmptyAgentID(t *testing.T) {
 	}
 }
 
-
 // =============================================================================
 // orchestrator — GetAgent error paths
 // =============================================================================
@@ -6098,7 +6095,6 @@ func TestOrchestrator_ListAgents_WithFilter(t *testing.T) {
 		t.Errorf("expected at least 2 agents, got %d", len(results))
 	}
 }
-
 
 func TestOrchestrator_BackendToolGuidance_WithBackend(t *testing.T) {
 	t.Parallel()
@@ -6260,7 +6256,6 @@ func TestTaskStore_ClaimTask_NotFound(t *testing.T) {
 	}
 }
 
-
 // =============================================================================
 // agent_registry — RegisterAgent duplicate
 // =============================================================================
@@ -6291,7 +6286,6 @@ func TestAgentRegistry_RegisterAgent_Duplicate(t *testing.T) {
 		t.Errorf("expected ErrAgentRegistryAlreadyExists, got %v", err)
 	}
 }
-
 
 // =============================================================================
 // orchestrator — ListTasks empty tenantID
@@ -6731,11 +6725,11 @@ func TestPeerMessagingStore_Acknowledge_Success(t *testing.T) {
 	ctx := context.Background()
 
 	msg := &PeerMessage{
-		ID:       "ack-msg-1",
-		From:     "src",
-		To:       "dst",
-		Action:   "task",
-		Metadata: map[string]string{"tenant_id": "t-ack"},
+		ID:        "ack-msg-1",
+		From:      "src",
+		To:        "dst",
+		Action:    "task",
+		Metadata:  map[string]string{"tenant_id": "t-ack"},
 		Timestamp: 1000,
 	}
 	if err := svc.Send(ctx, msg); err != nil {
@@ -8672,7 +8666,7 @@ func TestControlLoop_HandleInitialize_SpawnLeadFails(t *testing.T) {
 	impl := newTestService(t)
 	backend := &mockAgentBackend{
 		backendType: "acp",
-		caps: BackendCapabilities{PersistentSessions: true},
+		caps:        BackendCapabilities{PersistentSessions: true},
 		spawnFn: func(ctx context.Context, req *SpawnRequest) (*Session, error) {
 			return nil, errors.New("spawn failed")
 		},

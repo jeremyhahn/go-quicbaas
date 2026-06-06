@@ -246,8 +246,10 @@ func (e *CLIExecutor) Execute(ctx context.Context, args ...string) (*CLIResult, 
 		fullArgs = append(fullArgs, "--address", e.address)
 	}
 
-	// Skip TLS verification for integration tests with self-signed certs
-	fullArgs = append(fullArgs, "--tls-skip-verify")
+	// Trust the integration cluster's CA explicitly (--tls-skip-verify is
+	// banned project-wide). The integration test container mounts the CA at
+	// /etc/quicbaas/certs/ca.crt.
+	fullArgs = append(fullArgs, "--tls-ca", "/etc/quicbaas/certs/ca.crt")
 
 	// Add extra args
 	fullArgs = append(fullArgs, e.extraArgs...)

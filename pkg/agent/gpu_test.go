@@ -22,13 +22,13 @@ import "testing"
 // stubDetector lets each test control exactly which probe signals are active
 // without touching the filesystem or requiring any GPU hardware.
 type stubDetector struct {
-	device     bool
-	nvidiaSMI  bool
-	cudaEnv    bool
-	appleSili  bool
+	device    bool
+	nvidiaSMI bool
+	cudaEnv   bool
+	appleSili bool
 }
 
-func (s *stubDetector) DeviceExists() bool      { return s.device }
+func (s *stubDetector) DeviceExists() bool       { return s.device }
 func (s *stubDetector) NvidiaSMIAvailable() bool { return s.nvidiaSMI }
 func (s *stubDetector) CUDAEnvSet() bool         { return s.cudaEnv }
 func (s *stubDetector) IsAppleSilicon() bool     { return s.appleSili }

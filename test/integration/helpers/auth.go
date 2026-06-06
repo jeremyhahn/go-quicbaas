@@ -142,10 +142,9 @@ func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (st
 	}
 
 	tlsCfg := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            roots,
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true, //#nosec G402 -- integration test certs are self-signed against the test CA
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      roots,
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	client := &http.Client{

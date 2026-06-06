@@ -127,7 +127,7 @@ func TestProductionEnroller_Bootstrap_Non2xxStatus(t *testing.T) {
 	t.Parallel()
 
 	stub := &serverStub{
-		t:            t,
+		t:              t,
 		registerStatus: http.StatusServiceUnavailable,
 		registerBody:   []byte(`{"error":"overloaded"}`),
 	}

@@ -14,8 +14,11 @@
 package mcp
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
+
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -40,6 +43,10 @@ func (h *authHandler) transformResponse(method string, resp interface{}) (interf
 		return h.transformRefreshTokenResponse(resp)
 	case "ValidateToken":
 		return h.transformValidateTokenResponse(resp)
+	case "BeginLogin":
+		return h.transformBeginLoginResponse(resp)
+	case "FinishLogin":
+		return h.transformFinishLoginResponse(resp)
 	default:
 		// For other methods, return as-is
 		return resp, nil
@@ -215,4 +222,34 @@ func isMCPAuthService(service string) bool {
 		serviceName = service[idx+1:]
 	}
 	return serviceName == "Auth"
+}
+
+// transformBeginLoginResponse converts the MCP tool result map into the
+// canonical go-qrdb transport.BeginLoginResponse. The MCP server returns the
+// JSON-encoded response object; a JSON round-trip honours the qrdb json tags
+// (e.g. base64 nonce).
+func (h *authHandler) transformBeginLoginResponse(resp interface{}) (*qrdbtransport.BeginLoginResponse, error) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return nil, errors.NewInternal("mcp.authHandler", "failed to re-marshal BeginLogin response")
+	}
+	var out qrdbtransport.BeginLoginResponse
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, errors.NewInternal("mcp.authHandler", "failed to decode BeginLogin response")
+	}
+	return &out, nil
+}
+
+// transformFinishLoginResponse converts the MCP tool result map into the
+// canonical go-qrdb transport.FinishLoginResponse.
+func (h *authHandler) transformFinishLoginResponse(resp interface{}) (*qrdbtransport.FinishLoginResponse, error) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return nil, errors.NewInternal("mcp.authHandler", "failed to re-marshal FinishLogin response")
+	}
+	var out qrdbtransport.FinishLoginResponse
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, errors.NewInternal("mcp.authHandler", "failed to decode FinishLogin response")
+	}
+	return &out, nil
 }

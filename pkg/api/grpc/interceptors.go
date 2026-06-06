@@ -15,7 +15,6 @@ package grpc
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"runtime/debug"
 	"sync"
@@ -23,9 +22,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -41,35 +38,6 @@ var (
 	grpcStreamDuration  *metrics.HistogramVec
 	grpcActiveStreams   *metrics.Gauge
 )
-
-// FIPSApprovedCipherSuites contains the list of cipher suites approved for FIPS 140-3.
-// These are TLS 1.3 cipher suites using AES-GCM with 128 or 256-bit keys.
-var FIPSApprovedCipherSuites = map[uint16]string{
-	tls.TLS_AES_128_GCM_SHA256:                  "TLS_AES_128_GCM_SHA256",
-	tls.TLS_AES_256_GCM_SHA384:                  "TLS_AES_256_GCM_SHA384",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:   "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:   "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
-}
-
-// FIPSMinimumTLSVersion is the minimum TLS version required for FIPS compliance.
-// FIPS 140-3 requires TLS 1.2 or higher, but we enforce TLS 1.3 for maximum security.
-const FIPSMinimumTLSVersion = tls.VersionTLS13
-
-// FIPSValidationError represents an error that occurs during FIPS validation.
-type FIPSValidationError struct {
-	Reason string
-	Detail string
-}
-
-// Error implements the error interface.
-func (e *FIPSValidationError) Error() string {
-	if e.Detail != "" {
-		return fmt.Sprintf("FIPS validation failed: %s (%s)", e.Reason, e.Detail)
-	}
-	return fmt.Sprintf("FIPS validation failed: %s", e.Reason)
-}
 
 func initGRPCMetrics() {
 	grpcMetricsOnce.Do(func() {
@@ -346,100 +314,6 @@ func StreamErrorHandlerInterceptor() grpc.StreamServerInterceptor {
 	}
 }
 
-// validateFIPSCompliance validates that the TLS connection meets FIPS 140-3 requirements.
-// It checks:
-// - TLS version is at least TLS 1.3
-// - Cipher suite is FIPS-approved (AES-GCM with 128 or 256-bit keys)
-// Returns nil if validation passes, or a FIPSValidationError if it fails.
-func validateFIPSCompliance(ctx context.Context) *FIPSValidationError {
-	// Extract peer information from context
-	p, ok := peer.FromContext(ctx)
-	if !ok {
-		return &FIPSValidationError{
-			Reason: "no peer information",
-			Detail: "unable to extract connection information from context",
-		}
-	}
-
-	// Check if TLS is being used
-	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
-	if !ok {
-		return &FIPSValidationError{
-			Reason: "TLS not enabled",
-			Detail: "FIPS mode requires TLS encryption",
-		}
-	}
-
-	connState := tlsInfo.State
-
-	// Validate TLS version
-	if connState.Version < FIPSMinimumTLSVersion {
-		return &FIPSValidationError{
-			Reason: "insufficient TLS version",
-			Detail: fmt.Sprintf("connection uses TLS version 0x%04x, minimum required is TLS 1.3 (0x%04x)",
-				connState.Version, FIPSMinimumTLSVersion),
-		}
-	}
-
-	// Validate cipher suite
-	if _, approved := FIPSApprovedCipherSuites[connState.CipherSuite]; !approved {
-		return &FIPSValidationError{
-			Reason: "non-FIPS cipher suite",
-			Detail: fmt.Sprintf("cipher suite 0x%04x is not FIPS-approved", connState.CipherSuite),
-		}
-	}
-
-	return nil
-}
-
-// UnaryFIPSInterceptor validates FIPS compliance (if enabled).
-func UnaryFIPSInterceptor(fipsEnabled bool, log *logger.Logger) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if !fipsEnabled {
-			return handler(ctx, req)
-		}
-
-		// Validate FIPS compliance
-		if err := validateFIPSCompliance(ctx); err != nil {
-			log.WithFields(map[string]interface{}{
-				"method": info.FullMethod,
-				"reason": err.Reason,
-				"detail": err.Detail,
-			}).Warn("FIPS validation failed")
-
-			return nil, status.Errorf(codes.FailedPrecondition,
-				"FIPS compliance validation failed: %s", err.Reason)
-		}
-
-		log.Debug("FIPS validation passed")
-		return handler(ctx, req)
-	}
-}
-
-// StreamFIPSInterceptor validates FIPS compliance for streams.
-func StreamFIPSInterceptor(fipsEnabled bool, log *logger.Logger) grpc.StreamServerInterceptor {
-	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if !fipsEnabled {
-			return handler(srv, ss)
-		}
-
-		// Validate FIPS compliance using the stream's context
-		if err := validateFIPSCompliance(ss.Context()); err != nil {
-			log.WithFields(map[string]interface{}{
-				"method": info.FullMethod,
-				"reason": err.Reason,
-				"detail": err.Detail,
-			}).Warn("FIPS validation failed for stream")
-
-			return status.Errorf(codes.FailedPrecondition,
-				"FIPS compliance validation failed: %s", err.Reason)
-		}
-
-		log.Debug("FIPS validation passed for stream")
-		return handler(srv, ss)
-	}
-}
-
 // UnaryRequestIDInterceptor adds a request ID to the context.
 func UnaryRequestIDInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
@@ -531,19 +405,4 @@ func wrapServerStream(ss grpc.ServerStream, ctx context.Context) grpc.ServerStre
 		ServerStream: ss,
 		ctx:          ctx,
 	}
-}
-
-// IsFIPSApprovedCipherSuite checks if a cipher suite is FIPS-approved.
-func IsFIPSApprovedCipherSuite(cipherSuite uint16) bool {
-	_, ok := FIPSApprovedCipherSuites[cipherSuite]
-	return ok
-}
-
-// GetFIPSApprovedCipherSuiteNames returns the names of all FIPS-approved cipher suites.
-func GetFIPSApprovedCipherSuiteNames() []string {
-	names := make([]string, 0, len(FIPSApprovedCipherSuites))
-	for _, name := range FIPSApprovedCipherSuites {
-		names = append(names, name)
-	}
-	return names
 }

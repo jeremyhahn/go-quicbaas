@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -507,17 +506,7 @@ func TestAlgorithm_InvalidRejection(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
+	client := helpers.NewHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -622,7 +611,9 @@ func TestCrossProtocol_RESTToGRPC(t *testing.T) {
 	require.NoError(t, err, "Failed to connect to gRPC endpoint %s", grpcEndpoints[0])
 	defer conn.Close()
 
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Failed to create gRPC client")
 	defer grpcClient.Close()
 
@@ -663,7 +654,9 @@ func TestCrossProtocol_GRPCToREST(t *testing.T) {
 	require.NoError(t, err, "Failed to connect to gRPC endpoint %s", grpcEndpoints[0])
 	defer conn.Close()
 
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 	require.NoError(t, err, "Failed to create gRPC client")
 	defer grpcClient.Close()
 
@@ -714,11 +707,9 @@ func TestCrossProtocol_QUICToREST(t *testing.T) {
 	require.NotEmpty(t, quicEndpoints, "QUIC endpoints must be available for integration tests")
 
 	// Try to connect to QUIC
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{"quicbaas-quic"},
-	}
+	tlsConf, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	tlsConf.NextProtos = []string{"quicbaas-quic"}
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer dialCancel()
@@ -1080,7 +1071,9 @@ func TestMultiProtocol_TenantIsolation(t *testing.T) {
 		require.NoError(t, err, "Failed to connect to gRPC endpoint %s", grpcEndpoints[0])
 		defer conn.Close()
 
-		grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+		tlsCfg, err := helpers.IntegrationTLSConfig()
+		require.NoError(t, err, "load integration TLS config")
+		grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg))
 		require.NoError(t, err, "Failed to create gRPC client")
 		defer grpcClient.Close()
 
@@ -1096,14 +1089,17 @@ func TestMultiProtocol_TenantIsolation(t *testing.T) {
 		_, err := net.Dial("unix", socketPath)
 		require.NoError(t, err, "Unix socket must be available at %s for integration tests", socketPath)
 
+		tlsCfg, err := helpers.IntegrationTLSConfig()
+		require.NoError(t, err, "load integration TLS config")
+
 		conn, err := grpc.DialContext(ctx,
 			"unix://"+socketPath,
-			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		)
 		require.NoError(t, err, "Failed to connect to unix socket at %s", socketPath)
 		defer conn.Close()
 
-		unixClient, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+		unixClient, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
 		require.NoError(t, err, "Failed to create unix socket client")
 		defer unixClient.Close()
 

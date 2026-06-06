@@ -14,8 +14,10 @@
 package grpc
 
 import (
+	"context"
 	"testing"
 
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
@@ -157,5 +159,34 @@ func TestLogoutRequestType(t *testing.T) {
 
 	if req.AccessToken != "test-access-token" {
 		t.Errorf("AccessToken = %q, want %q", req.AccessToken, "test-access-token")
+	}
+}
+
+// TestAuthHandler_Login_LegacyPasswordRetired asserts the legacy
+// username/password Login verb fails closed with the typed
+// PasswordLoginUnsupportedError. A nil gRPC connection proves no network call
+// is attempted: the handler returns before dialing.
+func TestAuthHandler_Login_LegacyPasswordRetired(t *testing.T) {
+	handler := newAuthHandler(nil)
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		req  interface{}
+	}{
+		{"ExtendedLoginRequest", &service.ExtendedLoginRequest{Username: "alice"}},
+		{"wrong type", "not-a-request"},
+		{"nil request", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := handler.handleRequest(ctx, "quicbaas.Auth", "Login", tc.req)
+			if err == nil {
+				t.Fatal("expected PasswordLoginUnsupportedError, got nil")
+			}
+			if !sdkerrors.IsPasswordLoginUnsupported(err) {
+				t.Fatalf("expected PasswordLoginUnsupportedError, got %T: %v", err, err)
+			}
+		})
 	}
 }

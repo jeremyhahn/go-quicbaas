@@ -217,7 +217,10 @@ func TestFirstBootBootstrap_InviteTokenStoredWithExpiry(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, record.Used, "invite must not be pre-consumed")
 	assert.True(t, record.ExpiresAt.After(time.Now()), "invite must not be expired")
-	assert.Equal(t, "default", record.TenantID)
+	// Per the unified bootstrap (Phase 5): admin user lives in qrdb's
+	// canonical "system" tenant via qrdbfirstboot.Initialize, and the
+	// invite record is bound to that same tenant.
+	assert.Equal(t, "system", record.TenantID)
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +241,15 @@ func buildTestIAMComponents(t *testing.T) *iamComponents {
 		Name: "Default Tenant",
 	}); err != nil {
 		t.Fatalf("buildTestIAMComponents: create default tenant: %v", err)
+	}
+	// The bootstrap admin lives in the reserved "system" tenant (qrdb's
+	// SystemTenantID), so provision it too — BindAdminToSOCert's fallback
+	// scans the system tenant, not "default".
+	if _, err := tenantManager.CreateTenant(ctx, iam.CreateTenantOptions{
+		ID:   "system",
+		Name: "System Tenant",
+	}); err != nil {
+		t.Fatalf("buildTestIAMComponents: create system tenant: %v", err)
 	}
 
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{

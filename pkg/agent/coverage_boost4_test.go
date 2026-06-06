@@ -15,13 +15,11 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 )
 
 // =============================================================================
@@ -120,10 +118,8 @@ func TestRuntime_RemovePersistedSession_UnremovableFileIsLogged(t *testing.T) {
 // persistSession — MkdirAll failure path
 // =============================================================================
 
-// TestRuntime_PersistSession_MkdirAllFailureIsNonFatal exercises the MkdirAll
-// failure inside persistSession. The failure path is already exercised by
-// TestRuntime_Spawn_PersistenceFailureIsNonFatal, which makes the sessions
-// directory itself read-only. This companion test validates the error type.
+// TestRuntime_PersistSession_SessionsDirFailure exercises the MkdirAll
+// failure inside persistSession when the sessions directory cannot be created.
 func TestRuntime_PersistSession_SessionsDirFailure(t *testing.T) {
 	t.Parallel()
 	if os.Getuid() == 0 {
@@ -183,66 +179,3 @@ func TestNewDaemon_NilHeartbeatIsAccepted(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 }
-
-// =============================================================================
-// encryptWithTenantDEK — DEK fetch failure
-// =============================================================================
-
-// TestRuntime_EncryptWithTenantDEK_DEKFetchFailureIsNonFatal exercises the
-// DEK fetch failure inside encryptWithTenantDEK. Since persistSession is
-// non-fatal, Spawn still returns success.
-func TestRuntime_EncryptWithTenantDEK_DEKFetchFailureIsNonFatal(t *testing.T) {
-	t.Parallel()
-
-	// Use a DEK manager that always fails.
-	failDEK := &alwaysFailDEKManager{}
-	workDir := t.TempDir()
-	rt, err := NewRuntime(RuntimeConfig{
-		Backends:         map[string]orchestration.AgentBackend{"acp": &mockBackend{}},
-		Logger:           &testLogger{t: t},
-		TenantDEKManager: failDEK,
-		WorkDir:          workDir,
-	})
-	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
-	}
-
-	// Spawn must succeed even though DEK fetch fails (persistence is non-fatal).
-	sess, spawnErr := rt.Spawn(context.Background(), "tenant-dek-fail", nil, "acp",
-		&orchestration.SpawnRequest{WorkDir: workDir})
-	if spawnErr != nil {
-		t.Fatalf("Spawn: expected non-fatal DEK failure, got %v", spawnErr)
-	}
-	if sess.ID == "" {
-		t.Fatal("expected non-empty session ID")
-	}
-}
-
-// alwaysFailDEKManager is a TenantDEKManager that always returns an error.
-type alwaysFailDEKManager struct{}
-
-func (f *alwaysFailDEKManager) GetOrCreateTenantDEK(_ context.Context, _ string) ([]byte, error) {
-	return nil, errors.New("DEK service unavailable")
-}
-
-func (f *alwaysFailDEKManager) GetTenantDEK(_ context.Context, _ string) ([]byte, error) {
-	return nil, errors.New("DEK service unavailable")
-}
-
-func (f *alwaysFailDEKManager) RotateTenantDEK(_ context.Context, _ string) error {
-	return errors.New("DEK service unavailable")
-}
-
-func (f *alwaysFailDEKManager) DeleteTenantDEK(_ context.Context, _ string) error {
-	return errors.New("DEK service unavailable")
-}
-
-func (f *alwaysFailDEKManager) GetTenantDEKStatus(_ context.Context, _ string) (*security.TenantDEKStatus, error) {
-	return nil, errors.New("DEK service unavailable")
-}
-
-func (f *alwaysFailDEKManager) ListTenantDEKs(_ context.Context) ([]string, error) {
-	return nil, errors.New("DEK service unavailable")
-}
-
-func (f *alwaysFailDEKManager) Close() error { return nil }

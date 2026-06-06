@@ -26,7 +26,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
@@ -204,6 +203,45 @@ func (m *mockQuicBaaS) VerifyBackup(ctx context.Context, req *service.VerifyBack
 	return &service.VerifyBackupResponse{Valid: true}, nil
 }
 
+// SealService — full surface
+func (m *mockQuicBaaS) Status(ctx context.Context) (*service.SealStatusResponse, error) {
+	return &service.SealStatusResponse{}, nil
+}
+
+func (m *mockQuicBaaS) Initialize(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
+	return &service.SealInitResponse{}, nil
+}
+
+func (m *mockQuicBaaS) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
+	return &service.UnsealResponse{}, nil
+}
+
+func (m *mockQuicBaaS) Seal(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockQuicBaaS) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
+	return &service.RekeyResponse{}, nil
+}
+
+func (m *mockQuicBaaS) GenerateRecoveryKey(ctx context.Context, req *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
+	return &service.GenerateRecoveryKeyResponse{}, nil
+}
+
+func (m *mockQuicBaaS) DeleteRecoveryKey(ctx context.Context, req *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
+	return &service.DeleteRecoveryKeyResponse{}, nil
+}
+
+func (m *mockQuicBaaS) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
+	return &service.GenerateRootTokenResponse{}, nil
+}
+
+func (m *mockQuicBaaS) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
+	return &service.RotateRootKeyResponse{}, nil
+}
+
+func (m *mockQuicBaaS) SetSealService(svc service.SealService) {}
+
 // Auth operations
 func (m *mockQuicBaaS) Login(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error) {
 	return &service.LoginResponse{AccessToken: "token"}, nil
@@ -365,7 +403,6 @@ func (m *mockQuicBaaS) Embedding() service.EmbeddingService           { return n
 func (m *mockQuicBaaS) Ollama() service.OllamaService                 { return nil }
 func (m *mockQuicBaaS) Certificate() service.CertificateService       { return nil }
 func (m *mockQuicBaaS) DynamicSecrets() service.DynamicSecretsService { return nil }
-func (m *mockQuicBaaS) ClusterDEK() service.ClusterDEKService         { return nil }
 func (m *mockQuicBaaS) ObjectStorageService() service.ObjectStorageService {
 	return m.objectStorageService
 }
@@ -376,7 +413,6 @@ func (m *mockQuicBaaS) Scheduler() service.SchedulerService                     
 func (m *mockQuicBaaS) SchedulerEngine() *scheduler.SchedulerEngine                  { return nil }
 func (m *mockQuicBaaS) Agent() orchestration.AgentService                            { return nil }
 func (m *mockQuicBaaS) SSHClient() xkmsssh.Client                                    { return nil }
-func (m *mockQuicBaaS) SetTenantIsolationManager(m2 security.TenantIsolationManager) {}
 func (m *mockQuicBaaS) SetIAMProvider(provider service.IAMComponents)                {}
 func (m *mockQuicBaaS) Messaging() messaging.Service                                 { return nil }
 func (m *mockQuicBaaS) SetMessagingService(ms messaging.Service)                     {}
@@ -388,6 +424,8 @@ func (m *mockQuicBaaS) SetDatabaseService(ds service.DatabaseService)           
 func (m *mockQuicBaaS) AgentAdmin() service.AgentAdminService                        { return nil }
 func (m *mockQuicBaaS) Project() service.ProjectService                              { return nil }
 func (m *mockQuicBaaS) Close() error                                                 { return nil }
+func (m *mockQuicBaaS) LoginCeremony() service.LoginServicer                         { return nil }
+func (m *mockQuicBaaS) SetLoginService(svc service.LoginServicer)                    {}
 
 // =============================================================================
 // Mock KMS Service
@@ -533,6 +571,18 @@ func (m *mockKMSService) GetReencryptionProgress(ctx context.Context, req *servi
 
 func (m *mockKMSService) SetDefaultKey(ctx context.Context, req *service.SetDefaultKeyRequest) (*service.SetDefaultKeyResponse, error) {
 	return &service.SetDefaultKeyResponse{}, nil
+}
+func (m *mockKMSService) DeleteKeyPolicy(ctx context.Context, req *service.DeleteKeyPolicyRequest) (*service.DeleteKeyPolicyResponse, error) {
+	return &service.DeleteKeyPolicyResponse{}, nil
+}
+func (m *mockKMSService) SetKeyRotationPolicy(ctx context.Context, req *service.SetKeyRotationPolicyRequest) (*service.SetKeyRotationPolicyResponse, error) {
+	return &service.SetKeyRotationPolicyResponse{}, nil
+}
+func (m *mockKMSService) GetKeyRotationPolicy(ctx context.Context, req *service.GetKeyRotationPolicyRequest) (*service.GetKeyRotationPolicyResponse, error) {
+	return &service.GetKeyRotationPolicyResponse{}, nil
+}
+func (m *mockKMSService) DeleteKeyRotationPolicy(ctx context.Context, req *service.DeleteKeyRotationPolicyRequest) (*service.DeleteKeyRotationPolicyResponse, error) {
+	return &service.DeleteKeyRotationPolicyResponse{}, nil
 }
 
 // =============================================================================

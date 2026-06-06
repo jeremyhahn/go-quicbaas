@@ -16,6 +16,8 @@ package signalbridge
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,7 +169,9 @@ func (a *LibSignalAdapter) GeneratePreKeyBundle(account SignalAccount, numOneTim
 	oneTimeMaterial := make([]PreKeyMaterial, 0, len(preKeys))
 	for _, pk := range preKeys {
 		stored := record.NewPreKey(pk.ID().Value, pk.KeyPair(), a.serializer.PreKeyRecord)
-		a.preKeyStore.StorePreKey(pk.ID().Value, stored)
+		if err := a.preKeyStore.StorePreKey(pk.ID().Value, stored); err != nil {
+			return PreKeyBundleUpload{}, wrapError("signalbridge.GeneratePreKeyBundle", ErrKindProtocol, err, "store one-time prekey")
+		}
 		oneTimeMaterial = append(oneTimeMaterial, PreKeyMaterial{
 			ID:     pk.ID().Value,
 			Public: pk.KeyPair().PublicKey().Serialize(),
@@ -178,7 +182,7 @@ func (a *LibSignalAdapter) GeneratePreKeyBundle(account SignalAccount, numOneTim
 	if err != nil {
 		return PreKeyBundleUpload{}, wrapError("signalbridge.GeneratePreKeyBundle", ErrKindProtocol, err, "generate signed prekey")
 	}
-	a.signedPreKeyStore.StoreSignedPreKey(
+	if err := a.signedPreKeyStore.StoreSignedPreKey(
 		spk.ID(),
 		record.NewSignedPreKey(
 			spk.ID(),
@@ -187,7 +191,9 @@ func (a *LibSignalAdapter) GeneratePreKeyBundle(account SignalAccount, numOneTim
 			spk.Signature(),
 			a.serializer.SignedPreKeyRecord,
 		),
-	)
+	); err != nil {
+		return PreKeyBundleUpload{}, wrapError("signalbridge.GeneratePreKeyBundle", ErrKindProtocol, err, "store signed prekey")
+	}
 	a.nextSignedPreKeyID++
 
 	kyberMaterial := make([]KyberPreKeyMaterial, 0, numKyber)
@@ -254,7 +260,11 @@ func (a *LibSignalAdapter) Encrypt(ctx context.Context, account SignalAccount, m
 	addr := protocol.NewSignalAddress(msg.ConversationID, deviceID)
 
 	// Build session if we don't have one.
-	if !a.sessionStore.ContainsSession(addr) {
+	hasSession, err := a.sessionStore.ContainsSession(addr)
+	if err != nil {
+		return nil, newError(op, ErrKindProtocol, err.Error())
+	}
+	if !hasSession {
 		if fetchBundle == nil {
 			return nil, newError(op, ErrKindProtocol, "no session and no bundle fetcher")
 		}
@@ -277,7 +287,7 @@ func (a *LibSignalAdapter) Encrypt(ctx context.Context, account SignalAccount, m
 		a.serializer,
 	)
 	localAddr := protocol.NewSignalAddress(account.ACI, account.DeviceID)
-	cipher := session.NewCipher(builder, localAddr, addr)
+	cipher := session.NewCipherWithLocalAddress(builder, localAddr, addr)
 	ciphertext, err := cipher.Encrypt([]byte(msg.Body))
 	if err != nil {
 		return nil, wrapError(op, ErrKindProtocol, err, "encrypt")
@@ -394,14 +404,16 @@ func (a *LibSignalAdapter) Decrypt(ctx context.Context, account SignalAccount, e
 		a.serializer,
 	)
 	localAddr := protocol.NewSignalAddress(account.ACI, account.DeviceID)
-	cipher := session.NewCipher(builder, localAddr, addr)
+	cipher := session.NewCipherWithLocalAddress(builder, localAddr, addr)
 
 	var plaintext []byte
 	switch env.Type {
 	case int32(protocol.PREKEY_TYPE):
 		if len(env.Content) == 0 {
 			// Session-reset marker with no payload. Clear local state.
-			a.sessionStore.DeleteSession(addr)
+			if err := a.sessionStore.DeleteSession(addr); err != nil {
+				return InboundMessage{}, wrapError(op, ErrKindProtocol, err, "delete session")
+			}
 			return InboundMessage{
 				ConversationID:   env.SourceACI,
 				Kind:             ConversationDM,
@@ -455,8 +467,7 @@ func (a *LibSignalAdapter) ResetSession(account SignalAccount, recipientACI stri
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	addr := protocol.NewSignalAddress(recipientACI, deviceID)
-	a.sessionStore.DeleteSession(addr)
-	return nil
+	return a.sessionStore.DeleteSession(addr)
 }
 
 // =============================================================================
@@ -480,27 +491,35 @@ func addressKey(a *protocol.SignalAddress) string {
 	return fmt.Sprintf("%s::%d", a.Name(), a.DeviceID())
 }
 
-func (s *inMemSessionStore) LoadSession(a *protocol.SignalAddress) *record.Session {
+func (s *inMemSessionStore) LoadSession(a *protocol.SignalAddress) (*record.Session, error) {
 	key := addressKey(a)
 	if r, ok := s.sessions[key]; ok {
-		return r
+		return r, nil
 	}
 	r := record.NewSession(s.serializer.Session, s.serializer.State)
 	s.sessions[key] = r
-	return r
+	return r, nil
 }
 
-func (s *inMemSessionStore) GetSubDeviceSessions(name string) []uint32 {
+func (s *inMemSessionStore) GetSubDeviceSessions(name string) ([]uint32, error) {
 	var ids []uint32
 	for _, k := range s.keys() {
-		var n string
-		var d uint32
-		_, _ = fmt.Sscanf(k, "%[^::]::%d", &n, &d)
-		if n == name && d != 1 {
-			ids = append(ids, d)
+		// Keys are formatted by addressKey as "name::deviceID". Split on the
+		// final "::" so device names that themselves contain "::" still parse.
+		idx := strings.LastIndex(k, "::")
+		if idx < 0 {
+			continue
+		}
+		n := k[:idx]
+		d, err := strconv.ParseUint(k[idx+len("::"):], 10, 32)
+		if err != nil {
+			continue
+		}
+		if n == name && uint32(d) != 1 {
+			ids = append(ids, uint32(d))
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 func (s *inMemSessionStore) keys() []string {
@@ -511,21 +530,24 @@ func (s *inMemSessionStore) keys() []string {
 	return out
 }
 
-func (s *inMemSessionStore) StoreSession(a *protocol.SignalAddress, r *record.Session) {
+func (s *inMemSessionStore) StoreSession(a *protocol.SignalAddress, r *record.Session) error {
 	s.sessions[addressKey(a)] = r
+	return nil
 }
 
-func (s *inMemSessionStore) ContainsSession(a *protocol.SignalAddress) bool {
+func (s *inMemSessionStore) ContainsSession(a *protocol.SignalAddress) (bool, error) {
 	_, ok := s.sessions[addressKey(a)]
-	return ok
+	return ok, nil
 }
 
-func (s *inMemSessionStore) DeleteSession(a *protocol.SignalAddress) {
+func (s *inMemSessionStore) DeleteSession(a *protocol.SignalAddress) error {
 	delete(s.sessions, addressKey(a))
+	return nil
 }
 
-func (s *inMemSessionStore) DeleteAllSessions() {
+func (s *inMemSessionStore) DeleteAllSessions() error {
 	s.sessions = make(map[string]*record.Session)
+	return nil
 }
 
 // inMemPreKeyStore implements store.PreKey.
@@ -537,21 +559,23 @@ func newInMemPreKeyStore() *inMemPreKeyStore {
 	return &inMemPreKeyStore{keys: make(map[uint32]*record.PreKey)}
 }
 
-func (s *inMemPreKeyStore) LoadPreKey(id uint32) *record.PreKey {
-	return s.keys[id]
+func (s *inMemPreKeyStore) LoadPreKey(id uint32) (*record.PreKey, error) {
+	return s.keys[id], nil
 }
 
-func (s *inMemPreKeyStore) StorePreKey(id uint32, r *record.PreKey) {
+func (s *inMemPreKeyStore) StorePreKey(id uint32, r *record.PreKey) error {
 	s.keys[id] = r
+	return nil
 }
 
-func (s *inMemPreKeyStore) ContainsPreKey(id uint32) bool {
+func (s *inMemPreKeyStore) ContainsPreKey(id uint32) (bool, error) {
 	_, ok := s.keys[id]
-	return ok
+	return ok, nil
 }
 
-func (s *inMemPreKeyStore) RemovePreKey(id uint32) {
+func (s *inMemPreKeyStore) RemovePreKey(id uint32) error {
 	delete(s.keys, id)
+	return nil
 }
 
 // inMemSignedPreKeyStore implements store.SignedPreKey.
@@ -563,20 +587,28 @@ func newInMemSignedPreKeyStore() *inMemSignedPreKeyStore {
 	return &inMemSignedPreKeyStore{keys: make(map[uint32]*record.SignedPreKey)}
 }
 
-func (s *inMemSignedPreKeyStore) LoadSignedPreKey(id uint32) *record.SignedPreKey { return s.keys[id] }
-func (s *inMemSignedPreKeyStore) LoadSignedPreKeys() []*record.SignedPreKey {
+func (s *inMemSignedPreKeyStore) LoadSignedPreKey(id uint32) (*record.SignedPreKey, error) {
+	return s.keys[id], nil
+}
+func (s *inMemSignedPreKeyStore) LoadSignedPreKeys() ([]*record.SignedPreKey, error) {
 	out := make([]*record.SignedPreKey, 0, len(s.keys))
 	for _, v := range s.keys {
 		out = append(out, v)
 	}
-	return out
+	return out, nil
 }
-func (s *inMemSignedPreKeyStore) StoreSignedPreKey(id uint32, r *record.SignedPreKey) { s.keys[id] = r }
-func (s *inMemSignedPreKeyStore) ContainsSignedPreKey(id uint32) bool {
+func (s *inMemSignedPreKeyStore) StoreSignedPreKey(id uint32, r *record.SignedPreKey) error {
+	s.keys[id] = r
+	return nil
+}
+func (s *inMemSignedPreKeyStore) ContainsSignedPreKey(id uint32) (bool, error) {
 	_, ok := s.keys[id]
-	return ok
+	return ok, nil
 }
-func (s *inMemSignedPreKeyStore) RemoveSignedPreKey(id uint32) { delete(s.keys, id) }
+func (s *inMemSignedPreKeyStore) RemoveSignedPreKey(id uint32) error {
+	delete(s.keys, id)
+	return nil
+}
 
 // inMemIdentityStore implements store.IdentityKey.
 type inMemIdentityStore struct {
@@ -607,21 +639,21 @@ func (s *inMemIdentityStore) GetLocalRegistrationId() uint32        { return s.r
 //   - IdentityChangeReplacedExisting when a different key was already
 //     trusted for the address. Callers may treat this as a security
 //     event (key rotation / safety-number change).
-func (s *inMemIdentityStore) SaveIdentity(a *protocol.SignalAddress, k *identity.Key) store.IdentityChange {
+func (s *inMemIdentityStore) SaveIdentity(a *protocol.SignalAddress, k *identity.Key) (store.IdentityChange, error) {
 	key := addressKey(a)
 	prev, existed := s.trusted[key]
 	s.trusted[key] = k
 	if !existed {
-		return store.IdentityChangeNewOrUnchanged
+		return store.IdentityChangeNewOrUnchanged, nil
 	}
 	if prev.Fingerprint() == k.Fingerprint() {
-		return store.IdentityChangeNewOrUnchanged
+		return store.IdentityChangeNewOrUnchanged, nil
 	}
-	return store.IdentityChangeReplacedExisting
+	return store.IdentityChangeReplacedExisting, nil
 }
-func (s *inMemIdentityStore) IsTrustedIdentity(a *protocol.SignalAddress, k *identity.Key, _ store.Direction) bool {
+func (s *inMemIdentityStore) IsTrustedIdentity(a *protocol.SignalAddress, k *identity.Key, _ store.Direction) (bool, error) {
 	saved := s.trusted[addressKey(a)]
-	return saved == nil || saved.Fingerprint() == k.Fingerprint()
+	return saved == nil || saved.Fingerprint() == k.Fingerprint(), nil
 }
 func (s *inMemIdentityStore) GetIdentity(a *protocol.SignalAddress) (*identity.Key, error) {
 	return s.trusted[addressKey(a)], nil
@@ -651,9 +683,9 @@ func (s *inMemKyberPreKeyStore) MarkKyberPreKeyUsed(id uint32, _ uint32, _ ecc.E
 	s.marked[id] = true
 	return nil
 }
-func (s *inMemKyberPreKeyStore) ContainsKyberPreKey(id uint32) bool {
+func (s *inMemKyberPreKeyStore) ContainsKyberPreKey(id uint32) (bool, error) {
 	_, ok := s.keys[id]
-	return ok
+	return ok, nil
 }
 
 // Verify interface compliance at compile time.

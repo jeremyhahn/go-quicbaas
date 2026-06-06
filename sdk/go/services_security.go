@@ -27,6 +27,7 @@ package quicbaas
 import (
 	"context"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"sync"
 	"time"
@@ -37,6 +38,7 @@ import (
 
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
+	trustbootstrap "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/bootstrap"
 )
 
 // =============================================================================
@@ -50,6 +52,7 @@ const (
 	webauthnServiceName    = "quicbaas.WebAuthn"
 	pivServiceName         = "quicbaas.PIV"
 	authFactorsServiceName = "quicbaas.AuthFactors"
+	authServiceName        = "quicbaas.Auth"
 	certExtServiceName     = "quicbaas.Certificate"
 )
 
@@ -217,10 +220,6 @@ type (
 	// FinishAuthentication / FinishLogin.
 	FIDO2FinishAuthenticationResponse = xkmstransport.FinishAuthenticationResponse
 
-	// FIDO2CredentialParam represents a WebAuthn credential type and
-	// algorithm pair offered by the relying party.
-	FIDO2CredentialParam = xkmstransport.CredentialParam
-
 	// PIVListSlotsRequest is the request payload for PIV.ListSlots.
 	PIVListSlotsRequest = xkmstransport.ListPIVSlotsRequest
 
@@ -284,6 +283,43 @@ type (
 
 	// AuthFactorRevokeRequest permanently revokes an enrollment.
 	AuthFactorRevokeRequest = qrdbtransport.RevokeFactorRequest
+
+	// Unified login ceremony types (mtls | webauthn/fido2 | piv).
+	// Re-exported from go-qrdb so consumers (e.g. go-trusted-platform)
+	// drive the login ceremony entirely through the quicbaas SDK without
+	// importing go-qrdb directly.
+
+	// BeginLoginRequest opens a login attempt for a factor type.
+	BeginLoginRequest = qrdbtransport.BeginLoginRequest
+
+	// BeginLoginResponse carries the server-issued login challenge/session.
+	BeginLoginResponse = qrdbtransport.BeginLoginResponse
+
+	// FinishLoginRequest submits the factor proof to complete login.
+	FinishLoginRequest = qrdbtransport.FinishLoginRequest
+
+	// FinishLoginResponse carries the issued OIDC bearer + resolved identity.
+	FinishLoginResponse = qrdbtransport.FinishLoginResponse
+
+	// Identity is the resolved authenticated entity carried on a
+	// FinishLoginResponse (subject + tenant + roles + metadata).
+	Identity = qrdbtransport.Identity
+
+	// FactorType enumerates the unified-login factor types.
+	FactorType = qrdbtransport.FactorType
+)
+
+// Unified-login factor type constants, re-exported from go-qrdb so consumers
+// select a login method without importing go-qrdb.
+const (
+	// FactorTypeMTLS selects the client-certificate / mTLS factor.
+	FactorTypeMTLS = qrdbtransport.FactorTypeMTLS
+
+	// FactorTypeFIDO2 selects the WebAuthn / FIDO2 factor.
+	FactorTypeFIDO2 = qrdbtransport.FactorTypeFIDO2
+
+	// FactorTypePIV selects the PIV smart-card factor.
+	FactorTypePIV = qrdbtransport.FactorTypePIV
 )
 
 // =============================================================================
@@ -350,7 +386,8 @@ type ACMEClientAPI interface {
 // =============================================================================
 
 // TrustService publishes trust artifacts (DANE TLSA records, cross-signed
-// roots, AIA-driven imports). All three are required by the §5d single-dep
+// roots, AIA-driven imports) and exposes the canonical trust-bootstrap
+// dispatch via Bootstrap(). All four are required by the §5d single-dep
 // surface.
 type TrustService interface {
 	// PublishDANE publishes a DANE TLSA record for the given
@@ -366,6 +403,35 @@ type TrustService interface {
 	// certificates into the local trust store. The provided certChain
 	// must be DER-encoded.
 	AutoImportAIA(ctx context.Context, certChain []*x509.Certificate) error
+
+	// Bootstrap returns the trust-bootstrap dispatcher that wraps
+	// go-truststrap's DANE / Noise / SPKI / Direct / Auto modes.
+	// Backed by xkms/pkg/trust/bootstrap (the single canonical
+	// implementation in the stack).
+	Bootstrap() TrustBootstrapClient
+}
+
+// TrustBootstrapClient is the SDK surface for trust bootstrapping —
+// fetching the initial CA bundle from a remote server using the
+// caller-selected verification strategy. Implementations forward to
+// the canonical xkms/pkg/trust/bootstrap.Fetch via the
+// sdk/go/xkms/trust/bootstrap re-export.
+//
+// This is a local-only client: each call performs a direct outbound
+// network fetch from the caller (DNS for DANE, TCP for Noise, HTTPS
+// for SPKI/Direct). There is no transport hop through the configured
+// quicbaas backend — the SDK is acting as a library facade, not a
+// remote proxy.
+type TrustBootstrapClient interface {
+	// Fetch executes a single bootstrap attempt and returns the
+	// resulting CA bundle.
+	Fetch(ctx context.Context, cfg trustbootstrap.Config) (*trustbootstrap.CABundle, error)
+
+	// DeriveNoiseAddr returns the canonical host:port the Noise
+	// bootstrap channel listens on, derived from a server URL.
+	// Exposed so CLI / GUI callers can offer a default before the
+	// caller supplies an explicit NoiseConfig.ServerAddr.
+	DeriveNoiseAddr(serverURL string) string
 }
 
 // =============================================================================
@@ -715,6 +781,20 @@ type AuthService interface {
 
 	// Factors returns the multi-factor enrollment + login client.
 	Factors() AuthFactorsClient
+
+	// BeginLogin starts the unified login ceremony for any factor type
+	// (mtls / fido2 / piv) and returns the server-issued challenge. It
+	// routes to qrdb's verification-capable LoginClient — the single
+	// canonical login backbone shared across the stack. WebAuthn/PIV
+	// receive a method-specific challenge (the FactorChallenger); mTLS
+	// uses the handshake.
+	BeginLogin(ctx context.Context, req qrdbtransport.BeginLoginRequest) (*qrdbtransport.BeginLoginResponse, error)
+
+	// FinishLogin submits the factor proof produced from the BeginLogin
+	// challenge and, on success, returns the issued bearer and resolved
+	// identity. The proof is verified server-side by the registered factor
+	// authenticator before any token is issued.
+	FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error)
 }
 
 // =============================================================================
@@ -1044,8 +1124,26 @@ func (s *trustServiceImpl) AutoImportAIA(ctx context.Context, certChain []*x509.
 	return err
 }
 
+func (s *trustServiceImpl) Bootstrap() TrustBootstrapClient {
+	return trustBootstrapImpl{}
+}
+
 func newTrustService(t transport.Transport) TrustService {
 	return &trustServiceImpl{t: t}
+}
+
+// trustBootstrapImpl is the TrustBootstrapClient. It forwards every
+// call to the canonical xkms/pkg/trust/bootstrap library via the
+// SDK's type-alias re-export. There is no per-instance state — the
+// underlying Fetch is stateless — so we use a zero-sized struct.
+type trustBootstrapImpl struct{}
+
+func (trustBootstrapImpl) Fetch(ctx context.Context, cfg trustbootstrap.Config) (*trustbootstrap.CABundle, error) {
+	return trustbootstrap.Fetch(ctx, cfg)
+}
+
+func (trustBootstrapImpl) DeriveNoiseAddr(serverURL string) string {
+	return trustbootstrap.DeriveNoiseAddr(serverURL)
 }
 
 // certExtImpl implements CertificateExtensions.
@@ -1294,11 +1392,20 @@ func (c *webauthnImpl) FinishRegistration(ctx context.Context, user *WebAuthnUse
 	if resp == nil {
 		return nil, sdkerrors.NewInternal("webauthn.FinishRegistration", "nil response from server")
 	}
-	out, ok := resp.(*WebAuthnCredential)
-	if !ok {
-		return nil, sdkerrors.NewInternal("webauthn.FinishRegistration", "invalid response type")
+	// Already a typed credential (in-process / future transports).
+	if out, ok := resp.(*WebAuthnCredential); ok {
+		return out, nil
 	}
-	return out, nil
+	// REST transport returns the xkms ceremony result; adapt it to the
+	// SDK credential view. The xkms FinishRegistration response carries
+	// the issued token and the WebAuthn user handle as CredentialID.
+	if out, ok := resp.(*xkmstransport.FinishRegistrationResponse); ok {
+		return &WebAuthnCredential{
+			CredentialID: out.CredentialID,
+			UserID:       out.CredentialID,
+		}, nil
+	}
+	return nil, sdkerrors.NewInternal("webauthn.FinishRegistration", "invalid response type")
 }
 
 type webauthnBeginLoginRequest struct {
@@ -1354,11 +1461,19 @@ func (c *webauthnImpl) FinishLogin(ctx context.Context, user *WebAuthnUser, resp
 	if resp == nil {
 		return nil, sdkerrors.NewInternal("webauthn.FinishLogin", "nil response from server")
 	}
-	out, ok := resp.(*WebAuthnSession)
-	if !ok {
-		return nil, sdkerrors.NewInternal("webauthn.FinishLogin", "invalid response type")
+	// Already a typed session (in-process / future transports).
+	if out, ok := resp.(*WebAuthnSession); ok {
+		return out, nil
 	}
-	return out, nil
+	// REST transport returns the xkms ceremony result; adapt it to the
+	// SDK session view.
+	if out, ok := resp.(*xkmstransport.FinishAuthenticationResponse); ok {
+		return &WebAuthnSession{
+			Username: out.Username,
+			Token:    out.Token,
+		}, nil
+	}
+	return nil, sdkerrors.NewInternal("webauthn.FinishLogin", "invalid response type")
 }
 
 // pivImpl implements PIVClient.
@@ -1512,8 +1627,162 @@ func (c *pivImpl) Attest(ctx context.Context, reader, slot string) (*PIVAttestRe
 }
 
 // authFactorsImpl implements AuthFactorsClient.
+//
+// User-login factor enrollment (Add / List / Remove / Rotate / Relabel) is
+// routed to the qrdb user-side auth-factor store via the qrdb client's
+// UserAuthFactors() surface — the SAME uint64-keyed UserAuthFactor store the
+// unified login ceremony resolves against (go-qrdb LoginResolver +
+// UserAuthFactorServicer.LookupByCredentialKey). This closes the split-store
+// gap where enrollment wrote to the string-subject ceremony registry while
+// login read the uint64-keyed user store, so an enrolled factor could never
+// be resolved at login time.
+//
+// The Credential bytes written for each type are byte-identical to the
+// lookup key the login proof reduces to, so the store's (type, credential)
+// index matches what login submits:
+//
+//	mtls : SHA-256(certificate DER)  — equals proveCanonicalMTLS' fingerprint
+//	piv  : SHA-256(slot certificate) — equals proveCanonicalPIV's cert hash
+//	fido2: WebAuthn credentialID     — equals proveCanonicalFIDO2's lookup key
+//	                                   and WebAuthnFactorVerifier's compare key
+//
+// This path is auth-critical and fails closed: when the credential lookup
+// key cannot be derived for the requested type, enrollment is rejected
+// rather than writing a factor login can never resolve.
+//
+// The legacy string-subject ceremony registry (qrdb AuthFactorClient) is left
+// untouched for non-login custodian/ceremony enrolment; this surface no
+// longer routes there.
+//
+// Login() (challenge / response token mint) is unchanged and still routes
+// over the quicbaas transport to the server login handler.
 type authFactorsImpl struct {
+	c *client
 	t transport.Transport
+}
+
+// authFactorMethodParam reads a string value from the request's MethodParams.
+func authFactorMethodParam(req *AuthFactorEnrollRequest, key string) string {
+	if req == nil || req.MethodParams == nil {
+		return ""
+	}
+	if v, ok := req.MethodParams[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// authFactorCredentialFor derives the canonical credential lookup-key bytes
+// the qrdb user-side store must index for the given factor type. The bytes
+// MUST equal what the login proof reduces to so login resolution matches.
+//
+//	mtls / piv: MethodParams["credential_sha256"] is the hex SHA-256 of the
+//	            certificate DER; decode it to the raw 32-byte key.
+//	fido2     : MethodParams["credential_id"] is the WebAuthn credentialID
+//	            (base64url) — stored as its raw string bytes, matching both
+//	            proveCanonicalFIDO2 (lookup key = []byte(credentialID)) and
+//	            WebAuthnFactorVerifier.Verify (compare credential_id ==
+//	            string(factor.Credential)).
+func authFactorCredentialFor(factorType string, req *AuthFactorEnrollRequest) ([]byte, error) {
+	switch factorType {
+	case "mtls", "piv":
+		hexKey := authFactorMethodParam(req, "credential_sha256")
+		if hexKey == "" {
+			return nil, sdkerrors.NewInvalidInput("authfactors.Add",
+				factorType+" enrollment requires MethodParams[\"credential_sha256\"] (hex SHA-256 of the certificate)")
+		}
+		raw, err := hex.DecodeString(hexKey)
+		if err != nil {
+			return nil, sdkerrors.Wrap(err, sdkerrors.CodeInvalidInput, "authfactors.Add",
+				"credential_sha256 is not valid hex")
+		}
+		if len(raw) == 0 {
+			return nil, sdkerrors.NewInvalidInput("authfactors.Add", "credential_sha256 decoded to empty bytes")
+		}
+		return raw, nil
+	case "fido2":
+		credID := authFactorMethodParam(req, "credential_id")
+		if credID == "" {
+			return nil, sdkerrors.NewInvalidInput("authfactors.Add",
+				"fido2 enrollment requires MethodParams[\"credential_id\"] (the WebAuthn credentialID) so login can resolve the factor")
+		}
+		return []byte(credID), nil
+	default:
+		return nil, sdkerrors.NewInvalidInput("authfactors.Add", "unsupported factor type: "+factorType)
+	}
+}
+
+// authFactorMetadata projects the non-credential MethodParams entries into a
+// string metadata map for the stored factor. The credential lookup key is
+// kept narrow (in Credential); descriptive context (cert CN, serial, reader,
+// slot, AAGUID, device id) is retained in Metadata.
+func authFactorMetadata(req *AuthFactorEnrollRequest) map[string]string {
+	if req == nil || req.MethodParams == nil {
+		return nil
+	}
+	out := make(map[string]string, len(req.MethodParams))
+	for k, v := range req.MethodParams {
+		if k == "credential_sha256" || k == "credential_id" || k == "label" {
+			continue
+		}
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// factorMetadataToAny widens a string metadata map to map[string]any for the
+// response carrier.
+func factorMetadataToAny(in map[string]string) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+// userFactors returns the qrdb user-side N-factor client, backed by the SAME
+// UserAuthFactor store the login ceremony resolves against. Returns a typed
+// configuration error when the transport does not expose it.
+func (c *authFactorsImpl) userFactors() (*QRDBClient, qrdbtransport.UserAuthFactorClient, error) {
+	qrdb, err := c.c.qrdbClient()
+	if err != nil {
+		return nil, nil, err
+	}
+	uaf := qrdb.UserAuthFactors()
+	if uaf == nil {
+		return nil, nil, sdkerrors.NewUnavailable("authfactors",
+			"qrdb user-side auth-factor surface is unavailable — the transport was built without a UserAuthFactor service")
+	}
+	return qrdb, uaf, nil
+}
+
+// resolveSubjectUserID resolves the request's Subject (a tenant-scoped
+// username) to the qrdb uint64 user id via the qrdb user store — the same
+// store the login resolver's UserLookup reads. Enrolling against this id
+// guarantees the factor binds to the principal login will resolve.
+func resolveSubjectUserID(ctx context.Context, qrdb *QRDBClient, tenantID, subject string) (uint64, error) {
+	users := qrdb.Users()
+	if users == nil {
+		return 0, sdkerrors.NewUnavailable("authfactors", "qrdb user surface is unavailable")
+	}
+	u, err := users.GetUserByUsername(ctx, tenantID, subject)
+	if err != nil {
+		return 0, err
+	}
+	if u == nil || u.ID == 0 {
+		return 0, sdkerrors.NewNotFound("authfactors", "user not found for subject: "+subject)
+	}
+	return u.ID, nil
 }
 
 func (c *authFactorsImpl) Add(ctx context.Context, req *AuthFactorEnrollRequest) (*AuthFactorEnrollResponse, error) {
@@ -1529,41 +1798,80 @@ func (c *authFactorsImpl) Add(ctx context.Context, req *AuthFactorEnrollRequest)
 	if ctx == nil {
 		return nil, sdkerrors.NewInvalidInput("authfactors.Add", "context is required")
 	}
-	resp, err := c.t.Request(ctx, authFactorsServiceName, "Add", req)
+
+	credential, err := authFactorCredentialFor(req.FactorName, req)
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil {
-		return nil, sdkerrors.NewInternal("authfactors.Add", "nil response from server")
+
+	qrdb, uaf, err := c.userFactors()
+	if err != nil {
+		return nil, err
 	}
-	out, ok := resp.(*AuthFactorEnrollResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("authfactors.Add", "invalid response type")
+	userID, err := resolveSubjectUserID(ctx, qrdb, req.TenantID, req.Subject)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+
+	addResp, err := uaf.AddAuthFactor(ctx, &qrdbtransport.AuthFactorAddRequest{
+		UserID:     userID,
+		Type:       req.FactorName,
+		Label:      authFactorMethodParam(req, "label"),
+		Credential: credential,
+		Metadata:   authFactorMetadata(req),
+		CreatedBy:  "self",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &AuthFactorEnrollResponse{
+		FactorName: req.FactorName,
+		UserID:     req.Subject,
+		TenantID:   req.TenantID,
+	}
+	resp.EnrollmentID = addResp.Factor.ID
+	resp.EnrolledAt = addResp.Factor.RegisteredAt
+	resp.Metadata = factorMetadataToAny(addResp.Factor.Metadata)
+	return resp, nil
 }
 
 func (c *authFactorsImpl) List(ctx context.Context, userID string) (*AuthFactorListResponse, error) {
 	if ctx == nil {
 		return nil, sdkerrors.NewInvalidInput("authfactors.List", "context is required")
 	}
-	resp, err := c.t.Request(ctx, authFactorsServiceName, "List", &AuthFactorListRequest{Subject: userID})
+	if userID == "" {
+		return nil, sdkerrors.NewInvalidInput("authfactors.List", "subject (username) is required")
+	}
+
+	qrdb, uaf, err := c.userFactors()
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil {
-		return &AuthFactorListResponse{}, nil
+	uid, err := resolveSubjectUserID(ctx, qrdb, "", userID)
+	if err != nil {
+		return nil, err
 	}
-	out, ok := resp.(*AuthFactorListResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("authfactors.List", "invalid response type")
+	listResp, err := uaf.ListAuthFactors(ctx, &qrdbtransport.AuthFactorListRequest{UserID: uid})
+	if err != nil {
+		return nil, err
+	}
+	out := &AuthFactorListResponse{
+		Enrollments: make([]AuthFactorEntry, 0, len(listResp.Factors)),
+		Total:       len(listResp.Factors),
+	}
+	for i := range listResp.Factors {
+		f := &listResp.Factors[i]
+		out.Enrollments = append(out.Enrollments, AuthFactorEntry{
+			EnrollmentID: f.ID,
+			FactorName:   f.Type,
+			UserID:       userID,
+			Metadata:     factorMetadataToAny(f.Metadata),
+			EnrolledAt:   f.RegisteredAt,
+			RevokedAt:    f.RevokedAt,
+		})
 	}
 	return out, nil
-}
-
-type authFactorRemoveRequest struct {
-	FactorID string `json:"factor_id"`
-	Force    bool   `json:"force"`
 }
 
 func (c *authFactorsImpl) Remove(ctx context.Context, factorID string, force bool) error {
@@ -1573,16 +1881,15 @@ func (c *authFactorsImpl) Remove(ctx context.Context, factorID string, force boo
 	if ctx == nil {
 		return sdkerrors.NewInvalidInput("authfactors.Remove", "context is required")
 	}
-	_, err := c.t.Request(ctx, authFactorsServiceName, "Remove", &authFactorRemoveRequest{
+	_, uaf, err := c.userFactors()
+	if err != nil {
+		return err
+	}
+	_, err = uaf.RemoveAuthFactor(ctx, &qrdbtransport.AuthFactorRemoveRequest{
 		FactorID: factorID,
 		Force:    force,
 	})
 	return err
-}
-
-type authFactorRotateRequest struct {
-	OldID     string                   `json:"old_id"`
-	NewFactor *AuthFactorEnrollRequest `json:"new_factor"`
 }
 
 func (c *authFactorsImpl) Rotate(ctx context.Context, oldID string, newFactor *AuthFactorEnrollRequest) (*AuthFactorEnrollResponse, error) {
@@ -1595,29 +1902,50 @@ func (c *authFactorsImpl) Rotate(ctx context.Context, oldID string, newFactor *A
 	if newFactor.FactorName == "" {
 		return nil, sdkerrors.NewInvalidInput("authfactors.Rotate", "new factor name is required")
 	}
+	if newFactor.Subject == "" {
+		return nil, sdkerrors.NewInvalidInput("authfactors.Rotate", "new factor subject is required")
+	}
 	if ctx == nil {
 		return nil, sdkerrors.NewInvalidInput("authfactors.Rotate", "context is required")
 	}
-	resp, err := c.t.Request(ctx, authFactorsServiceName, "Rotate", &authFactorRotateRequest{
-		OldID:     oldID,
-		NewFactor: newFactor,
+
+	credential, err := authFactorCredentialFor(newFactor.FactorName, newFactor)
+	if err != nil {
+		return nil, err
+	}
+	qrdb, uaf, err := c.userFactors()
+	if err != nil {
+		return nil, err
+	}
+	userID, err := resolveSubjectUserID(ctx, qrdb, newFactor.TenantID, newFactor.Subject)
+	if err != nil {
+		return nil, err
+	}
+
+	rotateResp, err := uaf.RotateAuthFactor(ctx, &qrdbtransport.AuthFactorRotateRequest{
+		OldFactorID: oldID,
+		NewFactor: qrdbtransport.AuthFactorAddRequest{
+			UserID:     userID,
+			Type:       newFactor.FactorName,
+			Label:      authFactorMethodParam(newFactor, "label"),
+			Credential: credential,
+			Metadata:   authFactorMetadata(newFactor),
+			CreatedBy:  "self",
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil {
-		return nil, sdkerrors.NewInternal("authfactors.Rotate", "nil response from server")
-	}
-	out, ok := resp.(*AuthFactorEnrollResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("authfactors.Rotate", "invalid response type")
-	}
-	return out, nil
-}
 
-type authFactorRelabelRequest struct {
-	FactorID string `json:"factor_id"`
-	Label    string `json:"label"`
+	resp := &AuthFactorEnrollResponse{
+		FactorName: newFactor.FactorName,
+		UserID:     newFactor.Subject,
+		TenantID:   newFactor.TenantID,
+	}
+	resp.EnrollmentID = rotateResp.NewFactor.ID
+	resp.EnrolledAt = rotateResp.NewFactor.RegisteredAt
+	resp.Metadata = factorMetadataToAny(rotateResp.NewFactor.Metadata)
+	return resp, nil
 }
 
 func (c *authFactorsImpl) Relabel(ctx context.Context, factorID, label string) error {
@@ -1630,7 +1958,11 @@ func (c *authFactorsImpl) Relabel(ctx context.Context, factorID, label string) e
 	if ctx == nil {
 		return sdkerrors.NewInvalidInput("authfactors.Relabel", "context is required")
 	}
-	_, err := c.t.Request(ctx, authFactorsServiceName, "Relabel", &authFactorRelabelRequest{
+	_, uaf, err := c.userFactors()
+	if err != nil {
+		return err
+	}
+	_, err = uaf.RelabelAuthFactor(ctx, &qrdbtransport.AuthFactorRelabelRequest{
 		FactorID: factorID,
 		Label:    label,
 	})
@@ -1670,6 +2002,8 @@ func (c *authFactorsImpl) Login(ctx context.Context, req *AuthFactorLoginRequest
 // delegated to the underlying client.Auth() so behavior is unchanged.
 type authServiceImpl struct {
 	AuthClient
+	c        *client
+	t        transport.Transport
 	fido2    FIDO2Client
 	webauthn WebAuthnClient
 	piv      PIVClient
@@ -1680,10 +2014,12 @@ func newAuthService(c *client) AuthService {
 	t := c.transport
 	return &authServiceImpl{
 		AuthClient: c.Auth(),
+		c:          c,
+		t:          t,
 		fido2:      &fido2Impl{t: t},
 		webauthn:   &webauthnImpl{t: t},
 		piv:        &pivImpl{t: t},
-		factors:    &authFactorsImpl{t: t},
+		factors:    &authFactorsImpl{c: c, t: t},
 	}
 }
 
@@ -1691,6 +2027,44 @@ func (s *authServiceImpl) FIDO2() FIDO2Client         { return s.fido2 }
 func (s *authServiceImpl) WebAuthn() WebAuthnClient   { return s.webauthn }
 func (s *authServiceImpl) PIV() PIVClient             { return s.piv }
 func (s *authServiceImpl) Factors() AuthFactorsClient { return s.factors }
+
+// BeginLogin routes the unified login ceremony to qrdb's LoginClient — the
+// single canonical login backbone. The registered factor authenticator issues
+// the method-specific challenge (WebAuthn RP options / PIV nonce); mTLS uses
+// the handshake.
+func (s *authServiceImpl) BeginLogin(ctx context.Context, req qrdbtransport.BeginLoginRequest) (*qrdbtransport.BeginLoginResponse, error) {
+	// Route through the transport so BOTH embedded (in-process dispatch ->
+	// LoginCeremony() facade -> node) and network (-> quicbaas server login
+	// handler -> facade -> node) flow through one path. The qrdb login
+	// ceremony is embedded-only, so a direct qrdbClient().Login() would work
+	// only in-process; routing via the quicbaas transport reaches the server's
+	// in-process node from any client.
+	resp, err := s.t.Request(ctx, authServiceName, "BeginLogin", &req)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*qrdbtransport.BeginLoginResponse)
+	if !ok {
+		return nil, sdkerrors.NewInternal("auth.BeginLogin", "invalid response type from transport")
+	}
+	return out, nil
+}
+
+// FinishLogin routes proof submission through the quicbaas transport to the
+// server login handler, which forwards to qrdb's LoginClient. The server
+// derives the mTLS lookup key from the verified peer certificate; the
+// embedded transport trusts the caller-supplied key in-process.
+func (s *authServiceImpl) FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
+	resp, err := s.t.Request(ctx, authServiceName, "FinishLogin", &req)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*qrdbtransport.FinishLoginResponse)
+	if !ok {
+		return nil, sdkerrors.NewInternal("auth.FinishLogin", "invalid response type from transport")
+	}
+	return out, nil
+}
 
 // =============================================================================
 // SecurityService Extensions (ACME, Trust, AuthService, CertificateExtensions)

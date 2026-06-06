@@ -37,13 +37,13 @@ func newMockLogger() *mockLogger {
 	}
 }
 
-func (m *mockLogger) Debug(msg string, args ...any)                          {}
+func (m *mockLogger) Debug(msg string, args ...any)             {}
 func (m *mockLogger) Debugf(format string, args ...interface{}) {}
-func (m *mockLogger) Info(msg string, args ...any)                           {}
+func (m *mockLogger) Info(msg string, args ...any)              {}
 func (m *mockLogger) Infof(format string, args ...interface{})  {}
-func (m *mockLogger) Warn(msg string, args ...any)                           {}
+func (m *mockLogger) Warn(msg string, args ...any)              {}
 func (m *mockLogger) Warnf(format string, args ...interface{})  {}
-func (m *mockLogger) Error(msg string, args ...any)                          {}
+func (m *mockLogger) Error(msg string, args ...any)             {}
 func (m *mockLogger) Errorf(format string, args ...interface{}) {}
 func (m *mockLogger) Fatal(msg string)                          {}
 func (m *mockLogger) Fatalf(format string, args ...interface{}) {}

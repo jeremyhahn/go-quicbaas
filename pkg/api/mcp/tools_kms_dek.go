@@ -293,19 +293,9 @@ func (r *ToolRegistry) registerDEKTools() {
 // DEK Service Accessor
 // =============================================================================
 
-// getDEKService retrieves the ClusterDEKService from the service.
-func (r *ToolRegistry) getDEKService() (service.ClusterDEKService, error) {
-	dekSvc, ok := r.service.(interface {
-		ClusterDEKService() service.ClusterDEKService
-	})
-	if !ok {
-		return nil, api.NewServiceUnavailableError("cluster DEK")
-	}
-	svc := dekSvc.ClusterDEKService()
-	if svc == nil {
-		return nil, api.NewServiceUnavailableError("cluster DEK")
-	}
-	return svc, nil
+// getDEKService retrieves the KMSService for DEK re-encryption operations.
+func (r *ToolRegistry) getDEKService() (service.KMSService, error) {
+	return r.getKMSService()
 }
 
 // =============================================================================

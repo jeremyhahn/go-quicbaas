@@ -248,7 +248,7 @@ func (b *fakeModelBackend) Close(_ context.Context, _ string) error { return nil
 func (b *fakeModelBackend) Capabilities() orchestration.BackendCapabilities {
 	return orchestration.BackendCapabilities{Kind: orchestration.BackendKindModelServer}
 }
-func (b *fakeModelBackend) Type() string        { return "fake-model" }
+func (b *fakeModelBackend) Type() string         { return "fake-model" }
 func (b *fakeModelBackend) ToolGuidance() string { return "" }
 
 // ListModels implements orchestration.ModelLister.

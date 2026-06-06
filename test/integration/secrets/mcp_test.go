@@ -18,12 +18,10 @@ package secrets
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"testing"
@@ -54,19 +52,9 @@ type MCPClient struct {
 // NewMCPClient creates a new MCP client.
 func NewMCPClient(endpoint string) *MCPClient {
 	return &MCPClient{
-		endpoint: endpoint,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-				TLSHandshakeTimeout: 10 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
-		},
-		nextID: 1,
+		endpoint:   endpoint,
+		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		nextID:     1,
 	}
 }
 
@@ -146,7 +134,6 @@ func (c *MCPClient) ensureAuthenticated(ctx context.Context) error {
 	c.authenticated = true
 	return nil
 }
-
 
 // ListTools lists available MCP tools.
 func (c *MCPClient) ListTools(ctx context.Context) ([]map[string]interface{}, error) {

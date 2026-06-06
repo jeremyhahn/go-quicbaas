@@ -1111,12 +1111,9 @@ func TestOpcodeToString(t *testing.T) {
 		{OpUpgradeNode, "UpgradeNode"},
 		{OpGetUpgradeStatus, "GetUpgradeStatus"},
 
-		// Seal Operations
-		{OpSealStatus, "SealStatus"},
-		{OpSealInit, "SealInit"},
-		{OpUnseal, "Unseal"},
-		{OpSeal, "Seal"},
-		{OpSealRekey, "SealRekey"},
+		// Barrier / Ceremony Operations (sub-op dispatched)
+		{OpBarrier, "Barrier"},
+		{OpCeremony, "Ceremony"},
 
 		// KMS Operations
 		{OpKMSGenerateKey, "KMSGenerateKey"},

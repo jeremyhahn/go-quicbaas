@@ -27,6 +27,8 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // ToolRegistry manages MCP tools and their execution.
@@ -35,6 +37,25 @@ type ToolRegistry struct {
 	service     service.QuicBaaS
 	logger      *logger.Logger
 	tools       []ToolDefinition
+
+	// barrierSvc backs every quicbaas_barrier_* tool. Wired
+	// post-construction via SetBarrierService once the qrdb SDK BarrierClient
+	// is online; nil during early boot and unit tests, in which case the
+	// barrier dispatcher returns BarrierServiceUnavailableError.
+	barrierSvc service.BarrierServicer
+
+	// ceremonySvc backs every quicbaas_ceremony_* tool. Wired
+	// post-construction via SetCeremonyService once the qrdb SDK
+	// CeremonyClient is online; nil during early boot and unit tests, in
+	// which case the ceremony dispatcher returns
+	// CeremonyServiceUnavailableError.
+	ceremonySvc service.CeremonyServicer
+
+	// credentialSvc backs every qrdb_credential_* tool. Wired
+	// post-construction via SetCredentialService once the qrdb credential
+	// service is online; nil during early boot and unit tests, in which
+	// case the credential dispatcher returns CredentialServiceUnavailableError.
+	credentialSvc qrdbsdk.ServiceCredentialServicer
 }
 
 // ToolDefinition describes an MCP tool.
@@ -168,9 +189,6 @@ func (r *ToolRegistry) registerTools() {
 	// Register Dynamic Secrets tools
 	r.registerDynamicSecretsTools()
 
-	// Register Cluster DEK tools
-	r.registerClusterDEKTools()
-
 	// Register Parameter Store tools
 	r.registerParameterTools()
 
@@ -198,12 +216,24 @@ func (r *ToolRegistry) registerTools() {
 	// Register Agent Admin tools (global disable/enable)
 	r.registerAgentAdminTools()
 
+	// Register Barrier lifecycle tools (mirrors REST /api/v1/barrier surface)
+	r.registerBarrierTools()
+
+	// Register Ceremony lifecycle tools (mirrors REST /api/v1/init surface)
+	r.registerCeremonyTools()
+
+	// Register unified login ceremony tools
+	r.registerLoginTools()
+
+	// Register qrdb credential management tools (qrdb_credential_*).
+	r.registerCredentialTools()
+
 	// Register XKMS-compatible tools
 
 	r.registerXKMSTools()
 	// KV Operations
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_put",
+		Name:        "qrdb_put",
 		Description: "Store a key-value pair in QuicBaaS with optional consistency guarantees",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -218,7 +248,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_get",
+		Name:        "qrdb_get",
 		Description: "Retrieve a value by key from QuicBaaS",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -232,7 +262,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_delete",
+		Name:        "qrdb_delete",
 		Description: "Delete a key-value pair from QuicBaaS",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -246,7 +276,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_list",
+		Name:        "qrdb_list",
 		Description: "List all entities of a specific type with pagination",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -558,7 +588,7 @@ func (r *ToolRegistry) registerTools() {
 
 	// RBAC Operations
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_user_create",
+		Name:        "qrdb_user_create",
 		Description: "Create a new user with roles",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -571,7 +601,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_user_delete",
+		Name:        "qrdb_user_delete",
 		Description: "Delete a user",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -583,7 +613,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_user_list",
+		Name:        "qrdb_user_list",
 		Description: "List all users",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -595,7 +625,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_role_create",
+		Name:        "qrdb_role_create",
 		Description: "Create a new role with permissions",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -608,7 +638,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_role_delete",
+		Name:        "qrdb_role_delete",
 		Description: "Delete a role",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -620,7 +650,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_role_list",
+		Name:        "qrdb_role_list",
 		Description: "List all roles",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -628,7 +658,7 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_role_assign",
+		Name:        "qrdb_role_assign",
 		Description: "Assign a role to a user",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -699,7 +729,7 @@ func (r *ToolRegistry) registerTools() {
 
 	// Health Operations
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_health",
+		Name:        "qrdb_health",
 		Description: "Get node health status",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -838,6 +868,20 @@ func (r *ToolRegistry) SetAuthorizationChecker(checker *AuthorizationChecker) {
 	r.authChecker = checker
 }
 
+// SetBarrierService installs the BarrierServicer used by every
+// quicbaas_barrier_* tool. Pass nil to take the surface offline; tools will
+// then return BarrierServiceUnavailableError.
+func (r *ToolRegistry) SetBarrierService(svc service.BarrierServicer) {
+	r.barrierSvc = svc
+}
+
+// SetCeremonyService installs the CeremonyServicer used by every
+// quicbaas_ceremony_* tool. Pass nil to take the surface offline; tools will
+// then return CeremonyServiceUnavailableError.
+func (r *ToolRegistry) SetCeremonyService(svc service.CeremonyServicer) {
+	r.ceremonySvc = svc
+}
+
 // ExecuteTool executes a tool by name with the given arguments.
 func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	r.logger.WithFields(map[string]interface{}{
@@ -895,6 +939,12 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeKMSSetPolicy(ctx, args)
 	case "quicbaas_kms_get_policy":
 		return r.executeKMSGetPolicy(ctx, args)
+	case "quicbaas_kms_set_rotation_policy":
+		return r.executeKMSSetRotationPolicy(ctx, args)
+	case "quicbaas_kms_get_rotation_policy":
+		return r.executeKMSGetRotationPolicy(ctx, args)
+	case "quicbaas_kms_delete_rotation_policy":
+		return r.executeKMSDeleteRotationPolicy(ctx, args)
 
 	// KMS Operations - Encrypt/Decrypt/Backend
 	case "quicbaas_kms_encrypt":
@@ -1005,13 +1055,13 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeCryptoDecryptBatch(ctx, args)
 
 	// KV Operations
-	case "quicbaas_put":
+	case "qrdb_put":
 		return r.executePut(ctx, args)
-	case "quicbaas_get":
+	case "qrdb_get":
 		return r.executeGet(ctx, args)
-	case "quicbaas_delete":
+	case "qrdb_delete":
 		return r.executeDelete(ctx, args)
-	case "quicbaas_list":
+	case "qrdb_list":
 		return r.executeList(ctx, args)
 
 	// Batch Operations
@@ -1065,19 +1115,19 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeLogout(ctx, args)
 
 	// RBAC Operations
-	case "quicbaas_user_create":
+	case "qrdb_user_create":
 		return r.executeUserCreate(ctx, args)
-	case "quicbaas_user_delete":
+	case "qrdb_user_delete":
 		return r.executeUserDelete(ctx, args)
-	case "quicbaas_user_list":
+	case "qrdb_user_list":
 		return r.executeUserList(ctx, args)
-	case "quicbaas_role_create":
+	case "qrdb_role_create":
 		return r.executeRoleCreate(ctx, args)
-	case "quicbaas_role_delete":
+	case "qrdb_role_delete":
 		return r.executeRoleDelete(ctx, args)
-	case "quicbaas_role_list":
+	case "qrdb_role_list":
 		return r.executeRoleList(ctx, args)
-	case "quicbaas_role_assign":
+	case "qrdb_role_assign":
 		return r.executeRoleAssign(ctx, args)
 	case "quicbaas_role_revoke":
 		return r.executeRoleRevoke(ctx, args)
@@ -1093,7 +1143,7 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeCacheConfigUpdate(ctx, args)
 
 	// Health Operations
-	case "quicbaas_health":
+	case "qrdb_health":
 		return r.executeHealth(ctx, args)
 	case "quicbaas_liveness":
 		return r.executeLiveness(ctx, args)
@@ -1241,11 +1291,6 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 			return r.executeDynamicSecretsTool(ctx, name, args)
 		}
 
-		// Check if it's a Cluster DEK tool
-		if isClusterDEKTool(name) {
-			return r.executeClusterDEKTool(ctx, name, args)
-		}
-
 		// Check if it's a Parameter Store tool
 		if isParameterTool(name) {
 			return r.executeParameterTool(ctx, name, args)
@@ -1284,6 +1329,26 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// Check if it is an Agent Admin tool (disable/enable globally)
 		if isAgentAdminTool(name) {
 			return r.executeAgentAdminTool(ctx, name, args)
+		}
+
+		// Check if it is a Barrier lifecycle tool.
+		if isBarrierTool(name) {
+			return r.executeBarrierTool(ctx, name, args)
+		}
+
+		// Check if it is a Ceremony lifecycle tool.
+		if isCeremonyTool(name) {
+			return r.executeCeremonyTool(ctx, name, args)
+		}
+
+		// Check if it is a unified login ceremony tool.
+		if isLoginTool(name) {
+			return r.executeLoginTool(ctx, name, args)
+		}
+
+		// Check if it is a qrdb credential management tool.
+		if isCredentialTool(name) {
+			return r.executeCredentialTool(ctx, name, args)
 		}
 
 		return nil, api.NewUnknownToolError(name)

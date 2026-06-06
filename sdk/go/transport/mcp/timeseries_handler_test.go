@@ -30,57 +30,57 @@ func TestMapTimeseriesMethodToTool(t *testing.T) {
 		{
 			name:     "SDK Write method",
 			method:   "Write",
-			expected: "quicbaas_ts_write_point",
+			expected: "qrdb_ts_write_point",
 		},
 		{
 			name:     "SDK Query method",
 			method:   "Query",
-			expected: "quicbaas_ts_query",
+			expected: "qrdb_ts_query",
 		},
 		{
 			name:     "CLI TSWritePoint method",
 			method:   "TSWritePoint",
-			expected: "quicbaas_ts_write_point",
+			expected: "qrdb_ts_write_point",
 		},
 		{
 			name:     "CLI TSWriteBatch method",
 			method:   "TSWriteBatch",
-			expected: "quicbaas_ts_write_batch",
+			expected: "qrdb_ts_write_batch",
 		},
 		{
 			name:     "CLI TSQuery method",
 			method:   "TSQuery",
-			expected: "quicbaas_ts_query",
+			expected: "qrdb_ts_query",
 		},
 		{
 			name:     "CLI TSDeleteSeries method",
 			method:   "TSDeleteSeries",
-			expected: "quicbaas_ts_delete_series",
+			expected: "qrdb_ts_delete_series",
 		},
 		{
 			name:     "CLI TSGetRetentionPolicy method",
 			method:   "TSGetRetentionPolicy",
-			expected: "quicbaas_ts_get_retention_policy",
+			expected: "qrdb_ts_get_retention_policy",
 		},
 		{
 			name:     "CLI TSSetRetentionPolicy method",
 			method:   "TSSetRetentionPolicy",
-			expected: "quicbaas_ts_set_retention_policy",
+			expected: "qrdb_ts_set_retention_policy",
 		},
 		{
 			name:     "CLI TSListMetrics method",
 			method:   "TSListMetrics",
-			expected: "quicbaas_ts_list_metrics",
+			expected: "qrdb_ts_list_metrics",
 		},
 		{
 			name:     "Alternative WritePoint method",
 			method:   "WritePoint",
-			expected: "quicbaas_ts_write_point",
+			expected: "qrdb_ts_write_point",
 		},
 		{
 			name:     "Alternative WriteBatch method",
 			method:   "WriteBatch",
-			expected: "quicbaas_ts_write_batch",
+			expected: "qrdb_ts_write_batch",
 		},
 		{
 			name:     "Unknown method fallback",

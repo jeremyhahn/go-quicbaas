@@ -489,7 +489,8 @@ func TestStartMessaging_Enabled(t *testing.T) {
 		require.NoError(t, err)
 
 		// Set raft node required by service builder
-		srv.raftNode = newStandaloneRaftNode(srv.config.Raft.NodeID, srv.config.Raft.RaftAddress)
+		require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+		t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 		// Initialize the service (required for messaging to be attached)
 		err = srv.startService()
@@ -514,7 +515,8 @@ func TestStartMessaging_Enabled(t *testing.T) {
 		err := srv.startStorage()
 		require.NoError(t, err)
 
-		srv.raftNode = newStandaloneRaftNode(srv.config.Raft.NodeID, srv.config.Raft.RaftAddress)
+		require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+		t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 		err = srv.startService()
 		require.NoError(t, err)
@@ -536,7 +538,8 @@ func TestStartMessaging_Enabled(t *testing.T) {
 		err := srv.startStorage()
 		require.NoError(t, err)
 
-		srv.raftNode = newStandaloneRaftNode(srv.config.Raft.NodeID, srv.config.Raft.RaftAddress)
+		require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+		t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 		err = srv.startService()
 		require.NoError(t, err)

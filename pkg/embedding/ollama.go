@@ -1,4 +1,4 @@
-//go:build vector
+//go:build vector && qrdb_vector
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -24,8 +24,8 @@ import (
 
 // Default constants re-exported from go-qrdb for backward compatibility.
 const (
-	DefaultOllamaURL        = qrdbsdk.DefaultOllamaEmbeddingBaseURL
-	DefaultOllamaMaxRetries = 3
+	DefaultOllamaURL          = qrdbsdk.DefaultOllamaEmbeddingBaseURL
+	DefaultOllamaMaxRetries   = 3
 	DefaultOllamaRetryBackoff = time.Second
 )
 

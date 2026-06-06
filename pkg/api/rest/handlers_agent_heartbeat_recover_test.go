@@ -410,7 +410,6 @@ func TestRecoverer_NoRegistrarSetIsNoop(t *testing.T) {
 	}
 }
 
-
 // TestHeartbeat_AutoRegisterUsesBindAddrFromBody asserts that when the
 // agent's heartbeat body carries a concrete bind_addr (the daemon
 // reports its spawn-server address on every tick), the recovered

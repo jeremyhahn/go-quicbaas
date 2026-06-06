@@ -32,9 +32,9 @@ import (
 // It orchestrates embedding generation through the embedding manager,
 // integrates with caching, and provides observability through metrics.
 type embeddingService struct {
-	manager          interfaces.EmbeddingManager
-	logger           interfaces.Logger
-	metrics          *embeddingMetrics
+	manager           interfaces.EmbeddingManager
+	logger            interfaces.Logger
+	metrics           *embeddingMetrics
 	disabledProviders sync.Map // tracks provider name (string) → true when disabled
 }
 
@@ -135,6 +135,12 @@ func (s *embeddingService) initMetrics() {
 // It uses the configured embedding provider (or default if not specified),
 // checks cache first for efficiency, and stores successful results in cache.
 func (s *embeddingService) GenerateEmbedding(ctx context.Context, req *GenerateEmbeddingRequest) (*GenerateEmbeddingResponse, error) {
+	if req == nil {
+		if s.metrics != nil {
+			s.metrics.operationErrors.With("generate", "invalid_input").Inc()
+		}
+		return nil, api.NewNilRequestError("embeddings.GenerateEmbedding")
+	}
 	start := time.Now()
 	providerName := string(req.Provider)
 	if providerName == "" {
@@ -225,6 +231,12 @@ func (s *embeddingService) GenerateEmbedding(ctx context.Context, req *GenerateE
 // This is more efficient than individual requests as it leverages provider batch APIs
 // and parallel processing. The manager handles cache integration transparently.
 func (s *embeddingService) BatchGenerateEmbeddings(ctx context.Context, req *BatchGenerateEmbeddingsRequest) (*BatchGenerateEmbeddingsResponse, error) {
+	if req == nil {
+		if s.metrics != nil {
+			s.metrics.operationErrors.With("batch_generate", "invalid_input").Inc()
+		}
+		return nil, api.NewNilRequestError("embeddings.BatchGenerateEmbeddings")
+	}
 	start := time.Now()
 	providerName := string(req.Provider)
 	if providerName == "" {
@@ -392,6 +404,12 @@ func (s *embeddingService) ListProviders(ctx context.Context, req *ListProviders
 // GetProviderInfo returns detailed information about a specific provider.
 // This includes configuration, model details, rate limits, and current status.
 func (s *embeddingService) GetProviderInfo(ctx context.Context, req *GetProviderInfoRequest) (*GetProviderInfoResponse, error) {
+	if req == nil {
+		if s.metrics != nil {
+			s.metrics.operationErrors.With("get_provider_info", "invalid_input").Inc()
+		}
+		return nil, api.NewNilRequestError("embeddings.GetProviderInfo")
+	}
 	start := time.Now()
 	defer func() {
 		if s.metrics != nil {
@@ -442,6 +460,12 @@ func (s *embeddingService) GetProviderInfo(ctx context.Context, req *GetProvider
 // SetDefaultProvider sets the default embedding provider to use for requests
 // that don't explicitly specify a provider.
 func (s *embeddingService) SetDefaultProvider(ctx context.Context, req *SetDefaultProviderRequest) (*SetDefaultProviderResponse, error) {
+	if req == nil {
+		if s.metrics != nil {
+			s.metrics.operationErrors.With("set_default_provider", "invalid_input").Inc()
+		}
+		return nil, api.NewNilRequestError("embeddings.SetDefaultProvider")
+	}
 	start := time.Now()
 	defer func() {
 		if s.metrics != nil {

@@ -404,7 +404,7 @@ func runTxnExecuteCommand(cmd *cobra.Command, args []string) error {
 
 	// Build REST URL
 	scheme := "http"
-	if restTLS || tlsSkipVerify {
+	if restTLS {
 		scheme = "https"
 	}
 	url := fmt.Sprintf("%s/v1/transaction", strings.TrimSuffix(restAddress, "/"))
@@ -412,17 +412,16 @@ func runTxnExecuteCommand(cmd *cobra.Command, args []string) error {
 		url = fmt.Sprintf("%s://%s/v1/transaction", scheme, restAddress)
 	}
 
-	// Create HTTP client
+	// Create HTTP client. QuicBaaS bans insecure TLS — when HTTPS is in use,
+	// trust the CA via --tls-ca.
 	client := &http.Client{
 		Timeout: timeout,
 	}
-	if tlsSkipVerify {
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // G402: user explicitly requested --tls-skip-verify
-				MinVersion:         tls.VersionTLS13,
-			},
-		}
+	if tlsCfg, tlsErr := buildTLSConfig(); tlsErr != nil {
+		return errors.Wrapf(tlsErr, errors.ErrConfiguration, "txn execute", "failed to build TLS config")
+	} else if tlsCfg != nil {
+		tlsCfg.MinVersion = tls.VersionTLS13
+		client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
 	}
 
 	// Create request

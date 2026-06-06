@@ -52,6 +52,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 const (
@@ -253,6 +255,37 @@ func (s *Server) SetAppRegistrar(registrar AppRegistrar) {
 	s.appRegistrar = registrar
 }
 
+// SetBarrierService installs the BarrierServicer used by every
+// quicbaas_barrier_* MCP tool. Lifecycle wiring calls this once the qrdb SDK
+// BarrierClient is online. Passing nil takes the barrier surface offline;
+// tools then return BarrierServiceUnavailableError so callers can distinguish
+// "no service" from a transient failure.
+func (s *Server) SetBarrierService(svc service.BarrierServicer) {
+	if s.tools != nil {
+		s.tools.SetBarrierService(svc)
+	}
+}
+
+// SetCeremonyService installs the CeremonyServicer used by every
+// quicbaas_ceremony_* MCP tool. Lifecycle wiring calls this once the qrdb
+// SDK CeremonyClient is online. Passing nil takes the ceremony surface
+// offline; tools then return CeremonyServiceUnavailableError.
+func (s *Server) SetCeremonyService(svc service.CeremonyServicer) {
+	if s.tools != nil {
+		s.tools.SetCeremonyService(svc)
+	}
+}
+
+// SetCredentialService installs the CredentialServicer used by every
+// qrdb_credential_* MCP tool. Lifecycle wiring calls this once the qrdb
+// credential service is online. Passing nil takes the credential surface
+// offline; tools then return CredentialServiceUnavailableError.
+func (s *Server) SetCredentialService(svc qrdbsdk.ServiceCredentialServicer) {
+	if s.tools != nil {
+		s.tools.SetCredentialService(svc)
+	}
+}
+
 // EnableClientRegistrationEndpoint enables or disables the RFC 7591 dynamic client
 // registration endpoint. If no AppRegistrar is configured, an in-memory store is used.
 func (s *Server) EnableClientRegistrationEndpoint(enable bool) {
@@ -447,6 +480,15 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	// Create context with token
 	ctx := contextWithToken(r.Context(), token)
 
+	// Thread the verified mTLS peer certificate into the context so the unified
+	// login ceremony (quicbaas_login_finish) can derive the mtls factor lookup
+	// key from the verified handshake rather than a client-supplied value.
+	// VerifiedChains guarantees the cert passed chain validation against the
+	// configured client CA.
+	if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.VerifiedChains[0]) > 0 {
+		ctx = service.WithVerifiedPeerCert(ctx, r.TLS.VerifiedChains[0][0])
+	}
+
 	// Extract and validate MCP-Protocol-Version header
 	clientProtocolVersion := r.Header.Get(MCPProtocolVersionHeader)
 	if clientProtocolVersion != "" {
@@ -609,8 +651,11 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 	// BREAKING CHANGE (v1.1.0): _token and accessToken in params are no longer supported
 	token := tokenFromContext(ctx)
 
-	// Check authorization before executing tool
-	if authErr := s.authChecker.CheckToolAuthorization(ctx, name, token); authErr != nil {
+	// Check authorization before executing tool; inject Subject into context so
+	// service-layer per-key authorization can access the principal uniformly.
+	var authErr *AuthorizationError
+	ctx, authErr = s.authChecker.CheckToolAuthorizationWithContext(ctx, name, token)
+	if authErr != nil {
 		return s.handleAuthError(req.ID, authErr)
 	}
 

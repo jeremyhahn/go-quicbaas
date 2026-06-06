@@ -100,19 +100,19 @@ func (m *mockOrchestrator) SubscribeSessionEvents(ctx context.Context, req *orch
 // Keeping tests free of log output keeps `go test -v` readable.
 type noopLogger struct{}
 
-func (noopLogger) Debug(string, ...any)                        {}
-func (noopLogger) Debugf(string, ...interface{})               {}
-func (noopLogger) Info(string, ...any)                         {}
-func (noopLogger) Infof(string, ...interface{})                {}
-func (noopLogger) Warn(string, ...any)                         {}
-func (noopLogger) Warnf(string, ...interface{})                {}
-func (noopLogger) Error(string, ...any)                        {}
-func (noopLogger) Errorf(string, ...interface{})               {}
-func (noopLogger) Fatal(string)                                {}
-func (noopLogger) Fatalf(string, ...interface{})               {}
-func (l noopLogger) WithField(string, interface{}) interfaces.Logger { return l }
+func (noopLogger) Debug(string, ...any)                                  {}
+func (noopLogger) Debugf(string, ...interface{})                         {}
+func (noopLogger) Info(string, ...any)                                   {}
+func (noopLogger) Infof(string, ...interface{})                          {}
+func (noopLogger) Warn(string, ...any)                                   {}
+func (noopLogger) Warnf(string, ...interface{})                          {}
+func (noopLogger) Error(string, ...any)                                  {}
+func (noopLogger) Errorf(string, ...interface{})                         {}
+func (noopLogger) Fatal(string)                                          {}
+func (noopLogger) Fatalf(string, ...interface{})                         {}
+func (l noopLogger) WithField(string, interface{}) interfaces.Logger     { return l }
 func (l noopLogger) WithFields(map[string]interface{}) interfaces.Logger { return l }
-func (l noopLogger) WithError(error) interfaces.Logger         { return l }
+func (l noopLogger) WithError(error) interfaces.Logger                   { return l }
 
 // newTestBot assembles a bot backed entirely by in-memory fakes.
 func newTestBot(t *testing.T) (*OrchestratorBot, *fakeSignalIO, *mockOrchestrator, *SessionManager) {

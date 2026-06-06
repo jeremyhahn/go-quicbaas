@@ -150,3 +150,82 @@ type ConfigValidationError struct {
 func (e *ConfigValidationError) Error() string {
 	return "invalid indexing config: " + e.Field + " " + e.Reason
 }
+
+// QRDBVectorClientNilError indicates that no VectorClient was provided.
+type QRDBVectorClientNilError struct{}
+
+// Error implements the error interface.
+func (e *QRDBVectorClientNilError) Error() string {
+	return "qrdb vector index: VectorClient must not be nil"
+}
+
+// QRDBVectorNamespaceEmptyError indicates that no namespace was provided.
+type QRDBVectorNamespaceEmptyError struct{}
+
+// Error implements the error interface.
+func (e *QRDBVectorNamespaceEmptyError) Error() string {
+	return "qrdb vector index: namespace must not be empty"
+}
+
+// QRDBVectorCreateNamespaceError wraps a failure to create a qrdb namespace.
+type QRDBVectorCreateNamespaceError struct {
+	Namespace string
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *QRDBVectorCreateNamespaceError) Error() string {
+	return "qrdb vector index: failed to create namespace " + e.Namespace + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *QRDBVectorCreateNamespaceError) Unwrap() error {
+	return e.Cause
+}
+
+// QRDBVectorUpsertError wraps a failure to upsert a vector.
+type QRDBVectorUpsertError struct {
+	ID    string
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *QRDBVectorUpsertError) Error() string {
+	return "qrdb vector index: upsert failed for id " + e.ID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *QRDBVectorUpsertError) Unwrap() error {
+	return e.Cause
+}
+
+// QRDBVectorSearchError wraps a failure to perform a similarity search.
+type QRDBVectorSearchError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *QRDBVectorSearchError) Error() string {
+	return "qrdb vector index: search failed: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *QRDBVectorSearchError) Unwrap() error {
+	return e.Cause
+}
+
+// QRDBVectorDeleteError wraps a failure to delete a vector.
+type QRDBVectorDeleteError struct {
+	ID    string
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *QRDBVectorDeleteError) Error() string {
+	return "qrdb vector index: delete failed for id " + e.ID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *QRDBVectorDeleteError) Unwrap() error {
+	return e.Cause
+}

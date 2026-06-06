@@ -1,0 +1,199 @@
+// QuicBaaS Barrier Protocol Buffer Definitions v1
+// Storage barrier (root-key) lifecycle exposed by the QuicBaaS daemon.
+//
+// QuicBaaS itself does not own the barrier; the embedded go-qrdb instance
+// does. These RPCs are a thin gRPC facade that QuicBaaS exposes so that
+// gRPC-only clients connecting to the QuicBaaS endpoint can drive barrier
+// operations against the composed stack without having to dial qrdb
+// directly. The shape mirrors the REST surface served from
+// /api/v1/barrier and the underlying go-qrdb Barrier gRPC service.
+//
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+
+syntax = "proto3";
+
+package quicbaas.barrier.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// Barrier Service
+// =============================================================================
+
+// Barrier exposes the storage-barrier (root-key) lifecycle through gRPC.
+// All RPCs delegate to the embedded go-qrdb BarrierClient at the QuicBaaS
+// service-layer facade.
+service Barrier {
+  // BarrierInitialize initializes the storage barrier with a single
+  // passphrase. Returns FailedPrecondition if the barrier is already
+  // initialized.
+  rpc BarrierInitialize(BarrierInitializeRequest) returns (google.protobuf.Empty);
+
+  // BarrierUnseal unseals the barrier using a single passphrase.
+  rpc BarrierUnseal(BarrierUnsealRequest) returns (google.protobuf.Empty);
+
+  // BarrierSeal transitions the barrier to the sealed state. Subsequent
+  // data operations are rejected until the barrier is unsealed again.
+  rpc BarrierSeal(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // BarrierStatus reports the current barrier state including the active
+  // sealing strategy, hardware backing, and initialization timestamp.
+  rpc BarrierStatus(google.protobuf.Empty) returns (BarrierStatusResponse);
+
+  // BarrierShamirInitialize initializes the barrier with Shamir secret
+  // sharing, splitting the root key into threshold-of-total shares.
+  rpc BarrierShamirInitialize(BarrierShamirInitializeRequest) returns (BarrierShamirInitializeResponse);
+
+  // BarrierShamirUnsealShare submits a single Shamir share toward the
+  // unseal quorum and reports current progress.
+  rpc BarrierShamirUnsealShare(BarrierShamirUnsealShareRequest) returns (BarrierShamirUnsealShareResponse);
+
+  // BarrierShamirUnsealShares unseals the barrier using a complete set of
+  // Shamir shares supplied in a single call.
+  rpc BarrierShamirUnsealShares(BarrierShamirUnsealSharesRequest) returns (google.protobuf.Empty);
+
+  // BarrierShamirListShares returns metadata about persisted Shamir share
+  // state (count, threshold, total).
+  rpc BarrierShamirListShares(google.protobuf.Empty) returns (BarrierShamirSharesResponse);
+
+  // BarrierShamirDeleteShare removes a single persisted share by index.
+  rpc BarrierShamirDeleteShare(BarrierShamirDeleteShareRequest) returns (google.protobuf.Empty);
+
+  // BarrierShamirDeleteAllShares removes every persisted Shamir share.
+  rpc BarrierShamirDeleteAllShares(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // BarrierShamirVerify validates the consistency of every persisted share.
+  rpc BarrierShamirVerify(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // BarrierRekey generates new Shamir shares for the existing root key
+  // with the supplied threshold and total parameters.
+  rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitializeResponse);
+
+  // BarrierRecoveryGenerate generates a fresh set of recovery shares for
+  // disaster recovery.
+  rpc BarrierRecoveryGenerate(BarrierRecoveryGenerateRequest) returns (BarrierRecoveryKeysResponse);
+
+  // BarrierRecoveryRecover unseals the barrier using previously generated
+  // recovery shares.
+  rpc BarrierRecoveryRecover(BarrierRecoveryRecoverRequest) returns (google.protobuf.Empty);
+
+  // BarrierRecoveryDelete removes all persisted recovery key metadata.
+  rpc BarrierRecoveryDelete(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // BarrierRecoveryStatus reports whether recovery key metadata exists.
+  rpc BarrierRecoveryStatus(google.protobuf.Empty) returns (BarrierRecoveryStatusResponse);
+
+  // BarrierRootToken generates a fresh root token by proving knowledge of
+  // the master key through Shamir shares.
+  rpc BarrierRootToken(BarrierRootTokenRequest) returns (BarrierRootTokenResponse);
+}
+
+// =============================================================================
+// Messages
+// =============================================================================
+
+// BarrierInitializeRequest initialises the barrier with a single master key.
+message BarrierInitializeRequest {
+  string secret = 1;
+}
+
+// BarrierUnsealRequest unseals the barrier with a master key.
+message BarrierUnsealRequest {
+  string secret = 1;
+}
+
+// BarrierStatusResponse describes the current barrier state.
+message BarrierStatusResponse {
+  bool sealed = 1;
+  string strategy = 2;
+  bool hardware_backed = 3;
+  // initialized_at is RFC3339 (UTC) or empty when never initialised.
+  string initialized_at = 4;
+}
+
+// BarrierShamirInitializeRequest initialises the barrier with Shamir secret sharing.
+message BarrierShamirInitializeRequest {
+  string secret = 1;
+  int32 threshold = 2;
+  int32 total_shares = 3;
+}
+
+// BarrierShamirInitializeResponse returns the generated key shares.
+message BarrierShamirInitializeResponse {
+  repeated string shares = 1;
+  int32 threshold = 2;
+  int32 total_shares = 3;
+}
+
+// BarrierShamirUnsealShareRequest submits a single Shamir share.
+message BarrierShamirUnsealShareRequest {
+  string share = 1;
+}
+
+// BarrierShamirUnsealShareResponse reports unseal progress.
+message BarrierShamirUnsealShareResponse {
+  int32 required = 1;
+  int32 submitted = 2;
+  bool complete = 3;
+}
+
+// BarrierShamirUnsealSharesRequest submits multiple Shamir shares.
+message BarrierShamirUnsealSharesRequest {
+  repeated string shares = 1;
+}
+
+// BarrierShamirSharesResponse describes stored Shamir share metadata.
+message BarrierShamirSharesResponse {
+  int32 count = 1;
+  int32 threshold = 2;
+  int32 total = 3;
+}
+
+// BarrierShamirDeleteShareRequest deletes a single share by index.
+message BarrierShamirDeleteShareRequest {
+  int32 index = 1;
+}
+
+// BarrierRekeyRequest generates new Shamir shares.
+message BarrierRekeyRequest {
+  int32 threshold = 1;
+  int32 total = 2;
+}
+
+// BarrierRecoveryGenerateRequest generates recovery keys.
+message BarrierRecoveryGenerateRequest {
+  int32 threshold = 1;
+  int32 total = 2;
+}
+
+// BarrierRecoveryKeysResponse returns generated recovery keys.
+message BarrierRecoveryKeysResponse {
+  repeated string keys = 1;
+  int32 threshold = 2;
+  int32 total = 3;
+}
+
+// BarrierRecoveryRecoverRequest unseals the barrier using recovery keys.
+message BarrierRecoveryRecoverRequest {
+  repeated string keys = 1;
+}
+
+// BarrierRecoveryStatusResponse indicates whether recovery keys exist.
+message BarrierRecoveryStatusResponse {
+  bool has_recovery_keys = 1;
+}
+
+// BarrierRootTokenRequest generates a root token using Shamir shares.
+message BarrierRootTokenRequest {
+  repeated string shares = 1;
+}
+
+// BarrierRootTokenResponse returns a newly generated root token.
+message BarrierRootTokenResponse {
+  string token = 1;
+  // created_at is RFC3339 (UTC) or empty when not supplied by the server.
+  string created_at = 2;
+}

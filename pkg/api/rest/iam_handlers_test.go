@@ -526,6 +526,47 @@ func TestIAMHandler_CreateUser_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
+// TestIAMHandler_CreateUser_ResponseShape is a regression test for the bug
+// where the REST CreateUser response returned a flat map with "user_id"
+// instead of the canonical iam.User shape. The integration tests (and SDK
+// convertToUser) parse the response into iam.User expecting "id"/"name", so
+// the response MUST carry those fields. invite_token, invite_expires_at, and
+// invite_url must be present so the caller can deliver the invite.
+func TestIAMHandler_CreateUser_ResponseShape(t *testing.T) {
+	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+
+	body := `{"email": "shape@example.com", "username": "shape-user", "name": "Shape Test User"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	w := httptest.NewRecorder()
+
+	handler.CreateUser(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	// Canonical iam.User fields
+	assert.NotEmpty(t, resp["id"], "response must carry iam.User.id (not user_id)")
+	assert.Equal(t, "shape@example.com", resp["email"])
+	assert.Equal(t, "Shape Test User", resp["name"])
+	assert.Equal(t, "tenant1", resp["tenant_id"])
+
+	// Invite metadata
+	assert.NotEmpty(t, resp["invite_token"], "invite_token required for one-time delivery")
+	assert.NotEmpty(t, resp["invite_url"], "invite_url required for invite delivery")
+	assert.NotEmpty(t, resp["invite_expires_at"], "invite_expires_at required")
+
+	// The legacy user_id key must not be present — callers should use id.
+	_, hasUserID := resp["user_id"]
+	assert.False(t, hasUserID, "response must not carry legacy user_id key; use id")
+}
+
 func TestIAMHandler_CreateUser_MissingEmail(t *testing.T) {
 	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()

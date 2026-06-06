@@ -18,8 +18,10 @@ package service
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -37,7 +39,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
-	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
@@ -45,7 +46,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
 	schedulerstorage "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/storage/quicbaas"
-	"github.com/jeremyhahn/go-quicbaas/pkg/security"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -162,7 +162,6 @@ type quicBaaS struct {
 	ollamaService             OllamaService
 	certificateService        CertificateService
 	dynamicSecretsService     DynamicSecretsService
-	clusterDEKService         ClusterDEKService
 	objectStorageService      ObjectStorageService
 	objectStorageAdminService ObjectStorageAdminService
 	parameterStoreService     ParameterStoreService
@@ -177,9 +176,17 @@ type quicBaaS struct {
 	sshClient                 xkmsssh.Client
 	iamService                *iamServiceProvider
 
+	// kmsRotationScheduler drives cryptoperiod-based auto-rotation (PCI DSS 3.6).
+	// Nil when KMS is not configured or auto-rotation is disabled.
+	kmsRotationScheduler *KMSRotationScheduler
+
 	// sealService handles database seal/unseal operations.
 	// Nil when seal is disabled.
 	sealService SealService
+
+	// loginService is the unified login-ceremony facade
+	// (BeginLogin / FinishLogin). Nil until SetLoginService wires it.
+	loginService LoginServicer
 
 	// IAM provider - stores IAMComponents for REST handlers
 	// Uses IAMServiceProvider interface for proper type safety and testability
@@ -193,10 +200,6 @@ type quicBaaS struct {
 
 	// Keyspace resolver for multi-tenant key isolation
 	keyspaceResolver KeyspaceResolver
-
-	// tenantIsolationManager enforces the configured tenant isolation strategy
-	// (keyspace prefix or cryptographic barrier).
-	tenantIsolationManager security.TenantIsolationManager
 
 	// Lifecycle management
 	mu        sync.RWMutex
@@ -234,25 +237,33 @@ func (e *QRDBClientNotSetError) Error() string {
 	return "qrdb client provider not configured"
 }
 
-// newTenantIsolationManager constructs the appropriate TenantIsolationManager
-// based on the configuration. Defaults to keyspace mode when mode is empty or
-// unrecognized so that existing deployments are unaffected.
-func newTenantIsolationManager(cfg config.TenantIsolationConfig) security.TenantIsolationManager {
-	if cfg.Mode == config.TenantIsolationBarrier {
-		// BarrierIsolationManager requires a BarrierRegistry which is only
-		// available after a system barrier has been initialized. Return a
-		// no-op keyspace manager here; callers that need barrier mode must
-		// replace this via SetTenantIsolationManager once the registry is ready.
-		return security.NewKeyspaceIsolationManager()
+// isNilInterface reports whether v is either a nil interface or a typed-nil
+// pointer stored in an interface. Using == nil on an interface{} that holds a
+// typed-nil (e.g., (*ShardedClient)(nil)) returns false, so this helper uses
+// reflection to distinguish the two cases.
+func isNilInterface(v interface{}) bool {
+	if v == nil {
+		return true
 	}
-	return security.NewKeyspaceIsolationManager()
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+		return rv.IsNil()
+	}
+	return false
 }
 
 // newQuicBaaS creates a new QuicBaaS service from the builder.
 // This is called by ServiceBuilder.Build() in service.go.
 func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
-	// Validate required dependencies
-	if b.raftNode == nil {
+	// Validate required dependencies.
+	// raftNode is required unless a concrete qrdbClient is provided — when
+	// the caller has a real qrdb engine node the SDK client handles all
+	// data-plane operations and the standalone no-op raft node is not
+	// needed. Use reflect to detect typed-nil interface values so that
+	// a nil *ShardedClient stored as interface{} is treated as absent.
+	qrdbClientPresent := !isNilInterface(b.qrdbClient)
+	if b.raftNode == nil && !qrdbClientPresent {
 		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "service.newQuicBaaS",
@@ -268,18 +279,23 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		}
 	}
 
-	// Type assert interfaces to concrete types
-	raftNode, ok := b.raftNode.(interfaces.RaftNode)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "service.newQuicBaaS",
-			Err:  &api.InvalidTypeError{Field: "raft node", Expected: "interfaces.RaftNode"},
+	// Type assert raftNode only when it is provided.
+	var raftNode interfaces.RaftNode
+	if b.raftNode != nil {
+		var ok bool
+		raftNode, ok = b.raftNode.(interfaces.RaftNode)
+		if !ok {
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.newQuicBaaS",
+				Err:  &api.InvalidTypeError{Field: "raft node", Expected: "interfaces.RaftNode"},
+			}
 		}
 	}
 
 	var storage interfaces.Storage
 	if b.storage != nil {
+		var ok bool
 		storage, ok = b.storage.(interfaces.Storage)
 		if !ok {
 			return nil, &errors.QBError{
@@ -331,6 +347,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 
 	var logger interfaces.Logger
 	if b.logger != nil {
+		var ok bool
 		logger, ok = b.logger.(interfaces.Logger)
 		if !ok {
 			return nil, &errors.QBError{
@@ -357,16 +374,15 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 
 	// Create service instance
 	svc := &quicBaaS{
-		config:                 b.config,
-		raftNode:               raftNode,
-		storage:                storage,
-		cacheManager:           cacheManager,
-		authManager:            authManager,
-		backupMgr:              backupMgr,
-		logger:                 logger,
-		keyspaceResolver:       NewKeyspaceResolver(),
-		tenantIsolationManager: newTenantIsolationManager(b.config.TenantIsolation),
-		startTime:              time.Now(),
+		config:           b.config,
+		raftNode:         raftNode,
+		storage:          storage,
+		cacheManager:     cacheManager,
+		authManager:      authManager,
+		backupMgr:        backupMgr,
+		logger:           logger,
+		keyspaceResolver: NewKeyspaceResolver(),
+		startTime:        time.Now(),
 	}
 
 	// Wire qrdb SDK client provider if provided.
@@ -496,6 +512,17 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 
 				// Wire KVStore for persistent version status replication across cluster nodes
 				kmsImpl.SetKVStore(kvStore)
+
+				// Start KMS auto-rotation scheduler for PCI DSS 3.6 cryptoperiod enforcement.
+				// The scheduler scans all keys and rotates those whose RotationPolicy.AutoRotate
+				// is true and whose NextRotation timestamp has passed.
+				rotSched := newKMSRotationScheduler(kmsImpl, logger, b.config.KMSRotationScanInterval)
+				rotSched.Start(context.Background())
+				svc.kmsRotationScheduler = rotSched
+
+				if logger != nil {
+					logger.Info("KMS auto-rotation scheduler started")
+				}
 			}
 
 			// Register standard test handlers for integration testing
@@ -888,6 +915,19 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 	}
 	data, err := client.KV().Get(ctx, string(key))
 	if err != nil {
+		// Key-not-found from the transport is not a Raft error; return the
+		// not-found sentinel so the handler maps it to HTTP 404.
+		var knf *qrdbtransport.KeyNotFoundError
+		if stderrors.As(err, &knf) {
+			if k.svc.metrics != nil {
+				k.svc.metrics.requestsTotal.With("Get", "not_found").Inc()
+			}
+			return nil, &errors.QBError{
+				Code: errors.ErrNotFound,
+				Op:   "service.Get",
+				Err:  &api.NotFoundError{Resource: req.EntityType, ID: fmt.Sprintf("%d", req.ID)},
+			}
+		}
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Get", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
@@ -3475,42 +3515,47 @@ func (h *healthService) Readiness(ctx context.Context, req *ReadinessRequest) (*
 		return &ReadinessResponse{Ready: true}, nil
 	}
 
-	// Check all configured shards have elected leaders via SDK.
-	// If the SDK client cannot verify shard state (e.g., standalone raft
-	// nodes without full Raft consensus), fall back to ready since the
-	// local transport is operational.
-	shards := h.svc.config.Shards
-	if len(shards) == 0 {
-		shards = []uint64{1} // Default to shard 1
+	// Check all configured shards have elected leaders.
+	//
+	// Use GetTopology (the node-host shard view) rather than per-shard
+	// GetShardState. GetTopology reports the same leader/membership state the
+	// cluster-status endpoint exposes and that quicraft's NodeHostInfo sees,
+	// whereas GetShardState reads the engine's per-shard Raft peer
+	// (GetShardMembership), which returns ErrShardNotReady when the peer handle
+	// lags the node-host view on an otherwise healthy shard — making readiness
+	// flap to 503 on a cluster that has a stable leader. If the SDK client
+	// cannot verify topology (e.g., standalone nodes without full consensus),
+	// fall back to ready when a local raft node can serve reads.
+	client, err := h.svc.qrdbForShard(1) // shard 1 is the admin entry point
+	if err != nil {
+		if h.svc.raftNode != nil {
+			return &ReadinessResponse{Ready: true}, nil
+		}
+		return &ReadinessResponse{
+			Ready:  false,
+			Reason: "shard has no SDK client available",
+		}, nil
+	}
+	topology, err := client.Admin().GetTopology(ctx)
+	if err != nil {
+		if h.svc.raftNode != nil {
+			return &ReadinessResponse{Ready: true}, nil
+		}
+		return &ReadinessResponse{
+			Ready:  false,
+			Reason: "shard state check failed",
+		}, nil
 	}
 
-	for _, shardID := range shards {
-		client, err := h.svc.qrdbForShard(shardID)
-		if err != nil {
-			// No SDK client for this shard - check if local transport works
-			if h.svc.raftNode != nil {
-				continue // Local transport available, shard is accessible
-			}
-			return &ReadinessResponse{
-				Ready:  false,
-				Reason: "shard has no SDK client available",
-			}, nil
-		}
-		state, err := client.Admin().GetShardState(ctx, shardID)
-		if err != nil {
-			// GetShardState failed - this is expected with standalone raft nodes
-			// that don't participate in real Raft consensus. If the raft node
-			// is present, the local transport handles requests directly.
-			if h.svc.raftNode != nil {
-				continue
-			}
-			return &ReadinessResponse{
-				Ready:  false,
-				Reason: "shard state check failed",
-			}, nil
-		}
-		if !state.HasLeader {
-			// No leader - but if we have a local raft node, it can serve reads
+	// Require every Raft shard reported by the node-host topology to have an
+	// elected leader. The service config also lists non-Raft service shards
+	// (e.g. the vector shard, raft_enabled=false), which never appear in the
+	// topology — those must NOT be gated here, or readiness stays at 503 on an
+	// otherwise-healthy cluster.
+	sawShard := false
+	for _, si := range topology.Shards {
+		sawShard = true
+		if si.LeaderID == 0 {
 			if h.svc.raftNode != nil {
 				continue
 			}
@@ -3519,6 +3564,12 @@ func (h *healthService) Readiness(ctx context.Context, req *ReadinessRequest) (*
 				Reason: "shard has no leader elected",
 			}, nil
 		}
+	}
+	if !sawShard && h.svc.raftNode == nil {
+		return &ReadinessResponse{
+			Ready:  false,
+			Reason: "no raft shards available",
+		}, nil
 	}
 
 	return &ReadinessResponse{Ready: true}, nil
@@ -4987,11 +5038,6 @@ func (s *quicBaaS) DynamicSecrets() DynamicSecretsService {
 	return s.dynamicSecretsService
 }
 
-// ClusterDEK returns the Cluster DEK service (returns nil if not configured).
-func (s *quicBaaS) ClusterDEK() ClusterDEKService {
-	return s.clusterDEKService
-}
-
 // ObjectStorageService returns the Object Storage service (returns nil if not configured).
 func (s *quicBaaS) ObjectStorageService() ObjectStorageService {
 	return s.objectStorageService
@@ -5084,15 +5130,6 @@ func (s *quicBaaS) Messaging() messaging.Service {
 // This is called after the messaging service is initialized externally.
 func (s *quicBaaS) SetMessagingService(ms messaging.Service) {
 	s.messagingService = ms
-}
-
-// SetTenantIsolationManager replaces the tenant isolation manager.
-// Called by the server when barrier mode is active and the BarrierRegistry
-// has been initialized with the system barrier.
-func (s *quicBaaS) SetTenantIsolationManager(m security.TenantIsolationManager) {
-	s.mu.Lock()
-	s.tenantIsolationManager = m
-	s.mu.Unlock()
 }
 
 // SetSealService wires the SealService into the facade at runtime.
@@ -5220,6 +5257,19 @@ func (s *quicBaaS) SetQRDBClient(provider QRDBClientProvider) {
 	s.qrdbClient = provider
 }
 
+// LoginCeremony returns the unified login-ceremony facade. Returns nil before
+// SetLoginService has wired it (e.g. login disabled / IAM absent).
+func (s *quicBaaS) LoginCeremony() LoginServicer {
+	return s.loginService
+}
+
+// SetLoginService wires the unified login-ceremony facade into the service.
+// Called by the server once the qrdb node hosting the in-process LoginClient
+// is constructed.
+func (s *quicBaaS) SetLoginService(svc LoginServicer) {
+	s.loginService = svc
+}
+
 // WatchManager returns the internal watch.Manager for bridge integration.
 func (s *quicBaaS) WatchManager() *watch.Manager {
 	return s.watchManager
@@ -5345,6 +5395,12 @@ func (s *quicBaaS) Close() error {
 	}
 
 	// Close components in reverse dependency order
+
+	// Stop KMS auto-rotation scheduler before the scheduler engine so no new
+	// rotation scans are triggered while the engine is shutting down.
+	if s.kmsRotationScheduler != nil {
+		s.kmsRotationScheduler.Stop()
+	}
 
 	// Stop scheduler first to prevent new job executions
 	if s.schedulerEngine != nil {

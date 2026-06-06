@@ -132,6 +132,14 @@ func (m *mockCertificateService) IsRevoked(ctx context.Context, req *service.IsR
 	return &service.IsRevokedResponse{}, nil
 }
 
+func (m *mockCertificateService) CAInfo(ctx context.Context, req *service.CAInfoRequest) (*service.CAInfoResponse, error) {
+	return &service.CAInfoResponse{}, nil
+}
+
+func (m *mockCertificateService) ListCertificates(ctx context.Context, req *service.ListCertificatesRequest) (*service.ListCertificatesResponse, error) {
+	return &service.ListCertificatesResponse{}, nil
+}
+
 // =============================================================================
 // Mock Certificate-Enabled Service
 // =============================================================================
@@ -167,7 +175,7 @@ func createCertificateTestHandler(certSvc service.CertificateService) *Handler {
 	svc := &mockCertificateEnabledService{
 		certSvc: certSvc,
 	}
-	return NewHandler(svc, nil, nil, nil, nil, createCertificateTestLogger())
+	return NewHandler(svc, nil, nil, nil, createCertificateTestLogger())
 }
 
 // =============================================================================

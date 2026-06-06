@@ -87,7 +87,7 @@ func TestBootstrap_FirstBoot_PrintsActivationURL(t *testing.T) {
 		"activation banner must appear on stderr on first boot")
 	assert.Contains(t, stderrOutput, "/ui/#/activate?token=",
 		"activation URL with invite token must be in the banner")
-	assert.Contains(t, stderrOutput, "This invite is shown ONCE",
+	assert.Contains(t, stderrOutput, "Shown ONCE",
 		"banner must warn the invite is shown once")
 }
 
@@ -148,9 +148,14 @@ func TestBootstrap_SecondBoot_Silent(t *testing.T) {
 // TestBootstrap_ActivationEndpoint_ReturnsHTTP200
 //
 // On first boot, extract the invite token from stderr, then call
-// POST /api/v1/iam/invite/activate with a fake WebAuthn credential stub.
-// Asserts the endpoint returns 2xx (the activation flow accepts the token
-// even if the WebAuthn credential is minimal — the token itself must be valid).
+// POST /api/v1/iam/invite/validate over the REST transport. Asserts the
+// endpoint returns 200 (valid token) or 404 (endpoint not wired yet) — i.e.
+// the server is reachable and the token round-trips, not an auth error.
+//
+// Unlike the stderr-only tests above, this case needs a real network
+// listener, so it runs with Embedded=false (REST enabled) and discovers the
+// OS-assigned ephemeral port via srv.RESTAddr() rather than reading the
+// configured REST.Port (which stays 0 once the OS picks the real port).
 // ---------------------------------------------------------------------------
 
 func TestBootstrap_ActivationEndpoint_ReturnsHTTP200(t *testing.T) {
@@ -159,6 +164,12 @@ func TestBootstrap_ActivationEndpoint_ReturnsHTTP200(t *testing.T) {
 	cfg := minimalBootstrapConfig(tmpDir)
 	cfg.Auth.AllowPasswordAuth = false
 	cfg.Auth.InsecureDevMode = false
+
+	// Start a real REST listener (not the in-process embedded transport) so
+	// the activation endpoint is reachable over HTTP(S). REST.Port stays 0 so
+	// the OS assigns a free ephemeral port, avoiding collisions with siblings.
+	cfg.Server.Embedded = false
+	cfg.Server.REST.Enabled = true
 
 	// Capture stderr to get the invite token.
 	rdr, wtr, err := os.Pipe()
@@ -184,12 +195,24 @@ func TestBootstrap_ActivationEndpoint_ReturnsHTTP200(t *testing.T) {
 	token := extractInviteToken(t, stderrOutput)
 	require.NotEmpty(t, token, "invite token must be extractable from the activation URL")
 
-	// Verify the invite token against the REST API.
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.REST.Port)
+	// Resolve the REAL bound address. With REST.Port=0 the kernel picks an
+	// ephemeral port; cfg.Server.REST.Port still reads 0, so we must ask the
+	// running listener for its actual address.
+	restAddr := srv.RESTAddr()
+	require.NotNil(t, restAddr, "REST listener must be bound when Embedded=false and REST is enabled")
+
+	// The daemon enables TLS by default (Security.TLSEnabled), so the REST
+	// transport speaks HTTPS. daemonCAHTTPClient pins the daemon's own
+	// auto-issued CA (it is not a cluster node) and verifies its 127.0.0.1 leaf.
+	scheme := "https"
+	if !cfg.Security.TLSEnabled {
+		scheme = "http"
+	}
+	baseURL := fmt.Sprintf("%s://%s", scheme, restAddr.String())
 	validateURL := baseURL + "/api/v1/iam/invite/validate"
 
 	payload, _ := json.Marshal(map[string]string{"token": token})
-	resp, httpErr := insecureHTTPClient().Post(validateURL, "application/json", bytes.NewReader(payload))
+	resp, httpErr := daemonCAHTTPClient(t, srv).Post(validateURL, "application/json", bytes.NewReader(payload))
 	require.NoError(t, httpErr)
 	defer resp.Body.Close()
 
@@ -268,6 +291,13 @@ func minimalBootstrapConfig(dataDir string) *config.Config {
 
 // startBootstrapServer creates and starts a Server from cfg, waits for it to
 // be ready, and returns. The caller is responsible for shutting it down.
+//
+// In embedded mode Server.Start returns as soon as initialization (including
+// the first-boot bootstrap banner) finishes, so we start synchronously. In
+// non-embedded mode Start blocks until shutdown, so we run it in a goroutine
+// and wait for the REST listener to come up — which the daemon binds at the
+// tail of the same synchronous initialization that prints the banner, so a
+// bound listener implies the banner has already been emitted.
 func startBootstrapServer(t *testing.T, cfg *config.Config) (*server.Server, error) {
 	t.Helper()
 
@@ -276,25 +306,68 @@ func startBootstrapServer(t *testing.T, cfg *config.Config) (*server.Server, err
 		return nil, fmt.Errorf("NewServer: %w", err)
 	}
 
-	if err := srv.Start(); err != nil {
-		return nil, fmt.Errorf("Start: %w", err)
+	if cfg.Server.Embedded {
+		if err := srv.Start(); err != nil {
+			return nil, fmt.Errorf("Start: %w", err)
+		}
+		if err := waitForStarted(t, srv, nil, false); err != nil {
+			return nil, err
+		}
+		return srv, nil
 	}
 
-	// Wait up to 15 s for the server to report started.
+	// Non-embedded: Start blocks until shutdown, so run it in a goroutine and
+	// surface an early startup failure over a channel.
+	startErrCh := make(chan error, 1)
+	go func() {
+		if err := srv.Start(); err != nil {
+			startErrCh <- err
+		}
+	}()
+
+	if err := waitForStarted(t, srv, startErrCh, true); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		return nil, err
+	}
+	return srv, nil
+}
+
+// waitForStarted blocks until the server reports started and, when requireREST
+// is set (non-embedded mode), until the REST listener has bound a real address.
+// It fails fast if the goroutine-driven Start reports an error on startErrCh
+// (which is nil in embedded mode, where Start returns synchronously).
+func waitForStarted(t *testing.T, srv *server.Server, startErrCh <-chan error, requireREST bool) error {
+	t.Helper()
+
 	deadline := time.Now().Add(15 * time.Second)
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
-	for time.Now().Before(deadline) {
-		if srv.IsStarted() {
-			return srv, nil
+
+	ready := func() bool {
+		if !srv.IsStarted() {
+			return false
 		}
-		<-tick.C
+		if requireREST {
+			return srv.RESTAddr() != nil
+		}
+		return true
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(ctx)
-	return nil, fmt.Errorf("server did not start within timeout")
+	for {
+		if ready() {
+			return nil
+		}
+		select {
+		case err := <-startErrCh:
+			return fmt.Errorf("Start: %w", err)
+		case <-tick.C:
+			if time.Now().After(deadline) {
+				return fmt.Errorf("server did not start within timeout")
+			}
+		}
+	}
 }
 
 // extractInviteToken parses the invite token out of an activation URL in the
@@ -315,13 +388,27 @@ func extractInviteToken(t *testing.T, stderr string) string {
 	return rest[:end]
 }
 
-// insecureHTTPClient returns an http.Client that skips TLS verification.
-// Acceptable here because the test server uses a self-signed cert.
-func insecureHTTPClient() *http.Client {
+// daemonCAHTTPClient returns an http.Client that trusts the in-process
+// bootstrap daemon's OWN auto-issued CA (srv.CA()), pinned via RootCAs.
+//
+// The bootstrap daemon is NOT a cluster node — it boots from config.DefaultConfig
+// with a self-bootstrapped PKI, so the integration cluster CA (helpers.NewHTTPClient,
+// which pins /etc/quicbaas/certs/ca.crt) cannot verify it. The daemon binds
+// 127.0.0.1 (config default) and its serving leaf carries the 127.0.0.1 SAN —
+// the same loopback trust path the daemon uses to call itself — so RootCAs +
+// ServerName "127.0.0.1" verify cleanly without InsecureSkipVerify.
+func daemonCAHTTPClient(t *testing.T, srv *server.Server) *http.Client {
+	t.Helper()
+	pool, err := srv.CA().CABundleCertPool()
+	require.NoError(t, err, "load in-process daemon CA bundle pool")
 	return &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			TLSClientConfig: &tls.Config{
+				RootCAs:    pool,
+				ServerName: "127.0.0.1",
+				MinVersion: tls.VersionTLS13,
+			},
 		},
 	}
 }

@@ -42,9 +42,9 @@ func newAEADTestLogger() *aeadTestLogger {
 	}
 }
 
-func (l *aeadTestLogger) Debug(msg string, args ...any)                          {}
+func (l *aeadTestLogger) Debug(msg string, args ...any)             {}
 func (l *aeadTestLogger) Debugf(format string, args ...interface{}) {}
-func (l *aeadTestLogger) Info(msg string, args ...any)                           {}
+func (l *aeadTestLogger) Info(msg string, args ...any)              {}
 func (l *aeadTestLogger) Infof(format string, args ...interface{})  {}
 func (l *aeadTestLogger) Fatal(msg string)                          {}
 func (l *aeadTestLogger) Fatalf(format string, args ...interface{}) {}

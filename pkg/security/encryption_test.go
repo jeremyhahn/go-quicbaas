@@ -33,7 +33,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -1370,23 +1369,6 @@ func TestNewKeyring_InitializeXKMSError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestIsEncrypted_ZeroVersion(t *testing.T) {
-	data := make([]byte, 50)
-	assert.False(t, (&vectorEncryptionService{}).IsEncrypted(data))
-}
-
-func TestIsEncrypted_VersionAboveMax(t *testing.T) {
-	data := make([]byte, 50)
-	data[0] = VectorEncryptionVersion + 1
-	assert.False(t, (&vectorEncryptionService{}).IsEncrypted(data))
-}
-
-func TestIsEncrypted_PayloadZero(t *testing.T) {
-	data := make([]byte, 29)
-	data[0] = VectorEncryptionVersion
-	assert.False(t, (&vectorEncryptionService{}).IsEncrypted(data))
-}
-
 func TestEncryptionManager_Decrypt_InvalidVersion(t *testing.T) {
 	log := createTestLogger(t)
 	em, err := NewEncryptionManager(&EncryptionConfig{Enabled: true, Algorithm: DefaultAlgorithm, KeyProvider: "local"}, log)
@@ -1540,14 +1522,6 @@ func TestNewKeyring_KeyStorageTypeAssertionFail(t *testing.T) {
 
 // TestEncryptWithKey_InvalidKeySize tests the encryptWithKey error path
 // in vector_encryption.go:656-657 when the AES key size is invalid.
-func TestEncryptWithKey_InvalidKeySize(t *testing.T) {
-	svc := &vectorEncryptionService{}
-	// AES-256-GCM requires exactly 32-byte key; 16 bytes triggers ErrInvalidKeySize
-	invalidKey := make([]byte, 16)
-	_, err := svc.encryptWithKey(invalidKey, []byte("test plaintext"), nil)
-	assert.ErrorIs(t, err, ErrEncryptionFailed, "should return ErrEncryptionFailed for invalid key size")
-}
-
 // TestEncryptionManager_EncryptAfterRotate verifies that encryption works
 // with the new key after rotation.
 func TestEncryptionManager_EncryptAfterRotate(t *testing.T) {
@@ -2408,194 +2382,6 @@ func TestKeyring_RotateKeyWithNilBackend(t *testing.T) {
 	_, err := kr.RotateKey()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "backend not initialized")
-}
-
-// ---------------------------------------------------------------------------
-// vector_encryption.go -- DecryptVectorBatch coverage improvements
-// ---------------------------------------------------------------------------
-
-func TestDecryptVectorBatch_EmptyTenantIDError(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	_, err = svc.DecryptVectorBatch(ctx, "", "ns", map[string][]byte{"v": make([]byte, vectorMinEncryptedSize)})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrEmptyTenantID))
-}
-
-func TestDecryptVectorBatch_DEKNotFound(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	data := make([]byte, vectorMinEncryptedSize+16)
-	data[0] = VectorEncryptionVersion
-
-	_, err = svc.DecryptVectorBatch(ctx, "nonexistent-tenant", "ns", map[string][]byte{"v": data})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrTenantDEKNotFound))
-}
-
-func TestDecryptVectorBatch_WrongVersionInBatch(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// First create a DEK for this tenant.
-	_, err = svc.EncryptVector(ctx, "tenant-batch-ver", "ns", "setup", []float32{1.0})
-	require.NoError(t, err)
-
-	data := make([]byte, vectorMinEncryptedSize+16)
-	data[0] = 99 // Wrong version.
-
-	_, err = svc.DecryptVectorBatch(ctx, "tenant-batch-ver", "ns", map[string][]byte{"v": data})
-	require.Error(t, err)
-
-	var vecErr *VectorEncryptionError
-	assert.True(t, errors.As(err, &vecErr))
-	assert.True(t, errors.Is(vecErr.Err, ErrUnsupportedEncryptionVersion))
-}
-
-func TestDecryptVectorBatch_SkipsShortEntries(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Create a valid encrypted entry.
-	encrypted, err := svc.EncryptVector(ctx, "tenant-skip", "ns", "vec-1", []float32{1.0, 2.0})
-	require.NoError(t, err)
-
-	batch := map[string][]byte{
-		"vec-1": encrypted,
-		"vec-2": {1, 2, 3}, // Too short, should be skipped.
-	}
-
-	decrypted, err := svc.DecryptVectorBatch(ctx, "tenant-skip", "ns", batch)
-	require.NoError(t, err)
-	assert.Len(t, decrypted, 1)
-	assert.Contains(t, decrypted, "vec-1")
-}
-
-func TestDecryptVectorBatch_FailedDecryptReturnsError(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Create a DEK for the tenant.
-	_, err = svc.EncryptVector(ctx, "tenant-bad-decrypt", "ns", "setup", []float32{1.0})
-	require.NoError(t, err)
-
-	// Construct data with correct version but garbage ciphertext.
-	data := make([]byte, vectorMinEncryptedSize+16)
-	data[0] = VectorEncryptionVersion
-
-	_, err = svc.DecryptVectorBatch(ctx, "tenant-bad-decrypt", "ns", map[string][]byte{"v": data})
-	require.Error(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// vector_encryption.go -- EncryptVectorBatch DEK error
-// ---------------------------------------------------------------------------
-
-func TestEncryptVectorBatch_DEKCreationFailure(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	dekMgr.failCreateDEK = true
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	_, err = svc.EncryptVectorBatch(ctx, "tenant", "ns", map[string][]float32{"v": {1.0}})
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	assert.True(t, errors.As(err, &qbErr))
-}
-
-func TestEncryptVectorBatch_EmptyNamespaceError(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	_, err = svc.EncryptVectorBatch(ctx, "tenant", "", map[string][]float32{"v": {1.0}})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrEmptyNamespace))
-}
-
-// ---------------------------------------------------------------------------
-// vector_encryption.go -- DecryptVectorBatch DEK retrieval error
-// ---------------------------------------------------------------------------
-
-func TestDecryptVectorBatch_DEKRetrievalFailure(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Create DEK and encrypt first.
-	encrypted, err := svc.EncryptVector(ctx, "tenant-dek-fail", "ns", "v", []float32{1.0})
-	require.NoError(t, err)
-
-	dekMgr.failGetDEK = true
-
-	_, err = svc.DecryptVectorBatch(ctx, "tenant-dek-fail", "ns", map[string][]byte{"v": encrypted})
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	assert.True(t, errors.As(err, &qbErr))
-}
-
-// ---------------------------------------------------------------------------
-// vector_encryption.go -- validateDecryptInput
-// ---------------------------------------------------------------------------
-
-func TestDecryptVector_EmptyNamespaceError(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	data := make([]byte, vectorMinEncryptedSize)
-	data[0] = VectorEncryptionVersion
-
-	_, err = svc.DecryptVector(ctx, "tenant", "", "vec", data)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrEmptyNamespace))
-}
-
-func TestDecryptVector_EmptyVectorIDError(t *testing.T) {
-	dekMgr := newMockTenantDEKManagerForVectors()
-	logger := newVectorTestLogger()
-	svc, err := NewVectorEncryptionService(dekMgr, logger, nil)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	data := make([]byte, vectorMinEncryptedSize)
-	data[0] = VectorEncryptionVersion
-
-	_, err = svc.DecryptVector(ctx, "tenant", "ns", "", data)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrEmptyVectorID))
 }
 
 // ---------------------------------------------------------------------------

@@ -241,3 +241,26 @@ func TestNetworkTransportHandlers_EmbeddedNotIncluded(t *testing.T) {
 		t.Error("networkTransportHandlers should not contain embedded transport")
 	}
 }
+
+// TestTransportFactory_CreateNetworkClient_GRPCSucceeds drives the full
+// construction path of createNetworkClient for a supported (grpc) network
+// transport: option building, transport constructor invocation, and SDK
+// client creation. The grpc transport connects lazily, so client creation
+// succeeds without a live server; this covers the success branch (and the
+// buildTransportOptions/constructor/NewClient calls) that the unsupported-
+// transport test cannot reach.
+func TestTransportFactory_CreateNetworkClient_GRPCSucceeds(t *testing.T) {
+	cfg := &config.QRDBConfig{
+		Transport: config.QRDBTransportGRPC,
+		Address:   "127.0.0.1:59999",
+	}
+	factory := newTransportFactory(cfg, nil, nil)
+	client, err := factory.createNetworkClient()
+	if err != nil {
+		t.Fatalf("createNetworkClient(grpc) returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("createNetworkClient(grpc) returned nil client")
+	}
+	_ = client.Close()
+}

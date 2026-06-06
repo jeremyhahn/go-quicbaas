@@ -53,11 +53,11 @@ const (
 // testEnv holds shared state initialised in TestMain. Fields are
 // read-only after TestMain returns.
 type testEnv struct {
-	centralURL      string
-	ollamaURL       string
-	ollamaModel     string
-	centralAvail    bool
-	ollamaAvail     bool
+	centralURL   string
+	ollamaURL    string
+	ollamaModel  string
+	centralAvail bool
+	ollamaAvail  bool
 }
 
 // env is the package-level test environment populated by TestMain.

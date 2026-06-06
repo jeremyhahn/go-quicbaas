@@ -32,7 +32,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
 )
 
 func TestEmbeddedServerFailedError_Error(t *testing.T) {
@@ -359,129 +358,6 @@ func TestCreateObjectStorageClient_UnsupportedTransport(t *testing.T) {
 }
 
 // =============================================================================
-// user.go coverage - runUserRevokeRoleCommand edge cases
-// =============================================================================
-
-func TestRunUserRevokeRoleCommand_SuccessNotTrue(t *testing.T) {
-	origFactory := rbacClientFactory
-	origForce := userForce
-	origLog := log
-	defer func() {
-		rbacClientFactory = origFactory
-		userForce = origForce
-		log = origLog
-	}()
-
-	testLog := createTestLoggerForCoverageNinetyOne(t)
-	log = testLog
-
-	rbacClientFactory = func() (rbac.Client, error) {
-		return &MockRBACClient{
-			RevokeRoleFunc: func(ctx context.Context, req *rbac.RevokeRoleRequest) (*rbac.RevokeRoleResponse, error) {
-				return &rbac.RevokeRoleResponse{
-					Success: false,
-					Message: "role not assigned to user",
-				}, nil
-			},
-		}, nil
-	}
-	userForce = true
-
-	cmd := newUserRevokeRoleCommand()
-	cmd.SetArgs([]string{"testuser", "admin", "--yes"})
-
-	err := cmd.Execute()
-	assert.NoError(t, err)
-}
-
-func TestRunUserRevokeRoleCommand_FactoryError(t *testing.T) {
-	origFactory := rbacClientFactory
-	origForce := userForce
-	origLog := log
-	defer func() {
-		rbacClientFactory = origFactory
-		userForce = origForce
-		log = origLog
-	}()
-
-	testLog := createTestLoggerForCoverageNinetyOne(t)
-	log = testLog
-
-	rbacClientFactory = func() (rbac.Client, error) {
-		return nil, errors.Newf(errors.ErrUnauthorized, "test", "not authenticated")
-	}
-	userForce = true
-
-	cmd := newUserRevokeRoleCommand()
-	cmd.SetArgs([]string{"testuser", "admin", "--yes"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not authenticated")
-}
-
-// =============================================================================
-// role.go coverage - runRoleUnassignCommand edge cases
-// =============================================================================
-
-func TestRunRoleUnassignCommand_SuccessNotTrue(t *testing.T) {
-	origFactory := rbacClientFactory
-	origForce := roleForce
-	origLog := log
-	defer func() {
-		rbacClientFactory = origFactory
-		roleForce = origForce
-		log = origLog
-	}()
-
-	testLog := createTestLoggerForCoverageNinetyOne(t)
-	log = testLog
-
-	rbacClientFactory = func() (rbac.Client, error) {
-		return &MockRBACClient{
-			RevokeRoleFunc: func(ctx context.Context, req *rbac.RevokeRoleRequest) (*rbac.RevokeRoleResponse, error) {
-				return &rbac.RevokeRoleResponse{
-					Success: false,
-					Message: "role not found on user",
-				}, nil
-			},
-		}, nil
-	}
-	roleForce = true
-
-	cmd := newRoleUnassignCommand()
-	cmd.SetArgs([]string{"admin", "testuser", "--yes"})
-
-	err := cmd.Execute()
-	assert.NoError(t, err)
-}
-
-func TestRunRoleUnassignCommand_FactoryError(t *testing.T) {
-	origFactory := rbacClientFactory
-	origForce := roleForce
-	origLog := log
-	defer func() {
-		rbacClientFactory = origFactory
-		roleForce = origForce
-		log = origLog
-	}()
-
-	testLog := createTestLoggerForCoverageNinetyOne(t)
-	log = testLog
-
-	rbacClientFactory = func() (rbac.Client, error) {
-		return nil, errors.Newf(errors.ErrUnauthorized, "test", "auth failed")
-	}
-	roleForce = true
-
-	cmd := newRoleUnassignCommand()
-	cmd.SetArgs([]string{"admin", "testuser", "--yes"})
-
-	err := cmd.Execute()
-	assert.Error(t, err)
-}
-
-// =============================================================================
 // objectstorage.go coverage - runObjectListByTagCommand invalid tag format
 // =============================================================================
 
@@ -803,17 +679,6 @@ func TestFollowRebalanceProgressSDK_ErrorThenComplete(t *testing.T) {
 
 	err := followRebalanceProgressSDK(ctx, client, "op-789", "table")
 	assert.NoError(t, err)
-}
-
-// =============================================================================
-// Mock RBAC client ListRoles coverage
-// =============================================================================
-
-func TestMockRBACClient_ListRoles_DefaultBehavior(t *testing.T) {
-	client := &MockRBACClient{}
-	resp, err := client.ListRoles(context.Background(), &rbac.ListRolesRequest{})
-	assert.NoError(t, err)
-	assert.NotNil(t, resp)
 }
 
 // =============================================================================

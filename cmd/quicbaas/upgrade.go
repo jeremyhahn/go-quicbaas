@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -29,6 +28,7 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	operationsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 )
 
 var (
@@ -91,17 +91,17 @@ func createUpgradeGRPCClient(serverAddr string) (*grpc.Client, error) {
 	case upgradeTLSCert != "" && upgradeTLSKey != "":
 		opts = append(opts, grpc.WithTLS(upgradeTLSCert, upgradeTLSKey, upgradeTLSCA))
 	case upgradeTLSCA != "":
-		opts = append(opts, grpc.WithTLS("", "", upgradeTLSCA))
-	case tlsSkipVerify:
-		opts = append(opts, grpc.WithTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // G402: user explicitly requested --tls-skip-verify
-			MinVersion:         tls.VersionTLS13,
-		}))
+		opt, err := grpcCAOnlyTLSOption(upgradeTLSCA)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrConfiguration, "createUpgradeGRPCClient",
+				"failed to load --tls-ca")
+		}
+		opts = append(opts, opt)
 	default:
 		return nil, errors.Newf(
 			errors.ErrConfiguration,
 			"createUpgradeGRPCClient",
-			"TLS is required for gRPC connections (use --tls-cert, --tls-key, and --tls-ca, or --tls-skip-verify flags)",
+			"TLS is required for gRPC connections (use --tls-cert, --tls-key, and --tls-ca)",
 		)
 	}
 
@@ -111,6 +111,38 @@ func createUpgradeGRPCClient(serverAddr string) (*grpc.Client, error) {
 	}
 
 	return client, nil
+}
+
+// reconcileUpgradeSDKConfig promotes the upgrade command's transport flags
+// into the global SDK configuration that createSDKClient reads when it builds
+// the singleton SDK client.
+//
+// The upgrade subcommand registers its own --tls-cert / --tls-key / --tls-ca
+// (and --server) flags so the standalone usage examples in its help text work.
+// Because cobra resolves a command-local flag in preference to a persistent
+// flag of the same name, those local flags SHADOW the root command's global
+// --tls-cert / --tls-key / --tls-ca. Without this reconciliation the SDK path
+// (createSDKClient -> buildTLSConfig) would read the now-empty global TLS vars
+// and the gRPC transport would reject the dial with "TLS configuration is
+// required for all connections".
+//
+// Each upgrade-specific value is copied into its global counterpart only when
+// the upgrade flag is set and the global is still empty, so an explicit global
+// flag always wins and a transport already selected via --transport is never
+// clobbered.
+func reconcileUpgradeSDKConfig() {
+	if upgradeServerAddress != "" {
+		address = upgradeServerAddress
+	}
+	if upgradeTLSCA != "" && tlsCA == "" {
+		tlsCA = upgradeTLSCA
+	}
+	if upgradeTLSCert != "" && tlsCert == "" {
+		tlsCert = upgradeTLSCert
+	}
+	if upgradeTLSKey != "" && tlsKey == "" {
+		tlsKey = upgradeTLSKey
+	}
 }
 
 // newUpgradeStartCommand creates the upgrade start command.
@@ -187,15 +219,22 @@ func runUpgradeStart(cmd *cobra.Command, args []string) error {
 		serverAddr = "localhost:50051"
 	}
 
+	// Map the upgrade command's own transport flags onto the global SDK
+	// configuration before the singleton SDK client is built (see
+	// reconcileUpgradeSDKConfig for why the local flags otherwise shadow the
+	// global TLS flags and break the SDK gRPC dial).
+	reconcileUpgradeSDKConfig()
+
 	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
 	defer cancel()
 
-	// Create gRPC client with TLS
-	client, err := createUpgradeGRPCClient(serverAddr)
+	// Route through the SDK Operations client so the upgrade verb works
+	// across every transport (rest / grpc / quic / mcp / unix / embedded)
+	// rather than being pinned to a hardcoded gRPC connection.
+	client, err := operationsClientFactory()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	fmt.Printf("Starting rolling upgrade to version %s...\n", targetVersion)
 	fmt.Printf("  Server:           %s\n", serverAddr)
@@ -206,16 +245,16 @@ func runUpgradeStart(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Rollback on fail: %v\n", upgradeRollbackOnFail)
 	fmt.Println()
 
-	// Call the server's UpgradeNode RPC
-	req := &pb.UpgradeNodeRequest{
-		NodeId:        upgradeNodeID,
+	// Call UpgradeNode through the active SDK transport.
+	sdkResp, err := client.UpgradeNode(ctx, &operationsSDK.UpgradeNodeRequest{
+		NodeID:        upgradeNodeID,
 		TargetVersion: targetVersion,
-	}
-
-	resp, err := client.UpgradeNode(ctx, req)
+	})
 	if err != nil {
 		return api.NewOperationFailedError("upgrade", err)
 	}
+
+	resp := upgradeStartRespFromSDK(sdkResp)
 
 	fmt.Printf("Upgrade operation started: %s\n", resp.OperationId)
 	fmt.Printf("Started at: %s\n", time.Unix(0, resp.Started).Format(time.RFC3339))
@@ -229,8 +268,38 @@ func runUpgradeStart(cmd *cobra.Command, args []string) error {
 	return displayUpgradeStartResponse(resp)
 }
 
+// upgradeStartRespFromSDK adapts the SDK UpgradeNodeResponse to the proto
+// display DTO used by the upgrade output formatters. The SDK response
+// carries a JobID/Status pair; OperationId is sourced from JobID and the
+// server-reported start time is not part of the SDK shape, so Started is
+// left at zero (rendered as the Unix epoch by the formatter).
+func upgradeStartRespFromSDK(sdkResp *operationsSDK.UpgradeNodeResponse) *pb.UpgradeNodeResponse {
+	if sdkResp == nil {
+		return &pb.UpgradeNodeResponse{}
+	}
+	return &pb.UpgradeNodeResponse{
+		OperationId: sdkResp.JobID,
+	}
+}
+
+// upgradeStatusRespFromSDK adapts the SDK GetUpgradeStatusResponse to the
+// proto display DTO. NodesUpgraded/TotalNodes are not part of the SDK
+// response shape and are left at zero.
+func upgradeStatusRespFromSDK(sdkResp *operationsSDK.GetUpgradeStatusResponse) *pb.GetUpgradeStatusResponse {
+	if sdkResp == nil {
+		return &pb.GetUpgradeStatusResponse{}
+	}
+	return &pb.GetUpgradeStatusResponse{
+		OperationId:     sdkResp.JobID,
+		PercentComplete: sdkResp.Progress,
+		CurrentVersion:  sdkResp.CurrentVersion,
+		TargetVersion:   sdkResp.TargetVersion,
+		Status:          sdkResp.Status,
+	}
+}
+
 // followUpgradeProgress polls the server for upgrade progress until completion.
-func followUpgradeProgress(ctx context.Context, client *grpc.Client, operationID string, outputFormat string) error {
+func followUpgradeProgress(ctx context.Context, client OperationsClient, operationID string, outputFormat string) error {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
@@ -242,16 +311,15 @@ func followUpgradeProgress(ctx context.Context, client *grpc.Client, operationID
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			req := &pb.GetUpgradeStatusRequest{
-				OperationId: operationID,
-			}
-
-			resp, err := client.GetUpgradeStatus(ctx, req)
+			sdkResp, err := client.GetUpgradeStatus(ctx, &operationsSDK.GetUpgradeStatusRequest{
+				JobID: operationID,
+			})
 			if err != nil {
 				fmt.Printf("Warning: failed to get upgrade status: %v\n", err)
 				continue
 			}
 
+			resp := upgradeStatusRespFromSDK(sdkResp)
 			displayUpgradeProgress(resp)
 
 			// Check if upgrade is complete
@@ -302,36 +370,27 @@ Examples:
 
 // runUpgradeStatus executes the upgrade status command.
 func runUpgradeStatus(cmd *cobra.Command, args []string) error {
-	// Use server address from flag or fall back to global address
-	serverAddr := upgradeServerAddress
-	if serverAddr == "" {
-		serverAddr = address
-	}
-	if serverAddr == "" {
-		serverAddr = "localhost:50051"
-	}
+	// Map the upgrade command's own transport flags onto the global SDK
+	// configuration before the singleton SDK client is built.
+	reconcileUpgradeSDKConfig()
 
 	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
 	defer cancel()
 
-	// Create gRPC client with TLS
-	client, err := createUpgradeGRPCClient(serverAddr)
+	// Route through the SDK Operations client for multi-transport support.
+	client, err := operationsClientFactory()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	// Get upgrade status
-	req := &pb.GetUpgradeStatusRequest{
-		OperationId: upgradeOperationID,
-	}
-
-	resp, err := client.GetUpgradeStatus(ctx, req)
+	sdkResp, err := client.GetUpgradeStatus(ctx, &operationsSDK.GetUpgradeStatusRequest{
+		JobID: upgradeOperationID,
+	})
 	if err != nil {
 		return api.NewOperationFailedError("get upgrade status", err)
 	}
 
-	return displayUpgradeStatusResponse(resp, upgradeOutputFormat)
+	return displayUpgradeStatusResponse(upgradeStatusRespFromSDK(sdkResp), upgradeOutputFormat)
 }
 
 // Helper functions

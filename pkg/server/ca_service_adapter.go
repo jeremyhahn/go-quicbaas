@@ -15,6 +15,12 @@ package server
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -22,6 +28,8 @@ import (
 	"net"
 	"strings"
 	"sync"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -45,6 +53,15 @@ var (
 	// ErrCAServiceAdapterNilRequest is returned when the caller passes a
 	// nil request struct to a CA operation.
 	ErrCAServiceAdapterNilRequest = errors.New("server: ca service adapter received nil request")
+
+	// ErrCAServiceAdapterCertStoreUnavailable is returned when the CA
+	// has been initialized without a certificate store backend (callers
+	// cannot enumerate certificates in that mode).
+	ErrCAServiceAdapterCertStoreUnavailable = errors.New("server: ca service adapter has no certificate store")
+
+	// ErrCAServiceAdapterUnsupportedAlgorithm is returned when an IssueCertificate
+	// request names a key algorithm the adapter cannot generate.
+	ErrCAServiceAdapterUnsupportedAlgorithm = errors.New("server: ca service adapter received an unsupported key algorithm")
 )
 
 // caServiceAdapter wraps an xkmssdk.TrustedCA so it satisfies the
@@ -63,6 +80,15 @@ type caServiceAdapter struct {
 
 	mu sync.RWMutex
 	ca xkmssdk.TrustedCA
+
+	// spiffeTrustDomain is the operator-configured SPIFFE trust domain. When
+	// non-empty alongside a request TenantID, the adapter instructs the
+	// embedded CA to stamp a tenant-scoped SPIFFE URI SAN
+	// (spiffe://<trust-domain>/tenant/<tenantID>/<kind>/<name>) onto the
+	// issued leaf so mTLS/PIV login can derive the tenant from the verified
+	// peer certificate. Empty disables SPIFFE SAN synthesis (single-domain
+	// / pre-broker deployments).
+	spiffeTrustDomain string
 }
 
 // newCAServiceAdapter constructs an adapter that exposes a TrustedCA via
@@ -73,6 +99,24 @@ func newCAServiceAdapter(ca xkmssdk.TrustedCA) (*caServiceAdapter, error) {
 		return nil, ErrCAServiceAdapterNilCA
 	}
 	return &caServiceAdapter{ca: ca}, nil
+}
+
+// SetSPIFFETrustDomain records the operator-configured SPIFFE trust domain
+// used to synthesize tenant-scoped SPIFFE URI SANs on issued certificates.
+// Passing an empty string disables SPIFFE SAN synthesis. Safe to call before
+// the adapter is handed to the service builder.
+func (a *caServiceAdapter) SetSPIFFETrustDomain(trustDomain string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.spiffeTrustDomain = trustDomain
+}
+
+// getSPIFFETrustDomain returns the configured SPIFFE trust domain under a
+// read lock.
+func (a *caServiceAdapter) getSPIFFETrustDomain() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.spiffeTrustDomain
 }
 
 // SetCA atomically replaces the Certificate Authority backing this adapter.
@@ -94,8 +138,18 @@ func (a *caServiceAdapter) getCA() xkmssdk.TrustedCA {
 	return a.ca
 }
 
-// IssueCertificate issues a new certificate from the wrapped CA, generating
-// a fresh keypair as part of the request.
+// IssueCertificate issues a new certificate from the wrapped CA, generating a
+// fresh keypair in-process and returning the PEM-encoded private key alongside
+// the signed certificate.
+//
+// The keypair is generated here rather than inside the TrustedCA keystore on
+// purpose: keys created through the keystore are wrapped as non-exportable
+// opaque signers (the composite backend never returns raw key material), so
+// the "ca issue" contract — hand the requester both the certificate and its
+// private key — can only be honoured by owning the key locally. The key is
+// used to build a CSR, the CSR is signed by the CA, and only the signed leaf
+// is persisted in the certificate store; the private key is returned to the
+// caller and never retained by the server.
 func (a *caServiceAdapter) IssueCertificate(
 	ctx context.Context,
 	req *xkmstransport.IssueCertificateRequest,
@@ -105,7 +159,12 @@ func (a *caServiceAdapter) IssueCertificate(
 		return nil, ErrCAServiceAdapterNilRequest
 	}
 
-	caReq := &xkmssdk.TrustedCACertificateRequest{
+	signer, keyAlgorithm, err := generateLeafKey(req.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+
+	csrReq := &xkmssdk.TrustedCACertificateRequest{
 		Subject: xkmssdk.TrustedCASubject{
 			CommonName:   req.CommonName,
 			Organization: req.Organization,
@@ -114,25 +173,112 @@ func (a *caServiceAdapter) IssueCertificate(
 		Valid: req.ValidityDays,
 	}
 
-	issued, err := a.getCA().IssueCertificateWithProfile(caReq, req.Profile)
+	csrPEM, err := xkmssdk.CreateCSRWithKey(csrReq, signer)
 	if err != nil {
 		return nil, err
 	}
 
-	chain := issued.ChainPEM
-	if len(chain) == 0 {
-		chain = issued.CACertificatePEM
+	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID)
+
+	cert, err := a.getCA().SignCSR(csrPEM, opts)
+	if err != nil {
+		return nil, err
 	}
 
-	resp := &xkmstransport.IssueCertificateResponse{
-		CertificatePEM: issued.CertificatePEM,
-		ChainPEM:       chain,
-		PrivateKeyPEM:  issued.PrivateKeyPEM,
+	keyPEM, err := xkmssdk.EncodePrivateKeyPEM(signer, keyAlgorithm, nil)
+	if err != nil {
+		return nil, err
 	}
-	if issued.SerialNumber != nil {
-		resp.SerialNumber = issued.SerialNumber.Text(16)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert.Raw,
+	})
+
+	chain, _ := a.getCA().CABundle()
+
+	resp := &xkmstransport.IssueCertificateResponse{
+		CertificatePEM: certPEM,
+		ChainPEM:       chain,
+		PrivateKeyPEM:  keyPEM,
+	}
+	if cert.SerialNumber != nil {
+		resp.SerialNumber = cert.SerialNumber.Text(16)
 	}
 	return resp, nil
+}
+
+// generateLeafKey produces a fresh signer for a leaf certificate based on the
+// requested algorithm string. The accepted spellings mirror the documented
+// xkmstransport.IssueCertificateRequest.Algorithm values plus the CLI's
+// shorthand ("ecdsa", "rsa"). An empty algorithm defaults to ECDSA P-256,
+// matching the TrustedCA's own default. The returned x509.PublicKeyAlgorithm
+// drives PEM encoding of the private key.
+func generateLeafKey(algorithm string) (crypto.Signer, x509.PublicKeyAlgorithm, error) {
+	switch strings.ToLower(strings.TrimSpace(algorithm)) {
+	case "", "ecdsa", "ecdsa-p256", "ecdsap256", "p256":
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return nil, x509.UnknownPublicKeyAlgorithm, err
+		}
+		return key, x509.ECDSA, nil
+	case "ecdsa-p384", "ecdsap384", "p384":
+		key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+		if err != nil {
+			return nil, x509.UnknownPublicKeyAlgorithm, err
+		}
+		return key, x509.ECDSA, nil
+	case "rsa", "rsa2048", "rsa-2048":
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return nil, x509.UnknownPublicKeyAlgorithm, err
+		}
+		return key, x509.RSA, nil
+	case "rsa3072", "rsa-3072":
+		key, err := rsa.GenerateKey(rand.Reader, 3072)
+		if err != nil {
+			return nil, x509.UnknownPublicKeyAlgorithm, err
+		}
+		return key, x509.RSA, nil
+	case "rsa4096", "rsa-4096":
+		key, err := rsa.GenerateKey(rand.Reader, 4096)
+		if err != nil {
+			return nil, x509.UnknownPublicKeyAlgorithm, err
+		}
+		return key, x509.RSA, nil
+	case "ed25519":
+		_, key, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, x509.UnknownPublicKeyAlgorithm, err
+		}
+		return key, x509.Ed25519, nil
+	default:
+		return nil, x509.UnknownPublicKeyAlgorithm, ErrCAServiceAdapterUnsupportedAlgorithm
+	}
+}
+
+// signOptionsWithSPIFFE builds the TrustedCASignOptions for a single signing
+// operation, folding in the operator-configured SPIFFE trust domain, the
+// request tenant, and the SPIFFE workload kind derived from the certificate
+// profile. When the trust domain or tenant is empty the CA omits the SPIFFE
+// SAN (single-domain / pre-broker mode). Returns nil when there is nothing to
+// configure so the CA applies its own profile defaults unchanged.
+func (a *caServiceAdapter) signOptionsWithSPIFFE(profile string, validityDays int, tenantID string) *xkmssdk.TrustedCASignOptions {
+	trustDomain := a.getSPIFFETrustDomain()
+	spiffeRequested := trustDomain != "" && tenantID != ""
+	if profile == "" && validityDays <= 0 && !spiffeRequested {
+		return nil
+	}
+	opts := &xkmssdk.TrustedCASignOptions{
+		Profile:      profile,
+		ValidityDays: validityDays,
+	}
+	if spiffeRequested {
+		opts.SPIFFETrustDomain = trustDomain
+		opts.TenantID = tenantID
+		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
+	}
+	return opts
 }
 
 // SignCSR signs an externally generated CSR using the wrapped CA.
@@ -148,13 +294,7 @@ func (a *caServiceAdapter) SignCSR(
 		return nil, ErrCAServiceAdapterInvalidPEM
 	}
 
-	var opts *xkmssdk.TrustedCASignOptions
-	if req.Profile != "" || req.ValidityDays > 0 {
-		opts = &xkmssdk.TrustedCASignOptions{
-			Profile:      req.Profile,
-			ValidityDays: req.ValidityDays,
-		}
-	}
+	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID)
 
 	cert, err := a.getCA().SignCSR(req.CSRPEM, opts)
 	if err != nil {
@@ -283,6 +423,32 @@ func (a *caServiceAdapter) IsRevoked(
 		return nil, err
 	}
 	return &xkmstransport.IsRevokedResponse{Revoked: revoked}, nil
+}
+
+// ListStoredCertificates enumerates every certificate currently
+// stored in the wrapped CA's certificate store. Satisfies the
+// service.CertStoreLister capability used by
+// CertificateService.ListCertificates.
+//
+// The method is named ListStoredCertificates rather than
+// ListCertificates so the adapter can ALSO satisfy
+// xkmstransport.Client (whose ListCertificates method has a different
+// signature and semantics — it enumerates key-store certs by backend).
+//
+// The context parameter is currently unused — the CertStore interface
+// does not accept one — but it is part of the signature so the method
+// can be augmented with cancellation in a future revision without
+// breaking callers.
+func (a *caServiceAdapter) ListStoredCertificates(_ context.Context) ([]*x509.Certificate, error) {
+	ca := a.getCA()
+	if ca == nil {
+		return nil, ErrCAServiceAdapterNilCA
+	}
+	store := ca.CertStore()
+	if store == nil {
+		return nil, ErrCAServiceAdapterCertStoreUnavailable
+	}
+	return store.ListCertificates()
 }
 
 // parseTransportSANs converts the prefixed-string SAN format used by
