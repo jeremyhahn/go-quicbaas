@@ -94,8 +94,15 @@ snapshots/
 *.sst
 *.log
 MANIFEST-*
+OPTIONS-*
+marker.*
 CURRENT
 LOCK
+
+# Pebble/LSM test DBs leaked into the source tree (tests must use t.TempDir())
+/pkg/server/data/
+/pkg/server/vector/
+/pkg/server/timeseries/
 
 # Shared object binaries
 *.so.*

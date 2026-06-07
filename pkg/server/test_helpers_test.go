@@ -53,6 +53,12 @@ func createTestConfig(t *testing.T) *config.Config {
 	cfg.Storage.Backend = config.StorageBackendPebble
 	cfg.Storage.DataDir = filepath.Join(tempDir, "data")
 	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
+	// Pin engine storage paths to the temp dir. config.Default() seeds these with
+	// RELATIVE defaults (e.g. vector "./data/vector"), so without this the vector/
+	// timeseries Pebble engines write databases into the source tree (pkg/server/
+	// data, pkg/server/vector) during tests. Tests must never touch the host tree.
+	cfg.Vector.StoragePath = filepath.Join(tempDir, "vector")
+	cfg.TimeSeries.StoragePath = filepath.Join(tempDir, "timeseries")
 	cfg.Server.Host = "127.0.0.1"
 	cfg.Server.REST.Port = httpPort
 	cfg.Server.GRPC.Port = grpcPort
