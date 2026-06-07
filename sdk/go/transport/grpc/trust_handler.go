@@ -51,8 +51,9 @@ func newTrustHandler(conn *grpc.ClientConn) *trustHandler {
 }
 
 // handleRequest routes Trust requests to the appropriate handler based on
-// method name. PublishDANE has no proto analogue and returns a clear
-// unimplemented error rather than falling through to the untyped path.
+// method name. PublishDANE forwards to the TrustService.PublishDANE RPC;
+// the server returns a not-configured error until a DANE publisher is
+// registered.
 func (h *trustHandler) handleRequest(ctx context.Context, _ string, method string, req interface{}) (interface{}, error) {
 	client := pb.NewTrustServiceClient(h.conn)
 
@@ -61,6 +62,8 @@ func (h *trustHandler) handleRequest(ctx context.Context, _ string, method strin
 		return h.handleCrossSignedRootPool(ctx, client, req)
 	case "AutoImportAIA":
 		return h.handleAutoImportAIA(ctx, client, req)
+	case "PublishDANE":
+		return h.handlePublishDANE(ctx, client, req)
 	default:
 		return nil, errors.NewUnimplemented("trustHandler.handleRequest",
 			"method not exposed by TrustService gRPC proto: "+method)
@@ -102,4 +105,32 @@ func (h *trustHandler) handleAutoImportAIA(ctx context.Context, client pb.TrustS
 	}
 
 	return &trustclient.AutoImportAIAResponse{Imported: int(pbResp.Imported)}, nil
+}
+
+func (h *trustHandler) handlePublishDANE(ctx context.Context, client pb.TrustServiceClient, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*trustclient.PublishDANERequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("trustHandler.handlePublishDANE",
+			"invalid request type, expected *trust.PublishDANERequest")
+	}
+	if sdkReq.Name == "" {
+		return nil, errors.NewInvalidInput("trustHandler.handlePublishDANE", "name is required")
+	}
+	if sdkReq.Port <= 0 {
+		return nil, errors.NewInvalidInput("trustHandler.handlePublishDANE", "port must be positive")
+	}
+	if len(sdkReq.CertDER) == 0 {
+		return nil, errors.NewInvalidInput("trustHandler.handlePublishDANE", "cert is required")
+	}
+
+	pbResp, err := client.PublishDANE(ctx, &pb.PublishDANERequest{
+		Name:    sdkReq.Name,
+		Port:    int32(sdkReq.Port),
+		CertDer: sdkReq.CertDER,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "trustHandler.handlePublishDANE")
+	}
+
+	return &trustclient.PublishDANEResponse{Published: int(pbResp.Published)}, nil
 }

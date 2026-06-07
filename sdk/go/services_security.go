@@ -390,9 +390,10 @@ type ACMEClientAPI interface {
 // dispatch via Bootstrap(). All four are required by the §5d single-dep
 // surface.
 type TrustService interface {
-	// PublishDANE publishes a DANE TLSA record for the given
-	// (name, port, cert) tuple. Server side will write to the configured
-	// DNS provider.
+	// PublishDANE publishes DANE TLSA records for the given
+	// (name, port, cert) tuple via the DANE publisher registered on the
+	// server; xkms ships no DNS implementation, so this returns a typed
+	// not-configured error when no publisher is registered.
 	PublishDANE(ctx context.Context, name string, port int, cert *x509.Certificate) error
 
 	// CrossSignedRootPool returns a *x509.CertPool of cross-signed roots
@@ -973,12 +974,6 @@ type trustServiceImpl struct {
 	t transport.Transport
 }
 
-type trustPublishDANERequest struct {
-	Name    string `json:"name"`
-	Port    int    `json:"port"`
-	CertDER []byte `json:"cert_der"`
-}
-
 func (s *trustServiceImpl) PublishDANE(ctx context.Context, name string, port int, cert *x509.Certificate) error {
 	if name == "" {
 		return sdkerrors.NewInvalidInput("trust.PublishDANE", "name is required")
@@ -992,7 +987,7 @@ func (s *trustServiceImpl) PublishDANE(ctx context.Context, name string, port in
 	if ctx == nil {
 		return sdkerrors.NewInvalidInput("trust.PublishDANE", "context is required")
 	}
-	_, err := s.t.Request(ctx, trustServiceName, "PublishDANE", &trustPublishDANERequest{
+	_, err := s.t.Request(ctx, trustServiceName, "PublishDANE", &trustclient.PublishDANERequest{
 		Name:    name,
 		Port:    port,
 		CertDER: cert.Raw,

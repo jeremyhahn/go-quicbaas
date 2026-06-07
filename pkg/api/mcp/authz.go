@@ -240,9 +240,10 @@ var toolPrefixMapping = map[string]resourceAction{
 	"quicbaas_secrets_get_prefix":          {interfaces.ResourceSecrets, interfaces.ActionRead},
 	"quicbaas_secrets_watch":               {interfaces.ResourceSecrets, interfaces.ActionRead},
 
-	// Trust Operations (cross-sign / AIA composition over the CA)
+	// Trust Operations (cross-sign / AIA / DANE composition over the CA)
 	"quicbaas_trust_cross_signed_root_pool": {interfaces.ResourceCertificate, interfaces.ActionRead},
 	"quicbaas_trust_auto_import_aia":        {interfaces.ResourceCertificate, interfaces.ActionWrite},
+	"quicbaas_trust_publish_dane":           {interfaces.ResourceCertificate, interfaces.ActionWrite},
 
 	// Crypto Operations
 	"quicbaas_crypto_encrypt": {interfaces.ResourceCrypto, interfaces.ActionWrite},

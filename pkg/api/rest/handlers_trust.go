@@ -32,12 +32,13 @@ import (
 // registerTrustRoutes registers the Trust composition routes
 // (cross-sign / AIA) under /api/v1/trust. These delegate to the
 // service-layer TrustService, which composes the xkms TrustedCA. DANE
-// publication is intentionally NOT registered here (it is pending a
-// separate DNS-provider hook design).
+// publication is also registered; it returns a typed not-configured error
+// until an application registers a DANE publisher on the server.
 func registerTrustRoutes(s *Server, r chi.Router) {
 	r.Route("/trust", func(r chi.Router) {
 		r.Get("/cross-signed-roots", s.HandleTrustCrossSignedRootPool)
 		r.Post("/auto-import-aia", s.HandleTrustAutoImportAIA)
+		r.Post("/publish-dane", s.HandleTrustPublishDANE)
 	})
 }
 
@@ -62,6 +63,20 @@ type TrustAutoImportAIARESTRequest struct {
 // POST /api/v1/trust/auto-import-aia.
 type TrustAutoImportAIARESTResponse struct {
 	Imported int `json:"imported"`
+}
+
+// TrustPublishDANERESTRequest is the JSON body for
+// POST /api/v1/trust/publish-dane.
+type TrustPublishDANERESTRequest struct {
+	Name    string `json:"name"`
+	Port    int    `json:"port"`
+	CertDER []byte `json:"cert_der"`
+}
+
+// TrustPublishDANERESTResponse is the JSON body returned by
+// POST /api/v1/trust/publish-dane.
+type TrustPublishDANERESTResponse struct {
+	Published int `json:"published"`
 }
 
 // =============================================================================
@@ -129,5 +144,46 @@ func (s *Server) HandleTrustAutoImportAIA(w http.ResponseWriter, r *http.Request
 
 	RespondJSON(w, r, http.StatusOK, &TrustAutoImportAIARESTResponse{
 		Imported: svcResp.Imported,
+	})
+}
+
+// HandleTrustPublishDANE handles POST /api/v1/trust/publish-dane — derives
+// the DANE TLSA records for the supplied certificate and publishes them via
+// the registered DANE publisher. Returns a typed not-configured error when
+// no publisher has been registered on the server.
+func (s *Server) HandleTrustPublishDANE(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondBadRequest(w, r, "failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req TrustPublishDANERESTRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+
+	trustSvc := s.service.Trust()
+	if trustSvc == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, ErrTrustServiceUnavailable)
+		return
+	}
+
+	svcResp, err := trustSvc.PublishDANE(ctx, &service.PublishDANERequest{
+		Name:    req.Name,
+		Port:    req.Port,
+		CertDER: req.CertDER,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, &TrustPublishDANERESTResponse{
+		Published: svcResp.Published,
 	})
 }

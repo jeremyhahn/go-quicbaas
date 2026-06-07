@@ -29,6 +29,7 @@ import (
 
 	trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 
+	trustclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/trust"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	trustbootstrap "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/bootstrap"
 )
@@ -487,9 +488,9 @@ func TestTrust_PublishDANE_TransportError(t *testing.T) {
 
 func TestTrust_PublishDANE_HappyPath(t *testing.T) {
 	cert := makeSelfSignedCert(t)
-	var capturedReq *trustPublishDANERequest
+	var capturedReq *trustclient.PublishDANERequest
 	s := &trustServiceImpl{t: &mockTransport{requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-		capturedReq = req.(*trustPublishDANERequest)
+		capturedReq = req.(*trustclient.PublishDANERequest)
 		return nil, nil
 	}}}
 	if err := s.PublishDANE(context.Background(), "example.com", 443, cert); err != nil {

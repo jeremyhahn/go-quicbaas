@@ -30,6 +30,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	dane "github.com/jeremyhahn/go-xkms/sdk/go/dane"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -78,6 +79,12 @@ type serverOptions struct {
 	// automatically during Start. The caller is responsible for wiping the
 	// slice after construction. Only consulted when cfg.Seal.Enabled is true.
 	sealPassphrase []byte
+
+	// danePublisher is the application-supplied DANE TLSA publisher used by
+	// Security().Trust().PublishDANE. xkms defines the DANEPublisher
+	// interface but ships NO DNS implementation; an application registers
+	// one here. When nil, PublishDANE returns a typed not-configured error.
+	danePublisher dane.DANEPublisher
 }
 
 // ServerOption configures optional behavior on the Server during construction.
@@ -115,6 +122,18 @@ func WithTLSCertificate(cert *tls.Certificate) ServerOption {
 // constructed. The server does not retain a reference beyond node creation.
 func WithSealPassphrase(passphrase []byte) ServerOption {
 	return func(o *serverOptions) { o.sealPassphrase = passphrase }
+}
+
+// WithDANEPublisher returns a ServerOption that registers the
+// application-supplied DANE TLSA publisher used by
+// Security().Trust().PublishDANE. xkms defines the DANEPublisher interface
+// (cert→TLSA derivation is delegated to go-truststrap) but provides NO DNS
+// implementation: the DNS provider, zone, credentials, and update protocol
+// are deployment concerns owned by the embedding application. Until a
+// publisher is registered, PublishDANE returns a typed not-configured error
+// across every transport.
+func WithDANEPublisher(publisher dane.DANEPublisher) ServerOption {
+	return func(o *serverOptions) { o.danePublisher = publisher }
 }
 
 // Server orchestrates all QuicBaaS components.

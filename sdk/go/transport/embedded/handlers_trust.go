@@ -79,3 +79,29 @@ func handleTrustAutoImportAIA(ctx context.Context, svc service.QuicBaaS, req int
 	}
 	return &trustclient.AutoImportAIAResponse{Imported: svcResp.Imported}, nil
 }
+
+func handleTrustPublishDANE(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	trustSvc := svc.Trust()
+	if trustSvc == nil {
+		return nil, NewServiceNotConfiguredError("Trust")
+	}
+
+	sdkReq, ok := req.(*trustclient.PublishDANERequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError(
+			"quicbaas.Trust", "PublishDANE",
+			"*trust.PublishDANERequest",
+			reflect.TypeOf(req).String(),
+		)
+	}
+
+	svcResp, err := trustSvc.PublishDANE(ctx, &service.PublishDANERequest{
+		Name:    sdkReq.Name,
+		Port:    sdkReq.Port,
+		CertDER: sdkReq.CertDER,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &trustclient.PublishDANEResponse{Published: svcResp.Published}, nil
+}

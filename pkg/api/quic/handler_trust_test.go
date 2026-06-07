@@ -27,6 +27,7 @@ import (
 type mockTrustService struct {
 	crossSignedFn func(ctx context.Context, req *service.CrossSignedRootPoolRequest) (*service.CrossSignedRootPoolResponse, error)
 	autoImportFn  func(ctx context.Context, req *service.AutoImportAIARequest) (*service.AutoImportAIAResponse, error)
+	publishDANEFn func(ctx context.Context, req *service.PublishDANERequest) (*service.PublishDANEResponse, error)
 }
 
 func (m *mockTrustService) CrossSignedRootPool(ctx context.Context, req *service.CrossSignedRootPoolRequest) (*service.CrossSignedRootPoolResponse, error) {
@@ -41,6 +42,13 @@ func (m *mockTrustService) AutoImportAIA(ctx context.Context, req *service.AutoI
 		return m.autoImportFn(ctx, req)
 	}
 	return &service.AutoImportAIAResponse{Imported: len(req.ChainDER)}, nil
+}
+
+func (m *mockTrustService) PublishDANE(ctx context.Context, req *service.PublishDANERequest) (*service.PublishDANEResponse, error) {
+	if m.publishDANEFn != nil {
+		return m.publishDANEFn(ctx, req)
+	}
+	return &service.PublishDANEResponse{Published: 4}, nil
 }
 
 // mockTrustEnabledService overrides Trust() on the base mockService.
@@ -163,5 +171,60 @@ func TestHandleTrustAutoImportAIA_ServiceError(t *testing.T) {
 	resp := handler.HandleRequest(context.Background(), req)
 	if resp.Status == StatusOK {
 		t.Error("expected error from service")
+	}
+}
+
+func TestHandleTrustPublishDANE_Success(t *testing.T) {
+	trustSvc := &mockTrustService{
+		publishDANEFn: func(ctx context.Context, req *service.PublishDANERequest) (*service.PublishDANEResponse, error) {
+			return &service.PublishDANEResponse{Published: 4}, nil
+		},
+	}
+	handler := createTrustTestHandler(trustSvc)
+
+	payload, err := EncodePayload(&service.PublishDANERequest{
+		Name: "kms.example.com", Port: 443, CertDER: []byte{0x30, 0x82},
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	req := &Request{Opcode: OpTrustPublishDANE, Payload: payload}
+	resp := handler.handleTrustPublishDANE(context.Background(), req)
+	if resp.Status != StatusOK {
+		t.Errorf("expected StatusOK, got %d: %s", resp.Status, string(resp.Payload))
+	}
+}
+
+func TestHandleTrustPublishDANE_NilService(t *testing.T) {
+	handler := createTrustTestHandler(nil)
+	payload, _ := EncodePayload(&service.PublishDANERequest{Name: "h", Port: 443, CertDER: []byte{0x30}})
+	req := &Request{Opcode: OpTrustPublishDANE, Payload: payload}
+	resp := handler.handleTrustPublishDANE(context.Background(), req)
+	if resp.Status == StatusOK {
+		t.Error("expected error response for nil trust service")
+	}
+}
+
+func TestHandleTrustPublishDANE_ServiceError(t *testing.T) {
+	trustSvc := &mockTrustService{
+		publishDANEFn: func(ctx context.Context, req *service.PublishDANERequest) (*service.PublishDANEResponse, error) {
+			return nil, service.ErrTrustNoDANEPublisher
+		},
+	}
+	handler := createTrustTestHandler(trustSvc)
+	payload, _ := EncodePayload(&service.PublishDANERequest{Name: "h", Port: 443, CertDER: []byte{0x30}})
+	req := &Request{Opcode: OpTrustPublishDANE, Payload: payload}
+	resp := handler.handleTrustPublishDANE(context.Background(), req)
+	if resp.Status == StatusOK {
+		t.Error("expected error response for not-configured publisher")
+	}
+}
+
+func TestHandleTrustPublishDANE_DecodeError(t *testing.T) {
+	handler := createTrustTestHandler(&mockTrustService{})
+	req := &Request{Opcode: OpTrustPublishDANE, Payload: []byte("{not json")}
+	resp := handler.handleTrustPublishDANE(context.Background(), req)
+	if resp.Status == StatusOK {
+		t.Error("expected error response for decode failure")
 	}
 }

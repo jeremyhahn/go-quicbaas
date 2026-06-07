@@ -32,18 +32,14 @@ import (
 var trustMethods = map[string]func(*securityRESTHandler, context.Context, interface{}) (interface{}, error){
 	"CrossSignedRootPool": (*securityRESTHandler).trustCrossSignedRootPool,
 	"AutoImportAIA":       (*securityRESTHandler).trustAutoImportAIA,
+	"PublishDANE":         (*securityRESTHandler).trustPublishDANE,
 }
 
 // handleTrust dispatches a Security().Trust() method to its REST handler.
-// PublishDANE returns a precise unimplemented error (no server surface);
-// every other method returns a typed unimplemented error naming the verb.
+// Unknown methods return a typed unimplemented error naming the verb.
 func (h *securityRESTHandler) handleTrust(ctx context.Context, method string, req interface{}) (interface{}, error) {
 	fn, ok := trustMethods[method]
 	if !ok {
-		if method == "PublishDANE" {
-			return nil, errors.NewUnimplemented("rest.security.Trust.PublishDANE",
-				"DANE TLSA publication has no REST server surface on quicbaasd")
-		}
 		return nil, errors.NewUnimplemented("rest.security.Trust."+method,
 			"unsupported Trust method")
 	}
@@ -88,4 +84,43 @@ func (h *securityRESTHandler) trustAutoImportAIA(ctx context.Context, req interf
 		return nil, err
 	}
 	return &trustclient.AutoImportAIAResponse{Imported: wire.Imported}, nil
+}
+
+// trustPublishDANE calls POST /api/v1/trust/publish-dane with the supplied
+// certificate, name and port and returns the published-record count. The
+// server returns a typed not-configured error when no DANE publisher is
+// registered, which propagates here via doJSONRequest.
+func (h *securityRESTHandler) trustPublishDANE(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*trustclient.PublishDANERequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("rest.security.Trust.PublishDANE",
+			"request is required")
+	}
+	if r.Name == "" {
+		return nil, errors.NewInvalidInput("rest.security.Trust.PublishDANE",
+			"name is required")
+	}
+	if r.Port <= 0 {
+		return nil, errors.NewInvalidInput("rest.security.Trust.PublishDANE",
+			"port must be positive")
+	}
+	if len(r.CertDER) == 0 {
+		return nil, errors.NewInvalidInput("rest.security.Trust.PublishDANE",
+			"cert is required")
+	}
+
+	wireReq := struct {
+		Name    string `json:"name"`
+		Port    int    `json:"port"`
+		CertDER []byte `json:"cert_der"`
+	}{Name: r.Name, Port: r.Port, CertDER: r.CertDER}
+
+	var wire struct {
+		Published int `json:"published"`
+	}
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost,
+		"/api/v1/trust/publish-dane", &wireReq, &wire); err != nil {
+		return nil, err
+	}
+	return &trustclient.PublishDANEResponse{Published: wire.Published}, nil
 }

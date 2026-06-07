@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"testing"
 
@@ -51,6 +52,14 @@ func (f *fakeTrustServiceMCP) AutoImportAIA(ctx context.Context, req *service.Au
 	return &service.AutoImportAIAResponse{Imported: len(req.ChainDER)}, nil
 }
 
+func (f *fakeTrustServiceMCP) PublishDANE(ctx context.Context, req *service.PublishDANERequest) (*service.PublishDANEResponse, error) {
+	if f.failNext {
+		return nil, errTrustMCP
+	}
+	f.lastDER = [][]byte{req.CertDER}
+	return &service.PublishDANEResponse{Published: 4}, nil
+}
+
 func newTrustRegistry(t *testing.T, trust service.TrustService) *ToolRegistry {
 	t.Helper()
 	log := createTestLogger(t)
@@ -60,6 +69,7 @@ func newTrustRegistry(t *testing.T, trust service.TrustService) *ToolRegistry {
 func TestIsTrustTool(t *testing.T) {
 	assert.True(t, isTrustTool("quicbaas_trust_cross_signed_root_pool"))
 	assert.True(t, isTrustTool("quicbaas_trust_auto_import_aia"))
+	assert.True(t, isTrustTool("quicbaas_trust_publish_dane"))
 	assert.False(t, isTrustTool("quicbaas_certificate_issue"))
 }
 
@@ -71,6 +81,7 @@ func TestTrustToolsRegistered(t *testing.T) {
 	}
 	assert.True(t, names["quicbaas_trust_cross_signed_root_pool"])
 	assert.True(t, names["quicbaas_trust_auto_import_aia"])
+	assert.True(t, names["quicbaas_trust_publish_dane"])
 }
 
 func TestTrustCrossSignedRootPool_MCP(t *testing.T) {
@@ -127,4 +138,47 @@ func TestTrustTools_NotConfigured_MCP(t *testing.T) {
 		"quicbaas_trust_cross_signed_root_pool", map[string]interface{}{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "trust service not configured")
+}
+
+func TestTrustPublishDANE_MCP(t *testing.T) {
+	fake := &fakeTrustServiceMCP{}
+	reg := newTrustRegistry(t, fake)
+
+	der := []byte{0x30, 0x82, 0x01, 0x02}
+	result, err := reg.ExecuteTool(context.Background(),
+		"quicbaas_trust_publish_dane", map[string]interface{}{
+			"name":     "kms.example.com",
+			"port":     443,
+			"cert_der": base64.StdEncoding.EncodeToString(der),
+		})
+	require.NoError(t, err)
+	m, ok := result.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, 4, m["published"])
+	require.Len(t, fake.lastDER, 1)
+	assert.Equal(t, der, fake.lastDER[0])
+}
+
+func TestTrustPublishDANE_MCP_MissingArgs(t *testing.T) {
+	reg := newTrustRegistry(t, &fakeTrustServiceMCP{})
+
+	tests := []map[string]interface{}{
+		{"port": 443, "cert_der": "MIIB"},
+		{"name": "h", "cert_der": "MIIB"},
+		{"name": "h", "port": 443},
+		{"name": "h", "port": 443, "cert_der": "!!!not-base64!!!"},
+	}
+	for _, args := range tests {
+		_, err := reg.ExecuteTool(context.Background(), "quicbaas_trust_publish_dane", args)
+		require.Error(t, err)
+	}
+}
+
+func TestTrustPublishDANE_MCP_ServiceError(t *testing.T) {
+	reg := newTrustRegistry(t, &fakeTrustServiceMCP{failNext: true})
+	_, err := reg.ExecuteTool(context.Background(),
+		"quicbaas_trust_publish_dane", map[string]interface{}{
+			"name": "h", "port": 443, "cert_der": "MIIB",
+		})
+	require.Error(t, err)
 }

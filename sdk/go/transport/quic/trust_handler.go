@@ -49,6 +49,7 @@ type trustResponseDecoder func(data []byte) (interface{}, error)
 var trustResponseDecoders = map[string]trustResponseDecoder{
 	"CrossSignedRootPool": decodeCrossSignedRootPoolResponse,
 	"AutoImportAIA":       decodeAutoImportAIAResponse,
+	"PublishDANE":         decodePublishDANEResponse,
 }
 
 // decodeTrustResponse decodes raw wire bytes into the leaf trust type for
@@ -79,6 +80,14 @@ func decodeAutoImportAIAResponse(data []byte) (interface{}, error) {
 	var resp trustclient.AutoImportAIAResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, wrapTrustDecode("AutoImportAIA", err)
+	}
+	return &resp, nil
+}
+
+func decodePublishDANEResponse(data []byte) (interface{}, error) {
+	var resp trustclient.PublishDANEResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, wrapTrustDecode("PublishDANE", err)
 	}
 	return &resp, nil
 }

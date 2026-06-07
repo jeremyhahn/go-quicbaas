@@ -1544,6 +1544,12 @@ func (s *Server) startService() error {
 			// Keep a reference so UpdateCA() can swap the backing CA after start.
 			s.caAdapter = caAdapter
 			builder = builder.WithCAService(caAdapter)
+			// Thread the application-supplied DANE publisher (if any) so
+			// Trust().PublishDANE has a DNS hook. xkms ships none; when unset
+			// PublishDANE returns a typed not-configured error.
+			if s.opts.danePublisher != nil {
+				builder = builder.WithDANEPublisher(s.opts.danePublisher)
+			}
 			s.logger.Info("CA service attached to service builder via TrustedCA adapter")
 		}
 	}

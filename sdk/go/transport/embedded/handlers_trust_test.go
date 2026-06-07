@@ -52,6 +52,13 @@ func (f *fakeTrustService) AutoImportAIA(ctx context.Context, req *service.AutoI
 	return &service.AutoImportAIAResponse{Imported: len(req.ChainDER)}, nil
 }
 
+func (f *fakeTrustService) PublishDANE(ctx context.Context, req *service.PublishDANERequest) (*service.PublishDANEResponse, error) {
+	if f.failNext {
+		return nil, errTrust
+	}
+	return &service.PublishDANEResponse{Published: 4}, nil
+}
+
 // trustMock embeds the base mock and overrides Trust().
 type trustMock struct {
 	*mockQuicBaaS
@@ -128,4 +135,27 @@ func TestTransport_TrustOperations_NotConfigured(t *testing.T) {
 	_, err = tr.Request(context.Background(), "quicbaas.Trust", "AutoImportAIA",
 		&trustclient.AutoImportAIARequest{ChainDER: [][]byte{{0x30}}})
 	require.Error(t, err)
+}
+
+func TestTransport_TrustPublishDANE(t *testing.T) {
+	tr := newTrustTransport(t, &fakeTrustService{})
+	resp, err := tr.Request(context.Background(), "quicbaas.Trust", "PublishDANE",
+		&trustclient.PublishDANERequest{Name: "kms.example.com", Port: 443, CertDER: []byte{0x30, 0x82}})
+	require.NoError(t, err)
+	typed, ok := resp.(*trustclient.PublishDANEResponse)
+	require.True(t, ok)
+	assert.Equal(t, 4, typed.Published)
+}
+
+func TestTransport_TrustPublishDANE_WrongType(t *testing.T) {
+	tr := newTrustTransport(t, &fakeTrustService{})
+	_, err := tr.Request(context.Background(), "quicbaas.Trust", "PublishDANE", &service.PutRequest{})
+	require.Error(t, err)
+}
+
+func TestTransport_TrustPublishDANE_ServiceError(t *testing.T) {
+	tr := newTrustTransport(t, &fakeTrustService{failNext: true})
+	_, err := tr.Request(context.Background(), "quicbaas.Trust", "PublishDANE",
+		&trustclient.PublishDANERequest{Name: "kms.example.com", Port: 443, CertDER: []byte{0x30}})
+	require.ErrorIs(t, err, errTrust)
 }

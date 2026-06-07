@@ -581,7 +581,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		// delegating to the embedded xkms TrustedCA. Backends that do not
 		// expose cross-sign/AIA (TrustCA) leave Trust unconfigured.
 		if trustCA, ok := b.caService.(TrustCA); ok {
-			svc.trustService = NewTrustService(trustCA)
+			svc.trustService = NewTrustService(trustCA, b.danePublisher)
 		}
 	}
 

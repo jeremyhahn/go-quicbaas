@@ -395,8 +395,9 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 	case OpTrustCrossSignedRootPool:
 		return interfaces.ResourceCertificate, interfaces.ActionRead
 
-	// Trust Operations - Write (AIA import mutates the trust store)
-	case OpTrustAutoImportAIA:
+	// Trust Operations - Write (AIA import mutates the trust store; DANE
+	// publication mutates external DNS state)
+	case OpTrustAutoImportAIA, OpTrustPublishDANE:
 		return interfaces.ResourceCertificate, interfaces.ActionWrite
 
 	// Parameter Store Operations - Read
@@ -1089,6 +1090,8 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 		return h.handleTrustCrossSignedRootPool(ctx, req)
 	case OpTrustAutoImportAIA:
 		return h.handleTrustAutoImportAIA(ctx, req)
+	case OpTrustPublishDANE:
+		return h.handleTrustPublishDANE(ctx, req)
 
 	// Dynamic Secrets Operations
 	case OpDynamicSecretsCreateRole:

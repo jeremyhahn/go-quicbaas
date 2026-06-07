@@ -1616,6 +1616,11 @@ type ServiceBuilder interface {
 	// WithCAService sets the CA service for PKI operations
 	WithCAService(caService interface{}) ServiceBuilder
 
+	// WithDANEPublisher sets the application-supplied DANE TLSA publisher
+	// used by Trust().PublishDANE. xkms provides no DNS implementation; when
+	// unset, PublishDANE returns a typed not-configured error.
+	WithDANEPublisher(publisher DANEPublisher) ServiceBuilder
+
 	// WithCatalogManager sets the catalog manager for object storage
 	WithCatalogManager(catalogManager catalog.CatalogManager) ServiceBuilder
 
@@ -1677,6 +1682,7 @@ type serviceBuilder struct {
 	cryptoManager             interfaces.CryptoManager
 	kvStoreProvider           func(shardID uint64) interface{}
 	caService                 interface{}
+	danePublisher             DANEPublisher
 	catalogManager            catalog.CatalogManager
 	backendManager            catalog.BackendManager
 	objectStoreConfigResolver config.ObjectStoreConfigResolver
@@ -1760,6 +1766,11 @@ func (b *serviceBuilder) WithKVStoreProvider(provider func(shardID uint64) inter
 
 func (b *serviceBuilder) WithCAService(caService interface{}) ServiceBuilder {
 	b.caService = caService
+	return b
+}
+
+func (b *serviceBuilder) WithDANEPublisher(publisher DANEPublisher) ServiceBuilder {
+	b.danePublisher = publisher
 	return b
 }
 

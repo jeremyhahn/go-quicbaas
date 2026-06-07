@@ -374,6 +374,11 @@ service TrustService {
   // AutoImportAIA walks the AIA extension of each supplied DER-encoded
   // certificate and imports the referenced issuing CA certificates.
   rpc AutoImportAIA(AutoImportAIARequest) returns (AutoImportAIAResponse);
+
+  // PublishDANE derives the DANE TLSA records for the supplied certificate
+  // and publishes them via the registered DANE publisher. Returns a
+  // not-configured error when no publisher is registered on the server.
+  rpc PublishDANE(PublishDANERequest) returns (PublishDANEResponse);
 }
 
 // CrossSignedRootPoolRequest carries no parameters.
@@ -402,6 +407,28 @@ message AutoImportAIARequest {
 message AutoImportAIAResponse {
   // Imported is the count of chain certificates whose AIA was processed.
   int32 imported = 1;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// PublishDANERequest carries the DER-encoded certificate plus the DNS name
+// and port the TLSA records are published for.
+message PublishDANERequest {
+  // Name is the DNS name the TLSA records are published for.
+  string name = 1;
+
+  // Port is the TCP port the TLSA records are published for.
+  int32 port = 2;
+
+  // CertDER is the DER-encoded certificate whose TLSA records are derived.
+  bytes cert_der = 3;
+}
+
+// PublishDANEResponse reports how many TLSA records were published.
+message PublishDANEResponse {
+  // Published is the count of TLSA records published.
+  int32 published = 1;
 
   // Timestamp is when the request was processed.
   google.protobuf.Timestamp timestamp = 2;

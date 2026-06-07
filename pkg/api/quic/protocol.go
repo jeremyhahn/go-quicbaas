@@ -246,10 +246,11 @@ const (
 	OpCertGetCA        byte = 0x88
 	OpCertGetTLSConfig byte = 0x89
 
-	// Trust Operations (0x7A-0x7B). Cross-sign / AIA composition over the
-	// CA. Must mirror sdk/go/transport/quic/protocol.go exactly.
+	// Trust Operations (0x7A-0x7C). Cross-sign / AIA / DANE composition over
+	// the CA. Must mirror sdk/go/transport/quic/protocol.go exactly.
 	OpTrustCrossSignedRootPool byte = 0x7A
 	OpTrustAutoImportAIA       byte = 0x7B
+	OpTrustPublishDANE         byte = 0x7C
 
 	// Health Operations (0x90-0x92).
 	OpHealth    byte = 0x90

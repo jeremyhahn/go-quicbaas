@@ -50,3 +50,19 @@ type AutoImportAIARequest struct {
 type AutoImportAIAResponse struct {
 	Imported int `json:"imported"`
 }
+
+// PublishDANERequest carries the DER-encoded certificate plus the DNS name
+// and port the TLSA records are published for. The server derives the
+// TLSA records (via xkms BuildRecords / go-truststrap) and hands them to
+// the registered DANEPublisher.
+type PublishDANERequest struct {
+	Name    string `json:"name"`
+	Port    int    `json:"port"`
+	CertDER []byte `json:"cert_der"`
+}
+
+// PublishDANEResponse acknowledges a completed DANE publication and reports
+// how many TLSA records were published.
+type PublishDANEResponse struct {
+	Published int `json:"published"`
+}

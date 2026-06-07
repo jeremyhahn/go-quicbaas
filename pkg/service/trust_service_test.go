@@ -26,6 +26,8 @@ import (
 	"math/big"
 	"time"
 
+	xkmsdane "github.com/jeremyhahn/go-xkms/sdk/go/dane"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,12 +74,12 @@ func selfSignedDER(t *testing.T) []byte {
 }
 
 func TestNewTrustService_NilCA(t *testing.T) {
-	assert.Nil(t, NewTrustService(nil))
+	assert.Nil(t, NewTrustService(nil, nil))
 }
 
 func TestTrustService_CrossSignedRootPool(t *testing.T) {
 	ca := &fakeTrustCA{rootPEMs: [][]byte{[]byte("root-a"), []byte("root-b")}}
-	svc := NewTrustService(ca)
+	svc := NewTrustService(ca, nil)
 	require.NotNil(t, svc)
 
 	resp, err := svc.CrossSignedRootPool(context.Background(), &CrossSignedRootPoolRequest{})
@@ -87,7 +89,7 @@ func TestTrustService_CrossSignedRootPool(t *testing.T) {
 
 func TestTrustService_CrossSignedRootPool_CAError(t *testing.T) {
 	boom := stderrors.New("boom")
-	svc := NewTrustService(&fakeTrustCA{rootErr: boom})
+	svc := NewTrustService(&fakeTrustCA{rootErr: boom}, nil)
 
 	_, err := svc.CrossSignedRootPool(context.Background(), &CrossSignedRootPoolRequest{})
 	require.Error(t, err)
@@ -95,7 +97,7 @@ func TestTrustService_CrossSignedRootPool_CAError(t *testing.T) {
 }
 
 func TestTrustService_CrossSignedRootPool_CanceledContext(t *testing.T) {
-	svc := NewTrustService(&fakeTrustCA{rootPEMs: [][]byte{[]byte("root")}})
+	svc := NewTrustService(&fakeTrustCA{rootPEMs: [][]byte{[]byte("root")}}, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -105,7 +107,7 @@ func TestTrustService_CrossSignedRootPool_CanceledContext(t *testing.T) {
 
 func TestTrustService_AutoImportAIA(t *testing.T) {
 	ca := &fakeTrustCA{}
-	svc := NewTrustService(ca)
+	svc := NewTrustService(ca, nil)
 
 	der := selfSignedDER(t)
 	resp, err := svc.AutoImportAIA(context.Background(), &AutoImportAIARequest{
@@ -117,19 +119,19 @@ func TestTrustService_AutoImportAIA(t *testing.T) {
 }
 
 func TestTrustService_AutoImportAIA_NilRequest(t *testing.T) {
-	svc := NewTrustService(&fakeTrustCA{})
+	svc := NewTrustService(&fakeTrustCA{}, nil)
 	_, err := svc.AutoImportAIA(context.Background(), nil)
 	require.ErrorIs(t, err, ErrTrustNilRequest)
 }
 
 func TestTrustService_AutoImportAIA_EmptyChain(t *testing.T) {
-	svc := NewTrustService(&fakeTrustCA{})
+	svc := NewTrustService(&fakeTrustCA{}, nil)
 	_, err := svc.AutoImportAIA(context.Background(), &AutoImportAIARequest{})
 	require.ErrorIs(t, err, ErrTrustEmptyChain)
 }
 
 func TestTrustService_AutoImportAIA_EmptyEntry(t *testing.T) {
-	svc := NewTrustService(&fakeTrustCA{})
+	svc := NewTrustService(&fakeTrustCA{}, nil)
 	_, err := svc.AutoImportAIA(context.Background(), &AutoImportAIARequest{
 		ChainDER: [][]byte{{}},
 	})
@@ -137,7 +139,7 @@ func TestTrustService_AutoImportAIA_EmptyEntry(t *testing.T) {
 }
 
 func TestTrustService_AutoImportAIA_BadDER(t *testing.T) {
-	svc := NewTrustService(&fakeTrustCA{})
+	svc := NewTrustService(&fakeTrustCA{}, nil)
 	_, err := svc.AutoImportAIA(context.Background(), &AutoImportAIARequest{
 		ChainDER: [][]byte{{0xDE, 0xAD, 0xBE, 0xEF}},
 	})
@@ -146,9 +148,113 @@ func TestTrustService_AutoImportAIA_BadDER(t *testing.T) {
 
 func TestTrustService_AutoImportAIA_ImportError(t *testing.T) {
 	boom := stderrors.New("import boom")
-	svc := NewTrustService(&fakeTrustCA{importErr: boom})
+	svc := NewTrustService(&fakeTrustCA{importErr: boom}, nil)
 	_, err := svc.AutoImportAIA(context.Background(), &AutoImportAIARequest{
 		ChainDER: [][]byte{selfSignedDER(t)},
 	})
 	require.ErrorIs(t, err, boom)
+}
+
+// fakeDANEPublisher records the records it was handed and can be configured
+// to fail, exercising both the happy path and the publish-failure branch.
+type fakeDANEPublisher struct {
+	got []xkmsdane.Record
+	err error
+}
+
+func (f *fakeDANEPublisher) PublishDANE(_ context.Context, records []xkmsdane.Record) error {
+	f.got = records
+	return f.err
+}
+
+func TestTrustService_PublishDANE_NoPublisher(t *testing.T) {
+	svc := NewTrustService(&fakeTrustCA{}, nil)
+	_, err := svc.PublishDANE(context.Background(), &PublishDANERequest{
+		Name:    "kms.example.com",
+		Port:    443,
+		CertDER: selfSignedDER(t),
+	})
+	require.ErrorIs(t, err, ErrTrustNoDANEPublisher)
+	require.ErrorIs(t, err, xkmsdane.ErrNoDANEPublisher)
+}
+
+func TestTrustService_PublishDANE_HappyPath(t *testing.T) {
+	pub := &fakeDANEPublisher{}
+	svc := NewTrustService(&fakeTrustCA{}, pub)
+
+	der := selfSignedDER(t)
+	resp, err := svc.PublishDANE(context.Background(), &PublishDANERequest{
+		Name:    "kms.example.com",
+		Port:    443,
+		CertDER: der,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	// The published count must equal the records derived by xkms BuildRecords
+	// from the same cert, proving the service forwarded the built records.
+	cert, parseErr := x509.ParseCertificate(der)
+	require.NoError(t, parseErr)
+	want, buildErr := xkmsdane.BuildRecords(cert, "kms.example.com", 443)
+	require.NoError(t, buildErr)
+	assert.Equal(t, len(want), resp.Published)
+	require.Len(t, pub.got, len(want))
+	for i := range want {
+		assert.Equal(t, want[i], pub.got[i])
+	}
+}
+
+func TestTrustService_PublishDANE_PublisherError(t *testing.T) {
+	boom := stderrors.New("dns boom")
+	svc := NewTrustService(&fakeTrustCA{}, &fakeDANEPublisher{err: boom})
+	_, err := svc.PublishDANE(context.Background(), &PublishDANERequest{
+		Name:    "kms.example.com",
+		Port:    443,
+		CertDER: selfSignedDER(t),
+	})
+	require.ErrorIs(t, err, boom)
+}
+
+func TestTrustService_PublishDANE_Validation(t *testing.T) {
+	svc := NewTrustService(&fakeTrustCA{}, &fakeDANEPublisher{})
+	der := selfSignedDER(t)
+	tests := []struct {
+		name string
+		req  *PublishDANERequest
+		want error
+	}{
+		{"nil request", nil, ErrTrustNilRequest},
+		{"empty name", &PublishDANERequest{Name: "", Port: 443, CertDER: der}, ErrTrustEmptyName},
+		{"zero port", &PublishDANERequest{Name: "h", Port: 0, CertDER: der}, ErrTrustInvalidPort},
+		{"high port", &PublishDANERequest{Name: "h", Port: 70000, CertDER: der}, ErrTrustInvalidPort},
+		{"empty cert", &PublishDANERequest{Name: "h", Port: 443, CertDER: nil}, ErrTrustEmptyCertDER},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.PublishDANE(context.Background(), tc.req)
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+func TestTrustService_PublishDANE_BadDER(t *testing.T) {
+	svc := NewTrustService(&fakeTrustCA{}, &fakeDANEPublisher{})
+	_, err := svc.PublishDANE(context.Background(), &PublishDANERequest{
+		Name:    "kms.example.com",
+		Port:    443,
+		CertDER: []byte{0xDE, 0xAD, 0xBE, 0xEF},
+	})
+	require.Error(t, err)
+}
+
+func TestTrustService_PublishDANE_CanceledContext(t *testing.T) {
+	svc := NewTrustService(&fakeTrustCA{}, &fakeDANEPublisher{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.PublishDANE(ctx, &PublishDANERequest{
+		Name:    "kms.example.com",
+		Port:    443,
+		CertDER: selfSignedDER(t),
+	})
+	require.Error(t, err)
 }

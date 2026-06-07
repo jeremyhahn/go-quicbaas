@@ -133,9 +133,10 @@ const (
 	OpCertGetCA        byte = 0x88
 	OpCertGetTLSConfig byte = 0x89
 
-	// Trust Operations (0x7A-0x7B) - matching server pkg/api/quic/protocol.go.
+	// Trust Operations (0x7A-0x7C) - matching server pkg/api/quic/protocol.go.
 	OpTrustCrossSignedRootPool byte = 0x7A
 	OpTrustAutoImportAIA       byte = 0x7B
+	OpTrustPublishDANE         byte = 0x7C
 
 	// Health Operations (0x90-0x92).
 	OpHealth    byte = 0x90
@@ -1050,6 +1051,7 @@ var methodToOpcode = map[string]byte{
 	// Trust Operations (legacy)
 	"Trust/CrossSignedRootPool": OpTrustCrossSignedRootPool,
 	"Trust/AutoImportAIA":       OpTrustAutoImportAIA,
+	"Trust/PublishDANE":         OpTrustPublishDANE,
 
 	// ObjectStorage Operations (legacy)
 	"ObjectStorage/PutObject":       OpOSPutObject,
@@ -1312,11 +1314,11 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.Certificate/GetCACertificate":  OpCertGetCA,
 	"quicbaas.Certificate/GetTLSConfig":      OpCertGetTLSConfig,
 
-	// Trust Operations (0x7A-0x7B). CrossSignedRootPool and AutoImportAIA are
-	// wired; PublishDANE has no QUIC opcode (no server surface yet) and
-	// surfaces as "unknown method" rather than being silently misrouted.
+	// Trust Operations (0x7A-0x7C). CrossSignedRootPool, AutoImportAIA and
+	// PublishDANE are wired across the QUIC transport.
 	"quicbaas.Trust/CrossSignedRootPool": OpTrustCrossSignedRootPool,
 	"quicbaas.Trust/AutoImportAIA":       OpTrustAutoImportAIA,
+	"quicbaas.Trust/PublishDANE":         OpTrustPublishDANE,
 
 	// ObjectStorage Operations (0x28-0x3B). SetObjectPolicy/GetObjectPolicy reuse
 	// the server's UpdateObjectMetadata / GetLifecyclePolicy handlers, which
@@ -1722,6 +1724,7 @@ var opcodeToMethod = map[byte]string{
 	// Trust Operations
 	OpTrustCrossSignedRootPool: "quicbaas.Trust/CrossSignedRootPool",
 	OpTrustAutoImportAIA:       "quicbaas.Trust/AutoImportAIA",
+	OpTrustPublishDANE:         "quicbaas.Trust/PublishDANE",
 
 	// ObjectStorage Operations
 	OpOSPutObject:            "quicbaas.ObjectStorage/PutObject",

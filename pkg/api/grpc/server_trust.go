@@ -86,3 +86,31 @@ func (s *Server) AutoImportAIA(ctx context.Context, req *pb.AutoImportAIARequest
 		Timestamp: timestamppb.New(time.Now()),
 	}, nil
 }
+
+// PublishDANE derives the DANE TLSA records for the supplied certificate
+// and publishes them via the registered DANE publisher. Returns a
+// not-configured error when no publisher is registered on the server.
+func (s *Server) PublishDANE(ctx context.Context, req *pb.PublishDANERequest) (*pb.PublishDANEResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is nil")
+	}
+
+	trustService := s.service.Trust()
+	if trustService == nil {
+		return nil, status.Error(codes.Unimplemented, "trust service not available")
+	}
+
+	resp, err := trustService.PublishDANE(ctx, &service.PublishDANERequest{
+		Name:    req.Name,
+		Port:    int(req.Port),
+		CertDER: req.CertDer,
+	})
+	if err != nil {
+		return nil, toProtoError(err)
+	}
+
+	return &pb.PublishDANEResponse{
+		Published: int32(resp.Published),
+		Timestamp: timestamppb.New(time.Now()),
+	}, nil
+}

@@ -21,6 +21,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/pem"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -50,6 +51,8 @@ func (r *ToolRegistry) executeTrustTool(ctx context.Context, name string, args m
 		return r.handleTrustCrossSignedRootPool(ctx, trustSvc)
 	case "quicbaas_trust_auto_import_aia":
 		return r.handleTrustAutoImportAIA(ctx, trustSvc, args)
+	case "quicbaas_trust_publish_dane":
+		return r.handleTrustPublishDANE(ctx, trustSvc, args)
 	default:
 		return nil, api.NewUnknownToolError(name)
 	}
@@ -96,6 +99,41 @@ func (r *ToolRegistry) handleTrustAutoImportAIA(ctx context.Context, svc service
 	}, nil
 }
 
+// handleTrustPublishDANE handles quicbaas_trust_publish_dane. The cert_der
+// argument is a base64-encoded DER certificate; the service derives the
+// TLSA records and publishes them via the registered DANE publisher.
+func (r *ToolRegistry) handleTrustPublishDANE(ctx context.Context, svc service.TrustService, args map[string]interface{}) (interface{}, error) {
+	name := getString(args, "name")
+	if name == "" {
+		return nil, api.NewRequiredFieldError("name")
+	}
+	port := getInt(args, "port")
+	if port <= 0 {
+		return nil, api.NewRequiredFieldError("port")
+	}
+	certB64 := getString(args, "cert_der")
+	if certB64 == "" {
+		return nil, api.NewRequiredFieldError("cert_der")
+	}
+	certDER, err := base64.StdEncoding.DecodeString(certB64)
+	if err != nil {
+		return nil, api.NewRequiredFieldError("cert_der")
+	}
+
+	resp, err := svc.PublishDANE(ctx, &service.PublishDANERequest{
+		Name:    name,
+		Port:    port,
+		CertDER: certDER,
+	})
+	if err != nil {
+		return nil, api.NewOperationFailedError("publish dane", err)
+	}
+
+	return map[string]interface{}{
+		"published": resp.Published,
+	}, nil
+}
+
 // decodePEMChainToDER extracts the DER bytes of every CERTIFICATE block in
 // a PEM bundle, preserving order.
 func decodePEMChainToDER(pemBytes []byte) [][]byte {
@@ -121,7 +159,8 @@ func decodePEMChainToDER(pemBytes []byte) [][]byte {
 func isTrustTool(name string) bool {
 	switch name {
 	case "quicbaas_trust_cross_signed_root_pool",
-		"quicbaas_trust_auto_import_aia":
+		"quicbaas_trust_auto_import_aia",
+		"quicbaas_trust_publish_dane":
 		return true
 	default:
 		return false

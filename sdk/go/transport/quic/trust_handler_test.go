@@ -46,13 +46,14 @@ func TestTrustMethodToOpcode(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, OpTrustAutoImportAIA, op)
 
-	// Opcodes must match the server (0x7A-0x7B).
+	op, ok = MethodToOpcode("quicbaas.Trust", "PublishDANE")
+	require.True(t, ok)
+	assert.Equal(t, OpTrustPublishDANE, op)
+
+	// Opcodes must match the server (0x7A-0x7C).
 	assert.Equal(t, byte(0x7A), OpTrustCrossSignedRootPool)
 	assert.Equal(t, byte(0x7B), OpTrustAutoImportAIA)
-
-	// PublishDANE has no QUIC opcode and must surface as unknown.
-	_, ok = MethodToOpcode("quicbaas.Trust", "PublishDANE")
-	assert.False(t, ok)
+	assert.Equal(t, byte(0x7C), OpTrustPublishDANE)
 }
 
 func TestTrustOpcodeToMethod(t *testing.T) {
@@ -102,8 +103,16 @@ func TestDecodeTrustResponse_EmptyPayload(t *testing.T) {
 }
 
 func TestDecodeTrustResponse_UnknownMethod(t *testing.T) {
-	_, err := decodeTrustResponse("PublishDANE", []byte(`{}`))
+	_, err := decodeTrustResponse("NoSuchMethod", []byte(`{}`))
 	require.Error(t, err)
+}
+
+func TestDecodeTrustResponse_PublishDANE(t *testing.T) {
+	got, err := decodeTrustResponse("PublishDANE", []byte(`{"published":4}`))
+	require.NoError(t, err)
+	resp, ok := got.(*trust.PublishDANEResponse)
+	require.True(t, ok)
+	assert.Equal(t, 4, resp.Published)
 }
 
 func TestDecodeTrustResponse_InvalidJSON(t *testing.T) {

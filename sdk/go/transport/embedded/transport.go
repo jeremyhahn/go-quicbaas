@@ -208,6 +208,7 @@ var unaryHandlers = map[string]handlerFunc{
 	// Trust operations (cross-sign / AIA composition over xkms TrustedCA).
 	"quicbaas.Trust/CrossSignedRootPool": handleTrustCrossSignedRootPool,
 	"quicbaas.Trust/AutoImportAIA":       handleTrustAutoImportAIA,
+	"quicbaas.Trust/PublishDANE":         handleTrustPublishDANE,
 
 	// Orchestrator — session operations
 	"quicbaas.Orchestrator/Inference":     handleOrchestratorInference,

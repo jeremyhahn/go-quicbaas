@@ -112,13 +112,59 @@ func TestTrustRESTHandler_AutoImportAIA_EmptyChain(t *testing.T) {
 	}
 }
 
-func TestTrustRESTHandler_PublishDANE_Unimplemented(t *testing.T) {
-	tr := newTestTransport(t, httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {})))
+func TestTrustRESTHandler_PublishDANE_HappyPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/v1/trust/publish-dane" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		var req struct {
+			Name    string `json:"name"`
+			Port    int    `json:"port"`
+			CertDER []byte `json:"cert_der"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if req.Name != "kms.example.com" || req.Port != 443 || len(req.CertDER) == 0 {
+			t.Errorf("unexpected request: %+v", req)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Published int `json:"published"`
+		}{Published: 4})
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
 	defer tr.Close()
 
-	_, err := tr.Request(context.Background(), "quicbaas.Trust", "PublishDANE", struct{}{})
+	result, err := tr.Request(context.Background(), "quicbaas.Trust", "PublishDANE",
+		&trustclient.PublishDANERequest{Name: "kms.example.com", Port: 443, CertDER: []byte{0x30, 0x82}})
+	if err != nil {
+		t.Fatalf("PublishDANE failed: %v", err)
+	}
+	resp, ok := result.(*trustclient.PublishDANEResponse)
+	if !ok {
+		t.Fatalf("expected *trust.PublishDANEResponse, got %T", result)
+	}
+	if resp.Published != 4 {
+		t.Errorf("expected published=4, got %d", resp.Published)
+	}
+}
+
+func TestTrustRESTHandler_PublishDANE_Validation(t *testing.T) {
+	tr := newTestTransport(t, httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("server must not be reached for invalid PublishDANE request")
+	})))
+	defer tr.Close()
+
+	_, err := tr.Request(context.Background(), "quicbaas.Trust", "PublishDANE",
+		&trustclient.PublishDANERequest{Name: "", Port: 443, CertDER: []byte{0x30}})
 	if err == nil {
-		t.Fatal("expected unimplemented error for PublishDANE")
+		t.Fatal("expected validation error for empty name")
 	}
 }
 

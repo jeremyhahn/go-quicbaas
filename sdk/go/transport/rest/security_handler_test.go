@@ -307,7 +307,6 @@ func TestSecurity_UnsupportedVerbs_TypedUnimplemented(t *testing.T) {
 	}{
 		{securityServicePIV, "ListReaders"},
 		{securityServiceACME, "NewOrder"},
-		{securityServiceTrust, "PublishDANE"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.service+"."+tc.method, func(t *testing.T) {

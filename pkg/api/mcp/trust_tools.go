@@ -15,8 +15,9 @@
 
 // Package mcp implements Trust tool definitions for the Model Context
 // Protocol. The Trust tools compose the xkms TrustedCA cross-sign / AIA
-// verbs surfaced under Security().Trust(). DANE publication is
-// intentionally omitted (pending a separate DNS-provider hook design).
+// verbs surfaced under Security().Trust(). DANE publication is included;
+// it returns a typed not-configured error until an application registers a
+// DANE publisher on the server.
 package mcp
 
 var (
@@ -29,6 +30,33 @@ var (
 		InputSchema: InputSchema{
 			Type:       "object",
 			Properties: map[string]Property{},
+		},
+	}
+
+	// TrustPublishDANETool derives the DANE TLSA records for a certificate
+	// and publishes them via the registered DANE publisher.
+	TrustPublishDANETool = Tool{
+		Name: "quicbaas_trust_publish_dane",
+		Description: "Derive the DANE TLSA records for the supplied certificate at " +
+			"name:port and publish them via the registered DANE publisher. Returns " +
+			"a not-configured error until an application registers a DANE publisher",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"name": {
+					Type:        "string",
+					Description: "DNS name the TLSA records are published for",
+				},
+				"port": {
+					Type:        "integer",
+					Description: "TCP port the TLSA records are published for",
+				},
+				"cert_der": {
+					Type:        "string",
+					Description: "Base64-encoded DER certificate whose TLSA records are derived",
+				},
+			},
+			Required: []string{"name", "port", "cert_der"},
 		},
 	}
 
@@ -57,5 +85,6 @@ func getAllTrustTools() []Tool {
 	return []Tool{
 		TrustCrossSignedRootPoolTool,
 		TrustAutoImportAIATool,
+		TrustPublishDANETool,
 	}
 }

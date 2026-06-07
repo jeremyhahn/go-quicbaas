@@ -32,10 +32,12 @@ import (
 // stubTrustService is a configurable service.TrustService for the REST
 // server handler tests.
 type stubTrustService struct {
-	rootPEMs  [][]byte
-	crossErr  error
-	imported  int
-	importErr error
+	rootPEMs   [][]byte
+	crossErr   error
+	imported   int
+	importErr  error
+	published  int
+	publishErr error
 }
 
 func (s *stubTrustService) CrossSignedRootPool(ctx context.Context, _ *service.CrossSignedRootPoolRequest) (*service.CrossSignedRootPoolResponse, error) {
@@ -50,6 +52,13 @@ func (s *stubTrustService) AutoImportAIA(ctx context.Context, req *service.AutoI
 		return nil, s.importErr
 	}
 	return &service.AutoImportAIAResponse{Imported: s.imported}, nil
+}
+
+func (s *stubTrustService) PublishDANE(ctx context.Context, req *service.PublishDANERequest) (*service.PublishDANEResponse, error) {
+	if s.publishErr != nil {
+		return nil, s.publishErr
+	}
+	return &service.PublishDANEResponse{Published: s.published}, nil
 }
 
 func TestHandleTrustCrossSignedRootPool(t *testing.T) {
@@ -158,5 +167,64 @@ func TestHandleTrustAutoImportAIA(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.HandleTrustAutoImportAIA(w, req)
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+func TestHandleTrustPublishDANE(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		server, mockSvc, cleanup := setupMockServer(t)
+		defer cleanup()
+		mockSvc.TrustSvc = &stubTrustService{published: 4}
+
+		body, _ := json.Marshal(TrustPublishDANERESTRequest{
+			Name: "kms.example.com", Port: 443, CertDER: []byte{0x30, 0x82},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/trust/publish-dane", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.HandleTrustPublishDANE(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp TrustPublishDANERESTResponse
+		assert.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, 4, resp.Published)
+	})
+
+	t.Run("service not available", func(t *testing.T) {
+		server, mockSvc, cleanup := setupMockServer(t)
+		defer cleanup()
+		mockSvc.TrustSvc = nil
+
+		body, _ := json.Marshal(TrustPublishDANERESTRequest{Name: "h", Port: 443, CertDER: []byte{0x30}})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/trust/publish-dane", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.HandleTrustPublishDANE(w, req)
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	})
+
+	t.Run("not configured", func(t *testing.T) {
+		server, mockSvc, cleanup := setupMockServer(t)
+		defer cleanup()
+		mockSvc.TrustSvc = &stubTrustService{publishErr: service.ErrTrustNoDANEPublisher}
+
+		body, _ := json.Marshal(TrustPublishDANERESTRequest{Name: "h", Port: 443, CertDER: []byte{0x30}})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/trust/publish-dane", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.HandleTrustPublishDANE(w, req)
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		server, mockSvc, cleanup := setupMockServer(t)
+		defer cleanup()
+		mockSvc.TrustSvc = &stubTrustService{}
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/trust/publish-dane", bytes.NewReader([]byte("{not json")))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.HandleTrustPublishDANE(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 }
