@@ -100,8 +100,7 @@ func (h *securityRESTHandler) handleRequest(ctx context.Context, service, method
 		return nil, errors.NewUnimplemented("rest.security.PIV."+method,
 			"vendor-agnostic PIV reader/slot operations have no REST server surface on quicbaasd")
 	case "ACME":
-		return nil, errors.NewUnimplemented("rest.security.ACME."+method,
-			"ACME operations have no REST server surface on quicbaasd")
+		return h.handleACME(ctx, method, req)
 	case "Trust":
 		return h.handleTrust(ctx, method, req)
 	default:

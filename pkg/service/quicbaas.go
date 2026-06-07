@@ -162,6 +162,7 @@ type quicBaaS struct {
 	ollamaService             OllamaService
 	certificateService        CertificateService
 	trustService              TrustService
+	acmeService               ACMEServicer
 	dynamicSecretsService     DynamicSecretsService
 	objectStorageService      ObjectStorageService
 	objectStorageAdminService ObjectStorageAdminService
@@ -583,6 +584,14 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		if trustCA, ok := b.caService.(TrustCA); ok {
 			svc.trustService = NewTrustService(trustCA, b.danePublisher)
 		}
+	}
+
+	// Wire the composed ACME (RFC 8555) servicer when pkg/server built one.
+	// ACME composition (CA + qrdb-backed storage + base URL) lives in
+	// pkg/server where those dependencies are available; the builder only
+	// carries the finished servicer onto the facade.
+	if b.acmeService != nil {
+		svc.acmeService = b.acmeService
 	}
 
 	// Initialize IAM service if IAM manager is provided
@@ -5047,6 +5056,15 @@ func (s *quicBaaS) Certificate() CertificateService {
 // Security().Trust(), backed by the xkms TrustedCA via the CA adapter.
 func (s *quicBaaS) Trust() TrustService {
 	return s.trustService
+}
+
+// ACME returns the ACME (RFC 8555) composition service (returns nil if not
+// configured). It exposes the server-side challenge-registration and
+// issuance verbs surfaced under Security().ACME().Server(), backed by the
+// composed go-xkms ACME server. ACME is HTTP-native; it is reachable over
+// REST and the in-process embedded transport only.
+func (s *quicBaaS) ACME() ACMEServicer {
+	return s.acmeService
 }
 
 // DynamicSecrets returns the Dynamic Secrets service (returns nil if not configured).

@@ -29,6 +29,7 @@ import (
 
 	trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 
+	acmeclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/acme"
 	trustclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/trust"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	trustbootstrap "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/bootstrap"
@@ -219,215 +220,71 @@ func TestACMEServer_Issue_InvalidResponseType(t *testing.T) {
 }
 
 func TestACMEServer_Issue_HappyPath(t *testing.T) {
-	want := &ACMEIssueResponse{
+	wire := &acmeclient.IssueResponse{
 		CertificatePEM: []byte("cert"),
 		ChainPEM:       []byte("chain"),
 		SerialNumber:   "S/N",
-		NotBefore:      time.Now().UTC().Truncate(time.Second),
-		NotAfter:       time.Now().UTC().Add(time.Hour).Truncate(time.Second),
 	}
 	mt := &mockTransport{requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 		if service != acmeServiceName || method != "Issue" {
 			t.Errorf("unexpected dispatch: %s/%s", service, method)
 		}
-		return want, nil
+		return wire, nil
 	}}
 	srv := newACMEServer(mt)
 	got, err := srv.Issue(context.Background(), []byte("csr"), "http-01", "value")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != want {
-		t.Errorf("got %v, want %v", got, want)
+	if string(got.CertificatePEM) != "cert" || string(got.ChainPEM) != "chain" || got.SerialNumber != "S/N" {
+		t.Errorf("unexpected issue response: %+v", got)
 	}
 }
 
 // =============================================================================
 // acmeClientImpl tests
 // =============================================================================
+//
+// The protocol-client verbs are not transport RPCs: they require a JWS-signed
+// RFC 8555 exchange driven by an ACME protocol client. The SDK returns a typed
+// unimplemented error and never touches the transport.
 
-func TestACMEClient_NewOrder_Validation(t *testing.T) {
-	c := &acmeClientImpl{t: &mockTransport{}}
-	tests := []struct {
-		name string
-		ids  []ACMEOrderIdentifier
-		ctx  context.Context
-	}{
-		{"empty identifiers", nil, context.Background()},
-		{"nil context", []ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}}, nil},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := c.NewOrder(tc.ctx, tc.ids, "http-01")
-			if err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
-			}
-		})
-	}
-}
-
-func TestACMEClient_NewOrder_TransportError(t *testing.T) {
+func acmeClientUnimplemented(t *testing.T, name string, call func(*acmeClientImpl) error) {
+	t.Helper()
+	touched := false
 	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, errBoom
+		touched = true
+		return nil, nil
 	}}}
-	_, err := c.NewOrder(context.Background(), []ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}}, "http-01")
-	if err == nil {
-		t.Fatal("expected transport error to propagate")
+	err := call(c)
+	if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
+		t.Errorf("%s: expected unimplemented, got %v", name, err)
+	}
+	if touched {
+		t.Errorf("%s: must not touch the transport", name)
 	}
 }
 
-func TestACMEClient_NewOrder_NilAndInvalidResponse(t *testing.T) {
-	t.Run("nil response", func(t *testing.T) {
-		c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, nil
-		}}}
-		_, err := c.NewOrder(context.Background(), []ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}}, "http-01")
-		if err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return 42, nil
-		}}}
-		_, err := c.NewOrder(context.Background(), []ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}}, "http-01")
-		if err == nil {
-			t.Fatal("expected error")
-		}
+func TestACMEClient_NewOrder_Unimplemented(t *testing.T) {
+	acmeClientUnimplemented(t, "NewOrder", func(c *acmeClientImpl) error {
+		_, err := c.NewOrder(context.Background(),
+			[]ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}}, "http-01")
+		return err
 	})
 }
 
-func TestACMEClient_NewOrder_HappyPath(t *testing.T) {
-	want := &ACMEOrder{Status: ACMEStatusValid, URL: "https://acme.example/order/1"}
-	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return want, nil
-	}}}
-	got, err := c.NewOrder(context.Background(), []ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}}, "http-01")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != want {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestACMEClient_FinalizeOrder_Validation(t *testing.T) {
-	c := &acmeClientImpl{t: &mockTransport{}}
-	tests := []struct {
-		name     string
-		orderURL string
-		csr      []byte
-		ctx      context.Context
-	}{
-		{"empty url", "", []byte("csr"), context.Background()},
-		{"empty csr", "url", nil, context.Background()},
-		{"nil ctx", "url", []byte("csr"), nil},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := c.FinalizeOrder(tc.ctx, tc.orderURL, tc.csr)
-			if err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
-			}
-		})
-	}
-}
-
-func TestACMEClient_FinalizeOrder_TransportAndType(t *testing.T) {
-	t.Run("transport error", func(t *testing.T) {
-		c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
+func TestACMEClient_FinalizeOrder_Unimplemented(t *testing.T) {
+	acmeClientUnimplemented(t, "FinalizeOrder", func(c *acmeClientImpl) error {
 		_, err := c.FinalizeOrder(context.Background(), "url", []byte("csr"))
-		if err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, nil
-		}}}
-		_, err := c.FinalizeOrder(context.Background(), "url", []byte("csr"))
-		if err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		_, err := c.FinalizeOrder(context.Background(), "url", []byte("csr"))
-		if err == nil {
-			t.Fatal("expected error")
-		}
+		return err
 	})
 }
 
-func TestACMEClient_FinalizeOrder_HappyPath(t *testing.T) {
-	want := []byte("CERT-PEM")
-	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &acmeFinalizeOrderResponse{CertificatePEM: want}, nil
-	}}}
-	got, err := c.FinalizeOrder(context.Background(), "url", []byte("csr"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestACMEClient_Renew_Validation(t *testing.T) {
-	c := &acmeClientImpl{t: &mockTransport{}}
-	t.Run("empty url", func(t *testing.T) {
-		if _, err := c.Renew(context.Background(), ""); err == nil || !sdkerrors.IsInvalidInput(err) {
-			t.Errorf("expected InvalidInput, got %v", err)
-		}
+func TestACMEClient_Renew_Unimplemented(t *testing.T) {
+	acmeClientUnimplemented(t, "Renew", func(c *acmeClientImpl) error {
+		_, err := c.Renew(context.Background(), "url")
+		return err
 	})
-	t.Run("nil ctx", func(t *testing.T) {
-		if _, err := c.Renew(nil, "url"); err == nil || !sdkerrors.IsInvalidInput(err) {
-			t.Errorf("expected InvalidInput, got %v", err)
-		}
-	})
-}
-
-func TestACMEClient_Renew_TransportAndTypeErrors(t *testing.T) {
-	t.Run("transport error", func(t *testing.T) {
-		c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.Renew(context.Background(), "url"); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &acmeClientImpl{t: &mockTransport{}}
-		if _, err := c.Renew(context.Background(), "url"); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return 1.0, nil
-		}}}
-		if _, err := c.Renew(context.Background(), "url"); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-}
-
-func TestACMEClient_Renew_HappyPath(t *testing.T) {
-	want := []byte("RENEWED-CERT")
-	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &acmeRenewResponse{CertificatePEM: want}, nil
-	}}}
-	got, err := c.Renew(context.Background(), "url")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Errorf("got %q, want %q", got, want)
-	}
 }
 
 // =============================================================================

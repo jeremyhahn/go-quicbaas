@@ -36,6 +36,7 @@ import (
 	trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	acmeclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/acme"
 	trustclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/trust"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -766,13 +767,6 @@ func newACMEServer(t transport.Transport) *acmeServerImpl {
 	}
 }
 
-// acmeRegisterChallengeRequest is the wire-level payload for
-// RegisterChallenge. The verifier itself is process-local; the server is
-// only notified that the challenge type is enabled.
-type acmeRegisterChallengeRequest struct {
-	Name string `json:"name"`
-}
-
 // RegisterChallenge installs a challenge verifier in the SDK process and
 // notifies the server that the challenge type is active. The verifier
 // itself stays in-process: the server invokes it via the embedded
@@ -798,7 +792,7 @@ func (s *acmeServerImpl) RegisterChallenge(ctx context.Context, name string, ver
 		return nil
 	}
 
-	if _, err := s.t.Request(ctx, acmeServiceName, "RegisterChallenge", &acmeRegisterChallengeRequest{Name: name}); err != nil {
+	if _, err := s.t.Request(ctx, acmeServiceName, "RegisterChallenge", &acmeclient.RegisterChallengeRequest{Name: name}); err != nil {
 		return err
 	}
 
@@ -816,14 +810,10 @@ func (s *acmeServerImpl) Verifier(name string) ACMEChallengeVerifierFunc {
 	return s.verifiers[name]
 }
 
-// acmeIssueRequest is the wire-level Issue payload.
-type acmeIssueRequest struct {
-	CSRPEM         []byte `json:"csr_pem"`
-	ChallengeType  string `json:"challenge_type"`
-	ChallengeValue string `json:"challenge_value"`
-}
-
-// Issue triggers a server-side ACME issuance using the named challenge.
+// Issue triggers a server-side ACME issuance using the named challenge. The
+// challenge identified by challengeType/challengeValue must already have been
+// validated; the server signs the supplied CSR with the composed CA and
+// returns the issued chain.
 func (s *acmeServerImpl) Issue(ctx context.Context, csrPEM []byte, challengeType, challengeValue string) (*ACMEIssueResponse, error) {
 	if len(csrPEM) == 0 {
 		return nil, sdkerrors.NewInvalidInput("acme.Issue", "csr is required")
@@ -835,7 +825,7 @@ func (s *acmeServerImpl) Issue(ctx context.Context, csrPEM []byte, challengeType
 		return nil, sdkerrors.NewInvalidInput("acme.Issue", "context is required")
 	}
 
-	resp, err := s.t.Request(ctx, acmeServiceName, "Issue", &acmeIssueRequest{
+	resp, err := s.t.Request(ctx, acmeServiceName, "Issue", &acmeclient.IssueRequest{
 		CSRPEM:         csrPEM,
 		ChallengeType:  challengeType,
 		ChallengeValue: challengeValue,
@@ -847,110 +837,51 @@ func (s *acmeServerImpl) Issue(ctx context.Context, csrPEM []byte, challengeType
 		return nil, sdkerrors.NewInternal("acme.Issue", "nil response from server")
 	}
 
-	out, ok := resp.(*ACMEIssueResponse)
+	out, ok := resp.(*acmeclient.IssueResponse)
 	if !ok {
 		return nil, sdkerrors.NewInternal("acme.Issue", "invalid response type")
 	}
-	return out, nil
+	return &ACMEIssueResponse{
+		CertificatePEM: out.CertificatePEM,
+		ChainPEM:       out.ChainPEM,
+		SerialNumber:   out.SerialNumber,
+	}, nil
 }
 
-// acmeClientImpl is a transport-backed ACMEClientAPI.
+// acmeClientImpl is the ACMEClientAPI surface for the ACME PROTOCOL CLIENT
+// verbs (NewOrder / FinalizeOrder / Renew).
+//
+// These three verbs are RFC 8555 protocol exchanges: order creation and
+// finalization are JWS-signed POSTs that require a per-account signing key, a
+// registered account, replay nonces, and persistent account/order/cert
+// storage. They are performed by a real ACME protocol client
+// (go-xkms/pkg/acme/client) speaking to the directory the server mounts —
+// they are NOT quicbaas transport RPCs (the server's RFC 8555 handlers reject
+// non-JWS bodies). The current ACMEClientAPI signatures carry no account
+// credentials, so they cannot drive that client.
+//
+// Callers that need full order issuance use the directory the server exposes
+// (Security().ACME().Server() advertises it via the REST-mounted RFC 8555
+// endpoints) together with the xkms ACME client directly. Until the
+// ACMEClientAPI is extended to accept account credentials, these methods
+// return a typed unimplemented error rather than a misleading server RPC.
 type acmeClientImpl struct {
 	t transport.Transport
 }
 
-type acmeNewOrderRequest struct {
-	Identifiers   []ACMEOrderIdentifier `json:"identifiers"`
-	ChallengeType string                `json:"challenge_type"`
-}
-
 func (c *acmeClientImpl) NewOrder(ctx context.Context, identifiers []ACMEOrderIdentifier, challengeType string) (*ACMEOrder, error) {
-	if len(identifiers) == 0 {
-		return nil, sdkerrors.NewInvalidInput("acme.NewOrder", "at least one identifier is required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("acme.NewOrder", "context is required")
-	}
-	resp, err := c.t.Request(ctx, acmeServiceName, "NewOrder", &acmeNewOrderRequest{
-		Identifiers:   identifiers,
-		ChallengeType: challengeType,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, sdkerrors.NewInternal("acme.NewOrder", "nil response from server")
-	}
-	out, ok := resp.(*ACMEOrder)
-	if !ok {
-		return nil, sdkerrors.NewInternal("acme.NewOrder", "invalid response type")
-	}
-	return out, nil
-}
-
-type acmeFinalizeOrderRequest struct {
-	OrderURL string `json:"order_url"`
-	CSRPEM   []byte `json:"csr_pem"`
-}
-
-type acmeFinalizeOrderResponse struct {
-	CertificatePEM []byte `json:"certificate_pem"`
+	return nil, sdkerrors.NewUnimplemented("acme.NewOrder",
+		"ACME order creation is a JWS-signed RFC 8555 client exchange; drive go-xkms/pkg/acme/client against the directory exposed by Security().ACME().Server()")
 }
 
 func (c *acmeClientImpl) FinalizeOrder(ctx context.Context, orderURL string, csrPEM []byte) ([]byte, error) {
-	if orderURL == "" {
-		return nil, sdkerrors.NewInvalidInput("acme.FinalizeOrder", "order URL is required")
-	}
-	if len(csrPEM) == 0 {
-		return nil, sdkerrors.NewInvalidInput("acme.FinalizeOrder", "csr is required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("acme.FinalizeOrder", "context is required")
-	}
-	resp, err := c.t.Request(ctx, acmeServiceName, "FinalizeOrder", &acmeFinalizeOrderRequest{
-		OrderURL: orderURL,
-		CSRPEM:   csrPEM,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, sdkerrors.NewInternal("acme.FinalizeOrder", "nil response from server")
-	}
-	out, ok := resp.(*acmeFinalizeOrderResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("acme.FinalizeOrder", "invalid response type")
-	}
-	return out.CertificatePEM, nil
-}
-
-type acmeRenewRequest struct {
-	CertURL string `json:"cert_url"`
-}
-
-type acmeRenewResponse struct {
-	CertificatePEM []byte `json:"certificate_pem"`
+	return nil, sdkerrors.NewUnimplemented("acme.FinalizeOrder",
+		"ACME order finalization is a JWS-signed RFC 8555 client exchange; drive go-xkms/pkg/acme/client against the directory exposed by Security().ACME().Server()")
 }
 
 func (c *acmeClientImpl) Renew(ctx context.Context, certURL string) ([]byte, error) {
-	if certURL == "" {
-		return nil, sdkerrors.NewInvalidInput("acme.Renew", "cert URL is required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("acme.Renew", "context is required")
-	}
-	resp, err := c.t.Request(ctx, acmeServiceName, "Renew", &acmeRenewRequest{CertURL: certURL})
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, sdkerrors.NewInternal("acme.Renew", "nil response from server")
-	}
-	out, ok := resp.(*acmeRenewResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("acme.Renew", "invalid response type")
-	}
-	return out.CertificatePEM, nil
+	return nil, sdkerrors.NewUnimplemented("acme.Renew",
+		"ACME renewal is a JWS-signed RFC 8555 client exchange; drive go-xkms/pkg/acme/client against the directory exposed by Security().ACME().Server()")
 }
 
 // acmeServiceImpl is the ACMEService composite.

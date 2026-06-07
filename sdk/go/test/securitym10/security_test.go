@@ -36,6 +36,7 @@ import (
 	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	acmeclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/acme"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -261,21 +262,20 @@ func TestSDK_ACMEServer_Issue_HappyPath(t *testing.T) {
 	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
-	expected := &quicbaas.ACMEIssueResponse{
+	// The transport exchanges the shared client/acme wire type; the SDK
+	// converts it to the public ACMEIssueResponse.
+	rt.setResponse("quicbaas.ACME", "Issue", &acmeclient.IssueResponse{
 		CertificatePEM: []byte("CERT"),
 		ChainPEM:       []byte("CHAIN"),
 		SerialNumber:   "01",
-		NotBefore:      time.Now(),
-		NotAfter:       time.Now().Add(24 * time.Hour),
-	}
-	rt.setResponse("quicbaas.ACME", "Issue", expected, nil)
+	}, nil)
 
 	got, err := c.Security().ACME().Server().Issue(context.Background(), []byte("CSR"), "enroll-01", "device-1")
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	if got != expected {
-		t.Error("expected canned response")
+	if string(got.CertificatePEM) != "CERT" || string(got.ChainPEM) != "CHAIN" || got.SerialNumber != "01" {
+		t.Errorf("unexpected issue response: %+v", got)
 	}
 }
 
@@ -298,59 +298,54 @@ func TestSDK_ACMEServer_Issue_Validation(t *testing.T) {
 // =============================================================================
 // ACME — Client (NewOrder, FinalizeOrder, Renew)
 // =============================================================================
+//
+// The ACME protocol-client verbs are JWS-signed RFC 8555 exchanges that
+// require a per-account signing key and persistent account/order storage.
+// They are NOT quicbaas transport RPCs (the server's RFC 8555 handlers reject
+// non-JWS bodies). The SDK therefore returns a typed unimplemented error for
+// them and never touches the transport, pending an ACMEClientAPI extension
+// that accepts account credentials.
 
-func TestSDK_ACMEClient_NewOrder_HappyPath(t *testing.T) {
+func TestSDK_ACMEClient_NewOrder_Unimplemented(t *testing.T) {
 	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
-	expected := &quicbaas.ACMEOrder{}
-	rt.setResponse("quicbaas.ACME", "NewOrder", expected, nil)
-
-	got, err := c.Security().ACME().Client().NewOrder(
+	_, err := c.Security().ACME().Client().NewOrder(
 		context.Background(),
 		[]quicbaas.ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}},
 		"dns-01",
 	)
-	if err != nil {
-		t.Fatalf("NewOrder: %v", err)
+	if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
+		t.Errorf("expected unimplemented, got %v", err)
 	}
-	if got != expected {
-		t.Error("expected canned response")
-	}
-}
-
-func TestSDK_ACMEClient_NewOrder_Validation(t *testing.T) {
-	c, _ := newClientWithMockTransport(t)
-	defer c.Close()
-	cli := c.Security().ACME().Client()
-
-	if _, err := cli.NewOrder(context.Background(), nil, "x"); !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for empty identifiers, got %v", err)
-	}
-	if _, err := cli.NewOrder(nil, []quicbaas.ACMEOrderIdentifier{{Type: "dns", Value: "x"}}, "x"); !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for nil ctx, got %v", err)
+	if wire := rt.callsFor("quicbaas.ACME", "NewOrder"); wire != 0 {
+		t.Errorf("NewOrder must not touch the transport, got %d calls", wire)
 	}
 }
 
-func TestSDK_ACMEClient_FinalizeOrder_Validation(t *testing.T) {
-	c, _ := newClientWithMockTransport(t)
+func TestSDK_ACMEClient_FinalizeOrder_Unimplemented(t *testing.T) {
+	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
-	cli := c.Security().ACME().Client()
 
-	if _, err := cli.FinalizeOrder(context.Background(), "", []byte("X")); !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for empty url, got %v", err)
+	_, err := c.Security().ACME().Client().FinalizeOrder(context.Background(), "https://acme/order/1", []byte("CSR"))
+	if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
+		t.Errorf("expected unimplemented, got %v", err)
 	}
-	if _, err := cli.FinalizeOrder(context.Background(), "u", nil); !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for empty csr, got %v", err)
+	if wire := rt.callsFor("quicbaas.ACME", "FinalizeOrder"); wire != 0 {
+		t.Errorf("FinalizeOrder must not touch the transport, got %d calls", wire)
 	}
 }
 
-func TestSDK_ACMEClient_Renew_Validation(t *testing.T) {
-	c, _ := newClientWithMockTransport(t)
+func TestSDK_ACMEClient_Renew_Unimplemented(t *testing.T) {
+	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
-	if _, err := c.Security().ACME().Client().Renew(context.Background(), ""); !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for empty url, got %v", err)
+	_, err := c.Security().ACME().Client().Renew(context.Background(), "https://acme/cert/1")
+	if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
+		t.Errorf("expected unimplemented, got %v", err)
+	}
+	if wire := rt.callsFor("quicbaas.ACME", "Renew"); wire != 0 {
+		t.Errorf("Renew must not touch the transport, got %d calls", wire)
 	}
 }
 

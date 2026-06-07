@@ -1551,6 +1551,19 @@ func (s *Server) startService() error {
 				builder = builder.WithDANEPublisher(s.opts.danePublisher)
 			}
 			s.logger.Info("CA service attached to service builder via TrustedCA adapter")
+
+			// Compose the go-xkms ACME (RFC 8555) server off the same CA +
+			// qrdb datastore and attach it to the facade. ACME is HTTP-native;
+			// it is reachable over REST + the embedded transport only. A nil
+			// servicer (ACME not configured) is benign; a construction error
+			// is logged but does not abort startup.
+			acmeSvc, acmeErr := s.buildACMEService(caAdapter)
+			if acmeErr != nil {
+				s.logger.Warnf("Failed to compose ACME service: %v", acmeErr)
+			} else if acmeSvc != nil {
+				builder = builder.WithACMEService(acmeSvc)
+				s.logger.Info("ACME (RFC 8555) service attached to service builder")
+			}
 		}
 	}
 

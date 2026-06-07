@@ -1552,6 +1552,9 @@ type client struct {
 	projectClient            ProjectClient
 	qrdb                     qrdbState
 	address                  string
+	acmeTransportOnce        sync.Once
+	acmeTransportCached      Transport
+	acmeTransportErr         error
 
 	// M10 — extended security service (lazily initialized).
 	securityOnce sync.Once
@@ -1617,6 +1620,41 @@ func NewClient(address string, opts ...Option) (Client, error) {
 // dead.
 func resolveTLSConfig(opts *clientOptions) *tls.Config {
 	return opts.tlsConfig
+}
+
+// acmeTransport resolves the transport used for ACME (RFC 8555) server-side
+// verbs. ACME is HTTP-native: when the client's main transport is REST or the
+// in-process embedded transport, that transport already speaks ACME, so it is
+// reused. For any other main transport (gRPC / QUIC / MCP / Unix) ACME cannot
+// ride the wire protocol, so a dedicated REST transport to the same address is
+// lazily constructed and cached. This makes Security().ACME() work regardless
+// of the configured main transport without adding ACME opcodes to the other
+// protocols.
+func (c *client) acmeTransport() Transport {
+	// A REST or embedded main transport already speaks ACME; reuse it. A
+	// directly-injected transport (no resolvable network address — e.g. via
+	// NewClientWithTransport) is also used as-is: there is nothing to build a
+	// REST transport from, and the caller explicitly chose that transport.
+	if c.opts == nil ||
+		c.opts.transportType == TransportREST ||
+		c.opts.transportType == TransportEmbedded ||
+		c.address == "" {
+		return c.transport
+	}
+	c.acmeTransportOnce.Do(func() {
+		t, err := createRESTTransport(c.address, c.opts)
+		if err != nil {
+			c.acmeTransportErr = err
+			return
+		}
+		c.acmeTransportCached = t
+	})
+	if c.acmeTransportCached != nil {
+		return c.acmeTransportCached
+	}
+	// Fall back to the main transport when a REST transport could not be
+	// built; the ACME service will surface the resulting error on first use.
+	return c.transport
 }
 
 // createTransport creates the appropriate transport based on options.

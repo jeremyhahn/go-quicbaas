@@ -684,6 +684,12 @@ func (s *Server) setupRouter() {
 			// Trust composition routes (cross-sign / AIA)
 			registerTrustRoutes(s, r)
 
+			// ACME (RFC 8555) server-control routes (register-challenge / issue).
+			// The raw RFC 8555 directory endpoints are mounted at the router
+			// root (see registerACMEDirectoryRoutes below) per the ACME URL
+			// convention.
+			registerACMERoutes(s, r)
+
 			// Dynamic secrets service routes
 			registerDynamicSecretsRoutes(s, r)
 
@@ -732,6 +738,13 @@ func (s *Server) setupRouter() {
 			registerBackupRoutes(s, r)
 		})
 	})
+
+	// ACME RFC 8555 directory endpoints. Mounted at the router ROOT (NOT
+	// under /api/v1) so the directory URL the server advertises
+	// (https://host:port/acme/directory) follows the RFC 8555 convention.
+	// These delegate to the composed go-xkms RestServicer; they respond 503
+	// when ACME is not configured.
+	registerACMEDirectoryRoutes(s, r)
 
 	// Credential management routes mirror the qrdb /v1/credentials/* wire
 	// contract so a qrdb SDK REST client works unchanged against quicbaasd.

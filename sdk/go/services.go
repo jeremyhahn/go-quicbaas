@@ -222,7 +222,9 @@ func (s *securityService) SealStore() (QRDBSealStoreClient, error) {
 
 func (s *securityService) ACME() ACMEService {
 	s.acmeOnce.Do(func() {
-		s.acmeSvc = newACMEService(s.c.transport)
+		// ACME is HTTP-native; acmeTransport() routes over REST/embedded
+		// regardless of the client's configured main transport.
+		s.acmeSvc = newACMEService(s.c.acmeTransport())
 	})
 	return s.acmeSvc
 }

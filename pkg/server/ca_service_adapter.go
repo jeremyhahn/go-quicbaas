@@ -103,6 +103,11 @@ type caServiceAdapter struct {
 // off the same CA instance used for certificate operations.
 var _ service.TrustCA = (*caServiceAdapter)(nil)
 
+// Compile-time assertion that the adapter satisfies the service-layer
+// ACMECA capability, so the QuicBaaS ACME servicer can perform server-side
+// issuance off the same CA instance used for certificate operations.
+var _ service.ACMECA = (*caServiceAdapter)(nil)
+
 func newCAServiceAdapter(ca xkmssdk.TrustedCA) (*caServiceAdapter, error) {
 	if ca == nil {
 		return nil, ErrCAServiceAdapterNilCA
@@ -319,6 +324,33 @@ func (a *caServiceAdapter) SignCSR(
 		ChainPEM:     bundle,
 		SerialNumber: cert.SerialNumber.Text(16),
 	}, nil
+}
+
+// SignCSRPEM signs a PEM-encoded CSR with the wrapped CA and returns the
+// issued leaf certificate plus the CA chain, both PEM-encoded. It satisfies
+// the service.ACMECA capability used by Security().ACME().Server().Issue:
+// the ACME servicer hands the validated CSR here for server-side issuance.
+//
+// The default sign profile is applied (no SPIFFE synthesis): ACME issuance is
+// driven by the requester's CSR identifiers, not a tenant-scoped login leaf.
+func (a *caServiceAdapter) SignCSRPEM(_ context.Context, csrPEM []byte) (certPEM, chainPEM []byte, err error) {
+	if len(csrPEM) == 0 {
+		return nil, nil, ErrCAServiceAdapterInvalidPEM
+	}
+	ca := a.getCA()
+	if ca == nil {
+		return nil, nil, ErrCAServiceAdapterNilCA
+	}
+	cert, err := ca.SignCSR(csrPEM, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	chain, _ := ca.CABundle()
+	certPEM = pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert.Raw,
+	})
+	return certPEM, chain, nil
 }
 
 // RevokeCertificate marks a certificate as revoked by serial number.

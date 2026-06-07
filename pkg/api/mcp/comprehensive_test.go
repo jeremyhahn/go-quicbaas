@@ -499,6 +499,10 @@ func (m *mockService) Trust() service.TrustService {
 	return m.trustSvc
 }
 
+func (m *mockService) ACME() service.ACMEServicer {
+	return nil
+}
+
 func (m *mockService) DynamicSecrets() service.DynamicSecretsService {
 	return nil
 }

@@ -115,6 +115,12 @@ type QuicBaaS interface {
 	// Security().Trust(), backed by the xkms TrustedCA via the CA adapter.
 	Trust() TrustService
 
+	// ACME returns the ACME (RFC 8555) composition service (returns nil if
+	// not configured). It exposes the server-side challenge-registration and
+	// issuance verbs surfaced under Security().ACME(). ACME is HTTP-native:
+	// reachable over REST and the in-process embedded transport only.
+	ACME() ACMEServicer
+
 	// DynamicSecrets returns the Dynamic Secrets service (returns nil if not configured)
 	// Dynamic secrets handle credential generation with lease-based TTL management.
 	DynamicSecrets() DynamicSecretsService
@@ -1621,6 +1627,12 @@ type ServiceBuilder interface {
 	// unset, PublishDANE returns a typed not-configured error.
 	WithDANEPublisher(publisher DANEPublisher) ServiceBuilder
 
+	// WithACMEService sets the composed ACME (RFC 8555) servicer that backs
+	// Security().ACME(). The servicer is built in pkg/server where the CA,
+	// qrdb KVStore (for ACME persistence) and the externally reachable base
+	// URL are available. ACME is HTTP-native — REST + embedded only.
+	WithACMEService(acmeService ACMEServicer) ServiceBuilder
+
 	// WithCatalogManager sets the catalog manager for object storage
 	WithCatalogManager(catalogManager catalog.CatalogManager) ServiceBuilder
 
@@ -1683,6 +1695,7 @@ type serviceBuilder struct {
 	kvStoreProvider           func(shardID uint64) interface{}
 	caService                 interface{}
 	danePublisher             DANEPublisher
+	acmeService               ACMEServicer
 	catalogManager            catalog.CatalogManager
 	backendManager            catalog.BackendManager
 	objectStoreConfigResolver config.ObjectStoreConfigResolver
@@ -1771,6 +1784,11 @@ func (b *serviceBuilder) WithCAService(caService interface{}) ServiceBuilder {
 
 func (b *serviceBuilder) WithDANEPublisher(publisher DANEPublisher) ServiceBuilder {
 	b.danePublisher = publisher
+	return b
+}
+
+func (b *serviceBuilder) WithACMEService(acmeService ACMEServicer) ServiceBuilder {
+	b.acmeService = acmeService
 	return b
 }
 

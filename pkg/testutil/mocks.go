@@ -49,6 +49,7 @@ type MockQuicBaaS struct {
 	// These are returned by the corresponding accessor methods.
 	CertificateSvc   service.CertificateService
 	TrustSvc         service.TrustService
+	ACMESvc          service.ACMEServicer
 	EmbeddingService service.EmbeddingService
 	OllamaService    service.OllamaService
 
@@ -525,6 +526,11 @@ func (m *MockQuicBaaS) Certificate() service.CertificateService {
 // Trust returns the TrustSvc field (may be nil).
 func (m *MockQuicBaaS) Trust() service.TrustService {
 	return m.TrustSvc
+}
+
+// ACME returns ACMESvc when set, otherwise nil.
+func (m *MockQuicBaaS) ACME() service.ACMEServicer {
+	return m.ACMESvc
 }
 
 // DynamicSecrets returns DynamicSecretsSvc when set, otherwise nil.

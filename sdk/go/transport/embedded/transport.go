@@ -210,6 +210,13 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Trust/AutoImportAIA":       handleTrustAutoImportAIA,
 	"quicbaas.Trust/PublishDANE":         handleTrustPublishDANE,
 
+	// ACME server-side control operations (RFC 8555 composition over the
+	// go-xkms ACME server). Only the control verbs round-trip in-process;
+	// the protocol-client verbs (NewOrder/FinalizeOrder/Renew) are JWS-signed
+	// RFC 8555 exchanges, not transport RPCs, by design.
+	"quicbaas.ACME/RegisterChallenge": handleACMERegisterChallenge,
+	"quicbaas.ACME/Issue":             handleACMEIssue,
+
 	// Orchestrator — session operations
 	"quicbaas.Orchestrator/Inference":     handleOrchestratorInference,
 	"quicbaas.Orchestrator/SpawnSession":  handleOrchestratorSpawnSession,
