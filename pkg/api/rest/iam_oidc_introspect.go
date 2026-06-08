@@ -97,7 +97,7 @@ func (h *IAMHandler) Introspect(w http.ResponseWriter, r *http.Request) {
 	// the user (token subject/tenant/scope) for an active token. An audit
 	// failure must not fail the introspection itself; it is logged.
 	if resp.Active {
-		h.auditIntrospection(ctx, peerCert, callerClientID, resp)
+		h.auditIntrospection(ctx, r, peerCert, callerClientID, resp)
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
@@ -151,6 +151,7 @@ func (h *IAMHandler) authenticateIntrospectionCaller(
 // introspection of an active token.
 func (h *IAMHandler) auditIntrospection(
 	ctx context.Context,
+	r *http.Request,
 	peerCert *x509.Certificate,
 	callerClientID string,
 	resp *iam.IntrospectionResponse,
@@ -169,6 +170,8 @@ func (h *IAMHandler) auditIntrospection(
 		Scopes:          resp.SCP,
 		Roles:           resp.Roles,
 		ServiceIdentity: iam.ServiceIdentityFromCert(peerCert),
+		IPAddress:       getClientIP(r),
+		UserAgent:       r.UserAgent(),
 	}
 
 	details := map[string]interface{}{

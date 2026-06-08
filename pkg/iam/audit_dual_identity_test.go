@@ -146,3 +146,77 @@ func TestLogDualIdentity_Errors(t *testing.T) {
 		t.Errorf("expected error when no tenant is available")
 	}
 }
+
+// TestLogDualIdentity_CarriesNetworkSource verifies the audit entry stamps the
+// network source (client IP) and user agent supplied on the DualIdentity, so a
+// dual-identity event records WHERE the request originated (AU-3 network
+// source) in addition to WHO performed it.
+func TestLogDualIdentity_CarriesNetworkSource(t *testing.T) {
+	logger, err := NewAuditLogger()
+	if err != nil {
+		t.Fatalf("NewAuditLogger() error = %v", err)
+	}
+	defer logger.Close()
+
+	ctx := context.Background()
+	id := DualIdentity{
+		ServiceIdentity: "CN=rs.example.com",
+		Subject:         "user-net",
+		TenantID:        "acme",
+		IPAddress:       "203.0.113.7",
+		UserAgent:       "quicbaas-agent/1.2.3",
+	}
+
+	if err := LogDualIdentity(ctx, logger, id,
+		AuditEventAuthentication, AuditCategoryAuthentication,
+		"oauth2.token", AuditOutcomeSuccess, nil); err != nil {
+		t.Fatalf("LogDualIdentity() error = %v", err)
+	}
+
+	events, _, err := logger.Query(ctx, &AuditFilter{TenantID: "acme"})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].IPAddress != "203.0.113.7" {
+		t.Errorf("ip address = %q, want 203.0.113.7", events[0].IPAddress)
+	}
+	if events[0].UserAgent != "quicbaas-agent/1.2.3" {
+		t.Errorf("user agent = %q, want quicbaas-agent/1.2.3", events[0].UserAgent)
+	}
+}
+
+// TestLogDualIdentity_NetworkSourceOptional verifies that omitting the network
+// source leaves the fields empty rather than failing (the fields are optional).
+func TestLogDualIdentity_NetworkSourceOptional(t *testing.T) {
+	logger, err := NewAuditLogger()
+	if err != nil {
+		t.Fatalf("NewAuditLogger() error = %v", err)
+	}
+	defer logger.Close()
+
+	ctx := context.Background()
+	id := DualIdentity{Subject: "user-x", TenantID: "acme"}
+
+	if err := LogDualIdentity(ctx, logger, id,
+		AuditEventAuthentication, AuditCategoryAuthentication,
+		"oauth2.token", AuditOutcomeSuccess, nil); err != nil {
+		t.Fatalf("LogDualIdentity() error = %v", err)
+	}
+
+	events, _, err := logger.Query(ctx, &AuditFilter{TenantID: "acme"})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].IPAddress != "" {
+		t.Errorf("ip address = %q, want empty", events[0].IPAddress)
+	}
+	if events[0].UserAgent != "" {
+		t.Errorf("user agent = %q, want empty", events[0].UserAgent)
+	}
+}

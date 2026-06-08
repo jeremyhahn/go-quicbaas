@@ -95,11 +95,26 @@ control-plane operator can make the storage-isolation decision explicitly.
 
 ## 3. Platform access-token TTL
 
-The platform access token is short-lived. The broker default is **15 minutes**
-(`AccessTokenTTL` in `pkg/server/iam_init.go`), the upper bound of the required
-5–15 minute window. Refresh tokens (7 days) and ID tokens (1 hour) keep their
-longer lifetimes. Short access-token TTL bounds the replay window for a
-compromised bearer; revocation + introspection cover the in-window case.
+The platform access token is short-lived. The broker default is **15 minutes**,
+the upper bound of the required 5–15 minute window. Refresh tokens (7 days) and
+ID tokens (1 hour) keep their longer lifetimes. Short access-token TTL bounds the
+replay window for a compromised bearer; revocation + introspection cover the
+in-window case.
+
+These lifetimes are config-wired on `AuthConfig` and default to the values above
+when unset (zero):
+
+| Config key (`auth.*`)   | Default | Applies to                 |
+| ----------------------- | ------- | -------------------------- |
+| `access_token_ttl`      | 15m     | OIDC/OAuth2 access tokens  |
+| `refresh_token_ttl`     | 7d      | OIDC refresh tokens        |
+| `id_token_ttl`          | 1h      | OIDC ID tokens             |
+| `auth_code_ttl`         | 10m     | OAuth2 authorization codes |
+
+`access_token_ttl`, when set, is validated to stay within `[1m, 60m]`
+(`DefaultOIDCAccessTokenTTLMin`..`Max`); out-of-range values are rejected by the
+config validator. The provider is configured from these values in
+`pkg/server/iam_init.go`.
 
 ## 4. GovCloud private ingress (SC-7)
 
@@ -121,8 +136,21 @@ application code:
   publicly reachable; keep `/oauth2/introspect`, `/oauth2/revoke`, and the
   admin/audit APIs on the private listener.
 
-No separate application listener knob is added here: the broker binds a single
-`Address` (`pkg/api/rest/server.Config.Address`), and operators place that bind
-on a private interface and SG-restrict it. Introducing a second in-process
-listener would duplicate TLS/routing wiring without improving the SC-7 boundary,
-which is enforced at the network layer.
+The network boundary itself remains **operator-enforced** (private subnet + SG /
+NACL); the application does not relocate the boundary into code. Two optional,
+backward-compatible config knobs support the posture without changing it when
+unset:
+
+- **Per-protocol `bind_address`** (`server.{rest,grpc,quic,mcp,unix}.bind_address`)
+  overrides the shared `server.host` for that listener only, so privileged
+  protocols can bind a private interface independently of any public-facing one.
+  Empty (default) = use `server.host` for every listener (current behavior).
+  Resolved via `ServerConfig.ResolveBindHost`.
+- **`security.require_mtls`** flips the server TLS client-auth posture from the
+  default opportunistic `VerifyClientCertIfGiven` to strict
+  `RequireAndVerifyClientCert`, rejecting any connection without a trusted client
+  certificate. Default `false` preserves current behavior. Applied via
+  `Server.optionalMTLSClientAuth` (`pkg/server/lifecycle.go`).
+
+These are knobs, not a substitute for the network boundary: the operator still
+places the private listeners on an internal interface and SG-restricts them.

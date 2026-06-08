@@ -99,26 +99,139 @@ func TestACMERESTHandler_Issue_HappyPath(t *testing.T) {
 	}
 }
 
-// TestACMERESTHandler_ProtocolClientVerbsUnsupported verifies the
-// protocol-client verbs are rejected with a typed unimplemented error rather
-// than being routed to a nonexistent server endpoint — they are not transport
-// RPCs.
-func TestACMERESTHandler_ProtocolClientVerbsUnsupported(t *testing.T) {
+// TestACMERESTHandler_NewOrder_HappyPath verifies the broker-as-CA NewOrder
+// verb routes over POST /api/v1/acme/new-order.
+func TestACMERESTHandler_NewOrder_HappyPath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("server must not be reached for protocol-client verb, got %s", r.URL.Path)
+		if r.URL.Path != "/api/v1/acme/new-order" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		var req acmeclient.NewOrderRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(req.Identifiers) != 1 || req.Identifiers[0].Value != "example.com" {
+			t.Errorf("unexpected identifiers: %+v", req.Identifiers)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(acmeclient.NewOrderResponse{
+			OrderID:     7,
+			Status:      "pending",
+			Identifiers: req.Identifiers,
+			Finalize:    "https://acme.test/acme/order/7/finalize",
+			URL:         "https://acme.test/acme/order/7",
+		})
 	}))
 	defer server.Close()
 
 	tr := newTestTransport(t, server)
 	defer tr.Close()
 
-	for _, method := range []string{"NewOrder", "FinalizeOrder", "Renew"} {
-		_, err := tr.Request(context.Background(), "quicbaas.ACME", method, nil)
-		if err == nil {
-			t.Fatalf("%s: expected error, got nil", method)
+	result, err := tr.Request(context.Background(), "quicbaas.ACME", "NewOrder",
+		&acmeclient.NewOrderRequest{
+			Identifiers:   []acmeclient.OrderIdentifier{{Type: "dns", Value: "example.com"}},
+			ChallengeType: "http-01",
+		})
+	if err != nil {
+		t.Fatalf("NewOrder failed: %v", err)
+	}
+	resp, ok := result.(*acmeclient.NewOrderResponse)
+	if !ok {
+		t.Fatalf("expected *acme.NewOrderResponse, got %T", result)
+	}
+	if resp.OrderID != 7 || resp.Finalize == "" {
+		t.Errorf("unexpected order: %+v", resp)
+	}
+}
+
+// TestACMERESTHandler_FinalizeOrder_HappyPath verifies FinalizeOrder routes
+// over POST /api/v1/acme/finalize and returns the issued chain.
+func TestACMERESTHandler_FinalizeOrder_HappyPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/acme/finalize" {
+			t.Errorf("unexpected path %s", r.URL.Path)
 		}
-		if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
-			t.Errorf("%s: expected unimplemented error, got %v", method, err)
+		var req acmeclient.FinalizeOrderRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode: %v", err)
 		}
+		if string(req.CSRPEM) != "CSR" {
+			t.Errorf("unexpected csr: %q", req.CSRPEM)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(acmeclient.FinalizeOrderResponse{
+			CertificatePEM: []byte("CERT"),
+			ChainPEM:       []byte("CHAIN"),
+			SerialNumber:   "ff",
+		})
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	defer tr.Close()
+
+	result, err := tr.Request(context.Background(), "quicbaas.ACME", "FinalizeOrder",
+		&acmeclient.FinalizeOrderRequest{OrderURL: "url", CSRPEM: []byte("CSR")})
+	if err != nil {
+		t.Fatalf("FinalizeOrder failed: %v", err)
+	}
+	resp, ok := result.(*acmeclient.FinalizeOrderResponse)
+	if !ok {
+		t.Fatalf("expected *acme.FinalizeOrderResponse, got %T", result)
+	}
+	if string(resp.CertificatePEM) != "CERT" || resp.SerialNumber != "ff" {
+		t.Errorf("unexpected finalize response: %+v", resp)
+	}
+}
+
+// TestACMERESTHandler_Renew_PropagatesError verifies the Renew verb routes over
+// POST /api/v1/acme/renew and surfaces the server's typed needs-CSR error.
+func TestACMERESTHandler_Renew_PropagatesError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/acme/renew" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		var req acmeclient.RenewRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if req.CertURL != "ff" {
+			t.Errorf("unexpected cert url: %q", req.CertURL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": "renewal requires a fresh CSR via NewOrder/FinalizeOrder",
+		})
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	defer tr.Close()
+
+	_, err := tr.Request(context.Background(), "quicbaas.ACME", "Renew",
+		&acmeclient.RenewRequest{CertURL: "ff"})
+	if err == nil {
+		t.Fatal("expected error from renew, got nil")
+	}
+}
+
+// TestACMERESTHandler_UnknownMethod verifies an unrecognised ACME method still
+// returns a typed unimplemented error.
+func TestACMERESTHandler_UnknownMethod(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("server must not be reached for unknown method, got %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	defer tr.Close()
+
+	_, err := tr.Request(context.Background(), "quicbaas.ACME", "Bogus", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
+		t.Errorf("expected unimplemented error, got %v", err)
 	}
 }

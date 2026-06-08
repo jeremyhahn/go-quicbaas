@@ -299,53 +299,78 @@ func TestSDK_ACMEServer_Issue_Validation(t *testing.T) {
 // ACME — Client (NewOrder, FinalizeOrder, Renew)
 // =============================================================================
 //
-// The ACME protocol-client verbs are JWS-signed RFC 8555 exchanges that
-// require a per-account signing key and persistent account/order storage.
-// They are NOT quicbaas transport RPCs (the server's RFC 8555 handlers reject
-// non-JWS bodies). The SDK therefore returns a typed unimplemented error for
-// them and never touches the transport, pending an ACMEClientAPI extension
-// that accepts account credentials.
+// QuicBaaS is the broker-as-CA: it IS the certificate authority. The ACME
+// protocol-client verbs are therefore in-process service calls routed over the
+// quicbaas transport (REST + embedded), NOT JWS-signed RFC 8555 exchanges
+// against an external directory. NewOrder returns a pending order descriptor,
+// FinalizeOrder signs the supplied CSR, and Renew resolves a cert by serial.
 
-func TestSDK_ACMEClient_NewOrder_Unimplemented(t *testing.T) {
+func TestSDK_ACMEClient_NewOrder_HappyPath(t *testing.T) {
 	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
-	_, err := c.Security().ACME().Client().NewOrder(
+	rt.setResponse("quicbaas.ACME", "NewOrder", &acmeclient.NewOrderResponse{
+		OrderID:     9,
+		Status:      "pending",
+		Identifiers: []acmeclient.OrderIdentifier{{Type: "dns", Value: "example.com"}},
+		Finalize:    "https://acme/order/9/finalize",
+		URL:         "https://acme/order/9",
+	}, nil)
+
+	order, err := c.Security().ACME().Client().NewOrder(
 		context.Background(),
 		[]quicbaas.ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}},
 		"dns-01",
 	)
-	if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
-		t.Errorf("expected unimplemented, got %v", err)
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
 	}
-	if wire := rt.callsFor("quicbaas.ACME", "NewOrder"); wire != 0 {
-		t.Errorf("NewOrder must not touch the transport, got %d calls", wire)
+	if order.ID != 9 || order.Finalize == "" || len(order.Identifiers) != 1 {
+		t.Errorf("unexpected order: %+v", order)
 	}
-}
-
-func TestSDK_ACMEClient_FinalizeOrder_Unimplemented(t *testing.T) {
-	c, rt := newClientWithMockTransport(t)
-	defer c.Close()
-
-	_, err := c.Security().ACME().Client().FinalizeOrder(context.Background(), "https://acme/order/1", []byte("CSR"))
-	if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
-		t.Errorf("expected unimplemented, got %v", err)
-	}
-	if wire := rt.callsFor("quicbaas.ACME", "FinalizeOrder"); wire != 0 {
-		t.Errorf("FinalizeOrder must not touch the transport, got %d calls", wire)
+	if wire := rt.callsFor("quicbaas.ACME", "NewOrder"); wire != 1 {
+		t.Errorf("NewOrder must route over the transport once, got %d calls", wire)
 	}
 }
 
-func TestSDK_ACMEClient_Renew_Unimplemented(t *testing.T) {
+func TestSDK_ACMEClient_FinalizeOrder_HappyPath(t *testing.T) {
 	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
+
+	rt.setResponse("quicbaas.ACME", "FinalizeOrder", &acmeclient.FinalizeOrderResponse{
+		CertificatePEM: []byte("CERT"),
+		ChainPEM:       []byte("CHAIN"),
+		SerialNumber:   "01",
+	}, nil)
+
+	certPEM, err := c.Security().ACME().Client().FinalizeOrder(
+		context.Background(), "https://acme/order/1", []byte("CSR"))
+	if err != nil {
+		t.Fatalf("FinalizeOrder: %v", err)
+	}
+	if string(certPEM) != "CERT" {
+		t.Errorf("unexpected cert: %q", certPEM)
+	}
+	if wire := rt.callsFor("quicbaas.ACME", "FinalizeOrder"); wire != 1 {
+		t.Errorf("FinalizeOrder must route over the transport once, got %d calls", wire)
+	}
+}
+
+func TestSDK_ACMEClient_Renew_PropagatesNeedsCSR(t *testing.T) {
+	c, rt := newClientWithMockTransport(t)
+	defer c.Close()
+
+	// Broker-as-CA renewal needs a fresh CSR: the server returns a typed
+	// invalid-input error which the SDK propagates.
+	rt.setResponse("quicbaas.ACME", "Renew", nil,
+		sdkerrors.NewInvalidInput("acme.Renew", "renewal requires a fresh CSR"))
 
 	_, err := c.Security().ACME().Client().Renew(context.Background(), "https://acme/cert/1")
-	if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
-		t.Errorf("expected unimplemented, got %v", err)
+	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
+		t.Errorf("expected invalid-input, got %v", err)
 	}
-	if wire := rt.callsFor("quicbaas.ACME", "Renew"); wire != 0 {
-		t.Errorf("Renew must not touch the transport, got %d calls", wire)
+	if wire := rt.callsFor("quicbaas.ACME", "Renew"); wire != 1 {
+		t.Errorf("Renew must route over the transport once, got %d calls", wire)
 	}
 }
 

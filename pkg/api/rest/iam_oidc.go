@@ -307,6 +307,8 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 				Scopes:          claims.SCP,
 				Roles:           claims.Roles,
 				ServiceIdentity: iam.ServiceIdentityFromCert(verifiedPeerCertFromRequest(r)),
+				IPAddress:       getClientIP(r),
+				UserAgent:       r.UserAgent(),
 			}
 			if id.ClientID == "" {
 				id.ClientID = clientID
@@ -318,26 +320,6 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, tokenResp)
-}
-
-// requestAbsoluteURI reconstructs the externally-visible absolute request URI
-// (scheme://host/path) used as the RFC 9449 DPoP htu. It honors the reverse-proxy
-// forwarding headers so the htu matches the URL the client dialed when a
-// TLS-terminating proxy fronts the service. Query and fragment are not included;
-// the DPoP verifier canonicalizes both sides to scheme+host+path regardless.
-func requestAbsoluteURI(r *http.Request) string {
-	scheme := "https"
-	if r.TLS == nil {
-		scheme = "http"
-	}
-	if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
-		scheme = fwd
-	}
-	host := r.Host
-	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
-		host = fwd
-	}
-	return scheme + "://" + host + r.URL.Path
 }
 
 // UserInfo handles GET /oauth2/userinfo - OIDC UserInfo endpoint.

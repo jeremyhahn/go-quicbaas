@@ -213,3 +213,237 @@ func TestSerialFromCertPEM(t *testing.T) {
 		assert.Equal(t, "", serialFromCertPEM([]byte("not a pem")))
 	})
 }
+
+// fakeACMECertResolver is a configurable ACMECertResolver used to exercise the
+// Renew verb without standing up a full certificate authority.
+type fakeACMECertResolver struct {
+	certPEM      []byte
+	resolveErr   error
+	revokeErr    error
+	gotSerial    string
+	gotReason    int
+	revokeCalled bool
+}
+
+func (f *fakeACMECertResolver) CertificateBySerial(serialHex string) ([]byte, error) {
+	f.gotSerial = serialHex
+	if f.resolveErr != nil {
+		return nil, f.resolveErr
+	}
+	return f.certPEM, nil
+}
+
+func (f *fakeACMECertResolver) RevokeBySerial(serialHex string, reason int) error {
+	f.revokeCalled = true
+	f.gotSerial = serialHex
+	f.gotReason = reason
+	return f.revokeErr
+}
+
+// newTestACMEServiceFull builds an acmeService with a base URI plus issuance
+// and resolver capabilities for the client-verb tests.
+func newTestACMEServiceFull(issueCA ACMECA, resolver ACMECertResolver) *acmeService {
+	return &acmeService{
+		directoryURL: "https://acme.test.example/acme/directory",
+		baseURI:      "https://acme.test.example",
+		issueCA:      issueCA,
+		certResolver: resolver,
+		challenge:    map[string]xkmsacme.ACMEChallengeVerifierFunc{},
+	}
+}
+
+func TestACMEService_NewOrder(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("creates pending order with finalize url", func(t *testing.T) {
+		svc := newTestACMEServiceFull(&fakeACMECA{}, nil)
+		resp, err := svc.NewOrder(ctx, &ACMENewOrderRequest{
+			Identifiers:   []ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}},
+			ChallengeType: xkmsacme.ACMEChallengeTypeHTTP01,
+		})
+		require.NoError(t, err)
+		assert.NotZero(t, resp.OrderID)
+		assert.Equal(t, string(xkmsacme.OrderStatusPending), resp.Status)
+		require.Len(t, resp.Identifiers, 1)
+		assert.Equal(t, "example.com", resp.Identifiers[0].Value)
+		assert.Contains(t, resp.URL, "/acme/order/")
+		assert.Contains(t, resp.Finalize, "/finalize")
+	})
+
+	t.Run("distinct order ids", func(t *testing.T) {
+		svc := newTestACMEServiceFull(&fakeACMECA{}, nil)
+		ids := map[uint64]struct{}{}
+		for i := 0; i < 8; i++ {
+			resp, err := svc.NewOrder(ctx, &ACMENewOrderRequest{
+				Identifiers: []ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}},
+			})
+			require.NoError(t, err)
+			ids[resp.OrderID] = struct{}{}
+		}
+		assert.Len(t, ids, 8, "order IDs must be unique")
+	})
+
+	t.Run("nil request rejected", func(t *testing.T) {
+		svc := newTestACMEServiceFull(&fakeACMECA{}, nil)
+		_, err := svc.NewOrder(ctx, nil)
+		assert.ErrorIs(t, err, ErrACMENilRequest)
+	})
+
+	t.Run("no identifiers rejected", func(t *testing.T) {
+		svc := newTestACMEServiceFull(&fakeACMECA{}, nil)
+		_, err := svc.NewOrder(ctx, &ACMENewOrderRequest{})
+		assert.ErrorIs(t, err, ErrACMENoIdentifiers)
+	})
+}
+
+func TestACMEService_FinalizeOrder(t *testing.T) {
+	ctx := context.Background()
+	serial := big.NewInt(0xabc)
+	leaf := selfSignedLeafPEM(t, serial)
+	chain := []byte("-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----")
+
+	t.Run("signs csr and echoes serial", func(t *testing.T) {
+		ca := &fakeACMECA{certPEM: leaf, chainPEM: chain}
+		svc := newTestACMEServiceFull(ca, nil)
+		resp, err := svc.FinalizeOrder(ctx, &ACMEFinalizeOrderRequest{
+			OrderURL: "https://acme.test.example/acme/order/1",
+			CSRPEM:   []byte("CSR"),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, leaf, resp.CertificatePEM)
+		assert.Equal(t, chain, resp.ChainPEM)
+		assert.Equal(t, serial.Text(16), resp.SerialNumber)
+		assert.Equal(t, []byte("CSR"), ca.gotCSR)
+	})
+
+	t.Run("nil request rejected", func(t *testing.T) {
+		svc := newTestACMEServiceFull(&fakeACMECA{}, nil)
+		_, err := svc.FinalizeOrder(ctx, nil)
+		assert.ErrorIs(t, err, ErrACMENilRequest)
+	})
+
+	t.Run("empty csr rejected", func(t *testing.T) {
+		svc := newTestACMEServiceFull(&fakeACMECA{}, nil)
+		_, err := svc.FinalizeOrder(ctx, &ACMEFinalizeOrderRequest{})
+		assert.ErrorIs(t, err, ErrACMEEmptyCSR)
+	})
+
+	t.Run("missing CA returns typed error", func(t *testing.T) {
+		svc := newTestACMEServiceFull(nil, nil)
+		_, err := svc.FinalizeOrder(ctx, &ACMEFinalizeOrderRequest{CSRPEM: []byte("CSR")})
+		assert.ErrorIs(t, err, ErrACMECAMissing)
+	})
+
+	t.Run("CA error propagates", func(t *testing.T) {
+		boom := stderrors.New("sign failed")
+		svc := newTestACMEServiceFull(&fakeACMECA{err: boom}, nil)
+		_, err := svc.FinalizeOrder(ctx, &ACMEFinalizeOrderRequest{CSRPEM: []byte("CSR")})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, boom)
+	})
+}
+
+// TestACMEService_NewOrderToFinalize exercises the full broker-as-CA order ->
+// finalize flow in-process, producing a real signed leaf from a real CSR.
+func TestACMEService_NewOrderToFinalize(t *testing.T) {
+	ctx := context.Background()
+	serial := big.NewInt(0x1234)
+	leaf := selfSignedLeafPEM(t, serial)
+	ca := &fakeACMECA{certPEM: leaf, chainPEM: []byte("chain")}
+	svc := newTestACMEServiceFull(ca, nil)
+
+	order, err := svc.NewOrder(ctx, &ACMENewOrderRequest{
+		Identifiers:   []ACMEOrderIdentifier{{Type: "dns", Value: "host.example.com"}},
+		ChallengeType: xkmsacme.ACMEChallengeTypeHTTP01,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, order.Finalize)
+
+	// A real PEM-encoded CSR for the ordered identifier.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject:  pkix.Name{CommonName: "host.example.com"},
+		DNSNames: []string{"host.example.com"},
+	}, key)
+	require.NoError(t, err)
+	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
+
+	fin, err := svc.FinalizeOrder(ctx, &ACMEFinalizeOrderRequest{
+		OrderURL: order.Finalize,
+		CSRPEM:   csrPEM,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, leaf, fin.CertificatePEM)
+	assert.Equal(t, serial.Text(16), fin.SerialNumber)
+	assert.Equal(t, csrPEM, ca.gotCSR)
+}
+
+func TestACMEService_Renew(t *testing.T) {
+	ctx := context.Background()
+	leaf := selfSignedLeafPEM(t, big.NewInt(0xff))
+
+	t.Run("resolves cert then reports needs-csr", func(t *testing.T) {
+		res := &fakeACMECertResolver{certPEM: leaf}
+		svc := newTestACMEServiceFull(nil, res)
+		resp, err := svc.Renew(ctx, &ACMERenewRequest{CertURL: "ff"})
+		assert.ErrorIs(t, err, ErrACMERenewNeedsCSR)
+		require.NotNil(t, resp)
+		assert.Equal(t, leaf, resp.CertificatePEM)
+		assert.False(t, resp.Renewable)
+		assert.False(t, resp.Revoked)
+		assert.Equal(t, "ff", res.gotSerial)
+	})
+
+	t.Run("extracts serial from cert path url", func(t *testing.T) {
+		res := &fakeACMECertResolver{certPEM: leaf}
+		svc := newTestACMEServiceFull(nil, res)
+		_, err := svc.Renew(ctx, &ACMERenewRequest{CertURL: "https://acme.test.example/acme/cert/FF"})
+		assert.ErrorIs(t, err, ErrACMERenewNeedsCSR)
+		assert.Equal(t, "ff", res.gotSerial)
+	})
+
+	t.Run("revoke requested", func(t *testing.T) {
+		res := &fakeACMECertResolver{certPEM: leaf}
+		svc := newTestACMEServiceFull(nil, res)
+		resp, err := svc.Renew(ctx, &ACMERenewRequest{CertURL: "ff", Revoke: true})
+		assert.ErrorIs(t, err, ErrACMERenewNeedsCSR)
+		require.NotNil(t, resp)
+		assert.True(t, resp.Revoked)
+		assert.True(t, res.revokeCalled)
+	})
+
+	t.Run("cert not found", func(t *testing.T) {
+		res := &fakeACMECertResolver{resolveErr: ErrACMECertNotFound}
+		svc := newTestACMEServiceFull(nil, res)
+		_, err := svc.Renew(ctx, &ACMERenewRequest{CertURL: "ff"})
+		assert.ErrorIs(t, err, ErrACMECertNotFound)
+	})
+
+	t.Run("revoke error propagates", func(t *testing.T) {
+		boom := stderrors.New("revoke failed")
+		res := &fakeACMECertResolver{certPEM: leaf, revokeErr: boom}
+		svc := newTestACMEServiceFull(nil, res)
+		_, err := svc.Renew(ctx, &ACMERenewRequest{CertURL: "ff", Revoke: true})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, boom)
+	})
+
+	t.Run("nil request rejected", func(t *testing.T) {
+		svc := newTestACMEServiceFull(nil, &fakeACMECertResolver{})
+		_, err := svc.Renew(ctx, nil)
+		assert.ErrorIs(t, err, ErrACMENilRequest)
+	})
+
+	t.Run("empty url rejected", func(t *testing.T) {
+		svc := newTestACMEServiceFull(nil, &fakeACMECertResolver{})
+		_, err := svc.Renew(ctx, &ACMERenewRequest{})
+		assert.ErrorIs(t, err, ErrACMEEmptyCertURL)
+	})
+
+	t.Run("missing resolver returns typed error", func(t *testing.T) {
+		svc := newTestACMEServiceFull(nil, nil)
+		_, err := svc.Renew(ctx, &ACMERenewRequest{CertURL: "ff"})
+		assert.ErrorIs(t, err, ErrACMEResolverMissing)
+	})
+}

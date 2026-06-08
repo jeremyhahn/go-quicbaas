@@ -45,9 +45,11 @@ var ErrACMEServiceUnavailable = errors.New("acme service not available")
 //     RFC 8555 implementation in the stack — so any conformant ACME client
 //     (certbot, lego, the go-xkms ACME client) can drive issuance.
 //
-//  2. The QuicBaaS server-control verbs under /api/v1/acme/* (register-challenge,
-//     issue) that back Security().ACME().Server(). These delegate to the
-//     service-layer ACMEServicer.
+//  2. The QuicBaaS server-control and broker-as-CA client verbs under
+//     /api/v1/acme/* (register-challenge, issue, new-order, finalize, renew)
+//     that back Security().ACME(). These delegate to the service-layer
+//     ACMEServicer. In the broker-as-CA model the client verbs are in-process
+//     service calls, not JWS-signed exchanges.
 
 // registerACMERoutes mounts the RFC 8555 endpoints at /acme and the QuicBaaS
 // ACME control verbs at /api/v1/acme. The /acme group is mounted at the chi
@@ -58,6 +60,9 @@ func registerACMERoutes(s *Server, apiRouter chi.Router) {
 	apiRouter.Route("/acme", func(r chi.Router) {
 		r.Post("/register-challenge", s.HandleACMERegisterChallenge)
 		r.Post("/issue", s.HandleACMEIssue)
+		r.Post("/new-order", s.HandleACMENewOrder)
+		r.Post("/finalize", s.HandleACMEFinalizeOrder)
+		r.Post("/renew", s.HandleACMERenew)
 	})
 }
 
@@ -128,30 +133,40 @@ func (s *Server) acmeRFCHandler(sel func(acmeRest) http.HandlerFunc) http.Handle
 // Control-verb handlers (Security().ACME().Server())
 // =============================================================================
 
-// HandleACMERegisterChallenge handles POST /api/v1/acme/register-challenge —
-// enables a challenge verifier on the composed ACME server.
-func (s *Server) HandleACMERegisterChallenge(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+// acmeReadJSON resolves the ACME service, reads the request body, and decodes
+// it into v. It writes the appropriate error response and returns false when
+// the service is unavailable or the body is malformed.
+func (s *Server) acmeReadJSON(w http.ResponseWriter, r *http.Request, v interface{}) (service.ACMEServicer, bool) {
 	acmeSvc := s.service.ACME()
 	if acmeSvc == nil {
 		RespondError(w, r, http.StatusServiceUnavailable, ErrACMEServiceUnavailable)
-		return
+		return nil, false
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		RespondBadRequest(w, r, "failed to read request body")
-		return
+		return nil, false
 	}
 	defer r.Body.Close()
 
-	var req acmeclient.RegisterChallengeRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	if err := json.Unmarshal(body, v); err != nil {
 		RespondBadRequest(w, r, "invalid JSON body")
+		return nil, false
+	}
+	return acmeSvc, true
+}
+
+// HandleACMERegisterChallenge handles POST /api/v1/acme/register-challenge —
+// enables a challenge verifier on the composed ACME server.
+func (s *Server) HandleACMERegisterChallenge(w http.ResponseWriter, r *http.Request) {
+	var req acmeclient.RegisterChallengeRequest
+	acmeSvc, ok := s.acmeReadJSON(w, r, &req)
+	if !ok {
 		return
 	}
 
-	svcResp, err := acmeSvc.RegisterChallenge(ctx, &service.ACMERegisterChallengeRequest{Name: req.Name})
+	svcResp, err := acmeSvc.RegisterChallenge(r.Context(), &service.ACMERegisterChallengeRequest{Name: req.Name})
 	if err != nil {
 		s.handleServiceError(w, r, err)
 		return
@@ -162,27 +177,13 @@ func (s *Server) HandleACMERegisterChallenge(w http.ResponseWriter, r *http.Requ
 // HandleACMEIssue handles POST /api/v1/acme/issue — performs a server-side
 // issuance from the supplied CSR using the named challenge.
 func (s *Server) HandleACMEIssue(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	acmeSvc := s.service.ACME()
-	if acmeSvc == nil {
-		RespondError(w, r, http.StatusServiceUnavailable, ErrACMEServiceUnavailable)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		RespondBadRequest(w, r, "failed to read request body")
-		return
-	}
-	defer r.Body.Close()
-
 	var req acmeclient.IssueRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		RespondBadRequest(w, r, "invalid JSON body")
+	acmeSvc, ok := s.acmeReadJSON(w, r, &req)
+	if !ok {
 		return
 	}
 
-	svcResp, err := acmeSvc.Issue(ctx, &service.ACMEIssueRequest{
+	svcResp, err := acmeSvc.Issue(r.Context(), &service.ACMEIssueRequest{
 		CSRPEM:         req.CSRPEM,
 		ChallengeType:  req.ChallengeType,
 		ChallengeValue: req.ChallengeValue,
@@ -196,4 +197,99 @@ func (s *Server) HandleACMEIssue(w http.ResponseWriter, r *http.Request) {
 		ChainPEM:       svcResp.ChainPEM,
 		SerialNumber:   svcResp.SerialNumber,
 	})
+}
+
+// HandleACMENewOrder handles POST /api/v1/acme/new-order — creates a
+// lightweight in-process broker-as-CA order descriptor.
+func (s *Server) HandleACMENewOrder(w http.ResponseWriter, r *http.Request) {
+	var req acmeclient.NewOrderRequest
+	acmeSvc, ok := s.acmeReadJSON(w, r, &req)
+	if !ok {
+		return
+	}
+
+	svcResp, err := acmeSvc.NewOrder(r.Context(), &service.ACMENewOrderRequest{
+		Identifiers:   toServiceIdentifiers(req.Identifiers),
+		ChallengeType: req.ChallengeType,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, &acmeclient.NewOrderResponse{
+		OrderID:     svcResp.OrderID,
+		Status:      svcResp.Status,
+		Identifiers: fromServiceIdentifiers(svcResp.Identifiers),
+		Finalize:    svcResp.Finalize,
+		URL:         svcResp.URL,
+	})
+}
+
+// HandleACMEFinalizeOrder handles POST /api/v1/acme/finalize — signs the
+// supplied CSR with the composed CA and returns the issued chain.
+func (s *Server) HandleACMEFinalizeOrder(w http.ResponseWriter, r *http.Request) {
+	var req acmeclient.FinalizeOrderRequest
+	acmeSvc, ok := s.acmeReadJSON(w, r, &req)
+	if !ok {
+		return
+	}
+
+	svcResp, err := acmeSvc.FinalizeOrder(r.Context(), &service.ACMEFinalizeOrderRequest{
+		OrderURL: req.OrderURL,
+		CSRPEM:   req.CSRPEM,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, &acmeclient.FinalizeOrderResponse{
+		CertificatePEM: svcResp.CertificatePEM,
+		ChainPEM:       svcResp.ChainPEM,
+		SerialNumber:   svcResp.SerialNumber,
+	})
+}
+
+// HandleACMERenew handles POST /api/v1/acme/renew — resolves (and optionally
+// revokes) an existing certificate by serial. Renewal in the broker-as-CA
+// model requires a fresh CSR via new-order/finalize; the service returns
+// ErrACMERenewNeedsCSR which surfaces as a 400 with the resolved cert omitted.
+func (s *Server) HandleACMERenew(w http.ResponseWriter, r *http.Request) {
+	var req acmeclient.RenewRequest
+	acmeSvc, ok := s.acmeReadJSON(w, r, &req)
+	if !ok {
+		return
+	}
+
+	svcResp, err := acmeSvc.Renew(r.Context(), &service.ACMERenewRequest{
+		CertURL: req.CertURL,
+		Revoke:  req.Revoke,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, &acmeclient.RenewResponse{
+		CertificatePEM: svcResp.CertificatePEM,
+		SerialNumber:   svcResp.SerialNumber,
+		Revoked:        svcResp.Revoked,
+		Renewable:      svcResp.Renewable,
+	})
+}
+
+// toServiceIdentifiers maps wire identifiers to service identifiers.
+func toServiceIdentifiers(in []acmeclient.OrderIdentifier) []service.ACMEOrderIdentifier {
+	out := make([]service.ACMEOrderIdentifier, len(in))
+	for i, id := range in {
+		out[i] = service.ACMEOrderIdentifier{Type: id.Type, Value: id.Value}
+	}
+	return out
+}
+
+// fromServiceIdentifiers maps service identifiers back to wire identifiers.
+func fromServiceIdentifiers(in []service.ACMEOrderIdentifier) []acmeclient.OrderIdentifier {
+	out := make([]acmeclient.OrderIdentifier, len(in))
+	for i, id := range in {
+		out[i] = acmeclient.OrderIdentifier{Type: id.Type, Value: id.Value}
+	}
+	return out
 }

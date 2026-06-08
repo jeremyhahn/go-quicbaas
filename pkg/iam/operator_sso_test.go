@@ -168,6 +168,10 @@ func TestOperatorSSORegistrar_SucceedsAfterBootstrap(t *testing.T) {
 	manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
 
 	gate := &stubAdminGate{hasAdmin: true}
+	// Wire the same gate into the manager so the manager-level RegisterProvider
+	// chokepoint (which now also enforces the system-tenant gate) permits the
+	// registration the registrar forwards.
+	manager.bootstrapGate = gate
 	registrar, err := NewOperatorSSORegistrar(manager, gate)
 	if err != nil {
 		t.Fatalf("new registrar: %v", err)
@@ -218,6 +222,95 @@ func TestNewOperatorSSORegistrar_Validation(t *testing.T) {
 	if _, err := NewOperatorSSORegistrar(manager, nil); err == nil {
 		t.Fatal("expected error for nil admin gate")
 	}
+}
+
+// TestRegisterProvider_SystemTenantGate_AllowsWithAdmin proves the gate, pushed
+// down into the raw RegisterProvider chokepoint, ALLOWS a system-tenant operator
+// IdP once a bootstrap admin is present -- on the path every transport uses.
+func TestRegisterProvider_SystemTenantGate_AllowsWithAdmin(t *testing.T) {
+	manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
+	manager.bootstrapGate = &stubAdminGate{hasAdmin: true}
+
+	provider := createTestProvider(SystemTenantID, "okta-operators")
+	if err := manager.RegisterProvider(context.Background(), provider); err != nil {
+		t.Fatalf("expected system-tenant registration to succeed with admin present: %v", err)
+	}
+	if _, err := providerStorage.GetProviderByName(context.Background(), SystemTenantID, "okta-operators"); err != nil {
+		t.Fatalf("provider not persisted under system tenant: %v", err)
+	}
+}
+
+// TestRegisterProvider_SystemTenantGate_RejectsWithoutAdmin proves the raw
+// RegisterProvider chokepoint fails closed for the system tenant before a
+// bootstrap admin exists -- proving there is NO transport bypass of the
+// bootstrap-ordering invariant.
+func TestRegisterProvider_SystemTenantGate_RejectsWithoutAdmin(t *testing.T) {
+	manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
+	manager.bootstrapGate = &stubAdminGate{hasAdmin: false}
+
+	provider := createTestProvider(SystemTenantID, "okta-operators")
+	err := manager.RegisterProvider(context.Background(), provider)
+	if !errors.Is(err, ErrBootstrapNotReady) {
+		t.Fatalf("expected ErrBootstrapNotReady from raw RegisterProvider, got: %v", err)
+	}
+	if _, err := providerStorage.GetProviderByName(context.Background(), SystemTenantID, "okta-operators"); err == nil {
+		t.Fatal("provider must NOT be persisted when the gate rejects registration")
+	}
+}
+
+// TestRegisterProvider_SystemTenantGate_FailsClosedOnGateError proves a gate
+// error fails the system-tenant registration closed (never opening on
+// uncertainty).
+func TestRegisterProvider_SystemTenantGate_FailsClosedOnGateError(t *testing.T) {
+	manager, _, _, _, _, _ := setupTestFederationManager(t)
+	manager.bootstrapGate = &stubAdminGate{err: errors.New("storage unavailable")}
+
+	err := manager.RegisterProvider(context.Background(), createTestProvider(SystemTenantID, "okta"))
+	if !errors.Is(err, ErrBootstrapNotReady) {
+		t.Fatalf("expected fail-closed ErrBootstrapNotReady on gate error, got: %v", err)
+	}
+}
+
+// TestRegisterProvider_SystemTenantGate_NilGateFailsClosed proves that when no
+// gate is wired, system-tenant registration is denied (no gate => cannot verify
+// the admin => deny), so a misconfigured deployment cannot silently open the
+// control-plane configuration path.
+func TestRegisterProvider_SystemTenantGate_NilGateFailsClosed(t *testing.T) {
+	manager, _, _, _, _, _ := setupTestFederationManager(t)
+	// No bootstrapGate configured.
+
+	err := manager.RegisterProvider(context.Background(), createTestProvider(SystemTenantID, "okta"))
+	if !errors.Is(err, ErrBootstrapNotReady) {
+		t.Fatalf("expected nil-gate system-tenant registration to fail closed, got: %v", err)
+	}
+}
+
+// TestRegisterProvider_NonSystemTenant_UnaffectedByGate proves the gate never
+// touches non-system tenants: a data-plane provider registers successfully even
+// when no gate is wired and even when a stub gate would report no admin.
+func TestRegisterProvider_NonSystemTenant_UnaffectedByGate(t *testing.T) {
+	t.Run("nil gate", func(t *testing.T) {
+		manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
+		provider := createTestProvider("tenant-acme", "acme-oidc")
+		if err := manager.RegisterProvider(context.Background(), provider); err != nil {
+			t.Fatalf("non-system registration must succeed with no gate: %v", err)
+		}
+		if _, err := providerStorage.GetProviderByName(context.Background(), "tenant-acme", "acme-oidc"); err != nil {
+			t.Fatalf("non-system provider not persisted: %v", err)
+		}
+	})
+
+	t.Run("gate reports no admin", func(t *testing.T) {
+		manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
+		manager.bootstrapGate = &stubAdminGate{hasAdmin: false}
+		provider := createTestProvider("tenant-acme", "acme-oidc")
+		if err := manager.RegisterProvider(context.Background(), provider); err != nil {
+			t.Fatalf("non-system registration must ignore the gate: %v", err)
+		}
+		if _, err := providerStorage.GetProviderByName(context.Background(), "tenant-acme", "acme-oidc"); err != nil {
+			t.Fatalf("non-system provider not persisted: %v", err)
+		}
+	})
 }
 
 // TestIsSystemTenant covers the system-tenant helper.

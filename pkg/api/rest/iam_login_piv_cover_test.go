@@ -27,6 +27,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -268,4 +269,73 @@ func TestPIVLoginAudit_NoAuditLogger(t *testing.T) {
 	// Should not panic and silently return (service has no GetAuditLogger).
 	h.logPIVLoginAudit(context.Background(), "t", "u", "e", "thumb", "subj", "iss", "smartcard", req)
 	h.logPIVLoginFailureAudit(context.Background(), "t", "thumb", "err", "msg", req)
+}
+
+// pivAuditErrService returns a configurable (logger, err) pair from
+// GetAuditLogger to drive the fail-soft branches of the PIV audit helpers.
+type pivAuditErrService struct {
+	*testutil.MockQuicBaaS
+	auditLogger iam.AuditLogger
+	auditErr    error
+}
+
+func (s *pivAuditErrService) GetAuditLogger(_ context.Context) (iam.AuditLogger, error) {
+	return s.auditLogger, s.auditErr
+}
+
+func newPIVAuditErrHandler(t *testing.T, lg iam.AuditLogger, err error) *IAMHandler {
+	t.Helper()
+	log, lerr := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, lerr)
+	cfg := DefaultConfig()
+	cfg.Address = ":0"
+	srv, serr := NewServer(&pivAuditErrService{
+		MockQuicBaaS: testutil.NewMockQuicBaaS(),
+		auditLogger:  lg,
+		auditErr:     err,
+	}, cfg, log)
+	require.NoError(t, serr)
+	return &IAMHandler{server: srv}
+}
+
+// TestPIVLoginAudit_LookupErrorAndNilLogger covers the err != nil and the
+// logger == nil short-circuits shared by both PIV audit helpers: neither must
+// attempt LogAsync on a nil logger.
+func TestPIVLoginAudit_LookupErrorAndNilLogger(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	ctx := context.Background()
+
+	t.Run("lookup error", func(t *testing.T) {
+		h := newPIVAuditErrHandler(t, nil, errors.New("audit down"))
+		assert.NotPanics(t, func() {
+			h.logPIVLoginAudit(ctx, "t", "u", "e", "thumb", "subj", "iss", "smartcard", req)
+			h.logPIVLoginFailureAudit(ctx, "t", "thumb", "err", "msg", req)
+		})
+	})
+
+	t.Run("nil logger", func(t *testing.T) {
+		h := newPIVAuditErrHandler(t, nil, nil)
+		assert.NotPanics(t, func() {
+			h.logPIVLoginAudit(ctx, "t", "u", "e", "thumb", "subj", "iss", "smartcard", req)
+			h.logPIVLoginFailureAudit(ctx, "t", "thumb", "err", "msg", req)
+		})
+	})
+}
+
+// TestPIVLoginAudit_CapturesRemoteIPAndUserAgent asserts the IP/User-Agent
+// enrichment lands on the emitted PIV success audit event.
+func TestPIVLoginAudit_CapturesRemoteIPAndUserAgent(t *testing.T) {
+	capture := &captureAuditLogger{}
+	h := newPIVAuditErrHandler(t, capture, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req.RemoteAddr = "198.51.100.9:44444"
+	req.Header.Set("User-Agent", "piv-agent/1.0")
+
+	h.logPIVLoginAudit(context.Background(), "t", "u", "e", "thumb", "subj", "iss", "smartcard", req)
+
+	require.Len(t, capture.events, 1)
+	ev := capture.events[0]
+	assert.Equal(t, "198.51.100.9:44444", ev.IPAddress)
+	assert.Equal(t, "piv-agent/1.0", ev.UserAgent)
 }

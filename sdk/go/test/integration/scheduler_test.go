@@ -55,88 +55,134 @@ const (
 	OwnerTypeDelegated = "delegated"
 )
 
-// createJobRequest represents a request to create a scheduler job.
+// testJobHandler is an arbitrary, non-empty handler name. The scheduler
+// requires a non-empty handler at creation time but only resolves the
+// handler to a registered implementation at execution time, so any
+// non-empty string is accepted for create/get/update/list assertions.
+const testJobHandler = "noop"
+
+// createJobRequest mirrors the server-side CreateSchedulerJobRESTRequest
+// (pkg/api/rest/handlers_scheduler.go). The scheduler requires name,
+// handler, and type on every job; one-shot jobs additionally require
+// execute_at (RFC3339), recurring jobs require a cron schedule, and
+// delayed jobs require a positive delay (encoded as a time.Duration).
 type createJobRequest struct {
 	Name        string                 `json:"name"`
 	Type        string                 `json:"type"`
+	Handler     string                 `json:"handler"`
 	Schedule    string                 `json:"schedule,omitempty"`
-	Delay       string                 `json:"delay,omitempty"`
-	Payload     map[string]interface{} `json:"payload,omitempty"`
+	ExecuteAt   string                 `json:"execute_at,omitempty"`
+	Delay       time.Duration          `json:"delay,omitempty"`
+	Payload     map[string]interface{} `json:"-"`
 	OwnerType   string                 `json:"owner_type,omitempty"`
 	OwnerID     string                 `json:"owner_id,omitempty"`
-	Tags        []string               `json:"tags,omitempty"`
-	MaxRetries  int                    `json:"max_retries,omitempty"`
-	Timeout     string                 `json:"timeout,omitempty"`
+	Labels      map[string]string      `json:"labels,omitempty"`
+	MaxRetries  int32                  `json:"max_retries,omitempty"`
+	Timeout     time.Duration          `json:"timeout,omitempty"`
 	Description string                 `json:"description,omitempty"`
 }
 
-// updateJobRequest represents a request to update a scheduler job.
+// updateJobRequest mirrors the server-side UpdateSchedulerJobRESTRequest.
 type updateJobRequest struct {
 	Name        string                 `json:"name,omitempty"`
 	Schedule    string                 `json:"schedule,omitempty"`
-	Payload     map[string]interface{} `json:"payload,omitempty"`
-	Tags        []string               `json:"tags,omitempty"`
-	MaxRetries  int                    `json:"max_retries,omitempty"`
-	Timeout     string                 `json:"timeout,omitempty"`
+	Payload     map[string]interface{} `json:"-"`
+	Labels      map[string]string      `json:"labels,omitempty"`
+	MaxRetries  int32                  `json:"max_retries,omitempty"`
 	Description string                 `json:"description,omitempty"`
 }
 
-// jobResponse represents a job response from the API.
+// jobResponse mirrors the server-side SchedulerJobRESTResponse. The job ID
+// is a uint64 and the payload is raw JSON.
 type jobResponse struct {
-	ID          string                 `json:"id"`
+	ID          uint64                 `json:"id"`
 	Name        string                 `json:"name"`
 	Type        string                 `json:"type"`
 	Status      string                 `json:"status"`
 	Schedule    string                 `json:"schedule,omitempty"`
-	Delay       string                 `json:"delay,omitempty"`
-	Payload     map[string]interface{} `json:"payload,omitempty"`
+	ExecuteAt   time.Time              `json:"execute_at,omitempty"`
+	Delay       time.Duration          `json:"delay,omitempty"`
+	Handler     string                 `json:"handler"`
+	Payload     map[string]interface{} `json:"-"`
+	RawPayload  json.RawMessage        `json:"payload,omitempty"`
 	OwnerType   string                 `json:"owner_type,omitempty"`
 	OwnerID     string                 `json:"owner_id,omitempty"`
-	Tags        []string               `json:"tags,omitempty"`
-	MaxRetries  int                    `json:"max_retries,omitempty"`
-	Timeout     string                 `json:"timeout,omitempty"`
+	Labels      map[string]string      `json:"labels,omitempty"`
+	MaxRetries  int32                  `json:"max_retries,omitempty"`
 	Description string                 `json:"description,omitempty"`
 	NextRun     time.Time              `json:"next_run,omitempty"`
 	LastRun     time.Time              `json:"last_run,omitempty"`
-	RunCount    int64                  `json:"run_count,omitempty"`
+	RunCount    uint64                 `json:"run_count,omitempty"`
 	CreatedAt   time.Time              `json:"created_at,omitempty"`
 	UpdatedAt   time.Time              `json:"updated_at,omitempty"`
 }
 
-// listJobsResponse represents a list jobs response.
+// decodePayload populates the convenience Payload map from the raw payload.
+func (j *jobResponse) decodePayload() error {
+	if len(j.RawPayload) == 0 {
+		return nil
+	}
+	j.Payload = map[string]interface{}{}
+	if err := json.Unmarshal(j.RawPayload, &j.Payload); err != nil {
+		return &qberrors.WrappedMessageError{Message: "failed to decode job payload", Cause: err}
+	}
+	return nil
+}
+
+// jobEnvelope wraps a single job, matching the create/get/update REST
+// responses which return {"job": {...}, "timestamp": ...}.
+type jobEnvelope struct {
+	Job *jobResponse `json:"job"`
+}
+
+// statusChangeResponse matches the trigger/pause/resume/cancel REST
+// responses which return a status transition rather than the full job.
+type statusChangeResponse struct {
+	JobID     uint64 `json:"job_id"`
+	Status    string `json:"status,omitempty"`
+	OldStatus string `json:"old_status,omitempty"`
+	NewStatus string `json:"new_status,omitempty"`
+}
+
+// listJobsResponse mirrors the server-side ListSchedulerJobsRESTResponse.
 type listJobsResponse struct {
 	Jobs       []jobResponse `json:"jobs"`
-	Total      int           `json:"total,omitempty"`
+	Total      int           `json:"total_count,omitempty"`
 	NextCursor string        `json:"next_cursor,omitempty"`
+	HasMore    bool          `json:"has_more,omitempty"`
 }
 
-// jobHistoryEntry represents a single execution history entry.
+// jobHistoryEntry mirrors the server-side SchedulerJobExecutionRESTResponse.
 type jobHistoryEntry struct {
-	ID         string    `json:"id"`
-	JobID      string    `json:"job_id"`
-	Status     string    `json:"status"`
-	StartedAt  time.Time `json:"started_at"`
-	FinishedAt time.Time `json:"finished_at,omitempty"`
-	Duration   string    `json:"duration,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	ID        uint64        `json:"id"`
+	JobID     uint64        `json:"job_id"`
+	Status    string        `json:"status"`
+	StartedAt time.Time     `json:"started_at"`
+	EndedAt   time.Time     `json:"ended_at,omitempty"`
+	Duration  time.Duration `json:"duration,omitempty"`
+	Error     string        `json:"error,omitempty"`
+	Output    string        `json:"output,omitempty"`
 }
 
-// jobHistoryResponse represents a job history response.
+// jobHistoryResponse mirrors the server-side GetSchedulerJobHistoryRESTResponse.
 type jobHistoryResponse struct {
-	History []jobHistoryEntry `json:"history"`
-	Total   int               `json:"total,omitempty"`
+	Executions []jobHistoryEntry `json:"executions"`
+	NextCursor string            `json:"next_cursor,omitempty"`
+	HasMore    bool              `json:"has_more,omitempty"`
 }
 
-// schedulerStatusResponse represents the scheduler status response.
+// schedulerStatusResponse mirrors the server-side
+// GetSchedulerStatusRESTResponse, including the nested stats object.
 type schedulerStatusResponse struct {
-	Running       bool      `json:"running"`
-	TotalJobs     int64     `json:"total_jobs"`
-	ActiveJobs    int64     `json:"active_jobs"`
-	PausedJobs    int64     `json:"paused_jobs"`
-	CompletedJobs int64     `json:"completed_jobs"`
-	FailedJobs    int64     `json:"failed_jobs"`
-	Uptime        string    `json:"uptime,omitempty"`
-	StartedAt     time.Time `json:"started_at,omitempty"`
+	Running bool `json:"running"`
+	Stats   struct {
+		JobCount     uint64    `json:"job_count"`
+		RunningJobs  uint64    `json:"running_jobs"`
+		SuccessCount uint64    `json:"success_count"`
+		FailureCount uint64    `json:"failure_count"`
+		LastTickTime time.Time `json:"last_tick_time,omitempty"`
+		StartedAt    time.Time `json:"started_at"`
+	} `json:"stats"`
 }
 
 // TestSchedulerCreateJob tests creating scheduler jobs.
@@ -152,6 +198,8 @@ func TestSchedulerCreateJob(t *testing.T) {
 		req := createJobRequest{
 			Name:        jobName,
 			Type:        JobTypeOneShot,
+			Handler:     testJobHandler,
+			ExecuteAt:   time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
 			OwnerType:   OwnerTypeSystem,
 			Description: "Test one-shot job",
 			Payload:     map[string]interface{}{"task": "run_once", "priority": 1},
@@ -163,7 +211,7 @@ func TestSchedulerCreateJob(t *testing.T) {
 		}
 		defer cleanupJob(ctx, job.ID)
 
-		if job.ID == "" {
+		if job.ID == 0 {
 			t.Error("expected job ID to be set")
 		}
 		if job.Name != jobName {
@@ -173,7 +221,7 @@ func TestSchedulerCreateJob(t *testing.T) {
 			t.Errorf("expected type %q, got %q", JobTypeOneShot, job.Type)
 		}
 
-		t.Logf("created one-shot job: id=%s, name=%s, status=%s", job.ID, job.Name, job.Status)
+		t.Logf("created one-shot job: id=%d, name=%s, status=%s", job.ID, job.Name, job.Status)
 	})
 
 	t.Run("create recurring job with cron schedule", func(t *testing.T) {
@@ -184,14 +232,15 @@ func TestSchedulerCreateJob(t *testing.T) {
 		req := createJobRequest{
 			Name:        jobName,
 			Type:        JobTypeRecurring,
+			Handler:     testJobHandler,
 			Schedule:    "*/5 * * * *", // Every 5 minutes
 			OwnerType:   OwnerTypeTenant,
 			OwnerID:     "tenant-123",
 			Description: "Test recurring job",
 			Payload:     map[string]interface{}{"task": "run_periodic"},
-			Tags:        []string{"test", "recurring"},
+			Labels:      map[string]string{"env": "test", "kind": "recurring"},
 			MaxRetries:  3,
-			Timeout:     "5m",
+			Timeout:     5 * time.Minute,
 		}
 
 		job, err := schedulerCreateJob(ctx, req)
@@ -207,7 +256,7 @@ func TestSchedulerCreateJob(t *testing.T) {
 			t.Errorf("expected schedule %q, got %q", "*/5 * * * *", job.Schedule)
 		}
 
-		t.Logf("created recurring job: id=%s, schedule=%s", job.ID, job.Schedule)
+		t.Logf("created recurring job: id=%d, schedule=%s", job.ID, job.Schedule)
 	})
 
 	t.Run("create delayed job", func(t *testing.T) {
@@ -218,7 +267,8 @@ func TestSchedulerCreateJob(t *testing.T) {
 		req := createJobRequest{
 			Name:        jobName,
 			Type:        JobTypeDelayed,
-			Delay:       "1h",
+			Handler:     testJobHandler,
+			Delay:       1 * time.Hour,
 			OwnerType:   OwnerTypeDelegated,
 			Description: "Test delayed job",
 			Payload:     map[string]interface{}{"task": "run_later"},
@@ -234,7 +284,7 @@ func TestSchedulerCreateJob(t *testing.T) {
 			t.Errorf("expected type %q, got %q", JobTypeDelayed, job.Type)
 		}
 
-		t.Logf("created delayed job: id=%s, delay=%s", job.ID, job.Delay)
+		t.Logf("created delayed job: id=%d, delay=%s", job.ID, job.Delay)
 	})
 
 	t.Run("create job with invalid type returns error", func(t *testing.T) {
@@ -242,8 +292,9 @@ func TestSchedulerCreateJob(t *testing.T) {
 		defer cancel()
 
 		req := createJobRequest{
-			Name: fmt.Sprintf("invalid_test_%d", time.Now().UnixNano()),
-			Type: "invalid-type",
+			Name:    fmt.Sprintf("invalid_test_%d", time.Now().UnixNano()),
+			Type:    "invalid-type",
+			Handler: testJobHandler,
 		}
 
 		_, err := schedulerCreateJob(ctx, req)
@@ -258,7 +309,8 @@ func TestSchedulerCreateJob(t *testing.T) {
 		defer cancel()
 
 		req := createJobRequest{
-			Type: JobTypeOneShot,
+			Type:    JobTypeOneShot,
+			Handler: testJobHandler,
 		}
 
 		_, err := schedulerCreateJob(ctx, req)
@@ -268,13 +320,31 @@ func TestSchedulerCreateJob(t *testing.T) {
 		t.Logf("create with missing name returned error (expected): %v", err)
 	})
 
+	t.Run("create job with missing handler returns error", func(t *testing.T) {
+		ctx, cancel := DefaultContext(t)
+		defer cancel()
+
+		req := createJobRequest{
+			Name:      fmt.Sprintf("no_handler_test_%d", time.Now().UnixNano()),
+			Type:      JobTypeOneShot,
+			ExecuteAt: time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
+		}
+
+		_, err := schedulerCreateJob(ctx, req)
+		if err == nil {
+			t.Error("expected error for missing job handler")
+		}
+		t.Logf("create with missing handler returned error (expected): %v", err)
+	})
+
 	t.Run("create recurring job without schedule returns error", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
 		req := createJobRequest{
-			Name: fmt.Sprintf("no_schedule_test_%d", time.Now().UnixNano()),
-			Type: JobTypeRecurring,
+			Name:    fmt.Sprintf("no_schedule_test_%d", time.Now().UnixNano()),
+			Type:    JobTypeRecurring,
+			Handler: testJobHandler,
 		}
 
 		_, err := schedulerCreateJob(ctx, req)
@@ -297,9 +367,11 @@ func TestSchedulerGetJob(t *testing.T) {
 		// Create a job first
 		jobName := fmt.Sprintf("get_test_%d", time.Now().UnixNano())
 		created, err := schedulerCreateJob(ctx, createJobRequest{
-			Name:    jobName,
-			Type:    JobTypeOneShot,
-			Payload: map[string]interface{}{"test": true},
+			Name:      jobName,
+			Type:      JobTypeOneShot,
+			Handler:   testJobHandler,
+			ExecuteAt: time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
+			Payload:   map[string]interface{}{"test": true},
 		})
 		if err != nil {
 			t.Fatalf("create job failed: %v", err)
@@ -313,20 +385,20 @@ func TestSchedulerGetJob(t *testing.T) {
 		}
 
 		if job.ID != created.ID {
-			t.Errorf("expected ID %q, got %q", created.ID, job.ID)
+			t.Errorf("expected ID %d, got %d", created.ID, job.ID)
 		}
 		if job.Name != jobName {
 			t.Errorf("expected name %q, got %q", jobName, job.Name)
 		}
 
-		t.Logf("retrieved job: id=%s, name=%s, status=%s", job.ID, job.Name, job.Status)
+		t.Logf("retrieved job: id=%d, name=%s, status=%s", job.ID, job.Name, job.Status)
 	})
 
 	t.Run("get non-existent job returns error", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		_, err := schedulerGetJob(ctx, "non-existent-job-id-12345")
+		_, err := schedulerGetJob(ctx, nonExistentJobID)
 		if err == nil {
 			t.Error("expected error for non-existent job")
 		}
@@ -348,6 +420,8 @@ func TestSchedulerUpdateJob(t *testing.T) {
 		created, err := schedulerCreateJob(ctx, createJobRequest{
 			Name:        jobName,
 			Type:        JobTypeOneShot,
+			Handler:     testJobHandler,
+			ExecuteAt:   time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
 			Description: "Original description",
 		})
 		if err != nil {
@@ -372,7 +446,7 @@ func TestSchedulerUpdateJob(t *testing.T) {
 			t.Errorf("expected updated description")
 		}
 
-		t.Logf("updated job: id=%s, new_name=%s", updated.ID, updated.Name)
+		t.Logf("updated job: id=%d, new_name=%s", updated.ID, updated.Name)
 	})
 
 	t.Run("update job payload", func(t *testing.T) {
@@ -381,9 +455,11 @@ func TestSchedulerUpdateJob(t *testing.T) {
 
 		jobName := fmt.Sprintf("payload_update_test_%d", time.Now().UnixNano())
 		created, err := schedulerCreateJob(ctx, createJobRequest{
-			Name:    jobName,
-			Type:    JobTypeOneShot,
-			Payload: map[string]interface{}{"version": 1},
+			Name:      jobName,
+			Type:      JobTypeOneShot,
+			Handler:   testJobHandler,
+			ExecuteAt: time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
+			Payload:   map[string]interface{}{"version": 1},
 		})
 		if err != nil {
 			t.Fatalf("create job failed: %v", err)
@@ -409,7 +485,7 @@ func TestSchedulerUpdateJob(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		_, err := schedulerUpdateJob(ctx, "non-existent-job-id-12345", updateJobRequest{
+		_, err := schedulerUpdateJob(ctx, nonExistentJobID, updateJobRequest{
 			Name: "should-fail",
 		})
 		if err == nil {
@@ -429,13 +505,15 @@ func TestSchedulerListJobs(t *testing.T) {
 		defer cancel()
 
 		// Create several jobs
-		var createdIDs []string
+		var createdIDs []uint64
 		for i := 0; i < 3; i++ {
 			jobName := fmt.Sprintf("list_test_%d_%d", time.Now().UnixNano(), i)
 			job, err := schedulerCreateJob(ctx, createJobRequest{
-				Name:    jobName,
-				Type:    JobTypeOneShot,
-				Payload: map[string]interface{}{"index": i},
+				Name:      jobName,
+				Type:      JobTypeOneShot,
+				Handler:   testJobHandler,
+				ExecuteAt: time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
+				Payload:   map[string]interface{}{"index": i},
 			})
 			if err != nil {
 				t.Fatalf("create job %d failed: %v", i, err)
@@ -495,22 +573,22 @@ func TestSchedulerListJobs(t *testing.T) {
 		t.Logf("listed %d pending jobs", len(resp.Jobs))
 	})
 
-	t.Run("list jobs by type", func(t *testing.T) {
+	t.Run("list jobs by handler", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		resp, err := schedulerListJobs(ctx, 0, "", "", JobTypeOneShot)
+		resp, err := schedulerListJobs(ctx, 0, "", "", testJobHandler)
 		if err != nil {
-			t.Fatalf("list jobs by type failed: %v", err)
+			t.Fatalf("list jobs by handler failed: %v", err)
 		}
 
 		for _, job := range resp.Jobs {
-			if job.Type != JobTypeOneShot {
-				t.Errorf("expected type %q, got %q", JobTypeOneShot, job.Type)
+			if job.Handler != testJobHandler {
+				t.Errorf("expected handler %q, got %q", testJobHandler, job.Handler)
 			}
 		}
 
-		t.Logf("listed %d one-shot jobs", len(resp.Jobs))
+		t.Logf("listed %d jobs for handler %q", len(resp.Jobs), testJobHandler)
 	})
 }
 
@@ -528,6 +606,7 @@ func TestSchedulerTriggerJob(t *testing.T) {
 		job, err := schedulerCreateJob(ctx, createJobRequest{
 			Name:     jobName,
 			Type:     JobTypeRecurring,
+			Handler:  testJobHandler,
 			Schedule: "0 0 * * *", // Once a day (won't run during test)
 			Payload:  map[string]interface{}{"task": "triggered"},
 		})
@@ -542,14 +621,18 @@ func TestSchedulerTriggerJob(t *testing.T) {
 			t.Fatalf("trigger job failed: %v", err)
 		}
 
-		t.Logf("triggered job: id=%s, status=%s", triggered.ID, triggered.Status)
+		if triggered.JobID != job.ID {
+			t.Errorf("expected triggered job id %d, got %d", job.ID, triggered.JobID)
+		}
+
+		t.Logf("triggered job: id=%d, status=%s", triggered.JobID, triggered.Status)
 	})
 
 	t.Run("trigger non-existent job returns error", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		_, err := schedulerTriggerJob(ctx, "non-existent-job-id-12345")
+		_, err := schedulerTriggerJob(ctx, nonExistentJobID)
 		if err == nil {
 			t.Error("expected error for non-existent job")
 		}
@@ -571,6 +654,7 @@ func TestSchedulerPauseResumeJob(t *testing.T) {
 		job, err := schedulerCreateJob(ctx, createJobRequest{
 			Name:     jobName,
 			Type:     JobTypeRecurring,
+			Handler:  testJobHandler,
 			Schedule: "*/10 * * * *",
 			Payload:  map[string]interface{}{"task": "pausable"},
 		})
@@ -585,10 +669,10 @@ func TestSchedulerPauseResumeJob(t *testing.T) {
 			t.Fatalf("pause job failed: %v", err)
 		}
 
-		if paused.Status != JobStatusPaused {
-			t.Errorf("expected status %q after pause, got %q", JobStatusPaused, paused.Status)
+		if paused.NewStatus != JobStatusPaused {
+			t.Errorf("expected status %q after pause, got %q", JobStatusPaused, paused.NewStatus)
 		}
-		t.Logf("paused job: id=%s, status=%s", paused.ID, paused.Status)
+		t.Logf("paused job: id=%d, status=%s", paused.JobID, paused.NewStatus)
 
 		// Resume the job
 		resumed, err := schedulerResumeJob(ctx, job.ID)
@@ -596,17 +680,17 @@ func TestSchedulerPauseResumeJob(t *testing.T) {
 			t.Fatalf("resume job failed: %v", err)
 		}
 
-		if resumed.Status == JobStatusPaused {
+		if resumed.NewStatus == JobStatusPaused {
 			t.Error("expected status to change after resume")
 		}
-		t.Logf("resumed job: id=%s, status=%s", resumed.ID, resumed.Status)
+		t.Logf("resumed job: id=%d, status=%s", resumed.JobID, resumed.NewStatus)
 	})
 
 	t.Run("pause non-existent job returns error", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		_, err := schedulerPauseJob(ctx, "non-existent-job-id-12345")
+		_, err := schedulerPauseJob(ctx, nonExistentJobID)
 		if err == nil {
 			t.Error("expected error for non-existent job")
 		}
@@ -617,7 +701,7 @@ func TestSchedulerPauseResumeJob(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		_, err := schedulerResumeJob(ctx, "non-existent-job-id-12345")
+		_, err := schedulerResumeJob(ctx, nonExistentJobID)
 		if err == nil {
 			t.Error("expected error for non-existent job")
 		}
@@ -639,7 +723,8 @@ func TestSchedulerCancelJob(t *testing.T) {
 		job, err := schedulerCreateJob(ctx, createJobRequest{
 			Name:    jobName,
 			Type:    JobTypeDelayed,
-			Delay:   "24h",
+			Handler: testJobHandler,
+			Delay:   24 * time.Hour,
 			Payload: map[string]interface{}{"task": "cancelable"},
 		})
 		if err != nil {
@@ -653,17 +738,17 @@ func TestSchedulerCancelJob(t *testing.T) {
 			t.Fatalf("cancel job failed: %v", err)
 		}
 
-		if canceled.Status != JobStatusCanceled {
-			t.Errorf("expected status %q after cancel, got %q", JobStatusCanceled, canceled.Status)
+		if canceled.NewStatus != JobStatusCanceled {
+			t.Errorf("expected status %q after cancel, got %q", JobStatusCanceled, canceled.NewStatus)
 		}
-		t.Logf("canceled job: id=%s, status=%s", canceled.ID, canceled.Status)
+		t.Logf("canceled job: id=%d, status=%s", canceled.JobID, canceled.NewStatus)
 	})
 
 	t.Run("cancel non-existent job returns error", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		_, err := schedulerCancelJob(ctx, "non-existent-job-id-12345")
+		_, err := schedulerCancelJob(ctx, nonExistentJobID)
 		if err == nil {
 			t.Error("expected error for non-existent job")
 		}
@@ -683,9 +768,11 @@ func TestSchedulerDeleteJob(t *testing.T) {
 		// Create a job
 		jobName := fmt.Sprintf("delete_test_%d", time.Now().UnixNano())
 		job, err := schedulerCreateJob(ctx, createJobRequest{
-			Name:    jobName,
-			Type:    JobTypeOneShot,
-			Payload: map[string]interface{}{"task": "deletable"},
+			Name:      jobName,
+			Type:      JobTypeOneShot,
+			Handler:   testJobHandler,
+			ExecuteAt: time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
+			Payload:   map[string]interface{}{"task": "deletable"},
 		})
 		if err != nil {
 			t.Fatalf("create job failed: %v", err)
@@ -696,7 +783,7 @@ func TestSchedulerDeleteJob(t *testing.T) {
 		if err != nil {
 			t.Fatalf("delete job failed: %v", err)
 		}
-		t.Logf("deleted job: id=%s", job.ID)
+		t.Logf("deleted job: id=%d", job.ID)
 
 		// Verify job is gone
 		_, err = schedulerGetJob(ctx, job.ID)
@@ -710,7 +797,7 @@ func TestSchedulerDeleteJob(t *testing.T) {
 		defer cancel()
 
 		// Deleting non-existent job may succeed or fail depending on implementation
-		err := schedulerDeleteJob(ctx, "non-existent-job-id-12345")
+		err := schedulerDeleteJob(ctx, nonExistentJobID)
 		t.Logf("delete non-existent job response: error=%v", err)
 	})
 }
@@ -724,12 +811,14 @@ func TestSchedulerJobHistory(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		// Create and trigger a job to generate history
+		// Create a job to query history for
 		jobName := fmt.Sprintf("history_test_%d", time.Now().UnixNano())
 		job, err := schedulerCreateJob(ctx, createJobRequest{
-			Name:    jobName,
-			Type:    JobTypeOneShot,
-			Payload: map[string]interface{}{"task": "history_test"},
+			Name:      jobName,
+			Type:      JobTypeOneShot,
+			Handler:   testJobHandler,
+			ExecuteAt: time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
+			Payload:   map[string]interface{}{"task": "history_test"},
 		})
 		if err != nil {
 			t.Fatalf("create job failed: %v", err)
@@ -742,9 +831,9 @@ func TestSchedulerJobHistory(t *testing.T) {
 			t.Fatalf("get job history failed: %v", err)
 		}
 
-		t.Logf("job history: %d entries", len(history.History))
-		for i, entry := range history.History {
-			t.Logf("  entry %d: id=%s, status=%s, started=%s", i, entry.ID, entry.Status, entry.StartedAt)
+		t.Logf("job history: %d entries", len(history.Executions))
+		for i, entry := range history.Executions {
+			t.Logf("  entry %d: id=%d, status=%s, started=%s", i, entry.ID, entry.Status, entry.StartedAt)
 		}
 	})
 
@@ -752,7 +841,7 @@ func TestSchedulerJobHistory(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		_, err := schedulerGetJobHistory(ctx, "non-existent-job-id-12345", 10)
+		_, err := schedulerGetJobHistory(ctx, nonExistentJobID, 10)
 		if err == nil {
 			t.Error("expected error for non-existent job")
 		}
@@ -778,9 +867,9 @@ func TestSchedulerStatus(t *testing.T) {
 			t.Error("expected scheduler to be running")
 		}
 
-		t.Logf("scheduler status: running=%v, total_jobs=%d, active=%d, paused=%d, completed=%d, failed=%d",
-			status.Running, status.TotalJobs, status.ActiveJobs, status.PausedJobs,
-			status.CompletedJobs, status.FailedJobs)
+		t.Logf("scheduler status: running=%v, job_count=%d, running_jobs=%d, success=%d, failures=%d",
+			status.Running, status.Stats.JobCount, status.Stats.RunningJobs,
+			status.Stats.SuccessCount, status.Stats.FailureCount)
 	})
 }
 
@@ -798,77 +887,79 @@ func TestSchedulerJobLifecycle(t *testing.T) {
 		job, err := schedulerCreateJob(ctx, createJobRequest{
 			Name:        jobName,
 			Type:        JobTypeRecurring,
+			Handler:     testJobHandler,
 			Schedule:    "*/5 * * * *",
 			Description: "Lifecycle test job",
 			Payload:     map[string]interface{}{"step": 1},
-			Tags:        []string{"lifecycle", "test"},
+			Labels:      map[string]string{"phase": "lifecycle", "env": "test"},
 		})
 		if err != nil {
 			t.Fatalf("create job failed: %v", err)
 		}
-		t.Logf("1. created job: id=%s", job.ID)
+		jobID := job.ID
+		t.Logf("1. created job: id=%d", jobID)
 
 		// 2. Get
-		job, err = schedulerGetJob(ctx, job.ID)
+		got, err := schedulerGetJob(ctx, jobID)
 		if err != nil {
 			t.Fatalf("get job failed: %v", err)
 		}
-		t.Logf("2. retrieved job: status=%s", job.Status)
+		t.Logf("2. retrieved job: status=%s", got.Status)
 
 		// 3. Update
-		job, err = schedulerUpdateJob(ctx, job.ID, updateJobRequest{
+		updated, err := schedulerUpdateJob(ctx, jobID, updateJobRequest{
 			Description: "Updated lifecycle test job",
 			Payload:     map[string]interface{}{"step": 2},
 		})
 		if err != nil {
 			t.Fatalf("update job failed: %v", err)
 		}
-		t.Logf("3. updated job: description=%s", job.Description)
+		t.Logf("3. updated job: description=%s", updated.Description)
 
 		// 4. Pause
-		job, err = schedulerPauseJob(ctx, job.ID)
+		paused, err := schedulerPauseJob(ctx, jobID)
 		if err != nil {
 			t.Fatalf("pause job failed: %v", err)
 		}
-		t.Logf("4. paused job: status=%s", job.Status)
+		t.Logf("4. paused job: status=%s", paused.NewStatus)
 
 		// 5. Resume
-		job, err = schedulerResumeJob(ctx, job.ID)
+		resumed, err := schedulerResumeJob(ctx, jobID)
 		if err != nil {
 			t.Fatalf("resume job failed: %v", err)
 		}
-		t.Logf("5. resumed job: status=%s", job.Status)
+		t.Logf("5. resumed job: status=%s", resumed.NewStatus)
 
 		// 6. Trigger
-		job, err = schedulerTriggerJob(ctx, job.ID)
+		triggered, err := schedulerTriggerJob(ctx, jobID)
 		if err != nil {
 			t.Fatalf("trigger job failed: %v", err)
 		}
-		t.Logf("6. triggered job: status=%s", job.Status)
+		t.Logf("6. triggered job: status=%s", triggered.Status)
 
 		// 7. Get history
-		history, err := schedulerGetJobHistory(ctx, job.ID, 10)
+		history, err := schedulerGetJobHistory(ctx, jobID, 10)
 		if err != nil {
 			t.Fatalf("get history failed: %v", err)
 		}
-		t.Logf("7. job history: %d entries", len(history.History))
+		t.Logf("7. job history: %d entries", len(history.Executions))
 
 		// 8. Cancel
-		job, err = schedulerCancelJob(ctx, job.ID)
+		canceled, err := schedulerCancelJob(ctx, jobID)
 		if err != nil {
 			t.Fatalf("cancel job failed: %v", err)
 		}
-		t.Logf("8. canceled job: status=%s", job.Status)
+		t.Logf("8. canceled job: status=%s", canceled.NewStatus)
 
 		// 9. Delete
-		err = schedulerDeleteJob(ctx, job.ID)
+		err = schedulerDeleteJob(ctx, jobID)
 		if err != nil {
 			t.Fatalf("delete job failed: %v", err)
 		}
 		t.Logf("9. deleted job")
 
 		// 10. Verify deleted
-		_, err = schedulerGetJob(ctx, job.ID)
+		_, err = schedulerGetJob(ctx, jobID)
 		if err == nil {
 			t.Fatal("expected error for deleted job")
 		}
@@ -888,7 +979,7 @@ func TestSchedulerConcurrent(t *testing.T) {
 		const numGoroutines = 10
 		var wg sync.WaitGroup
 		errors := make(chan error, numGoroutines)
-		jobIDs := make(chan string, numGoroutines)
+		jobIDs := make(chan uint64, numGoroutines)
 
 		for i := 0; i < numGoroutines; i++ {
 			wg.Add(1)
@@ -897,9 +988,11 @@ func TestSchedulerConcurrent(t *testing.T) {
 
 				jobName := fmt.Sprintf("concurrent_test_%d_%d", time.Now().UnixNano(), idx)
 				job, err := schedulerCreateJob(ctx, createJobRequest{
-					Name:    jobName,
-					Type:    JobTypeOneShot,
-					Payload: map[string]interface{}{"goroutine": idx},
+					Name:      jobName,
+					Type:      JobTypeOneShot,
+					Handler:   testJobHandler,
+					ExecuteAt: time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
+					Payload:   map[string]interface{}{"goroutine": idx},
 				})
 				if err != nil {
 					errors <- &qberrors.WrappedMessageError{
@@ -941,6 +1034,7 @@ func TestSchedulerConcurrent(t *testing.T) {
 		job, err := schedulerCreateJob(ctx, createJobRequest{
 			Name:     jobName,
 			Type:     JobTypeRecurring,
+			Handler:  testJobHandler,
 			Schedule: "*/5 * * * *",
 		})
 		if err != nil {
@@ -978,137 +1072,95 @@ func TestSchedulerConcurrent(t *testing.T) {
 	})
 }
 
+// nonExistentJobID is a job ID that is extremely unlikely to exist on the
+// server, used to exercise not-found error paths.
+const nonExistentJobID uint64 = 999999999999
+
 // Helper functions for scheduler API operations.
+
+// marshalCreateRequest serializes a create request, encoding the payload
+// map into the raw JSON `payload` field the server expects.
+func marshalCreateRequest(req createJobRequest) ([]byte, error) {
+	type alias createJobRequest
+	envelope := struct {
+		alias
+		Payload json.RawMessage `json:"payload,omitempty"`
+	}{alias: alias(req)}
+	if req.Payload != nil {
+		raw, err := json.Marshal(req.Payload)
+		if err != nil {
+			return nil, &qberrors.WrappedMessageError{Message: "failed to marshal payload", Cause: err}
+		}
+		envelope.Payload = raw
+	}
+	return json.Marshal(envelope)
+}
+
+// marshalUpdateRequest serializes an update request, encoding the payload
+// map into the raw JSON `payload` field the server expects.
+func marshalUpdateRequest(req updateJobRequest) ([]byte, error) {
+	type alias updateJobRequest
+	envelope := struct {
+		alias
+		Payload json.RawMessage `json:"payload,omitempty"`
+	}{alias: alias(req)}
+	if req.Payload != nil {
+		raw, err := json.Marshal(req.Payload)
+		if err != nil {
+			return nil, &qberrors.WrappedMessageError{Message: "failed to marshal payload", Cause: err}
+		}
+		envelope.Payload = raw
+	}
+	return json.Marshal(envelope)
+}
 
 func schedulerCreateJob(ctx context.Context, req createJobRequest) (*jobResponse, error) {
 	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs", GetRESTAddress())
 
-	body, err := json.Marshal(req)
+	body, err := marshalCreateRequest(req)
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
+	respBody, err := doSchedulerRequest(ctx, http.MethodPost, reqURL, body,
+		"create job", http.StatusOK, http.StatusCreated)
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, &qberrors.MessageError{
-			Message: "create job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
-	}
-
-	var jobResp jobResponse
-	if len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
-		}
-	}
-
-	return &jobResp, nil
+	return decodeJobEnvelope(respBody)
 }
 
-func schedulerGetJob(ctx context.Context, id string) (*jobResponse, error) {
-	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%s", GetRESTAddress(), id)
+func schedulerGetJob(ctx context.Context, id uint64) (*jobResponse, error) {
+	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d", GetRESTAddress(), id)
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	respBody, err := doSchedulerRequest(ctx, http.MethodGet, reqURL, nil,
+		"get job", http.StatusOK)
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, err
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &qberrors.MessageError{Message: "job not found"}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{
-			Message: "get job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
-	}
-
-	var jobResp jobResponse
-	if len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
-		}
-	}
-
-	return &jobResp, nil
+	return decodeJobEnvelope(respBody)
 }
 
-func schedulerUpdateJob(ctx context.Context, id string, req updateJobRequest) (*jobResponse, error) {
-	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%s", GetRESTAddress(), id)
+func schedulerUpdateJob(ctx context.Context, id uint64, req updateJobRequest) (*jobResponse, error) {
+	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d", GetRESTAddress(), id)
 
-	body, err := json.Marshal(req)
+	body, err := marshalUpdateRequest(req)
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to marshal request", Cause: err}
+		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(body))
+	respBody, err := doSchedulerRequest(ctx, http.MethodPut, reqURL, body,
+		"update job", http.StatusOK)
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
+		return nil, err
 	}
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &qberrors.MessageError{Message: "job not found"}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{
-			Message: "update job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
-	}
-
-	var jobResp jobResponse
-	if len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
-		}
-	}
-
-	return &jobResp, nil
+	return decodeJobEnvelope(respBody)
 }
 
-func schedulerListJobs(ctx context.Context, limit int, cursor, status, jobType string) (*listJobsResponse, error) {
+func schedulerListJobs(ctx context.Context, limit int, cursor, status, handler string) (*listJobsResponse, error) {
 	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs", GetRESTAddress())
 
 	params := url.Values{}
@@ -1121,35 +1173,18 @@ func schedulerListJobs(ctx context.Context, limit int, cursor, status, jobType s
 	if status != "" {
 		params.Set("status", status)
 	}
-	if jobType != "" {
-		params.Set("type", jobType)
+	if handler != "" {
+		params.Set("handler", handler)
 	}
 
 	if len(params) > 0 {
 		reqURL += "?" + params.Encode()
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	respBody, err := doSchedulerRequest(ctx, http.MethodGet, reqURL, nil,
+		"list jobs", http.StatusOK)
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{
-			Message: "list jobs failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
+		return nil, err
 	}
 
 	var listResp listJobsResponse
@@ -1158,231 +1193,71 @@ func schedulerListJobs(ctx context.Context, limit int, cursor, status, jobType s
 			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
+	for i := range listResp.Jobs {
+		if err := listResp.Jobs[i].decodePayload(); err != nil {
+			return nil, err
+		}
+	}
 
 	return &listResp, nil
 }
 
-func schedulerTriggerJob(ctx context.Context, id string) (*jobResponse, error) {
-	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%s/trigger", GetRESTAddress(), id)
+func schedulerTriggerJob(ctx context.Context, id uint64) (*statusChangeResponse, error) {
+	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d/trigger", GetRESTAddress(), id)
+	return schedulerStatusChange(ctx, reqURL, "trigger job")
+}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+func schedulerPauseJob(ctx context.Context, id uint64) (*statusChangeResponse, error) {
+	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d/pause", GetRESTAddress(), id)
+	return schedulerStatusChange(ctx, reqURL, "pause job")
+}
+
+func schedulerResumeJob(ctx context.Context, id uint64) (*statusChangeResponse, error) {
+	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d/resume", GetRESTAddress(), id)
+	return schedulerStatusChange(ctx, reqURL, "resume job")
+}
+
+func schedulerCancelJob(ctx context.Context, id uint64) (*statusChangeResponse, error) {
+	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d/cancel", GetRESTAddress(), id)
+	return schedulerStatusChange(ctx, reqURL, "cancel job")
+}
+
+// schedulerStatusChange performs a POST status-transition request
+// (trigger/pause/resume/cancel) and decodes the status-change response.
+func schedulerStatusChange(ctx context.Context, reqURL, op string) (*statusChangeResponse, error) {
+	respBody, err := doSchedulerRequest(ctx, http.MethodPost, reqURL, nil, op, http.StatusOK)
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+		return nil, err
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &qberrors.MessageError{Message: "job not found"}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{
-			Message: "trigger job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
-	}
-
-	var jobResp jobResponse
+	var resp statusChangeResponse
 	if len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, &jobResp); err != nil {
+		if err := json.Unmarshal(respBody, &resp); err != nil {
 			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
-
-	return &jobResp, nil
+	return &resp, nil
 }
 
-func schedulerPauseJob(ctx context.Context, id string) (*jobResponse, error) {
-	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%s/pause", GetRESTAddress(), id)
+func schedulerDeleteJob(ctx context.Context, id uint64) error {
+	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d", GetRESTAddress(), id)
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &qberrors.MessageError{Message: "job not found"}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{
-			Message: "pause job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
-	}
-
-	var jobResp jobResponse
-	if len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
-		}
-	}
-
-	return &jobResp, nil
+	_, err := doSchedulerRequest(ctx, http.MethodDelete, reqURL, nil,
+		"delete job", http.StatusOK, http.StatusNoContent)
+	return err
 }
 
-func schedulerResumeJob(ctx context.Context, id string) (*jobResponse, error) {
-	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%s/resume", GetRESTAddress(), id)
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &qberrors.MessageError{Message: "job not found"}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{
-			Message: "resume job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
-	}
-
-	var jobResp jobResponse
-	if len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
-		}
-	}
-
-	return &jobResp, nil
-}
-
-func schedulerCancelJob(ctx context.Context, id string) (*jobResponse, error) {
-	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%s/cancel", GetRESTAddress(), id)
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &qberrors.MessageError{Message: "job not found"}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{
-			Message: "cancel job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
-	}
-
-	var jobResp jobResponse
-	if len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, &jobResp); err != nil {
-			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
-		}
-	}
-
-	return &jobResp, nil
-}
-
-func schedulerDeleteJob(ctx context.Context, id string) error {
-	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%s", GetRESTAddress(), id)
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, reqURL, nil)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return &qberrors.MessageError{
-			Message: "delete job failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
-	}
-
-	return nil
-}
-
-func schedulerGetJobHistory(ctx context.Context, id string, limit int) (*jobHistoryResponse, error) {
-	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%s/history", GetRESTAddress(), id)
+func schedulerGetJobHistory(ctx context.Context, id uint64, limit int) (*jobHistoryResponse, error) {
+	reqURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d/history", GetRESTAddress(), id)
 
 	if limit > 0 {
 		reqURL += "?limit=" + strconv.Itoa(limit)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	respBody, err := doSchedulerRequest(ctx, http.MethodGet, reqURL, nil,
+		"get job history", http.StatusOK)
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &qberrors.MessageError{Message: "job not found"}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{
-			Message: "get job history failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
-		}
+		return nil, err
 	}
 
 	var historyResp jobHistoryResponse
@@ -1398,9 +1273,37 @@ func schedulerGetJobHistory(ctx context.Context, id string, limit int) (*jobHist
 func schedulerGetStatus(ctx context.Context) (*schedulerStatusResponse, error) {
 	reqURL := fmt.Sprintf("%s/api/v1/scheduler/status", GetRESTAddress())
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	respBody, err := doSchedulerRequest(ctx, http.MethodGet, reqURL, nil,
+		"get scheduler status", http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+
+	var statusResp schedulerStatusResponse
+	if len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, &statusResp); err != nil {
+			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
+		}
+	}
+
+	return &statusResp, nil
+}
+
+// doSchedulerRequest issues an HTTP request to the scheduler REST API and
+// returns the response body, mapping non-success statuses to typed errors.
+// A 404 always maps to a "job not found" error regardless of okStatuses.
+func doSchedulerRequest(ctx context.Context, method, reqURL string, body []byte, op string, okStatuses ...int) ([]byte, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, method, reqURL, reader)
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
+	}
+	if body != nil {
+		httpReq.Header.Set("Content-Type", "application/json")
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -1415,25 +1318,42 @@ func schedulerGetStatus(ctx context.Context) (*schedulerStatusResponse, error) {
 		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{
-			Message: "get scheduler status failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &qberrors.MessageError{Message: "job not found"}
+	}
+
+	for _, ok := range okStatuses {
+		if resp.StatusCode == ok {
+			return respBody, nil
 		}
 	}
 
-	var statusResp schedulerStatusResponse
+	return nil, &qberrors.MessageError{
+		Message: op + " failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
+	}
+}
+
+// decodeJobEnvelope unwraps the {"job": {...}} envelope returned by the
+// create/get/update endpoints and decodes the job payload.
+func decodeJobEnvelope(respBody []byte) (*jobResponse, error) {
+	var env jobEnvelope
 	if len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, &statusResp); err != nil {
+		if err := json.Unmarshal(respBody, &env); err != nil {
 			return nil, &qberrors.WrappedMessageError{Message: "failed to unmarshal response", Cause: err}
 		}
 	}
-
-	return &statusResp, nil
+	if env.Job == nil {
+		return nil, &qberrors.MessageError{Message: "response did not contain a job"}
+	}
+	if err := env.Job.decodePayload(); err != nil {
+		return nil, err
+	}
+	return env.Job, nil
 }
 
-// cleanupJob attempts to delete a job, logging any error but not failing the test.
-func cleanupJob(ctx context.Context, id string) {
-	if id == "" {
+// cleanupJob attempts to delete a job, ignoring any error.
+func cleanupJob(ctx context.Context, id uint64) {
+	if id == 0 {
 		return
 	}
 	// Best effort cleanup - ignore errors

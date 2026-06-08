@@ -53,6 +53,18 @@ type FederationManager interface {
 	GetUserLinks(ctx context.Context, userID, tenantID string) ([]*FederatedIdentity, error)
 }
 
+// ProviderResolver performs home-realm provider discovery: it resolves the
+// tenant and the home provider from non-secret routing hints. It is satisfied by
+// *HomeRealmDirectory and injected into the federation manager so BeginLogin can
+// select a provider automatically when the caller does not name one.
+type ProviderResolver interface {
+	// ResolveProvider resolves both the tenant and the home provider from hints.
+	ResolveProvider(ctx context.Context, hints RealmHints, lister ProviderLister) (RealmProvider, error)
+	// ResolveProviderForTenant selects the home provider within an already-known
+	// tenant (used when BeginLogin is given an explicit tenant ID).
+	ResolveProviderForTenant(ctx context.Context, tenantID string, hints RealmHints, lister ProviderLister) (RealmProvider, error)
+}
+
 // FederationResult contains the result of a successful federation authentication.
 type FederationResult struct {
 	// User is the authenticated or provisioned user.
@@ -72,6 +84,11 @@ type FederationResult struct {
 
 	// Provisioned indicates whether the user was newly created.
 	Provisioned bool `json:"provisioned"`
+
+	// ScopesGranted are the platform token scopes (the `scp` catalog) granted to
+	// this login, resolved from the IdP claim->scope mappings (or DefaultScopes)
+	// and carried on the issued access token.
+	ScopesGranted []string `json:"scopes_granted,omitempty"`
 }
 
 // OIDCDiscoveryDocument represents the OIDC discovery document.
@@ -119,6 +136,20 @@ type DefaultFederationManager struct {
 	// now is the clock used for ID-token freshness and JWKS-cache expiry. It is
 	// injectable for deterministic tests.
 	now func() time.Time
+
+	// providerResolver performs home-realm provider discovery for BeginLoginHRD
+	// and for BeginLogin when no provider name is supplied. It is optional: when
+	// nil, HRD-driven selection is unavailable and a missing provider name is an
+	// error (preserving the legacy explicit-name behaviour).
+	providerResolver ProviderResolver
+
+	// bootstrapGate reports whether a bootstrap admin already exists. It guards
+	// registration of SYSTEM-tenant (operator) providers so the bootstrap
+	// ordering invariant holds on EVERY path that reaches RegisterProvider --
+	// not just the OperatorSSORegistrar. When nil, system-tenant registration
+	// fails closed (no gate => cannot verify the admin => deny). It is never
+	// consulted for non-system tenants, which federate independently.
+	bootstrapGate AdminPresenceChecker
 }
 
 // FederationManagerOption configures the federation manager.
@@ -197,6 +228,27 @@ func WithFederationClock(now func() time.Time) FederationManagerOption {
 	}
 }
 
+// WithProviderResolver sets the home-realm provider resolver used for
+// HRD-driven provider selection (BeginLoginHRD and BeginLogin without a provider
+// name).
+func WithProviderResolver(resolver ProviderResolver) FederationManagerOption {
+	return func(m *DefaultFederationManager) {
+		m.providerResolver = resolver
+	}
+}
+
+// WithFederationBootstrapGate sets the admin-presence checker that guards
+// SYSTEM-tenant (operator) provider registration. It enforces the bootstrap
+// ordering invariant at the manager level so no transport (REST/gRPC/QUIC/MCP)
+// can register a system-tenant IdP before a bootstrap admin exists. It is
+// optional for non-system tenants; when it is not set, system-tenant
+// registration fails closed.
+func WithFederationBootstrapGate(gate AdminPresenceChecker) FederationManagerOption {
+	return func(m *DefaultFederationManager) {
+		m.bootstrapGate = gate
+	}
+}
+
 // NewFederationManager creates a new federation manager.
 func NewFederationManager(opts ...FederationManagerOption) (*DefaultFederationManager, error) {
 	m := &DefaultFederationManager{
@@ -242,6 +294,20 @@ func (m *DefaultFederationManager) RegisterProvider(ctx context.Context, provide
 		return err
 	}
 
+	// Bootstrap-ordering gate: a SYSTEM-tenant (operator) IdP may only be
+	// registered once the local-factor bootstrap admin exists. This is enforced
+	// here -- the single chokepoint every transport routes through -- so no path
+	// can bypass it. Non-system tenants are unaffected. When no gate is wired we
+	// cannot verify the admin, so we fail closed for the system tenant rather
+	// than risk locking out the control plane behind a misconfigured IdP.
+	if IsSystemTenant(provider.TenantID) {
+		if err := m.ensureBootstrapReady(ctx); err != nil {
+			m.logProviderEvent(ctx, provider, "register", false,
+				map[string]interface{}{"error": err.Error()})
+			return err
+		}
+	}
+
 	// Check for duplicate name
 	existing, err := m.providerStorage.GetProviderByName(ctx, provider.TenantID, provider.Name)
 	if err == nil && existing != nil {
@@ -261,6 +327,25 @@ func (m *DefaultFederationManager) RegisterProvider(ctx context.Context, provide
 	// Log audit event
 	m.logProviderEvent(ctx, provider, "register", true, nil)
 
+	return nil
+}
+
+// ensureBootstrapReady enforces the bootstrap-ordering invariant for the
+// system tenant. It fails closed with ErrBootstrapNotReady when no gate is
+// configured or when the gate cannot confirm an admin is present, never opening
+// the configuration path on uncertainty.
+func (m *DefaultFederationManager) ensureBootstrapReady(ctx context.Context) error {
+	if m.bootstrapGate == nil {
+		return ErrBootstrapNotReady
+	}
+	hasAdmin, err := m.bootstrapGate.HasAdmin(ctx)
+	if err != nil {
+		return NewIAMError(ErrBootstrapNotReady, "iam.federation.register",
+			"failed to verify bootstrap admin presence", err)
+	}
+	if !hasAdmin {
+		return ErrBootstrapNotReady
+	}
 	return nil
 }
 
@@ -389,14 +474,34 @@ func (m *DefaultFederationManager) ListProviders(ctx context.Context, tenantID s
 	return providers, nil
 }
 
-// BeginLogin initiates the OAuth2 authorization flow.
+// BeginLogin initiates the OAuth2 authorization flow. When providerName is
+// supplied the named provider is used (the explicit-name path). When providerName
+// is empty, home-realm provider discovery selects the provider WITHIN the given
+// tenant (per-tenant default or single-provider shortcut); this requires a
+// provider resolver to have been configured.
 func (m *DefaultFederationManager) BeginLogin(ctx context.Context, tenantID, providerName, redirectURI string) (*LoginRedirect, error) {
-	if tenantID == "" || providerName == "" {
+	if tenantID == "" {
 		return nil, NewIAMError(ErrFederationStateInvalid, "iam.federation.begin_login",
-			"tenant ID and provider name are required", nil)
+			"tenant ID is required", nil)
 	}
 
-	// Get provider
+	if providerName == "" {
+		// HRD-driven selection within an already-known tenant: select the home
+		// provider by per-domain mapping / tenant default / single-provider
+		// shortcut, fail-closed when ambiguous.
+		if m.providerResolver == nil {
+			return nil, NewIAMError(ErrFederationStateInvalid, "iam.federation.begin_login",
+				"provider name is required (home-realm discovery is not configured)", nil)
+		}
+		realm, err := m.providerResolver.ResolveProviderForTenant(ctx, tenantID, RealmHints{}, m)
+		if err != nil {
+			return nil, NewIAMError(ErrProviderNotFound, "iam.federation.begin_login",
+				"home-realm provider discovery failed", err)
+		}
+		return m.beginLoginFromRealm(ctx, realm, redirectURI)
+	}
+
+	// Explicit-name path.
 	provider, err := m.providerStorage.GetProviderByName(ctx, tenantID, providerName)
 	if err != nil {
 		if dberrors.IsNotFound(err) {
@@ -405,6 +510,54 @@ func (m *DefaultFederationManager) BeginLogin(ctx context.Context, tenantID, pro
 		return nil, NewIAMError(ErrProviderInvalid, "iam.federation.begin_login",
 			"failed to get provider", err)
 	}
+
+	return m.beginLoginForProvider(ctx, provider, redirectURI)
+}
+
+// BeginLoginHRD resolves the tenant AND home provider from home-realm discovery
+// hints, then begins the login. A resolution to the local realm short-circuits
+// to a LoginRedirect carrying LocalRealmProviderID and no AuthURL.
+func (m *DefaultFederationManager) BeginLoginHRD(ctx context.Context, hints RealmHints, redirectURI string) (*LoginRedirect, error) {
+	if m.providerResolver == nil {
+		return nil, NewIAMError(ErrFederationStateInvalid, "iam.federation.begin_login",
+			"home-realm provider discovery is not configured", nil)
+	}
+
+	realm, err := m.providerResolver.ResolveProvider(ctx, hints, m)
+	if err != nil {
+		return nil, NewIAMError(ErrProviderNotFound, "iam.federation.begin_login",
+			"home-realm provider discovery failed", err)
+	}
+	return m.beginLoginFromRealm(ctx, realm, redirectURI)
+}
+
+// beginLoginFromRealm turns a resolved RealmProvider into a LoginRedirect. A
+// local-realm resolution short-circuits to the local-factor sentinel (no OAuth2
+// redirect); otherwise the resolved external provider drives the flow.
+func (m *DefaultFederationManager) beginLoginFromRealm(ctx context.Context, realm RealmProvider, redirectURI string) (*LoginRedirect, error) {
+	// Local realm: route to the tenant's local-factor path. No OAuth2 redirect is
+	// produced; the caller drives the local factor stack.
+	if realm.IsLocalRealm() {
+		return &LoginRedirect{ProviderID: LocalRealmProviderID}, nil
+	}
+
+	provider, err := m.providerStorage.GetProvider(ctx, realm.TenantID, realm.ProviderID)
+	if err != nil {
+		if dberrors.IsNotFound(err) {
+			return nil, ErrProviderNotFound
+		}
+		return nil, NewIAMError(ErrProviderInvalid, "iam.federation.begin_login",
+			"failed to get resolved provider", err)
+	}
+
+	return m.beginLoginForProvider(ctx, provider, redirectURI)
+}
+
+// beginLoginForProvider performs the OAuth2 authorization-flow setup for an
+// already-resolved provider. It is the shared body of BeginLogin and
+// BeginLoginHRD.
+func (m *DefaultFederationManager) beginLoginForProvider(ctx context.Context, provider *ExternalProvider, redirectURI string) (*LoginRedirect, error) {
+	tenantID := provider.TenantID
 
 	if !provider.Enabled {
 		return nil, ErrProviderDisabled
@@ -454,9 +607,10 @@ func (m *DefaultFederationManager) BeginLogin(ctx context.Context, tenantID, pro
 		oauth2.SetAuthURLParam("nonce", oidcNonce))
 
 	return &LoginRedirect{
-		AuthURL:   authURL,
-		State:     stateNonce,
-		ExpiresAt: state.ExpiresAt,
+		AuthURL:    authURL,
+		State:      stateNonce,
+		ExpiresAt:  state.ExpiresAt,
+		ProviderID: provider.ID,
 	}, nil
 }
 
@@ -1012,6 +1166,16 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 			"federated login denied: no roles resolvable", &NoRolesResolvableError{ProviderID: provider.ID})
 	}
 
+	// Resolve the platform token scopes from the IdP groups/roles claims, on the
+	// same axis as roles. This also fails closed: if claim->scope mappings are
+	// configured but the IdP values match none, the login is denied here before
+	// any user record is touched.
+	scopeResolution, err := resolveScopes(provider, claims)
+	if err != nil {
+		return nil, NewIAMError(ErrOIDCClaimMappingFailed, "iam.federation.process",
+			"federated login denied by scope mapping", err)
+	}
+
 	now := m.now()
 
 	// Try to find existing identity link
@@ -1036,7 +1200,7 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 		_ = m.linkStorage.UpdateLink(ctx, identity)
 
 		// Generate tokens
-		return m.generateTokenResult(ctx, user, identity, false)
+		return m.generateTokenResult(ctx, user, identity, false, scopeResolution)
 	}
 
 	// No existing link - try to link by email if allowed
@@ -1068,7 +1232,7 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 					"failed to create identity link", err)
 			}
 
-			return m.generateTokenResult(ctx, user, identity, false)
+			return m.generateTokenResult(ctx, user, identity, false, scopeResolution)
 		}
 	}
 
@@ -1103,7 +1267,7 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 			"failed to create identity link", err)
 	}
 
-	return m.generateTokenResult(ctx, user, identity, true)
+	return m.generateTokenResult(ctx, user, identity, true, scopeResolution)
 }
 
 // syncUserRoles reconciles a user's role assignments to exactly the set the IdP
@@ -1207,11 +1371,16 @@ func (m *DefaultFederationManager) provisionUser(ctx context.Context, provider *
 	return user, nil
 }
 
-// generateTokenResult generates a FederationResult with QuicBaaS tokens.
-func (m *DefaultFederationManager) generateTokenResult(ctx context.Context, user *User, identity *FederatedIdentity, provisioned bool) (*FederationResult, error) {
+// generateTokenResult generates a FederationResult with QuicBaaS tokens. The
+// resolved platform scopes (from the IdP claim->scope mappings or DefaultScopes)
+// are unioned with the base OIDC scopes and carried onto the issued access token
+// so the `scp` catalog reflects the tenant's claim mappings.
+func (m *DefaultFederationManager) generateTokenResult(ctx context.Context, user *User, identity *FederatedIdentity, provisioned bool, scopeResolution *ScopeResolution) (*FederationResult, error) {
+	scopes := federationTokenScopes(scopeResolution)
+
 	// Generate QuicBaaS tokens using OIDC provider if available
 	if m.oidcProvider != nil {
-		tokenResp, err := m.oidcProvider.generateTokenResponse(ctx, user, "", []string{"openid", "profile", "email"}, "", "", nil)
+		tokenResp, err := m.oidcProvider.generateTokenResponse(ctx, user, "", scopes, "", "", nil)
 		if err != nil {
 			return nil, NewIAMError(ErrOIDCTokenExchangeFailed, "iam.federation.tokens",
 				"failed to generate tokens", err)
@@ -1224,6 +1393,7 @@ func (m *DefaultFederationManager) generateTokenResult(ctx context.Context, user
 			RefreshToken:      tokenResp.RefreshToken,
 			ExpiresIn:         tokenResp.ExpiresIn,
 			Provisioned:       provisioned,
+			ScopesGranted:     scopes,
 		}, nil
 	}
 
@@ -1232,7 +1402,39 @@ func (m *DefaultFederationManager) generateTokenResult(ctx context.Context, user
 		User:              user,
 		FederatedIdentity: identity,
 		Provisioned:       provisioned,
+		ScopesGranted:     scopes,
 	}, nil
+}
+
+// federationBaseScopes are the OIDC scopes always present on a federated login's
+// issued token. Resolved platform scopes are unioned on top of these.
+var federationBaseScopes = []string{"openid", "profile", "email"}
+
+// federationTokenScopes unions the base OIDC scopes with the resolved platform
+// scopes, de-duplicated and order-stable (base scopes first). A nil resolution
+// yields just the base scopes.
+func federationTokenScopes(resolution *ScopeResolution) []string {
+	seen := make(map[string]struct{}, len(federationBaseScopes))
+	out := make([]string, 0, len(federationBaseScopes))
+	add := func(scope string) {
+		if scope == "" {
+			return
+		}
+		if _, ok := seen[scope]; ok {
+			return
+		}
+		seen[scope] = struct{}{}
+		out = append(out, scope)
+	}
+	for _, s := range federationBaseScopes {
+		add(s)
+	}
+	if resolution != nil {
+		for _, s := range resolution.Scopes {
+			add(s)
+		}
+	}
+	return out
 }
 
 // extractClaim extracts a claim value using the mapping or default key.

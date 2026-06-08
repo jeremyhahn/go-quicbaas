@@ -49,7 +49,7 @@ func (s *Server) startMCPServer() error {
 		ServerName:     "QuicBaaS",
 		ServerVersion:  "1.0.0",
 		Transport:      "http",
-		HTTPAddr:       fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.MCP.Port),
+		HTTPAddr:       fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.MCP.BindAddress), s.config.Server.MCP.Port),
 		RequestTimeout: 30 * time.Second,
 		TLSConfig:      s.tlsConfig,
 	}
@@ -90,7 +90,7 @@ func (s *Server) startMCPServer() error {
 	}()
 
 	s.mcpServer = mcpServer
-	s.logger.Infof("MCP server started on %s:%d", s.config.Server.Host, s.config.Server.MCP.Port)
+	s.logger.Infof("MCP server started on %s:%d", s.config.Server.ResolveBindHost(s.config.Server.MCP.BindAddress), s.config.Server.MCP.Port)
 	return nil
 }
 

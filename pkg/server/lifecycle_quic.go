@@ -81,7 +81,7 @@ func (s *Server) startQUICServer() error {
 
 	// Create QUIC server configuration
 	quicConfig := &quicapi.Config{
-		ListenAddr:                 fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.QUIC.Port),
+		ListenAddr:                 fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.QUIC.BindAddress), s.config.Server.QUIC.Port),
 		TLSConfig:                  tlsConfig,
 		MaxStreams:                 1000,
 		MaxIdleTimeout:             30 * time.Second,
@@ -147,7 +147,7 @@ func (s *Server) startQUICServer() error {
 	}
 
 	s.quicServer = quicServer
-	s.logger.Infof("QUIC server started on %s:%d", s.config.Server.Host, s.config.Server.QUIC.Port)
+	s.logger.Infof("QUIC server started on %s:%d", s.config.Server.ResolveBindHost(s.config.Server.QUIC.BindAddress), s.config.Server.QUIC.Port)
 	return nil
 }
 

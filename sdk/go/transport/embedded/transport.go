@@ -216,6 +216,9 @@ var unaryHandlers = map[string]handlerFunc{
 	// RFC 8555 exchanges, not transport RPCs, by design.
 	"quicbaas.ACME/RegisterChallenge": handleACMERegisterChallenge,
 	"quicbaas.ACME/Issue":             handleACMEIssue,
+	"quicbaas.ACME/NewOrder":          handleACMENewOrder,
+	"quicbaas.ACME/FinalizeOrder":     handleACMEFinalizeOrder,
+	"quicbaas.ACME/Renew":             handleACMERenew,
 
 	// Orchestrator — session operations
 	"quicbaas.Orchestrator/Inference":     handleOrchestratorInference,

@@ -35,6 +35,18 @@ const (
 
 	// KeyPrefixHRDHost maps an exact SNI/Host header value to a tenant ID.
 	KeyPrefixHRDHost = KeyPrefixIAM + "hrd/host/"
+
+	// KeyPrefixHRDProviderDomain maps an email/SNI domain to the home PROVIDER a
+	// login on that domain should use within its tenant. The value is a provider
+	// ID (or the LocalRealmProviderID sentinel for the local-factor path). It is
+	// keyed by "<tenantID>/<domain>" so two tenants can each route their own
+	// domains independently while still sharing the directory store.
+	KeyPrefixHRDProviderDomain = KeyPrefixIAM + "hrd/provider/domain/"
+
+	// KeyPrefixHRDDefaultProvider maps a tenant ID to its default home provider
+	// ID (or LocalRealmProviderID). It is the fallback used when no per-domain
+	// provider mapping matches and the tenant has more than one provider.
+	KeyPrefixHRDDefaultProvider = KeyPrefixIAM + "hrd/provider/default/"
 )
 
 // hrdDomainKey builds the routing key for an email/SNI domain.
@@ -45,6 +57,17 @@ func hrdDomainKey(domain string) string {
 // hrdHostKey builds the routing key for an exact SNI/Host value.
 func hrdHostKey(host string) string {
 	return KeyPrefixHRDHost + strings.ToLower(strings.TrimSpace(host))
+}
+
+// hrdProviderDomainKey builds the per-tenant domain->provider routing key.
+func hrdProviderDomainKey(tenantID, domain string) string {
+	return KeyPrefixHRDProviderDomain + strings.ToLower(strings.TrimSpace(tenantID)) +
+		"/" + strings.ToLower(strings.TrimSpace(domain))
+}
+
+// hrdDefaultProviderKey builds the per-tenant default-provider routing key.
+func hrdDefaultProviderKey(tenantID string) string {
+	return KeyPrefixHRDDefaultProvider + strings.ToLower(strings.TrimSpace(tenantID))
 }
 
 // RealmHints carries the non-secret signals a login presents for home-realm
@@ -184,6 +207,155 @@ func (d *HomeRealmDirectory) Resolve(ctx context.Context, hints RealmHints) (str
 	return "", &HRDNotFoundError{}
 }
 
+// ProviderLister enumerates the configured external providers for a tenant. It
+// is the single-provider shortcut input for ResolveProvider: when a tenant has
+// exactly one enabled provider and no explicit routing, that provider is the
+// unambiguous home realm. It is satisfied by the federation manager's provider
+// storage without coupling the directory to it.
+type ProviderLister interface {
+	// ListProviders returns the tenant's configured providers.
+	ListProviders(ctx context.Context, tenantID string, opts ListOptions) ([]*ExternalProvider, error)
+}
+
+// RealmProvider is the outcome of home-realm provider discovery: the resolved
+// tenant plus the home provider to drive the login. ProviderID is the
+// LocalRealmProviderID sentinel when the login routes to the tenant's
+// local-factor path rather than an external IdP; callers detect this with
+// IsLocalRealm.
+type RealmProvider struct {
+	// TenantID is the resolved tenant.
+	TenantID string
+
+	// ProviderID is the selected provider ID, or LocalRealmProviderID for the
+	// local-factor routing path.
+	ProviderID string
+}
+
+// IsLocalRealm reports whether the resolution routes to the tenant's local-factor
+// path instead of an external IdP.
+func (r RealmProvider) IsLocalRealm() bool {
+	return r.ProviderID == LocalRealmProviderID
+}
+
+// ResolveProvider resolves both the tenant and the home provider for a login
+// from non-secret routing hints, fail-closed. It first resolves the tenant via
+// Resolve, then selects the provider in this order:
+//
+//  1. A per-tenant domain->provider mapping (email domain, then SNI host /
+//     parent domain). This lets a multi-provider tenant route specific domains
+//     to specific IdPs (or to the local realm).
+//  2. The tenant's registered default provider.
+//  3. The single-provider shortcut: when lister is non-nil and the tenant has
+//     exactly one enabled provider, that provider is unambiguous.
+//
+// When none of these yield a selection and the tenant has more than one
+// provider (or the provider set is unknown), resolution fails closed with a
+// *HRDProviderAmbiguousError rather than guessing. lister may be nil, in which
+// case only the routing-directory steps (1 and 2) are consulted.
+func (d *HomeRealmDirectory) ResolveProvider(ctx context.Context, hints RealmHints, lister ProviderLister) (RealmProvider, error) {
+	tenantID, err := d.Resolve(ctx, hints)
+	if err != nil {
+		return RealmProvider{}, err
+	}
+	return d.selectProvider(ctx, tenantID, hints, lister)
+}
+
+// ResolveProviderForTenant selects the home provider for an ALREADY-RESOLVED
+// tenant, applying the same priority order as ResolveProvider (per-domain
+// mapping -> tenant default -> single-provider shortcut) and the same
+// fail-closed posture. It is used when the caller already knows the tenant (e.g.
+// BeginLogin given an explicit tenant ID) and only needs provider selection,
+// without re-running tenant discovery from the hints.
+func (d *HomeRealmDirectory) ResolveProviderForTenant(ctx context.Context, tenantID string, hints RealmHints, lister ProviderLister) (RealmProvider, error) {
+	if tenantID == "" {
+		return RealmProvider{}, &HRDInvalidError{Reason: "tenant is required"}
+	}
+	return d.selectProvider(ctx, tenantID, hints, lister)
+}
+
+// selectProvider selects the home provider within a known tenant, fail-closed.
+func (d *HomeRealmDirectory) selectProvider(ctx context.Context, tenantID string, hints RealmHints, lister ProviderLister) (RealmProvider, error) {
+	// 1. Per-domain provider mapping (email domain first, then SNI host/parent).
+	for _, domain := range hrdProviderDomains(hints) {
+		if providerID, ok := d.lookup(ctx, hrdProviderDomainKey(tenantID, domain)); ok {
+			return RealmProvider{TenantID: tenantID, ProviderID: providerID}, nil
+		}
+	}
+
+	// 2. Tenant default provider.
+	if providerID, ok := d.lookup(ctx, hrdDefaultProviderKey(tenantID)); ok {
+		return RealmProvider{TenantID: tenantID, ProviderID: providerID}, nil
+	}
+
+	// 3. Single-provider shortcut.
+	if lister != nil {
+		providers, err := lister.ListProviders(ctx, tenantID, ListOptions{})
+		if err != nil {
+			return RealmProvider{}, &HRDProviderAmbiguousError{TenantID: tenantID}
+		}
+		var enabled []*ExternalProvider
+		for _, p := range providers {
+			if p != nil && p.Enabled {
+				enabled = append(enabled, p)
+			}
+		}
+		if len(enabled) == 1 {
+			return RealmProvider{TenantID: tenantID, ProviderID: enabled[0].ID}, nil
+		}
+	}
+
+	// Fail closed: ambiguous selection with no default.
+	return RealmProvider{}, &HRDProviderAmbiguousError{TenantID: tenantID}
+}
+
+// hrdProviderDomains returns the candidate domains for per-domain provider
+// routing, in priority order: the email domain, then the exact SNI host, then
+// the SNI parent domain.
+func hrdProviderDomains(hints RealmHints) []string {
+	var domains []string
+	if hints.Email != "" {
+		if at := strings.LastIndex(hints.Email, "@"); at >= 0 && at < len(hints.Email)-1 {
+			domains = append(domains, hints.Email[at+1:])
+		}
+	}
+	if hints.SNIHost != "" {
+		domains = append(domains, hints.SNIHost)
+		if parent := parentDomain(hints.SNIHost); parent != "" {
+			domains = append(domains, parent)
+		}
+	}
+	return domains
+}
+
+// RegisterDomainProvider binds a domain to a home provider within a tenant. The
+// providerID may be a real ExternalProvider ID or the LocalRealmProviderID
+// sentinel to route the domain to the tenant's local-factor path. Self-service:
+// it writes only to the shared store and requires the domain to already route to
+// the tenant (so a tenant cannot map a domain it does not own).
+func (d *HomeRealmDirectory) RegisterDomainProvider(ctx context.Context, tenantID, domain, providerID string) error {
+	if tenantID == "" || strings.TrimSpace(domain) == "" || strings.TrimSpace(providerID) == "" {
+		return &HRDInvalidError{Reason: "tenant, domain, and provider are required"}
+	}
+	owner, ok := d.lookup(ctx, hrdDomainKey(domain))
+	if !ok {
+		return &HRDNotFoundError{}
+	}
+	if owner != tenantID {
+		return &HRDConflictError{Owner: owner}
+	}
+	return d.shared.Put(ctx, hrdProviderDomainKey(tenantID, domain), []byte(providerID))
+}
+
+// SetDefaultProvider records a tenant's default home provider (or the
+// LocalRealmProviderID sentinel). It is the fallback ResolveProvider uses when no
+// per-domain mapping matches.
+func (d *HomeRealmDirectory) SetDefaultProvider(ctx context.Context, tenantID, providerID string) error {
+	if tenantID == "" || strings.TrimSpace(providerID) == "" {
+		return &HRDInvalidError{Reason: "tenant and provider are required"}
+	}
+	return d.shared.Put(ctx, hrdDefaultProviderKey(tenantID), []byte(providerID))
+}
+
 // validateHint reports the tenant when the explicit hint matches a registered
 // host or email-domain routing entry that the hinted tenant owns.
 func (d *HomeRealmDirectory) validateHint(ctx context.Context, hints RealmHints) (string, bool) {
@@ -260,4 +432,17 @@ func parentDomain(host string) string {
 		return ""
 	}
 	return parent
+}
+
+// HRDProviderAmbiguousError is returned when home-realm provider discovery
+// resolves the tenant but cannot select a single home provider: no per-domain
+// mapping matched, no default provider is set, and the tenant does not have
+// exactly one enabled provider. The login is rejected (fail-closed) rather than
+// guessing which IdP to use.
+type HRDProviderAmbiguousError struct {
+	TenantID string
+}
+
+func (e *HRDProviderAmbiguousError) Error() string {
+	return "iam: home-realm provider discovery is ambiguous: no domain mapping, default, or single provider for tenant"
 }

@@ -1369,3 +1369,58 @@ func TestEncryptAEAD_EmptyPlaintext(t *testing.T) {
 func (m *encryptorMockKMSManager) Signer(_ context.Context, _ string) (crypto.Signer, error) {
 	return nil, nil
 }
+
+// TestEncryptAEAD_AES128GCM_DirectCall exercises the AES-128-GCM branch
+// of encryptAEAD/decryptAEAD directly, covering the dispatch into the
+// raw-crypto helpers that the xkms aesgcm package cannot serve.
+func TestEncryptAEAD_AES128GCM_DirectCall(t *testing.T) {
+	key := generateRandomKeyForTest(16)
+	plaintext := []byte("direct aes128 roundtrip")
+	aad := []byte("path/to/secret")
+
+	nonce, ciphertext, tag, err := encryptAEAD(key, plaintext, aad, interfaces.AlgorithmAES128GCM)
+	require.NoError(t, err)
+	assert.Equal(t, 12, len(nonce), "AES-128-GCM should use 12-byte nonce")
+	assert.Equal(t, 16, len(tag), "AES-128-GCM should use 16-byte tag")
+	assert.NotEmpty(t, ciphertext)
+
+	decrypted, err := decryptAEAD(key, nonce, ciphertext, tag, aad, interfaces.AlgorithmAES128GCM)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, decrypted)
+}
+
+// TestEncryptAES128GCMAEAD_BadKeySize covers the aes.NewCipher failure
+// branch: a key that is not a valid AES length must surface a crypto
+// operation error rather than panicking.
+func TestEncryptAES128GCMAEAD_BadKeySize(t *testing.T) {
+	badKey := make([]byte, 7) // not 16/24/32
+	_, _, _, err := encryptAES128GCMAEAD(badKey, []byte("data"), nil)
+	require.Error(t, err)
+}
+
+// TestDecryptAES128GCMAEAD_BadKeySize covers the aes.NewCipher failure
+// branch on the decrypt path.
+func TestDecryptAES128GCMAEAD_BadKeySize(t *testing.T) {
+	badKey := make([]byte, 7)
+	_, err := decryptAES128GCMAEAD(badKey, make([]byte, 12), []byte("ct"), make([]byte, 16), nil)
+	require.Error(t, err)
+}
+
+// TestDecryptAES128GCMAEAD_InvalidTag covers the GCM Open authentication
+// failure branch: a corrupted tag must yield an authentication error and
+// never return plaintext.
+func TestDecryptAES128GCMAEAD_InvalidTag(t *testing.T) {
+	key := generateRandomKeyForTest(16)
+	plaintext := []byte("aes128 authentication test")
+	aad := []byte("path/to/secret")
+
+	nonce, ciphertext, tag, err := encryptAES128GCMAEAD(key, plaintext, aad)
+	require.NoError(t, err)
+
+	corruptTag := make([]byte, len(tag))
+	copy(corruptTag, tag)
+	corruptTag[0] ^= 0xFF
+
+	_, err = decryptAES128GCMAEAD(key, nonce, ciphertext, corruptTag, aad)
+	require.Error(t, err, "corrupted tag must fail authentication")
+}

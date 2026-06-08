@@ -42,6 +42,14 @@ type stubACMEService struct {
 	issueResp    *service.ACMEIssueResponse
 	issueErr     error
 	gotCSR       []byte
+	newOrderResp *service.ACMENewOrderResponse
+	newOrderErr  error
+	gotIdents    []service.ACMEOrderIdentifier
+	finalizeResp *service.ACMEFinalizeOrderResponse
+	finalizeErr  error
+	renewResp    *service.ACMERenewResponse
+	renewErr     error
+	gotCertURL   string
 }
 
 func (s *stubACMEService) RegisterChallenge(_ context.Context, req *service.ACMERegisterChallengeRequest) (*service.ACMERegisterChallengeResponse, error) {
@@ -58,6 +66,30 @@ func (s *stubACMEService) Issue(_ context.Context, req *service.ACMEIssueRequest
 	}
 	s.gotCSR = req.CSRPEM
 	return s.issueResp, nil
+}
+
+func (s *stubACMEService) NewOrder(_ context.Context, req *service.ACMENewOrderRequest) (*service.ACMENewOrderResponse, error) {
+	if s.newOrderErr != nil {
+		return nil, s.newOrderErr
+	}
+	s.gotIdents = req.Identifiers
+	return s.newOrderResp, nil
+}
+
+func (s *stubACMEService) FinalizeOrder(_ context.Context, req *service.ACMEFinalizeOrderRequest) (*service.ACMEFinalizeOrderResponse, error) {
+	if s.finalizeErr != nil {
+		return nil, s.finalizeErr
+	}
+	s.gotCSR = req.CSRPEM
+	return s.finalizeResp, nil
+}
+
+func (s *stubACMEService) Renew(_ context.Context, req *service.ACMERenewRequest) (*service.ACMERenewResponse, error) {
+	s.gotCertURL = req.CertURL
+	if s.renewErr != nil {
+		return s.renewResp, s.renewErr
+	}
+	return s.renewResp, nil
 }
 
 func (s *stubACMEService) DirectoryURL() string { return "https://acme.test/acme/directory" }
@@ -157,4 +189,127 @@ func TestACMEDirectoryRoute_Inert(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.acmeRFCHandler(func(rs acmeRest) http.HandlerFunc { return rs.DirectoryHandler })(w, req)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestHandleACMENewOrder(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		server, mockSvc, cleanup := setupMockServer(t)
+		defer cleanup()
+		stub := &stubACMEService{newOrderResp: &service.ACMENewOrderResponse{
+			OrderID:     7,
+			Status:      "pending",
+			Identifiers: []service.ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}},
+			Finalize:    "https://acme.test/acme/order/7/finalize",
+			URL:         "https://acme.test/acme/order/7",
+		}}
+		mockSvc.ACMESvc = stub
+
+		body, _ := json.Marshal(acmeclient.NewOrderRequest{
+			Identifiers:   []acmeclient.OrderIdentifier{{Type: "dns", Value: "example.com"}},
+			ChallengeType: "http-01",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/acme/new-order", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		server.HandleACMENewOrder(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp acmeclient.NewOrderResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, uint64(7), resp.OrderID)
+		require.Len(t, resp.Identifiers, 1)
+		assert.Equal(t, "example.com", resp.Identifiers[0].Value)
+		assert.Contains(t, resp.Finalize, "/finalize")
+		require.Len(t, stub.gotIdents, 1)
+		assert.Equal(t, "example.com", stub.gotIdents[0].Value)
+	})
+
+	t.Run("service not available", func(t *testing.T) {
+		server, _, cleanup := setupMockServer(t)
+		defer cleanup()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/acme/new-order",
+			bytes.NewReader([]byte(`{"identifiers":[{"type":"dns","value":"x"}]}`)))
+		w := httptest.NewRecorder()
+		server.HandleACMENewOrder(w, req)
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	})
+}
+
+func TestHandleACMEFinalizeOrder(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		server, mockSvc, cleanup := setupMockServer(t)
+		defer cleanup()
+		stub := &stubACMEService{finalizeResp: &service.ACMEFinalizeOrderResponse{
+			CertificatePEM: []byte("CERT"),
+			ChainPEM:       []byte("CHAIN"),
+			SerialNumber:   "ff",
+		}}
+		mockSvc.ACMESvc = stub
+
+		body, _ := json.Marshal(acmeclient.FinalizeOrderRequest{
+			OrderURL: "https://acme.test/acme/order/7",
+			CSRPEM:   []byte("CSR"),
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/acme/finalize", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		server.HandleACMEFinalizeOrder(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp acmeclient.FinalizeOrderResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, []byte("CERT"), resp.CertificatePEM)
+		assert.Equal(t, "ff", resp.SerialNumber)
+		assert.Equal(t, []byte("CSR"), stub.gotCSR)
+	})
+
+	t.Run("service not available", func(t *testing.T) {
+		server, _, cleanup := setupMockServer(t)
+		defer cleanup()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/acme/finalize",
+			bytes.NewReader([]byte(`{"csr_pem":"Q1NS"}`)))
+		w := httptest.NewRecorder()
+		server.HandleACMEFinalizeOrder(w, req)
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	})
+}
+
+func TestHandleACMERenew(t *testing.T) {
+	t.Run("needs csr returns 400", func(t *testing.T) {
+		server, mockSvc, cleanup := setupMockServer(t)
+		defer cleanup()
+		stub := &stubACMEService{
+			renewResp: &service.ACMERenewResponse{SerialNumber: "ff", Renewable: false},
+			renewErr:  service.ErrACMERenewNeedsCSR,
+		}
+		mockSvc.ACMESvc = stub
+
+		body, _ := json.Marshal(acmeclient.RenewRequest{CertURL: "ff"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/acme/renew", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		server.HandleACMERenew(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "ff", stub.gotCertURL)
+	})
+
+	t.Run("cert not found returns 404", func(t *testing.T) {
+		server, mockSvc, cleanup := setupMockServer(t)
+		defer cleanup()
+		mockSvc.ACMESvc = &stubACMEService{renewErr: service.ErrACMECertNotFound}
+
+		body, _ := json.Marshal(acmeclient.RenewRequest{CertURL: "ff"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/acme/renew", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		server.HandleACMERenew(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("service not available", func(t *testing.T) {
+		server, _, cleanup := setupMockServer(t)
+		defer cleanup()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/acme/renew",
+			bytes.NewReader([]byte(`{"cert_url":"ff"}`)))
+		w := httptest.NewRecorder()
+		server.HandleACMERenew(w, req)
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	})
 }

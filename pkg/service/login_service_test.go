@@ -297,3 +297,42 @@ func TestLoginService_BeginLogin_Forwards(t *testing.T) {
 		t.Fatalf("hint not forwarded: %q", fake.gotBeginReq.Hint)
 	}
 }
+
+// TestLoginService_SetLoginClient_InstallsBackingClient asserts that a facade
+// constructed with no client fails closed, then forwards BeginLogin to the
+// client installed via SetLoginClient. This proves the late-wiring path the
+// server uses once the qrdb node is constructed.
+func TestLoginService_SetLoginClient_InstallsBackingClient(t *testing.T) {
+	svc := NewLoginService(nil)
+
+	// Before wiring: fails closed.
+	var unavailable *LoginCeremonyUnavailableError
+	if _, err := svc.BeginLogin(context.Background(), &qrdbtransport.BeginLoginRequest{}); !errors.As(err, &unavailable) {
+		t.Fatalf("pre-wire BeginLogin: expected *LoginCeremonyUnavailableError, got %T", err)
+	}
+
+	fake := &fakeLoginClient{beginResp: &qrdbtransport.BeginLoginResponse{}}
+	svc.SetLoginClient(fake)
+
+	if _, err := svc.BeginLogin(context.Background(), &qrdbtransport.BeginLoginRequest{Hint: "alice"}); err != nil {
+		t.Fatalf("post-wire BeginLogin: unexpected error: %v", err)
+	}
+	if fake.gotBeginReq.Hint != "alice" {
+		t.Fatalf("SetLoginClient did not install forwarding client; hint=%q", fake.gotBeginReq.Hint)
+	}
+}
+
+// TestLoginErrors_Messages pins the user-facing message contract of the login
+// facade's typed errors. Transports surface these strings to clients, so the
+// exact wording is part of the API and is asserted directly here.
+func TestLoginErrors_Messages(t *testing.T) {
+	if got := (&LoginCeremonyUnavailableError{}).Error(); got != "login: ceremony unavailable (no in-process login client wired)" {
+		t.Fatalf("LoginCeremonyUnavailableError.Error() = %q", got)
+	}
+	if got := (&MTLSPeerCertRequiredError{}).Error(); got != "login: mtls factor requires a verified peer certificate; refusing client-supplied lookup key" {
+		t.Fatalf("MTLSPeerCertRequiredError.Error() = %q", got)
+	}
+	if got := (&LoginRequestNilError{Op: "BeginLogin"}).Error(); got != "login: nil request for BeginLogin" {
+		t.Fatalf("LoginRequestNilError.Error() = %q", got)
+	}
+}

@@ -38,6 +38,10 @@ type fakeACMEService struct {
 	failNext     bool
 	gotChallenge string
 	gotCSR       []byte
+	gotIdents    []service.ACMEOrderIdentifier
+	gotCertURL   string
+	gotRevoke    bool
+	renewErr     error
 }
 
 func (f *fakeACMEService) RegisterChallenge(_ context.Context, req *service.ACMERegisterChallengeRequest) (*service.ACMERegisterChallengeResponse, error) {
@@ -58,6 +62,47 @@ func (f *fakeACMEService) Issue(_ context.Context, req *service.ACMEIssueRequest
 		ChainPEM:       []byte("CHAIN"),
 		SerialNumber:   "ff",
 	}, nil
+}
+
+func (f *fakeACMEService) NewOrder(_ context.Context, req *service.ACMENewOrderRequest) (*service.ACMENewOrderResponse, error) {
+	if f.failNext {
+		return nil, errACME
+	}
+	f.gotIdents = req.Identifiers
+	return &service.ACMENewOrderResponse{
+		OrderID:     7,
+		Status:      "pending",
+		Identifiers: req.Identifiers,
+		Finalize:    "https://acme.test/acme/order/7/finalize",
+		URL:         "https://acme.test/acme/order/7",
+	}, nil
+}
+
+func (f *fakeACMEService) FinalizeOrder(_ context.Context, req *service.ACMEFinalizeOrderRequest) (*service.ACMEFinalizeOrderResponse, error) {
+	if f.failNext {
+		return nil, errACME
+	}
+	f.gotCSR = req.CSRPEM
+	return &service.ACMEFinalizeOrderResponse{
+		CertificatePEM: []byte("CERT"),
+		ChainPEM:       []byte("CHAIN"),
+		SerialNumber:   "ff",
+	}, nil
+}
+
+func (f *fakeACMEService) Renew(_ context.Context, req *service.ACMERenewRequest) (*service.ACMERenewResponse, error) {
+	f.gotCertURL = req.CertURL
+	f.gotRevoke = req.Revoke
+	resp := &service.ACMERenewResponse{
+		CertificatePEM: []byte("CERT"),
+		SerialNumber:   req.CertURL,
+		Revoked:        req.Revoke,
+		Renewable:      false,
+	}
+	if f.renewErr != nil {
+		return resp, f.renewErr
+	}
+	return resp, nil
 }
 
 func (f *fakeACMEService) DirectoryURL() string { return "https://acme.test/acme/directory" }
@@ -142,5 +187,64 @@ func TestTransport_ACMEOperations_NotConfigured(t *testing.T) {
 
 	_, err = tr.Request(context.Background(), "quicbaas.ACME", "Issue",
 		&acmeclient.IssueRequest{CSRPEM: []byte("CSR"), ChallengeType: "http-01"})
+	require.Error(t, err)
+}
+
+func TestTransport_ACMENewOrder(t *testing.T) {
+	fake := &fakeACMEService{}
+	tr := newACMETransport(t, fake)
+
+	resp, err := tr.Request(context.Background(), "quicbaas.ACME", "NewOrder",
+		&acmeclient.NewOrderRequest{
+			Identifiers:   []acmeclient.OrderIdentifier{{Type: "dns", Value: "example.com"}},
+			ChallengeType: "http-01",
+		})
+	require.NoError(t, err)
+	typed, ok := resp.(*acmeclient.NewOrderResponse)
+	require.True(t, ok)
+	assert.Equal(t, uint64(7), typed.OrderID)
+	assert.Equal(t, "pending", typed.Status)
+	require.Len(t, typed.Identifiers, 1)
+	assert.Equal(t, "example.com", typed.Identifiers[0].Value)
+	require.Len(t, fake.gotIdents, 1)
+	assert.Equal(t, "example.com", fake.gotIdents[0].Value)
+}
+
+func TestTransport_ACMEFinalizeOrder(t *testing.T) {
+	fake := &fakeACMEService{}
+	tr := newACMETransport(t, fake)
+
+	resp, err := tr.Request(context.Background(), "quicbaas.ACME", "FinalizeOrder",
+		&acmeclient.FinalizeOrderRequest{
+			OrderURL: "https://acme.test/acme/order/7",
+			CSRPEM:   []byte("CSR"),
+		})
+	require.NoError(t, err)
+	typed, ok := resp.(*acmeclient.FinalizeOrderResponse)
+	require.True(t, ok)
+	assert.Equal(t, []byte("CERT"), typed.CertificatePEM)
+	assert.Equal(t, "ff", typed.SerialNumber)
+	assert.Equal(t, []byte("CSR"), fake.gotCSR)
+}
+
+func TestTransport_ACMERenew(t *testing.T) {
+	fake := &fakeACMEService{renewErr: errACME}
+	tr := newACMETransport(t, fake)
+
+	_, err := tr.Request(context.Background(), "quicbaas.ACME", "Renew",
+		&acmeclient.RenewRequest{CertURL: "ff", Revoke: true})
+	require.ErrorIs(t, err, errACME)
+	assert.Equal(t, "ff", fake.gotCertURL)
+	assert.True(t, fake.gotRevoke)
+}
+
+func TestTransport_ACMENewVerbs_WrongType(t *testing.T) {
+	tr := newACMETransport(t, &fakeACMEService{})
+
+	_, err := tr.Request(context.Background(), "quicbaas.ACME", "NewOrder", &service.PutRequest{})
+	require.Error(t, err)
+	_, err = tr.Request(context.Background(), "quicbaas.ACME", "FinalizeOrder", &service.PutRequest{})
+	require.Error(t, err)
+	_, err = tr.Request(context.Background(), "quicbaas.ACME", "Renew", &service.PutRequest{})
 	require.Error(t, err)
 }

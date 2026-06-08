@@ -2970,7 +2970,7 @@ func TestGenerateTokenResult_WithoutOIDCProvider(t *testing.T) {
 		ExternalID: "ext-1",
 	}
 
-	result, err := manager.generateTokenResult(ctx, user, identity, false)
+	result, err := manager.generateTokenResult(ctx, user, identity, false, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, user.ID, result.User.ID)
@@ -2998,7 +2998,7 @@ func TestGenerateTokenResult_Provisioned(t *testing.T) {
 		ExternalID: "ext-2",
 	}
 
-	result, err := manager.generateTokenResult(ctx, user, identity, true)
+	result, err := manager.generateTokenResult(ctx, user, identity, true, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.Provisioned)

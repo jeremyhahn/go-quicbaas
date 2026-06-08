@@ -79,6 +79,16 @@ func NewValidator() *Validator {
 	}
 }
 
+// Errors returns the accumulated validation errors, or nil when none were
+// recorded. It lets callers run an individual section validator (e.g.
+// validateAuth) and inspect the result without driving the full Validate pass.
+func (v *Validator) Errors() error {
+	if len(v.errors) > 0 {
+		return v.errors
+	}
+	return nil
+}
+
 // Validate validates the entire configuration.
 func (v *Validator) Validate(cfg *Config) error {
 	if cfg == nil {
@@ -90,6 +100,7 @@ func (v *Validator) Validate(cfg *Config) error {
 	v.validateStorage(&cfg.Storage)
 	v.validateRaft(&cfg.Raft, &cfg.Server)
 	v.validateSecurity(&cfg.Security)
+	v.validateAuth(&cfg.Auth)
 	v.validateLogging(&cfg.Logging)
 	v.validateKMS(&cfg.KMS)
 	v.validateOrchestration(&cfg.Orchestration)
@@ -164,6 +175,30 @@ func (v *Validator) validateServer(cfg *ServerConfig) {
 
 	if cfg.MaxConnections < 1 {
 		v.addError("server.max_connections", "max connections must be at least 1")
+	}
+}
+
+// validateAuth validates authentication configuration. OIDC token TTLs are
+// additive and backward-compatible: zero means "use the default" and is not an
+// error. When an explicit access-token TTL is set it must stay within the
+// short-lived [DefaultOIDCAccessTokenTTLMin, DefaultOIDCAccessTokenTTLMax]
+// replay window. Refresh/ID/auth-code TTLs, when set, must be positive.
+func (v *Validator) validateAuth(cfg *AuthConfig) {
+	if cfg.AccessTokenTTL != 0 {
+		if cfg.AccessTokenTTL < DefaultOIDCAccessTokenTTLMin || cfg.AccessTokenTTL > DefaultOIDCAccessTokenTTLMax {
+			v.addError("auth.access_token_ttl", fmt.Sprintf(
+				"access token TTL must be between %s and %s, got %s",
+				DefaultOIDCAccessTokenTTLMin, DefaultOIDCAccessTokenTTLMax, cfg.AccessTokenTTL))
+		}
+	}
+	if cfg.RefreshTokenTTL < 0 {
+		v.addError("auth.refresh_token_ttl", "refresh token TTL must not be negative")
+	}
+	if cfg.IDTokenTTL < 0 {
+		v.addError("auth.id_token_ttl", "ID token TTL must not be negative")
+	}
+	if cfg.AuthCodeTTL < 0 {
+		v.addError("auth.auth_code_ttl", "auth code TTL must not be negative")
 	}
 }
 

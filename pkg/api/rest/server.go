@@ -199,6 +199,12 @@ type Server struct {
 	// Authorization middleware (optional)
 	authzMiddleware *AuthzMiddleware
 
+	// bindingEnforcementOnly selects the proof-of-possession-only middleware
+	// (EnforceTokenBinding) over the full RBAC Authorize gate. When true the
+	// router installs DPoP/mTLS token-binding enforcement + AuthorizedContext
+	// injection without the deferred cluster-wide RBAC decision.
+	bindingEnforcementOnly bool
+
 	// hookTaskStore is the task store used by Claude Code hook handlers (optional)
 	hookTaskStore orchestration.TaskStore
 
@@ -346,9 +352,15 @@ func (s *Server) setupRouter() {
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Apply authorization middleware if configured
+		// Apply authorization middleware if configured. When only token-binding
+		// enforcement is requested, install the proof-of-possession gate
+		// (EnforceTokenBinding); otherwise install the full RBAC Authorize gate.
 		if s.authzMiddleware != nil {
-			r.Use(s.authzMiddleware.Authorize)
+			if s.bindingEnforcementOnly {
+				r.Use(s.authzMiddleware.EnforceTokenBinding)
+			} else {
+				r.Use(s.authzMiddleware.Authorize)
+			}
 		}
 
 		// Standard API routes with default body size limit (10 MB).
@@ -1014,6 +1026,39 @@ func (s *Server) SetAuthorizationService(authz interfaces.AuthorizationService, 
 	s.setupRouter()
 
 	s.logger.Info("Authorization middleware enabled via SetAuthorizationService")
+}
+
+// SetTokenBindingEnforcement installs the proof-of-possession-only middleware
+// (EnforceTokenBinding) after construction: it enforces DPoP / mTLS token binding
+// fail-closed for sender-constrained tokens and injects the verified principal +
+// platform AuthorizedContext, WITHOUT the full RBAC authorization decision. It is
+// the inbound enforcement the broker enables today while cluster-wide RBAC role
+// propagation is validated. The tokenValidator must be non-nil.
+//
+// This method recreates the router with the binding-enforcement middleware
+// applied.
+func (s *Server) SetTokenBindingEnforcement(tokenValidator TokenValidator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if tokenValidator == nil {
+		s.logger.Warn("SetTokenBindingEnforcement called with nil validator, enforcement not enabled")
+		return
+	}
+
+	s.authzMiddleware = NewAuthzMiddleware(&AuthzMiddlewareConfig{
+		Logger:         s.logger,
+		TokenValidator: tokenValidator,
+		// AuthzService is intentionally nil: EnforceTokenBinding does not run the
+		// RBAC decision. Per-resource RBAC is enforced at the handler layer via
+		// the injected AuthorizedContext.
+	})
+	s.bindingEnforcementOnly = true
+
+	// Rebuild the router with the binding-enforcement middleware.
+	s.setupRouter()
+
+	s.logger.Info("Token-binding (DPoP/mTLS) enforcement middleware enabled")
 }
 
 // HasAuthorizationMiddleware returns true if authorization middleware is configured.

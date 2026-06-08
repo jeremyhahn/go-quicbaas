@@ -75,6 +75,7 @@ func (s *Server) buildACMEService(caAdapter *caServiceAdapter) (service.ACMEServ
 		CA:             tcgCA,
 		StorageFactory: storageFactory,
 		IssueCA:        caAdapter,
+		CertResolver:   caAdapter,
 	})
 	if err != nil {
 		return nil, err

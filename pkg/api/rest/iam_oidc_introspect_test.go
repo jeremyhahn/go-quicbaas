@@ -359,3 +359,61 @@ func TestIntrospect_DualIdentityAudit(t *testing.T) {
 	assert.Contains(t, ev.Actor.Scopes, "agent:runtime:spawn")
 	assert.Equal(t, "oauth2.introspect", ev.Action)
 }
+
+// TestIntrospect_AuditCarriesNetworkSource verifies the introspection audit
+// event records the client IP (proxy-aware via X-Forwarded-For) and the user
+// agent of the introspecting caller (AU-3 network source).
+func TestIntrospect_AuditCarriesNetworkSource(t *testing.T) {
+	handler, provider, auditLogger, cleanup := setupIntrospectHandler(t)
+	defer cleanup()
+
+	token := mintToken(t, provider)
+	req := introspectRequest(token, true)
+	req.Header.Set("X-Forwarded-For", "198.51.100.23, 10.0.0.1")
+	req.Header.Set("User-Agent", "quicbaas-rs/2.0")
+
+	w := httptest.NewRecorder()
+	handler.Introspect(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	events, _, err := auditLogger.Query(context.Background(), &iam.AuditFilter{TenantID: introspectTenant})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
+	ev := events[0]
+	assert.Equal(t, "198.51.100.23", ev.IPAddress)
+	assert.Equal(t, "quicbaas-rs/2.0", ev.UserAgent)
+}
+
+// TestToken_AuditCarriesNetworkSource verifies the token-endpoint dual-identity
+// audit event records the client IP (proxy-aware via X-Real-IP) and the user
+// agent of the requesting client (AU-3 network source). It reuses the
+// introspect harness because that registers a real client_credentials client
+// against a real OIDC provider + audit logger.
+func TestToken_AuditCarriesNetworkSource(t *testing.T) {
+	handler, _, auditLogger, cleanup := setupIntrospectHandler(t)
+	defer cleanup()
+
+	form := url.Values{}
+	form.Set("grant_type", iam.GrantTypeClientCredentials)
+	form.Set("client_id", introspectClientID)
+	form.Set("client_secret", introspectSecret)
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Real-IP", "192.0.2.55")
+	req.Header.Set("User-Agent", "quicbaas-client/3.1")
+
+	w := httptest.NewRecorder()
+	handler.Token(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	events, _, err := auditLogger.Query(context.Background(), &iam.AuditFilter{TenantID: introspectTenant})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
+	ev := events[0]
+	assert.Equal(t, "oauth2.token", ev.Action)
+	assert.Equal(t, "192.0.2.55", ev.IPAddress)
+	assert.Equal(t, "quicbaas-client/3.1", ev.UserAgent)
+}

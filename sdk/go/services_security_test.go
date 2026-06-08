@@ -245,46 +245,129 @@ func TestACMEServer_Issue_HappyPath(t *testing.T) {
 // acmeClientImpl tests
 // =============================================================================
 //
-// The protocol-client verbs are not transport RPCs: they require a JWS-signed
-// RFC 8555 exchange driven by an ACME protocol client. The SDK returns a typed
-// unimplemented error and never touches the transport.
+// QuicBaaS is the broker-as-CA, so the protocol-client verbs are in-process
+// service calls routed over the quicbaas transport (REST + embedded), NOT
+// JWS-signed RFC 8555 exchanges. NewOrder returns a pending order descriptor,
+// FinalizeOrder signs the supplied CSR, and Renew resolves a cert by serial.
 
-func acmeClientUnimplemented(t *testing.T, name string, call func(*acmeClientImpl) error) {
-	t.Helper()
+func TestACMEClient_NewOrder_HappyPath(t *testing.T) {
+	wire := &acmeclient.NewOrderResponse{
+		OrderID:     42,
+		Status:      "pending",
+		Identifiers: []acmeclient.OrderIdentifier{{Type: "dns", Value: "example.com"}},
+		Finalize:    "https://baas/acme/order/42/finalize",
+		URL:         "https://baas/acme/order/42",
+	}
+	mt := &mockTransport{requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+		if service != acmeServiceName || method != "NewOrder" {
+			t.Errorf("unexpected dispatch: %s/%s", service, method)
+		}
+		r, ok := req.(*acmeclient.NewOrderRequest)
+		if !ok || len(r.Identifiers) != 1 || r.Identifiers[0].Value != "example.com" || r.ChallengeType != "http-01" {
+			t.Errorf("unexpected request: %+v", req)
+		}
+		return wire, nil
+	}}
+	c := &acmeClientImpl{t: mt}
+	got, err := c.NewOrder(context.Background(),
+		[]ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}}, "http-01")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != 42 || string(got.Status) != "pending" || got.Finalize == "" || len(got.Identifiers) != 1 {
+		t.Errorf("unexpected order: %+v", got)
+	}
+}
+
+func TestACMEClient_NewOrder_NoIdentifiers(t *testing.T) {
 	touched := false
 	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
 		touched = true
 		return nil, nil
 	}}}
-	err := call(c)
-	if sdkerrors.Code(err) != sdkerrors.CodeUnimplemented {
-		t.Errorf("%s: expected unimplemented, got %v", name, err)
+	_, err := c.NewOrder(context.Background(), nil, "http-01")
+	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
+		t.Errorf("expected invalid input, got %v", err)
 	}
 	if touched {
-		t.Errorf("%s: must not touch the transport", name)
+		t.Error("must not touch the transport on validation failure")
 	}
 }
 
-func TestACMEClient_NewOrder_Unimplemented(t *testing.T) {
-	acmeClientUnimplemented(t, "NewOrder", func(c *acmeClientImpl) error {
-		_, err := c.NewOrder(context.Background(),
-			[]ACMEOrderIdentifier{{Type: "dns", Value: "example.com"}}, "http-01")
-		return err
-	})
+func TestACMEClient_FinalizeOrder_HappyPath(t *testing.T) {
+	wire := &acmeclient.FinalizeOrderResponse{
+		CertificatePEM: []byte("cert"),
+		ChainPEM:       []byte("chain"),
+		SerialNumber:   "ff",
+	}
+	mt := &mockTransport{requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+		if service != acmeServiceName || method != "FinalizeOrder" {
+			t.Errorf("unexpected dispatch: %s/%s", service, method)
+		}
+		r, ok := req.(*acmeclient.FinalizeOrderRequest)
+		if !ok || string(r.CSRPEM) != "csr" || r.OrderURL != "url" {
+			t.Errorf("unexpected request: %+v", req)
+		}
+		return wire, nil
+	}}
+	c := &acmeClientImpl{t: mt}
+	got, err := c.FinalizeOrder(context.Background(), "url", []byte("csr"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "cert" {
+		t.Errorf("unexpected cert: %q", got)
+	}
 }
 
-func TestACMEClient_FinalizeOrder_Unimplemented(t *testing.T) {
-	acmeClientUnimplemented(t, "FinalizeOrder", func(c *acmeClientImpl) error {
-		_, err := c.FinalizeOrder(context.Background(), "url", []byte("csr"))
-		return err
-	})
+func TestACMEClient_FinalizeOrder_EmptyCSR(t *testing.T) {
+	touched := false
+	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+		touched = true
+		return nil, nil
+	}}}
+	_, err := c.FinalizeOrder(context.Background(), "url", nil)
+	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
+		t.Errorf("expected invalid input, got %v", err)
+	}
+	if touched {
+		t.Error("must not touch the transport on validation failure")
+	}
 }
 
-func TestACMEClient_Renew_Unimplemented(t *testing.T) {
-	acmeClientUnimplemented(t, "Renew", func(c *acmeClientImpl) error {
-		_, err := c.Renew(context.Background(), "url")
-		return err
-	})
+func TestACMEClient_Renew_PropagatesTransportError(t *testing.T) {
+	wantErr := sdkerrors.NewInvalidInput("acme.Renew",
+		"renewal requires a fresh CSR via NewOrder/FinalizeOrder")
+	mt := &mockTransport{requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+		if service != acmeServiceName || method != "Renew" {
+			t.Errorf("unexpected dispatch: %s/%s", service, method)
+		}
+		r, ok := req.(*acmeclient.RenewRequest)
+		if !ok || r.CertURL != "ff" {
+			t.Errorf("unexpected request: %+v", req)
+		}
+		return nil, wantErr
+	}}
+	c := &acmeClientImpl{t: mt}
+	_, err := c.Renew(context.Background(), "ff")
+	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
+		t.Errorf("expected propagated invalid-input error, got %v", err)
+	}
+}
+
+func TestACMEClient_Renew_EmptyURL(t *testing.T) {
+	touched := false
+	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+		touched = true
+		return nil, nil
+	}}}
+	_, err := c.Renew(context.Background(), "")
+	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
+		t.Errorf("expected invalid input, got %v", err)
+	}
+	if touched {
+		t.Error("must not touch the transport on validation failure")
+	}
 }
 
 // =============================================================================

@@ -662,6 +662,51 @@ func (p *OIDCProvider) ValidateAccessToken(ctx context.Context, tokenString stri
 	return claims, nil
 }
 
+// ValidateAccessTokenWithDPoP validates an access token (signature, issuer
+// audience, revocation — exactly as ValidateAccessToken) and, when the token is
+// DPoP sender-constrained via cnf.jkt (RFC 9449), additionally enforces the
+// presented DPoP proof against that binding: the proof signature, htm/htu match,
+// iat skew, jti single-use replay protection, and that the SHA-256 thumbprint of
+// the proof key equals cnf.jkt.
+//
+// This is the inbound counterpart to the bindDPoP issuance path: both share this
+// provider's single dpopReplay cache and the canonical pkg/iam/dpop verifier, so
+// a proof captured at issuance cannot be replayed at validation and vice versa.
+//
+// Enforcement is fail-closed for bound tokens: a cnf.jkt-bound token presented
+// as a plain bearer (empty proof) is rejected with *dpop.MissingProofError, and
+// a proof that does not match the binding/request is rejected with the verifier's
+// typed error. A token WITHOUT a cnf.jkt binding is a plain bearer and validates
+// exactly as ValidateAccessToken — the proof argument is ignored for it. Every
+// failure is a typed error the caller maps to 401.
+func (p *OIDCProvider) ValidateAccessTokenWithDPoP(ctx context.Context, tokenString, dpopProof, htm, htu string) (*Claims, error) {
+	claims, err := p.ValidateAccessToken(ctx, tokenString)
+	if err != nil {
+		return nil, err
+	}
+
+	// Unbound (plain bearer) token: no proof-of-possession required.
+	if claims.Confirmation == nil || claims.Confirmation.Jkt == "" {
+		return claims, nil
+	}
+
+	// Bound token: a proof is mandatory. A bearer presentation fails closed.
+	if strings.TrimSpace(dpopProof) == "" {
+		return nil, &dpop.MissingProofError{}
+	}
+
+	if _, err := dpop.VerifyProof(dpopProof, dpop.VerifyOptions{
+		HTM:         htm,
+		HTU:         htu,
+		ExpectedJkt: claims.Confirmation.Jkt,
+		ReplayCache: p.dpopReplay,
+	}); err != nil {
+		return nil, err
+	}
+
+	return claims, nil
+}
+
 // ValidateIDToken validates an ID token and returns its claims.
 func (p *OIDCProvider) ValidateIDToken(ctx context.Context, tokenString string) (*IDTokenClaims, error) {
 	// Resolve the verification key (kid-aware when a key manager is present).

@@ -547,6 +547,26 @@ func TestAgentHealthMonitor_CheckSession_ClosedState(t *testing.T) {
 // Start/Stop Tests
 // =============================================================================
 
+// waitForHealthCondition polls cond until it is true or timeout elapses, using a
+// ticker rather than time.Sleep (per project conventions) so the monitor tests are
+// deterministic instead of assuming a fixed wall-clock window under parallel load.
+func waitForHealthCondition(t *testing.T, timeout time.Duration, msg string, cond func() bool) {
+	t.Helper()
+	tick := time.NewTicker(2 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.After(timeout)
+	for {
+		if cond() {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal(msg)
+		case <-tick.C:
+		}
+	}
+}
+
 func TestAgentHealthMonitor_StartStop(t *testing.T) {
 	t.Parallel()
 
@@ -574,8 +594,10 @@ func TestAgentHealthMonitor_StartStop(t *testing.T) {
 		t.Error("expected monitor to be running after Start")
 	}
 
-	// Wait for at least 2 ticks
-	time.Sleep(50 * time.Millisecond)
+	// Wait until at least 2 ticks have run (deterministic, no fixed sleep).
+	waitForHealthCondition(t, 5*time.Second, "expected at least 2 health checks", func() bool {
+		return checkCount.Load() >= 2
+	})
 
 	if err := monitor.Stop(); err != nil {
 		t.Fatalf("expected no error stopping monitor, got %v", err)
@@ -583,11 +605,6 @@ func TestAgentHealthMonitor_StartStop(t *testing.T) {
 
 	if monitor.running.Load() {
 		t.Error("expected monitor to not be running after Stop")
-	}
-
-	count := checkCount.Load()
-	if count < 2 {
-		t.Errorf("expected at least 2 health checks, got %d", count)
 	}
 }
 
@@ -654,18 +671,18 @@ func TestAgentHealthMonitor_StartStop_ContextCancellation(t *testing.T) {
 		t.Fatalf("expected no error starting monitor, got %v", err)
 	}
 
-	// Let it tick a couple times
-	time.Sleep(50 * time.Millisecond)
+	// Wait until it has ticked at least once.
+	waitForHealthCondition(t, 5*time.Second, "expected monitor to tick before cancel", func() bool {
+		return checkCount.Load() >= 1
+	})
 
-	// Cancel the context, which should stop the goroutine
+	// Cancel the context, which should stop the goroutine.
 	cancel()
 
-	// Wait for goroutine to exit
-	time.Sleep(30 * time.Millisecond)
-
-	if monitor.running.Load() {
-		t.Error("expected monitor to stop running after context cancellation")
-	}
+	// Wait for the goroutine to observe cancellation and clear running.
+	waitForHealthCondition(t, 5*time.Second, "expected monitor to stop running after context cancellation", func() bool {
+		return !monitor.running.Load()
+	})
 }
 
 func TestAgentHealthMonitor_Restart(t *testing.T) {
@@ -682,20 +699,19 @@ func TestAgentHealthMonitor_Restart(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start and stop
+	// Start and stop. running is set synchronously by Start, so Stop needs no
+	// fixed delay; the monitor goroutine exits on the stop signal.
 	if err := monitor.Start(ctx); err != nil {
 		t.Fatalf("first start failed: %v", err)
 	}
-	time.Sleep(30 * time.Millisecond)
 	if err := monitor.Stop(); err != nil {
 		t.Fatalf("first stop failed: %v", err)
 	}
 
-	// Restart should succeed
+	// Restart should succeed.
 	if err := monitor.Start(ctx); err != nil {
 		t.Fatalf("restart failed: %v", err)
 	}
-	time.Sleep(30 * time.Millisecond)
 	if err := monitor.Stop(); err != nil {
 		t.Fatalf("second stop failed: %v", err)
 	}

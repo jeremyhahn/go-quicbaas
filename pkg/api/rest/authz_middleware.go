@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
 // TokenValidator defines the interface for JWT token validation.
@@ -58,6 +59,74 @@ func NewAuthzMiddleware(cfg *AuthzMiddlewareConfig) *AuthzMiddleware {
 	}
 }
 
+// validate verifies the bearer token and returns the authorization Subject plus,
+// when the configured validator is DPoP-aware, the verified platform
+// AuthorizedContext (scp -> RBAC, tenant_id -> RLS).
+//
+// DPoP-aware path (IAM OIDC adapter): a cnf.jkt-bound token requires a valid
+// DPoP proof over the request method + absolute URI (RFC 9449); a bearer
+// presentation of a bound token fails closed here. The returned AuthorizedContext
+// is non-nil so handlers can enforce scopes/roles.
+//
+// Plain path (validator without DPoP support, e.g. non-iam builds): the token is
+// validated for signature/expiry/revocation only and the AuthorizedContext is
+// nil, preserving prior behavior. The RFC 8705 mTLS binding check still runs on
+// this path for cnf.x5t#S256-bound tokens.
+func (m *AuthzMiddleware) validate(ctx context.Context, r *http.Request, token string) (interfaces.Subject, *platformtoken.AuthorizedContext, error) {
+	if dpopValidator, ok := m.tokenValidator.(DPoPTokenValidator); ok {
+		result, err := dpopValidator.ValidateTokenWithDPoP(ctx, token, r.Header.Get("DPoP"), r.Method, requestAbsoluteURI(r))
+		if err != nil {
+			return interfaces.Subject{}, nil, err
+		}
+		authzCtx := result.toAuthorizedContext()
+		subject := interfaces.Subject{
+			ID:            result.Subject,
+			Username:      result.Username,
+			Roles:         result.Roles,
+			Authenticated: true,
+			Attributes:    make(map[string]interface{}),
+		}
+		return subject, authzCtx, nil
+	}
+
+	result, err := m.tokenValidator.ValidateToken(ctx, token)
+	if err != nil {
+		return interfaces.Subject{}, nil, err
+	}
+	if result == nil || !result.Valid {
+		return interfaces.Subject{}, nil, &InvalidTokenResultError{}
+	}
+	if result.IsRevoked {
+		return interfaces.Subject{}, nil, &RevokedTokenError{}
+	}
+
+	// Enforce RFC 8705 §3.1 mTLS proof-of-possession for cnf-bound tokens.
+	// enforceMTLSBinding is a no-op when the iam build tag is absent.
+	if err := enforceMTLSBinding(r, token); err != nil {
+		return interfaces.Subject{}, nil, err
+	}
+
+	subject := interfaces.Subject{
+		ID:            result.UserID,
+		Username:      result.Username,
+		Roles:         result.Roles,
+		Authenticated: true,
+		Attributes:    make(map[string]interface{}),
+	}
+	return subject, nil, nil
+}
+
+// InvalidTokenResultError indicates the validator returned a nil-error result
+// that was nil or not valid (a contract violation surfaced as a 401).
+type InvalidTokenResultError struct{}
+
+func (e *InvalidTokenResultError) Error() string { return "token is invalid or expired" }
+
+// RevokedTokenError indicates the presented token has been revoked.
+type RevokedTokenError struct{}
+
+func (e *RevokedTokenError) Error() string { return "token has been revoked" }
+
 // Authorize is the middleware function that enforces authorization on requests.
 // It extracts the JWT token, validates it, extracts resource and action from the request,
 // and calls the AuthorizationService to make an access control decision.
@@ -77,37 +146,19 @@ func (m *AuthzMiddleware) Authorize(next http.Handler) http.Handler {
 			return
 		}
 
-		// Validate the token
+		// Validate the token. When the validator is DPoP-aware (the IAM OIDC
+		// adapter), route through the sender-constraint-enforcing path: a
+		// cnf.jkt-bound token requires a valid DPoP proof (RFC 9449) over the
+		// request method + absolute URI, verified against the provider's replay
+		// cache. A plain bearer (no cnf.jkt) validates exactly as before. When
+		// the validator is not DPoP-aware (non-iam builds), fall back to plain
+		// bearer validation, preserving prior behavior.
 		ctx := r.Context()
-		result, err := m.tokenValidator.ValidateToken(ctx, token)
-		if err != nil || result == nil || !result.Valid {
-			m.logUnauthorized(r, "invalid or expired token")
+		subject, authzCtx, err := m.validate(ctx, r, token)
+		if err != nil {
+			m.logUnauthorized(r, "token validation failed: "+err.Error())
 			respondUnauthorized(w, r, "Invalid or expired token")
 			return
-		}
-
-		// Check if token is revoked
-		if result.IsRevoked {
-			m.logUnauthorized(r, "token has been revoked")
-			respondUnauthorized(w, r, "Token has been revoked")
-			return
-		}
-
-		// Enforce RFC 8705 §3.1 mTLS proof-of-possession for cnf-bound tokens.
-		// enforceMTLSBinding is a no-op when the iam build tag is absent.
-		if err := enforceMTLSBinding(r, token); err != nil {
-			m.logUnauthorized(r, "mTLS token binding check failed: "+err.Error())
-			respondUnauthorized(w, r, "invalid_token")
-			return
-		}
-
-		// Build subject from validated token
-		subject := interfaces.Subject{
-			ID:            result.UserID,
-			Username:      result.Username,
-			Roles:         result.Roles,
-			Authenticated: true,
-			Attributes:    make(map[string]interface{}),
 		}
 
 		// Extract resource from URL path
@@ -141,18 +192,83 @@ func (m *AuthzMiddleware) Authorize(next http.Handler) http.Handler {
 		// Log successful authorization
 		m.logAllowed(r, authzReq, decision)
 
-		// Inject user info into context for downstream handlers
-		ctx = context.WithValue(ctx, UserIDKey, result.UserID)
-		ctx = context.WithValue(ctx, UserRolesKey, result.Roles)
-		ctx = context.WithValue(ctx, usernameKey, result.Username)
-
-		// Inject the full Subject so service-layer per-key authorization can
-		// access the principal without re-parsing the token.
-		ctx = auth.SubjectIntoContext(ctx, subject)
+		// Inject the verified principal + platform AuthorizedContext for
+		// downstream handlers (user info, RLS tenant, scp -> RBAC).
+		ctx = injectPrincipal(ctx, subject, authzCtx)
 
 		// Continue with the request
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// EnforceTokenBinding is the proof-of-possession middleware: it validates the
+// bearer token and, when the token is DPoP sender-constrained (cnf.jkt), enforces
+// the presented DPoP proof (RFC 9449) fail-closed before the request reaches a
+// handler. A bearer presentation of a bound token is rejected with 401; a plain
+// bearer (no cnf) passes. It then injects the verified principal + the platform
+// AuthorizedContext (scp -> RBAC, tenant_id -> RLS) so protected handlers can
+// enforce RequireScope / HasRole and set the RLS tenant.
+//
+// Unlike Authorize, it does NOT run the RBAC authorization decision: it gates on
+// token binding and identity only, leaving per-resource RBAC enforcement to the
+// handler layer (via the AuthorizedContext) until cluster-wide role propagation
+// is validated. This is the additive inbound enforcement the broker installs
+// today; it keeps unbound-bearer callers working while closing the DPoP replay
+// gap on sender-constrained tokens.
+func (m *AuthzMiddleware) EnforceTokenBinding(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAuthzPublicEndpoint(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		token, err := extractBearerToken(r)
+		if err != nil {
+			// No bearer token presented. EnforceTokenBinding enforces
+			// sender-constraint BINDING on tokens that ARE presented (a
+			// DPoP cnf-bound token cannot be stripped of its proof and
+			// replayed as a plain bearer); it is NOT an authentication gate.
+			// Token-less requests pass through unchanged — the data plane's
+			// authentication posture (anonymous vs required) is decided by the
+			// separate Authorize gate, not here. This preserves the
+			// pre-existing behavior where the data plane accepted
+			// unauthenticated requests.
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		subject, authzCtx, err := m.validate(ctx, r, token)
+		if err != nil {
+			m.logUnauthorized(r, "token binding check failed: "+err.Error())
+			respondUnauthorized(w, r, "invalid_token")
+			return
+		}
+
+		ctx = injectPrincipal(ctx, subject, authzCtx)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// injectPrincipal returns a child context carrying the validated principal and,
+// when present, the verified platform AuthorizedContext. It is the single place
+// the authz middlewares stamp identity onto the request so Authorize and
+// EnforceTokenBinding stay consistent.
+func injectPrincipal(ctx context.Context, subject interfaces.Subject, authzCtx *platformtoken.AuthorizedContext) context.Context {
+	ctx = context.WithValue(ctx, UserIDKey, subject.ID)
+	ctx = context.WithValue(ctx, UserRolesKey, subject.Roles)
+	ctx = context.WithValue(ctx, usernameKey, subject.Username)
+
+	// Inject the full Subject so service-layer per-key authorization can access
+	// the principal without re-parsing the token.
+	ctx = auth.SubjectIntoContext(ctx, subject)
+
+	// Inject the verified platform AuthorizedContext (scp -> RBAC, tenant_id ->
+	// RLS) when the DPoP-aware path produced one.
+	if authzCtx != nil {
+		ctx = authorizedContextIntoContext(ctx, authzCtx)
+	}
+	return ctx
 }
 
 // Context keys for authorization middleware.

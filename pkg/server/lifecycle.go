@@ -124,6 +124,18 @@ var (
 // initializeCA initializes the Certificate Authority for TLS.
 // On first startup it creates a root CA and issues a server certificate.
 // On subsequent startups it loads the existing CA from disk.
+// optionalMTLSClientAuth returns the TLS client-authentication mode for the
+// server's opportunistic-mTLS path. When Security.RequireMTLS is true the
+// server enforces a strict posture (RequireAndVerifyClientCert, SC-7); the
+// default false preserves the historical VerifyClientCertIfGiven behavior so
+// browser-origin requests proceed without a client certificate.
+func (s *Server) optionalMTLSClientAuth() tls.ClientAuthType {
+	if s.config.Security.RequireMTLS {
+		return tls.RequireAndVerifyClientCert
+	}
+	return tls.VerifyClientCertIfGiven
+}
+
 func (s *Server) initializeCA() error {
 	// Skip CA initialization when TLS is disabled
 	if !s.config.Security.TLSEnabled {
@@ -334,7 +346,7 @@ func (s *Server) initializeCA() error {
 						if pool.AppendCertsFromPEM(caBytes) {
 							s.tlsConfig.ClientCAs = pool
 							if !s.config.Security.TLSClientAuth {
-								s.tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+								s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
 							}
 						}
 					}
@@ -416,7 +428,7 @@ func (s *Server) initializeCA() error {
 			pool := x509.NewCertPool()
 			if pool.AppendCertsFromPEM(caBundle) {
 				s.tlsConfig.ClientCAs = pool
-				s.tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+				s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
 				s.logger.Info("TLS configured with optional mTLS (per-route client cert validation)")
 			}
 		}
@@ -1872,7 +1884,7 @@ func (s *Server) startGRPCServer() error {
 
 	// Start TCP listener only if explicitly enabled
 	if s.config.Server.GRPC.Enabled {
-		tcpAddress := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.GRPC.Port)
+		tcpAddress := fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.GRPC.BindAddress), s.config.Server.GRPC.Port)
 		tcpListener, err := listenFunc("tcp", tcpAddress)
 		if err != nil {
 			return api.NewOperationFailedError("create TCP listener", err)

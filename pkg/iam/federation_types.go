@@ -425,7 +425,20 @@ const (
 
 	// ProviderTypeOAuth2 is a generic OAuth2 provider.
 	ProviderTypeOAuth2 ProviderType = "oauth2"
+
+	// ProviderTypeLocal is the tenant's local-factor authentication path
+	// (WebAuthn/FIDO2/PIV/password — whatever the tenant has configured). It is
+	// NOT a new authentication mechanism: it is a first-class home-realm ROUTING
+	// SELECTOR so home-realm discovery can route a login to the tenant's built-in
+	// factor stack instead of an external IdP. A login routed to the local realm
+	// bypasses the OAuth2 federation flow entirely.
+	ProviderTypeLocal ProviderType = "local"
 )
+
+// LocalRealmProviderID is the reserved provider identifier home-realm discovery
+// returns when a login routes to a tenant's local-factor path rather than an
+// external IdP. It is a routing sentinel, not a stored ExternalProvider.
+const LocalRealmProviderID = "local"
 
 // ExternalProvider represents an external identity provider configuration.
 type ExternalProvider struct {
@@ -483,6 +496,12 @@ type ExternalProvider struct {
 
 	// DefaultGroups are assigned to auto-provisioned users.
 	DefaultGroups []string `json:"default_groups,omitempty"`
+
+	// DefaultScopes are the platform token scopes (the `scp` catalog, e.g.
+	// "<svc>.<verb>") granted to a federated login when no GroupScopeMappings are
+	// configured (the back-compatible fallback). When GroupScopeMappings ARE
+	// configured, scope resolution is fail-closed and DefaultScopes are ignored.
+	DefaultScopes []string `json:"default_scopes,omitempty"`
 
 	// AllowedEmailDomains restricts which IdP-asserted email domains may
 	// authenticate through this provider. When non-empty, a federated login
@@ -568,6 +587,13 @@ type ClaimMappings struct {
 	// is fail-closed: a federated login whose IdP values match no entry is
 	// denied. When empty, the provider DefaultRoles are used instead.
 	GroupRoleMappings []GroupRoleMapping `json:"group_role_mappings,omitempty"`
+
+	// GroupScopeMappings maps IdP group/role values (from the Groups/Roles
+	// claims) to platform token scopes (the `scp` catalog, e.g. "<svc>.<verb>").
+	// When non-empty, scope assignment is fail-closed: a federated login whose
+	// IdP values match no entry is denied. When empty, the provider DefaultScopes
+	// are used instead.
+	GroupScopeMappings []GroupScopeMapping `json:"group_scope_mappings,omitempty"`
 }
 
 // GroupRoleMapping maps a single IdP group/role value to a tenant role.
@@ -578,6 +604,22 @@ type GroupRoleMapping struct {
 	// RoleID is the tenant-scoped quicbaas role ID (or name) to assign when the
 	// IdP value matches.
 	RoleID string `json:"role_id"`
+
+	// Prefix, when true, matches any IdP value that starts with Group
+	// (STARTS_WITH) instead of requiring an exact match.
+	Prefix bool `json:"prefix,omitempty"`
+}
+
+// GroupScopeMapping maps a single IdP group/role value to a platform token
+// scope. It mirrors GroupRoleMapping but targets the `scp` catalog rather than
+// tenant roles, keeping scope grants explicit and decoupled from role grants.
+type GroupScopeMapping struct {
+	// Group is the IdP group or role value to match (case-insensitive).
+	Group string `json:"group"`
+
+	// Scope is the platform token scope (e.g. "<svc>.<verb>") to grant when the
+	// IdP value matches.
+	Scope string `json:"scope"`
 
 	// Prefix, when true, matches any IdP value that starts with Group
 	// (STARTS_WITH) instead of requiring an exact match.

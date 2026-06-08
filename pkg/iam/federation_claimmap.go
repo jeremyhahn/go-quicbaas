@@ -28,6 +28,17 @@ type RoleResolution struct {
 	UsedDefaults bool
 }
 
+// NoScopeMatchError is returned when claim->scope mappings are configured but the
+// IdP token's groups/roles matched none of them. The federated login is denied
+// (fail-closed), mirroring NoGroupMatchError for the role axis.
+type NoScopeMatchError struct {
+	ProviderID string
+}
+
+func (e *NoScopeMatchError) Error() string {
+	return "iam: federated login denied: no IdP group or role matched any configured scope mapping"
+}
+
 // resolveRoles maps the IdP token's groups/roles claims to tenant roles using
 // the provider's ClaimMappings, fail-closed:
 //
@@ -67,6 +78,97 @@ func resolveRoles(provider *ExternalProvider, claims map[string]interface{}) (*R
 	}
 
 	return &RoleResolution{RoleIDs: resolved}, nil
+}
+
+// ScopeResolution is the outcome of mapping an IdP token's groups/roles claims
+// to platform token scopes (the `scp` catalog used by the issued token).
+type ScopeResolution struct {
+	// Scopes are the resolved platform token scopes to grant.
+	Scopes []string
+
+	// UsedDefaults is true when no GroupScopeMappings were configured and the
+	// provider DefaultScopes were used as the fallback.
+	UsedDefaults bool
+}
+
+// resolveScopes maps the IdP token's groups/roles claims to platform token
+// scopes using the provider's ClaimMappings, fail-closed. It mirrors
+// resolveRoles exactly, but targets the `scp` catalog (e.g. "<svc>.<verb>")
+// rather than tenant roles:
+//
+//   - If GroupScopeMappings are configured (non-empty), the IdP group/role
+//     values (read from the Groups/Roles claims) are matched against them. If
+//     none match, a *NoScopeMatchError is returned and the login MUST be denied.
+//   - If no GroupScopeMappings are configured, the provider DefaultScopes are
+//     used as the back-compatible fallback.
+//
+// Scopes are mapped directly from IdP claims (not derived from resolved roles)
+// because the platform `scp` catalog (service.verb capabilities) does not map
+// one-to-one onto tenant roles; keeping the two resolutions independent lets a
+// tenant grant capabilities and roles on different axes. The matching is
+// case-insensitive and supports an optional STARTS_WITH prefix per entry,
+// identical to role resolution.
+func resolveScopes(provider *ExternalProvider, claims map[string]interface{}) (*ScopeResolution, error) {
+	mappings := provider.ClaimMappings
+	mapped := mappings != nil && len(mappings.GroupScopeMappings) > 0
+
+	if !mapped {
+		// No claim->scope mappings configured: fall back to static DefaultScopes.
+		return &ScopeResolution{
+			Scopes:       append([]string(nil), provider.DefaultScopes...),
+			UsedDefaults: true,
+		}, nil
+	}
+
+	var idpValues []string
+	if mappings.Groups != "" {
+		idpValues = append(idpValues, claimStringSlice(claims[mappings.Groups])...)
+	}
+	if mappings.Roles != "" {
+		idpValues = append(idpValues, claimStringSlice(claims[mappings.Roles])...)
+	}
+
+	resolved := matchScopeMappings(mappings.GroupScopeMappings, idpValues)
+	if len(resolved) == 0 {
+		// Mappings configured but nothing matched: fail closed.
+		return nil, &NoScopeMatchError{ProviderID: provider.ID}
+	}
+
+	return &ScopeResolution{Scopes: resolved}, nil
+}
+
+// matchScopeMappings returns the de-duplicated set of scopes whose mapping
+// matched at least one IdP value.
+func matchScopeMappings(mappings []GroupScopeMapping, idpValues []string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, m := range mappings {
+		for _, v := range idpValues {
+			if scopeGroupMatches(m, v) {
+				if _, ok := seen[m.Scope]; !ok {
+					seen[m.Scope] = struct{}{}
+					out = append(out, m.Scope)
+				}
+				break
+			}
+		}
+	}
+	return out
+}
+
+// scopeGroupMatches reports whether an IdP group/role value satisfies a scope
+// mapping entry, using the same case-insensitive exact/STARTS_WITH semantics as
+// groupMatches.
+func scopeGroupMatches(m GroupScopeMapping, idpValue string) bool {
+	want := strings.ToLower(strings.TrimSpace(m.Group))
+	got := strings.ToLower(strings.TrimSpace(idpValue))
+	if want == "" || got == "" {
+		return false
+	}
+	if m.Prefix {
+		return strings.HasPrefix(got, want)
+	}
+	return got == want
 }
 
 // matchRoleMappings returns the de-duplicated set of role IDs whose mapping

@@ -17,6 +17,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	dane "github.com/jeremyhahn/go-xkms/sdk/go/dane"
 )
 
 // =============================================================================
@@ -35,6 +36,12 @@ type QuicBaaSService = service.QuicBaaS
 // ServerOption configures optional behavior on the Server during construction.
 // Use WithCA and WithTLSCertificate to inject external components.
 type ServerOption = server.ServerOption
+
+// DANEPublisher publishes DANE TLSA records to a DNS provider. xkms defines
+// this interface but provides NO DNS implementation: the embedding application
+// supplies one and registers it via WithDANEPublisher. It is re-exported here
+// so consumers can implement the publisher without importing go-xkms directly.
+type DANEPublisher = dane.DANEPublisher
 
 // =============================================================================
 // Configuration Type Aliases
@@ -205,6 +212,14 @@ var WithCA = server.WithCA
 // WithTLSCertificate returns a ServerOption that provides a pre-issued TLS
 // certificate, skipping certificate issuance from the CA.
 var WithTLSCertificate = server.WithTLSCertificate
+
+// WithDANEPublisher returns a ServerOption that registers the
+// application-supplied DANE TLSA publisher used by Security().Trust().PublishDANE.
+// xkms derives the TLSA records server-side via dane.BuildRecords before calling
+// the publisher; the publisher only writes the records to its DNS provider.
+// Until a publisher is registered, PublishDANE returns a typed not-configured
+// error across every transport.
+var WithDANEPublisher = server.WithDANEPublisher
 
 // =============================================================================
 // Configuration Factory Functions

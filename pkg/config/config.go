@@ -491,8 +491,26 @@ type AuthConfig struct {
 	TokenTTL time.Duration `mapstructure:"token_ttl"`
 
 	// RefreshTokenTTL is the duration that refresh tokens are valid.
+	// Shared by both the legacy password-auth manager and the OIDC provider.
 	// Default: 7d (168h)
 	RefreshTokenTTL time.Duration `mapstructure:"refresh_token_ttl"`
+
+	// AccessTokenTTL is the lifetime of OIDC/OAuth2 access tokens minted by the
+	// broker. The platform access token is intentionally short-lived (5-15 min)
+	// to bound replay exposure. Must be within [DefaultOIDCAccessTokenTTLMin,
+	// DefaultOIDCAccessTokenTTLMax] when set; out-of-range values are rejected
+	// by the validator.
+	// Default: 15m (DefaultOIDCAccessTokenTTL) when zero.
+	AccessTokenTTL time.Duration `mapstructure:"access_token_ttl"`
+
+	// IDTokenTTL is the lifetime of OIDC ID tokens minted by the broker.
+	// Default: 1h (DefaultOIDCIDTokenTTL) when zero.
+	IDTokenTTL time.Duration `mapstructure:"id_token_ttl"`
+
+	// AuthCodeTTL is the lifetime of OAuth2 authorization codes minted by the
+	// broker (the short window between authorize and token exchange).
+	// Default: 10m (DefaultOIDCAuthCodeTTL) when zero.
+	AuthCodeTTL time.Duration `mapstructure:"auth_code_ttl"`
 
 	// AllowPasswordAuth enables username/password authentication.
 	// Default: false (use IAM-based authentication: WebAuthn, OIDC, mTLS)
@@ -551,6 +569,64 @@ type AuthConfig struct {
 	// Only applies when MaxLoginAttempts > 0.
 	// Default: 15m
 	LoginLockoutDuration time.Duration `mapstructure:"login_lockout_duration"`
+}
+
+// OIDC token TTL defaults and bounds. These preserve the historical
+// hardcoded broker lifetimes (15m access / 7d refresh / 1h id / 10m auth-code)
+// when the corresponding AuthConfig field is unset, and bound the access-token
+// lifetime to the platform's short-lived 5-15 minute window.
+const (
+	// DefaultOIDCAccessTokenTTL is the default access-token lifetime.
+	DefaultOIDCAccessTokenTTL = 15 * time.Minute
+	// DefaultOIDCRefreshTokenTTL is the default refresh-token lifetime.
+	DefaultOIDCRefreshTokenTTL = 7 * 24 * time.Hour
+	// DefaultOIDCIDTokenTTL is the default ID-token lifetime.
+	DefaultOIDCIDTokenTTL = 1 * time.Hour
+	// DefaultOIDCAuthCodeTTL is the default authorization-code lifetime.
+	DefaultOIDCAuthCodeTTL = 10 * time.Minute
+
+	// DefaultOIDCAccessTokenTTLMin is the lower bound for the access-token
+	// lifetime (replay window must stay short).
+	DefaultOIDCAccessTokenTTLMin = 1 * time.Minute
+	// DefaultOIDCAccessTokenTTLMax is the upper bound for the access-token
+	// lifetime (the platform's 5-15 minute intent caps at 60m).
+	DefaultOIDCAccessTokenTTLMax = 60 * time.Minute
+)
+
+// OIDCAccessTokenTTL returns the configured access-token lifetime, defaulting
+// to DefaultOIDCAccessTokenTTL when unset (zero).
+func (a *AuthConfig) OIDCAccessTokenTTL() time.Duration {
+	if a.AccessTokenTTL <= 0 {
+		return DefaultOIDCAccessTokenTTL
+	}
+	return a.AccessTokenTTL
+}
+
+// OIDCRefreshTokenTTL returns the configured refresh-token lifetime, defaulting
+// to DefaultOIDCRefreshTokenTTL when unset (zero).
+func (a *AuthConfig) OIDCRefreshTokenTTL() time.Duration {
+	if a.RefreshTokenTTL <= 0 {
+		return DefaultOIDCRefreshTokenTTL
+	}
+	return a.RefreshTokenTTL
+}
+
+// OIDCIDTokenTTL returns the configured ID-token lifetime, defaulting to
+// DefaultOIDCIDTokenTTL when unset (zero).
+func (a *AuthConfig) OIDCIDTokenTTL() time.Duration {
+	if a.IDTokenTTL <= 0 {
+		return DefaultOIDCIDTokenTTL
+	}
+	return a.IDTokenTTL
+}
+
+// OIDCAuthCodeTTL returns the configured authorization-code lifetime, defaulting
+// to DefaultOIDCAuthCodeTTL when unset (zero).
+func (a *AuthConfig) OIDCAuthCodeTTL() time.Duration {
+	if a.AuthCodeTTL <= 0 {
+		return DefaultOIDCAuthCodeTTL
+	}
+	return a.AuthCodeTTL
 }
 
 // SchedulerConfig contains job scheduler configuration.
@@ -801,12 +877,24 @@ type BackupConfig struct {
 type ServerGRPCConfig struct {
 	Enabled bool `mapstructure:"enabled"`
 	Port    int  `mapstructure:"port"`
+
+	// BindAddress optionally overrides Server.Host for the gRPC listener,
+	// allowing this protocol to bind to a private-ingress interface (SC-7)
+	// independently of the other listeners. Empty = use Server.Host
+	// (current behavior).
+	BindAddress string `mapstructure:"bind_address"`
 }
 
 // ServerRESTConfig contains REST/HTTP server configuration.
 type ServerRESTConfig struct {
 	Enabled bool `mapstructure:"enabled"`
 	Port    int  `mapstructure:"port"`
+
+	// BindAddress optionally overrides Server.Host for the REST listener,
+	// allowing this protocol to bind to a private-ingress interface (SC-7)
+	// independently of the other listeners. Empty = use Server.Host
+	// (current behavior).
+	BindAddress string `mapstructure:"bind_address"`
 }
 
 // ServerQUICConfig contains QUIC server configuration.
@@ -817,6 +905,12 @@ type ServerQUICConfig struct {
 	MaxIdleTimeout         time.Duration `mapstructure:"max_idle_timeout"`
 	HandshakeIdleTimeout   time.Duration `mapstructure:"handshake_idle_timeout"`
 	MaxStreamReceiveWindow uint64        `mapstructure:"max_stream_receive_window"`
+
+	// BindAddress optionally overrides Server.Host for the QUIC listener,
+	// allowing this protocol to bind to a private-ingress interface (SC-7)
+	// independently of the other listeners. Empty = use Server.Host
+	// (current behavior).
+	BindAddress string `mapstructure:"bind_address"`
 }
 
 // ServerMCPConfig contains MCP (Model Context Protocol) server configuration.
@@ -825,12 +919,25 @@ type ServerMCPConfig struct {
 	Port                int                          `mapstructure:"port"`
 	Authorization       MCPAuthorizationConfig       `mapstructure:"authorization"`
 	DynamicRegistration MCPDynamicRegistrationConfig `mapstructure:"dynamic_registration"`
+
+	// BindAddress optionally overrides Server.Host for the MCP listener,
+	// allowing this protocol to bind to a private-ingress interface (SC-7)
+	// independently of the other listeners. Empty = use Server.Host
+	// (current behavior).
+	BindAddress string `mapstructure:"bind_address"`
 }
 
 // ServerUnixConfig contains Unix domain socket server configuration.
 type ServerUnixConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	Socket  string `mapstructure:"socket"`
+
+	// BindAddress optionally overrides Server.Host for any network-facing
+	// component of the Unix transport. The Unix domain socket itself is
+	// addressed by Socket; this field exists for parity and is honored only
+	// when the transport binds a network address. Empty = use Server.Host
+	// (current behavior).
+	BindAddress string `mapstructure:"bind_address"`
 }
 
 // ServerConfig contains HTTP/gRPC/QUIC server configuration.
@@ -887,6 +994,18 @@ type ServerConfig struct {
 	Shards []uint64 `mapstructure:"shards"`
 	// EntityShardPins maps entity type to a fixed shard ID.
 	EntityShardPins map[string]uint64 `mapstructure:"entity_shard_pins"`
+}
+
+// ResolveBindHost returns the listen host for a protocol listener: the
+// per-protocol override when non-empty, otherwise the shared Server.Host.
+// This keeps the default (empty override) behavior identical to binding all
+// listeners on Server.Host while allowing per-protocol private-ingress
+// isolation (SC-7) when an operator sets a bind_address.
+func (c *ServerConfig) ResolveBindHost(override string) string {
+	if override != "" {
+		return override
+	}
+	return c.Host
 }
 
 // MCPAuthorizationConfig contains MCP authorization settings.
@@ -1019,11 +1138,19 @@ type StorageConfig struct {
 // SecurityConfig contains security and encryption settings.
 type SecurityConfig struct {
 	// TLSEnabled indicates TLS is enabled. Always true in production; retained for config compatibility.
-	TLSEnabled          bool   `mapstructure:"tls_enabled"`
-	TLSCertFile         string `mapstructure:"tls_cert_file"`
-	TLSKeyFile          string `mapstructure:"tls_key_file"`
-	TLSCAFile           string `mapstructure:"tls_ca_file"`
-	TLSClientAuth       bool   `mapstructure:"tls_client_auth"`
+	TLSEnabled    bool   `mapstructure:"tls_enabled"`
+	TLSCertFile   string `mapstructure:"tls_cert_file"`
+	TLSKeyFile    string `mapstructure:"tls_key_file"`
+	TLSCAFile     string `mapstructure:"tls_ca_file"`
+	TLSClientAuth bool   `mapstructure:"tls_client_auth"`
+
+	// RequireMTLS enforces a strict mTLS posture (SC-7): when true the server
+	// TLS uses RequireAndVerifyClientCert instead of the default
+	// VerifyClientCertIfGiven, rejecting any connection that does not present
+	// a client certificate chaining to a trusted CA. Default false preserves
+	// the current opportunistic-mTLS behavior.
+	RequireMTLS bool `mapstructure:"require_mtls"`
+
 	FIPSMode            bool   `mapstructure:"fips_mode"`
 	EncryptionEnabled   bool   `mapstructure:"encryption_enabled"`
 	EncryptionAlgorithm string `mapstructure:"encryption_algorithm"`

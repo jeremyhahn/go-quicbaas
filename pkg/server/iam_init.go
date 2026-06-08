@@ -417,13 +417,13 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 				SigningKeyManager: signingKeyManager,
 				TenantSigningKeys: tenantSigningKeys,
 				// Phase 6: the platform access token is short-lived (5-15 min
-				// window). 15 minutes is the upper bound of the allowed range,
-				// balancing replay exposure against re-mint churn. Refresh and
-				// ID tokens keep their longer lifetimes.
-				AccessTokenTTL:  15 * time.Minute,
-				RefreshTokenTTL: 7 * 24 * time.Hour,
-				IDTokenTTL:      1 * time.Hour,
-				AuthCodeTTL:     10 * time.Minute,
+				// window). TTLs are config-wired via AuthConfig and default to
+				// 15m access / 7d refresh / 1h id / 10m auth-code when unset;
+				// the access TTL is bound-checked by the config validator.
+				AccessTokenTTL:  s.config.Auth.OIDCAccessTokenTTL(),
+				RefreshTokenTTL: s.config.Auth.OIDCRefreshTokenTTL(),
+				IDTokenTTL:      s.config.Auth.OIDCIDTokenTTL(),
+				AuthCodeTTL:     s.config.Auth.OIDCAuthCodeTTL(),
 				PKCERequired:    true,
 				AllowedMethods:  []string{"S256"},
 			},
@@ -522,6 +522,11 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		iam.WithFederationIdentityStore(identityStore),
 		iam.WithFederationOIDCProvider(oidcProvider),
 		iam.WithFederationAuditLogger(auditLogger),
+		// Push the bootstrap-ordering gate DOWN into RegisterProvider so no
+		// transport can register a system-tenant operator IdP before the
+		// bootstrap admin exists. The AdminManager (built above) satisfies the
+		// AdminPresenceChecker via HasAdmin.
+		iam.WithFederationBootstrapGate(adminManager),
 	)
 	if err != nil {
 		s.logger.WithError(err).Warn("Failed to create federation manager, federation features will be unavailable")

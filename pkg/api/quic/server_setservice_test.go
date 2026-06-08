@@ -16,6 +16,8 @@
 package quic
 
 import (
+	"context"
+	"crypto/x509"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,4 +37,21 @@ func TestServer_SetBarrierAndCeremonyService(t *testing.T) {
 
 	server.SetCeremonyService(&mockCeremonyServicer{})
 	server.SetCeremonyService(nil)
+}
+
+// SetTenantResolver installs (and replaces) the per-request tenant-derivation
+// hook. It must accept a concrete resolver and nil (disable) without panicking
+// and must store the most recent value.
+func TestServer_SetTenantResolver(t *testing.T) {
+	config := DefaultConfig()
+	config.TLSConfig = generateTestTLSConfig(t)
+	server, err := NewServer(&mockService{}, config, createServerTestLogger())
+	require.NoError(t, err)
+
+	resolver := func(ctx context.Context, cert *x509.Certificate) context.Context { return ctx }
+	server.SetTenantResolver(resolver)
+	require.NotNil(t, server.tenantResolver)
+
+	server.SetTenantResolver(nil)
+	require.Nil(t, server.tenantResolver)
 }

@@ -18,10 +18,10 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -75,6 +75,11 @@ type oidcTokenValidator struct {
 // Compile-time check that oidcTokenValidator satisfies the REST TokenValidator.
 var _ restapi.TokenValidator = (*oidcTokenValidator)(nil)
 
+// Compile-time check that oidcTokenValidator is DPoP-aware so the REST authz
+// middleware enforces RFC 9449 sender-constraint on inbound cnf.jkt-bound tokens
+// and builds the scp -> RBAC / tenant_id -> RLS AuthorizedContext.
+var _ restapi.DPoPTokenValidator = (*oidcTokenValidator)(nil)
+
 // ValidateToken verifies the access token and returns a populated
 // *auth.TokenValidationResult. A nil error with Valid=false is never returned:
 // any verification failure surfaces as a typed error so the middleware can log
@@ -104,6 +109,59 @@ func (v *oidcTokenValidator) ValidateToken(ctx context.Context, token string) (*
 	}, nil
 }
 
+// ValidateTokenWithDPoP verifies the access token and, when it carries a cnf.jkt
+// binding, enforces the presented DPoP proof against it (RFC 9449) before
+// returning the platform claims the REST authz middleware projects onto an
+// AuthorizedContext. It delegates to OIDCProvider.ValidateAccessTokenWithDPoP so
+// inbound enforcement reuses the SAME signing-key resolution and DPoP replay
+// cache the issuance path uses — one code path, no duplicated crypto.
+//
+// A cnf.jkt-bound token presented without a valid proof (a bearer replay) returns
+// a typed error and the middleware responds 401. A plain bearer token (no
+// cnf.jkt) is accepted, exactly as before.
+func (v *oidcTokenValidator) ValidateTokenWithDPoP(ctx context.Context, token, dpopProof, htm, htu string) (*restapi.PlatformTokenResult, error) {
+	provider, err := v.getter.GetOIDCProvider(ctx)
+	if err != nil {
+		return nil, &RESTAuthzError{Op: "get oidc provider", Cause: err}
+	}
+	if provider == nil {
+		return nil, &RESTAuthzError{Op: "get oidc provider", Cause: ErrOIDCProviderUnavailable}
+	}
+
+	claims, err := provider.ValidateAccessTokenWithDPoP(ctx, token, dpopProof, htm, htu)
+	if err != nil {
+		return nil, &RESTAuthzError{Op: "validate access token (dpop)", Cause: err}
+	}
+
+	jkt := ""
+	if claims.Confirmation != nil {
+		jkt = claims.Confirmation.Jkt
+	}
+
+	return &restapi.PlatformTokenResult{
+		Subject:  claims.Subject,
+		Username: claims.Name,
+		TenantID: claims.TenantID,
+		Roles:    claims.Roles,
+		Scopes:   tokenScopes(claims),
+		JKT:      jkt,
+	}, nil
+}
+
+// tokenScopes returns the authoritative scope set the platform-token contract
+// defines: the array-form scp claim when present, otherwise the space-separated
+// scope string split into a slice. This mirrors platformtoken.Claims.scopes so
+// the REST surface and downstream services derive the same RBAC scope set.
+func tokenScopes(claims *iam.Claims) []string {
+	if len(claims.SCP) > 0 {
+		return claims.SCP
+	}
+	if strings.TrimSpace(claims.Scope) == "" {
+		return nil
+	}
+	return strings.Fields(claims.Scope)
+}
+
 // configureRESTAuthz wires the RBAC authorization middleware onto the REST
 // server so authenticated-but-unprivileged callers receive 403 on protected
 // /api/v1 endpoints while public routes (health, login, oauth2/token,
@@ -131,55 +189,29 @@ func (s *Server) configureRESTAuthz(restServer *restapi.Server) {
 		return
 	}
 
+	// The token validator wraps the IAM OIDC provider and is DPoP-aware: it
+	// enforces RFC 9449 sender-constraint on cnf.jkt-bound tokens and surfaces
+	// the platform claims (scp / tenant_id / roles) the middleware projects onto
+	// an AuthorizedContext.
 	validator := &oidcTokenValidator{getter: getter}
 
-	// The RBAC provider is backed by a role manager seeded with the canonical
-	// built-in roles. It is constructed standalone (rather than borrowing the
-	// optional password-era auth manager's role manager) so REST authorization
-	// is enforced regardless of whether password authentication is enabled —
-	// the integration cluster authenticates via PIV / OAuth2, not passwords.
-	roleManager := auth.NewRoleManager(s.logger)
-	provider, err := providers.NewRBACProvider(roleManager, s.logger)
-	if err != nil {
-		s.logger.WithError(err).Warn("REST authz disabled: failed to build RBAC provider")
-		return
-	}
-
-	// Install the per-tenant permission scope resolver when the embedded qrdb
-	// node exposes a StoreResolver (seal enabled with a barrier registry). With
-	// it, an admitted permission is gated by its scope resolved in the
-	// subject's own tenant: a barrier tenant's scope definitions live in that
-	// tenant's barrier, a prefix / system tenant's in the shared store, and a
-	// sealed barrier tenant fails closed. Without a resolver the provider keeps
-	// its scope-unaware behaviour.
-	if scopeStore := s.iamTenantScopeStore(); scopeStore != nil {
-		provider = provider.WithScopeResolver(scopeStore)
-		s.logger.Info("REST authz: per-tenant permission scope resolver installed")
-	}
-
-	authzService, err := auth.NewAuthorizationService(provider, s.logger)
-	if err != nil {
-		s.logger.WithError(err).Warn("REST authz disabled: failed to build authorization service")
-		return
-	}
-	_ = authzService
-	_ = validator
-
-	// RBAC ENFORCEMENT INTENTIONALLY NOT INSTALLED YET.
+	// Install the proof-of-possession-only enforcement gate. It validates every
+	// inbound bearer and, for DPoP sender-constrained tokens, enforces the
+	// presented proof fail-closed (a bearer replay of a bound token is rejected
+	// 401), then injects the verified principal + AuthorizedContext so handlers
+	// can enforce scp -> RBAC / tenant_id -> RLS.
 	//
-	// Wiring SetAuthorizationService(authzService, validator) here enforces RBAC
-	// on every /api/v1 request. Integration validation showed the cluster's
-	// authenticated principals (admin via PIV bearer, OAuth2 client_credentials)
-	// are not yet recognized by the standalone RBAC role manager — the
-	// token-claims -> roles -> role-grant chain does not currently authorize the
-	// admin principal, so enforcing here 403s legitimate callers cluster-wide.
-	//
-	// The validator + RBAC provider are built and exercised by unit tests; full
-	// enforcement is deferred until the admin principal's role propagation is
-	// fixed AND validated end-to-end against the live cluster (the token must
-	// carry the admin role and the role manager must grant it). Until then REST
-	// keeps its prior behaviour so the data plane is reachable.
-	s.logger.Info("REST authorization middleware built but enforcement deferred (RBAC role propagation pending cluster validation)")
+	// The full RBAC authorization DECISION (Authorize gate) remains intentionally
+	// deferred: integration validation showed the cluster's authenticated
+	// principals (admin via PIV bearer, OAuth2 client_credentials) are not yet
+	// recognized by the standalone RBAC role manager, so enforcing the decision
+	// here 403s legitimate callers cluster-wide. Per-resource RBAC is enforced at
+	// the handler layer via the injected AuthorizedContext until that
+	// token-claims -> roles -> role-grant chain is validated end-to-end. This
+	// keeps the data plane reachable for unbound-bearer callers while closing the
+	// DPoP replay gap on sender-constrained tokens (additive enforcement).
+	restServer.SetTokenBindingEnforcement(validator)
+	s.logger.Info("REST token-binding (DPoP/mTLS) enforcement installed; RBAC decision deferred (role propagation pending cluster validation)")
 }
 
 // Compile-time assertion that the AuthorizationService we build satisfies the

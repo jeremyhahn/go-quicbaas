@@ -152,8 +152,79 @@ All provider commands require the --tenant flag to specify the tenant context.`,
 	cmd.AddCommand(newIAMProviderUpdateCommand())
 	cmd.AddCommand(newIAMProviderDeleteCommand())
 	cmd.AddCommand(newIAMProviderListCommand())
+	cmd.AddCommand(newIAMProviderOperatorCommand())
 
 	return cmd
+}
+
+// operatorTenantID is the reserved control-plane / system tenant that hosts
+// operator (staff) identities. It mirrors the server-side reserved "system"
+// tenant: an operator SSO IdP is, by definition, system-tenant federation, and
+// the server gates its registration on a bootstrap admin already existing. The
+// CLI forces this tenant so an operator IdP cannot be accidentally registered
+// against a data-plane tenant.
+const operatorTenantID = "system"
+
+// newIAMProviderOperatorCommand creates the operator-SSO provider registration
+// command. It is a thin convenience over `provider create` that forces the
+// system tenant so staff/operator IdPs land on the control-plane tenant. The
+// server enforces the bootstrap-ordering invariant: this registration fails
+// until the bootstrap admin (the always-available local-factor break-glass
+// login) exists.
+func newIAMProviderOperatorCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "operator",
+		Short: "Register an operator (system-tenant) SSO identity provider",
+		Long: `Register an external identity provider for OPERATOR / staff SSO.
+
+This is a convenience over 'provider create' that forces the reserved control
+plane "system" tenant, so the IdP authenticates operators against the control
+plane rather than a data-plane tenant. It uses the same provider presets and
+flags as 'provider create'.
+
+The server enforces the bootstrap-ordering invariant: an operator IdP can only
+be registered once the bootstrap admin exists. The bootstrap admin's
+local-factor login (mTLS/WebAuthn/PIV) is the always-available break-glass path
+and never depends on federation, so a misconfigured or unreachable IdP can never
+lock the control plane out.
+
+Examples:
+  # Register an Okta operator IdP using the preset
+  quicbaas iam provider operator     --provider okta --domain acme     --client-id "0oaxxxxx" --client-secret "secret"     --auto-provision --default-roles operator
+
+  # Register a custom OIDC operator IdP
+  quicbaas iam provider operator     --provider-id corp-idp --name "Corp IdP" --type oidc     --client-id "client-id" --client-secret "secret"     --issuer-url "https://idp.example.com"     --scopes openid,email,profile --auto-provision`,
+		RunE: runIAMProviderOperatorCommand,
+	}
+
+	// Mirror the create command's flags so operators get the same ergonomics.
+	cmd.Flags().StringVar(&providerPreset, "provider", "", "Use preset configuration (google, microsoft, azure, okta, auth0, github, gitlab, keycloak)")
+	cmd.Flags().StringVar(&providerDomain, "domain", "", "Domain/tenant for provider (required for okta, auth0, azure, keycloak)")
+	cmd.Flags().StringVar(&providerID, "provider-id", "", "Unique provider identifier (auto-generated from --provider if not set)")
+	cmd.Flags().StringVar(&providerName, "name", "", "Provider display name (auto-set from --provider if not set)")
+	cmd.Flags().StringVar(&providerType, "type", "", "Provider type: oidc, oauth2, saml (auto-set from --provider if not set)")
+	cmd.Flags().StringVar(&providerClientID, "client-id", "", "OAuth2/OIDC client ID (required)")
+	cmd.Flags().StringVar(&providerSecret, "client-secret", "", "OAuth2/OIDC client secret")
+	cmd.Flags().StringVar(&providerIssuerURL, "issuer-url", "", "OIDC issuer URL (auto-set from --provider if not set)")
+	cmd.Flags().StringSliceVar(&providerScopes, "scopes", nil, "OAuth2 scopes (auto-set from --provider if not set)")
+	cmd.Flags().BoolVar(&autoProvision, "auto-provision", false, "Enable JIT user provisioning")
+	cmd.Flags().BoolVar(&allowLinking, "allow-linking", false, "Allow linking to existing accounts by email")
+	cmd.Flags().StringSliceVar(&defaultRoles, "default-roles", nil, "Default roles for auto-provisioned operators")
+	cmd.Flags().StringSliceVar(&defaultGroups, "default-groups", nil, "Default groups for auto-provisioned operators")
+
+	return cmd
+}
+
+// runIAMProviderOperatorCommand registers an operator (system-tenant) SSO IdP.
+// It forces the reserved system tenant, then delegates to the shared provider
+// registration path so it shares validation, presets, and output formatting
+// with 'provider create' (DRY).
+func runIAMProviderOperatorCommand(cmd *cobra.Command, args []string) error {
+	// Operator SSO is always system-tenant federation. Overriding the global
+	// --tenant here means the caller cannot smuggle a data-plane tenant past
+	// the operator semantics; the server independently forces / gates this too.
+	globalTenantID = operatorTenantID
+	return runIAMProviderCreate(cmd, "iam.provider.operator")
 }
 
 // newIAMProviderCreateCommand creates the provider create command.
@@ -223,9 +294,16 @@ Examples:
 
 // runIAMProviderCreateCommand executes the provider create command.
 func runIAMProviderCreateCommand(cmd *cobra.Command, args []string) error {
+	return runIAMProviderCreate(cmd, "iam.provider.create")
+}
+
+// runIAMProviderCreate is the shared provider-registration path used by both
+// 'provider create' and 'provider operator'. The op string is threaded into
+// returned errors so each subcommand reports its own operation context.
+func runIAMProviderCreate(cmd *cobra.Command, op string) error {
 	// Validate required flags
 	if globalTenantID == "" {
-		return errors.Newf(errors.ErrInvalidInput, "iam.provider.create", "--tenant flag is required")
+		return errors.Newf(errors.ErrInvalidInput, op, "--tenant flag is required")
 	}
 
 	// Apply provider preset if specified
@@ -237,7 +315,7 @@ func runIAMProviderCreateCommand(cmd *cobra.Command, args []string) error {
 
 	// Validate that either --provider or --provider-id is specified
 	if providerPreset == "" && providerID == "" {
-		return errors.Newf(errors.ErrInvalidInput, "iam.provider.create", "either --provider or --provider-id is required")
+		return errors.Newf(errors.ErrInvalidInput, op, "either --provider or --provider-id is required")
 	}
 
 	// Set default type if not specified
@@ -248,10 +326,10 @@ func runIAMProviderCreateCommand(cmd *cobra.Command, args []string) error {
 	// Validate OIDC-specific requirements
 	if providerType == "oidc" || providerType == "oauth2" {
 		if providerClientID == "" {
-			return errors.Newf(errors.ErrInvalidInput, "iam.provider.create", "--client-id is required for OIDC/OAuth2 providers")
+			return errors.Newf(errors.ErrInvalidInput, op, "--client-id is required for OIDC/OAuth2 providers")
 		}
 		if providerIssuerURL == "" && providerType == "oidc" {
-			return errors.Newf(errors.ErrInvalidInput, "iam.provider.create", "--issuer-url is required for OIDC providers")
+			return errors.Newf(errors.ErrInvalidInput, op, "--issuer-url is required for OIDC providers")
 		}
 	}
 

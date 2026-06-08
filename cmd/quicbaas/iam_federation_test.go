@@ -17,10 +17,18 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 )
+
+// errTestNoServer is a sentinel returned by the stub IAM client factory so the
+// operator command exits after forcing the system tenant but before any network
+// call.
+var errTestNoServer = errors.New("no server in unit test")
 
 // TestProviderPresets tests that all provider presets are properly defined.
 func TestProviderPresets(t *testing.T) {
@@ -373,6 +381,96 @@ func TestNewIAMProviderCreateCommand(t *testing.T) {
 		if flag == nil {
 			t.Errorf("flag --%s not found", flagName)
 		}
+	}
+}
+
+// TestNewIAMProviderOperatorCommand tests the operator subcommand structure and
+// flags, mirroring the create command convention.
+func TestNewIAMProviderOperatorCommand(t *testing.T) {
+	cmd := newIAMProviderOperatorCommand()
+
+	if cmd.Use != "operator" {
+		t.Errorf("cmd.Use = %q, want 'operator'", cmd.Use)
+	}
+	if cmd.RunE == nil {
+		t.Fatal("operator command must have a RunE")
+	}
+
+	// The operator command must expose the same registration flags as create.
+	expectedFlags := []string{
+		"provider", "domain", "provider-id", "name", "type",
+		"client-id", "client-secret", "issuer-url", "scopes",
+		"auto-provision", "allow-linking", "default-roles", "default-groups",
+	}
+	for _, flagName := range expectedFlags {
+		if cmd.Flags().Lookup(flagName) == nil {
+			t.Errorf("flag --%s not found on operator command", flagName)
+		}
+	}
+}
+
+// TestIAMProviderCommand_IncludesOperator proves the operator subcommand is wired
+// into the provider command group.
+func TestIAMProviderCommand_IncludesOperator(t *testing.T) {
+	cmd := newIAMProviderCommand()
+	found := false
+	for _, sub := range cmd.Commands() {
+		if sub.Use == "operator" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("provider command group must include the 'operator' subcommand")
+	}
+}
+
+// TestRunIAMProviderOperatorCommand_ForcesSystemTenant proves the operator
+// command forces the reserved system tenant regardless of the global --tenant,
+// so an operator IdP can never be registered against a data-plane tenant. The
+// run fails (no live server) but only AFTER the tenant has been forced, which is
+// what we assert.
+func TestRunIAMProviderOperatorCommand_ForcesSystemTenant(t *testing.T) {
+	// Simulate a stale/data-plane global tenant selection.
+	prevTenant := globalTenantID
+	prevPreset := providerPreset
+	prevID := providerID
+	prevClientID := providerClientID
+	prevIssuer := providerIssuerURL
+	prevType := providerType
+	prevScopes := providerScopes
+	defer func() {
+		globalTenantID = prevTenant
+		providerPreset = prevPreset
+		providerID = prevID
+		providerClientID = prevClientID
+		providerIssuerURL = prevIssuer
+		providerType = prevType
+		providerScopes = prevScopes
+	}()
+
+	globalTenantID = "tenant-acme"
+	providerPreset = ""
+	providerID = "corp-idp"
+	providerType = "oidc"
+	providerClientID = "client-id"
+	providerIssuerURL = "https://idp.example.com"
+	providerScopes = []string{"openid"}
+
+	// Route a real IAM-client construction failure so the run returns before any
+	// network call but after the tenant override executed.
+	iamClientFactory = func() (iam.Client, error) {
+		return nil, errTestNoServer
+	}
+	defer resetIAMFactory()
+
+	cmd := newIAMProviderOperatorCommand()
+	err := runIAMProviderOperatorCommand(cmd, nil)
+	if err == nil {
+		t.Fatal("expected an error from the operator command without a live server")
+	}
+	if globalTenantID != operatorTenantID {
+		t.Fatalf("operator command must force the system tenant, got %q", globalTenantID)
 	}
 }
 

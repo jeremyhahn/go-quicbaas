@@ -53,6 +53,15 @@ type DualIdentity struct {
 
 	// Roles is the role set carried by the token.
 	Roles []string
+
+	// IPAddress is the network source of the request (client IP). It is
+	// proxy-aware at the transport layer (X-Forwarded-For/X-Real-IP, falling
+	// back to RemoteAddr). Empty when the caller does not supply it.
+	IPAddress string
+
+	// UserAgent is the client user-agent string of the request. Empty when the
+	// caller does not supply it.
+	UserAgent string
 }
 
 // ServiceIdentityFromCert derives a stable service-identity string from a
@@ -76,9 +85,11 @@ func ServiceIdentityFromCert(cert *x509.Certificate) string {
 // (verified client cert SPIFFE/DN) and the user identity (sub, tenant_id, scp,
 // roles, jti) for an authenticated request. The event is stamped with the
 // tenant from the DualIdentity (falling back to the tenant on the context)
-// so it routes to the correct per-tenant audit partition. A nil logger or
-// empty tenant returns an error rather than silently dropping the event
-// (fail-closed: an unauditable security event must be visible to the caller).
+// so it routes to the correct per-tenant audit partition. The network source
+// (IPAddress) and UserAgent are stamped on the event when supplied. A nil
+// logger or empty tenant returns an error rather than silently dropping the
+// event (fail-closed: an unauditable security event must be visible to the
+// caller).
 func LogDualIdentity(
 	ctx context.Context,
 	logger AuditLogger,
@@ -119,6 +130,8 @@ func LogDualIdentity(
 		Action:    action,
 		Outcome:   outcome,
 		Details:   details,
+		IPAddress: id.IPAddress,
+		UserAgent: id.UserAgent,
 	}
 
 	return logger.Log(ctx, event)

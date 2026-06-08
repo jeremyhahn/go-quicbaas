@@ -4063,3 +4063,20 @@ func TestIAM91_GetOAuthASMetadata_NilProvider(t *testing.T) {
 	handler.GetOAuthASMetadata(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
+
+// TestIAM91_GetOAuthASMetadata_ProviderLookupError covers the branch where the
+// service exposes GetOIDCProvider but the lookup itself fails: the handler must
+// route through handleServiceError rather than emit metadata.
+func TestIAM91_GetOAuthASMetadata_ProviderLookupError(t *testing.T) {
+	svc := &mockServiceWithOIDC{
+		QuicBaaS:    testutil.NewMockQuicBaaS(),
+		providerErr: errors.New("oidc provider lookup failed"),
+	}
+	handler, cleanup := setupHandlerWithService(t, svc)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+	w := httptest.NewRecorder()
+	handler.GetOAuthASMetadata(w, req)
+	assert.GreaterOrEqual(t, w.Code, http.StatusInternalServerError)
+}

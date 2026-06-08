@@ -851,37 +851,107 @@ func (s *acmeServerImpl) Issue(ctx context.Context, csrPEM []byte, challengeType
 // acmeClientImpl is the ACMEClientAPI surface for the ACME PROTOCOL CLIENT
 // verbs (NewOrder / FinalizeOrder / Renew).
 //
-// These three verbs are RFC 8555 protocol exchanges: order creation and
-// finalization are JWS-signed POSTs that require a per-account signing key, a
-// registered account, replay nonces, and persistent account/order/cert
-// storage. They are performed by a real ACME protocol client
-// (go-xkms/pkg/acme/client) speaking to the directory the server mounts —
-// they are NOT quicbaas transport RPCs (the server's RFC 8555 handlers reject
-// non-JWS bodies). The current ACMEClientAPI signatures carry no account
-// credentials, so they cannot drive that client.
-//
-// Callers that need full order issuance use the directory the server exposes
-// (Security().ACME().Server() advertises it via the REST-mounted RFC 8555
-// endpoints) together with the xkms ACME client directly. Until the
-// ACMEClientAPI is extended to accept account credentials, these methods
-// return a typed unimplemented error rather than a misleading server RPC.
+// QuicBaaS is the BROKER-AS-CA: it IS the certificate authority. These three
+// verbs are therefore NOT JWS-signed RFC 8555 exchanges against an external
+// ACME directory — they are in-process service calls routed over the quicbaas
+// transport (REST + embedded) to the server-side ACMEServicer, exactly like
+// the Issue control verb. NewOrder returns a lightweight pending order
+// descriptor, FinalizeOrder signs the supplied CSR with the composed CA, and
+// Renew resolves an existing certificate by serial.
 type acmeClientImpl struct {
 	t transport.Transport
 }
 
+// NewOrder creates a lightweight in-process broker-as-CA order. The returned
+// ACMEOrder is a pending descriptor whose Finalize URL carries a generated
+// order ID; FinalizeOrder only needs the CSR supplied later.
 func (c *acmeClientImpl) NewOrder(ctx context.Context, identifiers []ACMEOrderIdentifier, challengeType string) (*ACMEOrder, error) {
-	return nil, sdkerrors.NewUnimplemented("acme.NewOrder",
-		"ACME order creation is a JWS-signed RFC 8555 client exchange; drive go-xkms/pkg/acme/client against the directory exposed by Security().ACME().Server()")
+	if ctx == nil {
+		return nil, sdkerrors.NewInvalidInput("acme.NewOrder", "context is required")
+	}
+	if len(identifiers) == 0 {
+		return nil, sdkerrors.NewInvalidInput("acme.NewOrder", "at least one identifier is required")
+	}
+
+	wireIDs := make([]acmeclient.OrderIdentifier, len(identifiers))
+	for i, id := range identifiers {
+		wireIDs[i] = acmeclient.OrderIdentifier{Type: id.Type, Value: id.Value}
+	}
+
+	resp, err := c.t.Request(ctx, acmeServiceName, "NewOrder", &acmeclient.NewOrderRequest{
+		Identifiers:   wireIDs,
+		ChallengeType: challengeType,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*acmeclient.NewOrderResponse)
+	if !ok || out == nil {
+		return nil, sdkerrors.NewInternal("acme.NewOrder", "invalid response type")
+	}
+
+	order := &ACMEOrder{
+		ID:       out.OrderID,
+		Status:   ACMEOrderStatus(out.Status),
+		Finalize: out.Finalize,
+		URL:      out.URL,
+	}
+	order.Identifiers = make([]ACMEOrderIdentifier, len(out.Identifiers))
+	for i, id := range out.Identifiers {
+		order.Identifiers[i] = ACMEOrderIdentifier{Type: id.Type, Value: id.Value}
+	}
+	return order, nil
 }
 
+// FinalizeOrder signs the supplied CSR with the composed CA and returns the
+// issued leaf certificate PEM. orderURL is advisory in the broker-as-CA model.
 func (c *acmeClientImpl) FinalizeOrder(ctx context.Context, orderURL string, csrPEM []byte) ([]byte, error) {
-	return nil, sdkerrors.NewUnimplemented("acme.FinalizeOrder",
-		"ACME order finalization is a JWS-signed RFC 8555 client exchange; drive go-xkms/pkg/acme/client against the directory exposed by Security().ACME().Server()")
+	if ctx == nil {
+		return nil, sdkerrors.NewInvalidInput("acme.FinalizeOrder", "context is required")
+	}
+	if len(csrPEM) == 0 {
+		return nil, sdkerrors.NewInvalidInput("acme.FinalizeOrder", "csr is required")
+	}
+
+	resp, err := c.t.Request(ctx, acmeServiceName, "FinalizeOrder", &acmeclient.FinalizeOrderRequest{
+		OrderURL: orderURL,
+		CSRPEM:   csrPEM,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*acmeclient.FinalizeOrderResponse)
+	if !ok || out == nil {
+		return nil, sdkerrors.NewInternal("acme.FinalizeOrder", "invalid response type")
+	}
+	return out.CertificatePEM, nil
 }
 
+// Renew resolves an existing certificate by serial (certURL is the hex serial
+// the CA assigned at issuance, optionally as an "/acme/cert/<serial>" path).
+// Because the broker-as-CA holds no subscriber private key and this signature
+// carries no CSR, a usable leaf cannot be re-signed in-process; Renew confirms
+// the certificate exists and returns a typed error directing the caller to
+// NewOrder/FinalizeOrder with a fresh CSR.
 func (c *acmeClientImpl) Renew(ctx context.Context, certURL string) ([]byte, error) {
-	return nil, sdkerrors.NewUnimplemented("acme.Renew",
-		"ACME renewal is a JWS-signed RFC 8555 client exchange; drive go-xkms/pkg/acme/client against the directory exposed by Security().ACME().Server()")
+	if ctx == nil {
+		return nil, sdkerrors.NewInvalidInput("acme.Renew", "context is required")
+	}
+	if certURL == "" {
+		return nil, sdkerrors.NewInvalidInput("acme.Renew", "certificate url is required")
+	}
+
+	resp, err := c.t.Request(ctx, acmeServiceName, "Renew", &acmeclient.RenewRequest{
+		CertURL: certURL,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*acmeclient.RenewResponse)
+	if !ok || out == nil {
+		return nil, sdkerrors.NewInternal("acme.Renew", "invalid response type")
+	}
+	return out.CertificatePEM, nil
 }
 
 // acmeServiceImpl is the ACMEService composite.
