@@ -207,14 +207,14 @@ func (s *securityService) Auth() AuthService {
 	return s.authSvc
 }
 
-func (s *securityService) Seal() SealClient                     { return s.c.Seal() }
-func (s *securityService) KMS() KMSClient                       { return s.c.KMS() }
-func (s *securityService) Secrets() SecretsClient               { return s.c.Secrets() }
-func (s *securityService) Crypto() CryptoClient                 { return s.c.Crypto() }
-func (s *securityService) Certificate() CertificateClient       { return s.c.Certificate() }
-func (s *securityService) DEK() DEKClient                       { return s.c.DEK() }
-func (s *securityService) DynamicSecrets() DynamicSecretsClient { return s.c.DynamicSecrets() }
-func (s *securityService) RBAC() RBACClient                     { return s.c.RBAC() }
+func (s *securityService) Seal() SealClient                     { return s.c.seal() }
+func (s *securityService) KMS() KMSClient                       { return s.c.kms() }
+func (s *securityService) Secrets() SecretsClient               { return s.c.secrets() }
+func (s *securityService) Crypto() CryptoClient                 { return s.c.crypto() }
+func (s *securityService) Certificate() CertificateClient       { return s.c.certificate() }
+func (s *securityService) DEK() DEKClient                       { return s.c.dek() }
+func (s *securityService) DynamicSecrets() DynamicSecretsClient { return s.c.dynamicSecrets() }
+func (s *securityService) RBAC() RBACClient                     { return s.c.rbac() }
 
 func (s *securityService) SealStore() (QRDBSealStoreClient, error) {
 	return s.c.SealStore()

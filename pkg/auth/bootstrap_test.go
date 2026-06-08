@@ -260,7 +260,7 @@ func TestBootstrap(t *testing.T) {
 		defer mockStorage.Close()
 
 		// Manually create admin user before bootstrap (no password - certificate auth)
-		_, err := authManager.CreateUser("admin", "", []string{RoleNameAdmin})
+		_, err := authManager.CreateUser("admin", []string{RoleNameAdmin})
 		require.NoError(t, err)
 
 		// Bootstrap should detect existing user and not recreate
@@ -323,7 +323,7 @@ func TestBootstrap(t *testing.T) {
 		defer mockStorage.Close()
 
 		// Create a user with the same name to cause conflict
-		_, err := authManager.CreateUser("admin", "password", []string{RoleNameReadOnly})
+		_, err := authManager.CreateUser("admin", []string{RoleNameReadOnly})
 		require.NoError(t, err)
 
 		config := &BootstrapConfig{

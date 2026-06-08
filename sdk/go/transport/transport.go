@@ -82,6 +82,12 @@ type Config struct {
 	// MaxRetryBackoff is the maximum retry backoff duration.
 	MaxRetryBackoff time.Duration
 
+	// AuthToken is an optional platform bearer token. When non-empty the
+	// transport attaches it as "Authorization: Bearer <token>" (REST header /
+	// gRPC+Unix metadata / QUIC stream auth) so the caller authenticates against
+	// the server's default-deny scope -> RBAC gate. Empty means anonymous.
+	AuthToken string
+
 	// Pool configuration (gRPC only)
 	PoolEnabled        bool
 	PoolMinSize        int

@@ -42,7 +42,7 @@ func TestPersistentRefreshToken(t *testing.T) {
 	defer pam.Close()
 
 	// Create user (password is ignored - use IAM for auth)
-	user, err := pam.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := pam.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	ctx := context.Background()

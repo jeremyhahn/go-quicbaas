@@ -54,6 +54,13 @@ type Handler struct {
 	authManager  interfaces.AuthManager
 	authzService interfaces.AuthorizationService
 
+	// tokenValidator is the qrdb-PDP authz token-validation seam. When set
+	// (RequireAuthz=true via SetAuthzEnforcement), it validates the inbound
+	// bearer against the OIDC provider — the SAME tokens REST and gRPC accept —
+	// and is preferred over authManager for building the authorization Subject.
+	// nil preserves the legacy authManager path.
+	tokenValidator AuthzTokenValidator
+
 	// Messaging service
 	msgService *messaging.PushService
 }
@@ -72,6 +79,31 @@ func WithHandlerAuthManager(auth interfaces.AuthManager) HandlerOption {
 func WithHandlerAuthorizationService(authz interfaces.AuthorizationService) HandlerOption {
 	return func(h *Handler) {
 		h.authzService = authz
+	}
+}
+
+// AuthzIdentity is the authenticated principal an AuthzTokenValidator resolves
+// from the inbound bearer token. It carries exactly the fields the qrdb policy
+// decision point and the service layer consume.
+type AuthzIdentity struct {
+	ID       string
+	Username string
+	TenantID string
+	Roles    []string
+}
+
+// AuthzTokenValidator validates an inbound bearer token and returns the
+// authenticated identity. It is satisfied by the server-layer OIDC validator
+// (the same provider REST and gRPC validate against). A failure returns a
+// non-nil error and the handler responds Unauthorized.
+type AuthzTokenValidator interface {
+	ValidateAuthzToken(ctx context.Context, token string) (*AuthzIdentity, error)
+}
+
+// WithHandlerTokenValidator installs the qrdb-PDP authz token-validation seam.
+func WithHandlerTokenValidator(v AuthzTokenValidator) HandlerOption {
+	return func(h *Handler) {
+		h.tokenValidator = v
 	}
 }
 
@@ -435,8 +467,11 @@ func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context
 		return ctx, nil
 	}
 
-	// If no auth service configured, allow all requests (backward compatibility)
-	if h.authzService == nil && h.authManager == nil {
+	// If no auth wiring is configured, allow all requests (backward
+	// compatibility). The qrdb-PDP authz token validator participates in this
+	// gate: when RequireAuthz is off none of these are wired and QUIC stays
+	// allow-all, exactly as before.
+	if h.authzService == nil && h.authManager == nil && h.tokenValidator == nil {
 		return ctx, nil
 	}
 
@@ -448,9 +483,29 @@ func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context
 		}
 	}
 
-	// Validate token
+	// Validate token. The qrdb-PDP authz validator (OIDC-backed, the same tokens
+	// REST and gRPC accept) takes precedence when installed; otherwise the legacy
+	// authManager path is used.
 	var subject interfaces.Subject
-	if h.authManager != nil {
+	if h.tokenValidator != nil {
+		id, err := h.tokenValidator.ValidateAuthzToken(ctx, req.Token)
+		if err != nil || id == nil {
+			if h.logger != nil && err != nil {
+				h.logger.WithError(err).Debug("Token validation failed")
+			}
+			return ctx, &Response{
+				Status:  StatusUnauthorized,
+				Payload: []byte("invalid token"),
+			}
+		}
+		subject = interfaces.Subject{
+			ID:            id.ID,
+			Username:      id.Username,
+			TenantID:      id.TenantID,
+			Roles:         id.Roles,
+			Authenticated: true,
+		}
+	} else if h.authManager != nil {
 		result, err := h.authManager.ValidateToken(ctx, req.Token)
 		if err != nil {
 			if h.logger != nil {
@@ -468,6 +523,7 @@ func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context
 			subject = interfaces.Subject{
 				ID:            validationResult.UserID,
 				Username:      validationResult.Username,
+				TenantID:      validationResult.TenantID,
 				Roles:         validationResult.Roles,
 				Authenticated: true,
 			}
@@ -486,9 +542,18 @@ func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context
 		}
 	}
 
-	// Perform authorization check if service is available
+	// Perform authorization check if service is available. The mapper emits
+	// qrdb-canonical (resource, action); an opcode with no registered qrdb
+	// permission is denied under the default-deny posture (an installed authz
+	// service means RequireAuthz is active).
 	if h.authzService != nil {
-		resource, action := getResourceAndAction(req.Opcode)
+		resource, action, mapped := getQRDBPermission(req.Opcode)
+		if !mapped {
+			return ctx, &Response{
+				Status:  StatusPermissionDenied,
+				Payload: []byte(fmt.Sprintf("permission denied: no qrdb permission mapping for opcode 0x%02X", req.Opcode)),
+			}
+		}
 
 		authzReq := &interfaces.AuthorizationRequest{
 			Subject:  subject,
@@ -566,6 +631,7 @@ func (h *Handler) authorize(ctx context.Context, req *Request) *Response {
 			subject = interfaces.Subject{
 				ID:            validationResult.UserID,
 				Username:      validationResult.Username,
+				TenantID:      validationResult.TenantID,
 				Roles:         validationResult.Roles,
 				Authenticated: true,
 			}
@@ -584,7 +650,7 @@ func (h *Handler) authorize(ctx context.Context, req *Request) *Response {
 		}
 	}
 
-	// Perform authorization check if service is available
+	// Perform authorization check if service is available.
 	if h.authzService != nil {
 		resource, action := getResourceAndAction(req.Opcode)
 

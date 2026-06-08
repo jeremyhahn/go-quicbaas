@@ -96,6 +96,12 @@ func DefaultConfig() *Config {
 			TLSEnabled:        true,
 			EncryptionEnabled: true,
 			SealEnabled:       false,
+			// Secure default: the REST surface enforces the default-deny scope ->
+			// RBAC gate. Non-public, non-cluster-mTLS requests must present a valid
+			// platform token carrying the required "<svc>.<verb>" scope; token-less
+			// requests are denied. Operators needing the legacy anonymous
+			// data-plane posture set require_authz=false explicitly.
+			RequireAuthz: true,
 			Authorization: AuthorizationConfig{
 				Provider: "rbac",
 				RBAC:     RBACAuthzConfig{Enabled: true, AllowAnonymous: false},
@@ -348,7 +354,10 @@ func DefaultSecurityConfig() SecurityConfig {
 		EncryptionKeyFile:   "",
 		EncryptionAlgorithm: "aes-256-gcm",
 		SealEnabled:         false,
-		Authorization:       DefaultAuthorizationConfig(),
+		// Secure default: enforce the default-deny scope -> RBAC gate. See the
+		// RequireAuthz field doc in config.go.
+		RequireAuthz:  true,
+		Authorization: DefaultAuthorizationConfig(),
 		TenantIsolation: TenantIsolationConfig{
 			Mode: TenantIsolationKeyspace,
 		},
@@ -506,6 +515,9 @@ func DevelopmentConfig() *Config {
 	cfg.Security.EncryptionEnabled = false
 	cfg.Security.Authorization.RBAC.AllowAnonymous = true
 	cfg.Security.Authorization.ABAC.Enabled = false
+	// Development runs anonymous (AllowAnonymous=true); the default-deny gate is
+	// off so local data-plane calls do not require a platform token.
+	cfg.Security.RequireAuthz = false
 
 	cfg.Logging.Level = "debug"
 	cfg.Logging.Format = "console"
@@ -706,6 +718,9 @@ func EmbeddedConfig() *Config {
 	// Disable security by default for embedded
 	cfg.Security.TLSEnabled = false
 	cfg.Security.EncryptionEnabled = false
+	// Embedded mode dispatches in-process via the anonymous path; the REST
+	// default-deny gate does not apply, so keep it off.
+	cfg.Security.RequireAuthz = false
 
 	// Disable most services
 	cfg.KMS.Enabled = false

@@ -23,6 +23,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // WebAuthnFactoryConfig holds the relying-party configuration used by the
@@ -87,6 +89,38 @@ func (e *WebAuthnFactoryConfigError) Error() string {
 		return "iam.webauthn.factory: invalid configuration"
 	}
 	return "iam.webauthn.factory: missing or invalid field: " + e.Field
+}
+
+// WebAuthnSettingsReadError reports a genuine store/read failure while
+// resolving a tenant's per-tenant WebAuthn relying-party override. It is a
+// fail-closed signal: a known-but-unreadable tenant must NOT silently fall
+// back to the global RP (an isolation leak). The factory denies the WebAuthn
+// ceremony for that tenant rather than serving it under the wrong relying
+// party. A not-found tenant is NOT this error — that case is the legitimate
+// "no per-tenant override" path and still falls back to the global RP.
+type WebAuthnSettingsReadError struct {
+	TenantID string
+	Cause    error
+}
+
+// Error implements error.
+func (e *WebAuthnSettingsReadError) Error() string {
+	if e == nil {
+		return "iam.webauthn.settings: read error"
+	}
+	msg := "iam.webauthn.settings: failed to resolve tenant override: " + e.TenantID
+	if e.Cause != nil {
+		return msg + ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the underlying cause for errors.Is and errors.As support.
+func (e *WebAuthnSettingsReadError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
 }
 
 // WebAuthnLoginSessionError reports a failure to correlate a FinishLogin
@@ -202,6 +236,12 @@ func (f *WebAuthnServiceFactory) ServiceFor(ctx context.Context, tenantID string
 // on, mirroring the DisplayName->Name / SandboxPolicy->server-default idiom.
 // When no settings provider is wired, or the tenant configured no override,
 // the global Config is returned unchanged (today's behavior).
+//
+// A genuine store/read error from the settings provider is propagated
+// (fail-closed): the WebAuthn ceremony for that tenant is denied rather than
+// silently served under the global relying party. The provider distinguishes
+// "tenant not found / no override" (-> nil, nil -> global fallback) from a
+// store read error (-> non-nil error).
 func (f *WebAuthnServiceFactory) resolveConfig(ctx context.Context, tenantID string) (WebAuthnFactoryConfig, error) {
 	cfg := f.params.Config
 	if f.params.Settings == nil {
@@ -308,16 +348,34 @@ func NewTenantManagerWebAuthnSettings(tenants TenantManager) *TenantManagerWebAu
 }
 
 // WebAuthnSettingsFor returns the tenant's WebAuthn override, or nil when the
-// tenant has none. A tenant the manager cannot resolve is treated as having no
-// override (the global RP applies) rather than failing the WebAuthn surface;
-// the manager already returns its own not-found error to callers that need it.
+// tenant has no per-tenant settings.
+//
+// It fails closed on a genuine store/read error: a known-but-unreadable
+// tenant must NOT silently fall back to the global relying party (an isolation
+// leak). The resolution distinguishes the two cases the tenant store already
+// exposes:
+//
+//   - tenant not found (dberrors.IsNotFound) -> (nil, nil): the legitimate
+//     "no per-tenant override" path; the factory uses the global RP. Existing
+//     tenants that never configured an override are unaffected.
+//   - any other GetTenant error (storage/transport/decode failure) ->
+//     (*WebAuthnSettingsReadError): the WebAuthn ceremony for that tenant is
+//     denied rather than served under the wrong relying party.
 func (a *TenantManagerWebAuthnSettings) WebAuthnSettingsFor(ctx context.Context, tenantID string) (*TenantWebAuthnConfig, error) {
 	if a == nil || a.tenants == nil {
 		return nil, nil
 	}
 	tenant, err := a.tenants.GetTenant(ctx, tenantID)
 	if err != nil {
-		return nil, nil
+		if dberrors.IsNotFound(err) {
+			// No such tenant: the legitimate not-configured case. Fall back
+			// to the global RP, preserving today's behavior.
+			return nil, nil
+		}
+		// Genuine store/read error for a tenant that may well exist: fail
+		// closed instead of leaking the global RP into another tenant's
+		// ceremony.
+		return nil, &WebAuthnSettingsReadError{TenantID: tenantID, Cause: err}
 	}
 	return tenant.Settings.WebAuthn, nil
 }

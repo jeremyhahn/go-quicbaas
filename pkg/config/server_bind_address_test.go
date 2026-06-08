@@ -59,3 +59,27 @@ func TestRequireMTLSDefaultFalse(t *testing.T) {
 	sc := &SecurityConfig{}
 	assert.False(t, sc.RequireMTLS)
 }
+
+// TestRequireAuthzSecureDefault verifies the default-deny authorization gate is
+// the secure default: a config produced by Default()/DefaultConfig() has the gate
+// ON, so the REST surface denies token-less requests to protected paths.
+func TestRequireAuthzSecureDefault(t *testing.T) {
+	assert.True(t, Default().Security.RequireAuthz)
+	assert.True(t, DefaultConfig().Security.RequireAuthz)
+	assert.True(t, DefaultSecurityConfig().RequireAuthz)
+}
+
+// TestRequireAuthzDisabledInDevAndEmbedded verifies the dev/embedded presets opt
+// out of the gate so local anonymous data-plane access keeps working.
+func TestRequireAuthzDisabledInDevAndEmbedded(t *testing.T) {
+	assert.False(t, DevelopmentConfig().Security.RequireAuthz)
+	assert.False(t, EmbeddedConfig().Security.RequireAuthz)
+}
+
+// TestRequireAuthzSettable verifies the flag can be toggled off.
+func TestRequireAuthzSettable(t *testing.T) {
+	sc := &SecurityConfig{RequireAuthz: true}
+	assert.True(t, sc.RequireAuthz)
+	sc.RequireAuthz = false
+	assert.False(t, sc.RequireAuthz)
+}

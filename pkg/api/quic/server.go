@@ -48,6 +48,11 @@ type Server struct {
 	authzService interfaces.AuthorizationService
 	authManager  interfaces.AuthManager
 
+	// authzTokenValidator is the qrdb-PDP authz token-validation seam, installed
+	// via SetAuthzEnforcement when RequireAuthz=true. nil leaves QUIC on its
+	// legacy allow-all / token-only path.
+	authzTokenValidator AuthzTokenValidator
+
 	// barrierService is the storage barrier facade used to serve OpBarrier
 	// requests. Wired by lifecycle via SetBarrierService once the qrdb SDK
 	// BarrierClient is online; nil before wiring completes.
@@ -520,6 +525,7 @@ func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger, 
 	handler := NewHandler(s.service, kmsService, secretsService, cryptoService, streamLogger,
 		WithHandlerAuthManager(s.authManager),
 		WithHandlerAuthorizationService(s.authzService),
+		WithHandlerTokenValidator(s.authzTokenValidator),
 		WithBarrierService(barrierService),
 		WithCeremonyService(ceremonyService),
 		getIAMServiceOption(s.service),
@@ -591,6 +597,17 @@ type TenantContextFunc func(ctx context.Context, cert *x509.Certificate) context
 // Lifecycle wiring invokes this with a resolver bound to the operator-
 // configured SPIFFE trust domain and home-realm directory. Safe to call
 // concurrently with request handling.
+// SetAuthzEnforcement installs the qrdb-PDP authorization decision point and its
+// OIDC-backed token validator on the QUIC server. It is called by lifecycle
+// wiring ONLY when RequireAuthz=true; when authz is off neither is installed and
+// the QUIC handler keeps its legacy allow-all / token-only behaviour. The
+// validator and authzService take effect on the next request because the
+// per-request handler reads them from the server.
+func (s *Server) SetAuthzEnforcement(validator AuthzTokenValidator, authz interfaces.AuthorizationService) {
+	s.authzTokenValidator = validator
+	s.authzService = authz
+}
+
 func (s *Server) SetTenantResolver(resolve TenantContextFunc) {
 	s.svcMu.Lock()
 	s.tenantResolver = resolve

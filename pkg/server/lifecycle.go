@@ -1691,21 +1691,36 @@ func (s *Server) startGRPCServer() error {
 	// non-iam builds (and the interceptor is a no-op pass-through), and even
 	// when wired it never rejects a call for lack of a tenant.
 	tenantResolve := s.tenantContextFunc()
+	unaryInterceptors := []ggrpc.UnaryServerInterceptor{
+		grpcapi.UnaryTimeoutInterceptor(30 * time.Second),
+		grpcapi.UnaryLoggingInterceptor(s.logger),
+		grpcapi.UnaryMetricsInterceptor(),
+		grpcapi.UnaryRecoveryInterceptor(s.logger),
+		grpcapi.UnaryTenantInterceptor(tenantResolve),
+	}
+	streamInterceptors := []ggrpc.StreamServerInterceptor{
+		grpcapi.StreamTimeoutInterceptor(5 * time.Minute),
+		grpcapi.StreamLoggingInterceptor(s.logger),
+		grpcapi.StreamMetricsInterceptor(),
+		grpcapi.StreamRecoveryInterceptor(s.logger),
+		grpcapi.StreamTenantInterceptor(tenantResolve),
+	}
+
+	// Install the qrdb-backed authorization interceptors after the tenant
+	// interceptor (so the cert-derived tenant is already on the context) when
+	// RequireAuthz=true. When authz is off the builder returns nil and the chain
+	// is unchanged — gRPC adds no authorization gate, exactly as before. The same
+	// chain backs the Unix-domain-socket gRPC listener, so this one installation
+	// covers both the gRPC and Unix transports.
+	if unaryAuthz, streamAuthz := s.grpcAuthorizationInterceptors(); unaryAuthz != nil {
+		unaryInterceptors = append(unaryInterceptors, unaryAuthz)
+		streamInterceptors = append(streamInterceptors, streamAuthz)
+		s.logger.Info("gRPC qrdb PDP authorization installed (RequireAuthz=true)")
+	}
+
 	grpcOpts = append(grpcOpts,
-		ggrpc.ChainUnaryInterceptor(
-			grpcapi.UnaryTimeoutInterceptor(30*time.Second),
-			grpcapi.UnaryLoggingInterceptor(s.logger),
-			grpcapi.UnaryMetricsInterceptor(),
-			grpcapi.UnaryRecoveryInterceptor(s.logger),
-			grpcapi.UnaryTenantInterceptor(tenantResolve),
-		),
-		ggrpc.ChainStreamInterceptor(
-			grpcapi.StreamTimeoutInterceptor(5*time.Minute),
-			grpcapi.StreamLoggingInterceptor(s.logger),
-			grpcapi.StreamMetricsInterceptor(),
-			grpcapi.StreamRecoveryInterceptor(s.logger),
-			grpcapi.StreamTenantInterceptor(tenantResolve),
-		),
+		ggrpc.ChainUnaryInterceptor(unaryInterceptors...),
+		ggrpc.ChainStreamInterceptor(streamInterceptors...),
 	)
 
 	// Create gRPC server

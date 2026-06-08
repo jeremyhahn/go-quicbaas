@@ -239,6 +239,16 @@ func (s *Server) SetAuthorizationService(authService interfaces.AuthorizationSer
 	s.tools.SetAuthorizationChecker(s.authChecker)
 }
 
+// EnableQRDBAuthzMapping switches the authorization checker to the qrdb-canonical
+// tool -> permission mapper and the default-deny posture for unmapped tools. It
+// is called by lifecycle wiring when the qrdb-backed authorization service is
+// installed under RequireAuthz=true.
+func (s *Server) EnableQRDBAuthzMapping() {
+	if s.authChecker != nil {
+		s.authChecker.EnableQRDBMapping()
+	}
+}
+
 // SetMCPAuthConfig sets the MCP authorization configuration.
 // This enables audience validation and protected resource metadata.
 func (s *Server) SetMCPAuthConfig(config *MCPAuthConfig) {

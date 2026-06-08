@@ -71,16 +71,17 @@ func (m *AppManager) RegisterApp(ctx context.Context, tenantID string, opts Regi
 
 	// Create application
 	app := &Application{
-		ClientID:       clientID,
-		ClientSecret:   hashedSecret,
-		Name:           opts.Name,
-		TenantID:       tenantID,
-		RedirectURIs:   opts.RedirectURIs,
-		ResourcePrefix: opts.ResourcePrefix,
-		GrantTypes:     opts.GrantTypes,
-		ResponseTypes:  opts.ResponseTypes,
-		Created:        now,
-		Updated:        now,
+		ClientID:        clientID,
+		ClientSecret:    hashedSecret,
+		Name:            opts.Name,
+		TenantID:        tenantID,
+		RedirectURIs:    opts.RedirectURIs,
+		ResourcePrefix:  opts.ResourcePrefix,
+		DefaultAudience: opts.DefaultAudience,
+		GrantTypes:      opts.GrantTypes,
+		ResponseTypes:   opts.ResponseTypes,
+		Created:         now,
+		Updated:         now,
 	}
 
 	// Set defaults
@@ -135,6 +136,12 @@ func (m *AppManager) UpdateApp(ctx context.Context, clientID string, opts Update
 	}
 	if opts.ResourcePrefix != nil {
 		app.ResourcePrefix = *opts.ResourcePrefix
+	}
+	if opts.DefaultAudience != nil {
+		if err := ValidateDefaultAudience(*opts.DefaultAudience); err != nil {
+			return nil, &IAMContextError{Message: "invalid default audience", Cause: err}
+		}
+		app.DefaultAudience = *opts.DefaultAudience
 	}
 	if opts.GrantTypes != nil {
 		app.GrantTypes = *opts.GrantTypes
@@ -262,6 +269,11 @@ func (m *AppManager) validateRegisterOptions(opts RegisterAppOptions) error {
 		if !isValidGrantType(gt) {
 			return &IAMMessageError{Message: "invalid grant type: " + gt}
 		}
+	}
+
+	// Validate the per-app default service audience (empty = no default).
+	if err := ValidateDefaultAudience(opts.DefaultAudience); err != nil {
+		return &IAMContextError{Message: "invalid default audience", Cause: err}
 	}
 
 	return nil

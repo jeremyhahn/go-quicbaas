@@ -381,6 +381,7 @@ func TestEntityErrorHandling(t *testing.T) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 
+		authorize(req)
 		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -417,6 +418,7 @@ func entityPut(ctx context.Context, entityType string, id uint64, data interface
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	authorize(req)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -453,6 +455,7 @@ func entityGet(ctx context.Context, entityType string, id uint64) (*entityRespon
 		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
+	authorize(req)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -493,6 +496,7 @@ func entityDelete(ctx context.Context, entityType string, id uint64) error {
 		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
+	authorize(req)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -535,6 +539,7 @@ func entityList(ctx context.Context, entityType string, limit int, cursor string
 		return nil, &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
 	}
 
+	authorize(req)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

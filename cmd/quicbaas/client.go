@@ -101,19 +101,33 @@ func buildSDKClientOptions() ([]quicbaas.Option, error) {
 		}
 	}
 
+	// Load the stored platform token once. It authenticates every network
+	// transport against the server's default-deny scope -> RBAC gate. The
+	// embedded transport dispatches in-process and needs no token.
+	authToken := loadStoredAuthToken()
+
 	// Configure transport type
 	switch transport {
 	case "rest":
 		opts = append(opts, quicbaas.WithREST())
+		if authToken != "" {
+			opts = append(opts, quicbaas.WithAuthToken(authToken))
+		}
 	case "quic":
 		opts = append(opts, quicbaas.WithQUIC())
+		if authToken != "" {
+			opts = append(opts, quicbaas.WithAuthToken(authToken))
+		}
 	case "unix":
 		opts = append(opts, quicbaas.WithUnix(address))
+		if authToken != "" {
+			opts = append(opts, quicbaas.WithAuthToken(authToken))
+		}
 	case "mcp":
 		opts = append(opts, quicbaas.WithMCP())
-		// Load stored token for MCP authentication
-		if token := loadMCPAuthToken(); token != "" {
-			opts = append(opts, quicbaas.WithMCPAuthToken(token))
+		// MCP keeps its dedicated token option for transport parity.
+		if authToken != "" {
+			opts = append(opts, quicbaas.WithMCPAuthToken(authToken))
 		}
 	case "embedded":
 		// Embedded transport uses an in-process QuicBaaS server.
@@ -135,7 +149,10 @@ func buildSDKClientOptions() ([]quicbaas.Option, error) {
 		}
 		opts = append(opts, qrdbOpt)
 	case "grpc", "":
-		// gRPC is the default transport, no option needed
+		// gRPC is the default transport, no transport option needed.
+		if authToken != "" {
+			opts = append(opts, quicbaas.WithAuthToken(authToken))
+		}
 	default:
 		return nil, &UnsupportedTransportError{Transport: transport}
 	}
@@ -247,9 +264,12 @@ func resetSDKClient() {
 	sdkClientHolder.Store(nil)
 }
 
-// loadMCPAuthToken loads the authentication token for MCP transport.
-// Returns empty string if no token is available or if loading fails.
-func loadMCPAuthToken() string {
+// loadStoredAuthToken loads the stored platform authentication token used to
+// authenticate data-plane requests across every transport (REST / gRPC / QUIC /
+// Unix / MCP) against the server's default-deny scope -> RBAC gate. It reads the
+// token from --token-file or the default token path, and returns an empty string
+// when no token is available, loading fails, or the token is expired.
+func loadStoredAuthToken() string {
 	// Determine token file path
 	tokenPath := authTokenFile
 	if tokenPath == "" {

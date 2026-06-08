@@ -18,56 +18,41 @@ func createTestAuthManager(t *testing.T) *auth.InMemoryAuthManager {
 	t.Helper()
 	log := mustCreateLogger()
 	cfg := &auth.AuthConfig{
-		Enabled:           true,
-		JWTSecret:         "test-secret-key-at-least-32-chars-long",
-		TokenTTL:          1 * time.Hour,
-		RefreshTokenTTL:   24 * time.Hour,
-		RefreshWindow:     5 * time.Minute,
-		MaxTokens:         10,
-		AllowPasswordAuth: true,
-		InsecureDevMode:   true,
+		Enabled:         true,
+		JWTSecret:       "test-secret-key-at-least-32-chars-long",
+		TokenTTL:        1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
+		RefreshWindow:   5 * time.Minute,
+		MaxTokens:       10,
 	}
 	mgr, err := auth.NewInMemoryAuthManager(cfg, log)
 	require.NoError(t, err)
 	return mgr
 }
 
+// issueTestToken creates a user record and issues a token for it via the
+// IAM-factor token path (IssueTokenForUser), mirroring how production mints
+// tokens after an mTLS / PIV / WebAuthn / OIDC factor verifies the caller.
+func issueTestToken(t *testing.T, mgr *auth.InMemoryAuthManager, username string) *auth.Token {
+	t.Helper()
+	user, err := mgr.CreateUser(username, []string{"admin"})
+	require.NoError(t, err)
+	token, err := mgr.IssueTokenForUser(context.Background(), user)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+	return token
+}
+
 // ---------------------------------------------------------------------------
 // inMemoryAuthManagerAdapter — real delegation through manager
 // ---------------------------------------------------------------------------
-
-func TestIAMAdapter_Authenticate_Success(t *testing.T) {
-	mgr := createTestAuthManager(t)
-	adapter := &inMemoryAuthManagerAdapter{manager: mgr}
-	ctx := context.Background()
-
-	_, err := mgr.CreateUser("authuser", "authpass", []string{"admin"})
-	require.NoError(t, err)
-
-	t.Run("successful authentication", func(t *testing.T) {
-		token, err := adapter.Authenticate(ctx, "authuser", pwBuffer(t, "authpass"))
-		require.NoError(t, err)
-		require.NotNil(t, token)
-		assert.NotEmpty(t, token.AccessToken)
-	})
-
-	t.Run("invalid credentials", func(t *testing.T) {
-		token, err := adapter.Authenticate(ctx, "authuser", pwBuffer(t, "wrong"))
-		require.Error(t, err)
-		assert.Nil(t, token)
-	})
-}
 
 func TestIAMAdapter_ValidateToken_Success(t *testing.T) {
 	mgr := createTestAuthManager(t)
 	adapter := &inMemoryAuthManagerAdapter{manager: mgr}
 	ctx := context.Background()
 
-	_, err := mgr.CreateUser("valuser2", "valpass2", []string{"admin"})
-	require.NoError(t, err)
-
-	token, err := adapter.Authenticate(ctx, "valuser2", pwBuffer(t, "valpass2"))
-	require.NoError(t, err)
+	token := issueTestToken(t, mgr, "valuser2")
 
 	t.Run("valid token", func(t *testing.T) {
 		result, err := adapter.ValidateToken(ctx, token.AccessToken)
@@ -87,11 +72,7 @@ func TestIAMAdapter_RefreshToken_Success(t *testing.T) {
 	adapter := &inMemoryAuthManagerAdapter{manager: mgr}
 	ctx := context.Background()
 
-	_, err := mgr.CreateUser("refuser2", "refpass2", []string{"admin"})
-	require.NoError(t, err)
-
-	token, err := adapter.Authenticate(ctx, "refuser2", pwBuffer(t, "refpass2"))
-	require.NoError(t, err)
+	token := issueTestToken(t, mgr, "refuser2")
 
 	t.Run("refresh with valid token", func(t *testing.T) {
 		newToken, err := adapter.RefreshToken(ctx, token.RefreshToken)
@@ -111,11 +92,7 @@ func TestIAMAdapter_RevokeToken_Success(t *testing.T) {
 	adapter := &inMemoryAuthManagerAdapter{manager: mgr}
 	ctx := context.Background()
 
-	_, err := mgr.CreateUser("revuser2", "revpass2", []string{"admin"})
-	require.NoError(t, err)
-
-	token, err := adapter.Authenticate(ctx, "revuser2", pwBuffer(t, "revpass2"))
-	require.NoError(t, err)
+	token := issueTestToken(t, mgr, "revuser2")
 
 	t.Run("revoke valid token succeeds", func(t *testing.T) {
 		err := adapter.RevokeToken(ctx, token.AccessToken)
@@ -123,9 +100,8 @@ func TestIAMAdapter_RevokeToken_Success(t *testing.T) {
 	})
 
 	t.Run("revoke unknown token exercises path", func(t *testing.T) {
-		// Some implementations are idempotent for revocation
+		// Revocation is idempotent for unknown tokens.
 		err := adapter.RevokeToken(ctx, "nonexistent-token")
-		// Just exercise the code path; behavior varies by implementation
 		_ = err
 	})
 }
@@ -135,14 +111,14 @@ func TestIAMAdapter_CreateUser_Success(t *testing.T) {
 	adapter := &inMemoryAuthManagerAdapter{manager: mgr}
 
 	t.Run("creates user successfully", func(t *testing.T) {
-		user, err := adapter.CreateUser("newuser2", "newpass2", []string{"reader"})
+		user, err := adapter.CreateUser("newuser2", []string{"reader"})
 		require.NoError(t, err)
 		require.NotNil(t, user)
 		assert.Equal(t, "newuser2", user.Username)
 	})
 
 	t.Run("duplicate user returns error", func(t *testing.T) {
-		_, err := adapter.CreateUser("newuser2", "anotherpass", []string{"admin"})
+		_, err := adapter.CreateUser("newuser2", []string{"admin"})
 		require.Error(t, err)
 	})
 }
@@ -151,36 +127,12 @@ func TestIAMAdapter_CreateUser_Success(t *testing.T) {
 // interfacesAuthManagerAdapter — real delegation through manager
 // ---------------------------------------------------------------------------
 
-func TestIfAdapter_Authenticate_Success(t *testing.T) {
-	mgr := createTestAuthManager(t)
-	adapter := &interfacesAuthManagerAdapter{manager: mgr}
-	ctx := context.Background()
-
-	_, err := mgr.CreateUser("ifuser2", "ifpass2", []string{"admin"})
-	require.NoError(t, err)
-
-	t.Run("successful authentication returns token", func(t *testing.T) {
-		result, err := adapter.Authenticate(ctx, "ifuser2", pwBuffer(t, "ifpass2"))
-		require.NoError(t, err)
-		require.NotNil(t, result)
-	})
-
-	t.Run("invalid credentials returns error", func(t *testing.T) {
-		_, err := adapter.Authenticate(ctx, "ifuser2", pwBuffer(t, "wrong"))
-		require.Error(t, err)
-	})
-}
-
 func TestIfAdapter_ValidateToken_Success(t *testing.T) {
 	mgr := createTestAuthManager(t)
 	adapter := &interfacesAuthManagerAdapter{manager: mgr}
 	ctx := context.Background()
 
-	_, err := mgr.CreateUser("vtuser2", "vtpass2", []string{"admin"})
-	require.NoError(t, err)
-
-	token, err := mgr.Authenticate(ctx, "vtuser2", pwBuffer(t, "vtpass2"))
-	require.NoError(t, err)
+	token := issueTestToken(t, mgr, "vtuser2")
 
 	t.Run("valid token", func(t *testing.T) {
 		result, err := adapter.ValidateToken(ctx, token.AccessToken)
@@ -199,11 +151,7 @@ func TestIfAdapter_RefreshToken_Success(t *testing.T) {
 	adapter := &interfacesAuthManagerAdapter{manager: mgr}
 	ctx := context.Background()
 
-	_, err := mgr.CreateUser("rtuser2", "rtpass2", []string{"admin"})
-	require.NoError(t, err)
-
-	token, err := mgr.Authenticate(ctx, "rtuser2", pwBuffer(t, "rtpass2"))
-	require.NoError(t, err)
+	token := issueTestToken(t, mgr, "rtuser2")
 
 	t.Run("refresh valid", func(t *testing.T) {
 		result, err := adapter.RefreshToken(ctx, token.RefreshToken)
@@ -222,11 +170,7 @@ func TestIfAdapter_RevokeToken_Success(t *testing.T) {
 	adapter := &interfacesAuthManagerAdapter{manager: mgr}
 	ctx := context.Background()
 
-	_, err := mgr.CreateUser("rvuser2", "rvpass2", []string{"admin"})
-	require.NoError(t, err)
-
-	token, err := mgr.Authenticate(ctx, "rvuser2", pwBuffer(t, "rvpass2"))
-	require.NoError(t, err)
+	token := issueTestToken(t, mgr, "rvuser2")
 
 	t.Run("revoke valid token succeeds", func(t *testing.T) {
 		err := adapter.RevokeToken(ctx, token.AccessToken)
@@ -244,13 +188,13 @@ func TestIfAdapter_CreateUser_Success(t *testing.T) {
 	adapter := &interfacesAuthManagerAdapter{manager: mgr}
 
 	t.Run("creates user successfully", func(t *testing.T) {
-		result, err := adapter.CreateUser("ifnewuser2", "ifnewpass2", []string{"reader"})
+		result, err := adapter.CreateUser("ifnewuser2", []string{"reader"})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 	})
 
 	t.Run("duplicate user returns error", func(t *testing.T) {
-		_, err := adapter.CreateUser("ifnewuser2", "pass", []string{"admin"})
+		_, err := adapter.CreateUser("ifnewuser2", []string{"admin"})
 		require.Error(t, err)
 	})
 }
@@ -260,11 +204,7 @@ func TestIfAdapter_Authorize_Success(t *testing.T) {
 	adapter := &interfacesAuthManagerAdapter{manager: mgr}
 	ctx := context.Background()
 
-	_, err := mgr.CreateUser("authzuser2", "authzpass2", []string{"admin"})
-	require.NoError(t, err)
-
-	token, err := mgr.Authenticate(ctx, "authzuser2", pwBuffer(t, "authzpass2"))
-	require.NoError(t, err)
+	token := issueTestToken(t, mgr, "authzuser2")
 
 	t.Run("authorize with valid token exercises path", func(t *testing.T) {
 		err := adapter.Authorize(ctx, token.AccessToken, "resource", "read")
@@ -297,19 +237,22 @@ func TestIfAdapter_GetRoleManager_Success(t *testing.T) {
 	})
 }
 
-func TestIfAdapter_IssueTokenForUser_ExercisePath(t *testing.T) {
+func TestIfAdapter_IssueTokenForUser_Success(t *testing.T) {
 	mgr := createTestAuthManager(t)
 	adapter := &interfacesAuthManagerAdapter{manager: mgr}
 	ctx := context.Background()
 
-	_, err := mgr.CreateUser("issueuser", "issuepass", []string{"admin"})
+	user, err := mgr.CreateUser("issueuser", []string{"admin"})
 	require.NoError(t, err)
 
-	t.Run("issue token for user exercises code path", func(t *testing.T) {
-		// IssueTokenForUser requires a UserInfo - use a basic implementation
-		// Since we don't have a concrete UserInfo, just pass nil and expect an error
+	t.Run("issues a token for a verified user", func(t *testing.T) {
+		result, err := adapter.IssueTokenForUser(ctx, user)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+	})
+
+	t.Run("nil user returns error", func(t *testing.T) {
 		_, err := adapter.IssueTokenForUser(ctx, nil)
-		// Will likely error since nil UserInfo - just exercise the path
-		_ = err
+		require.Error(t, err)
 	})
 }

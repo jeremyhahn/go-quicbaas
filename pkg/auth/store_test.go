@@ -350,7 +350,6 @@ func TestUserStore_AddUser(t *testing.T) {
 		ID:       "user1",
 		Username: "testuser",
 		Roles:    []string{"admin"},
-		password: "hashedpass",
 		Created:  time.Now(),
 	}
 

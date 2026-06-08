@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -114,7 +115,39 @@ func (t *Transport) buildDialOptions() ([]grpc.DialOption, error) {
 		}))
 	}
 
+	// Platform bearer token: attach it as "authorization: Bearer <token>"
+	// outgoing metadata on every RPC so the caller authenticates against the
+	// server's default-deny scope -> RBAC gate. Empty token leaves RPCs
+	// anonymous (no interceptor installed), preserving prior behavior.
+	if t.cfg.AuthToken != "" {
+		bearer := "Bearer " + t.cfg.AuthToken
+		opts = append(opts,
+			grpc.WithUnaryInterceptor(bearerUnaryInterceptor(bearer)),
+			grpc.WithStreamInterceptor(bearerStreamInterceptor(bearer)),
+		)
+	}
+
 	return opts, nil
+}
+
+// bearerUnaryInterceptor returns a unary client interceptor that appends the
+// given "Bearer <token>" authorization metadata to every outgoing unary RPC.
+func bearerUnaryInterceptor(bearer string) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply interface{},
+		cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", bearer)
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
+
+// bearerStreamInterceptor returns a stream client interceptor that appends the
+// given "Bearer <token>" authorization metadata to every outgoing streaming RPC.
+func bearerStreamInterceptor(bearer string) grpc.StreamClientInterceptor {
+	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn,
+		method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", bearer)
+		return streamer(ctx, desc, cc, method, opts...)
+	}
 }
 
 // getConn returns a connection from the pool or the single connection.

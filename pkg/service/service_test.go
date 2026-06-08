@@ -27,7 +27,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -689,23 +688,11 @@ type covNonCacheMgr struct{}
 func (m *covNonCacheMgr) Clear() {}
 
 type boost81MockAuthManager struct {
-	authenticateResult  interface{}
-	authenticateErr     error
 	revokeTokenErr      error
 	refreshTokenResult  interface{}
 	refreshTokenErr     error
 	validateTokenResult interface{}
 	validateTokenErr    error
-}
-
-func (m *boost81MockAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
-	if password != nil {
-		password.Destroy()
-	}
-	if m.authenticateErr != nil {
-		return nil, m.authenticateErr
-	}
-	return m.authenticateResult, nil
 }
 
 func (m *boost81MockAuthManager) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (interface{}, error) {
@@ -734,7 +721,7 @@ func (m *boost81MockAuthManager) ValidateToken(ctx context.Context, token string
 	return m.validateTokenResult, nil
 }
 
-func (m *boost81MockAuthManager) CreateUser(username, password string, roles []string) (interface{}, error) {
+func (m *boost81MockAuthManager) CreateUser(username string, roles []string) (interface{}, error) {
 	return nil, nil
 }
 
@@ -1415,29 +1402,6 @@ func TestAuthServiceImpl_ValidateToken_NilManager(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "authentication")
-}
-
-func TestAuthServiceImpl_Login_Success(t *testing.T) {
-	authMgr := &mockAuthManager{
-		authenticateFn: func(ctx context.Context, username string, password *secure.Buffer) (*auth.Token, error) {
-			if password != nil {
-				password.Destroy()
-			}
-			return &auth.Token{
-				AccessToken:  "access",
-				RefreshToken: "refresh",
-				ExpiresAt:    time.Now().Add(time.Hour),
-			}, nil
-		},
-	}
-
-	// Direct test with mockAuthManager
-	ctx := context.Background()
-	pwBuf, err := secure.NewBufferFromBytes([]byte("pass"))
-	require.NoError(t, err)
-	token, err := authMgr.Authenticate(ctx, "test", pwBuf)
-	require.NoError(t, err)
-	assert.Equal(t, "access", token.(*auth.Token).AccessToken)
 }
 
 func TestAuthServiceImpl_Logout_RevokeError(t *testing.T) {

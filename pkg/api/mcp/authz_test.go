@@ -25,8 +25,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -74,14 +72,6 @@ type MockAuthManager struct {
 	mock.Mock
 }
 
-func (m *MockAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
-	if password != nil {
-		defer password.Destroy()
-	}
-	args := m.Called(ctx, username, password)
-	return args.Get(0), args.Error(1)
-}
-
 func (m *MockAuthManager) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (interface{}, error) {
 	args := m.Called(ctx, user)
 	return args.Get(0), args.Error(1)
@@ -107,8 +97,8 @@ func (m *MockAuthManager) ValidateToken(ctx context.Context, token string) (inte
 	return args.Get(0), args.Error(1)
 }
 
-func (m *MockAuthManager) CreateUser(username, password string, roles []string) (interface{}, error) {
-	args := m.Called(username, password, roles)
+func (m *MockAuthManager) CreateUser(username string, roles []string) (interface{}, error) {
+	args := m.Called(username, roles)
 	return args.Get(0), args.Error(1)
 }
 

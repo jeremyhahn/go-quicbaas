@@ -367,8 +367,8 @@ func TestClient_Auth(t *testing.T) {
 		opts:      defaultOptions(),
 	}
 
-	auth := c.Auth()
-	auth2 := c.Auth()
+	auth := c.auth()
+	auth2 := c.auth()
 	if auth != auth2 {
 		t.Error("expected same Auth client instance")
 	}
@@ -381,8 +381,8 @@ func TestClient_Seal(t *testing.T) {
 		opts:      defaultOptions(),
 	}
 
-	seal := c.Seal()
-	seal2 := c.Seal()
+	seal := c.seal()
+	seal2 := c.seal()
 	if seal != seal2 {
 		t.Error("expected same Seal client instance")
 	}
@@ -395,8 +395,8 @@ func TestClient_KMS(t *testing.T) {
 		opts:      defaultOptions(),
 	}
 
-	kms := c.KMS()
-	kms2 := c.KMS()
+	kms := c.kms()
+	kms2 := c.kms()
 	if kms != kms2 {
 		t.Error("expected same KMS client instance")
 	}
@@ -409,8 +409,8 @@ func TestClient_Secrets(t *testing.T) {
 		opts:      defaultOptions(),
 	}
 
-	secrets := c.Secrets()
-	secrets2 := c.Secrets()
+	secrets := c.secrets()
+	secrets2 := c.secrets()
 	if secrets != secrets2 {
 		t.Error("expected same Secrets client instance")
 	}
@@ -423,8 +423,8 @@ func TestClient_Crypto(t *testing.T) {
 		opts:      defaultOptions(),
 	}
 
-	crypto := c.Crypto()
-	crypto2 := c.Crypto()
+	crypto := c.crypto()
+	crypto2 := c.crypto()
 	if crypto != crypto2 {
 		t.Error("expected same Crypto client instance")
 	}
@@ -983,7 +983,7 @@ func TestClient_Accessors_RLockPath(t *testing.T) {
 	t.Run("Auth_RLockPath", func(t *testing.T) {
 		mock := &mockAuthClientForCoverage{}
 		c := &client{transport: mockT, opts: defaultOptions(), authClient: mock}
-		result := c.Auth()
+		result := c.auth()
 		if result != AuthClient(mock) {
 			t.Error("expected pre-populated Auth client to be returned via RLock path")
 		}
@@ -992,7 +992,7 @@ func TestClient_Accessors_RLockPath(t *testing.T) {
 	t.Run("Seal_RLockPath", func(t *testing.T) {
 		mock := &mockSealClientForCoverage{}
 		c := &client{transport: mockT, opts: defaultOptions(), sealClient: mock}
-		result := c.Seal()
+		result := c.seal()
 		if result != SealClient(mock) {
 			t.Error("expected pre-populated Seal client to be returned via RLock path")
 		}
@@ -1001,7 +1001,7 @@ func TestClient_Accessors_RLockPath(t *testing.T) {
 	t.Run("KMS_RLockPath", func(t *testing.T) {
 		mock := &mockKMSClientForCoverage{}
 		c := &client{transport: mockT, opts: defaultOptions(), kmsClient: mock}
-		result := c.KMS()
+		result := c.kms()
 		if result != KMSClient(mock) {
 			t.Error("expected pre-populated KMS client to be returned via RLock path")
 		}
@@ -1010,7 +1010,7 @@ func TestClient_Accessors_RLockPath(t *testing.T) {
 	t.Run("Secrets_RLockPath", func(t *testing.T) {
 		mock := &mockSecretsClientForCoverage{}
 		c := &client{transport: mockT, opts: defaultOptions(), secretsClient: mock}
-		result := c.Secrets()
+		result := c.secrets()
 		if result != SecretsClient(mock) {
 			t.Error("expected pre-populated Secrets client to be returned via RLock path")
 		}
@@ -1019,7 +1019,7 @@ func TestClient_Accessors_RLockPath(t *testing.T) {
 	t.Run("Crypto_RLockPath", func(t *testing.T) {
 		mock := &mockCryptoClientForCoverage{}
 		c := &client{transport: mockT, opts: defaultOptions(), cryptoClient: mock}
-		result := c.Crypto()
+		result := c.crypto()
 		if result != CryptoClient(mock) {
 			t.Error("expected pre-populated Crypto client to be returned via RLock path")
 		}
@@ -1354,11 +1354,11 @@ func TestClient_ExtendedAccessors_WriteLockPath(t *testing.T) {
 
 	t.Run("RBAC_WriteLockPath", func(t *testing.T) {
 		c := &client{transport: mockT, opts: defaultOptions()}
-		result := c.RBAC()
+		result := c.rbac()
 		if result == nil {
 			t.Error("expected non-nil RBAC client after write lock initialization")
 		}
-		result2 := c.RBAC()
+		result2 := c.rbac()
 		if result != result2 {
 			t.Error("expected same RBAC client instance on repeated calls")
 		}
@@ -1366,11 +1366,11 @@ func TestClient_ExtendedAccessors_WriteLockPath(t *testing.T) {
 
 	t.Run("DynamicSecrets_WriteLockPath", func(t *testing.T) {
 		c := &client{transport: mockT, opts: defaultOptions()}
-		result := c.DynamicSecrets()
+		result := c.dynamicSecrets()
 		if result == nil {
 			t.Error("expected non-nil DynamicSecrets client after write lock initialization")
 		}
-		result2 := c.DynamicSecrets()
+		result2 := c.dynamicSecrets()
 		if result != result2 {
 			t.Error("expected same DynamicSecrets client instance on repeated calls")
 		}
@@ -1378,11 +1378,11 @@ func TestClient_ExtendedAccessors_WriteLockPath(t *testing.T) {
 
 	t.Run("Certificate_WriteLockPath", func(t *testing.T) {
 		c := &client{transport: mockT, opts: defaultOptions()}
-		result := c.Certificate()
+		result := c.certificate()
 		if result == nil {
 			t.Error("expected non-nil Certificate client after write lock initialization")
 		}
-		result2 := c.Certificate()
+		result2 := c.certificate()
 		if result != result2 {
 			t.Error("expected same Certificate client instance on repeated calls")
 		}
@@ -1464,9 +1464,9 @@ func TestClient_ExtendedAccessors_Concurrent(t *testing.T) {
 	}{
 		{"Cache", func(c *client) interface{} { return c.Cache() }},
 		{"Operations", func(c *client) interface{} { return c.Operations() }},
-		{"RBAC", func(c *client) interface{} { return c.RBAC() }},
-		{"DynamicSecrets", func(c *client) interface{} { return c.DynamicSecrets() }},
-		{"Certificate", func(c *client) interface{} { return c.Certificate() }},
+		{"RBAC", func(c *client) interface{} { return c.rbac() }},
+		{"DynamicSecrets", func(c *client) interface{} { return c.dynamicSecrets() }},
+		{"Certificate", func(c *client) interface{} { return c.certificate() }},
 		{"ObjectStorage", func(c *client) interface{} { return c.ObjectStorage() }},
 		{"ParameterStore", func(c *client) interface{} { return c.ParameterStore() }},
 		{"Embedding", func(c *client) interface{} { return c.Embedding() }},

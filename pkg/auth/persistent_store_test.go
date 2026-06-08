@@ -85,7 +85,6 @@ func TestPersistentUserStore_AddUser(t *testing.T) {
 		ID:       "user1",
 		Username: "alice",
 		Roles:    []string{RoleNameReadWrite},
-		password: "hashed_password",
 		Created:  time.Now(),
 	}
 
@@ -93,7 +92,6 @@ func TestPersistentUserStore_AddUser(t *testing.T) {
 		ID:       "user2",
 		Username: "bob",
 		Roles:    []string{RoleNameReadOnly},
-		password: "hashed_password2",
 		Created:  time.Now(),
 	}
 
@@ -112,7 +110,6 @@ func TestPersistentUserStore_AddUser(t *testing.T) {
 		ID:       "user1",
 		Username: "charlie",
 		Roles:    []string{RoleNameAdmin},
-		password: "hashed_password3",
 		Created:  time.Now(),
 	}
 	err = store.AddUser(duplicateID)
@@ -124,7 +121,6 @@ func TestPersistentUserStore_AddUser(t *testing.T) {
 		ID:       "user3",
 		Username: "alice",
 		Roles:    []string{RoleNameAdmin},
-		password: "hashed_password4",
 		Created:  time.Now(),
 	}
 	err = store.AddUser(duplicateUsername)
@@ -141,7 +137,6 @@ func TestPersistentUserStore_GetByID(t *testing.T) {
 		ID:       "user1",
 		Username: "alice",
 		Roles:    []string{RoleNameReadWrite},
-		password: "hashed_password",
 		Created:  time.Now(),
 	}
 
@@ -168,7 +163,6 @@ func TestPersistentUserStore_GetByID_FromStorage(t *testing.T) {
 		ID:       "user1",
 		Username: "alice",
 		Roles:    []string{RoleNameReadWrite},
-		password: "hashed_password",
 		Created:  time.Now(),
 	}
 
@@ -202,7 +196,6 @@ func TestPersistentUserStore_GetByUsername(t *testing.T) {
 		ID:       "user1",
 		Username: "alice",
 		Roles:    []string{RoleNameReadWrite},
-		password: "hashed_password",
 		Created:  time.Now(),
 	}
 
@@ -229,7 +222,6 @@ func TestPersistentUserStore_GetByUsername_FromStorage(t *testing.T) {
 		ID:       "user1",
 		Username: "alice",
 		Roles:    []string{RoleNameReadWrite},
-		password: "hashed_password",
 		Created:  time.Now(),
 	}
 
@@ -266,7 +258,6 @@ func TestPersistentUserStore_UpdateUser(t *testing.T) {
 		ID:       "user1",
 		Username: "alice",
 		Roles:    []string{RoleNameReadWrite},
-		password: "hashed_password",
 		Created:  time.Now(),
 	}
 
@@ -303,7 +294,6 @@ func TestPersistentUserStore_DeleteUser(t *testing.T) {
 		ID:       "user1",
 		Username: "alice",
 		Roles:    []string{RoleNameReadWrite},
-		password: "hashed_password",
 		Created:  time.Now(),
 	}
 

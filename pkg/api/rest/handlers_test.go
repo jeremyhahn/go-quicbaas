@@ -2399,13 +2399,12 @@ func newTestAuthManager(t *testing.T) *auth.AuthManager {
 	require.NoError(t, err)
 
 	mgr, err := auth.NewInMemoryAuthManager(&auth.AuthConfig{
-		Enabled:           true,
-		JWTSecret:         "test-secret-key-for-unit-tests-32chars!",
-		TokenTTL:          1 * time.Hour,
-		RefreshTokenTTL:   24 * time.Hour,
-		RefreshWindow:     5 * time.Minute,
-		MaxTokens:         10,
-		AllowPasswordAuth: true,
+		Enabled:         true,
+		JWTSecret:       "test-secret-key-for-unit-tests-32chars!",
+		TokenTTL:        1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
+		RefreshWindow:   5 * time.Minute,
+		MaxTokens:       10,
 	}, log)
 	require.NoError(t, err)
 	return mgr
@@ -2430,11 +2429,11 @@ func TestPhase4HandlerLogout_RevokeTokenSuccess(t *testing.T) {
 	authMgr := newTestAuthManager(t)
 	handler := NewPhase4Handler(nil, authMgr, nil)
 
-	// Create user and authenticate to get a token (password must be >= 12 characters)
-	_, err := authMgr.CreateUser("logoutuser", "password12345", []string{"user"})
+	// Create a user record and issue a token via the IAM-factor token path.
+	user, err := authMgr.CreateUser("logoutuser", []string{"user"})
 	require.NoError(t, err)
 
-	token, err := authMgr.Authenticate(context.Background(), "logoutuser", pwBuffer(t, "password12345"))
+	token, err := authMgr.IssueTokenForUser(context.Background(), user)
 	require.NoError(t, err)
 
 	body := fmt.Sprintf(`{"access_token":"%s"}`, token.AccessToken)
@@ -2456,11 +2455,11 @@ func TestPhase4HandlerRefreshToken_Success(t *testing.T) {
 	authMgr := newTestAuthManager(t)
 	handler := NewPhase4Handler(nil, authMgr, nil)
 
-	// Create user and authenticate to get tokens (password must be >= 12 characters)
-	_, err := authMgr.CreateUser("refreshuser", "password12345", []string{"user"})
+	// Create a user record and issue tokens via the IAM-factor token path.
+	user, err := authMgr.CreateUser("refreshuser", []string{"user"})
 	require.NoError(t, err)
 
-	token, err := authMgr.Authenticate(context.Background(), "refreshuser", pwBuffer(t, "password12345"))
+	token, err := authMgr.IssueTokenForUser(context.Background(), user)
 	require.NoError(t, err)
 
 	body := fmt.Sprintf(`{"refresh_token":"%s"}`, token.RefreshToken)
@@ -2518,7 +2517,7 @@ func TestPhase4HandlerCreateUser_DuplicateUser(t *testing.T) {
 	authMgr := newTestAuthManager(t)
 	handler := NewPhase4Handler(nil, authMgr, nil)
 
-	_, err := authMgr.CreateUser("dupuser", "password12345", []string{"user"})
+	_, err := authMgr.CreateUser("dupuser", []string{"user"})
 	require.NoError(t, err)
 
 	body := `{"username":"dupuser","password":"password45678","roles":["user"]}`
@@ -2550,9 +2549,9 @@ func TestPhase4HandlerListUsers_Success(t *testing.T) {
 	handler := NewPhase4Handler(nil, authMgr, nil)
 
 	// Create some users (passwords must be >= 12 characters)
-	_, err := authMgr.CreateUser("user1", "password1234", []string{"admin"})
+	_, err := authMgr.CreateUser("user1", []string{"admin"})
 	require.NoError(t, err)
-	_, err = authMgr.CreateUser("user2", "password2345", []string{"reader"})
+	_, err = authMgr.CreateUser("user2", []string{"reader"})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)

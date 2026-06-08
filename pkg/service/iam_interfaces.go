@@ -18,8 +18,6 @@ package service
 import (
 	"context"
 
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -145,13 +143,11 @@ type SessionManager interface {
 	RevokeAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error
 }
 
-// AuthManagerInterface defines authentication operations for password-based login.
-// This is used when AllowPasswordAuth is enabled for testing/development.
+// AuthManagerInterface defines token-management and user-record operations
+// backed by the auth manager. Identity is established by an IAM authentication
+// factor (mTLS, PIV, FIDO2/WebAuthn, OIDC); this interface issues, validates,
+// refreshes, and revokes the JWTs for the verified user.
 type AuthManagerInterface interface {
-	// Authenticate validates credentials and issues authentication tokens.
-	// Only works when AllowPasswordAuth is enabled.
-	Authenticate(ctx context.Context, username string, password *secure.Buffer) (*auth.Token, error)
-
 	// ValidateToken validates a token and returns validation information.
 	ValidateToken(ctx context.Context, token string) (*auth.TokenValidationResult, error)
 
@@ -161,11 +157,8 @@ type AuthManagerInterface interface {
 	// RevokeToken revokes an authentication token.
 	RevokeToken(ctx context.Context, token string) error
 
-	// CreateUser creates a new user with specified roles.
-	CreateUser(username, password string, roles []string) (*auth.User, error)
-
-	// IsPasswordAuthEnabled returns whether password authentication is enabled.
-	IsPasswordAuthEnabled() bool
+	// CreateUser creates a new user record with specified roles.
+	CreateUser(username string, roles []string) (*auth.User, error)
 }
 
 // IAMComponents aggregates all IAM component interfaces for the service layer.

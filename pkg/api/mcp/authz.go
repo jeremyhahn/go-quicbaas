@@ -336,6 +336,20 @@ type AuthorizationChecker struct {
 	authManager   interfaces.AuthManager
 	mcpAuthConfig *MCPAuthConfig
 	oidcProvider  interfaces.OIDCProvider
+
+	// useQRDBMapping selects the qrdb-canonical tool -> permission mapper and the
+	// default-deny posture for unmapped tools. It is enabled by lifecycle wiring
+	// when the qrdb-backed authService (the qrdbauthz bridge) is installed under
+	// RequireAuthz=true. When false the checker keeps the legacy broker-name
+	// mapper and behaviour, so a standalone RBAC authService is unaffected.
+	useQRDBMapping bool
+}
+
+// EnableQRDBMapping switches the checker to the qrdb-canonical tool -> permission
+// mapper and the default-deny posture for unmapped tools. It is called by
+// lifecycle wiring when the qrdb-backed authorization service is installed.
+func (ac *AuthorizationChecker) EnableQRDBMapping() {
+	ac.useQRDBMapping = true
 }
 
 // NewAuthorizationChecker creates a new authorization checker.
@@ -394,7 +408,7 @@ func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, tool
 
 	// Track validation state
 	var valid bool
-	var userID, username string
+	var userID, username, tenantID string
 	var roles []string
 	var validatedWithOIDC bool
 
@@ -407,6 +421,7 @@ func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, tool
 			userID = claims.GetSubject()
 			username = claims.GetName()
 			roles = claims.GetRoles()
+			tenantID = claims.GetTenantID()
 
 			// Validate audience from claims directly (more efficient)
 			if audErr := ac.validateTokenAudienceFromClaims(claims); audErr != nil {
@@ -461,6 +476,15 @@ func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, tool
 			}
 		}
 
+		// Capture the tenant from the validated result so the qrdb PDP scope
+		// rules resolve against the caller's tenant. A missing tenant claim is
+		// not an error here; tenant enforcement is not this method's job.
+		if tenantID == "" {
+			if g, ok := validationResult.(interface{ GetTenantID() string }); ok {
+				tenantID = g.GetTenantID()
+			}
+		}
+
 		if !valid {
 			return &AuthorizationError{
 				Type:    AuthErrorInvalidToken,
@@ -490,14 +514,29 @@ func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, tool
 		return nil
 	}
 
-	// Get resource and action for this tool
-	resource, action := getToolResourceAction(toolName)
+	// Get resource and action for this tool. Under the qrdb-canonical posture an
+	// unmapped tool is denied (default-deny): there is no registered qrdb
+	// permission to admit it. The legacy posture keeps the broker-name mapper.
+	var resource, action string
+	if ac.useQRDBMapping {
+		var mapped bool
+		resource, action, mapped = getToolQRDBPermission(toolName)
+		if !mapped {
+			return &AuthorizationError{
+				Type:    AuthErrorPermissionDenied,
+				Message: "permission denied: no qrdb permission mapping for tool " + toolName,
+			}
+		}
+	} else {
+		resource, action = getToolResourceAction(toolName)
+	}
 
 	// Build authorization request
 	authReq := &interfaces.AuthorizationRequest{
 		Subject: interfaces.Subject{
 			ID:            userID,
 			Username:      username,
+			TenantID:      tenantID,
 			Roles:         roles,
 			Authenticated: true,
 		},

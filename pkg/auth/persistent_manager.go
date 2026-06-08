@@ -18,8 +18,6 @@ import (
 	"context"
 	"time"
 
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
-
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -27,13 +25,26 @@ import (
 
 // PersistentAuthManager manages authentication with database-backed persistence.
 type PersistentAuthManager struct {
-	config         *AuthConfig
-	logger         *logger.Logger
-	storage        interfaces.Storage
-	roleManager    RoleManagerInterface
-	tokenStore     TokenStoreInterface
-	userStore      UserStoreInterface
-	attemptTracker *LoginAttemptTracker
+	config      *AuthConfig
+	logger      *logger.Logger
+	storage     interfaces.Storage
+	roleManager RoleManagerInterface
+	tokenStore  TokenStoreInterface
+	userStore   UserStoreInterface
+
+	// qrdbAuthz, when set, routes the authorization DECISION through qrdb's
+	// policy decision point instead of the forked roleManager. Wired at server
+	// lifecycle under the iam build tag when RequireAuthz is enabled; nil by
+	// default so existing behavior is preserved.
+	qrdbAuthz QRDBDecisionPoint
+}
+
+// SetQRDBDecisionPoint installs the qrdb-backed authorization decision point.
+// Passing it routes Authorize through qrdb's PDP; the forked roleManager is
+// retained for role validation and anonymous-access checks but no longer makes
+// the permission decision.
+func (pam *PersistentAuthManager) SetQRDBDecisionPoint(dp QRDBDecisionPoint) {
+	pam.qrdbAuthz = dp
 }
 
 // RoleManagerInterface abstracts role management for both in-memory and persistent implementations.
@@ -121,86 +132,20 @@ func NewPersistentAuthManager(cfg *AuthConfig, storage interfaces.Storage, log *
 	}
 
 	pam := &PersistentAuthManager{
-		config:         cfg,
-		logger:         log,
-		storage:        storage,
-		roleManager:    persistentRoleManager,
-		tokenStore:     persistentTokenStore,
-		userStore:      persistentUserStore,
-		attemptTracker: NewLoginAttemptTracker(cfg.MaxLoginAttempts, cfg.LoginLockoutDuration, log),
+		config:      cfg,
+		logger:      log,
+		storage:     storage,
+		roleManager: persistentRoleManager,
+		tokenStore:  persistentTokenStore,
+		userStore:   persistentUserStore,
 	}
 
 	log.Info("Persistent authentication manager initialized")
 	return pam, nil
 }
 
-// Authenticate validates credentials and issues authentication tokens.
-// Password-based authentication is disabled by default for security.
-// Set AllowPasswordAuth=true in AuthConfig to enable (for testing/dev only).
-// For production, use mTLS certificates or FIDO2/WebAuthn for authentication,
-// then call IssueTokenForUser.
-//
-// Login attempt throttling: After MaxLoginAttempts consecutive failures for a
-// given username, the account is locked for LoginLockoutDuration. The lockout
-// automatically expires after the duration elapses. A successful login resets
-// the failure counter.
-func (pam *PersistentAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (*Token, error) {
-	defer func() {
-		if password != nil {
-			password.Destroy()
-		}
-	}()
-
-	if !pam.config.Enabled {
-		return nil, api.NewAuthenticationDisabledError("auth.Authenticate")
-	}
-
-	// Check if password authentication is allowed
-	if !pam.config.AllowPasswordAuth {
-		return nil, api.NewPasswordAuthDisabledError("auth.Authenticate")
-	}
-
-	// Check if account is locked before attempting credential validation
-	if err := pam.attemptTracker.CheckLocked(username); err != nil {
-		return nil, err
-	}
-
-	// Validate credentials
-	user, err := pam.validateCredentials(ctx, username, password)
-	if err != nil {
-		// Record the failed attempt (may trigger lockout)
-		if lockErr := pam.attemptTracker.RecordFailure(username); lockErr != nil {
-			return nil, lockErr
-		}
-		return nil, err
-	}
-
-	// Successful login: reset the attempt counter
-	pam.attemptTracker.RecordSuccess(username)
-
-	// Update last authentication time
-	user.LastAuth = time.Now()
-	if err := pam.userStore.UpdateUser(user); err != nil {
-		pam.logger.WithError(err).Warn("Failed to update user last auth time")
-	}
-
-	// Generate tokens
-	token, err := pam.generateTokens(user)
-	if err != nil {
-		return nil, err
-	}
-
-	pam.logger.Infof("User authenticated: %s", username)
-	return token, nil
-}
-
-// GetAttemptTracker returns the login attempt tracker for testing and monitoring.
-func (pam *PersistentAuthManager) GetAttemptTracker() *LoginAttemptTracker {
-	return pam.attemptTracker
-}
-
 // IssueTokenForUser issues JWT tokens for a user who has been authenticated
-// via mTLS certificate, FIDO2/WebAuthn, or other IAM provider.
+// via mTLS certificate, FIDO2/WebAuthn, PIV, OIDC, or other IAM provider.
 // This should be called after successful authentication verification.
 func (pam *PersistentAuthManager) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (*Token, error) {
 	if !pam.config.Enabled {
@@ -266,7 +211,23 @@ func (pam *PersistentAuthManager) Authorize(ctx context.Context, token, resource
 		return api.NewTokenRevokedError("auth.Authorize")
 	}
 
-	// 3. Check permissions
+	// 3. Check permissions. When the qrdb decision point is installed
+	// (RequireAuthz under iam), delegate to qrdb's PDP; otherwise preserve the
+	// legacy forked roleManager decision so existing deployments and tests are
+	// unaffected.
+	if pam.qrdbAuthz != nil {
+		if err := pam.qrdbAuthz.Authorize(ctx, QRDBSubject{
+			ID:       claims.UserID,
+			TenantID: claims.TenantID,
+			Roles:    claims.Roles,
+		}, resource, action); err != nil {
+			pam.logger.Warnf("Authorization denied (qrdb PDP): user=%s resource=%s action=%s: %v",
+				claims.Username, resource, action, err)
+			return api.NewInsufficientPermissionsError("auth.Authorize")
+		}
+		return nil
+	}
+
 	if !pam.roleManager.HasPermission(claims.Roles, resource, action) {
 		pam.logger.Warnf("Authorization denied: user=%s resource=%s action=%s",
 			claims.Username, resource, action)
@@ -320,11 +281,12 @@ func (pam *PersistentAuthManager) RevokeToken(ctx context.Context, token string)
 	return nil
 }
 
-// CreateUser creates a new user with specified roles.
-// NOTE: The password parameter is only used when AllowPasswordAuth is enabled.
-// In production, password-based authentication should be disabled and
-// IAM (WebAuthn, OIDC, OAuth) should be used for authentication instead.
-func (pam *PersistentAuthManager) CreateUser(username, password string, roles []string) (*User, error) {
+// CreateUser creates a new user record with specified roles.
+//
+// The user record carries identity for token issuance and RBAC. Authentication
+// is performed by an IAM factor (mTLS, PIV, FIDO2/WebAuthn, OIDC); no password
+// is stored.
+func (pam *PersistentAuthManager) CreateUser(username string, roles []string) (*User, error) {
 	if username == "" {
 		return nil, api.NewRequiredFieldError("username")
 	}
@@ -349,18 +311,6 @@ func (pam *PersistentAuthManager) CreateUser(username, password string, roles []
 		Username: username,
 		Roles:    roles,
 		Created:  time.Now(),
-	}
-
-	// Only set password if password authentication is allowed and password is provided
-	if pam.config.AllowPasswordAuth && password != "" {
-		if err := validatePasswordLength(password); err != nil {
-			return nil, err
-		}
-		hashedPassword, err := hashPassword(password)
-		if err != nil {
-			return nil, err
-		}
-		user.password = hashedPassword
 	}
 
 	if err := pam.userStore.AddUser(user); err != nil {
@@ -414,38 +364,6 @@ func (pam *PersistentAuthManager) GetUserStore() UserStoreInterface {
 // GetTokenStore returns the token store.
 func (pam *PersistentAuthManager) GetTokenStore() TokenStoreInterface {
 	return pam.tokenStore
-}
-
-// validateCredentials validates user credentials for password-based authentication.
-// This method is only called when AllowPasswordAuth is enabled.
-func (pam *PersistentAuthManager) validateCredentials(ctx context.Context, username string, password *secure.Buffer) (*User, error) {
-	if username == "" || password == nil || password.Size() == 0 {
-		return nil, api.NewCredentialsRequiredError("auth.validateCredentials")
-	}
-
-	user := pam.userStore.GetByUsername(username)
-	if user == nil {
-		return nil, api.NewInvalidCredentialsError("auth.validateCredentials")
-	}
-
-	if user.password == "" {
-		return nil, api.NewNoPasswordSetError("auth.validateCredentials")
-	}
-
-	matched, rehashed := verifyPasswordBuffer(user.password, password)
-	if !matched {
-		return nil, api.NewInvalidCredentialsError("auth.validateCredentials")
-	}
-
-	// Transparently upgrade legacy SHA-256 hash to bcrypt on successful login
-	if rehashed != "" {
-		user.password = rehashed
-		if err := pam.userStore.UpdateUser(user); err != nil {
-			pam.logger.WithError(err).Warn("Failed to persist bcrypt password upgrade")
-		}
-	}
-
-	return user, nil
 }
 
 // generateTokens generates access and refresh tokens.

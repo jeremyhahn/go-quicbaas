@@ -73,15 +73,6 @@ func (m *mockClient) Cluster() quicbaas.ClusterClient                       { re
 func (m *mockClient) Health() quicbaas.HealthClient                         { return nil }
 func (m *mockClient) Operations() quicbaas.OperationsClient                 { return nil }
 func (m *mockClient) Cache() quicbaas.CacheClient                           { return nil }
-func (m *mockClient) Auth() quicbaas.AuthClient                             { return nil }
-func (m *mockClient) Seal() quicbaas.SealClient                             { return nil }
-func (m *mockClient) KMS() quicbaas.KMSClient                               { return nil }
-func (m *mockClient) Secrets() quicbaas.SecretsClient                       { return nil }
-func (m *mockClient) Crypto() quicbaas.CryptoClient                         { return nil }
-func (m *mockClient) RBAC() quicbaas.RBACClient                             { return nil }
-func (m *mockClient) DynamicSecrets() quicbaas.DynamicSecretsClient         { return nil }
-func (m *mockClient) Certificate() quicbaas.CertificateClient               { return nil }
-func (m *mockClient) DEK() quicbaas.DEKClient                               { return nil }
 func (m *mockClient) IAM() quicbaas.IAMClient                               { return nil }
 func (m *mockClient) Vector() quicbaas.VectorClient                         { return nil }
 func (m *mockClient) TimeSeries() quicbaas.TimeSeriesClient                 { return nil }
@@ -609,7 +600,7 @@ func TestBuildSDKClientOptions_TLSCA(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
-// buildSDKClientOptions: MCP transport with loadMCPAuthToken
+// buildSDKClientOptions: MCP transport with loadStoredAuthToken
 // --------------------------------------------------------------------------
 
 func TestBuildSDKClientOptions_MCPWithToken(t *testing.T) {
@@ -624,7 +615,7 @@ func TestBuildSDKClientOptions_MCPWithToken(t *testing.T) {
 
 	transport = "mcp"
 	globalTimeout = 5 * time.Second
-	// Set to non-existent path so loadMCPAuthToken returns empty
+	// Set to non-existent path so loadStoredAuthToken returns empty
 	authTokenFile = "/tmp/nonexistent-test-token.json"
 
 	opts, err := buildSDKClientOptions()
@@ -633,7 +624,71 @@ func TestBuildSDKClientOptions_MCPWithToken(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
-// loadMCPAuthToken: error paths
+// buildSDKClientOptions: network transports attach the stored platform token
+// so data-plane calls authenticate against the default-deny scope -> RBAC gate.
+// --------------------------------------------------------------------------
+
+// writeValidTokenFile writes a well-formed, non-expired token file and returns
+// its path. It is used to prove the network transports pick up the stored token.
+func writeValidTokenFile(t *testing.T) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	tokenPath := filepath.Join(tmpDir, "token.json")
+	future := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
+	content := `{"access_token":"test-platform-token","token_type":"bearer","expires_at":"` + future + `"}`
+	require.NoError(t, os.WriteFile(tokenPath, []byte(content), 0600))
+	return tokenPath
+}
+
+func TestBuildSDKClientOptions_NetworkTransportsAttachToken(t *testing.T) {
+	savedTransport := transport
+	savedTimeout := globalTimeout
+	savedTokenFile := authTokenFile
+	savedAddress := address
+	savedDataDir := dataDir
+	defer func() {
+		transport = savedTransport
+		globalTimeout = savedTimeout
+		authTokenFile = savedTokenFile
+		address = savedAddress
+		dataDir = savedDataDir
+	}()
+
+	globalTimeout = 5 * time.Second
+	dataDir = t.TempDir() // no auto-discovered CA, keeps TLS option deterministic
+
+	for _, tc := range []struct {
+		name      string
+		transport string
+		address   string
+	}{
+		{"rest", "rest", "localhost:8080"},
+		{"quic", "quic", "localhost:8080"},
+		{"unix", "unix", "/tmp/quicbaas-test.sock"},
+		{"grpc", "grpc", "localhost:8080"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport = tc.transport
+			address = tc.address
+
+			// Baseline: no token file -> no WithAuthToken option appended.
+			authTokenFile = filepath.Join(t.TempDir(), "missing.json")
+			withoutToken, err := buildSDKClientOptions()
+			require.NoError(t, err)
+
+			// With a valid token file -> exactly one extra option (WithAuthToken).
+			authTokenFile = writeValidTokenFile(t)
+			withToken, err := buildSDKClientOptions()
+			require.NoError(t, err)
+
+			assert.Equal(t, len(withoutToken)+1, len(withToken),
+				"%s transport must append the stored platform token", tc.name)
+		})
+	}
+}
+
+// --------------------------------------------------------------------------
+// loadStoredAuthToken: error paths
 // --------------------------------------------------------------------------
 
 func TestLoadMCPAuthToken_ExplicitPath_NotExist(t *testing.T) {
@@ -642,7 +697,7 @@ func TestLoadMCPAuthToken_ExplicitPath_NotExist(t *testing.T) {
 
 	authTokenFile = "/tmp/nonexistent-quicbaas-test-token-xyz.json"
 
-	token := loadMCPAuthToken()
+	token := loadStoredAuthToken()
 	assert.Empty(t, token, "should return empty for non-existent file")
 }
 
@@ -657,7 +712,7 @@ func TestLoadMCPAuthToken_InvalidTokenFile(t *testing.T) {
 
 	authTokenFile = tokenPath
 
-	token := loadMCPAuthToken()
+	token := loadStoredAuthToken()
 	assert.Empty(t, token, "should return empty for invalid token file")
 }
 
@@ -674,7 +729,7 @@ func TestLoadMCPAuthToken_ExpiredTokenFile(t *testing.T) {
 
 	authTokenFile = tokenPath
 
-	token := loadMCPAuthToken()
+	token := loadStoredAuthToken()
 	assert.Empty(t, token, "should return empty for expired token")
 }
 

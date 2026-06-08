@@ -1169,6 +1169,15 @@ type SecurityConfig struct {
 	// a local file backend will be created automatically.
 	EncryptionKeyFile string `mapstructure:"encryption_key_file"`
 
+	// RequireAuthz enables the default-deny scope -> RBAC authorization gate on
+	// the REST surface. When false (the default) the REST server keeps its
+	// existing token-binding enforcement posture and anonymous requests to the
+	// data plane pass through unchanged. When true, non-public, non-cluster-mTLS
+	// REST requests must present a valid platform token carrying the required
+	// scope; token-less requests are denied. Flipping this on requires clients to
+	// authenticate and is intended to be enabled only after the fleet has migrated.
+	RequireAuthz bool `mapstructure:"require_authz"`
+
 	// Authorization configures the unified authorization system.
 	Authorization AuthorizationConfig `mapstructure:"authorization"`
 

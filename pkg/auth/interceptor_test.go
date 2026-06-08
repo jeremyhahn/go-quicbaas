@@ -41,7 +41,7 @@ func TestUnaryAuthInterceptor(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	// Get auth token via generateTokens
@@ -153,7 +153,7 @@ func TestUnaryAuthInterceptorWithReadOnlyUser(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create readonly user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("readonly", "", []string{RoleNameReadOnly})
+	user, err := am.CreateUser("readonly", []string{RoleNameReadOnly})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
@@ -223,7 +223,7 @@ func TestStreamAuthInterceptor(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
@@ -544,7 +544,7 @@ func TestUnaryAuthInterceptorWithAuthorizationService(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user with readwrite role and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	// Get auth token via generateTokens
@@ -648,7 +648,7 @@ func TestStreamAuthInterceptorWithAuthorizationService(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
@@ -819,7 +819,7 @@ func TestPermissionDeniedWithAuthzService(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create readonly user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("readonly", "", []string{RoleNameReadOnly})
+	user, err := am.CreateUser("readonly", []string{RoleNameReadOnly})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
@@ -867,7 +867,7 @@ func TestBackwardCompatibility(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
@@ -904,7 +904,7 @@ func TestBuildSubjectFromToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite, RoleNameAdmin})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite, RoleNameAdmin})
 	require.NoError(t, err)
 
 	ctx := context.Background()

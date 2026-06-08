@@ -113,13 +113,13 @@ func TestPublicKeyTypeName_UnknownReturnsLabel(t *testing.T) {
 
 func TestClient_DEK_NonNil_AndCached(t *testing.T) {
 	c := &client{transport: &mockTransport{}, opts: defaultOptions()}
-	first := c.DEK()
+	first := c.dek()
 	if first == nil {
-		t.Fatal("DEK() returned nil")
+		t.Fatal("dek() returned nil")
 	}
-	second := c.DEK()
+	second := c.dek()
 	if first != second {
-		t.Error("DEK() should return the same instance across calls")
+		t.Error("dek() should return the same instance across calls")
 	}
 }
 
@@ -142,8 +142,8 @@ func TestClient_Orchestrator_NonNil_AndCached(t *testing.T) {
 func TestSecurityService_DEK_DelegatesToClient(t *testing.T) {
 	c := &client{transport: &mockTransport{}, opts: defaultOptions()}
 	svc := c.Security()
-	if svc.DEK() != c.DEK() {
-		t.Error("Security().DEK() should delegate to client.DEK()")
+	if svc.DEK() != c.dek() {
+		t.Error("Security().DEK() should delegate to client.dek()")
 	}
 }
 

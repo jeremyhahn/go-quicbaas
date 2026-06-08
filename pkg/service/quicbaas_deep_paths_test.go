@@ -399,7 +399,7 @@ func TestCreateUser_EmptyUsername(t *testing.T) {
 func TestCreateUser_AuthManagerError(t *testing.T) {
 	log := createTestLogger(t)
 	svc := &quicBaaS{logger: log, authManager: &mockAuthManager{
-		createUserFn: func(username, password string, roles []string) (*auth.User, error) {
+		createUserFn: func(username string, roles []string) (*auth.User, error) {
 			return nil, stderrors.New("user already exists")
 		},
 	}}
@@ -436,7 +436,7 @@ func TestCreateUser_TypeAssertionFailure(t *testing.T) {
 func TestCreateUser_Success(t *testing.T) {
 	log := createTestLogger(t)
 	svc := &quicBaaS{logger: log, authManager: &mockAuthManager{
-		createUserFn: func(username, password string, roles []string) (*auth.User, error) {
+		createUserFn: func(username string, roles []string) (*auth.User, error) {
 			return &auth.User{
 				ID:       "user-123",
 				Username: username,

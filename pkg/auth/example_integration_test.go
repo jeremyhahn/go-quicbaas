@@ -57,7 +57,7 @@ func Example_basicTokenGeneration() {
 	}
 
 	// Create a user with readwrite role (password is ignored)
-	user, err := authManager.CreateUser("alice", "", []string{auth.RoleNameReadWrite})
+	user, err := authManager.CreateUser("alice", []string{auth.RoleNameReadWrite})
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -122,7 +122,7 @@ func Example_customRole() {
 	roleManager.AddRole(metricsRole)
 
 	// Create user with custom role (password is ignored)
-	user, _ := authManager.CreateUser("metrics-user", "", []string{"metrics-viewer"})
+	user, _ := authManager.CreateUser("metrics-user", []string{"metrics-viewer"})
 	fmt.Printf("Created user: %s\n", user.Username)
 	fmt.Printf("User has role: metrics-viewer\n")
 
@@ -151,7 +151,7 @@ func Example_tokenRefresh() {
 	authManager, _ := auth.NewInMemoryAuthManager(config, log)
 
 	// Create user (password is ignored)
-	authManager.CreateUser("bob", "", []string{auth.RoleNameReadOnly})
+	authManager.CreateUser("bob", []string{auth.RoleNameReadOnly})
 
 	// In production, tokens are obtained via IAM authentication.
 	// For this example, we demonstrate that refresh tokens work.
@@ -186,8 +186,7 @@ func Example_multipleRoles() {
 	authManager, _ := auth.NewInMemoryAuthManager(config, log)
 
 	// Create user with multiple roles (password is ignored)
-	user, _ := authManager.CreateUser("charlie", "",
-		[]string{auth.RoleNameReadOnly, auth.RoleNameReadWrite})
+	user, _ := authManager.CreateUser("charlie", []string{auth.RoleNameReadOnly, auth.RoleNameReadWrite})
 
 	fmt.Printf("User has roles: %v\n", user.Roles)
 	fmt.Println("User permissions combine from all assigned roles")

@@ -44,8 +44,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
-
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 type iamComponents struct {
@@ -72,13 +70,6 @@ type inMemoryAuthManagerAdapter struct {
 	manager *auth.InMemoryAuthManager
 }
 
-// Authenticate validates credentials and issues authentication tokens.
-// Ownership of password transfers to the underlying manager, which
-// destroys the buffer on every return path.
-func (a *inMemoryAuthManagerAdapter) Authenticate(ctx context.Context, username string, password *secure.Buffer) (*auth.Token, error) {
-	return a.manager.Authenticate(ctx, username, password)
-}
-
 // ValidateToken validates a token and returns validation information.
 func (a *inMemoryAuthManagerAdapter) ValidateToken(ctx context.Context, token string) (*auth.TokenValidationResult, error) {
 	return a.manager.ValidateToken(ctx, token)
@@ -95,13 +86,8 @@ func (a *inMemoryAuthManagerAdapter) RevokeToken(ctx context.Context, token stri
 }
 
 // CreateUser creates a new user with specified roles.
-func (a *inMemoryAuthManagerAdapter) CreateUser(username, password string, roles []string) (*auth.User, error) {
-	return a.manager.CreateUser(username, password, roles)
-}
-
-// IsPasswordAuthEnabled returns whether password authentication is enabled.
-func (a *inMemoryAuthManagerAdapter) IsPasswordAuthEnabled() bool {
-	return true // The manager already validates this internally in Authenticate
+func (a *inMemoryAuthManagerAdapter) CreateUser(username string, roles []string) (*auth.User, error) {
+	return a.manager.CreateUser(username, roles)
 }
 
 // interfacesAuthManagerAdapter wraps InMemoryAuthManager to implement interfaces.AuthManager.
@@ -112,13 +98,6 @@ type interfacesAuthManagerAdapter struct {
 
 // Compile-time check that interfacesAuthManagerAdapter implements interfaces.AuthManager.
 var _ interfaces.AuthManager = (*interfacesAuthManagerAdapter)(nil)
-
-// Authenticate validates credentials and issues authentication tokens.
-// Ownership of password transfers to the underlying manager, which
-// destroys the buffer on every return path.
-func (a *interfacesAuthManagerAdapter) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
-	return a.manager.Authenticate(ctx, username, password)
-}
 
 // IssueTokenForUser issues JWT tokens for a user who has been authenticated.
 func (a *interfacesAuthManagerAdapter) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (interface{}, error) {
@@ -146,8 +125,8 @@ func (a *interfacesAuthManagerAdapter) ValidateToken(ctx context.Context, token 
 }
 
 // CreateUser creates a new user with specified roles.
-func (a *interfacesAuthManagerAdapter) CreateUser(username, password string, roles []string) (interface{}, error) {
-	return a.manager.CreateUser(username, password, roles)
+func (a *interfacesAuthManagerAdapter) CreateUser(username string, roles []string) (interface{}, error) {
+	return a.manager.CreateUser(username, roles)
 }
 
 // GetUserStore returns the user store for user management operations.
@@ -338,11 +317,24 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		}
 	}
 
+	// Route role persistence to qrdb's canonical RoleServicer (via the SDK
+	// RoleClient on the platform shard) so the broker and the qrdb policy
+	// decision point share ONE role ID space: a role the broker creates is the
+	// same object the PDP resolves to permissions, and a token's role names are
+	// recognized by the PDP. The broker-supplied string role ID is passed
+	// straight through to qrdb (the deterministic-ID seam), so a later
+	// Get/Update/Delete by that SAME id resolves the same record. Group
+	// persistence is NOT routed here — qrdb has no Group type — so it stays on
+	// the BackendStorage. This mirrors the KVStore-seam tenant routing: the
+	// IdentityStore needs no interface change, it just sees a different
+	// RoleStorage.
+	roleStorage := iam.NewQRDBRoleStorage(newPlatformRoleClientResolver(s.qrdbClient))
+
 	// Create identity store with storage backends
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
 		UserStorage:  backendStorage,
 		GroupStorage: backendStorage,
-		RoleStorage:  backendStorage,
+		RoleStorage:  roleStorage,
 		Tenants:      tenantManager,
 	})
 
@@ -557,17 +549,6 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		}
 	}
 
-	// Seed the well-known "admin" role in the default tenant. The bootstrap
-	// admin user is created with role label "admin" but the IAM Role store
-	// is a separate index — without a corresponding Role row, the Roles tab
-	// in the UI shows "No roles defined" while the Users tab shows the
-	// admin role. Creating the role here keeps the two surfaces consistent
-	// and gives operators a target object to extend with permissions.
-	// Idempotent: a duplicate role creation is swallowed.
-	if err := ensureAdminRole(tenantCtx, identityStore, "default"); err != nil {
-		s.logger.WithError(err).Warn("Failed to seed default admin role; Roles tab may show empty until a role is created")
-	}
-
 	// Bootstrap the orchestrator's own OAuth2 client for outbound daemon
 	// RPCs. The orchestrator presents a JWT minted from these credentials
 	// to every daemon it dispatches work to. Stored on the Server so the
@@ -602,40 +583,6 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		inviteStore:       inviteStore,
 	}
 
-	// Configure password-based authentication if enabled
-	if s.config.Auth.AllowPasswordAuth || s.config.Auth.InsecureDevMode {
-		username, password := s.resolveBootstrapCredentials()
-		if err := validateBootstrapCredentials(username, password, s.config.Auth.InsecureDevMode); err != nil {
-			return nil, err
-		}
-
-		authCfg := &auth.AuthConfig{
-			Enabled:              true,
-			JWTSecret:            s.config.Auth.JWTSecret,
-			JWTSigningKeyID:      s.config.Auth.JWTSigningKeyID,
-			JWTSigningAlgorithm:  s.config.Auth.JWTSigningAlgorithm,
-			TokenTTL:             s.config.Auth.TokenTTL,
-			RefreshTokenTTL:      s.config.Auth.RefreshTokenTTL,
-			AllowPasswordAuth:    s.config.Auth.AllowPasswordAuth,
-			InsecureDevMode:      s.config.Auth.InsecureDevMode,
-			MaxLoginAttempts:     s.config.Auth.MaxLoginAttempts,
-			LoginLockoutDuration: s.config.Auth.LoginLockoutDuration,
-		}
-
-		authMgr, err := auth.NewInMemoryAuthManager(authCfg, s.logger)
-		if err != nil {
-			return nil, &IAMComponentInitError{Component: "auth manager", Cause: err}
-		}
-
-		// Create bootstrap admin user
-		if _, err := authMgr.CreateUser(username, password, []string{"admin"}); err != nil {
-			return nil, &IAMComponentInitError{Component: "bootstrap admin user", Cause: err}
-		}
-
-		components.authManager = &inMemoryAuthManagerAdapter{manager: authMgr}
-		s.logger.Info("Password authentication enabled with bootstrap admin user")
-	}
-
 	// (Default tenant was created earlier, before the orchestrator
 	// daemon-client bootstrap that depends on it.)
 
@@ -646,20 +593,22 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// seal barrier is in use — access control and storage encryption
 	// are independent concerns.
 	//
-	// The bootstrap is skipped only when another path already provisions
-	// the admin: AllowPasswordAuth (legacy password admin), InsecureDevMode
-	// (dev-mode password admin), or BootstrapAdminPIVCertPath (non-interactive
-	// PIV pre-provisioning). The PIV path is independent of the others and
-	// always runs when configured.
-	pivBootstrap := s.config.Auth.BootstrapAdminPIVCertPath != ""
-	skipBootstrap := (s.config.Auth.AllowPasswordAuth ||
-		s.config.Auth.InsecureDevMode) && !pivBootstrap
-	if !skipBootstrap {
-		if bootstrapErr := s.firstBootBootstrap(context.Background(), components); bootstrapErr != nil {
-			// Non-fatal: log the error but do not abort the server. The operator
-			// can fix the cause (e.g., corrupt storage) and restart.
-			s.logger.WithError(bootstrapErr).Warn("First-boot bootstrap failed — no admin credential will be created this boot")
-		}
+	// Password-based admin provisioning has been removed; admin enrollment
+	// is cert-based (mTLS / PIV / WebAuthn). First-boot therefore always
+	// runs, including when BootstrapAdminPIVCertPath is configured for
+	// non-interactive PIV pre-provisioning.
+	if bootstrapErr := s.firstBootBootstrap(context.Background(), components); bootstrapErr != nil {
+		// Non-fatal: log the error but do not abort the server. The operator
+		// can fix the cause (e.g., corrupt storage) and restart.
+		s.logger.WithError(bootstrapErr).Warn("First-boot bootstrap failed — no admin credential will be created this boot")
+	}
+
+	// Reconcile against qrdb's canonical admin role (created by first-boot in
+	// the system tenant) rather than seeding a parallel broker admin. This is a
+	// no-op on the happy path; a missing role is logged so operators know a
+	// fresh first-boot is required before admin authorization resolves.
+	if err := reconcileAdminRole(context.Background(), identityStore); err != nil {
+		s.logger.WithError(err).Warn("Canonical admin role not reconciled; admin authorization may be unavailable until first-boot completes")
 	}
 
 	s.logger.Info("IAM components initialized successfully")
@@ -1358,48 +1307,51 @@ func readOrchestratorDaemonClient(path string) (*OrchestratorDaemonClient, error
 	return &c, nil
 }
 
-// AdminRoleID is the well-known ID assigned to the seed "admin" role in
-// every tenant. Using a stable ID lets ensureAdminRole detect the existing
-// row on restart with a single GetRole call instead of a full ListRoles
-// scan, and makes the role addressable from CLI / API without a lookup.
-const AdminRoleID = "admin"
+// AdminTenantID is the tenant that owns the canonical admin role and the
+// bootstrap admin user. qrdb's first-boot seeds the built-in roles and the
+// admin user in the system tenant; the broker reconciles against that single
+// source of truth rather than minting a parallel admin in another tenant.
+var AdminTenantID = qrdbsdk.SystemTenantID
 
-// ensureAdminRole seeds the canonical "admin" role inside the given tenant
-// when one does not already exist. The first-boot bootstrap creates the
-// admin user with the role label "admin" — without a matching Role row in
-// the IdentityStore the IAM Roles tab renders an empty list while the
-// Users tab continues to show the admin role string. Seeding the row keeps
-// both surfaces in sync and gives operators a target object to extend
-// with permissions.
+// AdminRoleID is the deterministic, cluster-stable ID of qrdb's canonical
+// "admin" role in the system tenant. It is NOT a broker-invented identifier:
+// it resolves to the exact role object qrdb's first-boot creates and that the
+// qrdb policy decision point resolves to admin permissions. Using qrdb's
+// deterministic ID means a token carrying the admin role binds to the same
+// role the PDP authorizes against — there is one admin role across the stack,
+// never two.
+var AdminRoleID = qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
+
+// reconcileAdminRole verifies that qrdb's canonical "admin" role is present and
+// addressable in the system tenant after first-boot has run. qrdb's first-boot
+// (qrdbsdk.FirstBootInitialize) is the SOLE creator of the built-in admin role;
+// this function does NOT mint a second one. It exists so a restart against an
+// already-bootstrapped data dir, or a deployment whose first-boot was skipped,
+// still surfaces a clear error when the canonical admin role is missing rather
+// than silently rendering an empty Roles tab.
 //
-// Idempotent: the function is a no-op when the role already exists. Only
-// genuine creation failures (e.g. the underlying storage rejecting the
-// row) bubble up to the caller.
-func ensureAdminRole(ctx context.Context, identityStore *iam.IdentityStore, tenantID string) error {
+// Idempotent and read-only on the happy path: when the admin role already
+// exists (the normal case) the function is a no-op. A missing role is returned
+// as a typed not-found error so the caller can log and re-bootstrap. The role is
+// resolved by qrdb's deterministic admin ID.
+func reconcileAdminRole(ctx context.Context, identityStore *iam.IdentityStore) error {
 	if identityStore == nil {
 		return nil
 	}
-	if _, err := identityStore.GetRole(ctx, tenantID, AdminRoleID); err == nil {
+	_, err := identityStore.GetRole(ctx, AdminTenantID, AdminRoleID)
+	if err == nil {
 		return nil
 	}
-	_, err := identityStore.CreateRole(ctx, tenantID, iam.CreateRoleOptions{
-		ID:          AdminRoleID,
-		Name:        "admin",
-		Description: "Built-in administrator role with full access. Granted to the bootstrap admin user on first boot.",
-		Permissions: []string{"*"},
-	})
-	if err != nil {
-		// Swallow the duplicate-creation race so a concurrent restart
-		// against the same data dir does not surface a spurious warning.
-		if errors.Is(err, iam.ErrRoleAlreadyExists) {
-			return nil
-		}
-		if strings.Contains(err.Error(), "already exists") {
-			return nil
-		}
-		return err
+	if errors.Is(err, iam.ErrRoleNotFound) {
+		// qrdb's first-boot is the sole creator of the admin role under its
+		// deterministic id; a not-found here means the canonical admin role is
+		// genuinely absent (first-boot skipped or storage wiped).
+		return ErrAdminRoleMissing
 	}
-	return nil
+	// A transport/storage error (e.g. sealed barrier) is not a missing role —
+	// surface it verbatim so the caller does not mistake it for a
+	// reconciliation gap.
+	return err
 }
 
 // writeOrchestratorDaemonClient persists the central's daemon-dispatch

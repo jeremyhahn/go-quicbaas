@@ -422,6 +422,13 @@ var ErrFirstBootBootstrap = errors.New("first-boot bootstrap failed")
 // is required.
 var ErrBootstrapAdminMissing = errors.New("bootstrap admin user not found")
 
+// ErrAdminRoleMissing is returned by reconcileAdminRole when qrdb's canonical
+// admin role is absent from the system tenant after first-boot. qrdb's
+// first-boot is the sole creator of the built-in admin role; this error means
+// first-boot was skipped or the role store was wiped, and a fresh first-boot is
+// required before admin authorization can resolve.
+var ErrAdminRoleMissing = errors.New("canonical admin role not found in system tenant")
+
 // FirstBootBootstrapError captures the operation that failed during the
 // first-boot admin bootstrap flow.
 type FirstBootBootstrapError struct {

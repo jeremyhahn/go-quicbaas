@@ -682,3 +682,27 @@ func TestTransportTypeConstants(t *testing.T) {
 		t.Errorf("expected TransportEmbedded=4, got %d", TransportEmbedded)
 	}
 }
+
+// TestWithAuthToken verifies the transport-agnostic platform token option sets
+// the shared authToken field that every network transport reads.
+func TestWithAuthToken(t *testing.T) {
+	t.Run("sets token", func(t *testing.T) {
+		opts := defaultOptions()
+		if err := WithAuthToken("platform-token-abc")(opts); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if opts.authToken != "platform-token-abc" {
+			t.Errorf("expected authToken to be set, got %q", opts.authToken)
+		}
+	})
+
+	t.Run("empty token is allowed (anonymous)", func(t *testing.T) {
+		opts := defaultOptions()
+		if err := WithAuthToken("")(opts); err != nil {
+			t.Fatalf("unexpected error for empty token: %v", err)
+		}
+		if opts.authToken != "" {
+			t.Errorf("expected empty authToken, got %q", opts.authToken)
+		}
+	})
+}

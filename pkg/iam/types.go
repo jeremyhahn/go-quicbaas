@@ -316,6 +316,15 @@ type Application struct {
 	// ResourcePrefix is the resource namespace for this application
 	ResourcePrefix string `json:"resource_prefix,omitempty" yaml:"resource_prefix,omitempty"`
 
+	// DefaultAudience is the per-app default service audience stamped into a
+	// token's `aud` claim when the client does NOT send an RFC 8707 `resource`
+	// indicator. It lets downstream resource servers configured for a fixed
+	// service audience (e.g. "api://orchestrator") accept tokens from clients
+	// that never send a resource indicator. A client-supplied `resource`
+	// always overrides this default. Empty means no default (the audience is
+	// built from the client/issuer only — fully backward compatible).
+	DefaultAudience string `json:"default_audience,omitempty" yaml:"default_audience,omitempty"`
+
 	// GrantTypes is the list of allowed OAuth grant types
 	GrantTypes []string `json:"grant_types" yaml:"grant_types"`
 

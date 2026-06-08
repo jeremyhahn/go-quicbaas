@@ -558,6 +558,12 @@ type RegisterAppOptions struct {
 	// ResourcePrefix is the resource namespace for this app
 	ResourcePrefix string
 
+	// DefaultAudience is the per-app default service audience stamped into the
+	// token `aud` claim when the client sends no RFC 8707 `resource` indicator.
+	// Empty means no default (backward compatible). Validated as an absolute
+	// "api://<service>" or https URI.
+	DefaultAudience string
+
 	// GrantTypes is the list of allowed grant types
 	GrantTypes []string
 
@@ -578,6 +584,10 @@ type UpdateAppOptions struct {
 
 	// ResourcePrefix is the resource namespace
 	ResourcePrefix *string
+
+	// DefaultAudience updates the per-app default service audience. A pointer to
+	// the empty string clears the default; nil leaves it unchanged.
+	DefaultAudience *string
 
 	// GrantTypes is the list of allowed grant types
 	GrantTypes *[]string

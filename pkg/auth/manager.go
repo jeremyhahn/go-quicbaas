@@ -12,8 +12,9 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package auth provides JWT-based authentication and role-based access control (RBAC)
-// for QuicBaaS. It includes token generation, validation, user authentication, and
-// integration with external authentication providers (LDAP, OAuth).
+// for QuicBaaS. It includes token generation, validation, and integration with the
+// IAM authentication factors (mTLS, PIV, FIDO2/WebAuthn, OIDC) that issue tokens via
+// IssueTokenForUser after a factor has verified the caller's identity.
 //
 // JWT signing supports two modes:
 //   - Asymmetric (ES256/RS256 via KMS): Set JWTSigningKeyID in AuthConfig. This is
@@ -33,36 +34,39 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
-	"golang.org/x/crypto/bcrypt"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
-// MinPasswordLength is the minimum number of characters required for passwords
-// when password-based authentication is enabled.
-const MinPasswordLength = 12
-
-// bcryptPrefix is the standard prefix for bcrypt hashes, used to distinguish
-// bcrypt hashes from legacy SHA-256 hex hashes during migration.
-const bcryptPrefix = "$2"
-
 // InMemoryAuthManager manages authentication and authorization for QuicBaaS
 // This is the in-memory (ephemeral) implementation - users are lost on restart.
 // For persistent auth, use PersistentAuthManager via NewAuthManager().
 type InMemoryAuthManager struct {
-	config         *AuthConfig
-	logger         *logger.Logger
-	roleManager    *RoleManager
-	tokenStore     *TokenStore
-	userStore      *UserStore
-	attemptTracker *LoginAttemptTracker
+	config      *AuthConfig
+	logger      *logger.Logger
+	roleManager *RoleManager
+	tokenStore  *TokenStore
+	userStore   *UserStore
+
+	// qrdbAuthz, when set, routes the authorization DECISION through qrdb's
+	// policy decision point instead of the forked roleManager. It is wired at
+	// server lifecycle under the iam build tag when RequireAuthz is enabled;
+	// when nil (the default, all non-iam builds, and tests) the manager
+	// preserves the legacy roleManager.HasPermission outcome.
+	qrdbAuthz QRDBDecisionPoint
+}
+
+// SetQRDBDecisionPoint installs the qrdb-backed authorization decision point.
+// Passing it routes Authorize through qrdb's PDP; the forked roleManager is
+// retained for role validation and anonymous-access checks but no longer makes
+// the permission decision.
+func (am *InMemoryAuthManager) SetQRDBDecisionPoint(dp QRDBDecisionPoint) {
+	am.qrdbAuthz = dp
 }
 
 // AuthManager is an alias for InMemoryAuthManager for backwards compatibility.
@@ -70,19 +74,15 @@ type AuthManager = InMemoryAuthManager
 
 // AuthConfig configures authentication behavior.
 type AuthConfig struct {
-	Enabled              bool          // Enable authentication
-	JWTSecret            string        // Secret for HS256 JWT signing (legacy, use JWTSigningKeyID for production)
-	JWTSigningKeyID      string        // KMS key ID for asymmetric JWT signing (e.g., "quicbaas-jwt-signing")
-	JWTSigningAlgorithm  string        // Asymmetric algorithm: "ES256" (default), "ES384", "RS256", etc.
-	TokenTTL             time.Duration // Access token TTL
-	RefreshTokenTTL      time.Duration // Refresh token TTL
-	RefreshWindow        time.Duration // Window before expiry when refresh is allowed
-	MaxTokens            int           // Max active tokens per user
-	AllowAnonymous       bool          // Allow unauthenticated access
-	AllowPasswordAuth    bool          // Allow password-based authentication (for testing/dev environments)
-	MaxLoginAttempts     int           // Max failed login attempts before lockout (0=disabled, <0=default of 5)
-	LoginLockoutDuration time.Duration // Duration of account lockout after max attempts (default: 15m)
-	InsecureDevMode      bool          // Allow short passwords and other insecure configurations for testing
+	Enabled             bool          // Enable authentication
+	JWTSecret           string        // Secret for HS256 JWT signing (legacy, use JWTSigningKeyID for production)
+	JWTSigningKeyID     string        // KMS key ID for asymmetric JWT signing (e.g., "quicbaas-jwt-signing")
+	JWTSigningAlgorithm string        // Asymmetric algorithm: "ES256" (default), "ES384", "RS256", etc.
+	TokenTTL            time.Duration // Access token TTL
+	RefreshTokenTTL     time.Duration // Refresh token TTL
+	RefreshWindow       time.Duration // Window before expiry when refresh is allowed
+	MaxTokens           int           // Max active tokens per user
+	AllowAnonymous      bool          // Allow unauthenticated access
 
 	// jwtSigner is the KMS-backed private key for asymmetric token signing.
 	// Set via SetAsymmetricSigning when JWTSigningKeyID is configured.
@@ -101,13 +101,14 @@ type Token struct {
 	TokenType    string    `json:"token_type"`
 }
 
-// User represents an authenticated user.
+// User represents an authenticated user. It is the JWT-subject and RBAC carrier:
+// identity is established by an IAM authentication factor (mTLS, PIV, FIDO2/WebAuthn,
+// OIDC) and tokens are issued for the verified user via IssueTokenForUser.
 type User struct {
 	ID       string    `json:"id"`
 	Username string    `json:"username"`
 	TenantID string    `json:"tenant_id,omitempty"` // Tenant ID for multi-tenant isolation
 	Roles    []string  `json:"roles"`
-	password string    // Hashed password (not exported)
 	Created  time.Time `json:"created"`
 	LastAuth time.Time `json:"last_auth"`
 }
@@ -226,12 +227,11 @@ func NewInMemoryAuthManager(cfg *AuthConfig, log *logger.Logger) (*InMemoryAuthM
 	}
 
 	am := &InMemoryAuthManager{
-		config:         cfg,
-		logger:         log,
-		roleManager:    NewRoleManager(log),
-		tokenStore:     NewTokenStore(),
-		userStore:      NewUserStore(),
-		attemptTracker: NewLoginAttemptTracker(cfg.MaxLoginAttempts, cfg.LoginLockoutDuration, log),
+		config:      cfg,
+		logger:      log,
+		roleManager: NewRoleManager(log),
+		tokenStore:  NewTokenStore(),
+		userStore:   NewUserStore(),
 	}
 
 	if cfg.JWTSigningKeyID != "" {
@@ -243,73 +243,8 @@ func NewInMemoryAuthManager(cfg *AuthConfig, log *logger.Logger) (*InMemoryAuthM
 	return am, nil
 }
 
-// Authenticate validates credentials and issues authentication tokens.
-// Password-based authentication is disabled by default for security.
-// Set AllowPasswordAuth=true in AuthConfig to enable (for testing/dev only).
-// For production, use mTLS certificates or FIDO2/WebAuthn for authentication,
-// then call IssueTokenForUser.
-//
-// Login attempt throttling: After MaxLoginAttempts consecutive failures for a
-// given username, the account is locked for LoginLockoutDuration. The lockout
-// automatically expires after the duration elapses. A successful login resets
-// the failure counter. Set MaxLoginAttempts=0 to disable throttling.
-func (am *InMemoryAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (*Token, error) {
-	// Destroy the caller-owned password buffer on every return path, including
-	// early-exit error paths. Destroy is idempotent and nil-safe.
-	defer func() {
-		if password != nil {
-			password.Destroy()
-		}
-	}()
-
-	if !am.config.Enabled {
-		return nil, api.NewAuthenticationDisabledError("auth.Authenticate")
-	}
-
-	// Check if password authentication is allowed
-	if !am.config.AllowPasswordAuth {
-		return nil, api.NewPasswordAuthDisabledError("auth.Authenticate")
-	}
-
-	// Check if account is locked before attempting credential validation
-	if err := am.attemptTracker.CheckLocked(username); err != nil {
-		return nil, err
-	}
-
-	// Validate credentials
-	user, err := am.validateCredentials(ctx, username, password)
-	if err != nil {
-		// Record the failed attempt (may trigger lockout)
-		if lockErr := am.attemptTracker.RecordFailure(username); lockErr != nil {
-			return nil, lockErr
-		}
-		return nil, err
-	}
-
-	// Successful login: reset the attempt counter
-	am.attemptTracker.RecordSuccess(username)
-
-	// Update last authentication time
-	user.LastAuth = time.Now()
-	am.userStore.UpdateUser(user)
-
-	// Generate tokens
-	token, err := am.generateTokens(user)
-	if err != nil {
-		return nil, err
-	}
-
-	am.logger.Infof("User authenticated: %s", username)
-	return token, nil
-}
-
-// GetAttemptTracker returns the login attempt tracker for testing and monitoring.
-func (am *InMemoryAuthManager) GetAttemptTracker() *LoginAttemptTracker {
-	return am.attemptTracker
-}
-
 // IssueTokenForUser issues JWT tokens for a user who has been authenticated
-// via mTLS certificate, FIDO2/WebAuthn, or other IAM provider.
+// via mTLS certificate, FIDO2/WebAuthn, PIV, OIDC, or other IAM provider.
 // This should be called after successful authentication verification.
 func (am *InMemoryAuthManager) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (*Token, error) {
 	if !am.config.Enabled {
@@ -376,7 +311,23 @@ func (am *InMemoryAuthManager) Authorize(ctx context.Context, token, resource, a
 		return api.NewTokenRevokedError("auth.Authorize")
 	}
 
-	// 3. Check permissions
+	// 3. Check permissions. When the qrdb decision point is installed
+	// (RequireAuthz under iam), delegate to qrdb's PDP; otherwise preserve the
+	// legacy forked roleManager decision so existing deployments and tests are
+	// unaffected.
+	if am.qrdbAuthz != nil {
+		if err := am.qrdbAuthz.Authorize(ctx, QRDBSubject{
+			ID:       claims.UserID,
+			TenantID: claims.TenantID,
+			Roles:    claims.Roles,
+		}, resource, action); err != nil {
+			am.logger.Warnf("Authorization denied (qrdb PDP): user=%s resource=%s action=%s: %v",
+				claims.Username, resource, action, err)
+			return api.NewInsufficientPermissionsError("auth.Authorize")
+		}
+		return nil
+	}
+
 	if !am.roleManager.HasPermission(claims.Roles, resource, action) {
 		am.logger.Warnf("Authorization denied: user=%s resource=%s action=%s",
 			claims.Username, resource, action)
@@ -479,20 +430,20 @@ func (am *InMemoryAuthManager) ValidateToken(ctx context.Context, token string) 
 	return result, nil
 }
 
-// CreateUser creates a new user with specified roles.
+// CreateUser creates a new user record with specified roles.
 // For multi-tenant deployments, use CreateUserWithTenant instead.
-func (am *InMemoryAuthManager) CreateUser(username, password string, roles []string) (*User, error) {
-	return am.CreateUserWithTenant(username, password, "", roles)
+//
+// The user record carries identity for token issuance and RBAC. Authentication
+// is performed by an IAM factor (mTLS, PIV, FIDO2/WebAuthn, OIDC); no password
+// is stored.
+func (am *InMemoryAuthManager) CreateUser(username string, roles []string) (*User, error) {
+	return am.CreateUserWithTenant(username, "", roles)
 }
 
-// CreateUserWithTenant creates a new user with specified tenant and roles.
+// CreateUserWithTenant creates a new user record with specified tenant and roles.
 // This is the primary method for creating users in multi-tenant deployments.
 // The tenantID will be included in JWT tokens to enable tenant isolation.
-//
-// NOTE: The password parameter is only used when AllowPasswordAuth is enabled.
-// In production, password-based authentication should be disabled and
-// IAM (WebAuthn, OIDC, OAuth) should be used for authentication instead.
-func (am *InMemoryAuthManager) CreateUserWithTenant(username, password, tenantID string, roles []string) (*User, error) {
+func (am *InMemoryAuthManager) CreateUserWithTenant(username, tenantID string, roles []string) (*User, error) {
 	if username == "" {
 		return nil, api.NewRequiredFieldError("username")
 	}
@@ -515,61 +466,12 @@ func (am *InMemoryAuthManager) CreateUserWithTenant(username, password, tenantID
 		Created:  time.Now(),
 	}
 
-	// Only set password if password authentication is allowed and password is provided
-	if am.config.AllowPasswordAuth && password != "" {
-		if !am.config.InsecureDevMode {
-			if err := validatePasswordLength(password); err != nil {
-				return nil, err
-			}
-		}
-		hashedPassword, err := hashPassword(password)
-		if err != nil {
-			return nil, err
-		}
-		user.password = hashedPassword
-	}
-
 	am.userStore.AddUser(user)
 	if tenantID != "" {
 		am.logger.Infof("User created: %s with tenant: %s and roles: %v", username, tenantID, roles)
 	} else {
 		am.logger.Infof("User created: %s with roles: %v", username, roles)
 	}
-	return user, nil
-}
-
-// validateCredentials validates user credentials for password-based authentication.
-// This method is only called when AllowPasswordAuth is enabled.
-func (am *InMemoryAuthManager) validateCredentials(ctx context.Context, username string, password *secure.Buffer) (*User, error) {
-	if username == "" || password == nil || password.Size() == 0 {
-		return nil, api.NewCredentialsRequiredError("auth.validateCredentials")
-	}
-
-	userInfo := am.userStore.GetByUsername(username)
-	if userInfo == nil {
-		return nil, api.NewInvalidCredentialsError("auth.validateCredentials")
-	}
-
-	user, ok := userInfo.(*User)
-	if !ok {
-		return nil, api.NewInvalidUserTypeError("auth.validateCredentials")
-	}
-
-	if user.password == "" {
-		return nil, api.NewNoPasswordSetError("auth.validateCredentials")
-	}
-
-	matched, rehashed := verifyPasswordBuffer(user.password, password)
-	if !matched {
-		return nil, api.NewInvalidCredentialsError("auth.validateCredentials")
-	}
-
-	// Transparently upgrade legacy SHA-256 hash to bcrypt on successful login
-	if rehashed != "" {
-		user.password = rehashed
-		am.userStore.UpdateUser(user)
-	}
-
 	return user, nil
 }
 
@@ -655,103 +557,6 @@ func (am *InMemoryAuthManager) validateToken(tokenString string) (*Claims, error
 func hashToken(token string) string {
 	hash := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(hash[:])
-}
-
-// validatePasswordLength validates that a password meets the minimum length requirement.
-func validatePasswordLength(password string) error {
-	if len(password) < MinPasswordLength {
-		return api.NewPasswordTooShortError("auth.validatePassword", MinPasswordLength, len(password))
-	}
-	return nil
-}
-
-// isBcryptHash returns true if the hash string is a bcrypt hash.
-// Bcrypt hashes always start with "$2a$", "$2b$", or "$2y$".
-func isBcryptHash(hash string) bool {
-	return strings.HasPrefix(hash, bcryptPrefix)
-}
-
-// hashPassword hashes a password using bcrypt with the default cost factor.
-// This provides salted, adaptive hashing with constant-time comparison.
-func hashPassword(password string) (string, error) {
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return "", api.NewPasswordHashError("auth.hashPassword", err)
-	}
-	return string(hashed), nil
-}
-
-// verifyPassword verifies a password against a stored hash.
-// It supports both bcrypt hashes (preferred) and legacy SHA-256 hashes for
-// backward compatibility during migration. When a legacy hash matches, the
-// caller receives the upgraded bcrypt hash to store.
-//
-// Returns:
-//   - matched: true if the password matches the stored hash
-//   - rehashed: non-empty bcrypt hash if a legacy SHA-256 hash was matched and
-//     needs to be upgraded in storage; empty string if already bcrypt or no match
-func verifyPassword(storedHash, password string) (matched bool, rehashed string) {
-	// Primary path: bcrypt verification (constant-time comparison built-in)
-	if isBcryptHash(storedHash) {
-		err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password))
-		return err == nil, ""
-	}
-
-	// Legacy fallback: SHA-256 hex hash (for pre-migration passwords)
-	legacyHash := hashToken(password)
-	if storedHash != legacyHash {
-		return false, ""
-	}
-
-	// Password matched via legacy hash; upgrade to bcrypt
-	upgraded, err := hashPassword(password)
-	if err != nil {
-		// Legacy hash matched but bcrypt upgrade failed; still authenticate
-		// but skip the upgrade. The hash will be upgraded on next login.
-		return true, ""
-	}
-	return true, upgraded
-}
-
-// verifyPasswordBuffer verifies a password supplied as an mlocked
-// *secure.Buffer against a stored hash. It mirrors verifyPassword but
-// takes raw bytes from the Buffer so the plaintext never becomes a Go
-// string. Callers still own the Buffer and are responsible for its
-// destruction.
-//
-// Returns:
-//   - matched: true if the password matches the stored hash
-//   - rehashed: non-empty bcrypt hash if a legacy SHA-256 hash was
-//     matched and needs to be upgraded in storage; empty string if
-//     already bcrypt or no match
-func verifyPasswordBuffer(storedHash string, password *secure.Buffer) (matched bool, rehashed string) {
-	if password == nil {
-		return false, ""
-	}
-	pwBytes := password.Bytes()
-
-	// Primary path: bcrypt verification (constant-time comparison built-in)
-	if isBcryptHash(storedHash) {
-		err := bcrypt.CompareHashAndPassword([]byte(storedHash), pwBytes)
-		return err == nil, ""
-	}
-
-	// Legacy fallback: SHA-256 hex hash (for pre-migration passwords)
-	hash := sha256.Sum256(pwBytes)
-	legacyHash := hex.EncodeToString(hash[:])
-	if storedHash != legacyHash {
-		return false, ""
-	}
-
-	// Password matched via legacy hash; upgrade to bcrypt directly from the
-	// mlocked bytes without copying into a string.
-	upgraded, err := bcrypt.GenerateFromPassword(pwBytes, bcrypt.DefaultCost)
-	if err != nil {
-		// Legacy hash matched but bcrypt upgrade failed; still authenticate
-		// but skip the upgrade. The hash will be upgraded on next login.
-		return true, ""
-	}
-	return true, string(upgraded)
 }
 
 // generateUserID generates a unique user ID.

@@ -142,7 +142,7 @@ func setup() error {
 	if isServerHealthy() {
 		fmt.Println("QuicBaaS server is already running")
 		testEnv = env
-		return nil
+		return acquireSuiteToken()
 	}
 
 	// Start containers
@@ -162,6 +162,21 @@ func setup() error {
 
 	fmt.Println("QuicBaaS server is ready for tests")
 	testEnv = env
+	return acquireSuiteToken()
+}
+
+// acquireSuiteToken obtains the platform access token the suite attaches to
+// every protected data-plane request under the default-deny gate. It runs once
+// against the public OAuth2 bootstrap (DCR + client_credentials). A failure is
+// fatal for the suite: without a token the gate rejects every data-plane call,
+// so silently continuing would mask a broken bootstrap.
+func acquireSuiteToken() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := acquirePlatformToken(ctx); err != nil {
+		return &qberrors.WrappedMessageError{Message: "failed to acquire platform token", Cause: err}
+	}
+	fmt.Println("Acquired platform token for default-deny data-plane access")
 	return nil
 }
 

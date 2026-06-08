@@ -451,94 +451,6 @@ func TestNewPersistentAuthManager(t *testing.T) {
 	})
 }
 
-// TestPersistentAuthenticate tests the Authenticate method.
-// Password-based authentication has been removed.
-// All authentication attempts should fail with an error.
-func TestPersistentAuthenticate(t *testing.T) {
-	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:         true,
-		JWTSecret:       "test-secret-key",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
-
-	storage := newAuthMockStorage()
-	pam, err := NewPersistentAuthManager(config, storage, log)
-	require.NoError(t, err)
-	defer pam.Close()
-
-	// Create a test user (password is ignored - use IAM for auth)
-	user, err := pam.CreateUser("testuser", "", []string{RoleNameReadWrite})
-	require.NoError(t, err)
-	require.NotNil(t, user)
-
-	tests := []struct {
-		name     string
-		username string
-		password string
-	}{
-		{
-			name:     "password auth disabled - valid credentials",
-			username: "testuser",
-			password: "password123",
-		},
-		{
-			name:     "password auth disabled - invalid password",
-			username: "testuser",
-			password: "wrongpassword",
-		},
-		{
-			name:     "password auth disabled - non-existent user",
-			username: "nonexistent",
-			password: "password123",
-		},
-		{
-			name:     "password auth disabled - empty username",
-			username: "",
-			password: "password123",
-		},
-		{
-			name:     "password auth disabled - empty password",
-			username: "testuser",
-			password: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			token, err := pam.Authenticate(ctx, tt.username, passwordBuffer(t, tt.password))
-
-			// Password-based authentication is disabled - all attempts should fail
-			assert.Error(t, err)
-			assert.Nil(t, token)
-			assert.Contains(t, err.Error(), "password-based authentication is disabled")
-		})
-	}
-}
-
-// TestPersistentAuthenticateDisabled tests that password authentication is always disabled.
-// Password-based authentication has been removed. Use IAM (WebAuthn, OIDC, OAuth)
-// or certificate-based authentication instead.
-func TestPersistentAuthenticateDisabled(t *testing.T) {
-	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled: false,
-	}
-
-	storage := newAuthMockStorage()
-	pam, err := NewPersistentAuthManager(config, storage, log)
-	require.NoError(t, err)
-	defer pam.Close()
-
-	ctx := context.Background()
-	_, err = pam.Authenticate(ctx, "testuser", passwordBuffer(t, "password"))
-	assert.Error(t, err)
-	// Authentication is not enabled when config.Enabled is false
-	assert.Contains(t, err.Error(), "authentication is not enabled")
-}
-
 // TestPersistentAuthorize tests the Authorize method.
 func TestPersistentAuthorize(t *testing.T) {
 	log := createPersistentTestLogger(t)
@@ -554,10 +466,10 @@ func TestPersistentAuthorize(t *testing.T) {
 	defer pam.Close()
 
 	// Create users with different roles (password is ignored - use IAM for auth)
-	adminUser, err := pam.CreateUser("admin", "", []string{RoleNameAdmin})
+	adminUser, err := pam.CreateUser("admin", []string{RoleNameAdmin})
 	require.NoError(t, err)
 
-	rwUser, err := pam.CreateUser("readwrite", "", []string{RoleNameReadWrite})
+	rwUser, err := pam.CreateUser("readwrite", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	// Get tokens via generateTokens (password auth is disabled)
@@ -650,7 +562,7 @@ func TestPersistentRevokeToken(t *testing.T) {
 	defer pam.Close()
 
 	// Create user and get token via generateTokens (password auth is disabled)
-	user, err := pam.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := pam.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -683,35 +595,30 @@ func TestPersistentCreateUser(t *testing.T) {
 	tests := []struct {
 		name        string
 		username    string
-		password    string
 		roles       []string
 		expectError bool
 	}{
 		{
 			name:        "valid user",
 			username:    "user1",
-			password:    "", // Password is ignored
 			roles:       []string{RoleNameReadWrite},
 			expectError: false,
 		},
 		{
 			name:        "empty username",
 			username:    "",
-			password:    "", // Password is ignored
 			roles:       []string{RoleNameReadWrite},
 			expectError: true,
 		},
 		{
 			name:        "duplicate username",
 			username:    "user1",
-			password:    "", // Password is ignored
 			roles:       []string{RoleNameReadOnly},
 			expectError: true,
 		},
 		{
 			name:        "invalid role",
 			username:    "user4",
-			password:    "", // Password is ignored
 			roles:       []string{"nonexistent-role"},
 			expectError: true,
 		},
@@ -719,7 +626,7 @@ func TestPersistentCreateUser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user, err := pam.CreateUser(tt.username, tt.password, tt.roles)
+			user, err := pam.CreateUser(tt.username, tt.roles)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -746,7 +653,7 @@ func TestPersistentDeleteUser(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	user, err := pam.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := pam.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	err = pam.DeleteUser(user.ID)
@@ -769,7 +676,7 @@ func TestPersistentUpdateUserRoles(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	user, err := pam.CreateUser("testuser", "", []string{RoleNameReadOnly})
+	user, err := pam.CreateUser("testuser", []string{RoleNameReadOnly})
 	require.NoError(t, err)
 
 	newRoles := []string{RoleNameAdmin}
@@ -837,7 +744,7 @@ func TestPersistentConcurrentAccess(t *testing.T) {
 	users := make([]*User, 5)
 	for i := 0; i < 5; i++ {
 		username := fmt.Sprintf("user%d", i)
-		user, err := pam.CreateUser(username, "", []string{RoleNameReadWrite})
+		user, err := pam.CreateUser(username, []string{RoleNameReadWrite})
 		require.NoError(t, err)
 		users[i] = user
 	}

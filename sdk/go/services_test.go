@@ -146,7 +146,7 @@ func TestSecurityService_DelegatesToClient(t *testing.T) {
 	t.Run("Auth", func(t *testing.T) {
 		// Security().Auth() returns the extended AuthService (embeds
 		// AuthClient + adds FIDO2/WebAuthn/PIV/Factors sub-services).
-		// It does not return the same instance as c.Auth() (the
+		// It does not return the same instance as c.auth() (the
 		// narrower AuthClient): the extended service is constructed
 		// lazily by securityService and wraps the client. The
 		// contract is that the extended surface satisfies AuthClient,
@@ -158,43 +158,43 @@ func TestSecurityService_DelegatesToClient(t *testing.T) {
 	})
 
 	t.Run("Seal", func(t *testing.T) {
-		if svc.Seal() != c.Seal() {
+		if svc.Seal() != c.seal() {
 			t.Error("Security().Seal() should delegate to client.Seal()")
 		}
 	})
 
 	t.Run("KMS", func(t *testing.T) {
-		if svc.KMS() != c.KMS() {
+		if svc.KMS() != c.kms() {
 			t.Error("Security().KMS() should delegate to client.KMS()")
 		}
 	})
 
 	t.Run("Secrets", func(t *testing.T) {
-		if svc.Secrets() != c.Secrets() {
+		if svc.Secrets() != c.secrets() {
 			t.Error("Security().Secrets() should delegate to client.Secrets()")
 		}
 	})
 
 	t.Run("Crypto", func(t *testing.T) {
-		if svc.Crypto() != c.Crypto() {
+		if svc.Crypto() != c.crypto() {
 			t.Error("Security().Crypto() should delegate to client.Crypto()")
 		}
 	})
 
 	t.Run("Certificate", func(t *testing.T) {
-		if svc.Certificate() != c.Certificate() {
+		if svc.Certificate() != c.certificate() {
 			t.Error("Security().Certificate() should delegate to client.Certificate()")
 		}
 	})
 
 	t.Run("DynamicSecrets", func(t *testing.T) {
-		if svc.DynamicSecrets() != c.DynamicSecrets() {
+		if svc.DynamicSecrets() != c.dynamicSecrets() {
 			t.Error("Security().DynamicSecrets() should delegate to client.DynamicSecrets()")
 		}
 	})
 
 	t.Run("RBAC", func(t *testing.T) {
-		if svc.RBAC() != c.RBAC() {
+		if svc.RBAC() != c.rbac() {
 			t.Error("Security().RBAC() should delegate to client.RBAC()")
 		}
 	})
@@ -355,19 +355,19 @@ func TestBackwardCompatibility_DirectAccessors(t *testing.T) {
 	if c.Health() == nil {
 		t.Error("Health() should return non-nil client")
 	}
-	if c.Auth() == nil {
+	if c.auth() == nil {
 		t.Error("Auth() should return non-nil client")
 	}
-	if c.Seal() == nil {
+	if c.seal() == nil {
 		t.Error("Seal() should return non-nil client")
 	}
-	if c.KMS() == nil {
+	if c.kms() == nil {
 		t.Error("KMS() should return non-nil client")
 	}
-	if c.Secrets() == nil {
+	if c.secrets() == nil {
 		t.Error("Secrets() should return non-nil client")
 	}
-	if c.Crypto() == nil {
+	if c.crypto() == nil {
 		t.Error("Crypto() should return non-nil client")
 	}
 	if c.Vector() == nil {
@@ -388,13 +388,13 @@ func TestBackwardCompatibility_DirectAccessors(t *testing.T) {
 	if c.Operations() == nil {
 		t.Error("Operations() should return non-nil client")
 	}
-	if c.RBAC() == nil {
+	if c.rbac() == nil {
 		t.Error("RBAC() should return non-nil client")
 	}
-	if c.DynamicSecrets() == nil {
+	if c.dynamicSecrets() == nil {
 		t.Error("DynamicSecrets() should return non-nil client")
 	}
-	if c.Certificate() == nil {
+	if c.certificate() == nil {
 		t.Error("Certificate() should return non-nil client")
 	}
 	if c.ObjectStorage() == nil {

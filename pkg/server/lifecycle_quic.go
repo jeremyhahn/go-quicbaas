@@ -137,6 +137,13 @@ func (s *Server) startQUICServer() error {
 		s.logger.Info("Tenant resolver wired into QUIC server")
 	}
 
+	// Install the qrdb-backed authorization decision point + OIDC token validator
+	// when RequireAuthz=true. It is a no-op otherwise (and in non-iam builds), so
+	// QUIC keeps its legacy allow-all / token-only behaviour unless the operator
+	// opts into enforcement. Every transport routes authorization to the same
+	// qrdb PDP.
+	s.configureQUICAuthz(quicServer)
+
 	// Start QUIC server
 	if err := quicServer.Start(); err != nil {
 		return &qberrors.QBError{

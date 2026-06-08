@@ -2555,26 +2555,6 @@ func (m *mockSDKClientForClusterCovPlusTest) Operations() quicbaas.OperationsCli
 
 func (m *mockSDKClientForClusterCovPlusTest) Cache() quicbaas.CacheClient { return nil }
 
-func (m *mockSDKClientForClusterCovPlusTest) Auth() quicbaas.AuthClient { return nil }
-
-func (m *mockSDKClientForClusterCovPlusTest) Seal() quicbaas.SealClient { return nil }
-
-func (m *mockSDKClientForClusterCovPlusTest) KMS() quicbaas.KMSClient { return nil }
-
-func (m *mockSDKClientForClusterCovPlusTest) Secrets() quicbaas.SecretsClient { return nil }
-
-func (m *mockSDKClientForClusterCovPlusTest) Crypto() quicbaas.CryptoClient { return nil }
-
-func (m *mockSDKClientForClusterCovPlusTest) RBAC() quicbaas.RBACClient { return nil }
-
-func (m *mockSDKClientForClusterCovPlusTest) DynamicSecrets() quicbaas.DynamicSecretsClient {
-	return nil
-}
-
-func (m *mockSDKClientForClusterCovPlusTest) Certificate() quicbaas.CertificateClient { return nil }
-
-func (m *mockSDKClientForClusterCovPlusTest) DEK() quicbaas.DEKClient { return nil }
-
 func (m *mockSDKClientForClusterCovPlusTest) IAM() quicbaas.IAMClient { return nil }
 
 func (m *mockSDKClientForClusterCovPlusTest) Vector() quicbaas.VectorClient { return nil }

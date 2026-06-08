@@ -870,17 +870,15 @@ func createTestAuthManagerWithBootstrap(t *testing.T, srv *Server) *inMemoryAuth
 	t.Helper()
 
 	authCfg := &auth.AuthConfig{
-		Enabled:           true,
-		JWTSecret:         srv.config.Auth.JWTSecret,
-		AllowPasswordAuth: srv.config.Auth.AllowPasswordAuth,
-		InsecureDevMode:   srv.config.Auth.InsecureDevMode,
+		Enabled:   true,
+		JWTSecret: srv.config.Auth.JWTSecret,
 	}
 
 	authMgr, err := auth.NewInMemoryAuthManager(authCfg, srv.logger)
 	require.NoError(t, err)
 
-	username, password := srv.resolveBootstrapCredentials()
-	_, err = authMgr.CreateUser(username, password, []string{"admin"})
+	username, _ := srv.resolveBootstrapCredentials()
+	_, err = authMgr.CreateUser(username, []string{"admin"})
 	require.NoError(t, err)
 
 	return &inMemoryAuthManagerAdapter{manager: authMgr}
@@ -894,10 +892,8 @@ func TestFT2_IAMAdapter_AllMethods(t *testing.T) {
 	saveAndRestoreSeams(t)
 
 	srv := createFTServerWithService(t)
-	srv.config.Auth.AllowPasswordAuth = true
 	srv.config.Auth.JWTSecret = "test-jwt-secret-at-least-32chars!!"
 	srv.config.Auth.BootstrapAdmin = true
-	srv.config.Auth.InsecureDevMode = true
 
 	authAdapter := createTestAuthManagerWithBootstrap(t, srv)
 
@@ -906,16 +902,7 @@ func TestFT2_IAMAdapter_AllMethods(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test Authenticate - success.
-	result, err := adapter.Authenticate(ctx, "admin", pwBuffer(t, "quicbaas-dev-admin"))
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-
-	// Test Authenticate - wrong password.
-	_, err = adapter.Authenticate(ctx, "admin", pwBuffer(t, "wrong"))
-	assert.Error(t, err)
-
-	// Test IssueTokenForUser.
+	// Test IssueTokenForUser - the IAM-factor token path.
 	mockUser := &ft2MockUserInfo{username: "admin", roles: []string{"admin"}}
 	issueResult, issueErr := adapter.IssueTokenForUser(ctx, mockUser)
 	assert.NoError(t, issueErr)
@@ -939,7 +926,7 @@ func TestFT2_IAMAdapter_AllMethods(t *testing.T) {
 	_ = revokeErr
 
 	// Test CreateUser.
-	newUser, createErr := adapter.CreateUser("testuser", "testpass", []string{"read"})
+	newUser, createErr := adapter.CreateUser("testuser", []string{"read"})
 	assert.NoError(t, createErr)
 	assert.NotNil(t, newUser)
 
@@ -976,17 +963,18 @@ func TestFT2_InMemoryAuthManagerAdapter_Methods(t *testing.T) {
 	saveAndRestoreSeams(t)
 
 	srv := createFTServerWithService(t)
-	srv.config.Auth.AllowPasswordAuth = true
 	srv.config.Auth.JWTSecret = "test-jwt-secret-at-least-32chars!!"
 	srv.config.Auth.BootstrapAdmin = true
-	srv.config.Auth.InsecureDevMode = true
 
 	authMgr := createTestAuthManagerWithBootstrap(t, srv)
 
 	ctx := context.Background()
 
-	// Test Authenticate.
-	token, err := authMgr.Authenticate(ctx, "admin", pwBuffer(t, "quicbaas-dev-admin"))
+	// Mint a token via the IAM-factor path (IssueTokenForUser), then exercise
+	// the token lifecycle through the adapter.
+	adminUser, err := authMgr.manager.CreateUser("seam-admin", []string{"admin"})
+	assert.NoError(t, err)
+	token, err := authMgr.manager.IssueTokenForUser(ctx, adminUser)
 	assert.NoError(t, err)
 	assert.NotNil(t, token)
 
@@ -1007,12 +995,9 @@ func TestFT2_InMemoryAuthManagerAdapter_Methods(t *testing.T) {
 	}
 
 	// Test CreateUser.
-	user, createErr := authMgr.CreateUser("newuser", "newpass", []string{"read"})
+	user, createErr := authMgr.CreateUser("newuser", []string{"read"})
 	assert.NoError(t, createErr)
 	assert.NotNil(t, user)
-
-	// Test IsPasswordAuthEnabled.
-	assert.True(t, authMgr.IsPasswordAuthEnabled())
 }
 
 // =============================================================================
@@ -1562,9 +1547,8 @@ func TestFT2_AuthManager_NoJWTSecret(t *testing.T) {
 
 	// Creating an auth manager with no JWT secret and no signing key should fail.
 	authCfg := &auth.AuthConfig{
-		Enabled:           true,
-		JWTSecret:         "",
-		AllowPasswordAuth: true,
+		Enabled:   true,
+		JWTSecret: "",
 	}
 
 	authMgr, authErr := auth.NewInMemoryAuthManager(authCfg, srv.logger)
@@ -1690,7 +1674,9 @@ func TestFT2_InitializeIAMComponents_Full(t *testing.T) {
 		assert.NotNil(t, components.GetOIDCProvider())
 		assert.NotNil(t, components.GetSessionStorage())
 		assert.NotNil(t, components.GetSessionManager())
-		assert.NotNil(t, components.GetInternalAuthManager())
+		// The password-built internal auth manager has been removed; tokens are
+		// minted by the IAM factors via the token service, so this is nil.
+		assert.Nil(t, components.GetInternalAuthManager())
 	} else {
 		// Without qrdbClient, IAM init is skipped gracefully
 		assert.Nil(t, components)

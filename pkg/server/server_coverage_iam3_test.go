@@ -73,23 +73,3 @@ func TestServer_InitializeIAMComponents_WithEmbeddedQRDB(t *testing.T) {
 	assert.NotNil(t, got.GetAuditLogger())
 	assert.NotNil(t, got.GetGDPRManager())
 }
-
-func TestServer_InitializeIAMComponents_WithPasswordAuthEnabled(t *testing.T) {
-	srv := withTempServer(t)
-	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
-	t.Cleanup(func() { _ = srv.stopQRDBNode() })
-	srv.qrdbClient = newNodeBackedShardedClient(srv.qrdbNode)
-
-	// Enable insecure dev mode so the bootstrap admin creation path runs.
-	// AllowPasswordAuth alone requires a 12+ char password; InsecureDevMode
-	// loosens that requirement to keep this test hermetic.
-	srv.config.Auth.InsecureDevMode = true
-	srv.config.Auth.BootstrapAdminUsername = "admin"
-	srv.config.Auth.BootstrapAdminPassword = "admin"
-	srv.config.Auth.JWTSecret = "test-jwt-secret-not-for-production-use-12345"
-
-	got, err := srv.initializeIAMComponents()
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.NotNil(t, got.GetAuthManager(), "password authentication must populate the auth manager")
-}

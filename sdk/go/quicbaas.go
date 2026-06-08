@@ -90,16 +90,13 @@ type Client interface {
 	Operations() OperationsClient
 	Cache() CacheClient
 
-	// Security operations (backward compatible)
-	Auth() AuthClient
-	Seal() SealClient
-	KMS() KMSClient
-	Secrets() SecretsClient
-	Crypto() CryptoClient
-	RBAC() RBACClient
-	DynamicSecrets() DynamicSecretsClient
-	Certificate() CertificateClient
-	DEK() DEKClient
+	// Security operations are reachable exclusively through Security().*:
+	// Security().Auth(), Security().Seal(), Security().KMS(),
+	// Security().Secrets(), Security().Crypto(), Security().RBAC(),
+	// Security().DynamicSecrets(), Security().Certificate(),
+	// Security().DEK(). There is exactly one canonical entry point per
+	// capability (the locked-architecture rule); the flat Client.X()
+	// shortcuts were removed.
 
 	// IAM operations (backward compatible)
 	IAM() IAMClient
@@ -1692,6 +1689,7 @@ func createGRPCTransport(address string, opts *clientOptions) (Transport, error)
 		PoolMinSize:      opts.poolMinSize,
 		PoolMaxSize:      opts.poolMaxSize,
 		PoolMaxAge:       opts.poolMaxAge,
+		AuthToken:        opts.authToken,
 	}
 
 	// Parse the address to determine its type
@@ -1712,13 +1710,19 @@ func createRESTTransport(address string, opts *clientOptions) (Transport, error)
 		MaxRetries:       opts.maxRetries,
 		RetryBackoff:     opts.retryBackoff,
 		MaxRetryBackoff:  opts.maxRetryBackoff,
+		AuthToken:        opts.authToken,
 	}
 
 	// Parse the address to determine its type
 	parsed := transport.ParseAddress(address)
 	cfg.AddressType = parsed.Type
 
-	return rest.New(cfg)
+	var restOpts []rest.Option
+	if opts.authToken != "" {
+		restOpts = append(restOpts, rest.WithAuthToken(opts.authToken))
+	}
+
+	return rest.New(cfg, restOpts...)
 }
 
 // createQUICTransport creates a QUIC transport.
@@ -1732,13 +1736,19 @@ func createQUICTransport(address string, opts *clientOptions) (Transport, error)
 		MaxRetries:       opts.maxRetries,
 		RetryBackoff:     opts.retryBackoff,
 		MaxRetryBackoff:  opts.maxRetryBackoff,
+		AuthToken:        opts.authToken,
 	}
 
 	// Parse the address to determine its type
 	parsed := transport.ParseAddress(address)
 	cfg.AddressType = parsed.Type
 
-	return quic.New(cfg)
+	var quicOpts []quic.Option
+	if opts.authToken != "" {
+		quicOpts = append(quicOpts, quic.WithAuthToken(opts.authToken))
+	}
+
+	return quic.New(cfg, quicOpts...)
 }
 
 // createUnixTransport creates a Unix socket transport (gRPC over UDS).
@@ -1753,6 +1763,7 @@ func createUnixTransport(opts *clientOptions) (Transport, error) {
 		MaxRetries:       opts.maxRetries,
 		RetryBackoff:     opts.retryBackoff,
 		MaxRetryBackoff:  opts.maxRetryBackoff,
+		AuthToken:        opts.authToken,
 	}
 
 	return unix.New(cfg)
@@ -1790,8 +1801,11 @@ func createMCPTransport(address string, opts *clientOptions) (Transport, error) 
 	// Build MCP transport options
 	var mcpOpts []mcp.Option
 	if opts.mcpAuthToken != "" {
-		// Use pre-existing token if provided
+		// Use the MCP-specific token if provided.
 		mcpOpts = append(mcpOpts, mcp.WithAuthToken(opts.mcpAuthToken))
+	} else if opts.authToken != "" {
+		// Fall back to the transport-agnostic platform token.
+		mcpOpts = append(mcpOpts, mcp.WithAuthToken(opts.authToken))
 	} else if opts.mcpUsername != "" && opts.mcpPassword != "" {
 		// Use credentials for auto-authentication
 		mcpOpts = append(mcpOpts, mcp.WithCredentials(opts.mcpUsername, opts.mcpPassword))
@@ -1929,8 +1943,8 @@ func (c *client) Health() HealthClient {
 	return c.healthClient
 }
 
-// Auth returns the Auth client.
-func (c *client) Auth() AuthClient {
+// auth returns the Auth client. Reachable via Security().Auth().
+func (c *client) auth() AuthClient {
 	c.mu.RLock()
 	if c.authClient != nil {
 		c.mu.RUnlock()
@@ -1947,8 +1961,8 @@ func (c *client) Auth() AuthClient {
 	return c.authClient
 }
 
-// Seal returns the Seal client.
-func (c *client) Seal() SealClient {
+// seal returns the Seal client. Reachable via Security().Seal().
+func (c *client) seal() SealClient {
 	c.mu.RLock()
 	if c.sealClient != nil {
 		c.mu.RUnlock()
@@ -1965,8 +1979,8 @@ func (c *client) Seal() SealClient {
 	return c.sealClient
 }
 
-// KMS returns the KMS client.
-func (c *client) KMS() KMSClient {
+// kms returns the KMS client. Reachable via Security().KMS().
+func (c *client) kms() KMSClient {
 	c.mu.RLock()
 	if c.kmsClient != nil {
 		c.mu.RUnlock()
@@ -1983,8 +1997,8 @@ func (c *client) KMS() KMSClient {
 	return c.kmsClient
 }
 
-// Secrets returns the Secrets client.
-func (c *client) Secrets() SecretsClient {
+// secrets returns the Secrets client. Reachable via Security().Secrets().
+func (c *client) secrets() SecretsClient {
 	c.mu.RLock()
 	if c.secretsClient != nil {
 		c.mu.RUnlock()
@@ -2001,8 +2015,8 @@ func (c *client) Secrets() SecretsClient {
 	return c.secretsClient
 }
 
-// Crypto returns the Crypto client.
-func (c *client) Crypto() CryptoClient {
+// crypto returns the Crypto client. Reachable via Security().Crypto().
+func (c *client) crypto() CryptoClient {
 	c.mu.RLock()
 	if c.cryptoClient != nil {
 		c.mu.RUnlock()
@@ -2127,8 +2141,8 @@ func (c *client) Operations() OperationsClient {
 	return c.operationsClient
 }
 
-// RBAC returns the RBAC client for role-based access control.
-func (c *client) RBAC() RBACClient {
+// rbac returns the RBAC client. Reachable via Security().RBAC().
+func (c *client) rbac() RBACClient {
 	c.mu.RLock()
 	if c.rbacClient != nil {
 		c.mu.RUnlock()
@@ -2145,8 +2159,8 @@ func (c *client) RBAC() RBACClient {
 	return c.rbacClient
 }
 
-// DynamicSecrets returns the DynamicSecrets client for dynamic credential management.
-func (c *client) DynamicSecrets() DynamicSecretsClient {
+// dynamicSecrets returns the DynamicSecrets client. Reachable via Security().DynamicSecrets().
+func (c *client) dynamicSecrets() DynamicSecretsClient {
 	c.mu.RLock()
 	if c.dynamicSecretsClient != nil {
 		c.mu.RUnlock()
@@ -2163,8 +2177,8 @@ func (c *client) DynamicSecrets() DynamicSecretsClient {
 	return c.dynamicSecretsClient
 }
 
-// Certificate returns the Certificate client for certificate management.
-func (c *client) Certificate() CertificateClient {
+// certificate returns the Certificate client. Reachable via Security().Certificate().
+func (c *client) certificate() CertificateClient {
 	c.mu.RLock()
 	if c.certificateClient != nil {
 		c.mu.RUnlock()
@@ -2181,8 +2195,8 @@ func (c *client) Certificate() CertificateClient {
 	return c.certificateClient
 }
 
-// DEK returns the DEK client for data encryption key management.
-func (c *client) DEK() DEKClient {
+// dek returns the DEK client. Reachable via Security().DEK().
+func (c *client) dek() DEKClient {
 	c.mu.RLock()
 	if c.dekClient != nil {
 		c.mu.RUnlock()

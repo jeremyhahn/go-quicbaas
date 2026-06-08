@@ -509,22 +509,30 @@ func TestServer_EnsureOrchestratorDaemonClient_ReturnsCachedClient(t *testing.T)
 }
 
 // =============================================================================
-// iam_init.go — ensureAdminRole idempotency and guard
+// iam_init.go — reconcileAdminRole guard (verify-only against qrdb's canonical
+// admin role; see iam_init_test.go for the primary suite)
 // =============================================================================
 
-func TestEnsureAdminRole_NilStoreIsNoOp(t *testing.T) {
-	assert.NoError(t, ensureAdminRole(context.Background(), nil, "default"))
+func TestReconcileAdminRole_NilStore(t *testing.T) {
+	assert.NoError(t, reconcileAdminRole(context.Background(), nil))
 }
 
-func TestEnsureAdminRole_IdempotentSeed(t *testing.T) {
+func TestReconcileAdminRole_PresentAfterSeed(t *testing.T) {
 	c := buildTestIAMComponents(t)
 	ctx := context.Background()
 
-	require.NoError(t, ensureAdminRole(ctx, c.identityStore, "default"))
-	// Second invocation must not error — the role already exists.
-	require.NoError(t, ensureAdminRole(ctx, c.identityStore, "default"))
+	// Seed the canonical admin role (as qrdb's first-boot would) and confirm
+	// reconcile is a clean no-op when it is present.
+	_, err := c.identityStore.CreateRole(ctx, AdminTenantID, iam.CreateRoleOptions{
+		ID:          AdminRoleID,
+		Name:        "admin",
+		Permissions: []string{"*:*"},
+	})
+	require.NoError(t, err)
 
-	role, err := c.identityStore.GetRole(ctx, "default", AdminRoleID)
+	require.NoError(t, reconcileAdminRole(ctx, c.identityStore))
+
+	role, err := c.identityStore.GetRole(ctx, AdminTenantID, AdminRoleID)
 	require.NoError(t, err)
 	assert.Equal(t, AdminRoleID, role.ID)
 }

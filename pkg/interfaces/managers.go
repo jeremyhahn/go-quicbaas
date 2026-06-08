@@ -20,7 +20,6 @@ import (
 	"time"
 
 	types "github.com/jeremyhahn/go-xkms/sdk/go"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
@@ -138,12 +137,6 @@ type RoleManager interface {
 //  2. Optional: FIDO2/WebAuthn key registration after initial mTLS connection
 //  3. After successful authentication, call IssueTokenForUser to get JWT tokens
 type AuthManager interface {
-	// Authenticate validates credentials and issues authentication tokens.
-	// DEPRECATED: Password-based authentication is disabled. Use mTLS certificates
-	// or FIDO2/WebAuthn for authentication, then call IssueTokenForUser.
-	// Returns *auth.Token
-	Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error)
-
 	// IssueTokenForUser issues JWT tokens for a user who has been authenticated
 	// via mTLS certificate, FIDO2/WebAuthn, or other IAM provider.
 	// This should be called after successful authentication verification.
@@ -164,9 +157,9 @@ type AuthManager interface {
 	// Returns *auth.TokenValidationResult
 	ValidateToken(ctx context.Context, token string) (interface{}, error)
 
-	// CreateUser creates a new user with specified roles.
+	// CreateUser creates a new user record with specified roles.
 	// Returns *auth.User
-	CreateUser(username, password string, roles []string) (interface{}, error)
+	CreateUser(username string, roles []string) (interface{}, error)
 
 	// GetUserStore returns the user store for user management operations.
 	GetUserStore() UserStore

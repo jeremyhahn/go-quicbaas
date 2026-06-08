@@ -244,7 +244,7 @@ func TestInMemoryAuthManagerMethods(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test create user (password is ignored)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 	assert.Equal(t, "testuser", user.Username)
 

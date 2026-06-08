@@ -70,7 +70,7 @@ func TestValidateToken(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create user and get token via generateTokens (password auth is disabled)
-		user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+		user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 		require.NoError(t, err)
 
 		ctx := context.Background()
@@ -114,7 +114,7 @@ func TestValidateToken(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create user and get token via generateTokens (password auth is disabled)
-		user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+		user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 		require.NoError(t, err)
 
 		ctx := context.Background()
@@ -201,7 +201,7 @@ func TestRefreshTokenErrorPaths(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create user and get token via generateTokens (password auth is disabled)
-		user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+		user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 		require.NoError(t, err)
 
 		// Manually generate a valid JWT that's not in the token store
@@ -227,7 +227,7 @@ func TestRefreshTokenErrorPaths(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create user and get token via generateTokens (password auth is disabled)
-		user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+		user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 		require.NoError(t, err)
 
 		token, err := am.generateTokens(user)
@@ -272,7 +272,7 @@ func TestValidateTokenInternalErrorPaths(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create user and get token via generateTokens (password auth is disabled)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)

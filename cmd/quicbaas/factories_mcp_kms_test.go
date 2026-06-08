@@ -530,24 +530,6 @@ func (m *mockSDKClientForMCP) Operations() quicbaas.OperationsClient { return ni
 
 func (m *mockSDKClientForMCP) Cache() quicbaas.CacheClient { return nil }
 
-func (m *mockSDKClientForMCP) Auth() quicbaas.AuthClient { return nil }
-
-func (m *mockSDKClientForMCP) Seal() quicbaas.SealClient { return nil }
-
-func (m *mockSDKClientForMCP) KMS() quicbaas.KMSClient { return nil }
-
-func (m *mockSDKClientForMCP) Secrets() quicbaas.SecretsClient { return nil }
-
-func (m *mockSDKClientForMCP) Crypto() quicbaas.CryptoClient { return nil }
-
-func (m *mockSDKClientForMCP) RBAC() quicbaas.RBACClient { return nil }
-
-func (m *mockSDKClientForMCP) DynamicSecrets() quicbaas.DynamicSecretsClient { return nil }
-
-func (m *mockSDKClientForMCP) Certificate() quicbaas.CertificateClient { return nil }
-
-func (m *mockSDKClientForMCP) DEK() quicbaas.DEKClient { return nil }
-
 func (m *mockSDKClientForMCP) IAM() quicbaas.IAMClient { return nil }
 
 func (m *mockSDKClientForMCP) Vector() quicbaas.VectorClient { return nil }

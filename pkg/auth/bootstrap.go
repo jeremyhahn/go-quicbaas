@@ -88,9 +88,8 @@ func Bootstrap(authManager *PersistentAuthManager, config *BootstrapConfig) (*Bo
 		authManager.logger.Warn("Force recreating admin user")
 	}
 
-	// Create or recreate admin user
-	// NOTE: Password-based authentication has been removed. Admin users authenticate
-	// via IAM (WebAuthn, OIDC, OAuth). This creates the user record for role assignment.
+	// Create or recreate admin user. Admin users authenticate via IAM
+	// (mTLS, PIV, WebAuthn, OIDC); this creates the user record for role assignment.
 	if config.CreateAdminUser {
 		// Check if admin user exists
 		existingUser := authManager.userStore.GetByUsername(config.AdminUsername)
@@ -109,8 +108,7 @@ func Bootstrap(authManager *PersistentAuthManager, config *BootstrapConfig) (*Bo
 			}
 		}
 
-		// Create admin user (password parameter ignored - use IAM for authentication)
-		adminUser, err := authManager.CreateUser(config.AdminUsername, "", []string{RoleNameAdmin})
+		adminUser, err := authManager.CreateUser(config.AdminUsername, []string{RoleNameAdmin})
 		if err != nil {
 			return nil, api.NewAdminUserCreateError("auth.Bootstrap", err)
 		}
@@ -170,12 +168,6 @@ func GetAdminUserID(storage interfaces.Storage) (string, error) {
 	}
 
 	return string(data), nil
-}
-
-// ResetAdminPassword is deprecated and no longer functional.
-// Password-based authentication has been removed. Use IAM (WebAuthn, OIDC, OAuth) instead.
-func ResetAdminPassword(authManager *PersistentAuthManager, newPassword string) error {
-	return api.NewPasswordAuthDeprecatedError("auth.ResetAdminPassword")
 }
 
 // CreateDefaultRoles ensures the default roles exist (called by PersistentRoleManager.initializeBuiltInRoles)

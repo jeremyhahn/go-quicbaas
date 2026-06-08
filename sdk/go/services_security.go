@@ -1851,7 +1851,7 @@ func (c *authFactorsImpl) Login(ctx context.Context, req *AuthFactorLoginRequest
 
 // authServiceImpl is the concrete AuthService. It composes the existing
 // AuthClient with the new factor-typed sub-services. AuthClient methods are
-// delegated to the underlying client.Auth() so behavior is unchanged.
+// delegated to the underlying client.auth() so behavior is unchanged.
 type authServiceImpl struct {
 	AuthClient
 	c        *client
@@ -1865,7 +1865,7 @@ type authServiceImpl struct {
 func newAuthService(c *client) AuthService {
 	t := c.transport
 	return &authServiceImpl{
-		AuthClient: c.Auth(),
+		AuthClient: c.auth(),
 		c:          c,
 		t:          t,
 		webauthn:   &webauthnImpl{t: t},

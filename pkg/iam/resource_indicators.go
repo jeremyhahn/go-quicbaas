@@ -96,13 +96,85 @@ func ValidateResourceIndicator(resource string, config *ResourceIndicatorConfig)
 	return nil
 }
 
+// ValidateDefaultAudience validates a per-app default service audience.
+//
+// A default audience is the value an OAuth client's token carries in its `aud`
+// claim when the client does NOT send an RFC 8707 `resource` indicator. It
+// lets downstream resource servers that are configured for a fixed service
+// audience (e.g. "api://orchestrator") accept tokens from clients that never
+// learned to send a resource indicator.
+//
+// Validation mirrors ValidateResourceIndicator (absolute URI, no fragment) but
+// additionally accepts the "api://<service>" custom scheme used for service
+// audiences — the same shape a `resource` indicator carries when it lands in
+// the audience. Empty is valid and means "no default" (current behavior:
+// audience is built from the client/issuer only). An https URI is also valid.
+func ValidateDefaultAudience(audience string) error {
+	if audience == "" {
+		// Empty means no default; fully backward compatible.
+		return nil
+	}
+
+	u, err := url.Parse(audience)
+	if err != nil {
+		return &ResourceURIError{Detail: "invalid default audience URI", Cause: err}
+	}
+
+	if !u.IsAbs() {
+		return &ResourceURIError{Detail: "default audience must be an absolute URI"}
+	}
+
+	if u.Fragment != "" {
+		return &ResourceURIError{Detail: "default audience URI must not have a fragment"}
+	}
+
+	switch u.Scheme {
+	case "api", "https":
+		// "api://<service>" service audiences and https resource URIs are both
+		// acceptable default audiences.
+	case "http":
+		// Allow http only for localhost (development), matching the resource
+		// indicator validator.
+		if u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" {
+			return &ResourceURIError{Detail: "default audience URI must use https or api scheme"}
+		}
+	default:
+		return &ResourceURIError{Detail: "default audience URI must use https or api scheme"}
+	}
+
+	return nil
+}
+
 // BuildAudience constructs the audience claim for a token.
 // If resource is provided, it's included in the audience.
 // The clientID is always included in the audience.
 func BuildAudience(clientID string, resource string) []string {
+	return BuildAudienceWithDefault(clientID, resource, "")
+}
+
+// BuildAudienceWithDefault constructs the audience claim for a token, honoring
+// a per-app default service audience.
+//
+// Precedence:
+//   - When the client sent a `resource` indicator (resource != ""), that value
+//     is appended to the audience and the default is NOT applied — the explicit
+//     client resource always wins (RFC 8707 override).
+//   - When the client sent NO resource and a defaultResource is configured,
+//     the default is appended so downstream validators configured for that
+//     service audience accept the token.
+//   - When neither is set, the audience is just the clientID (today's
+//     behavior; fully backward compatible).
+//
+// The clientID is always present in the audience. A value already equal to the
+// clientID is not duplicated.
+func BuildAudienceWithDefault(clientID string, resource string, defaultResource string) []string {
 	audience := []string{clientID}
-	if resource != "" && resource != clientID {
-		audience = append(audience, resource)
+	extra := resource
+	if extra == "" {
+		extra = defaultResource
+	}
+	if extra != "" && extra != clientID {
+		audience = append(audience, extra)
 	}
 	return audience
 }

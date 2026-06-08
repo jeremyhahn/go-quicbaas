@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"encoding/json"
 	"fmt"
@@ -167,12 +166,11 @@ func (m *mockStorage) Close() error {
 
 // mockAuthManager mocks auth.AuthManager for testing.
 type mockAuthManager struct {
-	authenticateFn    func(ctx context.Context, username string, password *secure.Buffer) (*auth.Token, error)
 	authorizeFn       func(ctx context.Context, token, resource, action string) error
 	revokeTokenFn     func(ctx context.Context, token string) error
 	refreshTokenFn    func(ctx context.Context, refreshToken string) (*auth.Token, error)
 	validateTokenFn   func(ctx context.Context, token string) (*auth.TokenValidationResult, error)
-	createUserFn      func(username, password string, roles []string) (*auth.User, error)
+	createUserFn      func(username string, roles []string) (*auth.User, error)
 	deleteUserFn      func(username string) error
 	listUsersFn       func() ([]*auth.User, error)
 	createRoleFn      func(roleName string, permissions []string) (*auth.Role, error)
@@ -182,16 +180,6 @@ type mockAuthManager struct {
 	revokeRoleFn      func(username, roleName string) error
 	userStoreReturn   interfaces.UserStore
 	roleManagerReturn interfaces.RoleManager
-}
-
-func (m *mockAuthManager) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
-	if m.authenticateFn != nil {
-		return m.authenticateFn(ctx, username, password)
-	}
-	if password != nil {
-		password.Destroy()
-	}
-	return nil, stderrors.New("not implemented")
 }
 
 func (m *mockAuthManager) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (interface{}, error) {
@@ -226,9 +214,9 @@ func (m *mockAuthManager) ValidateToken(ctx context.Context, token string) (inte
 	return nil, stderrors.New("not implemented")
 }
 
-func (m *mockAuthManager) CreateUser(username, password string, roles []string) (interface{}, error) {
+func (m *mockAuthManager) CreateUser(username string, roles []string) (interface{}, error) {
 	if m.createUserFn != nil {
-		return m.createUserFn(username, password, roles)
+		return m.createUserFn(username, roles)
 	}
 	return nil, stderrors.New("not implemented")
 }
@@ -1587,7 +1575,7 @@ func TestAuthService_ValidateToken_Success(t *testing.T) {
 
 func TestRBACService_CreateUser_Success(t *testing.T) {
 	mockAuth := &mockAuthManager{
-		createUserFn: func(username, password string, roles []string) (*auth.User, error) {
+		createUserFn: func(username string, roles []string) (*auth.User, error) {
 			return &auth.User{
 				ID:       "user-123",
 				Username: username,

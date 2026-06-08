@@ -231,7 +231,7 @@ func main() {
 
 // checkSealStatus retrieves and displays the current seal status.
 func checkSealStatus(ctx context.Context, client quicbaas.Client) (*quicbaas.SealStatus, error) {
-	status, err := client.Seal().Status(ctx)
+	status, err := client.Security().Seal().Status(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,7 @@ func checkSealStatus(ctx context.Context, client quicbaas.Client) (*quicbaas.Sea
 func initializeServer(ctx context.Context, client quicbaas.Client, shares, threshold int) ([]string, string, error) {
 	fmt.Printf("  Generating %d unseal key shares (threshold: %d)...\n", shares, threshold)
 
-	resp, err := client.Seal().Init(ctx, &quicbaas.InitRequest{
+	resp, err := client.Security().Seal().Init(ctx, &quicbaas.InitRequest{
 		SecretShares:    shares,
 		SecretThreshold: threshold,
 	})
@@ -272,7 +272,7 @@ func unsealServer(ctx context.Context, client quicbaas.Client, keys []string, th
 	fmt.Printf("  Providing %d unseal keys (threshold: %d)...\n", threshold, threshold)
 
 	for i := 0; i < threshold && i < len(keys); i++ {
-		resp, err := client.Seal().Unseal(ctx, &quicbaas.UnsealRequest{
+		resp, err := client.Security().Seal().Unseal(ctx, &quicbaas.UnsealRequest{
 			Key:   keys[i],
 			Reset: false,
 		})
@@ -298,7 +298,7 @@ func unsealServer(ctx context.Context, client quicbaas.Client, keys []string, th
 func sealServer(ctx context.Context, client quicbaas.Client) error {
 	fmt.Println("  Sending seal command...")
 
-	if err := client.Seal().Seal(ctx); err != nil {
+	if err := client.Security().Seal().Seal(ctx); err != nil {
 		return err
 	}
 
@@ -314,7 +314,7 @@ func demonstratePartialUnsealAndReset(ctx context.Context, client quicbaas.Clien
 
 	// Provide one key
 	fmt.Println("  Providing first unseal key...")
-	resp, err := client.Seal().Unseal(ctx, &quicbaas.UnsealRequest{
+	resp, err := client.Security().Seal().Unseal(ctx, &quicbaas.UnsealRequest{
 		Key:   keys[0],
 		Reset: false,
 	})
@@ -325,7 +325,7 @@ func demonstratePartialUnsealAndReset(ctx context.Context, client quicbaas.Clien
 
 	// Now reset the progress
 	fmt.Println("  Resetting unseal progress...")
-	resp, err = client.Seal().Unseal(ctx, &quicbaas.UnsealRequest{
+	resp, err = client.Security().Seal().Unseal(ctx, &quicbaas.UnsealRequest{
 		Key:   "",
 		Reset: true,
 	})

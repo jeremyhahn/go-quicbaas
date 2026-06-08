@@ -157,6 +157,9 @@ func (l *Loader) applyEnvironmentOverrides(cfg *Config) {
 	if val := os.Getenv("QUICBAAS_SECURITY_TLS_CLIENT_AUTH"); val != "" {
 		cfg.Security.TLSClientAuth = parseBool(val)
 	}
+	if val := os.Getenv("QUICBAAS_SECURITY_REQUIRE_AUTHZ"); val != "" {
+		cfg.Security.RequireAuthz = parseBool(val)
+	}
 
 	// Raft configuration
 	if val := os.Getenv("QUICBAAS_RAFT_MUTUAL_TLS"); val != "" {

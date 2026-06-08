@@ -101,7 +101,7 @@ func demonstrateJWTAuthentication(ctx context.Context, client quicbaas.Client) {
 	fmt.Println("Step 1: Logging in with username/password...")
 	// TODO: Password-based login was removed; this example needs to migrate to
 	// WebAuthn/PIV smartcard once those flows are wired through the SDK.
-	loginResp, err := client.Auth().Login(ctx, &service.ExtendedLoginRequest{
+	loginResp, err := client.Security().Auth().Login(ctx, &service.ExtendedLoginRequest{
 		Username: "admin@example.com",
 		TenantID: "default",
 	})
@@ -146,7 +146,7 @@ func demonstrateJWTAuthentication(ctx context.Context, client quicbaas.Client) {
 func demonstrateTokenValidation(ctx context.Context, client quicbaas.Client, accessToken string) {
 	// Step 2: Validate the access token
 	fmt.Println("Step 2: Validating access token...")
-	claims, err := client.Auth().ValidateToken(ctx, accessToken)
+	claims, err := client.Security().Auth().ValidateToken(ctx, accessToken)
 	if err != nil {
 		log.Printf("  Token validation failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating token claims...")
@@ -182,7 +182,7 @@ func demonstrateTokenValidation(ctx context.Context, client quicbaas.Client, acc
 func demonstrateTokenRefresh(ctx context.Context, client quicbaas.Client, refreshToken string) {
 	// Step 3: Refresh the access token
 	fmt.Println("Step 3: Refreshing access token...")
-	refreshResp, err := client.Auth().RefreshToken(ctx, refreshToken)
+	refreshResp, err := client.Security().Auth().RefreshToken(ctx, refreshToken)
 	if err != nil {
 		log.Printf("  Token refresh failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating token refresh response...")
@@ -207,7 +207,7 @@ func demonstrateTokenRefresh(ctx context.Context, client quicbaas.Client, refres
 func demonstrateLogout(ctx context.Context, client quicbaas.Client, accessToken string) {
 	// Step 4: Logout (revoke tokens)
 	fmt.Println("Step 4: Logging out (revoking tokens)...")
-	err := client.Auth().Logout(ctx, accessToken)
+	err := client.Security().Auth().Logout(ctx, accessToken)
 	if err != nil {
 		log.Printf("  Logout failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating successful logout...")
@@ -234,7 +234,7 @@ func demonstrateMFAAuthentication(ctx context.Context, client quicbaas.Client) {
 	// Step 2: Complete MFA verification
 	fmt.Println("Step 2: Completing MFA verification...")
 	// TODO: Password-based login was removed; MFA flow now relies on WebAuthn/PIV evidence.
-	mfaLoginResp, err := client.Auth().Login(ctx, &service.ExtendedLoginRequest{
+	mfaLoginResp, err := client.Security().Auth().Login(ctx, &service.ExtendedLoginRequest{
 		Username: "secure-user@example.com",
 		MFACode:  "123456", // TOTP code from authenticator app
 		TenantID: "default",
@@ -275,7 +275,7 @@ func demonstrateOAuth2Flow(ctx context.Context, client quicbaas.Client) {
 
 	// Step 1: List available identity providers
 	fmt.Println("Step 1: Listing configured identity providers...")
-	providersResp, err := client.Auth().ListProviders(ctx, tenantID)
+	providersResp, err := client.Security().Auth().ListProviders(ctx, tenantID)
 	if err != nil {
 		log.Printf("  List providers failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating available providers...")
@@ -307,7 +307,7 @@ func demonstrateOAuth2Flow(ctx context.Context, client quicbaas.Client) {
 
 	// Step 2: Get details about a specific provider
 	fmt.Println("Step 2: Getting provider details...")
-	provider, err := client.Auth().GetProvider(ctx, tenantID, "google")
+	provider, err := client.Security().Auth().GetProvider(ctx, tenantID, "google")
 	if err != nil {
 		log.Printf("  Get provider failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating Google provider details...")
@@ -339,7 +339,7 @@ func demonstrateOAuth2Flow(ctx context.Context, client quicbaas.Client) {
 
 	// Step 3: Begin OAuth2 login flow
 	fmt.Println("Step 3: Initiating OAuth2/OIDC login flow...")
-	beginResp, err := client.Auth().BeginFederatedLogin(ctx, &service.BeginFederatedLoginRequest{
+	beginResp, err := client.Security().Auth().BeginFederatedLogin(ctx, &service.BeginFederatedLoginRequest{
 		TenantID:    tenantID,
 		ProviderID:  "google",
 		RedirectURI: "https://myapp.example.com/auth/callback",
@@ -375,7 +375,7 @@ func demonstrateOAuth2Flow(ctx context.Context, client quicbaas.Client) {
 	fmt.Println("  [Demo] IdP redirects back with authorization code...")
 	fmt.Println()
 
-	callbackResp, err := client.Auth().HandleFederatedCallback(ctx, &service.HandleFederatedCallbackRequest{
+	callbackResp, err := client.Security().Auth().HandleFederatedCallback(ctx, &service.HandleFederatedCallbackRequest{
 		TenantID:    tenantID,
 		ProviderID:  "google",
 		Code:        "authorization-code-from-idp",
@@ -416,7 +416,7 @@ func demonstrateSessionManagement(ctx context.Context, client quicbaas.Client) {
 
 	// Step 1: List all active sessions
 	fmt.Println("Step 1: Listing all active sessions...")
-	sessionsResp, err := client.Auth().ListSessions(ctx)
+	sessionsResp, err := client.Security().Auth().ListSessions(ctx)
 	if err != nil {
 		log.Printf("  List sessions failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating active sessions...")
@@ -462,7 +462,7 @@ func demonstrateSessionManagement(ctx context.Context, client quicbaas.Client) {
 
 	// Step 2: Get details of a specific session
 	fmt.Println("Step 2: Getting specific session details...")
-	session, err := client.Auth().GetSession(ctx, "session-001")
+	session, err := client.Security().Auth().GetSession(ctx, "session-001")
 	if err != nil {
 		log.Printf("  Get session failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Session details retrieved successfully")
@@ -477,7 +477,7 @@ func demonstrateSessionManagement(ctx context.Context, client quicbaas.Client) {
 
 	// Step 3: Revoke a specific session
 	fmt.Println("Step 3: Revoking a specific session (session-002)...")
-	err = client.Auth().RevokeSession(ctx, "session-002")
+	err = client.Security().Auth().RevokeSession(ctx, "session-002")
 	if err != nil {
 		log.Printf("  Revoke session failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating session revocation...")
@@ -492,7 +492,7 @@ func demonstrateSessionManagement(ctx context.Context, client quicbaas.Client) {
 	fmt.Println("  [Demo] Skipping actual revocation in this example...")
 	fmt.Println()
 	fmt.Println("  To revoke all sessions, call:")
-	fmt.Println("    err := client.Auth().RevokeAllSessions(ctx)")
+	fmt.Println("    err := client.Security().Auth().RevokeAllSessions(ctx)")
 	fmt.Println()
 }
 
@@ -507,7 +507,7 @@ func demonstrateTokenIntrospection(ctx context.Context, client quicbaas.Client) 
 
 	// Introspect a token
 	fmt.Println("Step 1: Introspecting an access token...")
-	introspection, err := client.Auth().IntrospectToken(ctx, "demo-access-token")
+	introspection, err := client.Security().Auth().IntrospectToken(ctx, "demo-access-token")
 	if err != nil {
 		log.Printf("  Token introspection failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating token introspection response...")
@@ -555,7 +555,7 @@ func demonstrateOIDCDiscovery(ctx context.Context, client quicbaas.Client) {
 
 	// Step 1: Get OIDC discovery document
 	fmt.Println("Step 1: Fetching OIDC discovery document...")
-	config, err := client.Auth().GetOpenIDConfiguration(ctx)
+	config, err := client.Security().Auth().GetOpenIDConfiguration(ctx)
 	if err != nil {
 		log.Printf("  Get OIDC config failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating OIDC discovery document...")
@@ -602,7 +602,7 @@ func demonstrateOIDCDiscovery(ctx context.Context, client quicbaas.Client) {
 
 	// Step 2: Get JWKS (JSON Web Key Set)
 	fmt.Println("Step 2: Fetching JWKS (JSON Web Key Set)...")
-	jwks, err := client.Auth().GetJWKS(ctx)
+	jwks, err := client.Security().Auth().GetJWKS(ctx)
 	if err != nil {
 		log.Printf("  Get JWKS failed (expected in demo): %v", err)
 		fmt.Println("  [Demo] Simulating JWKS response...")

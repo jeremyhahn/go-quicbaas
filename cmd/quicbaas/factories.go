@@ -359,7 +359,7 @@ func createSDKAuthClient() (auth.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return sdk.Auth(), nil
+	return sdk.Security().Auth(), nil
 }
 
 // createCryptoClient creates a client for cryptographic operations based on transport.

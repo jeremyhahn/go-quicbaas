@@ -2874,7 +2874,7 @@ func (r *rbacService) CreateUser(ctx context.Context, req *AuthCreateUserRequest
 	}
 
 	// Create user through AuthManager
-	userRaw, err := r.svc.authManager.CreateUser(req.Username, "", req.Roles)
+	userRaw, err := r.svc.authManager.CreateUser(req.Username, req.Roles)
 	if err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,

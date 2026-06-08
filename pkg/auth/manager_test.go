@@ -16,17 +16,14 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/bcrypt"
 
 	"google.golang.org/grpc/metadata"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -83,61 +80,6 @@ func TestNewInMemoryAuthManager(t *testing.T) {
 	}
 }
 
-func TestAuthenticate(t *testing.T) {
-	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:         true,
-		JWTSecret:       "test-secret-key",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
-
-	am, err := NewInMemoryAuthManager(config, log)
-	require.NoError(t, err)
-
-	// Create a test user (password is ignored - use IAM for auth)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
-	require.NoError(t, err)
-	require.NotNil(t, user)
-
-	// Password-based authentication has been removed.
-	// All authentication attempts should fail with an error.
-	// Use IAM (WebAuthn, OIDC, OAuth) for authentication instead.
-	tests := []struct {
-		name     string
-		username string
-		password string
-	}{
-		{
-			name:     "password auth disabled - any credentials",
-			username: "testuser",
-			password: "password123",
-		},
-		{
-			name:     "password auth disabled - empty password",
-			username: "testuser",
-			password: "",
-		},
-		{
-			name:     "password auth disabled - empty username",
-			username: "",
-			password: "password123",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			token, err := am.Authenticate(ctx, tt.username, passwordBuffer(t, tt.password))
-
-			// Password-based authentication is disabled - all attempts should fail
-			assert.Error(t, err)
-			assert.Nil(t, token)
-			assert.Contains(t, err.Error(), "password-based authentication is disabled")
-		})
-	}
-}
-
 func TestAuthorize(t *testing.T) {
 	log := createTestLogger(t)
 	config := &AuthConfig{
@@ -153,13 +95,13 @@ func TestAuthorize(t *testing.T) {
 
 	// Create users with different roles (password ignored - use IAM for auth)
 	// CreateUser returns *User directly, no type assertion needed
-	adminUser, err := am.CreateUser("admin", "", []string{RoleNameAdmin})
+	adminUser, err := am.CreateUser("admin", []string{RoleNameAdmin})
 	require.NoError(t, err)
 
-	rwUser, err := am.CreateUser("readwrite", "", []string{RoleNameReadWrite})
+	rwUser, err := am.CreateUser("readwrite", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
-	roUser, err := am.CreateUser("readonly", "", []string{RoleNameReadOnly})
+	roUser, err := am.CreateUser("readonly", []string{RoleNameReadOnly})
 	require.NoError(t, err)
 
 	// Generate tokens directly (password auth is disabled)
@@ -292,7 +234,7 @@ func TestRevokeToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create user and get token via generateTokens (password auth is disabled)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -325,42 +267,36 @@ func TestCreateUser(t *testing.T) {
 	tests := []struct {
 		name        string
 		username    string
-		password    string
 		roles       []string
 		expectError bool
 	}{
 		{
 			name:        "valid user",
 			username:    "user1",
-			password:    "", // Password is ignored
 			roles:       []string{RoleNameReadWrite},
 			expectError: false,
 		},
 		{
 			name:        "empty username",
 			username:    "",
-			password:    "", // Password is ignored
 			roles:       []string{RoleNameReadWrite},
 			expectError: true,
 		},
 		{
 			name:        "empty password allowed",
 			username:    "user2",
-			password:    "", // Password is ignored in passwordless auth
 			roles:       []string{RoleNameReadWrite},
 			expectError: false,
 		},
 		{
 			name:        "duplicate username",
 			username:    "user1",
-			password:    "", // Password is ignored
 			roles:       []string{RoleNameReadOnly},
 			expectError: true,
 		},
 		{
 			name:        "multiple roles",
 			username:    "user3",
-			password:    "", // Password is ignored
 			roles:       []string{RoleNameReadWrite, RoleNameReadOnly},
 			expectError: false,
 		},
@@ -368,7 +304,7 @@ func TestCreateUser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user, err := am.CreateUser(tt.username, tt.password, tt.roles)
+			user, err := am.CreateUser(tt.username, tt.roles)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -399,7 +335,7 @@ func TestCreateUserWithTenant(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("user with tenant ID", func(t *testing.T) {
-		user, err := am.CreateUserWithTenant("tenant_user", "", "tenant-abc", []string{RoleNameReadWrite})
+		user, err := am.CreateUserWithTenant("tenant_user", "tenant-abc", []string{RoleNameReadWrite})
 		require.NoError(t, err)
 		require.NotNil(t, user)
 
@@ -429,7 +365,7 @@ func TestCreateUserWithTenant(t *testing.T) {
 	})
 
 	t.Run("user without tenant ID", func(t *testing.T) {
-		user, err := am.CreateUserWithTenant("no_tenant_user", "", "", []string{RoleNameReadWrite})
+		user, err := am.CreateUserWithTenant("no_tenant_user", "", []string{RoleNameReadWrite})
 		require.NoError(t, err)
 		require.NotNil(t, user)
 
@@ -457,7 +393,7 @@ func TestCreateUserWithTenant(t *testing.T) {
 
 	t.Run("CreateUser delegates to CreateUserWithTenant with empty tenant", func(t *testing.T) {
 		// CreateUser should create a user with no tenant ID
-		user, err := am.CreateUser("legacy_user", "", []string{RoleNameReadOnly})
+		user, err := am.CreateUser("legacy_user", []string{RoleNameReadOnly})
 		require.NoError(t, err)
 		require.NotNil(t, user)
 
@@ -467,299 +403,6 @@ func TestCreateUserWithTenant(t *testing.T) {
 }
 
 // TestTokenValidation moved to manager_integration_test.go
-
-func TestPasswordHashing(t *testing.T) {
-	t.Run("bcrypt hash and verify", func(t *testing.T) {
-		password := "testpassword123"
-
-		// Hash password with bcrypt
-		hash, err := hashPassword(password)
-		require.NoError(t, err)
-		assert.NotEmpty(t, hash)
-		assert.True(t, isBcryptHash(hash), "hash should be a bcrypt hash")
-
-		// Verify correct password returns match with no rehash needed
-		matched, rehashed := verifyPassword(hash, password)
-		assert.True(t, matched)
-		assert.Empty(t, rehashed, "bcrypt hash should not trigger rehash")
-	})
-
-	t.Run("wrong password rejected", func(t *testing.T) {
-		password := "testpassword123"
-
-		hash, err := hashPassword(password)
-		require.NoError(t, err)
-
-		// Wrong password should not match
-		matched, rehashed := verifyPassword(hash, "wrongpassword!")
-		assert.False(t, matched)
-		assert.Empty(t, rehashed)
-	})
-
-	t.Run("different passwords produce different hashes", func(t *testing.T) {
-		hash1, err := hashPassword("password-one-12")
-		require.NoError(t, err)
-
-		hash2, err := hashPassword("password-two-12")
-		require.NoError(t, err)
-
-		assert.NotEqual(t, hash1, hash2)
-	})
-
-	t.Run("same password produces unique hashes due to salt", func(t *testing.T) {
-		password := "same-password-123"
-
-		hash1, err := hashPassword(password)
-		require.NoError(t, err)
-
-		hash2, err := hashPassword(password)
-		require.NoError(t, err)
-
-		// bcrypt uses random salt, so same password yields different hashes
-		assert.NotEqual(t, hash1, hash2)
-
-		// Both should still verify correctly
-		matched1, _ := verifyPassword(hash1, password)
-		assert.True(t, matched1)
-
-		matched2, _ := verifyPassword(hash2, password)
-		assert.True(t, matched2)
-	})
-}
-
-func TestPasswordHashingLegacyMigration(t *testing.T) {
-	t.Run("legacy SHA-256 hash matches and triggers rehash", func(t *testing.T) {
-		password := "legacypassword123"
-		legacyHash := hashToken(password) // SHA-256 hex hash
-
-		// Verify the legacy hash is NOT a bcrypt hash
-		assert.False(t, isBcryptHash(legacyHash))
-
-		// Legacy hash should match and return upgraded bcrypt hash
-		matched, rehashed := verifyPassword(legacyHash, password)
-		assert.True(t, matched)
-		assert.NotEmpty(t, rehashed, "legacy hash match should return bcrypt upgrade")
-		assert.True(t, isBcryptHash(rehashed), "upgraded hash should be bcrypt")
-
-		// The upgraded hash should also verify correctly
-		matched2, rehashed2 := verifyPassword(rehashed, password)
-		assert.True(t, matched2)
-		assert.Empty(t, rehashed2, "bcrypt hash should not trigger another rehash")
-	})
-
-	t.Run("legacy SHA-256 hash rejects wrong password", func(t *testing.T) {
-		password := "legacypassword123"
-		legacyHash := hashToken(password) // SHA-256 hex hash
-
-		matched, rehashed := verifyPassword(legacyHash, "wrongpassword!")
-		assert.False(t, matched)
-		assert.Empty(t, rehashed)
-	})
-}
-
-func TestIsBcryptHash(t *testing.T) {
-	t.Run("bcrypt hash detected", func(t *testing.T) {
-		hash, err := bcrypt.GenerateFromPassword([]byte("test"), bcrypt.MinCost)
-		require.NoError(t, err)
-		assert.True(t, isBcryptHash(string(hash)))
-	})
-
-	t.Run("SHA-256 hex hash not detected as bcrypt", func(t *testing.T) {
-		sha256Hash := hashToken("test")
-		assert.False(t, isBcryptHash(sha256Hash))
-	})
-
-	t.Run("empty string not detected as bcrypt", func(t *testing.T) {
-		assert.False(t, isBcryptHash(""))
-	})
-
-	t.Run("arbitrary string not detected as bcrypt", func(t *testing.T) {
-		assert.False(t, isBcryptHash("not-a-hash"))
-	})
-}
-
-func TestValidatePasswordLength(t *testing.T) {
-	t.Run("valid password meets minimum length", func(t *testing.T) {
-		err := validatePasswordLength("123456789012") // exactly 12 chars
-		assert.NoError(t, err)
-	})
-
-	t.Run("long password accepted", func(t *testing.T) {
-		err := validatePasswordLength("this-is-a-very-long-password-that-exceeds-minimum")
-		assert.NoError(t, err)
-	})
-
-	t.Run("short password rejected", func(t *testing.T) {
-		err := validatePasswordLength("short")
-		require.Error(t, err)
-
-		var ptse *api.PasswordTooShortError
-		assert.True(t, errors.As(err, &ptse), "error should be PasswordTooShortError")
-		assert.Equal(t, MinPasswordLength, ptse.MinLength)
-		assert.Equal(t, 5, ptse.GotLength)
-	})
-
-	t.Run("empty password rejected", func(t *testing.T) {
-		err := validatePasswordLength("")
-		require.Error(t, err)
-
-		var ptse *api.PasswordTooShortError
-		assert.True(t, errors.As(err, &ptse), "error should be PasswordTooShortError")
-		assert.Equal(t, 0, ptse.GotLength)
-	})
-
-	t.Run("11 character password rejected", func(t *testing.T) {
-		err := validatePasswordLength("12345678901") // 11 chars
-		require.Error(t, err)
-
-		var ptse *api.PasswordTooShortError
-		assert.True(t, errors.As(err, &ptse))
-		assert.Equal(t, 11, ptse.GotLength)
-	})
-}
-
-func TestCreateUserWithPasswordValidation(t *testing.T) {
-	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:           true,
-		JWTSecret:         "test-secret-key",
-		AllowPasswordAuth: true,
-	}
-
-	am, err := NewInMemoryAuthManager(config, log)
-	require.NoError(t, err)
-
-	t.Run("valid password accepted", func(t *testing.T) {
-		user, err := am.CreateUser("validpwuser", "securepassword12", []string{RoleNameReadWrite})
-		require.NoError(t, err)
-		require.NotNil(t, user)
-		assert.NotEmpty(t, user.password)
-		assert.True(t, isBcryptHash(user.password), "stored hash should be bcrypt")
-	})
-
-	t.Run("short password rejected on create", func(t *testing.T) {
-		user, err := am.CreateUser("shortpwuser", "short", []string{RoleNameReadWrite})
-		assert.Error(t, err)
-		assert.Nil(t, user)
-		assert.Contains(t, err.Error(), "password must be at least")
-	})
-
-	t.Run("empty password allowed when password auth enabled", func(t *testing.T) {
-		// Empty password means no password is set (IAM-only user)
-		user, err := am.CreateUser("nopwuser", "", []string{RoleNameReadWrite})
-		require.NoError(t, err)
-		require.NotNil(t, user)
-		assert.Empty(t, user.password, "no password should be stored for empty password")
-	})
-}
-
-func TestAuthenticateWithBcrypt(t *testing.T) {
-	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:           true,
-		JWTSecret:         "test-secret-key",
-		TokenTTL:          1 * time.Hour,
-		AllowPasswordAuth: true,
-	}
-
-	am, err := NewInMemoryAuthManager(config, log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	password := "secure-password-123"
-
-	// Create user with password
-	user, err := am.CreateUser("bcryptuser", password, []string{RoleNameReadWrite})
-	require.NoError(t, err)
-	require.NotNil(t, user)
-
-	t.Run("correct password authenticates", func(t *testing.T) {
-		token, err := am.Authenticate(ctx, "bcryptuser", passwordBuffer(t, password))
-		require.NoError(t, err)
-		require.NotNil(t, token)
-		assert.NotEmpty(t, token.AccessToken)
-	})
-
-	t.Run("wrong password rejected", func(t *testing.T) {
-		token, err := am.Authenticate(ctx, "bcryptuser", passwordBuffer(t, "wrong-password-123"))
-		assert.Error(t, err)
-		assert.Nil(t, token)
-	})
-}
-
-func TestLegacyHashMigrationOnLogin(t *testing.T) {
-	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:           true,
-		JWTSecret:         "test-secret-key",
-		TokenTTL:          1 * time.Hour,
-		AllowPasswordAuth: true,
-	}
-
-	am, err := NewInMemoryAuthManager(config, log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	password := "legacy-password-123"
-
-	// Simulate a user with a legacy SHA-256 hash by directly setting the field
-	legacyHash := hashToken(password)
-	userID, err := generateUserID()
-	require.NoError(t, err)
-
-	user := &User{
-		ID:       userID,
-		Username: "legacyuser",
-		Roles:    []string{RoleNameReadWrite},
-		password: legacyHash,
-		Created:  time.Now(),
-	}
-	am.userStore.AddUser(user)
-
-	// Verify the stored hash is SHA-256 (not bcrypt)
-	storedUser := am.userStore.GetByUsername("legacyuser")
-	require.NotNil(t, storedUser)
-	userObj, ok := storedUser.(*User)
-	require.True(t, ok)
-	assert.False(t, isBcryptHash(userObj.password), "should start as SHA-256 hash")
-
-	// Authenticate with correct password - should succeed and migrate hash
-	token, err := am.Authenticate(ctx, "legacyuser", passwordBuffer(t, password))
-	require.NoError(t, err)
-	require.NotNil(t, token)
-
-	// After login, the hash should be upgraded to bcrypt
-	storedUser = am.userStore.GetByUsername("legacyuser")
-	require.NotNil(t, storedUser)
-	userObj, ok = storedUser.(*User)
-	require.True(t, ok)
-	assert.True(t, isBcryptHash(userObj.password), "hash should be migrated to bcrypt after login")
-
-	// Verify the user can still authenticate with the new bcrypt hash
-	token2, err := am.Authenticate(ctx, "legacyuser", passwordBuffer(t, password))
-	require.NoError(t, err)
-	require.NotNil(t, token2)
-}
-
-func TestAuthDisabled(t *testing.T) {
-	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled: false, // Auth disabled
-	}
-
-	am, err := NewInMemoryAuthManager(config, log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Authenticate should fail when auth is disabled
-	_, err = am.Authenticate(ctx, "testuser", passwordBuffer(t, "password"))
-	assert.Error(t, err)
-
-	// Authorize should succeed when auth is disabled
-	err = am.Authorize(ctx, "", ResourceKeys, ActionRead)
-	assert.NoError(t, err)
-}
 
 func TestAnonymousAccess(t *testing.T) {
 	log := createTestLogger(t)
@@ -804,7 +447,7 @@ func TestIssueTokenForUser(t *testing.T) {
 
 	t.Run("issue token for existing user", func(t *testing.T) {
 		// Create a user (simulating user registered via bootstrap)
-		user, err := am.CreateUser("certuser", "", []string{RoleNameReadWrite})
+		user, err := am.CreateUser("certuser", []string{RoleNameReadWrite})
 		require.NoError(t, err)
 		require.NotNil(t, user)
 
@@ -823,7 +466,7 @@ func TestIssueTokenForUser(t *testing.T) {
 
 	t.Run("issue token with user lookup by username", func(t *testing.T) {
 		// Create a user
-		_, err := am.CreateUser("lookupuser", "", []string{RoleNameAdmin})
+		_, err := am.CreateUser("lookupuser", []string{RoleNameAdmin})
 		require.NoError(t, err)
 
 		// Create a minimal UserInfo implementation for lookup
@@ -865,7 +508,7 @@ func TestIssueTokenForUser(t *testing.T) {
 		disabledAM, err := NewInMemoryAuthManager(disabledConfig, log)
 		require.NoError(t, err)
 
-		user, err := disabledAM.CreateUser("disableduser", "", []string{RoleNameReadWrite})
+		user, err := disabledAM.CreateUser("disableduser", []string{RoleNameReadWrite})
 		require.NoError(t, err)
 
 		token, err := disabledAM.IssueTokenForUser(ctx, user)
@@ -967,143 +610,37 @@ func TestUserGetTenantID(t *testing.T) {
 	})
 }
 
-// TestInMemoryValidateCredentials tests the in-memory validateCredentials method.
-func TestInMemoryValidateCredentials(t *testing.T) {
-	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:           true,
-		JWTSecret:         "test-secret-key",
-		AllowPasswordAuth: true,
-	}
-	am, err := NewInMemoryAuthManager(config, log)
-	require.NoError(t, err)
-
-	// Create user with password (must be >= 12 characters)
-	user, err := am.CreateUser("pwduser", "secret123long", []string{RoleNameReadOnly})
-	require.NoError(t, err)
-	require.NotNil(t, user)
-
-	ctx := context.Background()
-
-	t.Run("empty username", func(t *testing.T) {
-		_, err := am.validateCredentials(ctx, "", passwordBuffer(t, "password"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "username and password are required")
-	})
-
-	t.Run("empty password", func(t *testing.T) {
-		_, err := am.validateCredentials(ctx, "pwduser", passwordBuffer(t, ""))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "username and password are required")
-	})
-
-	t.Run("nonexistent user", func(t *testing.T) {
-		_, err := am.validateCredentials(ctx, "noone", passwordBuffer(t, "password"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid credentials")
-	})
-
-	t.Run("wrong password", func(t *testing.T) {
-		_, err := am.validateCredentials(ctx, "pwduser", passwordBuffer(t, "wrongpassword"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid credentials")
-	})
-
-	t.Run("correct credentials", func(t *testing.T) {
-		u, err := am.validateCredentials(ctx, "pwduser", passwordBuffer(t, "secret123long"))
-		require.NoError(t, err)
-		assert.Equal(t, "pwduser", u.Username)
-	})
-
-	t.Run("user without password set", func(t *testing.T) {
-		_, err := am.CreateUser("nopwduser", "", []string{RoleNameReadOnly})
-		require.NoError(t, err)
-
-		_, err = am.validateCredentials(ctx, "nopwduser", passwordBuffer(t, "anything"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "user has no password set")
-	})
-}
-
-// TestInMemoryAuthenticate tests the Authenticate method on InMemoryAuthManager.
-func TestInMemoryAuthenticate(t *testing.T) {
-	log := createTestLogger(t)
-
-	t.Run("auth disabled", func(t *testing.T) {
-		cfg := &AuthConfig{Enabled: false}
-		am, err := NewInMemoryAuthManager(cfg, log)
-		require.NoError(t, err)
-
-		_, err = am.Authenticate(context.Background(), "user", passwordBuffer(t, "pass"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not enabled")
-	})
-
-	t.Run("password auth disabled", func(t *testing.T) {
-		cfg := &AuthConfig{
-			Enabled:           true,
-			JWTSecret:         "test-secret",
-			AllowPasswordAuth: false,
-		}
-		am, err := NewInMemoryAuthManager(cfg, log)
-		require.NoError(t, err)
-
-		_, err = am.Authenticate(context.Background(), "user", passwordBuffer(t, "pass"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "password-based authentication is disabled")
-	})
-
-	t.Run("successful authentication", func(t *testing.T) {
-		cfg := &AuthConfig{
-			Enabled:           true,
-			JWTSecret:         "test-secret",
-			AllowPasswordAuth: true,
-		}
-		am, err := NewInMemoryAuthManager(cfg, log)
-		require.NoError(t, err)
-
-		_, err = am.CreateUser("authuser", "mypassword12", []string{RoleNameReadOnly})
-		require.NoError(t, err)
-
-		token, err := am.Authenticate(context.Background(), "authuser", passwordBuffer(t, "mypassword12"))
-		require.NoError(t, err)
-		assert.NotEmpty(t, token.AccessToken)
-		assert.NotEmpty(t, token.RefreshToken)
-	})
-}
-
 // TestInMemoryCreateUserWithTenant tests multi-tenant user creation.
 func TestInMemoryCreateUserWithTenant(t *testing.T) {
 	log := createTestLogger(t)
 	config := &AuthConfig{
-		Enabled:           true,
-		JWTSecret:         "test-secret-key",
-		AllowPasswordAuth: true,
+		Enabled:   true,
+		JWTSecret: "test-secret-key",
 	}
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
 
 	t.Run("create with tenant ID", func(t *testing.T) {
-		user, err := am.CreateUserWithTenant("tenantuser", "password-valid", "tenant-abc", []string{RoleNameReadOnly})
+		user, err := am.CreateUserWithTenant("tenantuser", "tenant-abc", []string{RoleNameReadOnly})
 		require.NoError(t, err)
 		assert.Equal(t, "tenant-abc", user.TenantID)
 		assert.Equal(t, "tenantuser", user.Username)
 	})
 
 	t.Run("create without tenant ID", func(t *testing.T) {
-		user, err := am.CreateUserWithTenant("singletenantuser", "password-valid", "", []string{RoleNameReadOnly})
+		user, err := am.CreateUserWithTenant("singletenantuser", "", []string{RoleNameReadOnly})
 		require.NoError(t, err)
 		assert.Empty(t, user.TenantID)
 	})
 
 	t.Run("empty username", func(t *testing.T) {
-		_, err := am.CreateUserWithTenant("", "password-valid", "", []string{RoleNameReadOnly})
+		_, err := am.CreateUserWithTenant("", "", []string{RoleNameReadOnly})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "username is required")
 	})
 
 	t.Run("duplicate user", func(t *testing.T) {
-		_, err := am.CreateUserWithTenant("tenantuser", "password-valid", "", []string{RoleNameReadOnly})
+		_, err := am.CreateUserWithTenant("tenantuser", "", []string{RoleNameReadOnly})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user already exists")
 	})
@@ -1136,7 +673,7 @@ func TestInMemoryIssueTokenForUser(t *testing.T) {
 	})
 
 	t.Run("user type is concrete User", func(t *testing.T) {
-		user, err := am.CreateUser("tokenuser", "", []string{RoleNameReadOnly})
+		user, err := am.CreateUser("tokenuser", []string{RoleNameReadOnly})
 		require.NoError(t, err)
 
 		token, err := am.IssueTokenForUser(context.Background(), user)
@@ -1145,7 +682,7 @@ func TestInMemoryIssueTokenForUser(t *testing.T) {
 	})
 
 	t.Run("user type is interface resolved by username", func(t *testing.T) {
-		_, err := am.CreateUser("extuser", "", []string{RoleNameReadOnly})
+		_, err := am.CreateUser("extuser", []string{RoleNameReadOnly})
 		require.NoError(t, err)
 
 		mockUser := &mockUserInfo{
@@ -1190,13 +727,6 @@ func (m *mockUserInfo) GetTenantID() string    { return m.tenantID }
 func (m *mockUserInfo) GetRoles() []string     { return m.roles }
 func (m *mockUserInfo) GetCreated() time.Time  { return m.created }
 func (m *mockUserInfo) GetLastAuth() time.Time { return m.lastAuth }
-
-// TestResetAdminPasswordDeprecated tests the deprecated ResetAdminPassword function.
-func TestResetAdminPasswordDeprecated(t *testing.T) {
-	err := ResetAdminPassword(nil, "newpass")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "password-based authentication is disabled")
-}
 
 // TestExtractTenantFromContextCoverage tests the exported ExtractTenantFromContext function.
 func TestExtractTenantFromContextCoverage(t *testing.T) {
@@ -1665,7 +1195,7 @@ func TestBuildSubjectFromTokenCoverage(t *testing.T) {
 	})
 
 	t.Run("valid token returns authenticated subject", func(t *testing.T) {
-		user, err := am.CreateUser("subjectuser", "", []string{RoleNameReadOnly})
+		user, err := am.CreateUser("subjectuser", []string{RoleNameReadOnly})
 		require.NoError(t, err)
 
 		token, err := am.generateTokens(user)

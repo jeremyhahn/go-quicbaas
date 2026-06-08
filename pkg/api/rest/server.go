@@ -205,6 +205,14 @@ type Server struct {
 	// injection without the deferred cluster-wide RBAC decision.
 	bindingEnforcementOnly bool
 
+	// defaultDenyEnforcement selects the default-deny scope -> RBAC gate
+	// (EnforceDefaultDeny) installed on the TOP router as a path-predicate. When
+	// true, non-public, non-cluster-mTLS requests must present a valid platform
+	// token carrying the required scope; token-less requests are denied. This is
+	// the opt-in gate behind SecurityConfig.RequireAuthz and takes precedence over
+	// bindingEnforcementOnly when set.
+	defaultDenyEnforcement bool
+
 	// hookTaskStore is the task store used by Claude Code hook handlers (optional)
 	hookTaskStore orchestration.TaskStore
 
@@ -335,6 +343,16 @@ func (s *Server) setupRouter() {
 	r.Use(LoggingMiddleware(s.logger))
 	r.Use(MetricsMiddleware())
 
+	// Default-deny authorization gate (opt-in via SecurityConfig.RequireAuthz).
+	// Installed on the TOP router as a path-predicate so it also covers
+	// root-mounted protected surfaces (IAM management, qrdb-wire mounts) that a
+	// gate scoped to the /api/v1 chi group would miss. When disabled (the
+	// default), the per-group EnforceTokenBinding / Authorize gates below run
+	// unchanged.
+	if s.authzMiddleware != nil && s.defaultDenyEnforcement {
+		r.Use(s.authzMiddleware.EnforceDefaultDeny(s.config.SPIFFETrustDomain))
+	}
+
 	// CORS middleware (if origins configured)
 	if len(s.config.CORSOrigins) > 0 {
 		r.Use(CORSMiddleware(s.config.CORSOrigins))
@@ -355,7 +373,7 @@ func (s *Server) setupRouter() {
 		// Apply authorization middleware if configured. When only token-binding
 		// enforcement is requested, install the proof-of-possession gate
 		// (EnforceTokenBinding); otherwise install the full RBAC Authorize gate.
-		if s.authzMiddleware != nil {
+		if s.authzMiddleware != nil && !s.defaultDenyEnforcement {
 			if s.bindingEnforcementOnly {
 				r.Use(s.authzMiddleware.EnforceTokenBinding)
 			} else {
@@ -1059,6 +1077,76 @@ func (s *Server) SetTokenBindingEnforcement(tokenValidator TokenValidator) {
 	s.setupRouter()
 
 	s.logger.Info("Token-binding (DPoP/mTLS) enforcement middleware enabled")
+}
+
+// SetDefaultDenyEnforcement installs the default-deny scope -> RBAC gate
+// (EnforceDefaultDeny) after construction. It is the opt-in inbound
+// authorization posture: non-public, non-cluster-mTLS requests must present a
+// valid platform token carrying the required scope, and token-less requests are
+// denied. It is installed on the TOP router as a path-predicate so it also covers
+// root-mounted protected surfaces (IAM management, qrdb-wire mounts). The
+// tokenValidator must be non-nil.
+//
+// This method recreates the router with the default-deny middleware applied. It
+// is mutually exclusive with SetTokenBindingEnforcement: enabling it disables the
+// per-group token-binding / RBAC gates so the surface is gated exactly once.
+func (s *Server) SetDefaultDenyEnforcement(tokenValidator TokenValidator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if tokenValidator == nil {
+		s.logger.Warn("SetDefaultDenyEnforcement called with nil validator, enforcement not enabled")
+		return
+	}
+
+	s.authzMiddleware = NewAuthzMiddleware(&AuthzMiddlewareConfig{
+		Logger:         s.logger,
+		TokenValidator: tokenValidator,
+		// AuthzService is intentionally nil: the default-deny gate enforces scope
+		// presence from the token's AuthorizedContext, not the standalone RBAC
+		// role-manager decision (which 403s cluster principals).
+	})
+	s.defaultDenyEnforcement = true
+	s.bindingEnforcementOnly = false
+
+	// Rebuild the router with the default-deny middleware on the top router.
+	s.setupRouter()
+
+	s.logger.Info("Default-deny scope -> RBAC enforcement middleware enabled")
+}
+
+// SetQRDBAuthzEnforcement installs the full RBAC Authorize gate backed by qrdb's
+// policy decision point (the qrdbauthz adapter). Unlike SetDefaultDenyEnforcement
+// (scope presence) and SetTokenBindingEnforcement (binding only), this routes
+// every protected /api/v1 request through qrdb's authorizer using the
+// qrdb-canonical PEP mapping: the request is mapped to a registered
+// "resource:action" permission and qrdb decides allow/deny. It is the opt-in
+// RequireAuthz=true posture for Stage 1.1a.
+//
+// Both tokenValidator and authorizer must be non-nil. This method recreates the
+// router with the Authorize gate (neither defaultDeny nor bindingOnly) applied to
+// the /api/v1 group.
+func (s *Server) SetQRDBAuthzEnforcement(tokenValidator TokenValidator, authorizer QRDBAuthorizer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if tokenValidator == nil || authorizer == nil {
+		s.logger.Warn("SetQRDBAuthzEnforcement called with nil dependency, enforcement not enabled")
+		return
+	}
+
+	s.authzMiddleware = NewAuthzMiddleware(&AuthzMiddlewareConfig{
+		Logger:         s.logger,
+		TokenValidator: tokenValidator,
+		QRDBAuthorizer: authorizer,
+	})
+	s.defaultDenyEnforcement = false
+	s.bindingEnforcementOnly = false
+
+	// Rebuild the router with the Authorize gate on the /api/v1 group.
+	s.setupRouter()
+
+	s.logger.Info("REST qrdb PDP authorization (Authorize gate) enabled")
 }
 
 // HasAuthorizationMiddleware returns true if authorization middleware is configured.

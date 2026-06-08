@@ -115,12 +115,6 @@ func TestIAMComponents_GetAuthManager_WithAdapter(t *testing.T) {
 // inMemoryAuthManagerAdapter Tests
 // ================================================================================
 
-func TestInMemoryAuthManagerAdapter_IsPasswordAuthEnabled(t *testing.T) {
-	adapter := &inMemoryAuthManagerAdapter{manager: nil}
-	result := adapter.IsPasswordAuthEnabled()
-	assert.True(t, result)
-}
-
 func TestInMemoryAuthManagerAdapter_NilManager(t *testing.T) {
 	// These tests verify the adapter methods handle nil manager gracefully
 	adapter := &inMemoryAuthManagerAdapter{manager: nil}

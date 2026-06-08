@@ -409,71 +409,48 @@ func mustIssueSelfSignedCert(t *testing.T, priv *ecdsa.PrivateKey, commonName st
 }
 
 // ---------------------------------------------------------------------------
-// ensureAdminRole tests
+// reconcileAdminRole tests
 //
-// Regression for the IAM Roles tab showing "No roles defined" while the
-// Users tab shows the admin role. Without a corresponding Role row in the
-// IdentityStore the two surfaces drift; ensureAdminRole keeps them in
-// sync.
+// Stage 1.2 of the authz unification adopts qrdb's canonical admin role as the
+// single source of truth: the broker no longer SEEDS its own admin role, it
+// RECONCILES against qrdb's deterministic admin role (created by qrdb's
+// first-boot in the system tenant). reconcileAdminRole therefore only verifies
+// the canonical role is present and surfaces ErrAdminRoleMissing when it is
+// absent — it never creates a parallel broker admin.
 // ---------------------------------------------------------------------------
 
-func TestEnsureAdminRole_CreatesAdminRoleInDefaultTenant(t *testing.T) {
+func TestReconcileAdminRole_PresentRoleOK(t *testing.T) {
 	c := buildTestIAMComponents(t)
 	ctx := context.Background()
 
-	// Pre-condition: the role store starts empty for the default tenant.
-	rolesBefore, err := c.identityStore.ListRoles(ctx, "default", iam.ListOptions{Limit: 100})
+	// Simulate qrdb's first-boot having seeded the canonical admin role under
+	// its deterministic ID in the system tenant.
+	_, err := c.identityStore.CreateRole(ctx, AdminTenantID, iam.CreateRoleOptions{
+		ID:          AdminRoleID,
+		Name:        "admin",
+		Permissions: []string{"*:*"},
+	})
 	require.NoError(t, err)
-	require.Empty(t, rolesBefore, "fresh tenant must start with no roles")
 
-	require.NoError(t, ensureAdminRole(ctx, c.identityStore, "default"))
-
-	role, err := c.identityStore.GetRole(ctx, "default", AdminRoleID)
-	require.NoError(t, err, "admin role must exist after ensureAdminRole")
-	require.NotNil(t, role)
-	assert.Equal(t, AdminRoleID, role.ID)
-	assert.Equal(t, "admin", role.Name)
-	assert.Contains(t, role.Permissions, "*",
-		"admin role must carry the wildcard permission so policy enforcement treats it as full access")
-
-	// Post-condition: the Roles tab API surface (ListRoles) returns the
-	// admin role so the IAM UI no longer reports an empty roster while the
-	// Users tab shows the role label.
-	rolesAfter, err := c.identityStore.ListRoles(ctx, "default", iam.ListOptions{Limit: 100})
-	require.NoError(t, err)
-	require.Len(t, rolesAfter, 1)
-	assert.Equal(t, AdminRoleID, rolesAfter[0].ID)
+	require.NoError(t, reconcileAdminRole(ctx, c.identityStore),
+		"reconcile must succeed once the canonical admin role exists")
 }
 
-func TestEnsureAdminRole_IsIdempotent(t *testing.T) {
+func TestReconcileAdminRole_MissingRoleReturnsErr(t *testing.T) {
 	c := buildTestIAMComponents(t)
 	ctx := context.Background()
 
-	// First call seeds the role.
-	require.NoError(t, ensureAdminRole(ctx, c.identityStore, "default"))
-
-	// Second call must be a no-op: no error, no duplicate row.
-	require.NoError(t, ensureAdminRole(ctx, c.identityStore, "default"))
-
-	roles, err := c.identityStore.ListRoles(ctx, "default", iam.ListOptions{Limit: 100})
-	require.NoError(t, err)
-	require.Len(t, roles, 1, "ensureAdminRole must not create duplicate rows on repeated invocations")
+	// A fresh store with no canonical admin role (first-boot not yet run /
+	// storage wiped) must surface the typed missing-role error rather than
+	// silently passing.
+	err := reconcileAdminRole(ctx, c.identityStore)
+	require.ErrorIs(t, err, ErrAdminRoleMissing)
 }
 
-func TestEnsureAdminRole_NilIdentityStoreIsNoOp(t *testing.T) {
+func TestReconcileAdminRole_NilIdentityStoreIsNoOp(t *testing.T) {
 	// Defensive: passing a nil identity store should not panic and should
 	// return nil so the caller's bootstrap flow continues unaffected.
-	require.NoError(t, ensureAdminRole(context.Background(), nil, "default"))
-}
-
-func TestEnsureAdminRole_RejectsInvalidTenant(t *testing.T) {
-	c := buildTestIAMComponents(t)
-	ctx := context.Background()
-
-	// An empty tenant ID must surface an error rather than silently
-	// creating a role under the zero-value tenant.
-	err := ensureAdminRole(ctx, c.identityStore, "")
-	require.Error(t, err)
+	require.NoError(t, reconcileAdminRole(context.Background(), nil))
 }
 
 // TestBindAdminToSOCert_RejectsNilIdentityStore covers the second guard of

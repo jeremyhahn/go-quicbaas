@@ -39,7 +39,7 @@ func TestRefreshToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create user (password is ignored - use IAM for auth)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -79,7 +79,7 @@ func TestTokenValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create user (password is ignored - use IAM for auth)
-	user, err := am.CreateUser("testuser", "", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
 	require.NoError(t, err)
 
 	ctx := context.Background()

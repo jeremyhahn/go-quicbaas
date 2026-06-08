@@ -923,23 +923,6 @@ func NewAuthenticationDisabledError(op string) *dberrors.QBError {
 	}
 }
 
-// PasswordAuthDisabledError indicates password-based authentication is disabled.
-type PasswordAuthDisabledError struct{}
-
-// Error implements the error interface.
-func (e *PasswordAuthDisabledError) Error() string {
-	return "password-based authentication is disabled; use mTLS certificate or FIDO2/WebAuthn authentication"
-}
-
-// NewPasswordAuthDisabledError creates a QBError for disabled password authentication.
-func NewPasswordAuthDisabledError(op string) *dberrors.QBError {
-	return &dberrors.QBError{
-		Code: dberrors.ErrUnauthorized,
-		Op:   op,
-		Err:  &PasswordAuthDisabledError{},
-	}
-}
-
 // TokenRequiredError indicates an authentication token is required.
 type TokenRequiredError struct{}
 
@@ -988,57 +971,6 @@ func NewInsufficientPermissionsError(op string) *dberrors.QBError {
 		Code: dberrors.ErrForbidden,
 		Op:   op,
 		Err:  &InsufficientPermissionsError{},
-	}
-}
-
-// InvalidCredentialsError indicates invalid authentication credentials.
-type InvalidCredentialsError struct{}
-
-// Error implements the error interface.
-func (e *InvalidCredentialsError) Error() string {
-	return "invalid credentials"
-}
-
-// NewInvalidCredentialsError creates a QBError for invalid credentials.
-func NewInvalidCredentialsError(op string) *dberrors.QBError {
-	return &dberrors.QBError{
-		Code: dberrors.ErrUnauthorized,
-		Op:   op,
-		Err:  &InvalidCredentialsError{},
-	}
-}
-
-// CredentialsRequiredError indicates username and password are required.
-type CredentialsRequiredError struct{}
-
-// Error implements the error interface.
-func (e *CredentialsRequiredError) Error() string {
-	return "username and password are required"
-}
-
-// NewCredentialsRequiredError creates a QBError for missing credentials.
-func NewCredentialsRequiredError(op string) *dberrors.QBError {
-	return &dberrors.QBError{
-		Code: dberrors.ErrUnauthorized,
-		Op:   op,
-		Err:  &CredentialsRequiredError{},
-	}
-}
-
-// NoPasswordSetError indicates a user has no password configured.
-type NoPasswordSetError struct{}
-
-// Error implements the error interface.
-func (e *NoPasswordSetError) Error() string {
-	return "user has no password set; use IAM authentication"
-}
-
-// NewNoPasswordSetError creates a QBError for a user without a password.
-func NewNoPasswordSetError(op string) *dberrors.QBError {
-	return &dberrors.QBError{
-		Code: dberrors.ErrUnauthorized,
-		Op:   op,
-		Err:  &NoPasswordSetError{},
 	}
 }
 

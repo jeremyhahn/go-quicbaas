@@ -884,8 +884,10 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 		return nil, NewOAuthError(ErrOAuthUnauthorizedClient, "client_credentials grant not allowed")
 	}
 
-	// Build audience with resource indicator (RFC 8707)
-	audience := BuildAudience(p.config.Issuer, req.Resource)
+	// Build audience with resource indicator (RFC 8707). When the client sends
+	// no resource indicator, fall back to the app's configured default service
+	// audience so downstream validators accept the token.
+	audience := BuildAudienceWithDefault(p.config.Issuer, req.Resource, p.validDefaultAudience(app))
 
 	// Bind a presented DPoP proof (RFC 9449) into cnf.jkt. No proof => bearer.
 	cnf, err := p.bindDPoP(req)
@@ -972,11 +974,45 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 	return p.generateTokenResponse(ctx, user, token.ClientID, scopes, "", "", cnf)
 }
 
+// defaultAudienceForClient resolves the configured default service audience for
+// the given OAuth client, returning "" when the client is unknown, has no
+// default configured, or the stored default fails validation. It is used by the
+// token-issuance path to stamp a service audience when the request carried no
+// RFC 8707 resource indicator. A lookup failure is treated as "no default"
+// (fail-open to today's behavior) rather than failing token issuance: the
+// default audience is an opt-in convenience, not a security gate.
+func (p *OIDCProvider) defaultAudienceForClient(ctx context.Context, clientID string) string {
+	if clientID == "" {
+		return ""
+	}
+	app, err := p.appStorage.GetApp(ctx, clientID)
+	if err != nil {
+		return ""
+	}
+	return p.validDefaultAudience(app)
+}
+
+// validDefaultAudience returns the app's configured default service audience
+// only when it passes validation; an absent or malformed default yields "" so
+// the audience falls back to today's client/issuer-only behavior.
+func (p *OIDCProvider) validDefaultAudience(app *Application) string {
+	if app == nil || app.DefaultAudience == "" {
+		return ""
+	}
+	if err := ValidateDefaultAudience(app.DefaultAudience); err != nil {
+		return ""
+	}
+	return app.DefaultAudience
+}
+
 func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, clientID string, scopes []string, nonce string, resource string, cnf *ConfirmationClaim) (*TokenResponse, error) {
 	now := time.Now()
 
-	// Build audience with resource indicator (RFC 8707)
-	audience := BuildAudience(p.config.Issuer, resource)
+	// Build audience with resource indicator (RFC 8707). When the request
+	// carried no resource indicator, fall back to the client app's configured
+	// default service audience (if any) so downstream validators accept the
+	// token. A client-supplied resource always wins.
+	audience := BuildAudienceWithDefault(p.config.Issuer, resource, p.defaultAudienceForClient(ctx, clientID))
 
 	// Generate access token
 	accessClaims := &Claims{

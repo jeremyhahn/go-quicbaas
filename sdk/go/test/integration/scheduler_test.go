@@ -1305,6 +1305,7 @@ func doSchedulerRequest(ctx context.Context, method, reqURL string, body []byte,
 	if body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
+	authorize(httpReq)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)

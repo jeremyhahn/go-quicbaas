@@ -227,10 +227,14 @@ func TestCreateSDKAuthClient(t *testing.T) {
 
 	t.Run("Success", func(t *testing.T) {
 		sdkClientFactory = func() (quicbaas.Client, error) {
-			return newTestSDKClient(nil, nil), nil
+			// createSDKAuthClient resolves the auth client via the canonical
+			// Security().Auth() accessor, so the fake must expose a non-nil
+			// SecurityService -> AuthService chain.
+			return newFakeFactorsClient(&fakeAuthFactorsClient{}), nil
 		}
-		_, err := createSDKAuthClient()
+		got, err := createSDKAuthClient()
 		require.NoError(t, err)
+		require.NotNil(t, got)
 	})
 
 	t.Run("FactoryError", func(t *testing.T) {

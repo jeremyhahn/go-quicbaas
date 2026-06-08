@@ -52,11 +52,6 @@ import (
 // silently break the contract.
 // ---------------------------------------------------------------------------
 
-func TestInMemoryAuthManagerAdapter_IsPasswordAuthEnabled_True(t *testing.T) {
-	adapter := &inMemoryAuthManagerAdapter{manager: nil}
-	assert.True(t, adapter.IsPasswordAuthEnabled())
-}
-
 // ---------------------------------------------------------------------------
 // iamComponents getter passthroughs that the older test only covers with
 // nil receivers. These tests confirm the non-nil-set branches return the

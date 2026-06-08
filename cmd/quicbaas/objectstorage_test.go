@@ -110,7 +110,7 @@ func TestGRPCBackupClientWrapper_Close_NilAdapter(t *testing.T) {
 }
 
 // =============================================================================
-// client.go coverage - loadMCPAuthToken
+// client.go coverage - loadStoredAuthToken
 // =============================================================================
 
 func TestLoadMCPAuthToken_EmptyTokenFile(t *testing.T) {
@@ -118,7 +118,7 @@ func TestLoadMCPAuthToken_EmptyTokenFile(t *testing.T) {
 	defer func() { authTokenFile = origTokenFile }()
 
 	authTokenFile = "/nonexistent/path/token"
-	token := loadMCPAuthToken()
+	token := loadStoredAuthToken()
 	assert.Empty(t, token)
 }
 
@@ -140,7 +140,7 @@ func TestLoadMCPAuthToken_ValidToken(t *testing.T) {
 	require.NoError(t, err)
 
 	authTokenFile = tokenPath
-	token := loadMCPAuthToken()
+	token := loadStoredAuthToken()
 	assert.Equal(t, "test-access-token-123", token)
 }
 
@@ -162,7 +162,7 @@ func TestLoadMCPAuthToken_ExpiredToken(t *testing.T) {
 	require.NoError(t, err)
 
 	authTokenFile = tokenPath
-	token := loadMCPAuthToken()
+	token := loadStoredAuthToken()
 	assert.Empty(t, token, "expired token should return empty string")
 }
 
@@ -171,7 +171,7 @@ func TestLoadMCPAuthToken_DefaultPathFallback(t *testing.T) {
 	defer func() { authTokenFile = origTokenFile }()
 
 	authTokenFile = ""
-	token := loadMCPAuthToken()
+	token := loadStoredAuthToken()
 	assert.Empty(t, token)
 }
 

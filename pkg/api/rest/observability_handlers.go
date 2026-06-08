@@ -291,7 +291,7 @@ func (h *Phase4Handler) HandleCreateUser(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	user, err := h.authMgr.CreateUser(req.Username, "", req.Roles)
+	user, err := h.authMgr.CreateUser(req.Username, req.Roles)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

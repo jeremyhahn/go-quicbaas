@@ -801,13 +801,9 @@ func TestAuthenticationErrors(t *testing.T) {
 		wantCode    dberrors.ErrorCode
 	}{
 		{"AuthenticationDisabled", func() *dberrors.QBError { return NewAuthenticationDisabledError("login") }, "authentication is not enabled", dberrors.ErrConfiguration},
-		{"PasswordAuthDisabled", func() *dberrors.QBError { return NewPasswordAuthDisabledError("login") }, "password-based authentication is disabled; use mTLS certificate or FIDO2/WebAuthn authentication", dberrors.ErrUnauthorized},
 		{"TokenRequired", func() *dberrors.QBError { return NewTokenRequiredError("api") }, "authentication token required", dberrors.ErrUnauthorized},
 		{"TokenRevoked", func() *dberrors.QBError { return NewTokenRevokedError("api") }, "token has been revoked", dberrors.ErrUnauthorized},
 		{"InsufficientPermissions", func() *dberrors.QBError { return NewInsufficientPermissionsError("admin") }, "insufficient permissions", dberrors.ErrForbidden},
-		{"InvalidCredentials", func() *dberrors.QBError { return NewInvalidCredentialsError("login") }, "invalid credentials", dberrors.ErrUnauthorized},
-		{"CredentialsRequired", func() *dberrors.QBError { return NewCredentialsRequiredError("login") }, "username and password are required", dberrors.ErrUnauthorized},
-		{"NoPasswordSet", func() *dberrors.QBError { return NewNoPasswordSetError("login") }, "user has no password set; use IAM authentication", dberrors.ErrUnauthorized},
 		{"InvalidTokenClaims", func() *dberrors.QBError { return NewInvalidTokenClaimsError("auth") }, "invalid token claims", dberrors.ErrUnauthorized},
 		{"InvalidRefreshToken", func() *dberrors.QBError { return NewInvalidRefreshTokenError("refresh") }, "invalid refresh token", dberrors.ErrUnauthorized},
 		{"InvalidUserType", func() *dberrors.QBError { return NewInvalidUserTypeError("auth") }, "invalid user type", dberrors.ErrInternal},
@@ -1346,53 +1342,9 @@ func TestMiscErrors(t *testing.T) {
 // errors_auth.go — PasswordTooShortError
 // ---------------------------------------------------------------------------
 
-func TestPasswordTooShortError(t *testing.T) {
-	t.Run("Error", func(t *testing.T) {
-		e := &PasswordTooShortError{MinLength: 8, GotLength: 3}
-		assert.Equal(t, "password must be at least 8 characters, got 3", e.Error())
-	})
-
-	t.Run("Constructor", func(t *testing.T) {
-		de := NewPasswordTooShortError("auth.Register", 12, 5)
-		require.NotNil(t, de)
-		assert.Equal(t, dberrors.ErrInvalidInput, de.Code)
-		assert.Equal(t, "auth.Register", de.Op)
-
-		var target *PasswordTooShortError
-		require.True(t, errors.As(de.Err, &target))
-		assert.Equal(t, 12, target.MinLength)
-		assert.Equal(t, 5, target.GotLength)
-	})
-}
-
 // ---------------------------------------------------------------------------
 // errors_auth.go — PasswordHashError
 // ---------------------------------------------------------------------------
-
-func TestPasswordHashError(t *testing.T) {
-	cause := errors.New("bcrypt cost too high")
-
-	t.Run("Error", func(t *testing.T) {
-		e := &PasswordHashError{Cause: cause}
-		assert.Equal(t, "failed to hash password: bcrypt cost too high", e.Error())
-	})
-
-	t.Run("Unwrap", func(t *testing.T) {
-		e := &PasswordHashError{Cause: cause}
-		assert.Equal(t, cause, e.Unwrap())
-	})
-
-	t.Run("Constructor", func(t *testing.T) {
-		de := NewPasswordHashError("auth.SetPassword", cause)
-		require.NotNil(t, de)
-		assert.Equal(t, dberrors.ErrInternal, de.Code)
-		assert.Equal(t, "auth.SetPassword", de.Op)
-
-		var target *PasswordHashError
-		require.True(t, errors.As(de.Err, &target))
-		assert.Equal(t, cause, target.Cause)
-	})
-}
 
 // ---------------------------------------------------------------------------
 // errors_auth.go — AccountLockedError / IsAccountLocked

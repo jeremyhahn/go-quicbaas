@@ -116,15 +116,6 @@ func (m *mockSDKClient) Cluster() quicbaas.ClusterClient                       {
 func (m *mockSDKClient) Health() quicbaas.HealthClient                         { return nil }
 func (m *mockSDKClient) Operations() quicbaas.OperationsClient                 { return nil }
 func (m *mockSDKClient) Cache() quicbaas.CacheClient                           { return nil }
-func (m *mockSDKClient) Auth() quicbaas.AuthClient                             { return nil }
-func (m *mockSDKClient) Seal() quicbaas.SealClient                             { return nil }
-func (m *mockSDKClient) KMS() quicbaas.KMSClient                               { return nil }
-func (m *mockSDKClient) Secrets() quicbaas.SecretsClient                       { return nil }
-func (m *mockSDKClient) Crypto() quicbaas.CryptoClient                         { return nil }
-func (m *mockSDKClient) RBAC() quicbaas.RBACClient                             { return nil }
-func (m *mockSDKClient) DynamicSecrets() quicbaas.DynamicSecretsClient         { return nil }
-func (m *mockSDKClient) Certificate() quicbaas.CertificateClient               { return nil }
-func (m *mockSDKClient) DEK() quicbaas.DEKClient                               { return nil }
 func (m *mockSDKClient) IAM() quicbaas.IAMClient                               { return nil }
 func (m *mockSDKClient) Vector() quicbaas.VectorClient                         { return nil }
 func (m *mockSDKClient) TimeSeries() quicbaas.TimeSeriesClient                 { return nil }

@@ -872,24 +872,6 @@ func (m *mockSDKClientWithVector) Operations() quicbaas.OperationsClient { retur
 
 func (m *mockSDKClientWithVector) Cache() quicbaas.CacheClient { return nil }
 
-func (m *mockSDKClientWithVector) Auth() quicbaas.AuthClient { return nil }
-
-func (m *mockSDKClientWithVector) Seal() quicbaas.SealClient { return nil }
-
-func (m *mockSDKClientWithVector) KMS() quicbaas.KMSClient { return nil }
-
-func (m *mockSDKClientWithVector) Secrets() quicbaas.SecretsClient { return nil }
-
-func (m *mockSDKClientWithVector) Crypto() quicbaas.CryptoClient { return nil }
-
-func (m *mockSDKClientWithVector) RBAC() quicbaas.RBACClient { return nil }
-
-func (m *mockSDKClientWithVector) DynamicSecrets() quicbaas.DynamicSecretsClient { return nil }
-
-func (m *mockSDKClientWithVector) Certificate() quicbaas.CertificateClient { return nil }
-
-func (m *mockSDKClientWithVector) DEK() quicbaas.DEKClient { return nil }
-
 func (m *mockSDKClientWithVector) IAM() quicbaas.IAMClient { return nil }
 
 func (m *mockSDKClientWithVector) TimeSeries() quicbaas.TimeSeriesClient { return nil }
@@ -1276,24 +1258,6 @@ func (m *testSDKClientForVector) Health() quicbaas.HealthClient { return nil }
 func (m *testSDKClientForVector) Operations() quicbaas.OperationsClient { return nil }
 
 func (m *testSDKClientForVector) Cache() quicbaas.CacheClient { return nil }
-
-func (m *testSDKClientForVector) Auth() quicbaas.AuthClient { return nil }
-
-func (m *testSDKClientForVector) Seal() quicbaas.SealClient { return nil }
-
-func (m *testSDKClientForVector) KMS() quicbaas.KMSClient { return nil }
-
-func (m *testSDKClientForVector) Secrets() quicbaas.SecretsClient { return nil }
-
-func (m *testSDKClientForVector) Crypto() quicbaas.CryptoClient { return nil }
-
-func (m *testSDKClientForVector) RBAC() quicbaas.RBACClient { return nil }
-
-func (m *testSDKClientForVector) DynamicSecrets() quicbaas.DynamicSecretsClient { return nil }
-
-func (m *testSDKClientForVector) Certificate() quicbaas.CertificateClient { return nil }
-
-func (m *testSDKClientForVector) DEK() quicbaas.DEKClient { return nil }
 
 func (m *testSDKClientForVector) IAM() quicbaas.IAMClient { return nil }
 

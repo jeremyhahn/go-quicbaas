@@ -121,6 +121,14 @@ func (s *Server) configureMCPAuth(mcpServer *mcpapi.Server) {
 		GetInternalAuthManager() interfaces.AuthManager
 	}
 
+	// When RequireAuthz=true, install the qrdb-backed authorization decision
+	// point (OIDC token validation + qrdb PDP + canonical tool mapper). When it
+	// installs enforcement we skip the legacy token-only wiring below so the two
+	// do not fight over the auth checker.
+	if s.configureMCPQRDBAuthz(mcpServer) {
+		return
+	}
+
 	// Try to get auth manager from the service via type assertion.
 	// The auth manager is set on the service when IAM components are initialized.
 	if getter, ok := s.quicBaaSService.(internalAuthManagerGetter); ok {

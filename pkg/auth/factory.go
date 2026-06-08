@@ -112,9 +112,8 @@ func MustBootstrap(authManager interface{}, config *BootstrapConfig) (*Bootstrap
 		return Bootstrap(pam, config)
 	}
 
-	// In-memory mode - create admin user directly
-	// NOTE: Password-based authentication has been removed. Users authenticate
-	// via IAM (WebAuthn, OIDC, OAuth). This creates the user record for role assignment.
+	// In-memory mode - create admin user record directly. Users authenticate
+	// via IAM (mTLS, PIV, WebAuthn, OIDC); this creates the record for role assignment.
 	am, ok := authManager.(*InMemoryAuthManager)
 	if !ok {
 		return nil, api.NewUnknownAuthManagerTypeError(
@@ -129,8 +128,7 @@ func MustBootstrap(authManager interface{}, config *BootstrapConfig) (*Bootstrap
 			username = "admin"
 		}
 
-		// Password parameter ignored - use IAM for authentication
-		user, err := am.CreateUser(username, "", []string{RoleNameAdmin})
+		user, err := am.CreateUser(username, []string{RoleNameAdmin})
 		if err != nil {
 			return nil, api.NewAdminUserCreateError("auth.MustBootstrap", err)
 		}

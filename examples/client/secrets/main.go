@@ -80,7 +80,7 @@ func main() {
 	// Step 1: Store a database credential secret
 	fmt.Println("Step 1: Storing database credentials...")
 	dbSecretPath := "secrets/database/production/postgres"
-	storeResp, err := client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+	storeResp, err := client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 		Path: dbSecretPath,
 		Data: map[string]interface{}{
 			"username": "dbadmin",
@@ -103,7 +103,7 @@ func main() {
 	// Step 2: Store an API key secret
 	fmt.Println("\nStep 2: Storing API key secret...")
 	apiSecretPath := "secrets/api/external/payment-gateway"
-	storeResp, err = client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+	storeResp, err = client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 		Path: apiSecretPath,
 		Data: map[string]interface{}{
 			"api_key":        "pk_live_abc123xyz789",
@@ -124,7 +124,7 @@ func main() {
 	// Step 3: Store a TLS certificate secret
 	fmt.Println("\nStep 3: Storing TLS certificate...")
 	certSecretPath := "secrets/certificates/wildcard-example-com"
-	storeResp, err = client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+	storeResp, err = client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 		Path: certSecretPath,
 		Data: map[string]interface{}{
 			"certificate": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
@@ -145,7 +145,7 @@ func main() {
 
 	// Step 4: Update the database secret (creates new version)
 	fmt.Println("\nStep 4: Rotating database password (new version)...")
-	storeResp, err = client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+	storeResp, err = client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 		Path: dbSecretPath,
 		Data: map[string]interface{}{
 			"username": "dbadmin",
@@ -168,7 +168,7 @@ func main() {
 
 	// Step 5: Retrieve the latest database secret
 	fmt.Println("\nStep 5: Retrieving latest database secret...")
-	secret, err := client.Secrets().Get(ctx, dbSecretPath)
+	secret, err := client.Security().Secrets().Get(ctx, dbSecretPath)
 	if err != nil {
 		log.Fatalf("Failed to get database secret: %v", err)
 	}
@@ -187,7 +187,7 @@ func main() {
 
 	// Step 6: Retrieve a specific version
 	fmt.Println("\nStep 6: Retrieving specific version (v1)...")
-	secretV1, err := client.Secrets().Get(ctx, dbSecretPath, quicbaas.WithSecretVersion(1))
+	secretV1, err := client.Security().Secrets().Get(ctx, dbSecretPath, quicbaas.WithSecretVersion(1))
 	if err != nil {
 		log.Printf("  Warning: Failed to get version 1: %v (version may not be supported)", err)
 	} else {
@@ -200,7 +200,7 @@ func main() {
 
 	// Step 7: List all secrets under a prefix
 	fmt.Println("\nStep 7: Listing secrets under 'secrets/'...")
-	listResp, err := client.Secrets().List(ctx, "secrets/")
+	listResp, err := client.Security().Secrets().List(ctx, "secrets/")
 	if err != nil {
 		log.Fatalf("Failed to list secrets: %v", err)
 	}
@@ -211,7 +211,7 @@ func main() {
 
 	// Step 8: List secrets under database prefix
 	fmt.Println("\nStep 8: Listing database secrets...")
-	listResp, err = client.Secrets().List(ctx, "secrets/database/")
+	listResp, err = client.Security().Secrets().List(ctx, "secrets/database/")
 	if err != nil {
 		log.Fatalf("Failed to list database secrets: %v", err)
 	}
@@ -224,7 +224,7 @@ func main() {
 	fmt.Println("\nStep 9: Cleaning up secrets...")
 	secretsToDelete := []string{dbSecretPath, apiSecretPath, certSecretPath}
 	for _, path := range secretsToDelete {
-		if err := client.Secrets().Delete(ctx, path); err != nil {
+		if err := client.Security().Secrets().Delete(ctx, path); err != nil {
 			log.Printf("  Warning: Failed to delete %s: %v", path, err)
 		} else {
 			fmt.Printf("  Deleted: %s\n", path)
@@ -233,7 +233,7 @@ func main() {
 
 	// Step 10: Verify deletion
 	fmt.Println("\nStep 10: Verifying deletion...")
-	listResp, err = client.Secrets().List(ctx, "secrets/")
+	listResp, err = client.Security().Secrets().List(ctx, "secrets/")
 	if err != nil {
 		log.Fatalf("Failed to list secrets: %v", err)
 	}

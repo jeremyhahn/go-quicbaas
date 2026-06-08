@@ -71,6 +71,11 @@ func createTestConfig(t *testing.T) *config.Config {
 	cfg.Security.TLSEnabled = false
 	cfg.Security.EncryptionEnabled = false
 	cfg.Raft.MutualTLS = false
+	// Unit tests exercise handlers via the in-process/anonymous path. The
+	// default-deny scope -> RBAC gate (now the secure default in config.Default)
+	// has its own dedicated unit tests; keep it OFF here so handler tests are not
+	// blanket-401'd. Integration suites prove enforcement with authed clients.
+	cfg.Security.RequireAuthz = false
 
 	// Disable features that require additional setup for unit tests
 	cfg.KMS.Enabled = false

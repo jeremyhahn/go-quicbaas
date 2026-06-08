@@ -99,6 +99,13 @@ type clientOptions struct {
 	mcpUsername  string
 	mcpPassword  string
 	mcpAuthToken string
+
+	// authToken is an optional platform bearer token attached to every
+	// data-plane request across the network transports (REST / gRPC / QUIC /
+	// Unix). It is how a client authenticates against the server's default-deny
+	// scope -> RBAC gate. Empty means anonymous (the embedded transport ignores
+	// it; MCP continues to use mcpAuthToken / mcp credentials).
+	authToken string
 }
 
 // Option is a functional option for configuring the client.
@@ -361,6 +368,18 @@ func WithMCPCredentials(username, password string) Option {
 func WithMCPAuthToken(token string) Option {
 	return func(o *clientOptions) error {
 		o.mcpAuthToken = token
+		return nil
+	}
+}
+
+// WithAuthToken sets a pre-obtained platform bearer token that is attached to
+// every data-plane request across the network transports (REST / gRPC / QUIC /
+// Unix). It is the transport-agnostic way to authenticate against the server's
+// default-deny scope -> RBAC gate. The embedded transport ignores it (in-process
+// dispatch is trusted); MCP continues to use WithMCPAuthToken / WithMCPCredentials.
+func WithAuthToken(token string) Option {
+	return func(o *clientOptions) error {
+		o.authToken = token
 		return nil
 	}
 }

@@ -80,7 +80,7 @@ func main() {
 
 	// Step 1: Generate an encryption key
 	fmt.Println("Step 1: Generating AES-256-GCM encryption key...")
-	genResp, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+	genResp, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 		Name:      "my-encryption-key",
 		Algorithm: quicbaas.AlgorithmAES256GCM,
 		Usage:     []quicbaas.KeyUsage{quicbaas.KeyUsageEncrypt, quicbaas.KeyUsageDecrypt},
@@ -95,7 +95,7 @@ func main() {
 
 	// Step 2: Generate a signing key
 	fmt.Println("\nStep 2: Generating Ed25519 signing key...")
-	signResp, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+	signResp, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 		Name:      "my-signing-key",
 		Algorithm: quicbaas.AlgorithmED25519,
 		Usage:     []quicbaas.KeyUsage{quicbaas.KeyUsageSign, quicbaas.KeyUsageVerify},
@@ -109,7 +109,7 @@ func main() {
 
 	// Step 3: List all keys
 	fmt.Println("\nStep 3: Listing all keys...")
-	listResp, err := client.KMS().ListKeys(ctx)
+	listResp, err := client.Security().KMS().ListKeys(ctx)
 	if err != nil {
 		log.Fatalf("Failed to list keys: %v", err)
 	}
@@ -120,7 +120,7 @@ func main() {
 
 	// Step 4: Get key details
 	fmt.Println("\nStep 4: Getting encryption key details...")
-	keyInfo, err := client.KMS().GetKey(ctx, encryptionKeyID)
+	keyInfo, err := client.Security().KMS().GetKey(ctx, encryptionKeyID)
 	if err != nil {
 		log.Fatalf("Failed to get key: %v", err)
 	}
@@ -142,7 +142,7 @@ func main() {
 	plaintext := []byte("Hello, QuicBaaS KMS!")
 	fmt.Printf("  Plaintext:  %s\n", string(plaintext))
 
-	encryptResp, err := client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+	encryptResp, err := client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 		KeyID:     encryptionKeyID,
 		Plaintext: plaintext,
 	})
@@ -151,7 +151,7 @@ func main() {
 	}
 	fmt.Printf("  Ciphertext: %x (truncated)\n", encryptResp.Ciphertext[:min(32, len(encryptResp.Ciphertext))])
 
-	decryptResp, err := client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	decryptResp, err := client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      encryptionKeyID,
 		Ciphertext: encryptResp.Ciphertext,
 	})
@@ -164,7 +164,7 @@ func main() {
 	fmt.Println("\nStep 6: Signing and verifying data...")
 	message := []byte("Important message to sign")
 
-	signDataResp, err := client.Crypto().Sign(ctx, &quicbaas.SignRequest{
+	signDataResp, err := client.Security().Crypto().Sign(ctx, &quicbaas.SignRequest{
 		KeyID:   signingKeyID,
 		Data:    message,
 		HashAlg: quicbaas.HashSHA256,
@@ -175,7 +175,7 @@ func main() {
 	fmt.Printf("  Message:    %s\n", string(message))
 	fmt.Printf("  Signature:  %x (truncated)\n", signDataResp.Signature[:min(32, len(signDataResp.Signature))])
 
-	verifyResp, err := client.Crypto().Verify(ctx, &quicbaas.VerifyRequest{
+	verifyResp, err := client.Security().Crypto().Verify(ctx, &quicbaas.VerifyRequest{
 		KeyID:     signingKeyID,
 		Data:      message,
 		Signature: signDataResp.Signature,
@@ -188,7 +188,7 @@ func main() {
 
 	// Step 7: Rotate a key
 	fmt.Println("\nStep 7: Rotating encryption key...")
-	rotateResp, err := client.KMS().RotateKey(ctx, encryptionKeyID)
+	rotateResp, err := client.Security().KMS().RotateKey(ctx, encryptionKeyID)
 	if err != nil {
 		log.Fatalf("Failed to rotate key: %v", err)
 	}
@@ -197,7 +197,7 @@ func main() {
 
 	// Step 8: Verify rotation
 	fmt.Println("\nStep 8: Verifying key rotation...")
-	keyInfo, err = client.KMS().GetKey(ctx, encryptionKeyID)
+	keyInfo, err = client.Security().KMS().GetKey(ctx, encryptionKeyID)
 	if err != nil {
 		log.Fatalf("Failed to get rotated key: %v", err)
 	}
@@ -206,13 +206,13 @@ func main() {
 
 	// Step 9: Delete keys (cleanup)
 	fmt.Println("\nStep 9: Cleaning up keys...")
-	if err := client.KMS().DeleteKey(ctx, encryptionKeyID); err != nil {
+	if err := client.Security().KMS().DeleteKey(ctx, encryptionKeyID); err != nil {
 		log.Printf("  Warning: Failed to delete encryption key: %v", err)
 	} else {
 		fmt.Printf("  Deleted: %s\n", encryptionKeyID)
 	}
 
-	if err := client.KMS().DeleteKey(ctx, signingKeyID); err != nil {
+	if err := client.Security().KMS().DeleteKey(ctx, signingKeyID); err != nil {
 		log.Printf("  Warning: Failed to delete signing key: %v", err)
 	} else {
 		fmt.Printf("  Deleted: %s\n", signingKeyID)

@@ -42,6 +42,11 @@ services:
       # checks). Disable TLS so the REST/gRPC listeners serve cleartext;
       # Security.TLSEnabled defaults to true otherwise.
       - QUICBAAS_SECURITY_TLS_ENABLED=false
+      # Default-deny scope -> RBAC gate ON (the secure default). The suite
+      # bootstraps a platform token via public OAuth2 (DCR + client_credentials)
+      # and attaches it to every protected data-plane request; an anonymous
+      # request to a protected path is rejected (proved by the negative test).
+      - QUICBAAS_SECURITY_REQUIRE_AUTHZ=true
       - QUICBAAS_SERVER_MCP_ENABLED=false
     volumes:
       - quicbaas-data:/data

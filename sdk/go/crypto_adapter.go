@@ -181,7 +181,7 @@ func (s *QuicBaaSSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts
 		return nil, &ErrSignerUnsupportedHash{Hash: opts.HashFunc()}
 	}
 
-	resp, err := s.client.Crypto().Sign(context.Background(), &sdkcrypto.SignRequest{
+	resp, err := s.client.Security().Crypto().Sign(context.Background(), &sdkcrypto.SignRequest{
 		KeyID:     s.keyID,
 		Data:      digest,
 		HashAlg:   hashAlg,
@@ -239,7 +239,7 @@ func (d *QuicBaaSDecrypter) Public() crypto.PublicKey {
 // The rand parameter is unused because the decryption operation is performed
 // remotely by the QuicBaaS server.
 func (d *QuicBaaSDecrypter) Decrypt(_ io.Reader, ciphertext []byte, _ crypto.DecrypterOpts) ([]byte, error) {
-	resp, err := d.client.Crypto().Decrypt(context.Background(), &sdkcrypto.DecryptRequest{
+	resp, err := d.client.Security().Crypto().Decrypt(context.Background(), &sdkcrypto.DecryptRequest{
 		KeyID:      d.keyID,
 		Ciphertext: ciphertext,
 	})
@@ -253,7 +253,7 @@ func (d *QuicBaaSDecrypter) Decrypt(_ io.Reader, ciphertext []byte, _ crypto.Dec
 // fetchPublicKey retrieves and parses the public key for the given key ID
 // from the QuicBaaS KMS service.
 func fetchPublicKey(client Client, keyID string) (crypto.PublicKey, error) {
-	resp, err := client.KMS().GetPublicKey(context.Background(), keyID)
+	resp, err := client.Security().KMS().GetPublicKey(context.Background(), keyID)
 	if err != nil {
 		return nil, err
 	}
