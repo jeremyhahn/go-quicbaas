@@ -69,7 +69,7 @@ func TestPersistentRefreshTokenErrorPaths(t *testing.T) {
 		defer pam.Close()
 
 		// Create user and get token via generateTokens (password auth is disabled)
-		user, err := pam.CreateUser("testuser", []string{RoleNameReadWrite})
+		user, err := pam.CreateUser("testuser", []string{"readwrite"})
 		require.NoError(t, err)
 
 		// Manually generate a valid JWT that's not in the token store
@@ -99,7 +99,7 @@ func TestPersistentRefreshTokenErrorPaths(t *testing.T) {
 		defer pam.Close()
 
 		// Create user and get token via generateTokens (password auth is disabled)
-		user, err := pam.CreateUser("testuser", []string{RoleNameReadWrite})
+		user, err := pam.CreateUser("testuser", []string{"readwrite"})
 		require.NoError(t, err)
 
 		token, err := pam.generateTokens(user)
@@ -154,7 +154,7 @@ func TestPersistentDeleteUserErrorPaths(t *testing.T) {
 
 	t.Run("delete user with tokens", func(t *testing.T) {
 		// Create user and generate token (password auth is disabled)
-		user, err := pam.CreateUser("user-with-tokens", []string{RoleNameReadWrite})
+		user, err := pam.CreateUser("user-with-tokens", []string{"readwrite"})
 		require.NoError(t, err)
 
 		// Generate tokens directly
@@ -184,37 +184,26 @@ func TestPersistentUpdateUserRolesErrorPaths(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	t.Run("invalid roles", func(t *testing.T) {
-		// Create user
-		user, err := pam.CreateUser("testuser", []string{RoleNameReadOnly})
-		require.NoError(t, err)
-
-		// Try to update with invalid roles
-		err = pam.UpdateUserRoles(user.ID, []string{"nonexistent-role"})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "one or more roles do not exist")
-	})
-
 	t.Run("user not found", func(t *testing.T) {
-		err := pam.UpdateUserRoles("nonexistent-user-id", []string{RoleNameAdmin})
+		err := pam.UpdateUserRoles("nonexistent-user-id", []string{"admin"})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user not found")
 	})
 
 	t.Run("successful update", func(t *testing.T) {
 		// Create user
-		user, err := pam.CreateUser("updateuser", []string{RoleNameReadOnly})
+		user, err := pam.CreateUser("updateuser", []string{"readonly"})
 		require.NoError(t, err)
 
 		// Update roles
-		err = pam.UpdateUserRoles(user.ID, []string{RoleNameAdmin, RoleNameReadWrite})
+		err = pam.UpdateUserRoles(user.ID, []string{"admin", "readwrite"})
 		assert.NoError(t, err)
 
 		// Verify update
 		updatedUser := pam.userStore.GetByID(user.ID)
 		assert.Len(t, updatedUser.Roles, 2)
-		assert.Contains(t, updatedUser.Roles, RoleNameAdmin)
-		assert.Contains(t, updatedUser.Roles, RoleNameReadWrite)
+		assert.Contains(t, updatedUser.Roles, "admin")
+		assert.Contains(t, updatedUser.Roles, "readwrite")
 	})
 }
 
@@ -253,12 +242,12 @@ func TestPersistentCreateUserErrorPaths(t *testing.T) {
 
 	t.Run("user storage error", func(t *testing.T) {
 		// Create user successfully first
-		user1, err := pam.CreateUser("user1", []string{RoleNameReadWrite})
+		user1, err := pam.CreateUser("user1", []string{"readwrite"})
 		require.NoError(t, err)
 		require.NotNil(t, user1)
 
 		// Try to create with same username
-		user2, err := pam.CreateUser("user1", []string{RoleNameReadOnly})
+		user2, err := pam.CreateUser("user1", []string{"readonly"})
 		assert.Error(t, err)
 		assert.Nil(t, user2)
 		assert.Contains(t, err.Error(), "user already exists")
@@ -287,7 +276,7 @@ func TestPersistentAuthManager_IssueTokenForUser_Success(t *testing.T) {
 	defer pam.Close()
 
 	// Create a user
-	user, err := pam.CreateUser("issuetoken-user", []string{RoleNameReadWrite})
+	user, err := pam.CreateUser("issuetoken-user", []string{"readwrite"})
 	require.NoError(t, err)
 
 	// Issue a token for the user
@@ -355,7 +344,7 @@ func TestPersistentAuthManager_ValidateToken_Success(t *testing.T) {
 	defer pam.Close()
 
 	// Create user and issue a token
-	user, err := pam.CreateUser("validate-user", []string{RoleNameAdmin})
+	user, err := pam.CreateUser("validate-user", []string{"admin"})
 	require.NoError(t, err)
 
 	token, err := pam.IssueTokenForUser(ctx, user)
@@ -427,7 +416,7 @@ func TestPersistentAuthManager_ValidateToken_RevokedToken(t *testing.T) {
 	defer pam.Close()
 
 	// Create user and issue a token
-	user, err := pam.CreateUser("revoke-user", []string{RoleNameReadOnly})
+	user, err := pam.CreateUser("revoke-user", []string{"readonly"})
 	require.NoError(t, err)
 
 	token, err := pam.IssueTokenForUser(ctx, user)

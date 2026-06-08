@@ -269,7 +269,3 @@ func (a *restQRDBAuthorizer) AuthorizeSubject(ctx context.Context, subject inter
 		Attributes: subject.Attributes,
 	}, resource, action)
 }
-
-// Compile-time assertion that the AuthorizationService we build satisfies the
-// interface the REST server expects.
-var _ interfaces.AuthorizationService = (*auth.AuthorizationServiceImpl)(nil)

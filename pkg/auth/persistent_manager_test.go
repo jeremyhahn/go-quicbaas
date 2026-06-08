@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
 )
@@ -451,54 +452,6 @@ func TestNewPersistentAuthManager(t *testing.T) {
 	})
 }
 
-// TestPersistentAuthorize tests the Authorize method.
-func TestPersistentAuthorize(t *testing.T) {
-	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  1 * time.Hour,
-	}
-
-	storage := newAuthMockStorage()
-	pam, err := NewPersistentAuthManager(config, storage, log)
-	require.NoError(t, err)
-	defer pam.Close()
-
-	// Create users with different roles (password is ignored - use IAM for auth)
-	adminUser, err := pam.CreateUser("admin", []string{RoleNameAdmin})
-	require.NoError(t, err)
-
-	rwUser, err := pam.CreateUser("readwrite", []string{RoleNameReadWrite})
-	require.NoError(t, err)
-
-	// Get tokens via generateTokens (password auth is disabled)
-	ctx := context.Background()
-	adminToken, err := pam.generateTokens(adminUser)
-	require.NoError(t, err)
-
-	rwToken, err := pam.generateTokens(rwUser)
-	require.NoError(t, err)
-
-	// Test admin permissions
-	err = pam.Authorize(ctx, adminToken.AccessToken, ResourceKeys, ActionRead)
-	assert.NoError(t, err)
-
-	err = pam.Authorize(ctx, adminToken.AccessToken, ResourceUsers, ActionAdmin)
-	assert.NoError(t, err)
-
-	// Test readwrite permissions
-	err = pam.Authorize(ctx, rwToken.AccessToken, ResourceKeys, ActionRead)
-	assert.NoError(t, err)
-
-	err = pam.Authorize(ctx, rwToken.AccessToken, ResourceUsers, ActionAdmin)
-	assert.Error(t, err)
-
-	// Test invalid token
-	err = pam.Authorize(ctx, "invalid-token", ResourceKeys, ActionRead)
-	assert.Error(t, err)
-}
-
 // TestPersistentAuthorizeDisabled tests authorization when disabled.
 func TestPersistentAuthorizeDisabled(t *testing.T) {
 	log := createPersistentTestLogger(t)
@@ -512,37 +465,8 @@ func TestPersistentAuthorizeDisabled(t *testing.T) {
 	defer pam.Close()
 
 	ctx := context.Background()
-	err = pam.Authorize(ctx, "", ResourceKeys, ActionRead)
+	err = pam.Authorize(ctx, "", interfaces.ResourceKeys, interfaces.ActionRead)
 	assert.NoError(t, err) // Should allow all when disabled
-}
-
-// TestPersistentAuthorizeAnonymous tests anonymous access.
-func TestPersistentAuthorizeAnonymous(t *testing.T) {
-	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:        true,
-		JWTSecret:      "test-secret-key",
-		AllowAnonymous: true,
-	}
-
-	storage := newAuthMockStorage()
-	pam, err := NewPersistentAuthManager(config, storage, log)
-	require.NoError(t, err)
-	defer pam.Close()
-
-	ctx := context.Background()
-
-	// Anonymous access to health should be allowed
-	err = pam.Authorize(ctx, "", ResourceHealth, ActionRead)
-	assert.NoError(t, err)
-
-	// Anonymous access to metrics should be allowed
-	err = pam.Authorize(ctx, "", ResourceMetrics, ActionRead)
-	assert.NoError(t, err)
-
-	// Anonymous access to keys should be denied
-	err = pam.Authorize(ctx, "", ResourceKeys, ActionRead)
-	assert.Error(t, err)
 }
 
 // TestPersistentRefreshToken moved to persistent_manager_integration_test.go
@@ -562,20 +486,24 @@ func TestPersistentRevokeToken(t *testing.T) {
 	defer pam.Close()
 
 	// Create user and get token via generateTokens (password auth is disabled)
-	user, err := pam.CreateUser("testuser", []string{RoleNameReadWrite})
+	user, err := pam.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
+
+	// Install an allow decision point so a valid token authorizes; the
+	// revocation check runs before the decision point.
+	pam.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
 
 	ctx := context.Background()
 	token, err := pam.generateTokens(user)
 	require.NoError(t, err)
 
-	err = pam.Authorize(ctx, token.AccessToken, ResourceKeys, ActionRead)
+	err = pam.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
 	assert.NoError(t, err)
 
 	err = pam.RevokeToken(ctx, token.AccessToken)
 	assert.NoError(t, err)
 
-	err = pam.Authorize(ctx, token.AccessToken, ResourceKeys, ActionRead)
+	err = pam.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
 	assert.Error(t, err)
 }
 
@@ -601,25 +529,19 @@ func TestPersistentCreateUser(t *testing.T) {
 		{
 			name:        "valid user",
 			username:    "user1",
-			roles:       []string{RoleNameReadWrite},
+			roles:       []string{"readwrite"},
 			expectError: false,
 		},
 		{
 			name:        "empty username",
 			username:    "",
-			roles:       []string{RoleNameReadWrite},
+			roles:       []string{"readwrite"},
 			expectError: true,
 		},
 		{
 			name:        "duplicate username",
 			username:    "user1",
-			roles:       []string{RoleNameReadOnly},
-			expectError: true,
-		},
-		{
-			name:        "invalid role",
-			username:    "user4",
-			roles:       []string{"nonexistent-role"},
+			roles:       []string{"readonly"},
 			expectError: true,
 		},
 	}
@@ -653,7 +575,7 @@ func TestPersistentDeleteUser(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	user, err := pam.CreateUser("testuser", []string{RoleNameReadWrite})
+	user, err := pam.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 
 	err = pam.DeleteUser(user.ID)
@@ -676,10 +598,10 @@ func TestPersistentUpdateUserRoles(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	user, err := pam.CreateUser("testuser", []string{RoleNameReadOnly})
+	user, err := pam.CreateUser("testuser", []string{"readonly"})
 	require.NoError(t, err)
 
-	newRoles := []string{RoleNameAdmin}
+	newRoles := []string{"admin"}
 	err = pam.UpdateUserRoles(user.ID, newRoles)
 	assert.NoError(t, err)
 
@@ -716,9 +638,6 @@ func TestPersistentGetters(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	roleManager := pam.GetRoleManager()
-	assert.NotNil(t, roleManager)
-
 	userStore := pam.GetUserStore()
 	assert.NotNil(t, userStore)
 
@@ -740,11 +659,14 @@ func TestPersistentConcurrentAccess(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
+	// Install an allow decision point so issued tokens authorize.
+	pam.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
+
 	// Create users and store their references for token generation
 	users := make([]*User, 5)
 	for i := 0; i < 5; i++ {
 		username := fmt.Sprintf("user%d", i)
-		user, err := pam.CreateUser(username, []string{RoleNameReadWrite})
+		user, err := pam.CreateUser(username, []string{"readwrite"})
 		require.NoError(t, err)
 		users[i] = user
 	}
@@ -759,7 +681,7 @@ func TestPersistentConcurrentAccess(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NotNil(t, token)
 
-			err = pam.Authorize(ctx, token.AccessToken, ResourceKeys, ActionRead)
+			err = pam.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
 			assert.NoError(t, err)
 
 			done <- true

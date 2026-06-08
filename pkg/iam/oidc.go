@@ -135,13 +135,14 @@ func NewOIDCProvider(config *OIDCConfig, deps OIDCDependencies) (*OIDCProvider, 
 
 	// Create token service
 	tokenService := &TokenService{
-		storage:    deps.TokenStorage,
-		signingKey: signingKey,
-		signingAlg: signingAlg,
-		currentKID: currentKID,
-		keyManager: config.SigningKeyManager,
-		tenantKeys: config.TenantSigningKeys,
-		config:     config,
+		storage:      deps.TokenStorage,
+		signingKey:   signingKey,
+		signingAlg:   signingAlg,
+		currentKID:   currentKID,
+		keyManager:   config.SigningKeyManager,
+		tenantKeys:   config.TenantSigningKeys,
+		config:       config,
+		permResolver: deps.PermissionResolver,
 	}
 
 	// Build the published JWKS.

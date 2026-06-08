@@ -90,7 +90,7 @@ func TestCompleteFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user
-	user, err := authManager.CreateUser("testuser", "testpass", []string{"admin"})
+	user, err := authManager.CreateUser("testuser", []string{"admin"})
 	require.NoError(t, err)
 	require.NotNil(t, user)
 

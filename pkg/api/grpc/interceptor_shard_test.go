@@ -24,7 +24,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
@@ -74,7 +74,7 @@ func TestUnaryPlatformShardGuardInterceptor_PlatformShard_AdminAllowed(t *testin
 
 	md := metadata.Pairs(
 		ShardIDMetadataKey, "1",
-		RolesMetadataKey, auth.RoleNameAdmin,
+		RolesMetadataKey, qrdbsdk.RoleNameAdmin,
 	)
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}
@@ -183,7 +183,7 @@ func TestStreamPlatformShardGuardInterceptor_PlatformShard_AdminAllowed(t *testi
 
 	md := metadata.Pairs(
 		ShardIDMetadataKey, "1",
-		RolesMetadataKey, auth.RoleNameAdmin,
+		RolesMetadataKey, qrdbsdk.RoleNameAdmin,
 	)
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 
@@ -252,7 +252,7 @@ func TestExtractShardIDFromMetadata_NoIncomingMetadata(t *testing.T) {
 }
 
 func TestHasAdminRoleFromMetadata_AdminPresent(t *testing.T) {
-	md := metadata.Pairs(RolesMetadataKey, auth.RoleNameAdmin)
+	md := metadata.Pairs(RolesMetadataKey, qrdbsdk.RoleNameAdmin)
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 
 	if !hasAdminRoleFromMetadata(ctx) {

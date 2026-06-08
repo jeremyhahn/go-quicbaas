@@ -31,7 +31,6 @@ import (
 func TestServiceBuilder_ChainedCalls(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	mockStore := &mockStorage{}
-	mockAuth := &mockAuthManager{}
 	mockBackup := &mockBackupManager{}
 	log := createTestLogger(t)
 
@@ -56,7 +55,6 @@ func TestServiceBuilder_ChainedCalls(t *testing.T) {
 		WithRaftNode(mockRaft).
 		WithStorage(mockStore).
 		WithCacheManager(cacheMgr).
-		WithAuthManager(mockAuth).
 		WithBackupManager(mockBackup).
 		WithLogger(log).
 		WithConfig(config)
@@ -67,7 +65,6 @@ func TestServiceBuilder_ChainedCalls(t *testing.T) {
 	assert.Equal(t, mockRaft, sb.raftNode)
 	assert.Equal(t, mockStore, sb.storage)
 	assert.Equal(t, cacheMgr, sb.cacheManager)
-	assert.Equal(t, mockAuth, sb.authManager)
 	assert.Equal(t, mockBackup, sb.backupManager)
 	assert.Equal(t, log, sb.logger)
 	assert.Equal(t, config, sb.config)

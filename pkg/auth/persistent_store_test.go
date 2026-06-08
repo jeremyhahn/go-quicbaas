@@ -84,14 +84,14 @@ func TestPersistentUserStore_AddUser(t *testing.T) {
 	user1 := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
 	user2 := &User{
 		ID:       "user2",
 		Username: "bob",
-		Roles:    []string{RoleNameReadOnly},
+		Roles:    []string{"readonly"},
 		Created:  time.Now(),
 	}
 
@@ -109,7 +109,7 @@ func TestPersistentUserStore_AddUser(t *testing.T) {
 	duplicateID := &User{
 		ID:       "user1",
 		Username: "charlie",
-		Roles:    []string{RoleNameAdmin},
+		Roles:    []string{"admin"},
 		Created:  time.Now(),
 	}
 	err = store.AddUser(duplicateID)
@@ -120,7 +120,7 @@ func TestPersistentUserStore_AddUser(t *testing.T) {
 	duplicateUsername := &User{
 		ID:       "user3",
 		Username: "alice",
-		Roles:    []string{RoleNameAdmin},
+		Roles:    []string{"admin"},
 		Created:  time.Now(),
 	}
 	err = store.AddUser(duplicateUsername)
@@ -136,7 +136,7 @@ func TestPersistentUserStore_GetByID(t *testing.T) {
 	user := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
@@ -162,7 +162,7 @@ func TestPersistentUserStore_GetByID_FromStorage(t *testing.T) {
 	user := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
@@ -195,7 +195,7 @@ func TestPersistentUserStore_GetByUsername(t *testing.T) {
 	user := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
@@ -221,7 +221,7 @@ func TestPersistentUserStore_GetByUsername_FromStorage(t *testing.T) {
 	user := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
@@ -257,7 +257,7 @@ func TestPersistentUserStore_UpdateUser(t *testing.T) {
 	user := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
@@ -265,7 +265,7 @@ func TestPersistentUserStore_UpdateUser(t *testing.T) {
 	require.NoError(t, err)
 
 	// Update user
-	user.Roles = []string{RoleNameAdmin}
+	user.Roles = []string{"admin"}
 	user.LastAuth = time.Now()
 	err = store.UpdateUser(user)
 	assert.NoError(t, err)
@@ -273,13 +273,13 @@ func TestPersistentUserStore_UpdateUser(t *testing.T) {
 	// Verify update
 	retrieved := store.GetByID("user1")
 	assert.NotNil(t, retrieved)
-	assert.Equal(t, []string{RoleNameAdmin}, retrieved.Roles)
+	assert.Equal(t, []string{"admin"}, retrieved.Roles)
 
 	// Try to update non-existent user
 	nonExistent := &User{
 		ID:       "nonexistent",
 		Username: "bob",
-		Roles:    []string{RoleNameReadOnly},
+		Roles:    []string{"readonly"},
 	}
 	err = store.UpdateUser(nonExistent)
 	assert.Error(t, err)
@@ -293,7 +293,7 @@ func TestPersistentUserStore_DeleteUser(t *testing.T) {
 	user := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
@@ -331,13 +331,13 @@ func TestPersistentUserStore_ListUsers(t *testing.T) {
 	user1 := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 	user2 := &User{
 		ID:       "user2",
 		Username: "bob",
-		Roles:    []string{RoleNameReadOnly},
+		Roles:    []string{"readonly"},
 		Created:  time.Now(),
 	}
 
@@ -366,13 +366,13 @@ func TestPersistentUserStore_LoadAllUsers(t *testing.T) {
 	user1 := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 	user2 := &User{
 		ID:       "user2",
 		Username: "bob",
-		Roles:    []string{RoleNameReadOnly},
+		Roles:    []string{"readonly"},
 		Created:  time.Now(),
 	}
 
@@ -404,7 +404,7 @@ func TestPersistentUserStore_LoadAllUsers_SkipsIndexKeys(t *testing.T) {
 	user := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
@@ -434,7 +434,7 @@ func TestPersistentUserStore_Count(t *testing.T) {
 	user1 := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
@@ -445,7 +445,7 @@ func TestPersistentUserStore_Count(t *testing.T) {
 	user2 := &User{
 		ID:       "user2",
 		Username: "bob",
-		Roles:    []string{RoleNameReadOnly},
+		Roles:    []string{"readonly"},
 		Created:  time.Now(),
 	}
 
@@ -474,7 +474,7 @@ func TestPersistentUserStore_ConcurrentAccess(t *testing.T) {
 			user := &User{
 				ID:       fmt.Sprintf("user%d", idx),
 				Username: fmt.Sprintf("user%d", idx),
-				Roles:    []string{RoleNameReadWrite},
+				Roles:    []string{"readwrite"},
 				Created:  time.Now(),
 			}
 			store.AddUser(user)
@@ -507,7 +507,7 @@ func TestPersistentUserStore_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			user := store.GetByID(fmt.Sprintf("user%d", idx))
 			if user != nil {
-				user.Roles = []string{RoleNameAdmin}
+				user.Roles = []string{"admin"}
 				store.UpdateUser(user)
 			}
 		}(i)
@@ -1064,7 +1064,7 @@ func TestPersistentUserStore_CacheConsistency(t *testing.T) {
 	user := &User{
 		ID:       "user1",
 		Username: "alice",
-		Roles:    []string{RoleNameReadWrite},
+		Roles:    []string{"readwrite"},
 		Created:  time.Now(),
 	}
 
@@ -1084,7 +1084,7 @@ func TestPersistentUserStore_CacheConsistency(t *testing.T) {
 	assert.Equal(t, "alice", cachedUser.Username)
 
 	// Update user
-	user.Roles = []string{RoleNameAdmin}
+	user.Roles = []string{"admin"}
 	err = store.UpdateUser(user)
 	require.NoError(t, err)
 
@@ -1092,7 +1092,7 @@ func TestPersistentUserStore_CacheConsistency(t *testing.T) {
 	store.mu.RLock()
 	cachedUser = store.cache["user1"]
 	store.mu.RUnlock()
-	assert.Equal(t, []string{RoleNameAdmin}, cachedUser.Roles)
+	assert.Equal(t, []string{"admin"}, cachedUser.Roles)
 
 	// Delete user
 	err = store.DeleteUser("user1")

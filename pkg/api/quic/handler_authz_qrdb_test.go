@@ -43,6 +43,19 @@ func TestGetQRDBPermission_Mapped(t *testing.T) {
 		{OpCeremony, "ceremony", "status"},
 		{OpVectorSearchSimilar, "vector", "search_similar"},
 		{OpCreateUser, "users", "create"},
+		// Stage 0.5 broker data-plane surfaces.
+		{OpOSPutObject, "objstore", "put"},
+		{OpOSGetObject, "objstore", "get"},
+		{OpOSBatchPutObjects, "objstore", "batch"},
+		{OpOSAdmin, "objstore", "admin"},
+		{OpOllamaEmbed, "ollama", "embed"},
+		{OpOllamaGetModelInfo, "ollama", "model_info"},
+		{OpDynamicSecretsGenerate, "dynamic_secrets", "generate"},
+		{OpDynamicSecretsCreateRole, "dynamic_secrets", "role_create"},
+		{OpParameterSet, "parameters", "write"},
+		{OpParameterSearch, "parameters", "search"},
+		{OpScheduler, "scheduler", "status"},
+		{OpOrchestrator, "orchestrator", "status"},
 	}
 	for _, c := range cases {
 		res, act, ok := getQRDBPermission(c.opcode)
@@ -54,13 +67,11 @@ func TestGetQRDBPermission_Mapped(t *testing.T) {
 
 func TestGetQRDBPermission_Unmapped(t *testing.T) {
 	// Surfaces with no qrdb permission family must be unmapped (default-deny).
+	// Embedding has no qrdb resource family after Stage 0.5.
 	for _, op := range []byte{
-		OpOSPutObject,
-		OpOrchestrator,
-		OpParameterSet,
 		OpEmbeddingGenerate,
-		OpOllamaEmbed,
-		OpDynamicSecretsGenerate,
+		OpEmbeddingBatchGenerate,
+		OpEmbeddingListProviders,
 	} {
 		_, _, ok := getQRDBPermission(op)
 		assert.False(t, ok, "opcode 0x%02X should be unmapped", op)
@@ -138,10 +149,11 @@ func TestQRDBAuthorizeAndInject_AllowAndDeny(t *testing.T) {
 
 func TestQRDBAuthorizeAndInject_UnmappedDenied(t *testing.T) {
 	validator := &fakeQUICValidator{token: "good", id: &AuthzIdentity{ID: "u1", TenantID: "system", Roles: []string{"admin"}}}
-	// authz service would allow anything, but the opcode has no qrdb permission.
+	// authz service would allow anything, but the opcode has no qrdb permission
+	// (embedding has no qrdb resource family after Stage 0.5).
 	svc := &fakeQUICAuthzService{allowResource: "*", allowAction: "*"}
 	h := newAuthzHandler(svc, validator)
-	_, resp := h.authorizeAndInject(context.Background(), &Request{Opcode: OpOSPutObject, Token: "good"})
+	_, resp := h.authorizeAndInject(context.Background(), &Request{Opcode: OpEmbeddingGenerate, Token: "good"})
 	require.NotNil(t, resp)
 	assert.Equal(t, StatusPermissionDenied, resp.Status)
 	assert.Nil(t, svc.lastReq, "unmapped opcode must not reach the authz service")

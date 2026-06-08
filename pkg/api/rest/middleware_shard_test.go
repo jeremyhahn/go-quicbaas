@@ -23,7 +23,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
@@ -74,7 +74,7 @@ func TestPlatformShardGuardMiddleware_PlatformShard_AdminAllowed(t *testing.T) {
 	req.Header.Set(ShardIDHeader, "1")
 
 	// Set admin role in context (as the authz middleware would).
-	ctx := context.WithValue(req.Context(), UserRolesKey, []string{auth.RoleNameAdmin})
+	ctx := context.WithValue(req.Context(), UserRolesKey, []string{qrdbsdk.RoleNameAdmin})
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -168,7 +168,7 @@ func TestExtractShardIDFromHeader_Invalid(t *testing.T) {
 
 func TestHasAdminRoleFromContext_AdminPresent(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	ctx := context.WithValue(req.Context(), UserRolesKey, []string{auth.RoleNameAdmin, "readwrite"})
+	ctx := context.WithValue(req.Context(), UserRolesKey, []string{qrdbsdk.RoleNameAdmin, "readwrite"})
 	req = req.WithContext(ctx)
 
 	if !hasAdminRoleFromContext(req) {

@@ -28,19 +28,21 @@ import (
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
-// dataPlaneScopes are the "<svc>.<verb>" scopes the SDK integration suite needs
-// to exercise the protected data plane under the default-deny gate
-// (QUICBAAS_SECURITY_REQUIRE_AUTHZ=true). They mirror the gate's scope table in
-// pkg/api/rest/authz_default_deny.go for the surfaces the suite touches: entity
-// KV (kv.read / kv.write) plus the scheduler (no specific scope, just a valid
-// token). Requesting them broadly keeps a single bootstrap token usable across
-// every authed helper.
+// dataPlaneScopes are the qrdb-canonical colon "resource:action" scopes the SDK
+// integration suite needs to exercise the protected data plane under the
+// default-deny gate (QUICBAAS_SECURITY_REQUIRE_AUTHZ=true). They mirror the
+// gate's scope table in pkg/api/rest/authz_default_deny.go for the surfaces the
+// suite touches: entity KV (kv:get / kv:put) plus the scheduler (no specific
+// scope, just a valid token). For the client_credentials grant (no user/roles)
+// the scp claim falls back to these requested scopes, so they must be the colon
+// grammar the gate now matches. Requesting them broadly keeps a single
+// bootstrap token usable across every authed helper.
 var dataPlaneScopes = []string{
-	"kv.read", "kv.write",
-	"iam.read", "iam.write",
-	"secrets.read", "secrets.write",
-	"kms.read", "kms.write",
-	"certificate.read", "certificate.write",
+	"kv:get", "kv:put",
+	"tenants:read", "tenants:create",
+	"credentials:retrieve", "credentials:store",
+	"keys:get", "keys:create",
+	"certs:read", "certs:generate",
 }
 
 var (

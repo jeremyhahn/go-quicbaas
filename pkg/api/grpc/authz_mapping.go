@@ -27,10 +27,14 @@ package grpc
 // registered qrdb permission to admit it). This is the same posture the REST PEP
 // takes for an unmapped path.
 //
-// quicbaas-specific surfaces that the qrdb permission registry does NOT define a
-// resource family for — orchestrator, object storage, messaging, scheduler,
-// parameter store, dynamic secrets, embedding, ollama, project, agent runtime,
-// RAG — are intentionally absent. They have no qrdb PDP permission, so they are
+// Stage 0.5 maps the broker-only data-plane surfaces that qrdb now registers a
+// permission family for (go-qrdb/pkg/permission/broker_dataplane_scope.go):
+// object storage (objstore), orchestrator, messaging, scheduler, parameter
+// store (parameters), dynamic_secrets, project, ollama. Before Stage 0.5 these
+// were unmapped and blanket-denied under RequireAuthz default-deny.
+//
+// Surfaces that the qrdb permission registry still does NOT define a resource
+// family for — embedding, agent runtime, RAG — remain intentionally absent and
 // denied under RequireAuthz default-deny. Granting them requires first
 // registering a qrdb permission family for the surface; inventing a name here
 // would not resolve against the PDP.
@@ -265,6 +269,147 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.vector.v1.VectorAdmin/GetIndexStats":         {"vector", "get_index_stats"},
 	"/quicbaas.vector.v1.VectorAdmin/Compact":               {"vector", "compact"},
 	"/quicbaas.vector.v1.VectorAdmin/GetCompactionProgress": {"vector", "get_compaction_progress"},
+
+	// ---- Stage 0.5: broker data-plane surfaces (qrdb-registered) ----
+
+	// ---- quicbaas.objectstorage.v1.ObjectStorageService ----
+	"/quicbaas.objectstorage.v1.ObjectStorageService/PutObject":                    {"objstore", "put"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/StreamPutObject":              {"objstore", "put"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/GetObject":                    {"objstore", "get"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/StreamGetObject":              {"objstore", "get"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/DeleteObject":                 {"objstore", "delete"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/HeadObject":                   {"objstore", "head"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/ListObjects":                  {"objstore", "list"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/ListByTag":                    {"objstore", "list"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/ListByTenant":                 {"objstore", "list"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/CopyObject":                   {"objstore", "copy"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/ArchiveObject":                {"objstore", "archive"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/RestoreObject":                {"objstore", "restore"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/VerifyObject":                 {"objstore", "verify"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/ReplicateObject":              {"objstore", "replicate"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/MigrateObject":                {"objstore", "migrate"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/BatchPutObjects":              {"objstore", "batch"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/BatchGetObjects":              {"objstore", "batch"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/BatchDeleteObjects":           {"objstore", "batch"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/GetObjectPolicy":              {"objstore", "read_policy"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/SetObjectPolicy":              {"objstore", "write_policy"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/ListBackends":                 {"objstore", "read_backend"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/GetBackendHealth":             {"objstore", "read_backend"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/GetObjectStorageTenantUsage":  {"objstore", "tenant_usage"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/GetObjectStorageTenantQuotas": {"objstore", "tenant_quota_read"},
+	"/quicbaas.objectstorage.v1.ObjectStorageService/SetObjectStorageTenantQuotas": {"objstore", "tenant_quota_write"},
+
+	// ---- quicbaas.objectstorage.v1.ObjectStorageAdmin ----
+	"/quicbaas.objectstorage.v1.ObjectStorageAdmin/CreateBackend":                {"objstore", "admin"},
+	"/quicbaas.objectstorage.v1.ObjectStorageAdmin/UpdateBackend":                {"objstore", "admin"},
+	"/quicbaas.objectstorage.v1.ObjectStorageAdmin/DeleteBackend":                {"objstore", "admin"},
+	"/quicbaas.objectstorage.v1.ObjectStorageAdmin/SetBackendStatus":             {"objstore", "admin"},
+	"/quicbaas.objectstorage.v1.ObjectStorageAdmin/GetStorageStats":              {"objstore", "read_stats"},
+	"/quicbaas.objectstorage.v1.ObjectStorageAdmin/RunGarbageCollection":         {"objstore", "admin"},
+	"/quicbaas.objectstorage.v1.ObjectStorageAdmin/GetGarbageCollectionProgress": {"objstore", "admin"},
+	"/quicbaas.objectstorage.v1.ObjectStorageAdmin/RepairObject":                 {"objstore", "admin"},
+	"/quicbaas.objectstorage.v1.ObjectStorageAdmin/CompactBackend":               {"objstore", "admin"},
+
+	// ---- quicbaas.v1.ObjectTransferService ----
+	"/quicbaas.v1.ObjectTransferService/FetchObject":        {"objstore", "get"},
+	"/quicbaas.v1.ObjectTransferService/StreamFetchObjects": {"objstore", "get"},
+
+	// ---- quicbaas.orchestrator.v1.OrchestratorService ----
+	"/quicbaas.orchestrator.v1.OrchestratorService/SpawnSession":           {"orchestrator", "spawn"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SpawnChildJob":          {"orchestrator", "job_start"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/PromptSession":          {"orchestrator", "prompt"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SessionStatus":          {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CloseSession":           {"orchestrator", "close"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListSessions":           {"orchestrator", "list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents": {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CreateTask":             {"orchestrator", "task_create"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetTask":                {"orchestrator", "task_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListTasks":              {"orchestrator", "task_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ClaimTask":              {"orchestrator", "task_claim"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CompleteTask":           {"orchestrator", "task_complete"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/DecomposeTask":          {"orchestrator", "task_decompose"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SubmitTaskArtifacts":    {"orchestrator", "artifact_submit"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetTaskArtifact":        {"orchestrator", "artifact_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListTaskArtifacts":      {"orchestrator", "artifact_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/StartJob":               {"orchestrator", "job_start"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetJobStatus":           {"orchestrator", "job_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListJobs":               {"orchestrator", "job_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CancelJob":              {"orchestrator", "job_cancel"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeJobEvents":     {"orchestrator", "job_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListBackends":           {"orchestrator", "backend_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/Health":                 {"orchestrator", "health"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/Inference":              {"orchestrator", "inference"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream":        {"orchestrator", "inference"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/RegisterAgent":          {"orchestrator", "agent_register"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetAgent":               {"orchestrator", "agent_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListAgents":             {"orchestrator", "agent_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/RemoveAgent":            {"orchestrator", "agent_remove"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/AgentHeartbeat":         {"orchestrator", "agent_heartbeat"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/PushEvents":             {"orchestrator", "hook"},
+
+	// ---- quicbaas.messaging.v1.MessagingService ----
+	"/quicbaas.messaging.v1.MessagingService/CreateChannel":       {"messaging", "channel_create"},
+	"/quicbaas.messaging.v1.MessagingService/GetChannel":          {"messaging", "channel_read"},
+	"/quicbaas.messaging.v1.MessagingService/ListChannels":        {"messaging", "channel_list"},
+	"/quicbaas.messaging.v1.MessagingService/DeleteChannel":       {"messaging", "channel_delete"},
+	"/quicbaas.messaging.v1.MessagingService/Publish":             {"messaging", "publish"},
+	"/quicbaas.messaging.v1.MessagingService/PublishDelta":        {"messaging", "publish"},
+	"/quicbaas.messaging.v1.MessagingService/Subscribe":           {"messaging", "subscribe"},
+	"/quicbaas.messaging.v1.MessagingService/Unsubscribe":         {"messaging", "unsubscribe"},
+	"/quicbaas.messaging.v1.MessagingService/WatchChannel":        {"messaging", "watch"},
+	"/quicbaas.messaging.v1.MessagingService/StreamNotifications": {"messaging", "watch"},
+	"/quicbaas.messaging.v1.MessagingService/GetStats":            {"messaging", "stats"},
+	"/quicbaas.messaging.v1.MessagingService/GetChannelStats":     {"messaging", "stats"},
+	"/quicbaas.messaging.v1.MessagingService/GetDedupStats":       {"messaging", "stats"},
+
+	// ---- quicbaas.scheduler.v1.SchedulerService ----
+	"/quicbaas.scheduler.v1.SchedulerService/CreateJob":          {"scheduler", "create"},
+	"/quicbaas.scheduler.v1.SchedulerService/GetJob":             {"scheduler", "read"},
+	"/quicbaas.scheduler.v1.SchedulerService/ListJobs":           {"scheduler", "list"},
+	"/quicbaas.scheduler.v1.SchedulerService/UpdateJob":          {"scheduler", "update"},
+	"/quicbaas.scheduler.v1.SchedulerService/DeleteJob":          {"scheduler", "delete"},
+	"/quicbaas.scheduler.v1.SchedulerService/TriggerJob":         {"scheduler", "trigger"},
+	"/quicbaas.scheduler.v1.SchedulerService/PauseJob":           {"scheduler", "pause"},
+	"/quicbaas.scheduler.v1.SchedulerService/ResumeJob":          {"scheduler", "resume"},
+	"/quicbaas.scheduler.v1.SchedulerService/CancelJob":          {"scheduler", "cancel"},
+	"/quicbaas.scheduler.v1.SchedulerService/GetJobHistory":      {"scheduler", "history"},
+	"/quicbaas.scheduler.v1.SchedulerService/GetSchedulerStatus": {"scheduler", "status"},
+
+	// ---- quicbaas.parameterstore.v1.ParameterStore ----
+	"/quicbaas.parameterstore.v1.ParameterStore/GetParameter":     {"parameters", "read"},
+	"/quicbaas.parameterstore.v1.ParameterStore/GetParameters":    {"parameters", "read"},
+	"/quicbaas.parameterstore.v1.ParameterStore/SetParameter":     {"parameters", "write"},
+	"/quicbaas.parameterstore.v1.ParameterStore/SetParameters":    {"parameters", "write"},
+	"/quicbaas.parameterstore.v1.ParameterStore/DeleteParameter":  {"parameters", "delete"},
+	"/quicbaas.parameterstore.v1.ParameterStore/DeleteParameters": {"parameters", "delete"},
+	"/quicbaas.parameterstore.v1.ParameterStore/ListParameters":   {"parameters", "list"},
+	"/quicbaas.parameterstore.v1.ParameterStore/SearchByTags":     {"parameters", "search"},
+
+	// ---- quicbaas.dynamicsecrets.v1.DynamicSecretsService ----
+	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/CreateRole":         {"dynamic_secrets", "role_create"},
+	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/GetRole":            {"dynamic_secrets", "role_read"},
+	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/ListRoles":          {"dynamic_secrets", "role_list"},
+	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/DeleteRole":         {"dynamic_secrets", "role_delete"},
+	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/GenerateCredential": {"dynamic_secrets", "generate"},
+	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/RenewLease":         {"dynamic_secrets", "lease_renew"},
+	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/RevokeLease":        {"dynamic_secrets", "lease_revoke"},
+	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/ListLeases":         {"dynamic_secrets", "lease_list"},
+
+	// ---- quicbaas.project.v1.ProjectService ----
+	"/quicbaas.project.v1.ProjectService/CreateProject":    {"project", "create"},
+	"/quicbaas.project.v1.ProjectService/GetProject":       {"project", "read"},
+	"/quicbaas.project.v1.ProjectService/GetProjectByName": {"project", "read"},
+	"/quicbaas.project.v1.ProjectService/ListProjects":     {"project", "list"},
+	"/quicbaas.project.v1.ProjectService/UpdateProject":    {"project", "update"},
+	"/quicbaas.project.v1.ProjectService/DeleteProject":    {"project", "delete"},
+
+	// ---- quicbaas.ollama.v1.OllamaService ----
+	"/quicbaas.ollama.v1.OllamaService/Health":         {"ollama", "health"},
+	"/quicbaas.ollama.v1.OllamaService/ListModels":     {"ollama", "model_list"},
+	"/quicbaas.ollama.v1.OllamaService/GetModelInfo":   {"ollama", "model_info"},
+	"/quicbaas.ollama.v1.OllamaService/Embed":          {"ollama", "embed"},
+	"/quicbaas.ollama.v1.OllamaService/EmbedBatch":     {"ollama", "embed"},
+	"/quicbaas.ollama.v1.OllamaService/EmbedWithModel": {"ollama", "embed"},
 }
 
 // grpcResourceAndAction returns the qrdb-canonical (resource, action) for the

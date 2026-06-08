@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
@@ -89,7 +89,7 @@ func extractShardIDFromHeader(r *http.Request) (uint64, bool) {
 func hasAdminRoleFromContext(r *http.Request) bool {
 	roles := GetUserRoles(r.Context())
 	for _, role := range roles {
-		if role == auth.RoleNameAdmin {
+		if role == qrdbsdk.RoleNameAdmin {
 			return true
 		}
 	}

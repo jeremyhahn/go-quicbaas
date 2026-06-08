@@ -34,10 +34,10 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/authzfake"
 )
 
 // testMultiTenantContext provides infrastructure for multi-tenant vector tests.
@@ -269,14 +269,11 @@ func newTestMultiTenantContext(t *testing.T) *testMultiTenantContext {
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
 
-	roleManager := authManager.GetRoleManager()
-	setupVectorRoles(t, roleManager)
-
-	rbacProvider, err := providers.NewRBACProvider(roleManager, log)
-	require.NoError(t, err)
-
-	authzService, err := auth.NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	// Tenant isolation is enforced by the interceptor's x-tenant-id validation
+	// and the tenant-keyed mock store, not by RBAC roles. All tenant users hold
+	// the vector-admin role, so the server grants every vector operation; the
+	// cross-tenant denials the tests assert come from the tenant boundary.
+	authzService := authzfake.New(adminGrants...)
 
 	unaryInterceptor := auth.UnaryAuthInterceptorWithService(authManager, authzService, log)
 	streamInterceptor := auth.StreamAuthInterceptorWithService(authManager, authzService, log)
@@ -351,8 +348,7 @@ func (c *testMultiTenantContext) createTenantUser(tenantID, userID, username str
 
 	// Create user via the auth manager with tenant ID
 	// The tenant ID will be included in the JWT token claims
-	password := "password123"
-	_, err := c.authManager.CreateUserWithTenant(username, password, tenantID, roles)
+	_, err := c.authManager.CreateUserWithTenant(username, tenantID, roles)
 	if err != nil {
 		c.t.Logf("user may already exist: %v", err)
 	}

@@ -63,10 +63,6 @@ func (m *mockAuthManager) GetUserStore() interfaces.UserStore {
 	return nil
 }
 
-func (m *mockAuthManager) GetRoleManager() interfaces.RoleManager {
-	return nil
-}
-
 // =============================================================================
 // Mock Authorization Service for Testing
 // =============================================================================

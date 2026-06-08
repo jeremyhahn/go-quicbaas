@@ -609,4 +609,11 @@ type OIDCDependencies struct {
 
 	// TokenStorage manages tokens and auth codes
 	TokenStorage TokenStorage
+
+	// PermissionResolver, when set, resolves a subject's effective qrdb
+	// permissions at access-token issuance so the scp claim carries the user's
+	// RBAC authority (colon "resource:action"). Optional: when nil the scp claim
+	// falls back to the OIDC scope (today's behavior), so non-server callers and
+	// tests need not wire it.
+	PermissionResolver PermissionResolver
 }

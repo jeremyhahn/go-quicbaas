@@ -110,14 +110,6 @@ func (m *MockAuthManager) GetUserStore() interfaces.UserStore {
 	return args.Get(0).(interfaces.UserStore)
 }
 
-func (m *MockAuthManager) GetRoleManager() interfaces.RoleManager {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(interfaces.RoleManager)
-}
-
 // MockTokenValidationResult implements the token validation result interface.
 type MockTokenValidationResult struct {
 	Valid    bool

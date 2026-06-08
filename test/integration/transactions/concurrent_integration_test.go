@@ -95,7 +95,7 @@ func TestConcurrentOperations(t *testing.T) {
 	users := make([]*auth.Token, 10)
 	for i := 0; i < 10; i++ {
 		username := fmt.Sprintf("user%d", i)
-		_, err := authManager.CreateUser(username, "password", []string{"user"})
+		_, err := authManager.CreateUser(username, []string{"user"})
 		require.NoError(t, err)
 
 		token, err := issueTokenForUser(ctx, authManager, username)

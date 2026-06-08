@@ -22,70 +22,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUserStore_SetRoleManager tests SetRoleManager method.
-func TestUserStore_SetRoleManager(t *testing.T) {
-	us := NewUserStore()
-	assert.Nil(t, us.roleManager)
-
-	rm := NewRoleManager(createTestLogger(t))
-	us.SetRoleManager(rm)
-
-	assert.NotNil(t, us.roleManager)
-	assert.Equal(t, rm, us.roleManager)
-}
-
 // TestUserStore_AssignRole tests AssignRole method.
 func TestUserStore_AssignRole(t *testing.T) {
 	us := NewUserStore()
-	rm := NewRoleManager(createTestLogger(t))
-	us.SetRoleManager(rm)
 
 	t.Run("success", func(t *testing.T) {
 		user := &User{
 			ID:       "user1",
 			Username: "testuser",
-			Roles:    []string{RoleNameReadOnly},
+			Roles:    []string{"readonly"},
 			Created:  time.Now(),
 		}
 		us.AddUser(user)
 
-		err := us.AssignRole("user1", RoleNameReadWrite)
+		err := us.AssignRole("user1", "readwrite")
 		assert.NoError(t, err)
 
 		retrieved := us.GetByID("user1")
-		assert.Contains(t, retrieved.GetRoles(), RoleNameReadOnly)
-		assert.Contains(t, retrieved.GetRoles(), RoleNameReadWrite)
+		assert.Contains(t, retrieved.GetRoles(), "readonly")
+		assert.Contains(t, retrieved.GetRoles(), "readwrite")
 		assert.True(t, retrieved.GetLastAuth().After(user.Created))
 	})
 
 	t.Run("user not found", func(t *testing.T) {
-		err := us.AssignRole("nonexistent", RoleNameAdmin)
+		err := us.AssignRole("nonexistent", "admin")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user not found")
-	})
-
-	t.Run("role not found", func(t *testing.T) {
-		user := &User{
-			ID:       "user2",
-			Username: "testuser2",
-			Roles:    []string{RoleNameReadOnly},
-		}
-		us.AddUser(user)
-
-		err := us.AssignRole("user2", "nonexistent-role")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "role not found")
 	})
 
 	t.Run("user already has role", func(t *testing.T) {
 		user := &User{
 			ID:       "user3",
 			Username: "testuser3",
-			Roles:    []string{RoleNameReadOnly},
+			Roles:    []string{"readonly"},
 		}
 		us.AddUser(user)
 
-		err := us.AssignRole("user3", RoleNameReadOnly)
+		err := us.AssignRole("user3", "readonly")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user already has role")
 	})
@@ -116,23 +89,23 @@ func TestUserStore_RevokeRole(t *testing.T) {
 		user := &User{
 			ID:       "user1",
 			Username: "testuser",
-			Roles:    []string{RoleNameReadOnly, RoleNameReadWrite},
+			Roles:    []string{"readonly", "readwrite"},
 			Created:  time.Now(),
 		}
 		us.AddUser(user)
 
-		err := us.RevokeRole("user1", RoleNameReadWrite)
+		err := us.RevokeRole("user1", "readwrite")
 		assert.NoError(t, err)
 
 		retrieved := us.GetByID("user1")
-		assert.Contains(t, retrieved.GetRoles(), RoleNameReadOnly)
-		assert.NotContains(t, retrieved.GetRoles(), RoleNameReadWrite)
+		assert.Contains(t, retrieved.GetRoles(), "readonly")
+		assert.NotContains(t, retrieved.GetRoles(), "readwrite")
 		assert.Len(t, retrieved.GetRoles(), 1)
 		assert.True(t, retrieved.GetLastAuth().After(user.Created))
 	})
 
 	t.Run("user not found", func(t *testing.T) {
-		err := us.RevokeRole("nonexistent", RoleNameAdmin)
+		err := us.RevokeRole("nonexistent", "admin")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user not found")
 	})
@@ -141,11 +114,11 @@ func TestUserStore_RevokeRole(t *testing.T) {
 		user := &User{
 			ID:       "user2",
 			Username: "testuser2",
-			Roles:    []string{RoleNameReadOnly},
+			Roles:    []string{"readonly"},
 		}
 		us.AddUser(user)
 
-		err := us.RevokeRole("user2", RoleNameAdmin)
+		err := us.RevokeRole("user2", "admin")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user does not have role")
 	})
@@ -154,32 +127,32 @@ func TestUserStore_RevokeRole(t *testing.T) {
 		user := &User{
 			ID:       "user3",
 			Username: "testuser3",
-			Roles:    []string{RoleNameAdmin, RoleNameReadWrite, RoleNameReadOnly},
+			Roles:    []string{"admin", "readwrite", "readonly"},
 		}
 		us.AddUser(user)
 
-		err := us.RevokeRole("user3", RoleNameAdmin)
+		err := us.RevokeRole("user3", "admin")
 		assert.NoError(t, err)
 
 		retrieved := us.GetByID("user3")
-		assert.NotContains(t, retrieved.GetRoles(), RoleNameAdmin)
+		assert.NotContains(t, retrieved.GetRoles(), "admin")
 		assert.Len(t, retrieved.GetRoles(), 2)
-		assert.Equal(t, RoleNameReadWrite, retrieved.GetRoles()[0])
+		assert.Equal(t, "readwrite", retrieved.GetRoles()[0])
 	})
 
 	t.Run("revoke middle role", func(t *testing.T) {
 		user := &User{
 			ID:       "user4",
 			Username: "testuser4",
-			Roles:    []string{RoleNameAdmin, RoleNameReadWrite, RoleNameReadOnly},
+			Roles:    []string{"admin", "readwrite", "readonly"},
 		}
 		us.AddUser(user)
 
-		err := us.RevokeRole("user4", RoleNameReadWrite)
+		err := us.RevokeRole("user4", "readwrite")
 		assert.NoError(t, err)
 
 		retrieved := us.GetByID("user4")
-		assert.NotContains(t, retrieved.GetRoles(), RoleNameReadWrite)
+		assert.NotContains(t, retrieved.GetRoles(), "readwrite")
 		assert.Len(t, retrieved.GetRoles(), 2)
 	})
 
@@ -187,11 +160,11 @@ func TestUserStore_RevokeRole(t *testing.T) {
 		user := &User{
 			ID:       "user5",
 			Username: "testuser5",
-			Roles:    []string{RoleNameAdmin},
+			Roles:    []string{"admin"},
 		}
 		us.AddUser(user)
 
-		err := us.RevokeRole("user5", RoleNameAdmin)
+		err := us.RevokeRole("user5", "admin")
 		assert.NoError(t, err)
 
 		retrieved := us.GetByID("user5")
@@ -296,7 +269,7 @@ func TestUserStore_UpdateUser_ErrorPath(t *testing.T) {
 	user := &User{
 		ID:       "newuser",
 		Username: "newusername",
-		Roles:    []string{RoleNameReadOnly},
+		Roles:    []string{"readonly"},
 	}
 	us.UpdateUser(user)
 

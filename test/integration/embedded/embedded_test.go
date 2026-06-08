@@ -409,7 +409,7 @@ func TestEmbedded_KMSKeyLifecycle(t *testing.T) {
 	keyName := uniqueKey("kms-lifecycle")
 
 	// Generate key
-	genResp, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+	genResp, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 		Name:      keyName,
 		Algorithm: quicbaas.AlgorithmAES256GCM,
 		Usage:     []quicbaas.KeyUsage{quicbaas.KeyUsageEncrypt, quicbaas.KeyUsageDecrypt},
@@ -420,14 +420,14 @@ func TestEmbedded_KMSKeyLifecycle(t *testing.T) {
 	keyID := genResp.KeyID
 
 	// Get key
-	keyInfo, err := client.KMS().GetKey(ctx, keyID)
+	keyInfo, err := client.Security().KMS().GetKey(ctx, keyID)
 	require.NoError(t, err, "GetKey should succeed")
 	require.NotNil(t, keyInfo, "KeyInfo should not be nil")
 	assert.Equal(t, keyID, keyInfo.KeyID, "key ID should match")
 	assert.Equal(t, keyName, keyInfo.Name, "key name should match")
 
 	// List keys
-	listResp, err := client.KMS().ListKeys(ctx)
+	listResp, err := client.Security().KMS().ListKeys(ctx)
 	require.NoError(t, err, "ListKeys should succeed")
 	require.NotNil(t, listResp, "ListKeys response should not be nil")
 	found := false
@@ -440,7 +440,7 @@ func TestEmbedded_KMSKeyLifecycle(t *testing.T) {
 	assert.True(t, found, "created key should appear in ListKeys results")
 
 	// Rotate key
-	rotateResp, err := client.KMS().RotateKey(ctx, keyID)
+	rotateResp, err := client.Security().KMS().RotateKey(ctx, keyID)
 	require.NoError(t, err, "RotateKey should succeed")
 	require.NotNil(t, rotateResp, "RotateKey response should not be nil")
 	assert.Equal(t, keyID, rotateResp.KeyID, "rotated key ID should match")
@@ -448,11 +448,11 @@ func TestEmbedded_KMSKeyLifecycle(t *testing.T) {
 		"rotated version should be greater than initial version")
 
 	// Delete key
-	err = client.KMS().DeleteKey(ctx, keyID)
+	err = client.Security().KMS().DeleteKey(ctx, keyID)
 	require.NoError(t, err, "DeleteKey should succeed")
 
 	// Verify deletion - get should fail
-	_, err = client.KMS().GetKey(ctx, keyID)
+	_, err = client.Security().KMS().GetKey(ctx, keyID)
 	assert.Error(t, err, "GetKey should fail after deletion")
 }
 
@@ -465,32 +465,32 @@ func TestEmbedded_KMSKeyLifecycle_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
 
 	// Generate key with empty name should fail
-	_, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+	_, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 		Name:      "",
 		Algorithm: quicbaas.AlgorithmAES256GCM,
 	})
 	assert.Error(t, err, "GenerateKey with empty name should fail")
 
 	// Get non-existent key should fail
-	_, err = client.KMS().GetKey(ctx, "nonexistent-key-id")
+	_, err = client.Security().KMS().GetKey(ctx, "nonexistent-key-id")
 	assert.Error(t, err, "GetKey for non-existent key should fail")
 
 	// Rotate non-existent key should fail
-	_, err = client.KMS().RotateKey(ctx, "nonexistent-key-id")
+	_, err = client.Security().KMS().RotateKey(ctx, "nonexistent-key-id")
 	assert.Error(t, err, "RotateKey for non-existent key should fail")
 
 	// Delete non-existent key should fail
-	err = client.KMS().DeleteKey(ctx, "nonexistent-key-id")
+	err = client.Security().KMS().DeleteKey(ctx, "nonexistent-key-id")
 	assert.Error(t, err, "DeleteKey for non-existent key should fail")
 
 	// Empty key ID should fail
-	_, err = client.KMS().GetKey(ctx, "")
+	_, err = client.Security().KMS().GetKey(ctx, "")
 	assert.Error(t, err, "GetKey with empty key ID should fail")
 
-	_, err = client.KMS().RotateKey(ctx, "")
+	_, err = client.Security().KMS().RotateKey(ctx, "")
 	assert.Error(t, err, "RotateKey with empty key ID should fail")
 
-	err = client.KMS().DeleteKey(ctx, "")
+	err = client.Security().KMS().DeleteKey(ctx, "")
 	assert.Error(t, err, "DeleteKey with empty key ID should fail")
 }
 
@@ -509,7 +509,7 @@ func TestEmbedded_KMSEncryptDecrypt(t *testing.T) {
 	plaintext := []byte("Hello, QuicBaaS! This is a secret message.")
 
 	// Create key
-	genResp, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+	genResp, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 		Name:      keyName,
 		Algorithm: quicbaas.AlgorithmAES256GCM,
 		Usage:     []quicbaas.KeyUsage{quicbaas.KeyUsageEncrypt, quicbaas.KeyUsageDecrypt},
@@ -518,7 +518,7 @@ func TestEmbedded_KMSEncryptDecrypt(t *testing.T) {
 	keyID := genResp.KeyID
 
 	// Encrypt
-	encResp, err := client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+	encResp, err := client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 		KeyID:     keyID,
 		Plaintext: plaintext,
 	})
@@ -529,7 +529,7 @@ func TestEmbedded_KMSEncryptDecrypt(t *testing.T) {
 		"ciphertext should differ from plaintext")
 
 	// Decrypt
-	decResp, err := client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	decResp, err := client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      keyID,
 		Ciphertext: encResp.Ciphertext,
 	})
@@ -539,7 +539,7 @@ func TestEmbedded_KMSEncryptDecrypt(t *testing.T) {
 		"decrypted plaintext should match original")
 
 	// Cleanup
-	err = client.KMS().DeleteKey(ctx, keyID)
+	err = client.Security().KMS().DeleteKey(ctx, keyID)
 	require.NoError(t, err, "DeleteKey cleanup should succeed")
 }
 
@@ -552,38 +552,38 @@ func TestEmbedded_KMSEncryptDecrypt_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
 
 	// Encrypt with empty key ID should fail
-	_, err := client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+	_, err := client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 		KeyID:     "",
 		Plaintext: []byte("test"),
 	})
 	assert.Error(t, err, "Encrypt with empty key ID should fail")
 
 	// Encrypt with empty plaintext should fail
-	_, err = client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+	_, err = client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 		KeyID:     "some-key",
 		Plaintext: []byte{},
 	})
 	assert.Error(t, err, "Encrypt with empty plaintext should fail")
 
 	// Decrypt with empty key ID should fail
-	_, err = client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	_, err = client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      "",
 		Ciphertext: []byte("fake-ciphertext"),
 	})
 	assert.Error(t, err, "Decrypt with empty key ID should fail")
 
 	// Decrypt with empty ciphertext should fail
-	_, err = client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	_, err = client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      "some-key",
 		Ciphertext: []byte{},
 	})
 	assert.Error(t, err, "Decrypt with empty ciphertext should fail")
 
 	// Nil requests should fail
-	_, err = client.Crypto().Encrypt(ctx, nil)
+	_, err = client.Security().Crypto().Encrypt(ctx, nil)
 	assert.Error(t, err, "Encrypt with nil request should fail")
 
-	_, err = client.Crypto().Decrypt(ctx, nil)
+	_, err = client.Security().Crypto().Decrypt(ctx, nil)
 	assert.Error(t, err, "Decrypt with nil request should fail")
 }
 
@@ -611,7 +611,7 @@ func TestEmbedded_MultipleAlgorithms(t *testing.T) {
 		t.Run(algo.name, func(t *testing.T) {
 			keyName := uniqueKey("algo-" + algo.name)
 
-			genResp, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+			genResp, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 				Name:      keyName,
 				Algorithm: algo.algorithm,
 				Usage:     []quicbaas.KeyUsage{quicbaas.KeyUsageEncrypt, quicbaas.KeyUsageDecrypt},
@@ -621,14 +621,14 @@ func TestEmbedded_MultipleAlgorithms(t *testing.T) {
 			assert.NotEmpty(t, genResp.KeyID, "key ID should not be empty")
 
 			// Verify key was created with correct algorithm
-			keyInfo, err := client.KMS().GetKey(ctx, genResp.KeyID)
+			keyInfo, err := client.Security().KMS().GetKey(ctx, genResp.KeyID)
 			require.NoError(t, err, "GetKey should succeed for %s key", algo.name)
 			require.NotNil(t, keyInfo, "KeyInfo should not be nil")
 			assert.Equal(t, genResp.KeyID, keyInfo.KeyID, "key ID should match")
 
 			// Encrypt with the created key
 			plaintext := []byte("test data for " + algo.name)
-			encResp, err := client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+			encResp, err := client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 				KeyID:     genResp.KeyID,
 				Plaintext: plaintext,
 			})
@@ -636,7 +636,7 @@ func TestEmbedded_MultipleAlgorithms(t *testing.T) {
 			assert.NotEmpty(t, encResp.Ciphertext, "ciphertext should not be empty")
 
 			// Decrypt with the created key
-			decResp, err := client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+			decResp, err := client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 				KeyID:      genResp.KeyID,
 				Ciphertext: encResp.Ciphertext,
 			})
@@ -645,7 +645,7 @@ func TestEmbedded_MultipleAlgorithms(t *testing.T) {
 				"decrypted plaintext should match for %s", algo.name)
 
 			// Cleanup
-			err = client.KMS().DeleteKey(ctx, genResp.KeyID)
+			err = client.Security().KMS().DeleteKey(ctx, genResp.KeyID)
 			require.NoError(t, err, "DeleteKey cleanup should succeed for %s", algo.name)
 		})
 	}
@@ -660,7 +660,7 @@ func TestEmbedded_MultipleAlgorithms_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
 
 	// Invalid algorithm should fail
-	_, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+	_, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 		Name:      uniqueKey("invalid-algo"),
 		Algorithm: quicbaas.KeyAlgorithm(999),
 	})
@@ -685,7 +685,7 @@ func TestEmbedded_SecretsLifecycle(t *testing.T) {
 	}
 
 	// Store secret
-	storeResp, err := client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+	storeResp, err := client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 		Path: secretPath,
 		Data: secretData,
 	})
@@ -694,7 +694,7 @@ func TestEmbedded_SecretsLifecycle(t *testing.T) {
 	assert.Equal(t, 1, storeResp.Version, "first version should be 1")
 
 	// Get secret
-	secret, err := client.Secrets().Get(ctx, secretPath)
+	secret, err := client.Security().Secrets().Get(ctx, secretPath)
 	require.NoError(t, err, "Get secret should succeed")
 	require.NotNil(t, secret, "Secret should not be nil")
 	assert.Equal(t, secretPath, secret.Path, "secret path should match")
@@ -704,7 +704,7 @@ func TestEmbedded_SecretsLifecycle(t *testing.T) {
 		"password should match")
 
 	// List secrets
-	listResp, err := client.Secrets().List(ctx, secretPath)
+	listResp, err := client.Security().Secrets().List(ctx, secretPath)
 	require.NoError(t, err, "List secrets should succeed")
 	require.NotNil(t, listResp, "List response should not be nil")
 	assert.NotEmpty(t, listResp.Paths, "secret paths should not be empty")
@@ -714,7 +714,7 @@ func TestEmbedded_SecretsLifecycle(t *testing.T) {
 		"username": "admin",
 		"password": "new-super-secret-67890",
 	}
-	rotateResp, err := client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+	rotateResp, err := client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 		Path: secretPath,
 		Data: rotatedData,
 	})
@@ -723,23 +723,23 @@ func TestEmbedded_SecretsLifecycle(t *testing.T) {
 	assert.Greater(t, rotateResp.Version, 1, "rotated version should be greater than 1")
 
 	// Get latest version
-	latestSecret, err := client.Secrets().Get(ctx, secretPath)
+	latestSecret, err := client.Security().Secrets().Get(ctx, secretPath)
 	require.NoError(t, err, "Get latest secret should succeed")
 	assert.Equal(t, rotatedData["password"], latestSecret.Data["password"],
 		"latest secret should have rotated password")
 
 	// Get specific version (version 1)
-	v1Secret, err := client.Secrets().Get(ctx, secretPath, quicbaas.WithSecretVersion(1))
+	v1Secret, err := client.Security().Secrets().Get(ctx, secretPath, quicbaas.WithSecretVersion(1))
 	require.NoError(t, err, "Get secret version 1 should succeed")
 	assert.Equal(t, secretData["password"], v1Secret.Data["password"],
 		"version 1 should have original password")
 
 	// Delete secret
-	err = client.Secrets().Delete(ctx, secretPath)
+	err = client.Security().Secrets().Delete(ctx, secretPath)
 	require.NoError(t, err, "Delete secret should succeed")
 
 	// Verify deletion
-	_, err = client.Secrets().Get(ctx, secretPath)
+	_, err = client.Security().Secrets().Get(ctx, secretPath)
 	assert.Error(t, err, "Get after delete should fail")
 }
 
@@ -752,33 +752,33 @@ func TestEmbedded_SecretsLifecycle_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
 
 	// Store with empty path should fail
-	_, err := client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+	_, err := client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 		Path: "",
 		Data: map[string]interface{}{"key": "value"},
 	})
 	assert.Error(t, err, "Store with empty path should fail")
 
 	// Store with empty data should fail
-	_, err = client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+	_, err = client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 		Path: "test-path",
 		Data: map[string]interface{}{},
 	})
 	assert.Error(t, err, "Store with empty data should fail")
 
 	// Store with nil request should fail
-	_, err = client.Secrets().Store(ctx, nil)
+	_, err = client.Security().Secrets().Store(ctx, nil)
 	assert.Error(t, err, "Store with nil request should fail")
 
 	// Get with empty path should fail
-	_, err = client.Secrets().Get(ctx, "")
+	_, err = client.Security().Secrets().Get(ctx, "")
 	assert.Error(t, err, "Get with empty path should fail")
 
 	// Get non-existent secret should fail
-	_, err = client.Secrets().Get(ctx, "nonexistent/secret/path")
+	_, err = client.Security().Secrets().Get(ctx, "nonexistent/secret/path")
 	assert.Error(t, err, "Get non-existent secret should fail")
 
 	// Delete with empty path should fail
-	err = client.Secrets().Delete(ctx, "")
+	err = client.Security().Secrets().Delete(ctx, "")
 	assert.Error(t, err, "Delete with empty path should fail")
 }
 
@@ -977,7 +977,7 @@ func TestEmbedded_EncryptDecryptWithAAD(t *testing.T) {
 	aad := []byte("additional-authenticated-data")
 
 	// Create key
-	genResp, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+	genResp, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 		Name:      keyName,
 		Algorithm: quicbaas.AlgorithmAES256GCM,
 		Usage:     []quicbaas.KeyUsage{quicbaas.KeyUsageEncrypt, quicbaas.KeyUsageDecrypt},
@@ -986,7 +986,7 @@ func TestEmbedded_EncryptDecryptWithAAD(t *testing.T) {
 	keyID := genResp.KeyID
 
 	// Encrypt with AAD
-	encResp, err := client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+	encResp, err := client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 		KeyID:     keyID,
 		Plaintext: plaintext,
 		Context:   aad,
@@ -995,7 +995,7 @@ func TestEmbedded_EncryptDecryptWithAAD(t *testing.T) {
 	assert.NotEmpty(t, encResp.Ciphertext, "ciphertext should not be empty")
 
 	// Decrypt with correct AAD
-	decResp, err := client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	decResp, err := client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      keyID,
 		Ciphertext: encResp.Ciphertext,
 		Context:    aad,
@@ -1005,7 +1005,7 @@ func TestEmbedded_EncryptDecryptWithAAD(t *testing.T) {
 		"decrypted plaintext should match original")
 
 	// Decrypt with wrong AAD should fail
-	_, err = client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	_, err = client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      keyID,
 		Ciphertext: encResp.Ciphertext,
 		Context:    []byte("wrong-aad"),
@@ -1013,14 +1013,14 @@ func TestEmbedded_EncryptDecryptWithAAD(t *testing.T) {
 	assert.Error(t, err, "Decrypt with wrong AAD should fail")
 
 	// Decrypt without AAD should fail (when encrypted with AAD)
-	_, err = client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	_, err = client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      keyID,
 		Ciphertext: encResp.Ciphertext,
 	})
 	assert.Error(t, err, "Decrypt without AAD should fail when encrypted with AAD")
 
 	// Cleanup
-	err = client.KMS().DeleteKey(ctx, keyID)
+	err = client.Security().KMS().DeleteKey(ctx, keyID)
 	require.NoError(t, err, "DeleteKey cleanup should succeed")
 }
 
@@ -1033,7 +1033,7 @@ func TestEmbedded_EncryptDecryptWithAAD_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
 
 	// Encrypt with non-existent key should fail
-	_, err := client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+	_, err := client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 		KeyID:     "nonexistent-key",
 		Plaintext: []byte("data"),
 		Context:   []byte("aad"),
@@ -1041,7 +1041,7 @@ func TestEmbedded_EncryptDecryptWithAAD_ErrorHandling(t *testing.T) {
 	assert.Error(t, err, "Encrypt with non-existent key should fail")
 
 	// Decrypt with non-existent key should fail
-	_, err = client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	_, err = client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      "nonexistent-key",
 		Ciphertext: []byte("fake-ciphertext"),
 		Context:    []byte("aad"),
@@ -1302,7 +1302,7 @@ func TestEmbedded_KMSRotateAndEncrypt(t *testing.T) {
 	plaintext := []byte("data encrypted before rotation")
 
 	// Create key
-	genResp, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+	genResp, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 		Name:      keyName,
 		Algorithm: quicbaas.AlgorithmAES256GCM,
 		Usage:     []quicbaas.KeyUsage{quicbaas.KeyUsageEncrypt, quicbaas.KeyUsageDecrypt},
@@ -1311,20 +1311,20 @@ func TestEmbedded_KMSRotateAndEncrypt(t *testing.T) {
 	keyID := genResp.KeyID
 
 	// Encrypt before rotation
-	encResp, err := client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+	encResp, err := client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 		KeyID:     keyID,
 		Plaintext: plaintext,
 	})
 	require.NoError(t, err, "Encrypt before rotation should succeed")
 
 	// Rotate key
-	rotateResp, err := client.KMS().RotateKey(ctx, keyID)
+	rotateResp, err := client.Security().KMS().RotateKey(ctx, keyID)
 	require.NoError(t, err, "RotateKey should succeed")
 	assert.Greater(t, rotateResp.NewVersion, genResp.Version,
 		"new version should be greater")
 
 	// Decrypt ciphertext from before rotation (should still work)
-	decResp, err := client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	decResp, err := client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      keyID,
 		Ciphertext: encResp.Ciphertext,
 	})
@@ -1334,14 +1334,14 @@ func TestEmbedded_KMSRotateAndEncrypt(t *testing.T) {
 
 	// Encrypt after rotation (should use new version)
 	newPlaintext := []byte("data encrypted after rotation")
-	encResp2, err := client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+	encResp2, err := client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 		KeyID:     keyID,
 		Plaintext: newPlaintext,
 	})
 	require.NoError(t, err, "Encrypt after rotation should succeed")
 
 	// Decrypt post-rotation ciphertext
-	decResp2, err := client.Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
+	decResp2, err := client.Security().Crypto().Decrypt(ctx, &quicbaas.DecryptRequest{
 		KeyID:      keyID,
 		Ciphertext: encResp2.Ciphertext,
 	})
@@ -1350,7 +1350,7 @@ func TestEmbedded_KMSRotateAndEncrypt(t *testing.T) {
 		"post-rotation ciphertext should decrypt correctly")
 
 	// Cleanup
-	err = client.KMS().DeleteKey(ctx, keyID)
+	err = client.Security().KMS().DeleteKey(ctx, keyID)
 	require.NoError(t, err, "DeleteKey cleanup should succeed")
 }
 
@@ -1364,7 +1364,7 @@ func TestEmbedded_KMSRotateAndEncrypt_ErrorHandling(t *testing.T) {
 	keyName := uniqueKey("rotate-error-key")
 
 	// Create and immediately delete a key
-	genResp, err := client.KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
+	genResp, err := client.Security().KMS().GenerateKey(ctx, &quicbaas.GenerateKeyRequest{
 		Name:      keyName,
 		Algorithm: quicbaas.AlgorithmAES256GCM,
 		Usage:     []quicbaas.KeyUsage{quicbaas.KeyUsageEncrypt, quicbaas.KeyUsageDecrypt},
@@ -1372,15 +1372,15 @@ func TestEmbedded_KMSRotateAndEncrypt_ErrorHandling(t *testing.T) {
 	require.NoError(t, err, "GenerateKey should succeed")
 	keyID := genResp.KeyID
 
-	err = client.KMS().DeleteKey(ctx, keyID)
+	err = client.Security().KMS().DeleteKey(ctx, keyID)
 	require.NoError(t, err, "DeleteKey should succeed")
 
 	// Rotate deleted key should fail
-	_, err = client.KMS().RotateKey(ctx, keyID)
+	_, err = client.Security().KMS().RotateKey(ctx, keyID)
 	assert.Error(t, err, "RotateKey for deleted key should fail")
 
 	// Encrypt with deleted key should fail
-	_, err = client.Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
+	_, err = client.Security().Crypto().Encrypt(ctx, &quicbaas.EncryptRequest{
 		KeyID:     keyID,
 		Plaintext: []byte("data"),
 	})
@@ -1409,7 +1409,7 @@ func TestEmbedded_SecretsHierarchy(t *testing.T) {
 
 	// Store secrets at different paths
 	for i, path := range paths {
-		_, err := client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+		_, err := client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 			Path: path,
 			Data: map[string]interface{}{
 				"value": fmt.Sprintf("secret-value-%d", i),
@@ -1419,7 +1419,7 @@ func TestEmbedded_SecretsHierarchy(t *testing.T) {
 	}
 
 	// List all secrets under base path
-	listResp, err := client.Secrets().List(ctx, basePath)
+	listResp, err := client.Security().Secrets().List(ctx, basePath)
 	require.NoError(t, err, "List under base path should succeed")
 	require.NotNil(t, listResp, "List response should not be nil")
 	assert.GreaterOrEqual(t, len(listResp.Paths), len(paths),
@@ -1427,7 +1427,7 @@ func TestEmbedded_SecretsHierarchy(t *testing.T) {
 
 	// Cleanup
 	for _, path := range paths {
-		err := client.Secrets().Delete(ctx, path)
+		err := client.Security().Secrets().Delete(ctx, path)
 		require.NoError(t, err, "Delete at path %s should succeed", path)
 	}
 }
@@ -1441,7 +1441,7 @@ func TestEmbedded_SecretsHierarchy_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
 
 	// List non-existent prefix should return empty list, not error
-	listResp, err := client.Secrets().List(ctx, "nonexistent/prefix")
+	listResp, err := client.Security().Secrets().List(ctx, "nonexistent/prefix")
 	require.NoError(t, err, "List of non-existent prefix should not error")
 	require.NotNil(t, listResp, "List response should not be nil")
 	assert.Empty(t, listResp.Paths, "list should be empty for non-existent prefix")

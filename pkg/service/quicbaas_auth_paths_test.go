@@ -71,22 +71,6 @@ func TestPut_AuthEnabled_NoToken(t *testing.T) {
 	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
-func TestPut_AuthEnabled_AuthorizationFailure(t *testing.T) {
-	svc := authTestService()
-	svc.authManager = &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, action string) error {
-			return assert.AnError
-		},
-	}
-	ctx := authTestContext("valid-token")
-	resp, err := svc.kvService.Put(ctx, &PutRequest{EntityType: "users", ID: 1, Data: []byte(`{}`)})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
-}
-
 // =============================================================================
 // Get - Auth checks (line 743-751)
 // =============================================================================
@@ -94,22 +78,6 @@ func TestPut_AuthEnabled_AuthorizationFailure(t *testing.T) {
 func TestGet_AuthEnabled_NoToken(t *testing.T) {
 	svc := authTestService()
 	resp, err := svc.kvService.Get(noTokenContext(), &GetRequest{EntityType: "users", ID: 1})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
-}
-
-func TestGet_AuthEnabled_AuthorizationFailure(t *testing.T) {
-	svc := authTestService()
-	svc.authManager = &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, action string) error {
-			return assert.AnError
-		},
-	}
-	ctx := authTestContext("valid-token")
-	resp, err := svc.kvService.Get(ctx, &GetRequest{EntityType: "users", ID: 1})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -188,24 +156,6 @@ func TestBatchPut_AuthEnabled_NoToken(t *testing.T) {
 	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
 }
 
-func TestBatchPut_AuthEnabled_AuthorizationFailure(t *testing.T) {
-	svc := authTestService()
-	svc.authManager = &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, action string) error {
-			return assert.AnError
-		},
-	}
-	ctx := authTestContext("valid-token")
-	resp, err := svc.batchService.BatchPut(ctx, &BatchPutRequest{
-		Requests: []*PutRequest{{EntityType: "users", ID: 1, Data: []byte(`{}`)}},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
-}
-
 // =============================================================================
 // BatchDelete - Auth checks (line 1504-1511)
 // =============================================================================
@@ -260,26 +210,6 @@ func TestBatchGet_AuthEnabled_NoToken(t *testing.T) {
 func TestTransaction_AuthEnabled_NoToken(t *testing.T) {
 	svc := authTestService()
 	resp, err := svc.transactionService.Transaction(noTokenContext(), &TransactionRequest{
-		Compare: []*CompareCondition{
-			{EntityType: "users", ID: 1, Target: CompareTargetVersion, Operator: CompareOperatorEqual, Version: 1},
-		},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnauthorized, qbErr.Code)
-}
-
-func TestTransaction_AuthEnabled_AuthorizationFailure(t *testing.T) {
-	svc := authTestService()
-	svc.authManager = &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, action string) error {
-			return assert.AnError
-		},
-	}
-	ctx := authTestContext("valid-token")
-	resp, err := svc.transactionService.Transaction(ctx, &TransactionRequest{
 		Compare: []*CompareCondition{
 			{EntityType: "users", ID: 1, Target: CompareTargetVersion, Operator: CompareOperatorEqual, Version: 1},
 		},

@@ -1431,7 +1431,7 @@ func (c *embeddedSecretsClient) StoreSecret(ctx context.Context, req *service.St
 		Metadata: req.Metadata,
 	}
 
-	resp, err := c.client.Secrets().Store(ctx, storeReq)
+	resp, err := c.client.Security().Secrets().Store(ctx, storeReq)
 	if err != nil {
 		return nil, err
 	}
@@ -1453,7 +1453,7 @@ func (c *embeddedSecretsClient) GetSecret(ctx context.Context, req *service.GetS
 		opts = append(opts, quicbaas.WithSecretVersion(int(req.Version)))
 	}
 
-	secret, err := c.client.Secrets().Get(ctx, req.SecretID, opts...)
+	secret, err := c.client.Security().Secrets().Get(ctx, req.SecretID, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1484,7 +1484,7 @@ func (c *embeddedSecretsClient) ListSecrets(ctx context.Context, req *service.Li
 		prefix = req.Filter["prefix"]
 	}
 
-	resp, err := c.client.Secrets().List(ctx, prefix)
+	resp, err := c.client.Security().Secrets().List(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -1519,7 +1519,7 @@ func (c *embeddedSecretsClient) DeleteSecret(ctx context.Context, req *service.D
 		return nil, ErrEmbeddedClientNotInitialized{}
 	}
 
-	err := c.client.Secrets().Delete(ctx, req.SecretID)
+	err := c.client.Security().Secrets().Delete(ctx, req.SecretID)
 	if err != nil {
 		return nil, err
 	}
@@ -1557,7 +1557,7 @@ func (c *embeddedSecretsClient) Rotate(ctx context.Context, req *service.RotateS
 	}
 
 	// Get current version first
-	secret, err := c.client.Secrets().Get(ctx, req.SecretID)
+	secret, err := c.client.Security().Secrets().Get(ctx, req.SecretID)
 	if err != nil {
 		return nil, err
 	}
@@ -1576,7 +1576,7 @@ func (c *embeddedSecretsClient) Rotate(ctx context.Context, req *service.RotateS
 		Metadata: req.Metadata,
 	}
 
-	resp, err := c.client.Secrets().Store(ctx, storeReq)
+	resp, err := c.client.Security().Secrets().Store(ctx, storeReq)
 	if err != nil {
 		return nil, err
 	}

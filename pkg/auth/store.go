@@ -143,9 +143,8 @@ func (ts *TokenStore) cleanupExpiredTokens() {
 
 // UserStore manages user accounts.
 type UserStore struct {
-	users       map[string]*User       // userID -> user
-	usernameMap map[string]string      // username -> userID
-	roleManager interfaces.RoleManager // for validating roles
+	users       map[string]*User  // userID -> user
+	usernameMap map[string]string // username -> userID
 	mu          sync.RWMutex
 }
 
@@ -155,13 +154,6 @@ func NewUserStore() *UserStore {
 		users:       make(map[string]*User),
 		usernameMap: make(map[string]string),
 	}
-}
-
-// SetRoleManager sets the role manager for role validation.
-func (us *UserStore) SetRoleManager(rm interfaces.RoleManager) {
-	us.mu.Lock()
-	defer us.mu.Unlock()
-	us.roleManager = rm
 }
 
 // AddUser adds a user to the store.
@@ -277,14 +269,6 @@ func (us *UserStore) AssignRole(userID, roleName string) error {
 	user, exists := us.users[userID]
 	if !exists {
 		return api.NewUserNotFoundError("auth.UserStore.AssignRole", userID)
-	}
-
-	// Check if role exists in RoleManager
-	if us.roleManager != nil {
-		role := us.roleManager.GetRole(roleName)
-		if role == nil {
-			return api.NewRoleNotFoundError("auth.UserStore.AssignRole", roleName)
-		}
 	}
 
 	// Check if user already has the role

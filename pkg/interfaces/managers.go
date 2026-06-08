@@ -82,51 +82,6 @@ type UserStore interface {
 
 	// RevokeRole revokes a role from a user.
 	RevokeRole(userID, roleName string) error
-
-	// SetRoleManager sets the role manager for role validation.
-	SetRoleManager(rm RoleManager)
-}
-
-// PermissionInfo represents permission information.
-type PermissionInfo interface {
-	GetResource() string
-	GetActions() []string
-}
-
-// RoleInfo represents basic role information returned by RoleManager.
-// This interface abstracts the concrete auth.Role type.
-type RoleInfo interface {
-	GetName() string
-	GetDescription() string
-	GetPermissions() []PermissionInfo
-}
-
-// RoleManager defines the interface for role-based access control operations.
-// This interface allows for mock implementations in tests.
-type RoleManager interface {
-	// HasPermission checks if any of the user's roles have permission for the action.
-	HasPermission(userRoles []string, resource, action string) bool
-
-	// AllowsAnonymous checks if a resource/action allows anonymous access.
-	AllowsAnonymous(resource, action string) bool
-
-	// AddRole adds a custom role.
-	AddRole(role RoleInfo) error
-
-	// GetRole retrieves a role by name.
-	GetRole(name string) RoleInfo
-
-	// ListRoles returns all available roles.
-	ListRoles() []RoleInfo
-
-	// DeleteRole removes a custom role (cannot delete built-in roles).
-	DeleteRole(name string) error
-
-	// UpdateRole updates an existing role.
-	UpdateRole(role RoleInfo) error
-
-	// ValidateRoles checks if all role names exist.
-	ValidateRoles(roleNames []string) bool
 }
 
 // AuthManager defines the interface for authentication operations.
@@ -163,9 +118,6 @@ type AuthManager interface {
 
 	// GetUserStore returns the user store for user management operations.
 	GetUserStore() UserStore
-
-	// GetRoleManager returns the role manager for RBAC operations.
-	GetRoleManager() RoleManager
 }
 
 // BackupManager defines the interface for backup operations.

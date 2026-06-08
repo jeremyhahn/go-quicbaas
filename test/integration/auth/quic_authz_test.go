@@ -25,21 +25,15 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/authzfake"
 )
 
 // quicAuthManagerAdapter wraps auth.InMemoryAuthManager to satisfy interfaces.AuthManager.
 type quicAuthManagerAdapter struct {
 	manager *auth.InMemoryAuthManager
-}
-
-// Authenticate wraps the concrete Authenticate to return interface{}.
-func (a *quicAuthManagerAdapter) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
-	return a.manager.Authenticate(ctx, username, password)
 }
 
 // IssueTokenForUser issues JWT tokens for a user who has been authenticated
@@ -69,18 +63,13 @@ func (a *quicAuthManagerAdapter) RevokeToken(ctx context.Context, token string) 
 }
 
 // CreateUser wraps the concrete CreateUser to return interface{}.
-func (a *quicAuthManagerAdapter) CreateUser(username, password string, roles []string) (interface{}, error) {
-	return a.manager.CreateUser(username, password, roles)
+func (a *quicAuthManagerAdapter) CreateUser(username string, roles []string) (interface{}, error) {
+	return a.manager.CreateUser(username, roles)
 }
 
 // GetUserStore returns the user store.
 func (a *quicAuthManagerAdapter) GetUserStore() interfaces.UserStore {
 	return a.manager.GetUserStore()
-}
-
-// GetRoleManager returns the role manager.
-func (a *quicAuthManagerAdapter) GetRoleManager() interfaces.RoleManager {
-	return a.manager.GetRoleManager()
 }
 
 // testQUICContext provides infrastructure for QUIC authorization tests.
@@ -100,7 +89,7 @@ type mockQuicBaaSService struct {
 }
 
 // newTestQUICContext creates a new test context for QUIC authorization tests.
-func newTestQUICContext(t *testing.T) *testQUICContext {
+func newTestQUICContext(t *testing.T, allowed ...string) *testQUICContext {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 	log, err := logger.New(logger.LogConfig{
@@ -121,13 +110,7 @@ func newTestQUICContext(t *testing.T) *testQUICContext {
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
 
-	roleManager := authManager.GetRoleManager()
-
-	rbacProvider, err := providers.NewRBACProvider(roleManager, log)
-	require.NoError(t, err)
-
-	authzService, err := auth.NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	authzService := authzfake.New(allowed...)
 
 	// Create adapter to satisfy interfaces.AuthManager
 	authAdapter := &quicAuthManagerAdapter{manager: authManager}
@@ -166,7 +149,7 @@ func (tc *testQUICContext) Close() {
 // Note: password parameter removed as password-based authentication is disabled.
 // Users authenticate via mTLS certificates, WebAuthn, or OIDC.
 func (tc *testQUICContext) createTestUser(username string, roles []string) (string, error) {
-	_, err := tc.authManager.CreateUser(username, "", roles)
+	_, err := tc.authManager.CreateUser(username, roles)
 	if err != nil {
 		return "", err
 	}
@@ -182,7 +165,7 @@ func (tc *testQUICContext) createTestUser(username string, roles []string) (stri
 
 // TestQUICPublicOperationsNoAuth tests that public operations bypass authorization.
 func TestQUICPublicOperationsNoAuth(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "*:*")
 	defer tc.Close()
 
 	publicOperations := []struct {
@@ -213,7 +196,7 @@ func TestQUICPublicOperationsNoAuth(t *testing.T) {
 
 // TestQUICProtectedOperationsRequireToken tests that protected operations require a token.
 func TestQUICProtectedOperationsRequireToken(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "*:*")
 	defer tc.Close()
 
 	protectedOperations := []struct {
@@ -249,7 +232,7 @@ func TestQUICProtectedOperationsRequireToken(t *testing.T) {
 
 // TestQUICStatusUnauthorizedForMissingToken tests StatusUnauthorized (0x03) for missing token.
 func TestQUICStatusUnauthorizedForMissingToken(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "*:*")
 	defer tc.Close()
 
 	req := &quic.Request{
@@ -267,7 +250,7 @@ func TestQUICStatusUnauthorizedForMissingToken(t *testing.T) {
 
 // TestQUICStatusUnauthorizedForInvalidToken tests StatusUnauthorized for invalid token.
 func TestQUICStatusUnauthorizedForInvalidToken(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "*:*")
 	defer tc.Close()
 
 	req := &quic.Request{
@@ -284,11 +267,11 @@ func TestQUICStatusUnauthorizedForInvalidToken(t *testing.T) {
 
 // TestQUICStatusPermissionDeniedForDeniedAccess tests StatusPermissionDenied (0x07) for denied access.
 func TestQUICStatusPermissionDeniedForDeniedAccess(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "keys:read")
 	defer tc.Close()
 
 	// Create readonly user
-	token, err := tc.createTestUser("readonly-quic", []string{auth.RoleNameReadOnly})
+	token, err := tc.createTestUser("readonly-quic", []string{"readonly"})
 	require.NoError(t, err)
 
 	// Readonly user trying to Put (write action)
@@ -307,10 +290,10 @@ func TestQUICStatusPermissionDeniedForDeniedAccess(t *testing.T) {
 
 // TestQUICAdminRoleAccess tests that admin role has full access.
 func TestQUICAdminRoleAccess(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "*:*")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("admin-quic", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("admin-quic", []string{"admin"})
 	require.NoError(t, err)
 
 	operations := []struct {
@@ -346,10 +329,10 @@ func TestQUICAdminRoleAccess(t *testing.T) {
 
 // TestQUICReadWriteRoleAccess tests readwrite role permissions.
 func TestQUICReadWriteRoleAccess(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "keys:read", "keys:write", "keys:delete")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("readwrite-quic", []string{auth.RoleNameReadWrite})
+	token, err := tc.createTestUser("readwrite-quic", []string{"readwrite"})
 	require.NoError(t, err)
 
 	t.Run("can_read", func(t *testing.T) {
@@ -406,10 +389,10 @@ func TestQUICReadWriteRoleAccess(t *testing.T) {
 
 // TestQUICReadOnlyRoleAccess tests readonly role permissions.
 func TestQUICReadOnlyRoleAccess(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "keys:read")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("readonly-quic-2", []string{auth.RoleNameReadOnly})
+	token, err := tc.createTestUser("readonly-quic-2", []string{"readonly"})
 	require.NoError(t, err)
 
 	t.Run("can_read", func(t *testing.T) {
@@ -524,10 +507,10 @@ func TestQUICOpcodeToResourceActionMapping(t *testing.T) {
 
 // TestQUICRevokedTokenRejected tests that revoked tokens are rejected.
 func TestQUICRevokedTokenRejected(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "keys:read")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("revoke-quic", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("revoke-quic", []string{"admin"})
 	require.NoError(t, err)
 
 	// Verify token works initially
@@ -551,24 +534,11 @@ func TestQUICRevokedTokenRejected(t *testing.T) {
 
 // TestQUICCustomRoleAuthorization tests authorization with custom roles.
 func TestQUICCustomRoleAuthorization(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "kms:read", "kms:write")
 	defer tc.Close()
 
-	// Create custom KMS-only role
-	roleManager := tc.authManager.GetRoleManager()
-	kmsRole := &auth.Role{
-		Name:        "kms-operator",
-		Description: "Can only manage KMS keys",
-		Permissions: []*auth.Permission{
-			{
-				Resource: interfaces.ResourceKMS,
-				Actions:  []string{interfaces.ActionRead, interfaces.ActionWrite},
-			},
-		},
-	}
-	err := roleManager.AddRole(kmsRole)
-	require.NoError(t, err)
-
+	// The server's authzfake allow-list grants kms:read and kms:write only,
+	// modelling a narrow custom "kms-operator" role.
 	token, err := tc.createTestUser("kms-only-quic", []string{"kms-operator"})
 	require.NoError(t, err)
 
@@ -625,10 +595,10 @@ func TestQUICCustomRoleAuthorization(t *testing.T) {
 
 // TestQUICMultipleRolesAuthorization tests authorization with multiple roles.
 func TestQUICMultipleRolesAuthorization(t *testing.T) {
-	tc := newTestQUICContext(t)
+	tc := newTestQUICContext(t, "keys:read", "keys:write")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("multi-role-quic", []string{auth.RoleNameReadOnly, auth.RoleNameReadWrite})
+	token, err := tc.createTestUser("multi-role-quic", []string{"readonly", "readwrite"})
 	require.NoError(t, err)
 
 	t.Run("can_read", func(t *testing.T) {

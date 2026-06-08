@@ -454,7 +454,7 @@ func parseGRPCMethod(fullMethod string) (resource, action string) {
 
 	parts := strings.Split(fullMethod, "/")
 	if len(parts) < 3 {
-		return ResourceAll, ActionAll
+		return interfaces.ResourceAll, interfaces.ActionAll
 	}
 
 	servicePart := parts[1] // e.g., "quicbaas.v1.QuicBaaS" or "quicbaas.v1.Cluster"

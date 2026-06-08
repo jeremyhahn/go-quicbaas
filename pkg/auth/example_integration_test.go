@@ -21,7 +21,6 @@
 package auth_test
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -57,7 +56,7 @@ func Example_basicTokenGeneration() {
 	}
 
 	// Create a user with readwrite role (password is ignored)
-	user, err := authManager.CreateUser("alice", []string{auth.RoleNameReadWrite})
+	user, err := authManager.CreateUser("alice", []string{"readwrite"})
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -86,51 +85,6 @@ func Example_basicTokenGeneration() {
 	// In production, use WebAuthn, OIDC, or OAuth for authentication
 }
 
-// Example_customRole demonstrates creating a custom role.
-func Example_customRole() {
-	log, _ := logger.New(logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stdout",
-		Component: "auth-example",
-	})
-
-	config := &auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "example-secret-key",
-	}
-
-	authManager, _ := auth.NewInMemoryAuthManager(config, log)
-	roleManager := authManager.GetRoleManager()
-
-	// Create a custom "metrics-viewer" role
-	metricsRole := &auth.Role{
-		Name:        "metrics-viewer",
-		Description: "Can view metrics and health but nothing else",
-		Permissions: []*auth.Permission{
-			{
-				Resource: auth.ResourceMetrics,
-				Actions:  []string{auth.ActionRead},
-			},
-			{
-				Resource: auth.ResourceHealth,
-				Actions:  []string{auth.ActionRead},
-			},
-		},
-	}
-
-	roleManager.AddRole(metricsRole)
-
-	// Create user with custom role (password is ignored)
-	user, _ := authManager.CreateUser("metrics-user", []string{"metrics-viewer"})
-	fmt.Printf("Created user: %s\n", user.Username)
-	fmt.Printf("User has role: metrics-viewer\n")
-
-	// Output:
-	// Created user: metrics-user
-	// User has role: metrics-viewer
-}
-
 // Example_tokenRefresh demonstrates token refresh workflow.
 // Note: Initial token must be obtained via IAM authentication.
 func Example_tokenRefresh() {
@@ -151,7 +105,7 @@ func Example_tokenRefresh() {
 	authManager, _ := auth.NewInMemoryAuthManager(config, log)
 
 	// Create user (password is ignored)
-	authManager.CreateUser("bob", []string{auth.RoleNameReadOnly})
+	authManager.CreateUser("bob", []string{"readonly"})
 
 	// In production, tokens are obtained via IAM authentication.
 	// For this example, we demonstrate that refresh tokens work.
@@ -186,7 +140,7 @@ func Example_multipleRoles() {
 	authManager, _ := auth.NewInMemoryAuthManager(config, log)
 
 	// Create user with multiple roles (password is ignored)
-	user, _ := authManager.CreateUser("charlie", []string{auth.RoleNameReadOnly, auth.RoleNameReadWrite})
+	user, _ := authManager.CreateUser("charlie", []string{"readonly", "readwrite"})
 
 	fmt.Printf("User has roles: %v\n", user.Roles)
 	fmt.Println("User permissions combine from all assigned roles")
@@ -194,46 +148,4 @@ func Example_multipleRoles() {
 	// Output:
 	// User has roles: [readonly readwrite]
 	// User permissions combine from all assigned roles
-}
-
-// Example_authorizationCheck demonstrates authorization checking.
-func Example_authorizationCheck() {
-	log, _ := logger.New(logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stdout",
-		Component: "auth-example",
-	})
-
-	config := &auth.AuthConfig{
-		Enabled:        true,
-		JWTSecret:      "example-secret-key",
-		AllowAnonymous: true,
-	}
-
-	authManager, _ := auth.NewInMemoryAuthManager(config, log)
-
-	ctx := context.Background()
-
-	// With AllowAnonymous, public resources can be accessed without a token
-	err := authManager.Authorize(ctx, "", auth.ResourceHealth, auth.ActionRead)
-	if err == nil {
-		fmt.Println("Anonymous health check: allowed")
-	}
-
-	err = authManager.Authorize(ctx, "", auth.ResourceMetrics, auth.ActionRead)
-	if err == nil {
-		fmt.Println("Anonymous metrics read: allowed")
-	}
-
-	// But protected resources require authentication
-	err = authManager.Authorize(ctx, "", auth.ResourceKeys, auth.ActionRead)
-	if err != nil {
-		fmt.Println("Anonymous key read: denied (as expected)")
-	}
-
-	// Output:
-	// Anonymous health check: allowed
-	// Anonymous metrics read: allowed
-	// Anonymous key read: denied (as expected)
 }

@@ -47,24 +47,22 @@ import (
 // This is the in-memory (ephemeral) implementation - users are lost on restart.
 // For persistent auth, use PersistentAuthManager via NewAuthManager().
 type InMemoryAuthManager struct {
-	config      *AuthConfig
-	logger      *logger.Logger
-	roleManager *RoleManager
-	tokenStore  *TokenStore
-	userStore   *UserStore
+	config     *AuthConfig
+	logger     *logger.Logger
+	tokenStore *TokenStore
+	userStore  *UserStore
 
 	// qrdbAuthz, when set, routes the authorization DECISION through qrdb's
-	// policy decision point instead of the forked roleManager. It is wired at
-	// server lifecycle under the iam build tag when RequireAuthz is enabled;
-	// when nil (the default, all non-iam builds, and tests) the manager
-	// preserves the legacy roleManager.HasPermission outcome.
+	// policy decision point. It is wired at server lifecycle under the iam
+	// build tag when RequireAuthz is enabled. When nil the manager fails closed
+	// (Authorize returns AuthorizerNotConfiguredError); it never makes a local
+	// RBAC decision.
 	qrdbAuthz QRDBDecisionPoint
 }
 
 // SetQRDBDecisionPoint installs the qrdb-backed authorization decision point.
-// Passing it routes Authorize through qrdb's PDP; the forked roleManager is
-// retained for role validation and anonymous-access checks but no longer makes
-// the permission decision.
+// Passing it routes Authorize through qrdb's PDP. Without it the manager fails
+// closed.
 func (am *InMemoryAuthManager) SetQRDBDecisionPoint(dp QRDBDecisionPoint) {
 	am.qrdbAuthz = dp
 }
@@ -227,11 +225,10 @@ func NewInMemoryAuthManager(cfg *AuthConfig, log *logger.Logger) (*InMemoryAuthM
 	}
 
 	am := &InMemoryAuthManager{
-		config:      cfg,
-		logger:      log,
-		roleManager: NewRoleManager(log),
-		tokenStore:  NewTokenStore(),
-		userStore:   NewUserStore(),
+		config:     cfg,
+		logger:     log,
+		tokenStore: NewTokenStore(),
+		userStore:  NewUserStore(),
 	}
 
 	if cfg.JWTSigningKeyID != "" {
@@ -284,16 +281,21 @@ func (am *InMemoryAuthManager) IssueTokenForUser(ctx context.Context, user inter
 }
 
 // Authorize checks if a token has permission to perform an action on a resource.
+//
+// The authorization DECISION belongs to qrdb. When a qrdb decision point has
+// been installed (RequireAuthz under iam), Authorize delegates to it. When no
+// decision point is configured the manager fails closed and returns
+// AuthorizerNotConfiguredError — it never makes a local RBAC decision.
 func (am *InMemoryAuthManager) Authorize(ctx context.Context, token, resource, action string) error {
 	if !am.config.Enabled {
 		return nil // Authentication disabled, allow all
 	}
 
-	if am.config.AllowAnonymous && token == "" {
-		// Check if resource allows anonymous access
-		if am.roleManager.AllowsAnonymous(resource, action) {
-			return nil
-		}
+	// Fail closed: without a qrdb decision point there is no authority to
+	// authorize against. This is a server-side misconfiguration, not a silent
+	// allow and not a fork RBAC decision.
+	if am.qrdbAuthz == nil {
+		return api.NewAuthorizerNotConfiguredError("auth.Authorize")
 	}
 
 	if token == "" {
@@ -311,26 +313,14 @@ func (am *InMemoryAuthManager) Authorize(ctx context.Context, token, resource, a
 		return api.NewTokenRevokedError("auth.Authorize")
 	}
 
-	// 3. Check permissions. When the qrdb decision point is installed
-	// (RequireAuthz under iam), delegate to qrdb's PDP; otherwise preserve the
-	// legacy forked roleManager decision so existing deployments and tests are
-	// unaffected.
-	if am.qrdbAuthz != nil {
-		if err := am.qrdbAuthz.Authorize(ctx, QRDBSubject{
-			ID:       claims.UserID,
-			TenantID: claims.TenantID,
-			Roles:    claims.Roles,
-		}, resource, action); err != nil {
-			am.logger.Warnf("Authorization denied (qrdb PDP): user=%s resource=%s action=%s: %v",
-				claims.Username, resource, action, err)
-			return api.NewInsufficientPermissionsError("auth.Authorize")
-		}
-		return nil
-	}
-
-	if !am.roleManager.HasPermission(claims.Roles, resource, action) {
-		am.logger.Warnf("Authorization denied: user=%s resource=%s action=%s",
-			claims.Username, resource, action)
+	// 3. Delegate the permission decision to qrdb's policy decision point.
+	if err := am.qrdbAuthz.Authorize(ctx, QRDBSubject{
+		ID:       claims.UserID,
+		TenantID: claims.TenantID,
+		Roles:    claims.Roles,
+	}, resource, action); err != nil {
+		am.logger.Warnf("Authorization denied (qrdb PDP): user=%s resource=%s action=%s: %v",
+			claims.Username, resource, action, err)
 		return api.NewInsufficientPermissionsError("auth.Authorize")
 	}
 
@@ -575,11 +565,6 @@ func generateTokenNonce() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
-}
-
-// GetRoleManager returns the role manager.
-func (am *InMemoryAuthManager) GetRoleManager() interfaces.RoleManager {
-	return am.roleManager
 }
 
 // GetUserStore returns the user store.

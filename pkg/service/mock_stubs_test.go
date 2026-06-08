@@ -196,7 +196,6 @@ func (s *mockUserStore2) DeleteUser(_ string)                        {}
 func (s *mockUserStore2) ListUsers() []interfaces.UserInfo           { return s.users }
 func (s *mockUserStore2) AssignRole(_, _ string) error               { return nil }
 func (s *mockUserStore2) RevokeRole(_, _ string) error               { return nil }
-func (s *mockUserStore2) SetRoleManager(_ interfaces.RoleManager)    {}
 
 // mockKMSScheduler implements KMSScheduler
 func (m *mockKMSScheduler) ScheduleJob(_ context.Context, _ *SchedulerJob) error { return nil }
@@ -228,9 +227,6 @@ func (m *svcBoostAuthManager) CreateUser(_ string, _ []string) (interface{}, err
 func (m *svcBoostAuthManager) DeleteUser(_ string) error { return nil }
 func (m *svcBoostAuthManager) GetUserStore() interfaces.UserStore {
 	return m.userStoreReturn
-}
-func (m *svcBoostAuthManager) GetRoleManager() interfaces.RoleManager {
-	return m.roleManagerReturn
 }
 
 // svcBoostRaftNode implements interfaces.RaftNode
@@ -281,10 +277,6 @@ func (n *svcBoostRaftNode) StartShard(_ map[uint64]string, _ bool, _ interfaces.
 }
 func (n *svcBoostRaftNode) StopShard(_ uint64) error { return nil }
 func (n *svcBoostRaftNode) Close() error             { return nil }
-
-// svcBoostRoleManager - missing DeleteRole, ListRoles
-func (m *svcBoostRoleManager) DeleteRole(_ string) error        { return nil }
-func (m *svcBoostRoleManager) ListRoles() []interfaces.RoleInfo { return nil }
 
 // svcBoostUserStore - missing AssignRole, RevokeRole, DeleteUser, ListUsers
 func (s *svcBoostUserStore) AssignRole(_, _ string) error {

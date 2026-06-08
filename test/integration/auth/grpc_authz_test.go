@@ -31,10 +31,10 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/authzfake"
 )
 
 // testGRPCContext provides infrastructure for gRPC authorization tests.
@@ -51,7 +51,7 @@ type testGRPCContext struct {
 }
 
 // newTestGRPCContext creates a new test context for gRPC authorization tests.
-func newTestGRPCContext(t *testing.T) *testGRPCContext {
+func newTestGRPCContext(t *testing.T, allowed ...string) *testGRPCContext {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 	log, err := logger.New(logger.LogConfig{
@@ -72,13 +72,7 @@ func newTestGRPCContext(t *testing.T) *testGRPCContext {
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
 
-	roleManager := authManager.GetRoleManager()
-
-	rbacProvider, err := providers.NewRBACProvider(roleManager, log)
-	require.NoError(t, err)
-
-	authzService, err := auth.NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	authzService := authzfake.New(allowed...)
 
 	// Create gRPC server with auth interceptors
 	unaryInterceptor := auth.UnaryAuthInterceptorWithService(authManager, authzService, log)
@@ -178,7 +172,7 @@ func (tc *testGRPCContext) Close() {
 // Note: password parameter is ignored as password-based authentication is disabled.
 // Users authenticate via mTLS certificates, WebAuthn, or OIDC.
 func (tc *testGRPCContext) createTestUser(username string, roles []string) (string, error) {
-	_, err := tc.authManager.CreateUser(username, "", roles)
+	_, err := tc.authManager.CreateUser(username, roles)
 	if err != nil {
 		return "", err
 	}
@@ -204,7 +198,7 @@ func contextWithToken(ctx context.Context, token string) context.Context {
 
 // TestGRPCPublicMethodsBypassAuth tests that public methods don't require authentication.
 func TestGRPCPublicMethodsBypassAuth(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "*:*")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
@@ -230,7 +224,7 @@ func TestGRPCPublicMethodsBypassAuth(t *testing.T) {
 
 // TestGRPCProtectedMethodsRequireToken tests that protected methods require authentication.
 func TestGRPCProtectedMethodsRequireToken(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "*:*")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
@@ -275,7 +269,7 @@ func TestGRPCProtectedMethodsRequireToken(t *testing.T) {
 
 // TestGRPCUnauthenticatedForInvalidToken tests codes.Unauthenticated for invalid tokens.
 func TestGRPCUnauthenticatedForInvalidToken(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "*:*")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
@@ -295,13 +289,13 @@ func TestGRPCUnauthenticatedForInvalidToken(t *testing.T) {
 
 // TestGRPCPermissionDeniedForInsufficientPermissions tests permission denied scenarios.
 func TestGRPCPermissionDeniedForInsufficientPermissions(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "keys:read")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
 
 	// Create readonly user
-	token, err := tc.createTestUser("readonly-grpc", []string{auth.RoleNameReadOnly})
+	token, err := tc.createTestUser("readonly-grpc", []string{"readonly"})
 	require.NoError(t, err)
 
 	ctx := contextWithToken(tc.ctx, token)
@@ -343,12 +337,12 @@ func TestGRPCPermissionDeniedForInsufficientPermissions(t *testing.T) {
 
 // TestGRPCAdminRoleAccess tests that admin role has full access.
 func TestGRPCAdminRoleAccess(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "*:*")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
 
-	token, err := tc.createTestUser("admin-grpc", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("admin-grpc", []string{"admin"})
 	require.NoError(t, err)
 
 	ctx := contextWithToken(tc.ctx, token)
@@ -384,12 +378,12 @@ func TestGRPCAdminRoleAccess(t *testing.T) {
 
 // TestGRPCReadWriteRoleAccess tests readwrite role permissions.
 func TestGRPCReadWriteRoleAccess(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "keys:read", "keys:write", "keys:delete")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
 
-	token, err := tc.createTestUser("readwrite-grpc", []string{auth.RoleNameReadWrite})
+	token, err := tc.createTestUser("readwrite-grpc", []string{"readwrite"})
 	require.NoError(t, err)
 
 	ctx := contextWithToken(tc.ctx, token)
@@ -425,12 +419,12 @@ func TestGRPCReadWriteRoleAccess(t *testing.T) {
 
 // TestGRPCTokenMetadataFormats tests different token metadata formats.
 func TestGRPCTokenMetadataFormats(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "keys:read")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
 
-	token, err := tc.createTestUser("format-test", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("format-test", []string{"admin"})
 	require.NoError(t, err)
 
 	t.Run("bearer_prefix", func(t *testing.T) {
@@ -467,12 +461,12 @@ func TestGRPCTokenMetadataFormats(t *testing.T) {
 
 // TestGRPCRevokedTokenRejected tests that revoked tokens are rejected.
 func TestGRPCRevokedTokenRejected(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "keys:read")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
 
-	token, err := tc.createTestUser("revoke-grpc", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("revoke-grpc", []string{"admin"})
 	require.NoError(t, err)
 
 	ctx := contextWithToken(tc.ctx, token)
@@ -608,26 +602,13 @@ func mapQuicBaaSMethodForTest(method string) (resource, action string) {
 
 // TestGRPCCustomRoleAuthorization tests authorization with custom roles.
 func TestGRPCCustomRoleAuthorization(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "keys:read")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
 
-	// Create custom read-only keys role
-	roleManager := tc.authManager.GetRoleManager()
-	customRole := &auth.Role{
-		Name:        "keys-reader",
-		Description: "Can only read keys",
-		Permissions: []*auth.Permission{
-			{
-				Resource: interfaces.ResourceKeys,
-				Actions:  []string{interfaces.ActionRead},
-			},
-		},
-	}
-	err := roleManager.AddRole(customRole)
-	require.NoError(t, err)
-
+	// The server's authzfake allow-list grants keys:read only, modelling a
+	// narrow custom "keys-reader" role.
 	token, err := tc.createTestUser("keys-only", []string{"keys-reader"})
 	require.NoError(t, err)
 
@@ -658,12 +639,12 @@ func TestGRPCCustomRoleAuthorization(t *testing.T) {
 
 // TestGRPCMultipleRolesAuthorization tests authorization with multiple roles.
 func TestGRPCMultipleRolesAuthorization(t *testing.T) {
-	tc := newTestGRPCContext(t)
+	tc := newTestGRPCContext(t, "keys:read", "keys:write")
 	defer tc.Close()
 
 	client := pb.NewQuicBaaSClient(tc.conn)
 
-	token, err := tc.createTestUser("multi-role-grpc", []string{auth.RoleNameReadOnly, auth.RoleNameReadWrite})
+	token, err := tc.createTestUser("multi-role-grpc", []string{"readonly", "readwrite"})
 	require.NoError(t, err)
 
 	ctx := contextWithToken(tc.ctx, token)

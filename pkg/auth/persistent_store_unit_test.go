@@ -22,21 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPersistentUserStore_SetRoleManager tests SetRoleManager method.
-func TestPersistentUserStore_SetRoleManager(t *testing.T) {
-	storage := newAuthMockStorage()
-	log := createPersistentTestLogger(t)
-
-	ps, err := NewPersistentUserStore(storage, log)
-	require.NoError(t, err)
-
-	rm := NewRoleManager(log)
-	ps.SetRoleManager(rm)
-
-	// Role manager should be set
-	assert.NotNil(t, ps.roleManager)
-}
-
 // TestPersistentUserStore_AssignRole tests AssignRole method.
 func TestPersistentUserStore_AssignRole(t *testing.T) {
 	storage := newAuthMockStorage()
@@ -45,58 +30,41 @@ func TestPersistentUserStore_AssignRole(t *testing.T) {
 	ps, err := NewPersistentUserStore(storage, log)
 	require.NoError(t, err)
 
-	rm := NewRoleManager(log)
-	ps.SetRoleManager(rm)
-
 	t.Run("success", func(t *testing.T) {
 		user := &User{
 			ID:       "user1",
 			Username: "testuser",
-			Roles:    []string{RoleNameReadOnly},
+			Roles:    []string{"readonly"},
 			Created:  time.Now(),
 		}
 		err := ps.AddUser(user)
 		require.NoError(t, err)
 
-		err = ps.AssignRole("user1", RoleNameReadWrite)
+		err = ps.AssignRole("user1", "readwrite")
 		assert.NoError(t, err)
 
 		retrieved := ps.GetByID("user1")
-		assert.Contains(t, retrieved.Roles, RoleNameReadOnly)
-		assert.Contains(t, retrieved.Roles, RoleNameReadWrite)
+		assert.Contains(t, retrieved.Roles, "readonly")
+		assert.Contains(t, retrieved.Roles, "readwrite")
 		assert.True(t, retrieved.LastAuth.After(user.Created))
 	})
 
 	t.Run("user not found", func(t *testing.T) {
-		err := ps.AssignRole("nonexistent", RoleNameAdmin)
+		err := ps.AssignRole("nonexistent", "admin")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user not found")
-	})
-
-	t.Run("role not found", func(t *testing.T) {
-		user := &User{
-			ID:       "user2",
-			Username: "testuser2",
-			Roles:    []string{RoleNameReadOnly},
-		}
-		err := ps.AddUser(user)
-		require.NoError(t, err)
-
-		err = ps.AssignRole("user2", "nonexistent-role")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "role not found")
 	})
 
 	t.Run("user already has role", func(t *testing.T) {
 		user := &User{
 			ID:       "user3",
 			Username: "testuser3",
-			Roles:    []string{RoleNameReadOnly},
+			Roles:    []string{"readonly"},
 		}
 		err := ps.AddUser(user)
 		require.NoError(t, err)
 
-		err = ps.AssignRole("user3", RoleNameReadOnly)
+		err = ps.AssignRole("user3", "readonly")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user already has role")
 	})
@@ -135,24 +103,24 @@ func TestPersistentUserStore_RevokeRole(t *testing.T) {
 		user := &User{
 			ID:       "user1",
 			Username: "testuser",
-			Roles:    []string{RoleNameReadOnly, RoleNameReadWrite},
+			Roles:    []string{"readonly", "readwrite"},
 			Created:  time.Now(),
 		}
 		err := ps.AddUser(user)
 		require.NoError(t, err)
 
-		err = ps.RevokeRole("user1", RoleNameReadWrite)
+		err = ps.RevokeRole("user1", "readwrite")
 		assert.NoError(t, err)
 
 		retrieved := ps.GetByID("user1")
-		assert.Contains(t, retrieved.Roles, RoleNameReadOnly)
-		assert.NotContains(t, retrieved.Roles, RoleNameReadWrite)
+		assert.Contains(t, retrieved.Roles, "readonly")
+		assert.NotContains(t, retrieved.Roles, "readwrite")
 		assert.Len(t, retrieved.Roles, 1)
 		assert.True(t, retrieved.LastAuth.After(user.Created))
 	})
 
 	t.Run("user not found", func(t *testing.T) {
-		err := ps.RevokeRole("nonexistent", RoleNameAdmin)
+		err := ps.RevokeRole("nonexistent", "admin")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user not found")
 	})
@@ -161,12 +129,12 @@ func TestPersistentUserStore_RevokeRole(t *testing.T) {
 		user := &User{
 			ID:       "user2",
 			Username: "testuser2",
-			Roles:    []string{RoleNameReadOnly},
+			Roles:    []string{"readonly"},
 		}
 		err := ps.AddUser(user)
 		require.NoError(t, err)
 
-		err = ps.RevokeRole("user2", RoleNameAdmin)
+		err = ps.RevokeRole("user2", "admin")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user does not have role")
 	})
@@ -175,34 +143,34 @@ func TestPersistentUserStore_RevokeRole(t *testing.T) {
 		user := &User{
 			ID:       "user3",
 			Username: "testuser3",
-			Roles:    []string{RoleNameAdmin, RoleNameReadWrite, RoleNameReadOnly},
+			Roles:    []string{"admin", "readwrite", "readonly"},
 		}
 		err := ps.AddUser(user)
 		require.NoError(t, err)
 
-		err = ps.RevokeRole("user3", RoleNameAdmin)
+		err = ps.RevokeRole("user3", "admin")
 		assert.NoError(t, err)
 
 		retrieved := ps.GetByID("user3")
-		assert.NotContains(t, retrieved.Roles, RoleNameAdmin)
+		assert.NotContains(t, retrieved.Roles, "admin")
 		assert.Len(t, retrieved.Roles, 2)
-		assert.Equal(t, RoleNameReadWrite, retrieved.Roles[0])
+		assert.Equal(t, "readwrite", retrieved.Roles[0])
 	})
 
 	t.Run("revoke middle role", func(t *testing.T) {
 		user := &User{
 			ID:       "user4",
 			Username: "testuser4",
-			Roles:    []string{RoleNameAdmin, RoleNameReadWrite, RoleNameReadOnly},
+			Roles:    []string{"admin", "readwrite", "readonly"},
 		}
 		err := ps.AddUser(user)
 		require.NoError(t, err)
 
-		err = ps.RevokeRole("user4", RoleNameReadWrite)
+		err = ps.RevokeRole("user4", "readwrite")
 		assert.NoError(t, err)
 
 		retrieved := ps.GetByID("user4")
-		assert.NotContains(t, retrieved.Roles, RoleNameReadWrite)
+		assert.NotContains(t, retrieved.Roles, "readwrite")
 		assert.Len(t, retrieved.Roles, 2)
 	})
 
@@ -210,12 +178,12 @@ func TestPersistentUserStore_RevokeRole(t *testing.T) {
 		user := &User{
 			ID:       "user5",
 			Username: "testuser5",
-			Roles:    []string{RoleNameAdmin},
+			Roles:    []string{"admin"},
 		}
 		err := ps.AddUser(user)
 		require.NoError(t, err)
 
-		err = ps.RevokeRole("user5", RoleNameAdmin)
+		err = ps.RevokeRole("user5", "admin")
 		assert.NoError(t, err)
 
 		retrieved := ps.GetByID("user5")
@@ -264,7 +232,7 @@ func TestPersistentUserStore_ErrorPaths(t *testing.T) {
 		user1 := &User{
 			ID:       "duplicate-id",
 			Username: "user1",
-			Roles:    []string{RoleNameReadOnly},
+			Roles:    []string{"readonly"},
 		}
 		err := ps.AddUser(user1)
 		require.NoError(t, err)
@@ -272,7 +240,7 @@ func TestPersistentUserStore_ErrorPaths(t *testing.T) {
 		user2 := &User{
 			ID:       "duplicate-id",
 			Username: "user2",
-			Roles:    []string{RoleNameReadWrite},
+			Roles:    []string{"readwrite"},
 		}
 		err = ps.AddUser(user2)
 		assert.Error(t, err)
@@ -283,7 +251,7 @@ func TestPersistentUserStore_ErrorPaths(t *testing.T) {
 		user1 := &User{
 			ID:       "id1",
 			Username: "duplicate-username",
-			Roles:    []string{RoleNameReadOnly},
+			Roles:    []string{"readonly"},
 		}
 		err := ps.AddUser(user1)
 		require.NoError(t, err)
@@ -291,7 +259,7 @@ func TestPersistentUserStore_ErrorPaths(t *testing.T) {
 		user2 := &User{
 			ID:       "id2",
 			Username: "duplicate-username",
-			Roles:    []string{RoleNameReadWrite},
+			Roles:    []string{"readwrite"},
 		}
 		err = ps.AddUser(user2)
 		assert.Error(t, err)
@@ -302,7 +270,7 @@ func TestPersistentUserStore_ErrorPaths(t *testing.T) {
 		user := &User{
 			ID:       "nonexistent",
 			Username: "testuser",
-			Roles:    []string{RoleNameReadOnly},
+			Roles:    []string{"readonly"},
 		}
 		err := ps.UpdateUser(user)
 		assert.Error(t, err)
@@ -361,7 +329,7 @@ func TestPersistentUserStore_ConcurrentAccessDetails(t *testing.T) {
 	user := &User{
 		ID:       "concurrent-user",
 		Username: "testuser",
-		Roles:    []string{RoleNameReadOnly},
+		Roles:    []string{"readonly"},
 	}
 	err = ps.AddUser(user)
 	require.NoError(t, err)
@@ -424,7 +392,7 @@ func TestPersistentUserStore_GetByID_CacheLogic(t *testing.T) {
 	user := &User{
 		ID:       "cache-test",
 		Username: "cacheuser",
-		Roles:    []string{RoleNameReadOnly},
+		Roles:    []string{"readonly"},
 	}
 	err = ps.AddUser(user)
 	require.NoError(t, err)
@@ -457,7 +425,7 @@ func TestPersistentUserStore_GetByUsername_CacheLogic(t *testing.T) {
 	user := &User{
 		ID:       "username-cache-test",
 		Username: "uniqueuser",
-		Roles:    []string{RoleNameReadOnly},
+		Roles:    []string{"readonly"},
 	}
 	err = ps.AddUser(user)
 	require.NoError(t, err)

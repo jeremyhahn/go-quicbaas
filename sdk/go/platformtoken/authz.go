@@ -19,9 +19,11 @@ package platformtoken
 // authorization: scopes map to RBAC permissions and tenant_id sets row-level
 // security.
 //
-// Scope catalog convention: scopes are "<svc>.<verb>", e.g. "app.read",
-// "app.admin". A service grants a capability when the token's scp set contains
-// the corresponding scope. A token with no "<svc>.*" scope is denied (403).
+// Scope catalog convention: scopes are the qrdb-canonical colon
+// "resource:action", e.g. "keys:get", "tenant_barrier:init". The scp claim
+// carries the subject's qrdb-RESOLVED effective permissions, so a service
+// grants a capability when the token's scp set contains the corresponding
+// permission. A token lacking the required permission is denied (403).
 type AuthorizedContext struct {
 	// Subject is the stable user/service id (sub); used for audit.
 	Subject string

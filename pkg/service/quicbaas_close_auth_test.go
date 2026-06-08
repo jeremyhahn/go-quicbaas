@@ -15,7 +15,6 @@ package service
 
 import (
 	"context"
-	stderrors "errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -120,26 +119,6 @@ func TestQuicBaaS_CheckAuth_AuthEnabled_ValidTokenAuthorized(t *testing.T) {
 
 	err := db.checkAuth(ctx, "read")
 	require.NoError(t, err)
-}
-
-func TestQuicBaaS_CheckAuth_AuthEnabled_AuthorizationDenied(t *testing.T) {
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("forbidden")
-		},
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer bad-token-456",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	err := db.checkAuth(ctx, "write")
-	require.Error(t, err)
 }
 
 func TestQuicBaaS_CheckAuth_AuthEnabled_NoAuthManagerPassesWithToken(t *testing.T) {

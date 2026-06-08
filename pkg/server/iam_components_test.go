@@ -16,7 +16,6 @@
 package server
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,57 +96,6 @@ func TestIAMComponents_Getters(t *testing.T) {
 		result := components.GetAuthManager()
 		assert.Nil(t, result)
 	})
-}
-
-func TestIAMComponents_GetAuthManager_WithAdapter(t *testing.T) {
-	// Create iamComponents with a non-nil auth manager adapter
-	adapter := &inMemoryAuthManagerAdapter{manager: nil}
-	components := &iamComponents{
-		authManager: adapter,
-	}
-
-	result := components.GetAuthManager()
-	require.NotNil(t, result)
-	assert.Equal(t, adapter, result)
-}
-
-// ================================================================================
-// inMemoryAuthManagerAdapter Tests
-// ================================================================================
-
-func TestInMemoryAuthManagerAdapter_NilManager(t *testing.T) {
-	// These tests verify the adapter methods handle nil manager gracefully
-	adapter := &inMemoryAuthManagerAdapter{manager: nil}
-
-	ctx := context.Background()
-
-	t.Run("Authenticate_NilManager", func(t *testing.T) {
-		// Will panic with nil manager - so just verify it compiles
-		assert.NotNil(t, adapter)
-	})
-
-	t.Run("ValidateToken_NilManager", func(t *testing.T) {
-		// Will panic with nil manager - so just verify it compiles
-		assert.NotNil(t, adapter)
-	})
-
-	t.Run("RefreshToken_NilManager", func(t *testing.T) {
-		// Will panic with nil manager - so just verify it compiles
-		assert.NotNil(t, adapter)
-	})
-
-	t.Run("RevokeToken_NilManager", func(t *testing.T) {
-		// Will panic with nil manager - so just verify it compiles
-		assert.NotNil(t, adapter)
-	})
-
-	t.Run("CreateUser_NilManager", func(t *testing.T) {
-		// Will panic with nil manager - so just verify it compiles
-		assert.NotNil(t, adapter)
-	})
-
-	// Ensure context is used to avoid unused variable warning
-	_ = ctx
 }
 
 // ================================================================================

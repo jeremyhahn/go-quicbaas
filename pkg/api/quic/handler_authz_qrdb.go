@@ -26,10 +26,17 @@ package quic
 //
 // An opcode that has no entry is reported unmapped (ok=false): under
 // RequireAuthz the QUIC authz gate is default-deny, so an unmapped protected
-// opcode is denied rather than admitted. quicbaas-specific surfaces that the
-// qrdb permission registry does NOT define a resource family for — object
-// storage, orchestrator, parameter store, embedding, ollama, dynamic secrets,
-// cache, messaging — are intentionally absent and denied under RequireAuthz.
+// opcode is denied rather than admitted.
+//
+// Stage 0.5 maps the broker-only data-plane surfaces that qrdb now registers a
+// permission family for (go-qrdb/pkg/permission/broker_dataplane_scope.go):
+// object storage (objstore), orchestrator, scheduler, parameters,
+// dynamic_secrets, ollama. The scheduler and orchestrator opcodes are single
+// dispatch opcodes (sub-op in payload[0]), so they authorize at the surface
+// level — the same pattern OpBarrier/OpCeremony already follow.
+//
+// Surfaces still without a qrdb resource family — embedding, cache — remain
+// intentionally absent and denied under RequireAuthz.
 
 type qrdbPermission struct {
 	resource string
@@ -203,6 +210,70 @@ var quicOpcodePermissions = map[byte]qrdbPermission{
 	OpTrustCrossSignedRootPool: {"certs", "read"},
 	OpTrustAutoImportAIA:       {"certs", "generate"},
 	OpTrustPublishDANE:         {"certs", "generate"},
+
+	// ---- Stage 0.5: broker data-plane surfaces (qrdb-registered) ----
+
+	// Object storage -> objstore
+	OpOSPutObject:            {"objstore", "put"},
+	OpOSGetObject:            {"objstore", "get"},
+	OpOSDeleteObject:         {"objstore", "delete"},
+	OpOSHeadObject:           {"objstore", "head"},
+	OpOSListObjects:          {"objstore", "list"},
+	OpOSListByTag:            {"objstore", "list"},
+	OpOSListByTenant:         {"objstore", "list"},
+	OpOSCopyObject:           {"objstore", "copy"},
+	OpOSReplicateObject:      {"objstore", "replicate"},
+	OpOSMigrateObject:        {"objstore", "migrate"},
+	OpOSArchiveObject:        {"objstore", "archive"},
+	OpOSRestoreObject:        {"objstore", "restore"},
+	OpOSVerifyObject:         {"objstore", "verify"},
+	OpOSGetObjectMetadata:    {"objstore", "head"},
+	OpOSUpdateObjectMetadata: {"objstore", "put"},
+	OpOSGetStorageStats:      {"objstore", "read_stats"},
+	OpOSSetLifecyclePolicy:   {"objstore", "write_policy"},
+	OpOSGetLifecyclePolicy:   {"objstore", "read_policy"},
+	OpOSGetObjectPolicy:      {"objstore", "read_policy"},
+	OpOSListBackends:         {"objstore", "read_backend"},
+	OpOSGetBackendHealth:     {"objstore", "read_backend"},
+	OpOSSetTenantQuotas:      {"objstore", "tenant_quota_write"},
+	OpOSBatchPutObjects:      {"objstore", "batch"},
+	OpOSBatchGetObjects:      {"objstore", "batch"},
+	OpOSBatchDeleteObjects:   {"objstore", "batch"},
+	OpOSAdmin:                {"objstore", "admin"},
+
+	// Ollama -> ollama
+	OpOllamaHealth:         {"ollama", "health"},
+	OpOllamaListModels:     {"ollama", "model_list"},
+	OpOllamaGetModelInfo:   {"ollama", "model_info"},
+	OpOllamaEmbed:          {"ollama", "embed"},
+	OpOllamaEmbedWithModel: {"ollama", "embed"},
+	OpOllamaEmbedBatch:     {"ollama", "embed"},
+
+	// Dynamic secrets -> dynamic_secrets
+	OpDynamicSecretsCreateRole:  {"dynamic_secrets", "role_create"},
+	OpDynamicSecretsGetRole:     {"dynamic_secrets", "role_read"},
+	OpDynamicSecretsListRoles:   {"dynamic_secrets", "role_list"},
+	OpDynamicSecretsDeleteRole:  {"dynamic_secrets", "role_delete"},
+	OpDynamicSecretsGenerate:    {"dynamic_secrets", "generate"},
+	OpDynamicSecretsRenewLease:  {"dynamic_secrets", "lease_renew"},
+	OpDynamicSecretsRevokeLease: {"dynamic_secrets", "lease_revoke"},
+	OpDynamicSecretsListLeases:  {"dynamic_secrets", "lease_list"},
+
+	// Parameter store -> parameters
+	OpParameterGet:         {"parameters", "read"},
+	OpParameterSet:         {"parameters", "write"},
+	OpParameterDelete:      {"parameters", "delete"},
+	OpParameterList:        {"parameters", "list"},
+	OpParameterBatchGet:    {"parameters", "read"},
+	OpParameterBatchSet:    {"parameters", "write"},
+	OpParameterBatchDelete: {"parameters", "delete"},
+	OpParameterSearch:      {"parameters", "search"},
+
+	// Scheduler dispatch (sub-op in payload; authorized at the surface level)
+	OpScheduler: {"scheduler", "status"},
+
+	// Orchestrator dispatch (sub-op in payload; authorized at the surface level)
+	OpOrchestrator: {"orchestrator", "status"},
 }
 
 // getQRDBPermission returns the qrdb-canonical (resource, action) for the opcode

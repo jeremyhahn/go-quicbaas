@@ -24,7 +24,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
@@ -119,7 +119,7 @@ func hasAdminRoleFromMetadata(ctx context.Context) bool {
 
 	roles := md.Get(RolesMetadataKey)
 	for _, role := range roles {
-		if role == auth.RoleNameAdmin {
+		if role == qrdbsdk.RoleNameAdmin {
 			return true
 		}
 	}

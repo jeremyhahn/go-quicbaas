@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -41,14 +40,17 @@ func TestUnaryAuthInterceptor(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 
 	// Get auth token via generateTokens
 	token, err := am.generateTokens(user)
 	require.NoError(t, err)
 
-	interceptor := UnaryAuthInterceptor(am, log)
+	// Drive the real authorizeWithService seam with a readwrite allow-list.
+	authzService := newAllowListAuthzFake("keys:read", "keys:write", "keys:delete")
+	defer authzService.Close()
+	interceptor := UnaryAuthInterceptorWithService(am, authzService, log)
 
 	tests := []struct {
 		name         string
@@ -92,7 +94,7 @@ func TestUnaryAuthInterceptor(t *testing.T) {
 			},
 			method:       "/quicbaas.v1.QuicBaaS/Get",
 			expectError:  true,
-			expectedCode: codes.PermissionDenied,
+			expectedCode: codes.Unauthenticated,
 		},
 		{
 			name: "token without Bearer prefix",
@@ -153,13 +155,16 @@ func TestUnaryAuthInterceptorWithReadOnlyUser(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create readonly user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("readonly", []string{RoleNameReadOnly})
+	user, err := am.CreateUser("readonly", []string{"readonly"})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
 	require.NoError(t, err)
 
-	interceptor := UnaryAuthInterceptor(am, log)
+	// Drive the real authorizeWithService seam with a readonly allow-list.
+	authzService := newAllowListAuthzFake("keys:read")
+	defer authzService.Close()
+	interceptor := UnaryAuthInterceptorWithService(am, authzService, log)
 
 	tests := []struct {
 		name        string
@@ -223,13 +228,16 @@ func TestStreamAuthInterceptor(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
 	require.NoError(t, err)
 
-	interceptor := StreamAuthInterceptor(am, log)
+	// Drive the real authorizeWithService seam with a readwrite allow-list.
+	authzService := newAllowListAuthzFake("keys:read", "keys:write", "keys:delete")
+	defer authzService.Close()
+	interceptor := StreamAuthInterceptorWithService(am, authzService, log)
 
 	tests := []struct {
 		name        string
@@ -354,8 +362,8 @@ func TestParseGRPCMethod(t *testing.T) {
 		},
 		{
 			method:           "invalid-method",
-			expectedResource: ResourceAll,
-			expectedAction:   ActionAll,
+			expectedResource: interfaces.ResourceAll,
+			expectedAction:   interfaces.ActionAll,
 		},
 		// Service-specific tests
 		{
@@ -544,19 +552,16 @@ func TestUnaryAuthInterceptorWithAuthorizationService(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user with readwrite role and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 
 	// Get auth token via generateTokens
 	token, err := am.generateTokens(user)
 	require.NoError(t, err)
 
-	// Create RBAC provider and AuthorizationService
-	rbacProvider, err := providers.NewRBACProvider(am.GetRoleManager(), log)
-	require.NoError(t, err)
-
-	authzService, err := NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	// Build an allow-list AuthorizationService to drive the authorizeWithService
+	// seam (readwrite => read+write+delete on keys).
+	authzService := newAllowListAuthzFake("keys:read", "keys:write", "keys:delete")
 	defer authzService.Close()
 
 	// Create interceptor with AuthorizationService
@@ -648,18 +653,15 @@ func TestStreamAuthInterceptorWithAuthorizationService(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
 	require.NoError(t, err)
 
-	// Create RBAC provider and AuthorizationService
-	rbacProvider, err := providers.NewRBACProvider(am.GetRoleManager(), log)
-	require.NoError(t, err)
-
-	authzService, err := NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	// Build an allow-list AuthorizationService to drive the authorizeWithService
+	// seam (readwrite => read+write+delete on keys).
+	authzService := newAllowListAuthzFake("keys:read", "keys:write", "keys:delete")
 	defer authzService.Close()
 
 	interceptor := StreamAuthInterceptorWithService(am, authzService, log)
@@ -819,18 +821,15 @@ func TestPermissionDeniedWithAuthzService(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create readonly user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("readonly", []string{RoleNameReadOnly})
+	user, err := am.CreateUser("readonly", []string{"readonly"})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
 	require.NoError(t, err)
 
-	// Create RBAC provider and AuthorizationService
-	rbacProvider, err := providers.NewRBACProvider(am.GetRoleManager(), log)
-	require.NoError(t, err)
-
-	authzService, err := NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	// Build an allow-list AuthorizationService to drive the authorizeWithService
+	// seam (readonly => read on keys only, so a write is denied).
+	authzService := newAllowListAuthzFake("keys:read")
 	defer authzService.Close()
 
 	interceptor := UnaryAuthInterceptorWithService(am, authzService, log)
@@ -855,8 +854,11 @@ func TestPermissionDeniedWithAuthzService(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, st.Code())
 }
 
-// TestBackwardCompatibility tests that existing callers without AuthorizationService still work.
-func TestBackwardCompatibility(t *testing.T) {
+// TestLegacyInterceptorFailsClosed verifies that the legacy interceptor path
+// (no AuthorizationService wired) now fails closed: with no qrdb decision point
+// the manager returns AuthorizerNotConfiguredError, which the interceptor maps
+// to PermissionDenied. The fork allow decision no longer exists.
+func TestLegacyInterceptorFailsClosed(t *testing.T) {
 	log := createTestLogger(t)
 	config := &AuthConfig{
 		Enabled:   true,
@@ -867,7 +869,7 @@ func TestBackwardCompatibility(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 
 	token, err := am.generateTokens(user)
@@ -887,9 +889,11 @@ func TestBackwardCompatibility(t *testing.T) {
 		return "success", nil
 	}
 
-	result, err := interceptor(ctx, nil, info, handler)
-	assert.NoError(t, err)
-	assert.Equal(t, "success", result)
+	_, err = interceptor(ctx, nil, info, handler)
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok, "expected gRPC status error")
+	assert.Equal(t, codes.PermissionDenied, st.Code())
 }
 
 // TestBuildSubjectFromToken tests subject creation from token.
@@ -904,7 +908,7 @@ func TestBuildSubjectFromToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test user and generate token directly (password auth is disabled)
-	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite, RoleNameAdmin})
+	user, err := am.CreateUser("testuser", []string{"readwrite", "admin"})
 	require.NoError(t, err)
 
 	ctx := context.Background()

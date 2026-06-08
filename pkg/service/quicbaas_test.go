@@ -166,20 +166,16 @@ func (m *mockStorage) Close() error {
 
 // mockAuthManager mocks auth.AuthManager for testing.
 type mockAuthManager struct {
-	authorizeFn       func(ctx context.Context, token, resource, action string) error
-	revokeTokenFn     func(ctx context.Context, token string) error
-	refreshTokenFn    func(ctx context.Context, refreshToken string) (*auth.Token, error)
-	validateTokenFn   func(ctx context.Context, token string) (*auth.TokenValidationResult, error)
-	createUserFn      func(username string, roles []string) (*auth.User, error)
-	deleteUserFn      func(username string) error
-	listUsersFn       func() ([]*auth.User, error)
-	createRoleFn      func(roleName string, permissions []string) (*auth.Role, error)
-	deleteRoleFn      func(roleName string) error
-	listRolesFn       func() ([]*auth.Role, error)
-	assignRoleFn      func(username, roleName string) error
-	revokeRoleFn      func(username, roleName string) error
-	userStoreReturn   interfaces.UserStore
-	roleManagerReturn interfaces.RoleManager
+	authorizeFn     func(ctx context.Context, token, resource, action string) error
+	revokeTokenFn   func(ctx context.Context, token string) error
+	refreshTokenFn  func(ctx context.Context, refreshToken string) (*auth.Token, error)
+	validateTokenFn func(ctx context.Context, token string) (*auth.TokenValidationResult, error)
+	createUserFn    func(username string, roles []string) (*auth.User, error)
+	deleteUserFn    func(username string) error
+	listUsersFn     func() ([]*auth.User, error)
+	assignRoleFn    func(username, roleName string) error
+	revokeRoleFn    func(username, roleName string) error
+	userStoreReturn interfaces.UserStore
 }
 
 func (m *mockAuthManager) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (interface{}, error) {
@@ -235,27 +231,6 @@ func (m *mockAuthManager) ListUsers() ([]*auth.User, error) {
 	return nil, stderrors.New("not implemented")
 }
 
-func (m *mockAuthManager) CreateRole(roleName string, permissions []string) (interface{}, error) {
-	if m.createRoleFn != nil {
-		return m.createRoleFn(roleName, permissions)
-	}
-	return nil, stderrors.New("not implemented")
-}
-
-func (m *mockAuthManager) DeleteRole(roleName string) error {
-	if m.deleteRoleFn != nil {
-		return m.deleteRoleFn(roleName)
-	}
-	return nil
-}
-
-func (m *mockAuthManager) ListRoles() ([]*auth.Role, error) {
-	if m.listRolesFn != nil {
-		return m.listRolesFn()
-	}
-	return nil, stderrors.New("not implemented")
-}
-
 func (m *mockAuthManager) AssignRole(username, roleName string) error {
 	if m.assignRoleFn != nil {
 		return m.assignRoleFn(username, roleName)
@@ -272,10 +247,6 @@ func (m *mockAuthManager) RevokeRole(username, roleName string) error {
 
 func (m *mockAuthManager) GetUserStore() interfaces.UserStore {
 	return m.userStoreReturn
-}
-
-func (m *mockAuthManager) GetRoleManager() interfaces.RoleManager {
-	return m.roleManagerReturn
 }
 
 type mockBackupManager struct {
@@ -471,15 +442,6 @@ func TestServiceBuilder_WithCacheManager(t *testing.T) {
 	sb, ok := builder.(*serviceBuilder)
 	require.True(t, ok)
 	assert.Equal(t, mockCache, sb.cacheManager)
-}
-
-func TestServiceBuilder_WithAuthManager(t *testing.T) {
-	mockAuth := &mockAuthManager{}
-	builder := NewServiceBuilder().WithAuthManager(mockAuth)
-
-	sb, ok := builder.(*serviceBuilder)
-	require.True(t, ok)
-	assert.Equal(t, mockAuth, sb.authManager)
 }
 
 func TestServiceBuilder_WithBackupManager(t *testing.T) {
@@ -2368,31 +2330,6 @@ func TestWatch_SuccessPath_CreatedResponse(t *testing.T) {
 	}
 }
 
-func TestPut_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	resp, err := svc.Put(ctx, &PutRequest{
-		EntityType: "user",
-		ID:         1,
-		Data:       []byte(`{"x":1}`),
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestGet_AuthFailure_WithMetrics(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	mockAuth := &mockAuthManager{
@@ -2412,149 +2349,6 @@ func TestGet_AuthFailure_WithMetrics(t *testing.T) {
 	resp, err := svc.Get(ctx, &GetRequest{
 		EntityType: "user",
 		ID:         1,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestDelete_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	resp, err := svc.Delete(ctx, &DeleteRequest{
-		EntityType: "user",
-		ID:         1,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestList_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	stream := make(chan *ListResponse, 1)
-	err := svc.List(ctx, &ListRequest{EntityType: "user"}, stream)
-	require.Error(t, err)
-}
-
-func TestBatchPut_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	resp, err := svc.BatchPut(ctx, &BatchPutRequest{
-		Requests: []*PutRequest{{EntityType: "user", ID: 1, Data: []byte(`{}`)}},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestBatchGet_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	resp, err := svc.BatchGet(ctx, &BatchGetRequest{
-		Requests: []*GetRequest{{EntityType: "user", ID: 1}},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestBatchDelete_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	resp, err := svc.BatchDelete(ctx, &BatchDeleteRequest{
-		Requests: []*DeleteRequest{{EntityType: "user", ID: 1}},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestTransaction_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	resp, err := svc.Transaction(ctx, &TransactionRequest{
-		Compare: []*CompareCondition{{
-			EntityType: "user",
-			ID:         1,
-			Operator:   CompareOperatorEqual,
-			Value:      []byte("x"),
-		}},
-		Success: []*TransactionOp{{OpType: TransactionOpTypePut, EntityType: "user", ID: 1, Data: []byte(`{}`)}},
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2687,27 +2481,6 @@ func TestDelete_RaftError_WithMetrics(t *testing.T) {
 	var qbErr *errors.QBError
 	require.ErrorAs(t, err, &qbErr)
 	assert.Equal(t, errors.ErrRaft, qbErr.Code)
-}
-
-func TestListEntityTypes_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	resp, err := svc.ListEntityTypes(ctx, &ListEntityTypesRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestListEntityTypes_BuildTenantPrefixError(t *testing.T) {
@@ -2917,64 +2690,6 @@ func TestTimeSeriesQuery_WithMetrics_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestCreateRole_NilTypedRoleManager(t *testing.T) {
-	var nilRM *auth.RoleManager
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			roleManagerReturn: nilRM,
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.CreateRole(context.Background(), &AuthCreateRoleRequest{
-		RoleName: "test-role",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestDeleteRole_NilTypedRoleManager(t *testing.T) {
-	var nilRM *auth.RoleManager
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			roleManagerReturn: nilRM,
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.DeleteRole(context.Background(), &AuthDeleteRoleRequest{
-		RoleName: "test-role",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestListRoles_NilTypedRoleManager(t *testing.T) {
-	var nilRM *auth.RoleManager
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			roleManagerReturn: nilRM,
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.ListRoles(context.Background(), &AuthListRolesRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
 func TestDeleteUser_NilTypedUserStore(t *testing.T) {
 	var nilUS *auth.UserStore
 	svc := &quicBaaS{
@@ -3030,31 +2745,6 @@ func TestWithEmbeddingManager(t *testing.T) {
 
 	sb := result.(*serviceBuilder)
 	assert.Nil(t, sb.embeddingManager)
-}
-
-func TestQuery_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	stream := make(chan *QueryResponse, 1)
-	err := svc.Query(ctx, &QueryRequest{
-		EntityType: "user",
-		IndexName:  "name",
-		Value:      []byte("test"),
-	}, stream)
-	require.Error(t, err)
 }
 
 func TestWatch_NilRequest_WithMetrics(t *testing.T) {
@@ -4464,195 +4154,6 @@ func TestClose_WithLogger(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestCreateRole_NilAuthManager(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.CreateRole(context.Background(), &AuthCreateRoleRequest{
-		RoleName: "test-role",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
-}
-
-func TestCreateRole_EmptyRoleName(t *testing.T) {
-	svc := &quicBaaS{
-		config:      &ServiceConfig{},
-		authManager: &mockAuthManager{},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.CreateRole(context.Background(), &AuthCreateRoleRequest{
-		RoleName: "",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestCreateRole_InvalidRoleManagerType(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			roleManagerReturn: nil, // returns nil which is not *auth.RoleManager
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.CreateRole(context.Background(), &AuthCreateRoleRequest{
-		RoleName: "test-role",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestCreateRole_RoleAlreadyExists(t *testing.T) {
-	rm := auth.NewRoleManager(cov90RoleLogger())
-	// "admin" role is created by default in NewRoleManager
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			roleManagerReturn: rm,
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.CreateRole(context.Background(), &AuthCreateRoleRequest{
-		RoleName: "admin", // already exists as built-in
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestCreateRole_Success(t *testing.T) {
-	rm := auth.NewRoleManager(cov90RoleLogger())
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			roleManagerReturn: rm,
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.CreateRole(context.Background(), &AuthCreateRoleRequest{
-		RoleName:    "custom-role",
-		Permissions: []string{"read", "write"},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "custom-role", resp.RoleID)
-}
-
-func TestDeleteRole_NilAuthManager(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.DeleteRole(context.Background(), &AuthDeleteRoleRequest{
-		RoleName: "test-role",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
-}
-
-func TestDeleteRole_EmptyRoleName(t *testing.T) {
-	svc := &quicBaaS{
-		config:      &ServiceConfig{},
-		authManager: &mockAuthManager{},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.DeleteRole(context.Background(), &AuthDeleteRoleRequest{
-		RoleName: "",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestDeleteRole_InvalidRoleManagerType(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			roleManagerReturn: nil,
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.DeleteRole(context.Background(), &AuthDeleteRoleRequest{
-		RoleName: "test-role",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestDeleteRole_RoleNotFound(t *testing.T) {
-	rm := auth.NewRoleManager(cov90RoleLogger())
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			roleManagerReturn: rm,
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.DeleteRole(context.Background(), &AuthDeleteRoleRequest{
-		RoleName: "nonexistent-role",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
-}
-
-func TestDeleteRole_Success(t *testing.T) {
-	rm := auth.NewRoleManager(cov90RoleLogger())
-	// Add a custom role first, then delete it
-	require.NoError(t, rm.AddRole(&auth.Role{
-		Name:        "deletable-role",
-		Description: "A role to delete",
-		Permissions: []*auth.Permission{},
-	}))
-
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			roleManagerReturn: rm,
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.DeleteRole(context.Background(), &AuthDeleteRoleRequest{
-		RoleName: "deletable-role",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-}
-
 func TestRebalanceCluster_NilQRDBClient(t *testing.T) {
 	svc := &quicBaaS{
 		config: &ServiceConfig{},
@@ -4834,90 +4335,6 @@ func TestListUsers_Pagination(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(4), resp.TotalCount)
 	assert.Len(t, resp.Users, 0)
-}
-
-func TestListRoles_NilAuthManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, authManager: nil}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
-}
-
-func TestListRoles_InvalidRoleManager(t *testing.T) {
-	log := createTestLogger(t)
-	// Use a mock that will fail type assertion to *auth.RoleManager
-	authMgr := &svcBoostAuthManager{roleManagerReturn: &svcBoostRoleManager{}}
-	svc := &quicBaaS{logger: log, authManager: authMgr}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestListRoles_NilRoleManager(t *testing.T) {
-	log := createTestLogger(t)
-	// Use the real RoleManager type but pass nil
-	authMgr := &mockAuthManager{roleManagerReturn: nil}
-	svc := &quicBaaS{logger: log, authManager: authMgr}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestListRoles_Success(t *testing.T) {
-	log := createTestLogger(t)
-	roleManager := auth.NewRoleManager(createConcreteLogger(t))
-
-	authMgr := &mockAuthManager{roleManagerReturn: roleManager}
-	svc := &quicBaaS{logger: log, authManager: authMgr}
-	rbacSvc := &rbacService{svc: svc}
-
-	resp, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	// Built-in roles should be present
-	assert.Greater(t, resp.TotalCount, uint64(0))
-}
-
-func TestListRoles_Pagination(t *testing.T) {
-	log := createTestLogger(t)
-	roleManager := auth.NewRoleManager(createConcreteLogger(t))
-
-	authMgr := &mockAuthManager{roleManagerReturn: roleManager}
-	svc := &quicBaaS{logger: log, authManager: authMgr}
-	rbacSvc := &rbacService{svc: svc}
-
-	// Get total count first
-	fullResp, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
-	require.NoError(t, err)
-	totalCount := fullResp.TotalCount
-
-	// Test with limit
-	resp, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{Limit: 1, Offset: 0})
-	require.NoError(t, err)
-	assert.Equal(t, totalCount, resp.TotalCount)
-	assert.Len(t, resp.Roles, 1)
-
-	// Test offset beyond total
-	resp, err = rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{Limit: 10, Offset: 1000})
-	require.NoError(t, err)
-	assert.Equal(t, totalCount, resp.TotalCount)
-	assert.Len(t, resp.Roles, 0)
 }
 
 func TestAssignRole_NilAuthManager(t *testing.T) {
@@ -7512,92 +6929,6 @@ func TestDeleteUser_Coverage(t *testing.T) {
 		rbacSvc := &rbacService{svc: svc}
 
 		_, err := rbacSvc.DeleteUser(context.Background(), &DeleteUserRequest{Username: ""})
-		require.Error(t, err)
-	})
-}
-
-func TestCreateRole_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-
-	t.Run("success", func(t *testing.T) {
-		roleManager := createTestRoleManager(t)
-		svc := &quicBaaS{
-			logger:      log,
-			authManager: &mockAuthManager{roleManagerReturn: roleManager},
-		}
-		rbacSvc := &rbacService{svc: svc}
-
-		resp, err := rbacSvc.CreateRole(context.Background(), &AuthCreateRoleRequest{RoleName: "editor"})
-		require.NoError(t, err)
-		assert.Equal(t, "editor", resp.RoleID)
-	})
-
-	t.Run("error - empty role name", func(t *testing.T) {
-		svc := &quicBaaS{
-			logger:      log,
-			authManager: &mockAuthManager{},
-		}
-		rbacSvc := &rbacService{svc: svc}
-
-		_, err := rbacSvc.CreateRole(context.Background(), &AuthCreateRoleRequest{RoleName: ""})
-		require.Error(t, err)
-	})
-}
-
-func TestDeleteRole_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-
-	t.Run("success", func(t *testing.T) {
-		roleManager := createTestRoleManager(t)
-		roleManager.AddRole(&auth.Role{Name: "editor"})
-
-		svc := &quicBaaS{
-			logger:      log,
-			authManager: &mockAuthManager{roleManagerReturn: roleManager},
-		}
-		rbacSvc := &rbacService{svc: svc}
-
-		resp, err := rbacSvc.DeleteRole(context.Background(), &AuthDeleteRoleRequest{RoleName: "editor"})
-		require.NoError(t, err)
-		assert.True(t, resp.Success)
-	})
-
-	t.Run("error - role not found", func(t *testing.T) {
-		roleManager := createTestRoleManager(t)
-		svc := &quicBaaS{
-			logger:      log,
-			authManager: &mockAuthManager{roleManagerReturn: roleManager},
-		}
-		rbacSvc := &rbacService{svc: svc}
-
-		_, err := rbacSvc.DeleteRole(context.Background(), &AuthDeleteRoleRequest{RoleName: "nonexistent"})
-		require.Error(t, err)
-	})
-}
-
-func TestListRoles_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-
-	t.Run("success", func(t *testing.T) {
-		roleManager := createTestRoleManager(t)
-		roleManager.AddRole(&auth.Role{Name: "admin"})
-
-		svc := &quicBaaS{
-			logger:      log,
-			authManager: &mockAuthManager{roleManagerReturn: roleManager},
-		}
-		rbacSvc := &rbacService{svc: svc}
-
-		resp, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
-		require.NoError(t, err)
-		assert.Greater(t, len(resp.Roles), 0)
-	})
-
-	t.Run("error - no auth manager", func(t *testing.T) {
-		svc := &quicBaaS{logger: log, authManager: nil}
-		rbacSvc := &rbacService{svc: svc}
-
-		_, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
 		require.Error(t, err)
 	})
 }

@@ -25,20 +25,14 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/authzfake"
 )
 
 // authManagerAdapter wraps auth.InMemoryAuthManager to satisfy interfaces.AuthManager.
 type authManagerAdapter struct {
 	manager *auth.InMemoryAuthManager
-}
-
-// Authenticate wraps the concrete Authenticate to return interface{}.
-func (a *authManagerAdapter) Authenticate(ctx context.Context, username string, password *secure.Buffer) (interface{}, error) {
-	return a.manager.Authenticate(ctx, username, password)
 }
 
 // IssueTokenForUser issues JWT tokens for a user who has been authenticated
@@ -68,18 +62,13 @@ func (a *authManagerAdapter) RevokeToken(ctx context.Context, token string) erro
 }
 
 // CreateUser wraps the concrete CreateUser to return interface{}.
-func (a *authManagerAdapter) CreateUser(username, password string, roles []string) (interface{}, error) {
-	return a.manager.CreateUser(username, password, roles)
+func (a *authManagerAdapter) CreateUser(username string, roles []string) (interface{}, error) {
+	return a.manager.CreateUser(username, roles)
 }
 
 // GetUserStore returns the user store.
 func (a *authManagerAdapter) GetUserStore() interfaces.UserStore {
 	return a.manager.GetUserStore()
-}
-
-// GetRoleManager returns the role manager.
-func (a *authManagerAdapter) GetRoleManager() interfaces.RoleManager {
-	return a.manager.GetRoleManager()
 }
 
 // testMCPContext provides infrastructure for MCP authorization tests.
@@ -94,7 +83,7 @@ type testMCPContext struct {
 }
 
 // newTestMCPContext creates a new test context for MCP authorization tests.
-func newTestMCPContext(t *testing.T) *testMCPContext {
+func newTestMCPContext(t *testing.T, allowed ...string) *testMCPContext {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 	log, err := logger.New(logger.LogConfig{
@@ -115,13 +104,7 @@ func newTestMCPContext(t *testing.T) *testMCPContext {
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
 
-	roleManager := authManager.GetRoleManager()
-
-	rbacProvider, err := providers.NewRBACProvider(roleManager, log)
-	require.NoError(t, err)
-
-	authzService, err := auth.NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	authzService := authzfake.New(allowed...)
 
 	// Create adapter to satisfy interfaces.AuthManager
 	authAdapter := &authManagerAdapter{manager: authManager}
@@ -152,7 +135,7 @@ func (tc *testMCPContext) Close() {
 // Note: password parameter removed as password-based authentication is disabled.
 // Users authenticate via mTLS certificates, WebAuthn, or OIDC.
 func (tc *testMCPContext) createTestUser(username string, roles []string) (string, error) {
-	_, err := tc.authManager.CreateUser(username, "", roles)
+	_, err := tc.authManager.CreateUser(username, roles)
 	if err != nil {
 		return "", err
 	}
@@ -168,7 +151,7 @@ func (tc *testMCPContext) createTestUser(username string, roles []string) (strin
 
 // TestMCPPublicToolsNoAuth tests that public tools bypass authorization.
 func TestMCPPublicToolsNoAuth(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "*:*")
 	defer tc.Close()
 
 	publicTools := []string{
@@ -188,7 +171,7 @@ func TestMCPPublicToolsNoAuth(t *testing.T) {
 
 // TestMCPProtectedToolsRequireToken tests that protected tools require a token.
 func TestMCPProtectedToolsRequireToken(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "*:*")
 	defer tc.Close()
 
 	protectedTools := []string{
@@ -215,7 +198,7 @@ func TestMCPProtectedToolsRequireToken(t *testing.T) {
 
 // TestMCPAuthErrorMissingToken tests AuthErrorMissingToken for missing token.
 func TestMCPAuthErrorMissingToken(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "*:*")
 	defer tc.Close()
 
 	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", "")
@@ -227,7 +210,7 @@ func TestMCPAuthErrorMissingToken(t *testing.T) {
 
 // TestMCPAuthErrorInvalidToken tests AuthErrorInvalidToken for invalid token.
 func TestMCPAuthErrorInvalidToken(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "*:*")
 	defer tc.Close()
 
 	authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "qrdb_get", "invalid-token-12345")
@@ -239,11 +222,11 @@ func TestMCPAuthErrorInvalidToken(t *testing.T) {
 
 // TestMCPAuthErrorPermissionDenied tests AuthErrorPermissionDenied for denied access.
 func TestMCPAuthErrorPermissionDenied(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "keys:read")
 	defer tc.Close()
 
 	// Create readonly user
-	token, err := tc.createTestUser("readonly-mcp", []string{auth.RoleNameReadOnly})
+	token, err := tc.createTestUser("readonly-mcp", []string{"readonly"})
 	require.NoError(t, err)
 
 	// Readonly user trying to use write tool
@@ -256,10 +239,10 @@ func TestMCPAuthErrorPermissionDenied(t *testing.T) {
 
 // TestMCPAdminRoleAccess tests that admin role has full access to all tools.
 func TestMCPAdminRoleAccess(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "*:*")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("admin-mcp", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("admin-mcp", []string{"admin"})
 	require.NoError(t, err)
 
 	adminTools := []string{
@@ -296,10 +279,10 @@ func TestMCPAdminRoleAccess(t *testing.T) {
 
 // TestMCPReadWriteRoleAccess tests readwrite role permissions.
 func TestMCPReadWriteRoleAccess(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "keys:read", "keys:write", "keys:delete")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("readwrite-mcp", []string{auth.RoleNameReadWrite})
+	token, err := tc.createTestUser("readwrite-mcp", []string{"readwrite"})
 	require.NoError(t, err)
 
 	t.Run("can_read_keys", func(t *testing.T) {
@@ -332,10 +315,10 @@ func TestMCPReadWriteRoleAccess(t *testing.T) {
 
 // TestMCPReadOnlyRoleAccess tests readonly role permissions.
 func TestMCPReadOnlyRoleAccess(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "keys:read")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("readonly-mcp-2", []string{auth.RoleNameReadOnly})
+	token, err := tc.createTestUser("readonly-mcp-2", []string{"readonly"})
 	require.NoError(t, err)
 
 	t.Run("can_read_keys", func(t *testing.T) {
@@ -420,10 +403,10 @@ func TestMCPToolToResourceMapping(t *testing.T) {
 
 // TestMCPRevokedTokenRejected tests that revoked tokens are rejected.
 func TestMCPRevokedTokenRejected(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "keys:read")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("revoke-mcp", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("revoke-mcp", []string{"admin"})
 	require.NoError(t, err)
 
 	// Verify token works initially
@@ -442,24 +425,11 @@ func TestMCPRevokedTokenRejected(t *testing.T) {
 
 // TestMCPCustomRoleAuthorization tests authorization with custom roles.
 func TestMCPCustomRoleAuthorization(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "secrets:read", "secrets:write", "secrets:delete")
 	defer tc.Close()
 
-	// Create custom secrets-only role
-	roleManager := tc.authManager.GetRoleManager()
-	secretsRole := &auth.Role{
-		Name:        "secrets-manager",
-		Description: "Can only manage secrets",
-		Permissions: []*auth.Permission{
-			{
-				Resource: interfaces.ResourceSecrets,
-				Actions:  []string{interfaces.ActionRead, interfaces.ActionWrite, interfaces.ActionDelete},
-			},
-		},
-	}
-	err := roleManager.AddRole(secretsRole)
-	require.NoError(t, err)
-
+	// The server's authzfake allow-list grants secrets read/write/delete only,
+	// modelling a narrow custom "secrets-manager" role.
 	token, err := tc.createTestUser("secrets-only-mcp", []string{"secrets-manager"})
 	require.NoError(t, err)
 
@@ -493,10 +463,10 @@ func TestMCPCustomRoleAuthorization(t *testing.T) {
 
 // TestMCPMultipleRolesAuthorization tests authorization with multiple roles.
 func TestMCPMultipleRolesAuthorization(t *testing.T) {
-	tc := newTestMCPContext(t)
+	tc := newTestMCPContext(t, "keys:read", "keys:write")
 	defer tc.Close()
 
-	token, err := tc.createTestUser("multi-role-mcp", []string{auth.RoleNameReadOnly, auth.RoleNameReadWrite})
+	token, err := tc.createTestUser("multi-role-mcp", []string{"readonly", "readwrite"})
 	require.NoError(t, err)
 
 	t.Run("can_read_from_readonly", func(t *testing.T) {
@@ -547,24 +517,28 @@ func TestMCPIsPublicTool(t *testing.T) {
 
 // TestMCPUnknownToolDefaultsToAdmin tests that unknown tools require admin access.
 func TestMCPUnknownToolDefaultsToAdmin(t *testing.T) {
-	tc := newTestMCPContext(t)
-	defer tc.Close()
-
-	// Create non-admin user
-	nonAdminToken, err := tc.createTestUser("non-admin-mcp", []string{auth.RoleNameReadWrite})
-	require.NoError(t, err)
-
-	// Create admin user
-	adminToken, err := tc.createTestUser("admin-mcp-2", []string{auth.RoleNameAdmin})
-	require.NoError(t, err)
-
+	// Unknown tools default to the cluster:admin permission. A non-admin server
+	// (allow-list without cluster:admin) denies them; an admin server (full
+	// wildcard) allows them.
 	t.Run("unknown_tool_denied_for_non_admin", func(t *testing.T) {
+		tc := newTestMCPContext(t, "keys:read", "keys:write")
+		defer tc.Close()
+
+		nonAdminToken, err := tc.createTestUser("non-admin-mcp", []string{"readwrite"})
+		require.NoError(t, err)
+
 		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_unknown_tool", nonAdminToken)
 		require.NotNil(t, authErr)
 		assert.Equal(t, mcp.AuthErrorPermissionDenied, authErr.Type)
 	})
 
 	t.Run("unknown_tool_allowed_for_admin", func(t *testing.T) {
+		tc := newTestMCPContext(t, "*:*")
+		defer tc.Close()
+
+		adminToken, err := tc.createTestUser("admin-mcp-2", []string{"admin"})
+		require.NoError(t, err)
+
 		authErr := tc.authzChecker.CheckToolAuthorization(tc.ctx, "quicbaas_unknown_tool", adminToken)
 		assert.Nil(t, authErr)
 	})

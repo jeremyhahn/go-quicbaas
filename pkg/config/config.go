@@ -1200,7 +1200,7 @@ type TenantIsolationConfig struct {
 type AuthorizationConfig struct {
 	// Provider specifies the authorization provider to use.
 	// Options: "rbac" (default), "abac", "hybrid"
-	// - rbac: Role-based access control using RoleManager
+	// - rbac: Role-based access control (qrdb-owned role model)
 	// - abac: Attribute-based access control using PolicyEngine (requires iam build tag)
 	// - hybrid: ABAC-first with RBAC fallback for gradual migration
 	Provider string `mapstructure:"provider"`

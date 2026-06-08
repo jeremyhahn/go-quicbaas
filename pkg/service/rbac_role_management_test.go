@@ -11,274 +11,77 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+//go:build !iam
+
 package service
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
 // =============================================================================
-// Helper: create a real auth.RoleManager for testing
+// RBAC role STORE — non-IAM build assertions.
+//
+// In non-IAM builds the qrdb-backed IdentityStore is not compiled in, so the
+// role-store verbs (CreateRole / DeleteRole / ListRoles, exposed publicly as
+// CreateAuthRole / DeleteAuthRole / ListAuthRoles) fail closed with a typed
+// not-configured error. There is no fall-back to the legacy in-memory
+// the deleted fork role model. The IdentityStore round-trip is covered by the //go:build
+// iam test in rbac_role_store_iam_test.go.
 // =============================================================================
 
-func createRBACTestRoleManager(t *testing.T) *auth.RoleManager {
+// assertRoleStoreNotConfigured asserts the error is the typed
+// ServiceNotConfiguredError{"identity store"} wrapped in a configuration
+// QBError.
+func assertRoleStoreNotConfigured(t *testing.T, err error) {
 	t.Helper()
-	log, err := logger.New(logger.LogConfig{
-		Level:  "error",
-		Format: "json",
-		Output: "stderr",
-	})
-	require.NoError(t, err)
-	return auth.NewRoleManager(log)
+	require.Error(t, err)
+
+	var qErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &qErr), "expected *errors.QBError, got %T", err)
+	assert.Equal(t, dberrors.ErrConfiguration, qErr.Code)
+
+	var notConfigured *api.ServiceNotConfiguredError
+	require.True(t, stderrors.As(err, &notConfigured), "expected *api.ServiceNotConfiguredError, got %T", qErr.Err)
+	assert.Equal(t, "identity store", notConfigured.Service)
 }
 
-// =============================================================================
-// CreateAuthRole Tests
-// =============================================================================
+func TestRBACService_CreateAuthRole_NotConfigured(t *testing.T) {
+	svc := createTestService(t)
 
-func TestRBACService_CreateAuthRole_Success(t *testing.T) {
-	roleMgr := createRBACTestRoleManager(t)
-	mockAuth := &mockAuthManager{
-		roleManagerReturn: roleMgr,
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-
-	req := &AuthCreateRoleRequest{
+	resp, err := svc.CreateAuthRole(context.Background(), &AuthCreateRoleRequest{
 		RoleName:    "custom-role",
-		Permissions: []string{"read", "write"},
-	}
+		Permissions: []string{"keys:read", "keys:write"},
+	})
 
-	resp, err := svc.CreateAuthRole(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "custom-role", resp.RoleID)
-	assert.NotZero(t, resp.Timestamp)
-}
-
-func TestRBACService_CreateAuthRole_RoleAlreadyExists(t *testing.T) {
-	roleMgr := createRBACTestRoleManager(t)
-	mockAuth := &mockAuthManager{
-		roleManagerReturn: roleMgr,
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-
-	req := &AuthCreateRoleRequest{
-		RoleName:    "duplicate-role",
-		Permissions: []string{"read"},
-	}
-	resp, err := svc.CreateAuthRole(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-
-	// Try to create again - should fail
-	resp2, err := svc.CreateAuthRole(context.Background(), req)
-	require.Error(t, err)
-	assert.Nil(t, resp2)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-}
-
-func TestRBACService_CreateAuthRole_EmptyRoleName(t *testing.T) {
-	roleMgr := createRBACTestRoleManager(t)
-	mockAuth := &mockAuthManager{
-		roleManagerReturn: roleMgr,
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-
-	req := &AuthCreateRoleRequest{
-		RoleName: "",
-	}
-
-	resp, err := svc.CreateAuthRole(context.Background(), req)
-	require.Error(t, err)
 	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
+	assertRoleStoreNotConfigured(t, err)
 }
 
-func TestRBACService_CreateAuthRole_NilAuthManager(t *testing.T) {
+func TestRBACService_DeleteAuthRole_NotConfigured(t *testing.T) {
 	svc := createTestService(t)
-	db := svc.(*quicBaaS)
-	db.authManager = nil
 
-	req := &AuthCreateRoleRequest{
-		RoleName:    "orphan-role",
-		Permissions: []string{"read"},
-	}
+	resp, err := svc.DeleteAuthRole(context.Background(), &AuthDeleteRoleRequest{
+		RoleName: "custom-role",
+	})
 
-	resp, err := svc.CreateAuthRole(context.Background(), req)
-	require.Error(t, err)
 	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrConfiguration, dErr.Code)
+	assertRoleStoreNotConfigured(t, err)
 }
 
-func TestRBACService_CreateAuthRole_InvalidRoleManagerType(t *testing.T) {
-	// Return nil role manager which fails the type assertion
-	mockAuth := &mockAuthManager{
-		roleManagerReturn: nil,
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-
-	req := &AuthCreateRoleRequest{
-		RoleName:    "test-role",
-		Permissions: []string{"read"},
-	}
-
-	resp, err := svc.CreateAuthRole(context.Background(), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// DeleteAuthRole Tests
-// =============================================================================
-
-func TestRBACService_DeleteAuthRole_Success(t *testing.T) {
-	roleMgr := createRBACTestRoleManager(t)
-	mockAuth := &mockAuthManager{
-		roleManagerReturn: roleMgr,
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-
-	// Create a role first
-	createReq := &AuthCreateRoleRequest{
-		RoleName:    "deletable-role",
-		Permissions: []string{"read"},
-	}
-	_, err := svc.CreateAuthRole(context.Background(), createReq)
-	require.NoError(t, err)
-
-	// Delete it
-	deleteReq := &AuthDeleteRoleRequest{
-		RoleName: "deletable-role",
-	}
-
-	resp, err := svc.DeleteAuthRole(context.Background(), deleteReq)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-}
-
-func TestRBACService_DeleteAuthRole_NotFound(t *testing.T) {
-	roleMgr := createRBACTestRoleManager(t)
-	mockAuth := &mockAuthManager{
-		roleManagerReturn: roleMgr,
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-
-	req := &AuthDeleteRoleRequest{
-		RoleName: "nonexistent-role",
-	}
-
-	resp, err := svc.DeleteAuthRole(context.Background(), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotFound, dErr.Code)
-}
-
-func TestRBACService_DeleteAuthRole_EmptyRoleName(t *testing.T) {
-	roleMgr := createRBACTestRoleManager(t)
-	mockAuth := &mockAuthManager{
-		roleManagerReturn: roleMgr,
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-
-	req := &AuthDeleteRoleRequest{
-		RoleName: "",
-	}
-
-	resp, err := svc.DeleteAuthRole(context.Background(), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-}
-
-func TestRBACService_DeleteAuthRole_NilAuthManager(t *testing.T) {
+func TestRBACService_ListAuthRoles_NotConfigured(t *testing.T) {
 	svc := createTestService(t)
-	db := svc.(*quicBaaS)
-	db.authManager = nil
 
-	req := &AuthDeleteRoleRequest{
-		RoleName: "orphan-role",
-	}
+	resp, err := svc.ListAuthRoles(context.Background(), &AuthListRolesRequest{})
 
-	resp, err := svc.DeleteAuthRole(context.Background(), req)
-	require.Error(t, err)
 	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrConfiguration, dErr.Code)
-}
-
-func TestRBACService_DeleteAuthRole_InvalidRoleManagerType(t *testing.T) {
-	mockAuth := &mockAuthManager{
-		roleManagerReturn: nil,
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-
-	req := &AuthDeleteRoleRequest{
-		RoleName: "test-role",
-	}
-
-	resp, err := svc.DeleteAuthRole(context.Background(), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// CreateAuthRole - With Multiple Permissions
-// =============================================================================
-
-func TestRBACService_CreateAuthRole_MultiplePermissions(t *testing.T) {
-	roleMgr := createRBACTestRoleManager(t)
-	mockAuth := &mockAuthManager{
-		roleManagerReturn: roleMgr,
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-
-	req := &AuthCreateRoleRequest{
-		RoleName:    "multi-perm-role",
-		Permissions: []string{"read", "write", "delete", "admin"},
-	}
-
-	resp, err := svc.CreateAuthRole(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "multi-perm-role", resp.RoleID)
-
-	// Verify the role exists in the manager via the RoleInfo interface
-	role := roleMgr.GetRole("multi-perm-role")
-	require.NotNil(t, role)
-	assert.Equal(t, "multi-perm-role", role.GetName())
+	assertRoleStoreNotConfigured(t, err)
 }

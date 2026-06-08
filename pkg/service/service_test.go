@@ -757,10 +757,6 @@ func (m *boost81MockAuthManager) GetUserStore() interfaces.UserStore {
 	return nil
 }
 
-func (m *boost81MockAuthManager) GetRoleManager() interfaces.RoleManager {
-	return nil
-}
-
 var _ interfaces.AuthManager = (*boost81MockAuthManager)(nil)
 
 type boost81RaftNode struct{}
@@ -1068,13 +1064,6 @@ type mockReencStatusWithOldVersion struct {
 
 func (m *mockReencStatusWithOldVersion) GetOldVersion() uint64 { return m.oldVersion }
 
-// cov90RoleLogger creates a logger for auth.NewRoleManager.
-func cov90RoleLogger() *logger.Logger {
-	cfg := logger.LogConfig{Level: "error", Format: "console", Output: "stdout"}
-	log, _ := logger.New(cfg)
-	return log
-}
-
 type cov90MockCacheManager struct {
 	getFn    func(ctx context.Context, key string) ([]byte, error)
 	setFn    func(ctx context.Context, key string, value []byte) error
@@ -1161,57 +1150,8 @@ func (m *svcBoostUserStore) AddUser(user interfaces.UserInfo) {}
 
 func (m *svcBoostUserStore) UpdateUser(user interfaces.UserInfo) {}
 
-func (m *svcBoostUserStore) SetRoleManager(rm interfaces.RoleManager) {}
-
-type svcBoostPermission struct {
-	resource string
-	actions  []string
-}
-
-func (p *svcBoostPermission) GetResource() string { return p.resource }
-
-func (p *svcBoostPermission) GetActions() []string { return p.actions }
-
-type svcBoostRole struct {
-	name        string
-	description string
-	permissions []interfaces.PermissionInfo
-}
-
-func (r *svcBoostRole) GetName() string { return r.name }
-
-func (r *svcBoostRole) GetDescription() string { return r.description }
-
-func (r *svcBoostRole) GetPermissions() []interfaces.PermissionInfo { return r.permissions }
-
-type svcBoostRoleManager struct {
-	roles []interfaces.RoleInfo
-}
-
-func (m *svcBoostRoleManager) GetRole(name string) interfaces.RoleInfo {
-	for _, r := range m.roles {
-		if r.GetName() == name {
-			return r
-		}
-	}
-	return nil
-}
-
-func (m *svcBoostRoleManager) HasPermission(userRoles []string, resource, action string) bool {
-	return false
-}
-
-func (m *svcBoostRoleManager) AllowsAnonymous(resource, action string) bool { return false }
-
-func (m *svcBoostRoleManager) AddRole(role interfaces.RoleInfo) error { return nil }
-
-func (m *svcBoostRoleManager) UpdateRole(role interfaces.RoleInfo) error { return nil }
-
-func (m *svcBoostRoleManager) ValidateRoles(roleNames []string) bool { return true }
-
 type svcBoostAuthManager struct {
-	userStoreReturn   interfaces.UserStore
-	roleManagerReturn interfaces.RoleManager
+	userStoreReturn interfaces.UserStore
 }
 
 type svcBoostRaftNode struct {
@@ -1470,36 +1410,6 @@ func TestRBACServiceImpl_ListUsers_NilManager(t *testing.T) {
 	rbacSvc := &rbacService{svc: svc}
 
 	_, err := rbacSvc.ListUsers(context.Background(), &ListUsersRequest{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
-}
-
-func TestRBACServiceImpl_CreateRole_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.CreateRole(context.Background(), &AuthCreateRoleRequest{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
-}
-
-func TestRBACServiceImpl_DeleteRole_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.DeleteRole(context.Background(), &AuthDeleteRoleRequest{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
-}
-
-func TestRBACServiceImpl_ListRoles_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.ListRoles(context.Background(), &AuthListRolesRequest{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "authentication")
@@ -2234,24 +2144,6 @@ func TestRBACServiceImpl_ListUsers_NoUserStore(t *testing.T) {
 }
 
 // ListRoles Tests (65.4% -> 80%).
-func TestRBACServiceImpl_ListRoles_NoAuthManager(t *testing.T) {
-	svc := &quicBaaS{
-		authManager: nil,
-		logger:      testLoggerCoverage(t),
-	}
-
-	rbacSvc := &rbacService{svc: svc}
-
-	req := &AuthListRolesRequest{
-		Limit:  10,
-		Offset: 0,
-	}
-
-	_, err := rbacSvc.ListRoles(context.Background(), req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication manager service not configured")
-}
-
 // checkAuth Tests (66.7% -> 100%).
 func TestServiceImpl_CheckAuth_Disabled(t *testing.T) {
 	svc := &quicBaaS{
@@ -2965,12 +2857,6 @@ func TestServiceImpl_TimeSeriesQuery_Delegation(t *testing.T) {
 	// This will fail but we're testing delegation
 	err := svc.TimeSeriesQuery(context.Background(), req, stream)
 	assert.Error(t, err)
-}
-
-// Helper to create role manager for tests.
-func createTestRoleManager(t *testing.T) *auth.RoleManager {
-	log := createConcreteLogger(t)
-	return auth.NewRoleManager(log)
 }
 
 func TestMatchesIndexValue_Coverage(t *testing.T) {

@@ -3009,215 +3009,17 @@ func (r *rbacService) ListUsers(ctx context.Context, req *AuthListUsersRequest) 
 	}, nil
 }
 
-func (r *rbacService) CreateRole(ctx context.Context, req *AuthCreateRoleRequest) (*AuthCreateRoleResponse, error) {
-	// Check if authManager is available
-	if r.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.CreateRole",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
-		}
-	}
+// CreateRole, DeleteRole and ListRoles operate on the qrdb-backed
+// IdentityStore and live in build-tagged files: rbac_role_store.go
+// (//go:build iam) holds the IdentityStore-backed implementations, while
+// rbac_role_store_stub.go (//go:build !iam) returns a typed not-configured
+// error. See authz-unification Stage 1.2.
 
-	// Validate request
-	if req.RoleName == "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "service.CreateRole",
-			Err:  &api.RequiredFieldError{Field: "role name"},
-		}
-	}
-
-	// Get role manager
-	roleManagerRaw := r.svc.authManager.GetRoleManager()
-	roleManager, ok := roleManagerRaw.(*auth.RoleManager)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.RBAC",
-			Err:  &api.InvalidTypeError{Field: "role manager", Expected: "*auth.RoleManager"},
-		}
-	}
-	if roleManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.CreateRole",
-			Err:  &api.ServiceNotConfiguredError{Service: "role manager"},
-		}
-	}
-
-	// Check if role already exists
-	if existing := roleManager.GetRole(req.RoleName); existing != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "service.CreateRole",
-			Err:  &api.InvalidInputError{Message: "role already exists: " + req.RoleName},
-		}
-	}
-
-	// Create role with permissions
-	// Parse permissions into Permission objects
-	permissions := make([]*auth.Permission, 0, len(req.Permissions))
-	for _, perm := range req.Permissions {
-		// Simple format: "resource:action" or "resource:*"
-		permissions = append(permissions, &auth.Permission{
-			Resource: auth.ResourceKeys, // Default to keys for now
-			Actions:  []string{perm},
-		})
-	}
-
-	role := &auth.Role{
-		Name:        req.RoleName,
-		Description: fmt.Sprintf("Custom role: %s", req.RoleName),
-		Permissions: permissions,
-	}
-
-	// Add role
-	if err := roleManager.AddRole(role); err != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.CreateRole",
-			Err:  err,
-		}
-	}
-
-	return &AuthCreateRoleResponse{
-		RoleID:    req.RoleName,
-		Timestamp: time.Now().UnixNano(),
-	}, nil
-}
-
-func (r *rbacService) DeleteRole(ctx context.Context, req *AuthDeleteRoleRequest) (*AuthDeleteRoleResponse, error) {
-	// Check if authManager is available
-	if r.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.DeleteRole",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
-		}
-	}
-
-	// Validate request
-	if req.RoleName == "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "service.DeleteRole",
-			Err:  &api.RequiredFieldError{Field: "role name"},
-		}
-	}
-
-	// Get role manager
-	roleManagerRaw := r.svc.authManager.GetRoleManager()
-	roleManager, ok := roleManagerRaw.(*auth.RoleManager)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.RBAC",
-			Err:  &api.InvalidTypeError{Field: "role manager", Expected: "*auth.RoleManager"},
-		}
-	}
-	if roleManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.DeleteRole",
-			Err:  &api.ServiceNotConfiguredError{Service: "role manager"},
-		}
-	}
-
-	// Check if role exists
-	if existing := roleManager.GetRole(req.RoleName); existing == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
-			Op:   "service.DeleteRole",
-			Err:  &api.NotFoundError{Resource: "role", ID: req.RoleName},
-		}
-	}
-
-	// Delete role
-	if err := roleManager.DeleteRole(req.RoleName); err != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.DeleteRole",
-			Err:  err,
-		}
-	}
-
-	return &AuthDeleteRoleResponse{
-		Success: true,
-		Message: fmt.Sprintf("Role %s deleted successfully", req.RoleName),
-	}, nil
-}
-
-func (r *rbacService) ListRoles(ctx context.Context, req *AuthListRolesRequest) (*AuthListRolesResponse, error) {
-	// Check if authManager is available
-	if r.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.ListRoles",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
-		}
-	}
-
-	// Get role manager
-	roleManagerRaw := r.svc.authManager.GetRoleManager()
-	roleManager, ok := roleManagerRaw.(*auth.RoleManager)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.RBAC",
-			Err:  &api.InvalidTypeError{Field: "role manager", Expected: "*auth.RoleManager"},
-		}
-	}
-	if roleManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.ListRoles",
-			Err:  &api.ServiceNotConfiguredError{Service: "role manager"},
-		}
-	}
-
-	// Get all roles
-	roles := roleManager.ListRoles()
-
-	// Convert to RoleInfo
-	roleInfos := make([]*RoleInfo, 0, len(roles))
-	for _, role := range roles {
-		// Extract permission strings
-		permStrings := make([]string, 0)
-		for _, perm := range role.GetPermissions() {
-			for _, action := range perm.GetActions() {
-				permStrings = append(permStrings, fmt.Sprintf("%s:%s", perm.GetResource(), action))
-			}
-		}
-
-		roleInfos = append(roleInfos, &RoleInfo{
-			RoleID:      role.GetName(),
-			RoleName:    role.GetName(),
-			Permissions: permStrings,
-			CreatedAt:   time.Now().UnixNano(), // Roles don't track creation time
-		})
-	}
-
-	// Apply pagination if requested
-	totalCount := uint64(len(roleInfos))
-	if req.Limit > 0 {
-		start := req.Offset
-		if start > totalCount {
-			start = totalCount
-		}
-		end := start + req.Limit
-		if end > totalCount {
-			end = totalCount
-		}
-		roleInfos = roleInfos[start:end]
-	}
-
-	return &AuthListRolesResponse{
-		Roles:      roleInfos,
-		TotalCount: totalCount,
-	}, nil
-}
-
+// AssignRole assigns a named role to a user.
+//
+// User->role binding still uses the in-memory user store; deferred to the
+// user-model unification (iam.User lacks the Username lookup qrdb's sdk.User
+// provides). It is intentionally NOT redirected to the IdentityStore here.
 func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest) (*AuthAssignRoleResponse, error) {
 	// Check if authManager is available
 	if r.svc.authManager == nil {
@@ -5536,17 +5338,10 @@ func (s *quicBaaS) checkAuth(ctx context.Context, permission string) error {
 		}
 	}
 
-	// Validate token and check permission using auth manager
-	if s.authManager != nil {
-		if err := s.authManager.Authorize(ctx, token, "keys", permission); err != nil {
-			return &errors.QBError{
-				Code: errors.ErrUnauthorized,
-				Op:   "service.checkAuth",
-				Err:  &api.OperationFailedError{Operation: "authorization", Cause: err},
-			}
-		}
-	}
-
+	// Token presence is verified above. The authorization DECISION for
+	// service-layer key operations is enforced at the transport interceptors
+	// against qrdb's policy decision point; checkAuth no longer holds a local
+	// auth manager to authorize against.
 	return nil
 }
 

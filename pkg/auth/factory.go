@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"reflect"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -128,7 +130,7 @@ func MustBootstrap(authManager interface{}, config *BootstrapConfig) (*Bootstrap
 			username = "admin"
 		}
 
-		user, err := am.CreateUser(username, []string{RoleNameAdmin})
+		user, err := am.CreateUser(username, []string{qrdbsdk.RoleNameAdmin})
 		if err != nil {
 			return nil, api.NewAdminUserCreateError("auth.MustBootstrap", err)
 		}

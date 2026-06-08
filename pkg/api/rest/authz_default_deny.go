@@ -94,7 +94,7 @@ func (m *AuthzMiddleware) EnforceDefaultDeny(pinnedTrustDomain string) func(http
 
 			// Enforce the required scope for this path. When the path maps to a
 			// known protected surface the token must carry the corresponding
-			// "<svc>.<verb>" scope; missing scope is a 403. A path with no scope
+			// "resource:action" scope; missing scope is a 403. A path with no scope
 			// mapping requires a valid token only (authentication, not a specific
 			// capability) — the path is already non-public and non-cluster.
 			if required := requiredScopeForRequest(path, r.Method); required != "" {
@@ -224,64 +224,75 @@ func isDefaultDenyPublic(path string) bool {
 }
 
 // defaultDenyScopeRule binds a path prefix to the scope required for read versus
-// mutating access. The platform-token convention is "<svc>.<verb>": a read verb
-// maps to ".read" and a mutating verb (POST/PUT/PATCH/DELETE) maps to ".write".
-// admin-only surfaces use the same ".write" verb for mutations since the gate
-// enforces capability presence, not role hierarchy.
+// mutating access. The scope grammar is the qrdb-canonical colon
+// "resource:action" (e.g. "keys:get", "tenant_barrier:init") so it matches the
+// scp claim the issuer mints from a subject's qrdb-resolved permissions and the
+// (resource, action) pairs the REST PEP (authz_pep_mapping.go) passes to qrdb's
+// PDP. A read verb maps to the resource's canonical read action and a mutating
+// verb (POST/PUT/PATCH/DELETE) to its canonical write action.
 type defaultDenyScopeRule struct {
 	read  string
 	write string
 }
 
 // defaultDenyScopeTable maps protected REST path prefixes to their required
-// "<svc>.<verb>" scopes. Longest-prefix wins (see requiredScopeForRequest) so
-// nested surfaces resolve to the most specific rule. Public + cluster-principal
-// requests short-circuit before this table is consulted.
+// qrdb-canonical "resource:action" scopes. Longest-prefix wins (see
+// requiredScopeForRequest) so nested surfaces resolve to the most specific
+// rule. Public + cluster-principal requests short-circuit before this table is
+// consulted.
 //
 // A path absent from the table requires a valid token but no specific scope:
 // authentication without a declared capability gate. The table covers the
 // security-sensitive surfaces (KMS / Secrets / Crypto / Certificate / DEK / KV /
 // IAM-write / barrier / credential / ceremony) called out in the design.
+//
+// Resource names are qrdb-canonical and agree with authz_pep_mapping.go: kms /
+// crypto / dek -> keys; the KV data plane -> kv; secrets/credentials ->
+// credentials; certificates/trust/acme -> certs; barrier/seal ->
+// tenant_barrier; IAM tenant admin -> tenants. The single vocabulary means the
+// scp the issuer mints (qrdb perm Names) is matched verbatim here.
 var defaultDenyScopeTable = map[string]defaultDenyScopeRule{
-	// Crypto / key-management plane.
-	"/api/v1/kms":     {read: "kms.read", write: "kms.write"},
-	"/api/v1/keys":    {read: "kms.read", write: "kms.write"},
-	"/api/v1/crypto":  {read: "crypto.read", write: "crypto.write"},
-	"/api/v1/secrets": {read: "secrets.read", write: "secrets.write"},
-	"/api/v1/dek":     {read: "kms.read", write: "kms.write"},
-	"/api/v1/seal":    {read: "barrier.read", write: "barrier.write"},
+	// Crypto / key-management plane (qrdb resource "keys").
+	"/api/v1/kms":     {read: "keys:get", write: "keys:create"},
+	"/api/v1/crypto":  {read: "keys:get", write: "keys:create"},
+	"/api/v1/dek":     {read: "keys:get", write: "keys:create"},
+	"/api/v1/secrets": {read: "credentials:retrieve", write: "credentials:store"},
+	"/api/v1/seal":    {read: "tenant_barrier:status", write: "tenant_barrier:seal"},
 
-	// Certificate / trust / ACME control plane.
-	"/api/v1/certificates": {read: "certificate.read", write: "certificate.write"},
-	"/api/v1/trust":        {read: "certificate.read", write: "certificate.write"},
-	"/api/v1/acme":         {read: "certificate.read", write: "certificate.write"},
+	// Certificate / trust / ACME control plane (qrdb resource "certs").
+	"/api/v1/certificates": {read: "certs:read", write: "certs:generate"},
+	"/api/v1/trust":        {read: "certs:read", write: "certs:generate"},
+	"/api/v1/acme":         {read: "certs:read", write: "certs:generate"},
 
-	// Data plane (entities, KV, query, transactions, batch).
-	"/api/v1/entities":     {read: "kv.read", write: "kv.write"},
-	"/api/v1/kv":           {read: "kv.read", write: "kv.write"},
-	"/api/v1/query":        {read: "kv.read", write: "kv.read"},
-	"/api/v1/entity-types": {read: "kv.read", write: "kv.read"},
-	"/api/v1/transaction":  {read: "kv.write", write: "kv.write"},
-	"/api/v1/batch":        {read: "kv.write", write: "kv.write"},
-	"/api/v1/timeseries":   {read: "kv.read", write: "kv.write"},
+	// Data plane (KV-family surfaces; qrdb resource "kv"). /api/v1/keys is the
+	// KV data plane (NOT cryptographic keys) per the PEP correspondence.
+	"/api/v1/keys":         {read: "kv:get", write: "kv:put"},
+	"/api/v1/entities":     {read: "kv:get", write: "kv:put"},
+	"/api/v1/kv":           {read: "kv:get", write: "kv:put"},
+	"/api/v1/query":        {read: "kv:get", write: "kv:get"},
+	"/api/v1/entity-types": {read: "kv:get", write: "kv:get"},
+	"/api/v1/transaction":  {read: "transaction:execute", write: "transaction:execute"},
+	"/api/v1/batch":        {read: "kv:put", write: "kv:put"},
+	"/api/v1/timeseries":   {read: "timeseries:query", write: "timeseries:write"},
 
-	// IAM management surface (tenant/user/role/policy admin).
-	"/api/v1/tenants": {read: "iam.read", write: "iam.write"},
-	"/api/v1/iam":     {read: "iam.read", write: "iam.write"},
+	// IAM management surface (tenant/user/role/policy admin; qrdb resource "tenants").
+	"/api/v1/tenants": {read: "tenants:read", write: "tenants:create"},
+	"/api/v1/iam":     {read: "tenants:read", write: "tenants:create"},
 
 	// qrdb-wire mounts at the router root.
-	"/v1/credentials": {read: "credential.read", write: "credential.write"},
-	"/v1/barrier":     {read: "barrier.read", write: "barrier.write"},
-	"/api/v1/barrier": {read: "barrier.read", write: "barrier.write"},
-	"/v1/ceremony":    {read: "ceremony.read", write: "ceremony.write"},
-	"/v1/init":        {read: "ceremony.read", write: "ceremony.write"},
-	"/api/v1/init":    {read: "ceremony.read", write: "ceremony.write"},
+	"/v1/credentials": {read: "credentials:retrieve", write: "credentials:store"},
+	"/v1/barrier":     {read: "tenant_barrier:status", write: "tenant_barrier:init"},
+	"/api/v1/barrier": {read: "tenant_barrier:status", write: "tenant_barrier:init"},
+	"/v1/ceremony":    {read: "ceremony:status", write: "ceremony:initialize"},
+	"/v1/init":        {read: "ceremony:status", write: "ceremony:initialize"},
+	"/api/v1/init":    {read: "ceremony:status", write: "ceremony:initialize"},
 }
 
-// requiredScopeForRequest returns the "<svc>.<verb>" scope required for the given
-// path + HTTP method, or "" when the path is not in the scope table (a valid
-// token is required but no specific capability). It performs longest-prefix
-// matching so the most specific rule applies to nested paths.
+// requiredScopeForRequest returns the qrdb-canonical "resource:action" scope
+// required for the given path + HTTP method, or "" when the path is not in the
+// scope table (a valid token is required but no specific capability). It
+// performs longest-prefix matching so the most specific rule applies to nested
+// paths.
 func requiredScopeForRequest(path, method string) string {
 	path = strings.TrimSuffix(path, "/")
 

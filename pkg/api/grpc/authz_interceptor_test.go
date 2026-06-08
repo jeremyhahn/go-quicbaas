@@ -77,6 +77,25 @@ func TestGRPCResourceAndAction_Mapped(t *testing.T) {
 		{"/quicbaas.kms.v1.Crypto/Sign", "keys", "sign"},
 		{"/quicbaas.barrier.v1.Barrier/BarrierStatus", "tenant_barrier", "status"},
 		{"/quicbaas.vector.v1.VectorDB/SearchSimilar", "vector", "search_similar"},
+		// Stage 0.5 broker data-plane surfaces.
+		{"/quicbaas.objectstorage.v1.ObjectStorageService/PutObject", "objstore", "put"},
+		{"/quicbaas.objectstorage.v1.ObjectStorageService/ListObjects", "objstore", "list"},
+		{"/quicbaas.objectstorage.v1.ObjectStorageAdmin/RunGarbageCollection", "objstore", "admin"},
+		{"/quicbaas.v1.ObjectTransferService/FetchObject", "objstore", "get"},
+		{"/quicbaas.orchestrator.v1.OrchestratorService/SpawnSession", "orchestrator", "spawn"},
+		{"/quicbaas.orchestrator.v1.OrchestratorService/ClaimTask", "orchestrator", "task_claim"},
+		{"/quicbaas.messaging.v1.MessagingService/Publish", "messaging", "publish"},
+		{"/quicbaas.messaging.v1.MessagingService/CreateChannel", "messaging", "channel_create"},
+		{"/quicbaas.scheduler.v1.SchedulerService/CreateJob", "scheduler", "create"},
+		{"/quicbaas.scheduler.v1.SchedulerService/TriggerJob", "scheduler", "trigger"},
+		{"/quicbaas.parameterstore.v1.ParameterStore/GetParameter", "parameters", "read"},
+		{"/quicbaas.parameterstore.v1.ParameterStore/SearchByTags", "parameters", "search"},
+		{"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/GenerateCredential", "dynamic_secrets", "generate"},
+		{"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/CreateRole", "dynamic_secrets", "role_create"},
+		{"/quicbaas.project.v1.ProjectService/CreateProject", "project", "create"},
+		{"/quicbaas.project.v1.ProjectService/GetProjectByName", "project", "read"},
+		{"/quicbaas.ollama.v1.OllamaService/Embed", "ollama", "embed"},
+		{"/quicbaas.ollama.v1.OllamaService/GetModelInfo", "ollama", "model_info"},
 	}
 	for _, c := range cases {
 		res, act, ok := grpcResourceAndAction(c.method)
@@ -88,11 +107,11 @@ func TestGRPCResourceAndAction_Mapped(t *testing.T) {
 
 func TestGRPCResourceAndAction_Unmapped(t *testing.T) {
 	// Surfaces with no qrdb permission family must be unmapped (default-deny).
+	// embedding, agent runtime, and RAG remain unregistered after Stage 0.5.
 	for _, m := range []string{
-		"/quicbaas.orchestrator.v1.OrchestratorService/Spawn",
-		"/quicbaas.objectstorage.v1.ObjectStorageService/PutObject",
-		"/quicbaas.messaging.v1.MessagingService/Publish",
-		"/quicbaas.scheduler.v1.SchedulerService/CreateJob",
+		"/quicbaas.embedding.v1.EmbeddingService/Generate",
+		"/quicbaas.agent.v1.AgentRuntime/DoThing",
+		"/quicbaas.rag.v1.RAGService/Query",
 		"/quicbaas.unknown.v1.Mystery/DoThing",
 	} {
 		_, _, ok := grpcResourceAndAction(m)

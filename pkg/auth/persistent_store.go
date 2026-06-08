@@ -28,13 +28,12 @@ import (
 
 // PersistentUserStore provides database-backed user storage with in-memory caching.
 type PersistentUserStore struct {
-	storage     interfaces.Storage
-	logger      *logger.Logger
-	keyBuilder  *KeyBuilder
-	cache       map[string]*User  // userID -> User (for fast lookup)
-	nameIndex   map[string]string // username -> userID
-	roleManager *RoleManager      // for validating roles
-	mu          sync.RWMutex
+	storage    interfaces.Storage
+	logger     *logger.Logger
+	keyBuilder *KeyBuilder
+	cache      map[string]*User  // userID -> User (for fast lookup)
+	nameIndex  map[string]string // username -> userID
+	mu         sync.RWMutex
 }
 
 // NewPersistentUserStore creates a new persistent user store.
@@ -62,13 +61,6 @@ func NewPersistentUserStore(storage interfaces.Storage, logger *logger.Logger) (
 
 	logger.Infof("Persistent user store initialized with %d users", len(ps.cache))
 	return ps, nil
-}
-
-// SetRoleManager sets the role manager for role validation.
-func (ps *PersistentUserStore) SetRoleManager(rm *RoleManager) {
-	ps.mu.Lock()
-	defer ps.mu.Unlock()
-	ps.roleManager = rm
 }
 
 // AddUser adds a user to persistent storage.
@@ -311,14 +303,6 @@ func (ps *PersistentUserStore) AssignRole(userID, roleName string) error {
 	user, exists := ps.cache[userID]
 	if !exists {
 		return api.NewNotFoundError("user", userID)
-	}
-
-	// Check if role exists in RoleManager
-	if ps.roleManager != nil {
-		role := ps.roleManager.GetRole(roleName)
-		if role == nil {
-			return api.NewNotFoundError("role", roleName)
-		}
 	}
 
 	// Check if user already has the role

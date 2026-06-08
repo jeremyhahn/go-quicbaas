@@ -131,7 +131,7 @@ func TestQRDBAuthorize_UnmappedPathDenied(t *testing.T) {
 	mw := newQRDBMiddleware(validator, authorizer)
 
 	handler := &testHandler{}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/spawn", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/embedding/generate", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	rr := httptest.NewRecorder()
 
@@ -175,8 +175,8 @@ func TestQRDBAuthorize_PublicEndpointBypass(t *testing.T) {
 // TestUnmappedResourceError_Message asserts the typed error names the offending
 // path.
 func TestUnmappedResourceError_Message(t *testing.T) {
-	err := &UnmappedResourceError{Path: "/api/v1/orchestrator/spawn"}
-	if got := err.Error(); got != "no qrdb permission mapping for path: /api/v1/orchestrator/spawn" {
+	err := &UnmappedResourceError{Path: "/api/v1/embedding/generate"}
+	if got := err.Error(); got != "no qrdb permission mapping for path: /api/v1/embedding/generate" {
 		t.Errorf("Error() = %q", got)
 	}
 }

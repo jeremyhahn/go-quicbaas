@@ -26,10 +26,16 @@ import "strings"
 //
 // A tool that has no entry is reported unmapped (ok=false): under RequireAuthz
 // the MCP authz gate is default-deny, so an unmapped protected tool is denied
-// rather than admitted. quicbaas-specific surfaces that the qrdb permission
-// registry does NOT define a resource family for — KMS, crypto, orchestrator,
-// project, agent, object storage, parameter store, embedding, ollama, RAG,
-// dynamic secrets — are intentionally absent and denied under RequireAuthz.
+// rather than admitted.
+//
+// Stage 0.5 maps the broker-only data-plane surfaces that qrdb now registers a
+// permission family for (go-qrdb/pkg/permission/broker_dataplane_scope.go):
+// object storage (objstore), orchestrator, scheduler, parameters,
+// dynamic_secrets, project, ollama.
+//
+// Surfaces the qrdb permission registry still does NOT define a resource family
+// for — KMS, crypto, agent, embedding, RAG — remain intentionally absent and
+// denied under RequireAuthz.
 
 // qrdbToolResource is a qrdb-canonical (resource, action) tuple.
 type qrdbToolResource struct {
@@ -106,6 +112,117 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 
 	// Auth (logout)
 	"quicbaas_logout": {"user_authfactors", "login"},
+
+	// ---- Stage 0.5: broker data-plane surfaces (qrdb-registered) ----
+
+	// Object storage -> objstore
+	"quicbaas_object_put":                   {"objstore", "put"},
+	"quicbaas_object_get":                   {"objstore", "get"},
+	"quicbaas_object_delete":                {"objstore", "delete"},
+	"quicbaas_object_list":                  {"objstore", "list"},
+	"quicbaas_object_list_by_tag":           {"objstore", "list"},
+	"quicbaas_object_list_by_tenant":        {"objstore", "list"},
+	"quicbaas_object_head":                  {"objstore", "head"},
+	"quicbaas_object_copy":                  {"objstore", "copy"},
+	"quicbaas_object_archive":               {"objstore", "archive"},
+	"quicbaas_object_restore":               {"objstore", "restore"},
+	"quicbaas_object_verify":                {"objstore", "verify"},
+	"quicbaas_object_replicate":             {"objstore", "replicate"},
+	"quicbaas_object_migrate":               {"objstore", "migrate"},
+	"quicbaas_object_batch_put":             {"objstore", "batch"},
+	"quicbaas_object_batch_get":             {"objstore", "batch"},
+	"quicbaas_object_batch_delete":          {"objstore", "batch"},
+	"quicbaas_object_get_policy":            {"objstore", "read_policy"},
+	"quicbaas_object_set_policy":            {"objstore", "write_policy"},
+	"quicbaas_object_list_backends":         {"objstore", "read_backend"},
+	"quicbaas_object_backend_health":        {"objstore", "read_backend"},
+	"quicbaas_object_tenant_usage":          {"objstore", "tenant_usage"},
+	"quicbaas_object_tenant_quotas":         {"objstore", "tenant_quota_read"},
+	"quicbaas_object_set_tenant_quotas":     {"objstore", "tenant_quota_write"},
+	"quicbaas_object_transfer_fetch":        {"objstore", "get"},
+	"quicbaas_object_transfer_stream_fetch": {"objstore", "get"},
+
+	// Object storage admin -> objstore
+	"quicbaas_object_admin_create_backend":     {"objstore", "admin"},
+	"quicbaas_object_admin_update_backend":     {"objstore", "admin"},
+	"quicbaas_object_admin_delete_backend":     {"objstore", "admin"},
+	"quicbaas_object_admin_set_backend_status": {"objstore", "admin"},
+	"quicbaas_object_admin_get_storage_stats":  {"objstore", "read_stats"},
+	"quicbaas_object_admin_run_gc":             {"objstore", "admin"},
+	"quicbaas_object_admin_get_gc_progress":    {"objstore", "admin"},
+	"quicbaas_object_admin_repair_object":      {"objstore", "admin"},
+	"quicbaas_object_admin_compact_backend":    {"objstore", "admin"},
+
+	// Orchestrator -> orchestrator
+	"quicbaas_orchestrator_spawn":          {"orchestrator", "spawn"},
+	"quicbaas_orchestrator_prompt":         {"orchestrator", "prompt"},
+	"quicbaas_orchestrator_status":         {"orchestrator", "status"},
+	"quicbaas_orchestrator_close":          {"orchestrator", "close"},
+	"quicbaas_orchestrator_list":           {"orchestrator", "list"},
+	"quicbaas_orchestrator_list_sessions":  {"orchestrator", "list"},
+	"quicbaas_orchestrator_task_create":    {"orchestrator", "task_create"},
+	"quicbaas_orchestrator_decompose":      {"orchestrator", "task_decompose"},
+	"quicbaas_orchestrator_start_job":      {"orchestrator", "job_start"},
+	"quicbaas_orchestrator_get_job_status": {"orchestrator", "job_read"},
+	"quicbaas_orchestrator_list_jobs":      {"orchestrator", "job_list"},
+	"quicbaas_orchestrator_cancel_job":     {"orchestrator", "job_cancel"},
+	"quicbaas_orchestrator_list_backends":  {"orchestrator", "backend_list"},
+	"quicbaas_orchestrator_discover":       {"orchestrator", "discover"},
+	"quicbaas_orchestrator_health":         {"orchestrator", "health"},
+	"quicbaas_orchestrator_inference":      {"orchestrator", "inference"},
+	"quicbaas_orchestrator_register":       {"orchestrator", "agent_register"},
+	"quicbaas_orchestrator_cache_get":      {"orchestrator", "cache_read"},
+	"quicbaas_orchestrator_cache_put":      {"orchestrator", "cache_write"},
+	"quicbaas_orchestrator_broadcast":      {"orchestrator", "broadcast"},
+
+	// Scheduler -> scheduler
+	"quicbaas_scheduler_create_job":  {"scheduler", "create"},
+	"quicbaas_scheduler_get_job":     {"scheduler", "read"},
+	"quicbaas_scheduler_list_jobs":   {"scheduler", "list"},
+	"quicbaas_scheduler_update_job":  {"scheduler", "update"},
+	"quicbaas_scheduler_delete_job":  {"scheduler", "delete"},
+	"quicbaas_scheduler_trigger_job": {"scheduler", "trigger"},
+	"quicbaas_scheduler_pause_job":   {"scheduler", "pause"},
+	"quicbaas_scheduler_resume_job":  {"scheduler", "resume"},
+	"quicbaas_scheduler_cancel_job":  {"scheduler", "cancel"},
+	"quicbaas_scheduler_job_history": {"scheduler", "history"},
+	"quicbaas_scheduler_status":      {"scheduler", "status"},
+
+	// Parameter store -> parameters
+	"quicbaas_parameter_get":          {"parameters", "read"},
+	"quicbaas_parameter_set":          {"parameters", "write"},
+	"quicbaas_parameter_delete":       {"parameters", "delete"},
+	"quicbaas_parameter_list":         {"parameters", "list"},
+	"quicbaas_parameter_batch_get":    {"parameters", "read"},
+	"quicbaas_parameter_batch_set":    {"parameters", "write"},
+	"quicbaas_parameter_batch_delete": {"parameters", "delete"},
+	"quicbaas_parameter_search":       {"parameters", "search"},
+
+	// Dynamic secrets -> dynamic_secrets
+	"quicbaas_dynamic_secrets_create_role":  {"dynamic_secrets", "role_create"},
+	"quicbaas_dynamic_secrets_get_role":     {"dynamic_secrets", "role_read"},
+	"quicbaas_dynamic_secrets_list_roles":   {"dynamic_secrets", "role_list"},
+	"quicbaas_dynamic_secrets_delete_role":  {"dynamic_secrets", "role_delete"},
+	"quicbaas_dynamic_secrets_generate":     {"dynamic_secrets", "generate"},
+	"quicbaas_dynamic_secrets_renew_lease":  {"dynamic_secrets", "lease_renew"},
+	"quicbaas_dynamic_secrets_revoke_lease": {"dynamic_secrets", "lease_revoke"},
+	"quicbaas_dynamic_secrets_list_leases":  {"dynamic_secrets", "lease_list"},
+
+	// Project -> project (tools are registered without a quicbaas_ prefix)
+	"project_create":       {"project", "create"},
+	"project_get":          {"project", "read"},
+	"project_list":         {"project", "list"},
+	"project_update":       {"project", "update"},
+	"project_delete":       {"project", "delete"},
+	"project_grant_agent":  {"project", "grant"},
+	"project_revoke_agent": {"project", "revoke"},
+
+	// Ollama -> ollama
+	"quicbaas_ollama_health":      {"ollama", "health"},
+	"quicbaas_ollama_model_list":  {"ollama", "model_list"},
+	"quicbaas_ollama_model_info":  {"ollama", "model_info"},
+	"quicbaas_ollama_embed":       {"ollama", "embed"},
+	"quicbaas_ollama_embed_batch": {"ollama", "embed"},
 }
 
 // qrdbToolPrefixMapping maps prefix-based tool groups to qrdb permissions. It is
@@ -168,16 +285,30 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 
 // getToolQRDBPermission returns the qrdb-canonical (resource, action) for the
 // tool and whether a mapping exists. Exact match is preferred over prefix match.
-// An unmapped tool has ok=false: the default-deny authz gate denies it under
-// RequireAuthz.
+// Among prefix matches the LONGEST matching prefix wins, so a specific tool
+// (e.g. "qrdb_credential_list") resolves to its own entry rather than a shorter
+// surface prefix (e.g. "qrdb_credential"). Map iteration order is otherwise
+// non-deterministic, so longest-prefix selection is required for a stable
+// decision. An unmapped tool has ok=false: the default-deny authz gate denies
+// it under RequireAuthz.
 func getToolQRDBPermission(toolName string) (resource, action string, ok bool) {
 	if m, found := qrdbToolExactMapping[toolName]; found {
 		return m.resource, m.action, true
 	}
+	var (
+		bestLen = -1
+		best    qrdbToolResource
+		found   bool
+	)
 	for prefix, m := range qrdbToolPrefixMapping {
-		if strings.HasPrefix(toolName, prefix) {
-			return m.resource, m.action, true
+		if strings.HasPrefix(toolName, prefix) && len(prefix) > bestLen {
+			bestLen = len(prefix)
+			best = m
+			found = true
 		}
+	}
+	if found {
+		return best.resource, best.action, true
 	}
 	return "", "", false
 }

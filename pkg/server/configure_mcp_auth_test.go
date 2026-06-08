@@ -21,6 +21,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
@@ -29,6 +30,22 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+// stubAuthManager is a minimal interfaces.AuthManager used to drive the
+// configureMCPAuth wiring branch. It does not perform real authorization.
+type stubAuthManager struct{}
+
+func (stubAuthManager) IssueTokenForUser(context.Context, interfaces.UserInfo) (interface{}, error) {
+	return nil, nil
+}
+func (stubAuthManager) Authorize(context.Context, string, string, string) error   { return nil }
+func (stubAuthManager) RefreshToken(context.Context, string) (interface{}, error) { return nil, nil }
+func (stubAuthManager) RevokeToken(context.Context, string) error                 { return nil }
+func (stubAuthManager) ValidateToken(context.Context, string) (interface{}, error) {
+	return nil, nil
+}
+func (stubAuthManager) CreateUser(string, []string) (interface{}, error) { return nil, nil }
+func (stubAuthManager) GetUserStore() interfaces.UserStore               { return nil }
 
 // authManagerGetterService embeds service.QuicBaaS (nil) so it satisfies the
 // quicBaaSService interface, and implements the internalAuthManagerGetter shape
@@ -46,7 +63,7 @@ func (s *authManagerGetterService) GetInternalAuthManager() interfaces.AuthManag
 // TestConfigureMCPAuth_WiresAuthManager drives the non-nil auth-manager branch
 // of configureMCPAuth.
 func TestConfigureMCPAuth_WiresAuthManager(t *testing.T) {
-	authMgr := &interfacesAuthManagerAdapter{manager: createTestAuthManager(t)}
+	authMgr := stubAuthManager{}
 	srv := &Server{
 		logger:          buildTestLogger(t),
 		quicBaaSService: &authManagerGetterService{mgr: authMgr},

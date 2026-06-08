@@ -30,9 +30,9 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/authzfake"
 )
 
 // testRESTContext provides infrastructure for REST authorization tests.
@@ -47,7 +47,7 @@ type testRESTContext struct {
 }
 
 // newTestRESTContext creates a new test context for REST authorization tests.
-func newTestRESTContext(t *testing.T) *testRESTContext {
+func newTestRESTContext(t *testing.T, allowed ...string) *testRESTContext {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 	log, err := logger.New(logger.LogConfig{
@@ -68,13 +68,7 @@ func newTestRESTContext(t *testing.T) *testRESTContext {
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
 
-	roleManager := authManager.GetRoleManager()
-
-	rbacProvider, err := providers.NewRBACProvider(roleManager, log)
-	require.NoError(t, err)
-
-	authzService, err := auth.NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	authzService := authzfake.New(allowed...)
 
 	// Create middleware with mock token validator using the auth manager
 	authzMiddleware := rest.NewAuthzMiddleware(&rest.AuthzMiddlewareConfig{
@@ -113,8 +107,8 @@ func (tc *testRESTContext) Close() {
 }
 
 // createTestUser creates a user and returns the token.
-func (tc *testRESTContext) createTestUser(username, password string, roles []string) (string, error) {
-	_, err := tc.authManager.CreateUser(username, password, roles)
+func (tc *testRESTContext) createTestUser(username string, roles []string) (string, error) {
+	_, err := tc.authManager.CreateUser(username, roles)
 	if err != nil {
 		return "", err
 	}
@@ -138,7 +132,7 @@ func mockHandler() http.Handler {
 
 // TestRESTPublicEndpointsNoAuth tests that public endpoints bypass authorization.
 func TestRESTPublicEndpointsNoAuth(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "*:*")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
@@ -167,7 +161,7 @@ func TestRESTPublicEndpointsNoAuth(t *testing.T) {
 
 // TestRESTProtectedEndpointsRequireToken tests that protected endpoints require a valid JWT.
 func TestRESTProtectedEndpointsRequireToken(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "*:*")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
@@ -203,7 +197,7 @@ func TestRESTProtectedEndpointsRequireToken(t *testing.T) {
 
 // TestREST401ForMissingToken tests 401 Unauthorized for missing token.
 func TestREST401ForMissingToken(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "*:*")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
@@ -221,7 +215,7 @@ func TestREST401ForMissingToken(t *testing.T) {
 
 // TestREST401ForInvalidToken tests 401 Unauthorized for invalid token.
 func TestREST401ForInvalidToken(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "*:*")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
@@ -259,12 +253,7 @@ func TestREST401ForExpiredToken(t *testing.T) {
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
 
-	roleManager := authManager.GetRoleManager()
-	rbacProvider, err := providers.NewRBACProvider(roleManager, log)
-	require.NoError(t, err)
-
-	authzService, err := auth.NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	authzService := authzfake.New("*:*")
 	defer authzService.Close()
 
 	authzMiddleware := rest.NewAuthzMiddleware(&rest.AuthzMiddlewareConfig{
@@ -276,7 +265,7 @@ func TestREST401ForExpiredToken(t *testing.T) {
 	handler := authzMiddleware.Authorize(mockHandler())
 
 	// Create user and get token
-	_, err = authManager.CreateUser("expire-test", "password", []string{auth.RoleNameAdmin})
+	_, err = authManager.CreateUser("expire-test", []string{"admin"})
 	require.NoError(t, err)
 
 	userInfo := authManager.GetUserStore().GetByUsername("expire-test")
@@ -297,13 +286,13 @@ func TestREST401ForExpiredToken(t *testing.T) {
 
 // TestREST403ForInsufficientPermissions tests 403 Forbidden for insufficient permissions.
 func TestREST403ForInsufficientPermissions(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "keys:read")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
 
 	// Create readonly user
-	token, err := tc.createTestUser("readonly-rest", "password", []string{auth.RoleNameReadOnly})
+	token, err := tc.createTestUser("readonly-rest", []string{"readonly"})
 	require.NoError(t, err)
 
 	// Readonly user trying to POST (write action)
@@ -319,12 +308,12 @@ func TestREST403ForInsufficientPermissions(t *testing.T) {
 
 // TestRESTAdminRoleAccess tests that admin role has full access.
 func TestRESTAdminRoleAccess(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "*:*")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
 
-	token, err := tc.createTestUser("admin-rest", "password", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("admin-rest", []string{"admin"})
 	require.NoError(t, err)
 
 	endpoints := []struct {
@@ -355,12 +344,12 @@ func TestRESTAdminRoleAccess(t *testing.T) {
 
 // TestRESTReadWriteRoleAccess tests readwrite role permissions.
 func TestRESTReadWriteRoleAccess(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "keys:read", "keys:write", "keys:delete")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
 
-	token, err := tc.createTestUser("readwrite-rest", "password", []string{auth.RoleNameReadWrite})
+	token, err := tc.createTestUser("readwrite-rest", []string{"readwrite"})
 	require.NoError(t, err)
 
 	t.Run("can_read_keys", func(t *testing.T) {
@@ -403,12 +392,12 @@ func TestRESTReadWriteRoleAccess(t *testing.T) {
 
 // TestRESTReadOnlyRoleAccess tests readonly role permissions.
 func TestRESTReadOnlyRoleAccess(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "keys:read")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
 
-	token, err := tc.createTestUser("readonly-rest-2", "password", []string{auth.RoleNameReadOnly})
+	token, err := tc.createTestUser("readonly-rest-2", []string{"readonly"})
 	require.NoError(t, err)
 
 	t.Run("can_read_keys", func(t *testing.T) {
@@ -441,13 +430,13 @@ func TestRESTReadOnlyRoleAccess(t *testing.T) {
 
 // TestRESTResourceActionMapping tests HTTP method to action mapping.
 func TestRESTResourceActionMapping(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "keys:read")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
 
 	// Create a user with only read permission
-	_, err := tc.authManager.CreateUser("mapping-test", "password", []string{auth.RoleNameReadOnly})
+	_, err := tc.authManager.CreateUser("mapping-test", []string{"readonly"})
 	require.NoError(t, err)
 	userInfo := tc.authManager.GetUserStore().GetByUsername("mapping-test")
 	token, err := tc.authManager.IssueTokenForUser(tc.ctx, userInfo)
@@ -481,13 +470,13 @@ func TestRESTResourceActionMapping(t *testing.T) {
 
 // TestRESTResourceExtraction tests resource extraction from URL paths.
 func TestRESTResourceExtraction(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "*:*")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
 
 	// Create admin to verify access patterns
-	token, err := tc.createTestUser("resource-test", "password", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("resource-test", []string{"admin"})
 	require.NoError(t, err)
 
 	resourcePaths := []struct {
@@ -523,12 +512,12 @@ func TestRESTResourceExtraction(t *testing.T) {
 
 // TestRESTRevokedTokenRejected tests that revoked tokens are rejected.
 func TestRESTRevokedTokenRejected(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "keys:read")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
 
-	token, err := tc.createTestUser("revoke-test", "password", []string{auth.RoleNameAdmin})
+	token, err := tc.createTestUser("revoke-test", []string{"admin"})
 	require.NoError(t, err)
 
 	// Verify token works initially
@@ -552,7 +541,7 @@ func TestRESTRevokedTokenRejected(t *testing.T) {
 
 // TestRESTMalformedAuthorizationHeader tests handling of malformed Authorization headers.
 func TestRESTMalformedAuthorizationHeader(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "*:*")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
@@ -586,27 +575,14 @@ func TestRESTMalformedAuthorizationHeader(t *testing.T) {
 
 // TestRESTCustomRoleAuthorization tests authorization with custom roles.
 func TestRESTCustomRoleAuthorization(t *testing.T) {
-	tc := newTestRESTContext(t)
+	tc := newTestRESTContext(t, "secrets:read")
 	defer tc.Close()
 
 	handler := tc.authzMiddleware.Authorize(mockHandler())
 
-	// Create custom secrets-only role
-	roleManager := tc.authManager.GetRoleManager()
-	secretsRole := &auth.Role{
-		Name:        "secrets-reader",
-		Description: "Can only read secrets",
-		Permissions: []*auth.Permission{
-			{
-				Resource: interfaces.ResourceSecrets,
-				Actions:  []string{interfaces.ActionRead},
-			},
-		},
-	}
-	err := roleManager.AddRole(secretsRole)
-	require.NoError(t, err)
-
-	token, err := tc.createTestUser("secrets-only", "password", []string{"secrets-reader"})
+	// The server's authzfake allow-list grants secrets:read only, modelling a
+	// narrow custom "secrets-reader" role.
+	token, err := tc.createTestUser("secrets-only", []string{"secrets-reader"})
 	require.NoError(t, err)
 
 	t.Run("can_read_secrets", func(t *testing.T) {

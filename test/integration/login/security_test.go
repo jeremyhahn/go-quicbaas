@@ -47,7 +47,7 @@ func TestUnifiedLogin_PasswordLoginUnsupported(t *testing.T) {
 			require.NoError(t, cerr, "[%s] build login client", tr)
 			defer c.Close()
 
-			_, lerr := c.Auth().Login(ctx, &service.ExtendedLoginRequest{
+			_, lerr := c.Security().Auth().Login(ctx, &service.ExtendedLoginRequest{
 				Username: adminSubject,
 				TenantID: systemTenantID,
 			})

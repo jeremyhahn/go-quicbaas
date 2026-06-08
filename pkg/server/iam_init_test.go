@@ -172,34 +172,6 @@ func TestIAMComponents_GettersReturnNil(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// iamComponents.GetAuthManager with non-nil value
-// ---------------------------------------------------------------------------
-
-func TestIAMComponents_GetAuthManager_NonNil(t *testing.T) {
-	t.Run("returns non-nil when set", func(t *testing.T) {
-		adapter := &inMemoryAuthManagerAdapter{manager: nil}
-		c := &iamComponents{
-			authManager: adapter,
-		}
-		assert.NotNil(t, c.GetAuthManager())
-	})
-}
-
-func TestIAMComponents_GetInternalAuthManager_NonNil(t *testing.T) {
-	t.Run("returns non-nil adapter when auth manager set", func(t *testing.T) {
-		adapter := &inMemoryAuthManagerAdapter{manager: nil}
-		c := &iamComponents{
-			authManager: adapter,
-		}
-		// GetInternalAuthManager creates an interfacesAuthManagerAdapter
-		// but requires a non-nil manager field. Since we pass nil, this
-		// will work but the adapter wraps nil.
-		result := c.GetInternalAuthManager()
-		assert.NotNil(t, result)
-	})
-}
-
-// ---------------------------------------------------------------------------
 // Phase 11: admin <-> SO certificate SPKI thumbprint binding
 // ---------------------------------------------------------------------------
 

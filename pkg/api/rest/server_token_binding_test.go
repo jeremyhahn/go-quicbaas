@@ -40,9 +40,9 @@ func (bindingValidator) ValidateTokenWithDPoP(ctx context.Context, token, dpopPr
 			// Sender-constrained token presented as a bearer: fail closed.
 			return nil, &platformtoken.NotSenderConstrainedError{}
 		}
-		return &PlatformTokenResult{Subject: "svc", TenantID: "t1", Scopes: []string{"kms.read"}, JKT: "jkt"}, nil
+		return &PlatformTokenResult{Subject: "svc", TenantID: "t1", Scopes: []string{"kv:get"}, JKT: "jkt"}, nil
 	}
-	return &PlatformTokenResult{Subject: "human", TenantID: "t1", Scopes: []string{"kms.read"}}, nil
+	return &PlatformTokenResult{Subject: "human", TenantID: "t1", Scopes: []string{"kv:get"}}, nil
 }
 
 // SetTokenBindingEnforcement installs EnforceTokenBinding on the live router: a

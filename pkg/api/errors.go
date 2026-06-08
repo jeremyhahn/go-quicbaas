@@ -974,6 +974,27 @@ func NewInsufficientPermissionsError(op string) *dberrors.QBError {
 	}
 }
 
+// AuthorizerNotConfiguredError indicates that no authorization decision point
+// has been wired into the auth manager. The manager fails closed (deny) rather
+// than silently allowing, so this surfaces a server-side misconfiguration where
+// RequireAuthz is in effect but the qrdb decision point was never installed.
+type AuthorizerNotConfiguredError struct{}
+
+// Error implements the error interface.
+func (e *AuthorizerNotConfiguredError) Error() string {
+	return "authorization decision point not configured"
+}
+
+// NewAuthorizerNotConfiguredError creates a QBError for a missing authorization
+// decision point. It is fail-closed (ErrForbidden).
+func NewAuthorizerNotConfiguredError(op string) *dberrors.QBError {
+	return &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   op,
+		Err:  &AuthorizerNotConfiguredError{},
+	}
+}
+
 // InvalidTokenError indicates a JWT token is invalid.
 type InvalidTokenError struct {
 	Cause error

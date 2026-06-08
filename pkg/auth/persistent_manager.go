@@ -25,38 +25,25 @@ import (
 
 // PersistentAuthManager manages authentication with database-backed persistence.
 type PersistentAuthManager struct {
-	config      *AuthConfig
-	logger      *logger.Logger
-	storage     interfaces.Storage
-	roleManager RoleManagerInterface
-	tokenStore  TokenStoreInterface
-	userStore   UserStoreInterface
+	config     *AuthConfig
+	logger     *logger.Logger
+	storage    interfaces.Storage
+	tokenStore TokenStoreInterface
+	userStore  UserStoreInterface
 
 	// qrdbAuthz, when set, routes the authorization DECISION through qrdb's
-	// policy decision point instead of the forked roleManager. Wired at server
-	// lifecycle under the iam build tag when RequireAuthz is enabled; nil by
-	// default so existing behavior is preserved.
+	// policy decision point. Wired at server lifecycle under the iam build tag
+	// when RequireAuthz is enabled. When nil the manager fails closed
+	// (Authorize returns AuthorizerNotConfiguredError); it never makes a local
+	// RBAC decision.
 	qrdbAuthz QRDBDecisionPoint
 }
 
 // SetQRDBDecisionPoint installs the qrdb-backed authorization decision point.
-// Passing it routes Authorize through qrdb's PDP; the forked roleManager is
-// retained for role validation and anonymous-access checks but no longer makes
-// the permission decision.
+// Passing it routes Authorize through qrdb's PDP. Without it the manager fails
+// closed.
 func (pam *PersistentAuthManager) SetQRDBDecisionPoint(dp QRDBDecisionPoint) {
 	pam.qrdbAuthz = dp
-}
-
-// RoleManagerInterface abstracts role management for both in-memory and persistent implementations.
-type RoleManagerInterface interface {
-	HasPermission(userRoles []string, resource, action string) bool
-	AllowsAnonymous(resource, action string) bool
-	AddRole(role *Role) error
-	GetRole(name string) *Role
-	ListRoles() []*Role
-	DeleteRole(name string) error
-	UpdateRole(role *Role) error
-	ValidateRoles(roleNames []string) bool
 }
 
 // UserStoreInterface abstracts user storage for both in-memory and persistent implementations.
@@ -121,23 +108,17 @@ func NewPersistentAuthManager(cfg *AuthConfig, storage interfaces.Storage, log *
 		return nil, api.NewOperationFailedError("create persistent user store", err)
 	}
 
-	persistentRoleManager, err := NewPersistentRoleManager(storage, log)
-	if err != nil {
-		return nil, api.NewOperationFailedError("create persistent role manager", err)
-	}
-
 	persistentTokenStore, err := NewPersistentTokenStore(storage, log)
 	if err != nil {
 		return nil, api.NewOperationFailedError("create persistent token store", err)
 	}
 
 	pam := &PersistentAuthManager{
-		config:      cfg,
-		logger:      log,
-		storage:     storage,
-		roleManager: persistentRoleManager,
-		tokenStore:  persistentTokenStore,
-		userStore:   persistentUserStore,
+		config:     cfg,
+		logger:     log,
+		storage:    storage,
+		tokenStore: persistentTokenStore,
+		userStore:  persistentUserStore,
 	}
 
 	log.Info("Persistent authentication manager initialized")
@@ -184,16 +165,21 @@ func (pam *PersistentAuthManager) IssueTokenForUser(ctx context.Context, user in
 }
 
 // Authorize checks if a token has permission to perform an action on a resource.
+//
+// The authorization DECISION belongs to qrdb. When a qrdb decision point has
+// been installed (RequireAuthz under iam), Authorize delegates to it. When no
+// decision point is configured the manager fails closed and returns
+// AuthorizerNotConfiguredError — it never makes a local RBAC decision.
 func (pam *PersistentAuthManager) Authorize(ctx context.Context, token, resource, action string) error {
 	if !pam.config.Enabled {
 		return nil // Authentication disabled, allow all
 	}
 
-	if pam.config.AllowAnonymous && token == "" {
-		// Check if resource allows anonymous access
-		if pam.roleManager.AllowsAnonymous(resource, action) {
-			return nil
-		}
+	// Fail closed: without a qrdb decision point there is no authority to
+	// authorize against. This is a server-side misconfiguration, not a silent
+	// allow and not a fork RBAC decision.
+	if pam.qrdbAuthz == nil {
+		return api.NewAuthorizerNotConfiguredError("auth.Authorize")
 	}
 
 	if token == "" {
@@ -211,26 +197,14 @@ func (pam *PersistentAuthManager) Authorize(ctx context.Context, token, resource
 		return api.NewTokenRevokedError("auth.Authorize")
 	}
 
-	// 3. Check permissions. When the qrdb decision point is installed
-	// (RequireAuthz under iam), delegate to qrdb's PDP; otherwise preserve the
-	// legacy forked roleManager decision so existing deployments and tests are
-	// unaffected.
-	if pam.qrdbAuthz != nil {
-		if err := pam.qrdbAuthz.Authorize(ctx, QRDBSubject{
-			ID:       claims.UserID,
-			TenantID: claims.TenantID,
-			Roles:    claims.Roles,
-		}, resource, action); err != nil {
-			pam.logger.Warnf("Authorization denied (qrdb PDP): user=%s resource=%s action=%s: %v",
-				claims.Username, resource, action, err)
-			return api.NewInsufficientPermissionsError("auth.Authorize")
-		}
-		return nil
-	}
-
-	if !pam.roleManager.HasPermission(claims.Roles, resource, action) {
-		pam.logger.Warnf("Authorization denied: user=%s resource=%s action=%s",
-			claims.Username, resource, action)
+	// 3. Delegate the permission decision to qrdb's policy decision point.
+	if err := pam.qrdbAuthz.Authorize(ctx, QRDBSubject{
+		ID:       claims.UserID,
+		TenantID: claims.TenantID,
+		Roles:    claims.Roles,
+	}, resource, action); err != nil {
+		pam.logger.Warnf("Authorization denied (qrdb PDP): user=%s resource=%s action=%s: %v",
+			claims.Username, resource, action, err)
 		return api.NewInsufficientPermissionsError("auth.Authorize")
 	}
 
@@ -296,11 +270,6 @@ func (pam *PersistentAuthManager) CreateUser(username string, roles []string) (*
 		return nil, api.NewAlreadyExistsError("auth.CreateUser", "user", username)
 	}
 
-	// Validate roles exist
-	if !pam.roleManager.ValidateRoles(roles) {
-		return nil, api.NewRolesNotFoundError("auth.CreateUser")
-	}
-
 	userID, err := generateUserID()
 	if err != nil {
 		return nil, api.NewOperationFailedError("generate user ID", err)
@@ -337,11 +306,6 @@ func (pam *PersistentAuthManager) DeleteUser(userID string) error {
 
 // UpdateUserRoles updates a user's roles.
 func (pam *PersistentAuthManager) UpdateUserRoles(userID string, roles []string) error {
-	// Validate roles exist
-	if !pam.roleManager.ValidateRoles(roles) {
-		return api.NewRolesNotFoundError("auth.UpdateUserRoles")
-	}
-
 	user := pam.userStore.GetByID(userID)
 	if user == nil {
 		return api.NewNotFoundError("user", userID)
@@ -349,11 +313,6 @@ func (pam *PersistentAuthManager) UpdateUserRoles(userID string, roles []string)
 
 	user.Roles = roles
 	return pam.userStore.UpdateUser(user)
-}
-
-// GetRoleManager returns the role manager.
-func (pam *PersistentAuthManager) GetRoleManager() RoleManagerInterface {
-	return pam.roleManager
 }
 
 // GetUserStore returns the user store.

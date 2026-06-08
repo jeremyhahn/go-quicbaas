@@ -17,6 +17,8 @@ package auth
 import (
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -108,7 +110,7 @@ func Bootstrap(authManager *PersistentAuthManager, config *BootstrapConfig) (*Bo
 			}
 		}
 
-		adminUser, err := authManager.CreateUser(config.AdminUsername, []string{RoleNameAdmin})
+		adminUser, err := authManager.CreateUser(config.AdminUsername, []string{qrdbsdk.RoleNameAdmin})
 		if err != nil {
 			return nil, api.NewAdminUserCreateError("auth.Bootstrap", err)
 		}
@@ -131,12 +133,8 @@ func Bootstrap(authManager *PersistentAuthManager, config *BootstrapConfig) (*Bo
 		return nil, api.NewBootstrapMarkerError("auth.Bootstrap", err)
 	}
 
-	// Count roles
-	roleManager := authManager.GetRoleManager()
-	if prm, ok := roleManager.(*PersistentRoleManager); ok {
-		result.RolesCreated = prm.Count()
-	}
-
+	// Built-in roles are seeded and owned by qrdb, not by this composer, so the
+	// bootstrap result reports no locally-created roles.
 	result.Message = "Bootstrap completed successfully"
 	authManager.logger.Info("Authentication system bootstrap completed")
 
@@ -168,10 +166,4 @@ func GetAdminUserID(storage interfaces.Storage) (string, error) {
 	}
 
 	return string(data), nil
-}
-
-// CreateDefaultRoles ensures the default roles exist (called by PersistentRoleManager.initializeBuiltInRoles)
-// This is exposed for manual invocation if needed.
-func CreateDefaultRoles(roleManager *PersistentRoleManager) error {
-	return roleManager.initializeBuiltInRoles()
 }

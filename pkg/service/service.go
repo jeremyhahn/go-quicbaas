@@ -1589,9 +1589,6 @@ type ServiceBuilder interface {
 	// WithCacheManager sets the cache manager
 	WithCacheManager(cacheManager interface{}) ServiceBuilder
 
-	// WithAuthManager sets the authentication manager
-	WithAuthManager(authManager interface{}) ServiceBuilder
-
 	// WithBackupManager sets the backup manager
 	WithBackupManager(backupManager interface{}) ServiceBuilder
 
@@ -1724,11 +1721,6 @@ func (b *serviceBuilder) WithIndexManager(indexManager interface{}) ServiceBuild
 
 func (b *serviceBuilder) WithCacheManager(cacheManager interface{}) ServiceBuilder {
 	b.cacheManager = cacheManager
-	return b
-}
-
-func (b *serviceBuilder) WithAuthManager(authManager interface{}) ServiceBuilder {
-	b.authManager = authManager
 	return b
 }
 

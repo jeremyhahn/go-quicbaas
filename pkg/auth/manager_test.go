@@ -80,146 +80,6 @@ func TestNewInMemoryAuthManager(t *testing.T) {
 	}
 }
 
-func TestAuthorize(t *testing.T) {
-	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  1 * time.Hour,
-	}
-
-	am, err := NewInMemoryAuthManager(config, log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Create users with different roles (password ignored - use IAM for auth)
-	// CreateUser returns *User directly, no type assertion needed
-	adminUser, err := am.CreateUser("admin", []string{RoleNameAdmin})
-	require.NoError(t, err)
-
-	rwUser, err := am.CreateUser("readwrite", []string{RoleNameReadWrite})
-	require.NoError(t, err)
-
-	roUser, err := am.CreateUser("readonly", []string{RoleNameReadOnly})
-	require.NoError(t, err)
-
-	// Generate tokens directly (password auth is disabled)
-	adminToken, err := am.generateTokens(adminUser)
-	require.NoError(t, err)
-
-	rwToken, err := am.generateTokens(rwUser)
-	require.NoError(t, err)
-
-	roToken, err := am.generateTokens(roUser)
-	require.NoError(t, err)
-
-	tests := []struct {
-		name        string
-		token       string
-		resource    string
-		action      string
-		expectError bool
-	}{
-		// Admin tests
-		{
-			name:        "admin can read keys",
-			token:       adminToken.AccessToken,
-			resource:    ResourceKeys,
-			action:      ActionRead,
-			expectError: false,
-		},
-		{
-			name:        "admin can write keys",
-			token:       adminToken.AccessToken,
-			resource:    ResourceKeys,
-			action:      ActionWrite,
-			expectError: false,
-		},
-		{
-			name:        "admin can manage users",
-			token:       adminToken.AccessToken,
-			resource:    ResourceUsers,
-			action:      ActionAdmin,
-			expectError: false,
-		},
-
-		// ReadWrite tests
-		{
-			name:        "readwrite can read keys",
-			token:       rwToken.AccessToken,
-			resource:    ResourceKeys,
-			action:      ActionRead,
-			expectError: false,
-		},
-		{
-			name:        "readwrite can write keys",
-			token:       rwToken.AccessToken,
-			resource:    ResourceKeys,
-			action:      ActionWrite,
-			expectError: false,
-		},
-		{
-			name:        "readwrite cannot manage users",
-			token:       rwToken.AccessToken,
-			resource:    ResourceUsers,
-			action:      ActionAdmin,
-			expectError: true,
-		},
-
-		// ReadOnly tests
-		{
-			name:        "readonly can read keys",
-			token:       roToken.AccessToken,
-			resource:    ResourceKeys,
-			action:      ActionRead,
-			expectError: false,
-		},
-		{
-			name:        "readonly cannot write keys",
-			token:       roToken.AccessToken,
-			resource:    ResourceKeys,
-			action:      ActionWrite,
-			expectError: true,
-		},
-		{
-			name:        "readonly cannot delete keys",
-			token:       roToken.AccessToken,
-			resource:    ResourceKeys,
-			action:      ActionDelete,
-			expectError: true,
-		},
-
-		// Invalid token tests
-		{
-			name:        "invalid token",
-			token:       "invalid-token",
-			resource:    ResourceKeys,
-			action:      ActionRead,
-			expectError: true,
-		},
-		{
-			name:        "empty token",
-			token:       "",
-			resource:    ResourceKeys,
-			action:      ActionRead,
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := am.Authorize(ctx, tt.token, tt.resource, tt.action)
-
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 // TestRefreshToken moved to manager_integration_test.go
 
 func TestRevokeToken(t *testing.T) {
@@ -234,15 +94,19 @@ func TestRevokeToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create user and get token via generateTokens (password auth is disabled)
-	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	token, err := am.generateTokens(user)
 	require.NoError(t, err)
 
+	// Install an allow decision point so a valid token authorizes; the
+	// token-revocation check runs before the decision point.
+	am.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
+
 	// Verify token works before revocation
-	err = am.Authorize(ctx, token.AccessToken, ResourceKeys, ActionRead)
+	err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
 	assert.NoError(t, err)
 
 	// Revoke token
@@ -250,7 +114,7 @@ func TestRevokeToken(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify token no longer works
-	err = am.Authorize(ctx, token.AccessToken, ResourceKeys, ActionRead)
+	err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
 	assert.Error(t, err)
 }
 
@@ -273,31 +137,31 @@ func TestCreateUser(t *testing.T) {
 		{
 			name:        "valid user",
 			username:    "user1",
-			roles:       []string{RoleNameReadWrite},
+			roles:       []string{"readwrite"},
 			expectError: false,
 		},
 		{
 			name:        "empty username",
 			username:    "",
-			roles:       []string{RoleNameReadWrite},
+			roles:       []string{"readwrite"},
 			expectError: true,
 		},
 		{
 			name:        "empty password allowed",
 			username:    "user2",
-			roles:       []string{RoleNameReadWrite},
+			roles:       []string{"readwrite"},
 			expectError: false,
 		},
 		{
 			name:        "duplicate username",
 			username:    "user1",
-			roles:       []string{RoleNameReadOnly},
+			roles:       []string{"readonly"},
 			expectError: true,
 		},
 		{
 			name:        "multiple roles",
 			username:    "user3",
-			roles:       []string{RoleNameReadWrite, RoleNameReadOnly},
+			roles:       []string{"readwrite", "readonly"},
 			expectError: false,
 		},
 	}
@@ -335,13 +199,13 @@ func TestCreateUserWithTenant(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("user with tenant ID", func(t *testing.T) {
-		user, err := am.CreateUserWithTenant("tenant_user", "tenant-abc", []string{RoleNameReadWrite})
+		user, err := am.CreateUserWithTenant("tenant_user", "tenant-abc", []string{"readwrite"})
 		require.NoError(t, err)
 		require.NotNil(t, user)
 
 		assert.Equal(t, "tenant_user", user.Username)
 		assert.Equal(t, "tenant-abc", user.TenantID)
-		assert.Equal(t, []string{RoleNameReadWrite}, user.Roles)
+		assert.Equal(t, []string{"readwrite"}, user.Roles)
 	})
 
 	t.Run("token includes tenant ID", func(t *testing.T) {
@@ -365,7 +229,7 @@ func TestCreateUserWithTenant(t *testing.T) {
 	})
 
 	t.Run("user without tenant ID", func(t *testing.T) {
-		user, err := am.CreateUserWithTenant("no_tenant_user", "", []string{RoleNameReadWrite})
+		user, err := am.CreateUserWithTenant("no_tenant_user", "", []string{"readwrite"})
 		require.NoError(t, err)
 		require.NotNil(t, user)
 
@@ -393,7 +257,7 @@ func TestCreateUserWithTenant(t *testing.T) {
 
 	t.Run("CreateUser delegates to CreateUserWithTenant with empty tenant", func(t *testing.T) {
 		// CreateUser should create a user with no tenant ID
-		user, err := am.CreateUser("legacy_user", []string{RoleNameReadOnly})
+		user, err := am.CreateUser("legacy_user", []string{"readonly"})
 		require.NoError(t, err)
 		require.NotNil(t, user)
 
@@ -403,32 +267,6 @@ func TestCreateUserWithTenant(t *testing.T) {
 }
 
 // TestTokenValidation moved to manager_integration_test.go
-
-func TestAnonymousAccess(t *testing.T) {
-	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:        true,
-		JWTSecret:      "test-secret-key",
-		AllowAnonymous: true,
-	}
-
-	am, err := NewInMemoryAuthManager(config, log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Anonymous access to health should be allowed
-	err = am.Authorize(ctx, "", ResourceHealth, ActionRead)
-	assert.NoError(t, err)
-
-	// Anonymous access to metrics should be allowed
-	err = am.Authorize(ctx, "", ResourceMetrics, ActionRead)
-	assert.NoError(t, err)
-
-	// Anonymous access to keys should be denied
-	err = am.Authorize(ctx, "", ResourceKeys, ActionRead)
-	assert.Error(t, err)
-}
 
 // TestIssueTokenForUser tests token issuance for users authenticated via
 // external providers (mTLS certificates, FIDO2/WebAuthn).
@@ -443,11 +281,14 @@ func TestIssueTokenForUser(t *testing.T) {
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
 
+	// Install an allow decision point so issued tokens authorize.
+	am.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
+
 	ctx := context.Background()
 
 	t.Run("issue token for existing user", func(t *testing.T) {
 		// Create a user (simulating user registered via bootstrap)
-		user, err := am.CreateUser("certuser", []string{RoleNameReadWrite})
+		user, err := am.CreateUser("certuser", []string{"readwrite"})
 		require.NoError(t, err)
 		require.NotNil(t, user)
 
@@ -460,13 +301,13 @@ func TestIssueTokenForUser(t *testing.T) {
 		assert.NotEmpty(t, token.RefreshToken)
 
 		// Verify the token works for authorization
-		err = am.Authorize(ctx, token.AccessToken, ResourceKeys, ActionRead)
+		err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
 		assert.NoError(t, err)
 	})
 
 	t.Run("issue token with user lookup by username", func(t *testing.T) {
 		// Create a user
-		_, err := am.CreateUser("lookupuser", []string{RoleNameAdmin})
+		_, err := am.CreateUser("lookupuser", []string{"admin"})
 		require.NoError(t, err)
 
 		// Create a minimal UserInfo implementation for lookup
@@ -480,7 +321,7 @@ func TestIssueTokenForUser(t *testing.T) {
 		assert.NotEmpty(t, token.AccessToken)
 
 		// Verify admin permissions
-		err = am.Authorize(ctx, token.AccessToken, ResourceUsers, ActionAdmin)
+		err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceUsers, interfaces.ActionAdmin)
 		assert.NoError(t, err)
 	})
 
@@ -508,7 +349,7 @@ func TestIssueTokenForUser(t *testing.T) {
 		disabledAM, err := NewInMemoryAuthManager(disabledConfig, log)
 		require.NoError(t, err)
 
-		user, err := disabledAM.CreateUser("disableduser", []string{RoleNameReadWrite})
+		user, err := disabledAM.CreateUser("disableduser", []string{"readwrite"})
 		require.NoError(t, err)
 
 		token, err := disabledAM.IssueTokenForUser(ctx, user)
@@ -621,26 +462,26 @@ func TestInMemoryCreateUserWithTenant(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("create with tenant ID", func(t *testing.T) {
-		user, err := am.CreateUserWithTenant("tenantuser", "tenant-abc", []string{RoleNameReadOnly})
+		user, err := am.CreateUserWithTenant("tenantuser", "tenant-abc", []string{"readonly"})
 		require.NoError(t, err)
 		assert.Equal(t, "tenant-abc", user.TenantID)
 		assert.Equal(t, "tenantuser", user.Username)
 	})
 
 	t.Run("create without tenant ID", func(t *testing.T) {
-		user, err := am.CreateUserWithTenant("singletenantuser", "", []string{RoleNameReadOnly})
+		user, err := am.CreateUserWithTenant("singletenantuser", "", []string{"readonly"})
 		require.NoError(t, err)
 		assert.Empty(t, user.TenantID)
 	})
 
 	t.Run("empty username", func(t *testing.T) {
-		_, err := am.CreateUserWithTenant("", "", []string{RoleNameReadOnly})
+		_, err := am.CreateUserWithTenant("", "", []string{"readonly"})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "username is required")
 	})
 
 	t.Run("duplicate user", func(t *testing.T) {
-		_, err := am.CreateUserWithTenant("tenantuser", "", []string{RoleNameReadOnly})
+		_, err := am.CreateUserWithTenant("tenantuser", "", []string{"readonly"})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user already exists")
 	})
@@ -673,7 +514,7 @@ func TestInMemoryIssueTokenForUser(t *testing.T) {
 	})
 
 	t.Run("user type is concrete User", func(t *testing.T) {
-		user, err := am.CreateUser("tokenuser", []string{RoleNameReadOnly})
+		user, err := am.CreateUser("tokenuser", []string{"readonly"})
 		require.NoError(t, err)
 
 		token, err := am.IssueTokenForUser(context.Background(), user)
@@ -682,13 +523,13 @@ func TestInMemoryIssueTokenForUser(t *testing.T) {
 	})
 
 	t.Run("user type is interface resolved by username", func(t *testing.T) {
-		_, err := am.CreateUser("extuser", []string{RoleNameReadOnly})
+		_, err := am.CreateUser("extuser", []string{"readonly"})
 		require.NoError(t, err)
 
 		mockUser := &mockUserInfo{
 			id:       "ext-id",
 			username: "extuser",
-			roles:    []string{RoleNameReadOnly},
+			roles:    []string{"readonly"},
 			created:  time.Now(),
 		}
 
@@ -1003,134 +844,6 @@ func TestMapRouteServiceDispatching(t *testing.T) {
 	})
 }
 
-// TestObjectActionImpliesCoverage tests the objectActionImplies method on RoleManager.
-func TestObjectActionImpliesCoverage(t *testing.T) {
-	log := createTestLogger(t)
-	rm := NewRoleManager(log)
-
-	tests := []struct {
-		name      string
-		granted   string
-		requested string
-		expected  bool
-	}{
-		{"admin implies get", ActionAdmin, interfaces.ActionObjectGet, true},
-		{"all implies get", ActionAll, interfaces.ActionObjectGet, true},
-		{"write implies get", ActionWrite, interfaces.ActionObjectGet, true},
-		{"write implies list", ActionWrite, interfaces.ActionObjectList, true},
-		{"write implies read", ActionWrite, ActionRead, true},
-		{"objectPut implies get", interfaces.ActionObjectPut, interfaces.ActionObjectGet, true},
-		{"objectPut implies list", interfaces.ActionObjectPut, interfaces.ActionObjectList, true},
-		{"replicate implies get", interfaces.ActionObjectReplicate, interfaces.ActionObjectGet, true},
-		{"migrate implies list", interfaces.ActionObjectMigrate, interfaces.ActionObjectList, true},
-		{"archive implies read", interfaces.ActionObjectArchive, ActionRead, true},
-		{"get does not imply write", interfaces.ActionObjectGet, interfaces.ActionObjectPut, false},
-		{"list does not imply delete", interfaces.ActionObjectList, interfaces.ActionObjectDelete, false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := rm.objectActionImplies(tc.granted, tc.requested)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-// TestHasObjectBucketPermissionCoverage tests the HasObjectBucketPermission method.
-func TestHasObjectBucketPermissionCoverage(t *testing.T) {
-	log := createTestLogger(t)
-	rm := NewRoleManager(log)
-
-	t.Run("admin has permission on any bucket", func(t *testing.T) {
-		result := rm.HasObjectBucketPermission([]string{RoleNameAdmin}, "my-bucket", interfaces.ActionBucketCreate)
-		assert.True(t, result)
-	})
-
-	t.Run("readonly has no bucket create permission", func(t *testing.T) {
-		result := rm.HasObjectBucketPermission([]string{RoleNameReadOnly}, "my-bucket", interfaces.ActionBucketCreate)
-		assert.False(t, result)
-	})
-}
-
-// TestIsObjectStorageActionCoverage tests the isObjectStorageAction function.
-func TestIsObjectStorageActionCoverage(t *testing.T) {
-	objectActions := []string{
-		interfaces.ActionObjectPut, interfaces.ActionObjectGet, interfaces.ActionObjectDelete,
-		interfaces.ActionObjectList, interfaces.ActionObjectReplicate, interfaces.ActionObjectMigrate,
-		interfaces.ActionObjectArchive, interfaces.ActionObjectVerify, interfaces.ActionObjectSetPolicy,
-		interfaces.ActionObjectSetACL, interfaces.ActionBucketCreate, interfaces.ActionBucketDelete,
-		interfaces.ActionBucketList, interfaces.ActionBucketSetPolicy,
-	}
-
-	for _, action := range objectActions {
-		t.Run(action, func(t *testing.T) {
-			assert.True(t, isObjectStorageAction(action))
-		})
-	}
-
-	t.Run("non-object action", func(t *testing.T) {
-		assert.False(t, isObjectStorageAction("read"))
-		assert.False(t, isObjectStorageAction("write"))
-	})
-}
-
-// TestRoleManagerAddRoleFromInterface tests AddRole with a non-concrete Role interface.
-func TestRoleManagerAddRoleFromInterface(t *testing.T) {
-	log := createTestLogger(t)
-	rm := NewRoleManager(log)
-
-	mockRole := &mockRoleInfo{
-		name:        "custom-iface",
-		description: "Custom interface role",
-		permissions: []interfaces.PermissionInfo{
-			&mockPermissionInfo{
-				resource: ResourceKeys,
-				actions:  []string{ActionRead},
-			},
-		},
-	}
-
-	err := rm.AddRole(mockRole)
-	require.NoError(t, err)
-
-	retrieved := rm.GetRole("custom-iface")
-	require.NotNil(t, retrieved)
-	assert.Equal(t, "custom-iface", retrieved.GetName())
-	assert.Equal(t, "Custom interface role", retrieved.GetDescription())
-}
-
-// TestRoleManagerUpdateRoleFromInterface tests UpdateRole with a non-concrete Role interface.
-func TestRoleManagerUpdateRoleFromInterface(t *testing.T) {
-	log := createTestLogger(t)
-	rm := NewRoleManager(log)
-
-	role := &Role{
-		Name:        "updatable",
-		Description: "Before",
-		Permissions: []*Permission{{Resource: ResourceKeys, Actions: []string{ActionRead}}},
-	}
-	err := rm.AddRole(role)
-	require.NoError(t, err)
-
-	mockRole := &mockRoleInfo{
-		name:        "updatable",
-		description: "After",
-		permissions: []interfaces.PermissionInfo{
-			&mockPermissionInfo{
-				resource: ResourceKeys,
-				actions:  []string{ActionRead, ActionWrite},
-			},
-		},
-	}
-
-	err = rm.UpdateRole(mockRole)
-	require.NoError(t, err)
-
-	retrieved := rm.GetRole("updatable")
-	require.NotNil(t, retrieved)
-	assert.Equal(t, "After", retrieved.GetDescription())
-}
-
 // TestUserStoreAddUserFromInterface tests AddUser with a non-concrete User interface.
 func TestUserStoreAddUserFromInterface(t *testing.T) {
 	us := NewUserStore()
@@ -1195,7 +908,7 @@ func TestBuildSubjectFromTokenCoverage(t *testing.T) {
 	})
 
 	t.Run("valid token returns authenticated subject", func(t *testing.T) {
-		user, err := am.CreateUser("subjectuser", []string{RoleNameReadOnly})
+		user, err := am.CreateUser("subjectuser", []string{"readonly"})
 		require.NoError(t, err)
 
 		token, err := am.generateTokens(user)
@@ -1245,26 +958,6 @@ func TestNewAuthManagerFactoryCoverage(t *testing.T) {
 		assert.True(t, ok)
 	})
 }
-
-// mockRoleInfo implements interfaces.RoleInfo for testing.
-type mockRoleInfo struct {
-	name        string
-	description string
-	permissions []interfaces.PermissionInfo
-}
-
-func (m *mockRoleInfo) GetName() string                             { return m.name }
-func (m *mockRoleInfo) GetDescription() string                      { return m.description }
-func (m *mockRoleInfo) GetPermissions() []interfaces.PermissionInfo { return m.permissions }
-
-// mockPermissionInfo implements interfaces.PermissionInfo for testing.
-type mockPermissionInfo struct {
-	resource string
-	actions  []string
-}
-
-func (m *mockPermissionInfo) GetResource() string  { return m.resource }
-func (m *mockPermissionInfo) GetActions() []string { return m.actions }
 
 // =============================================================================
 // Consolidated from coverage_boost_test.go
@@ -1445,11 +1138,6 @@ func TestInMemoryAuthManagerGetters(t *testing.T) {
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
 
-	t.Run("GetRoleManager", func(t *testing.T) {
-		rm := am.GetRoleManager()
-		assert.NotNil(t, rm)
-	})
-
 	t.Run("Close", func(t *testing.T) {
 		err := am.Close()
 		assert.NoError(t, err)
@@ -1467,35 +1155,6 @@ func TestUserGetCreated(t *testing.T) {
 
 	created := user.GetCreated()
 	assert.Equal(t, now, created)
-}
-
-// TestRoleGetDescription tests the GetDescription method.
-func TestRoleGetDescription(t *testing.T) {
-	role := &Role{
-		Name:        "admin",
-		Description: "Administrator role",
-	}
-
-	desc := role.GetDescription()
-	assert.Equal(t, "Administrator role", desc)
-}
-
-// TestPermissionGetters tests Permission getter methods.
-func TestPermissionGetters(t *testing.T) {
-	perm := &Permission{
-		Resource: "/api/users",
-		Actions:  []string{"read", "write"},
-	}
-
-	t.Run("GetResource", func(t *testing.T) {
-		resource := perm.GetResource()
-		assert.Equal(t, "/api/users", resource)
-	})
-
-	t.Run("GetActions", func(t *testing.T) {
-		actions := perm.GetActions()
-		assert.Equal(t, []string{"read", "write"}, actions)
-	})
 }
 
 // TestTokenStoreCleanupExpiredTokens tests the cleanup goroutine.
@@ -1539,79 +1198,6 @@ func TestTokenStoreCleanupExpiredTokens(t *testing.T) {
 	_, exists = ts.refreshTokens[userID]
 	ts.mu.RUnlock()
 	assert.False(t, exists, "Expired tokens should be cleaned up")
-}
-
-// TestRoleManagerAddRole tests the AddRole method.
-func TestRoleManagerAddRole(t *testing.T) {
-	log := createTestLogger(t)
-	rm := NewRoleManager(log)
-
-	t.Run("add custom role", func(t *testing.T) {
-		role := &Role{
-			Name:        "editor",
-			Description: "Editor role",
-			Permissions: []*Permission{
-				{Resource: ResourceKeys, Actions: []string{ActionRead, ActionWrite}},
-			},
-		}
-
-		err := rm.AddRole(role)
-		assert.NoError(t, err)
-
-		// Verify role was added
-		retrieved := rm.GetRole("editor")
-		assert.NotNil(t, retrieved)
-		assert.Equal(t, "editor", retrieved.GetName())
-		assert.Equal(t, "Editor role", retrieved.GetDescription())
-	})
-}
-
-// TestRoleManagerUpdateRole tests the UpdateRole method.
-func TestRoleManagerUpdateRole(t *testing.T) {
-	log := createTestLogger(t)
-	rm := NewRoleManager(log)
-
-	// Add initial role
-	role := &Role{
-		Name:        "viewer",
-		Description: "View only",
-		Permissions: []*Permission{
-			{Resource: ResourceKeys, Actions: []string{ActionRead}},
-		},
-	}
-	err := rm.AddRole(role)
-	require.NoError(t, err)
-
-	t.Run("update custom role", func(t *testing.T) {
-		updatedRole := &Role{
-			Name:        "viewer",
-			Description: "Updated viewer role",
-			Permissions: []*Permission{
-				{Resource: ResourceKeys, Actions: []string{ActionRead}},
-				{Resource: ResourceMetrics, Actions: []string{ActionRead}},
-			},
-		}
-
-		err := rm.UpdateRole(updatedRole)
-		assert.NoError(t, err)
-
-		// Verify update
-		retrieved := rm.GetRole("viewer")
-		assert.NotNil(t, retrieved)
-		assert.Equal(t, "Updated viewer role", retrieved.GetDescription())
-		assert.Len(t, retrieved.GetPermissions(), 2)
-	})
-
-	t.Run("update built-in role returns nil", func(t *testing.T) {
-		// Attempt to update built-in admin role (should return nil without error)
-		adminRole := &Role{
-			Name:        RoleNameAdmin,
-			Description: "Modified admin",
-		}
-
-		err := rm.UpdateRole(adminRole)
-		assert.NoError(t, err) // Should not error, just silently ignores
-	})
 }
 
 // TestUserStoreAddUpdateUser tests the AddUser and UpdateUser methods.

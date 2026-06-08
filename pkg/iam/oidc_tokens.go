@@ -24,9 +24,23 @@ import (
 	"fmt"
 	"time"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
+
+// PermissionResolver returns the qrdb RBAC client the token service consults to
+// resolve a subject's effective permissions at access-token issuance. The
+// resolver indirection late-binds the qrdb client (constructed during server
+// lifecycle, after the OIDC provider) and mirrors the RoleClientResolver seam:
+// the iam package depends only on the narrow qrdb transport RBAC surface, not
+// the full QRDBClientProvider. A nil return (qrdb not yet wired) leaves the scp
+// claim deriving from the OIDC scope, preserving today's behavior.
+type PermissionResolver interface {
+	// RBACClient returns the qrdb RBAC client, or nil when qrdb is unavailable.
+	RBACClient() qrdbtransport.RBACClient
+}
 
 // TokenService handles token generation, validation, and storage.
 type TokenService struct {
@@ -49,6 +63,12 @@ type TokenService struct {
 	// global key). When nil all tokens use keyManager (single-key behavior).
 	tenantKeys *TenantSigningKeyResolver
 	config     *OIDCConfig
+	// permResolver, when set, resolves the subject's effective qrdb permissions
+	// at access-token issuance so the scp claim carries the user's RBAC
+	// authority (colon "resource:action" form) rather than the OAuth-requested
+	// scope passthrough. When nil (qrdb not wired) scp falls back to the OIDC
+	// scope, preserving today's behavior.
+	permResolver PermissionResolver
 }
 
 // NewTokenService creates a new token service.
@@ -114,13 +134,27 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 		"auth_method":  claims.AuthMethod,
 	}
 
-	// Emit scp (array-form scope) for the platform access-token contract. When
-	// the caller did not populate SCP, derive it from the space-separated Scope
-	// so downstream RBAC has a consistent array to map.
-	if len(claims.SCP) > 0 {
+	// Emit scp (array-form scope) for the platform access-token contract. The
+	// scp claim carries the subject's qrdb-RESOLVED effective permissions in
+	// colon "resource:action" form (e.g. "keys:get") so the offline platform
+	// validator's exact-match scope check is a faithful RBAC decision. The OIDC
+	// "scope" claim (above) keeps the requested OIDC scopes (openid/profile/...).
+	//
+	// Precedence: an explicitly pre-populated claims.SCP wins (callers that
+	// already computed the perm set); otherwise the qrdb resolver computes the
+	// union of the subject's role permissions; if the resolver is unavailable
+	// (qrdb not wired) scp falls back to the OIDC scope so behavior is unchanged.
+	switch {
+	case len(claims.SCP) > 0:
 		jwtClaims["scp"] = claims.SCP
-	} else if claims.Scope != "" {
-		jwtClaims["scp"] = parseScopes(claims.Scope)
+	default:
+		if perms, err := s.resolveEffectivePermissions(ctx, claims); err != nil {
+			return "", err
+		} else if len(perms) > 0 {
+			jwtClaims["scp"] = perms
+		} else if claims.Scope != "" {
+			jwtClaims["scp"] = parseScopes(claims.Scope)
+		}
 	}
 
 	// Emit cnf for sender-constrained tokens (DPoP jkt or mTLS x5t#S256). The
@@ -169,6 +203,49 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 	}
 
 	return tokenString, nil
+}
+
+// resolveEffectivePermissions returns the subject's qrdb-resolved effective
+// permissions in colon "resource:action" form (e.g. "keys:get"), to be emitted
+// as the scp claim. It calls qrdb RBAC().ListPermissions with an Identity built
+// from the token's subject/tenant/roles and returns the union of granted
+// permission Names. When no resolver is configured, or the resolver yields a
+// nil client (qrdb not yet wired), it returns (nil, nil) so the caller falls
+// back to the OIDC scope without failing issuance. A real RBAC error is
+// surfaced typed (the token must not ship with an unauthorized perm set).
+func (s *TokenService) resolveEffectivePermissions(ctx context.Context, claims *Claims) ([]string, error) {
+	if s.permResolver == nil {
+		return nil, nil
+	}
+	rbac := s.permResolver.RBACClient()
+	if rbac == nil {
+		return nil, nil
+	}
+	identity := &qrdbtransport.Identity{
+		Subject:  claims.Subject,
+		TenantID: claims.TenantID,
+		Roles:    claims.Roles,
+	}
+	infos, err := rbac.ListPermissions(ctx, identity)
+	if err != nil {
+		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.resolveEffectivePermissions", "failed to resolve effective permissions")
+	}
+	if len(infos) == 0 {
+		return nil, nil
+	}
+	perms := make([]string, 0, len(infos))
+	seen := make(map[string]struct{}, len(infos))
+	for _, info := range infos {
+		if info.Name == "" {
+			continue
+		}
+		if _, dup := seen[info.Name]; dup {
+			continue
+		}
+		seen[info.Name] = struct{}{}
+		perms = append(perms, info.Name)
+	}
+	return perms, nil
 }
 
 // GenerateIDToken generates a new JWT ID token.

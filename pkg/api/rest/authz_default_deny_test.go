@@ -259,7 +259,7 @@ func TestEnforceDefaultDeny_ValidTokenWithScopeAllowed(t *testing.T) {
 		result: &PlatformTokenResult{
 			Subject:  "svc-1",
 			TenantID: "tenant-1",
-			Scopes:   []string{"kms.write"},
+			Scopes:   []string{"keys:create"},
 		},
 	}
 	mw := newDefaultDenyMiddleware(t, validator)
@@ -307,7 +307,7 @@ func TestEnforceDefaultDeny_WrongScopeForbidden(t *testing.T) {
 	validator := &mockDPoPValidator{
 		result: &PlatformTokenResult{
 			Subject: "svc-1",
-			Scopes:  []string{"kv.read"}, // not the kms.write the path requires
+			Scopes:  []string{"kv:get"}, // not the keys:create the path requires
 		},
 	}
 	mw := newDefaultDenyMiddleware(t, validator)
@@ -383,19 +383,19 @@ func TestRequiredScopeForRequest(t *testing.T) {
 		method string
 		want   string
 	}{
-		{"kms read", "/api/v1/kms/keys/k1", http.MethodGet, "kms.read"},
-		{"kms write", "/api/v1/kms/keys", http.MethodPost, "kms.write"},
-		{"secrets delete is write verb", "/api/v1/secrets/db", http.MethodDelete, "secrets.write"},
-		{"iam tenants write", "/api/v1/tenants", http.MethodPost, "iam.write"},
-		{"iam read", "/api/v1/iam/sessions", http.MethodGet, "iam.read"},
-		{"credential wire write", "/v1/credentials/submit", http.MethodPost, "credential.write"},
-		{"barrier wire read", "/v1/barrier/status", http.MethodGet, "barrier.read"},
-		{"ceremony wire write", "/v1/ceremony/initialize", http.MethodPost, "ceremony.write"},
-		{"init wire write", "/v1/init/enroll-external-officer", http.MethodPost, "ceremony.write"},
-		{"certificate read", "/api/v1/certificates/abc", http.MethodGet, "certificate.read"},
-		{"kv write", "/api/v1/kv/users/k1", http.MethodPut, "kv.write"},
+		{"kms read", "/api/v1/kms/keys/k1", http.MethodGet, "keys:get"},
+		{"kms write", "/api/v1/kms/keys", http.MethodPost, "keys:create"},
+		{"secrets delete is write verb", "/api/v1/secrets/db", http.MethodDelete, "credentials:store"},
+		{"iam tenants write", "/api/v1/tenants", http.MethodPost, "tenants:create"},
+		{"iam read", "/api/v1/iam/sessions", http.MethodGet, "tenants:read"},
+		{"credential wire write", "/v1/credentials/submit", http.MethodPost, "credentials:store"},
+		{"barrier wire read", "/v1/barrier/status", http.MethodGet, "tenant_barrier:status"},
+		{"ceremony wire write", "/v1/ceremony/initialize", http.MethodPost, "ceremony:initialize"},
+		{"init wire write", "/v1/init/enroll-external-officer", http.MethodPost, "ceremony:initialize"},
+		{"certificate read", "/api/v1/certificates/abc", http.MethodGet, "certs:read"},
+		{"kv write", "/api/v1/kv/users/k1", http.MethodPut, "kv:put"},
 		{"unmapped path", "/api/v1/cluster/status", http.MethodGet, ""},
-		{"trailing slash normalized", "/api/v1/kms/", http.MethodGet, "kms.read"},
+		{"trailing slash normalized", "/api/v1/kms/", http.MethodGet, "keys:get"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -411,8 +411,8 @@ func TestRequiredScopeForRequest(t *testing.T) {
 // /api/v1/iam path resolves to iam scopes.
 func TestRequiredScopeForRequest_LongestPrefix(t *testing.T) {
 	// /api/v1/barrier and /v1/barrier both exist; ensure each resolves to barrier.
-	if got := requiredScopeForRequest("/api/v1/barrier/status", http.MethodGet); got != "barrier.read" {
-		t.Errorf("expected barrier.read, got %q", got)
+	if got := requiredScopeForRequest("/api/v1/barrier/status", http.MethodGet); got != "tenant_barrier:status" {
+		t.Errorf("expected tenant_barrier:status, got %q", got)
 	}
 }
 

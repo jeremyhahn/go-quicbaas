@@ -33,10 +33,10 @@ import (
 	ggrpc "google.golang.org/grpc"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
@@ -61,82 +61,7 @@ type iamComponents struct {
 	gdprManager       *iam.GDPRManager
 	sessionStorage    iam.SessionStorage
 	sessionManager    iam.SessionManager
-	authManager       *inMemoryAuthManagerAdapter
 	inviteStore       iam.InviteStore
-}
-
-// inMemoryAuthManagerAdapter wraps InMemoryAuthManager to implement service.AuthManagerInterface.
-type inMemoryAuthManagerAdapter struct {
-	manager *auth.InMemoryAuthManager
-}
-
-// ValidateToken validates a token and returns validation information.
-func (a *inMemoryAuthManagerAdapter) ValidateToken(ctx context.Context, token string) (*auth.TokenValidationResult, error) {
-	return a.manager.ValidateToken(ctx, token)
-}
-
-// RefreshToken generates a new access token from a refresh token.
-func (a *inMemoryAuthManagerAdapter) RefreshToken(ctx context.Context, refreshToken string) (*auth.Token, error) {
-	return a.manager.RefreshToken(ctx, refreshToken)
-}
-
-// RevokeToken revokes an authentication token.
-func (a *inMemoryAuthManagerAdapter) RevokeToken(ctx context.Context, token string) error {
-	return a.manager.RevokeToken(ctx, token)
-}
-
-// CreateUser creates a new user with specified roles.
-func (a *inMemoryAuthManagerAdapter) CreateUser(username string, roles []string) (*auth.User, error) {
-	return a.manager.CreateUser(username, roles)
-}
-
-// interfacesAuthManagerAdapter wraps InMemoryAuthManager to implement interfaces.AuthManager.
-// This adapter converts the concrete return types to interface{} as required by interfaces.AuthManager.
-type interfacesAuthManagerAdapter struct {
-	manager *auth.InMemoryAuthManager
-}
-
-// Compile-time check that interfacesAuthManagerAdapter implements interfaces.AuthManager.
-var _ interfaces.AuthManager = (*interfacesAuthManagerAdapter)(nil)
-
-// IssueTokenForUser issues JWT tokens for a user who has been authenticated.
-func (a *interfacesAuthManagerAdapter) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (interface{}, error) {
-	return a.manager.IssueTokenForUser(ctx, user)
-}
-
-// Authorize checks if a token has permission to perform an action on a resource.
-func (a *interfacesAuthManagerAdapter) Authorize(ctx context.Context, token, resource, action string) error {
-	return a.manager.Authorize(ctx, token, resource, action)
-}
-
-// RefreshToken generates a new access token from a refresh token.
-func (a *interfacesAuthManagerAdapter) RefreshToken(ctx context.Context, refreshToken string) (interface{}, error) {
-	return a.manager.RefreshToken(ctx, refreshToken)
-}
-
-// RevokeToken revokes an authentication token.
-func (a *interfacesAuthManagerAdapter) RevokeToken(ctx context.Context, token string) error {
-	return a.manager.RevokeToken(ctx, token)
-}
-
-// ValidateToken validates a token and returns validation information.
-func (a *interfacesAuthManagerAdapter) ValidateToken(ctx context.Context, token string) (interface{}, error) {
-	return a.manager.ValidateToken(ctx, token)
-}
-
-// CreateUser creates a new user with specified roles.
-func (a *interfacesAuthManagerAdapter) CreateUser(username string, roles []string) (interface{}, error) {
-	return a.manager.CreateUser(username, roles)
-}
-
-// GetUserStore returns the user store for user management operations.
-func (a *interfacesAuthManagerAdapter) GetUserStore() interfaces.UserStore {
-	return a.manager.GetUserStore()
-}
-
-// GetRoleManager returns the role manager for RBAC operations.
-func (a *interfacesAuthManagerAdapter) GetRoleManager() interfaces.RoleManager {
-	return a.manager.GetRoleManager()
 }
 
 // Compile-time check that iamComponents implements service.IAMComponents
@@ -243,10 +168,10 @@ func (c *iamComponents) GetSessionManager() iam.SessionManager {
 // GetAuthManager returns the authentication manager for password-based login.
 // Returns nil if password authentication is not configured.
 func (c *iamComponents) GetAuthManager() service.AuthManagerInterface {
-	if c.authManager == nil {
-		return nil
-	}
-	return c.authManager
+	// The in-memory auth manager is never wired into iamComponents; live token
+	// operations flow through the qrdb/iam layer. Returns nil so callers fall
+	// back to that path.
+	return nil
 }
 
 // GetInviteStore returns the invite token store.
@@ -254,22 +179,37 @@ func (c *iamComponents) GetInviteStore() iam.InviteStore {
 	return c.inviteStore
 }
 
-// GetInternalAuthManager returns the interfaces.AuthManager for internal service use.
-// This is used to wire up the auth manager in the QuicBaaS service for MCP transport
-// and other internal operations that require the full interfaces.AuthManager interface.
-// Returns nil if password authentication is not configured.
+// GetInternalAuthManager returns the interfaces.AuthManager for internal service
+// use. The in-memory auth manager is never wired into iamComponents (live token
+// operations flow through the qrdb/iam layer), so this returns nil.
 func (c *iamComponents) GetInternalAuthManager() interfaces.AuthManager {
-	if c.authManager == nil {
-		return nil
-	}
-	// Return an adapter that wraps the underlying manager and implements interfaces.AuthManager.
-	// This adapter converts concrete return types to interface{} as required by the interface.
-	return &interfacesAuthManagerAdapter{manager: c.authManager.manager}
+	return nil
 }
 
 // initializeIAMComponents creates and initializes all IAM components.
 // Returns nil if the qrdb client is not available (e.g., in standalone/embedded
 // mode without storage initialization).
+// serverPermissionResolver adapts the Server's late-bound qrdb node client to
+// the iam.PermissionResolver seam consumed by the OIDC token service. The qrdb
+// node client is constructed later in the server lifecycle than the OIDC
+// provider, so the RBAC client is resolved per token-issue (a nil node client
+// yields a nil RBAC client, and the token service then falls back to the OIDC
+// scope). This mirrors the per-request RBAC resolver the REST/gRPC/QUIC/MCP
+// authz gates use (GetQRDBNodeClient().RBAC()).
+type serverPermissionResolver struct {
+	server *Server
+}
+
+// RBACClient returns the qrdb RBAC client, or nil when the node client is not
+// yet available.
+func (r *serverPermissionResolver) RBACClient() qrdbtransport.RBACClient {
+	node := r.server.GetQRDBNodeClient()
+	if node == nil {
+		return nil
+	}
+	return node.RBAC()
+}
+
 func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// Check if qrdb client is available before attempting IAM init.
 	// In standalone/embedded mode, the qrdb client may not be initialized
@@ -423,6 +363,12 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 				IdentityStore: identityStore,
 				AppStorage:    backendStorage,
 				TokenStorage:  backendStorage,
+				// Late-bind the qrdb RBAC client so the scp claim carries the
+				// subject's qrdb-resolved effective permissions (colon
+				// "resource:action") rather than the OAuth-requested scope. The
+				// node client is constructed later in lifecycle, so the resolver
+				// is consulted per token-issue via GetQRDBNodeClient().RBAC().
+				PermissionResolver: &serverPermissionResolver{server: s},
 			},
 		)
 		if err != nil {

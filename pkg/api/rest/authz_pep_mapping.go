@@ -51,6 +51,12 @@ import (
 //	transactions            ->  transaction
 //	backups                 ->  backup
 //
+// Stage 0.5 additionally maps the broker-only data-plane surfaces that qrdb now
+// registers a permission family for (go-qrdb/pkg/permission/broker_dataplane_scope.go):
+// object storage (objstore), orchestrator, messaging, scheduler, parameters,
+// dynamic_secrets, project, ollama. These previously returned ok=false and were
+// blanket-denied under RequireAuthz; they now resolve to a registered qrdb perm.
+//
 // Unmapped surfaces return ok=false; the caller decides the posture for those
 // (see the middleware). This keeps the mapping a closed, registered set rather
 // than guessing an action that qrdb would reject.
@@ -115,11 +121,162 @@ var pepMapping = map[string]pepResource{
 	"/api/v1/transactions": {resource: "transaction", verbs: crudVerbs{get: "execute", list: "execute", create: "execute", del: "execute"}},
 	"/api/v1/transaction":  {resource: "transaction", verbs: crudVerbs{get: "execute", list: "execute", create: "execute", del: "execute"}},
 	"/api/v1/backups":      {resource: "backup", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
+
+	// ---- Stage 0.5: broker-only data-plane surfaces (qrdb-registered) ----
+
+	// Object storage. The bare /objects/* CRUD shape maps onto objstore verbs;
+	// non-CRUD object actions and admin sub-paths are handled by pepSpecialRules.
+	"/api/v1/objects":         {resource: "objstore", verbs: crudVerbs{get: "get", list: "list", create: "put", del: "delete"}},
+	"/api/v1/object-backends": {resource: "objstore", verbs: crudVerbs{get: "read_backend", list: "read_backend", create: "admin", del: "admin"}},
+	"/api/v1/object-transfer": {resource: "objstore", verbs: crudVerbs{get: "get", list: "get", create: "get", del: "delete"}},
+
+	// Orchestrator. The most common CRUD-ish entry points map here; the
+	// sub-action POSTs (claim/complete/decompose/...) are in pepSpecialRules.
+	"/api/v1/orchestrator": {resource: "orchestrator", verbs: crudVerbs{get: "status", list: "list", create: "spawn", del: "close"}},
+
+	// Messaging. Channel CRUD; publish/subscribe live in pepSpecialRules.
+	"/api/v1/messaging": {resource: "messaging", verbs: crudVerbs{get: "channel_read", list: "channel_list", create: "channel_create", del: "channel_delete"}},
+
+	// Scheduler. Job CRUD; lifecycle sub-actions live in pepSpecialRules.
+	"/api/v1/scheduler": {resource: "scheduler", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
+
+	// Parameter store.
+	"/api/v1/parameters": {resource: "parameters", verbs: crudVerbs{get: "read", list: "list", create: "write", del: "delete"}},
+
+	// Dynamic secrets (mounted at /api/v1/secrets/dynamic).
+	"/api/v1/secrets/dynamic": {resource: "dynamic_secrets", verbs: crudVerbs{get: "role_read", list: "role_list", create: "role_create", del: "role_delete"}},
+
+	// Project + membership.
+	"/api/v1/projects": {resource: "project", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
+
+	// Ollama embedding inference.
+	"/api/v1/ollama": {resource: "ollama", verbs: crudVerbs{get: "health", list: "model_list", create: "embed", del: "embed"}},
+}
+
+// pepSpecialRule overrides the CRUD-shaped pepMapping for a non-CRUD endpoint
+// whose action cannot be inferred from the HTTP method alone (e.g. a POST that
+// triggers a job rather than creating one). Rules are matched by HTTP method and
+// a path suffix (after stripping a trailing slash); the first match in
+// pepSpecialRules wins, and the suffix list is ordered most-specific-first so a
+// sub-path like ".../jobs/{id}/trigger" is checked before the bare CRUD shape.
+type pepSpecialRule struct {
+	// method is the HTTP method this rule applies to.
+	method string
+	// prefix is the /api/v1 path prefix that scopes this rule to one surface.
+	prefix string
+	// suffix is matched against the request path (a request matches when its
+	// path ends with suffix). An empty suffix matches any path under prefix.
+	suffix string
+	// resource is the qrdb-canonical resource name.
+	resource string
+	// action is the qrdb-canonical action.
+	action string
+}
+
+// pepSpecialRules captures the broker data-plane endpoints whose action is not a
+// plain CRUD verb. They are consulted BEFORE the CRUD prefix table so a tailored
+// (resource, action) wins for sub-action routes. Each (resource, action) here is
+// a registered qrdb permission (go-qrdb/pkg/permission/broker_dataplane_scope.go).
+var pepSpecialRules = []pepSpecialRule{
+	// ---- Scheduler job lifecycle sub-actions ----
+	{http.MethodGet, "/api/v1/scheduler", "/jobs/", "scheduler", "read"},
+	{http.MethodGet, "/api/v1/scheduler", "/jobs", "scheduler", "list"},
+	{http.MethodPost, "/api/v1/scheduler", "/jobs", "scheduler", "create"},
+	{http.MethodDelete, "/api/v1/scheduler", "/jobs/", "scheduler", "delete"},
+	{http.MethodPost, "/api/v1/scheduler", "/trigger", "scheduler", "trigger"},
+	{http.MethodPost, "/api/v1/scheduler", "/pause", "scheduler", "pause"},
+	{http.MethodPost, "/api/v1/scheduler", "/resume", "scheduler", "resume"},
+	{http.MethodPost, "/api/v1/scheduler", "/cancel", "scheduler", "cancel"},
+	{http.MethodGet, "/api/v1/scheduler", "/history", "scheduler", "history"},
+	{http.MethodGet, "/api/v1/scheduler", "/status", "scheduler", "status"},
+	{http.MethodPut, "/api/v1/scheduler", "", "scheduler", "update"},
+
+	// ---- Messaging publish / subscribe ----
+	{http.MethodGet, "/api/v1/messaging", "/channels/", "messaging", "channel_read"},
+	{http.MethodGet, "/api/v1/messaging", "/channels", "messaging", "channel_list"},
+	{http.MethodPost, "/api/v1/messaging", "/channels", "messaging", "channel_create"},
+	{http.MethodDelete, "/api/v1/messaging", "/channels/", "messaging", "channel_delete"},
+	{http.MethodPost, "/api/v1/messaging", "/subscribe", "messaging", "subscribe"},
+	{http.MethodDelete, "/api/v1/messaging", "/subscribe", "messaging", "unsubscribe"},
+	{http.MethodPost, "/api/v1/messaging", "/publish", "messaging", "publish"},
+	{http.MethodPost, "/api/v1/messaging", "/publish-delta", "messaging", "publish"},
+	{http.MethodGet, "/api/v1/messaging", "/stats", "messaging", "stats"},
+	{http.MethodGet, "/api/v1/messaging", "/dedup/stats", "messaging", "stats"},
+
+	// ---- Orchestrator sub-actions ----
+	{http.MethodPost, "/api/v1/orchestrator", "/prompt", "orchestrator", "prompt"},
+	{http.MethodPost, "/api/v1/orchestrator", "/claim", "orchestrator", "task_claim"},
+	{http.MethodPost, "/api/v1/orchestrator", "/complete", "orchestrator", "task_complete"},
+	{http.MethodPost, "/api/v1/orchestrator", "/decompose", "orchestrator", "task_decompose"},
+	{http.MethodPost, "/api/v1/orchestrator", "/heartbeat", "orchestrator", "agent_heartbeat"},
+	{http.MethodPost, "/api/v1/orchestrator", "/children", "orchestrator", "job_start"},
+	{http.MethodGet, "/api/v1/orchestrator", "/events", "orchestrator", "status"},
+	{http.MethodGet, "/api/v1/orchestrator", "/artifacts", "orchestrator", "artifact_read"},
+	{http.MethodPost, "/api/v1/orchestrator", "/artifacts", "orchestrator", "artifact_submit"},
+	{http.MethodGet, "/api/v1/orchestrator", "/health", "orchestrator", "health"},
+	{http.MethodGet, "/api/v1/orchestrator", "/backends", "orchestrator", "backend_list"},
+	{http.MethodGet, "/api/v1/orchestrator", "/workflows", "orchestrator", "workflow_read"},
+	{http.MethodPost, "/api/v1/orchestrator", "/workflows", "orchestrator", "workflow_write"},
+	{http.MethodPut, "/api/v1/orchestrator", "/workflows", "orchestrator", "workflow_write"},
+	{http.MethodDelete, "/api/v1/orchestrator", "/workflows", "orchestrator", "workflow_write"},
+	{http.MethodPost, "/api/v1/orchestrator", "/discover", "orchestrator", "discover"},
+	{http.MethodPost, "/api/v1/orchestrator", "/hooks", "orchestrator", "hook"},
+	{http.MethodPost, "/api/v1/orchestrator", "/inference", "orchestrator", "inference"},
+	{http.MethodPost, "/api/v1/orchestrator", "/sessions", "orchestrator", "spawn"},
+	{http.MethodPost, "/api/v1/orchestrator", "/tasks", "orchestrator", "task_create"},
+	{http.MethodPost, "/api/v1/orchestrator", "/jobs", "orchestrator", "job_start"},
+	{http.MethodPost, "/api/v1/orchestrator", "/agents", "orchestrator", "agent_register"},
+
+	// ---- Object storage non-CRUD actions ----
+	{http.MethodPost, "/api/v1/objects", "/batch/get", "objstore", "batch"},
+	{http.MethodPost, "/api/v1/objects", "/batch/delete", "objstore", "batch"},
+	{http.MethodPost, "/api/v1/objects", "/batch", "objstore", "batch"},
+	{http.MethodHead, "/api/v1/objects", "", "objstore", "head"},
+	{http.MethodPut, "/api/v1/objects", "/quotas", "objstore", "tenant_quota_write"},
+	{http.MethodGet, "/api/v1/objects", "/quotas", "objstore", "tenant_quota_read"},
+	{http.MethodGet, "/api/v1/objects", "/usage", "objstore", "tenant_usage"},
+	{http.MethodGet, "/api/v1/object-backends", "/health", "objstore", "read_backend"},
+	{http.MethodPost, "/api/v1/object-transfer", "/fetch", "objstore", "get"},
+	{http.MethodPost, "/api/v1/object-transfer", "/stream-fetch", "objstore", "get"},
+
+	// ---- Dynamic secrets generation + lease lifecycle ----
+	{http.MethodGet, "/api/v1/secrets/dynamic", "/roles/", "dynamic_secrets", "role_read"},
+	{http.MethodGet, "/api/v1/secrets/dynamic", "/roles", "dynamic_secrets", "role_list"},
+	{http.MethodPost, "/api/v1/secrets/dynamic", "/roles", "dynamic_secrets", "role_create"},
+	{http.MethodDelete, "/api/v1/secrets/dynamic", "/roles/", "dynamic_secrets", "role_delete"},
+	{http.MethodPost, "/api/v1/secrets/dynamic", "/renew", "dynamic_secrets", "lease_renew"},
+	{http.MethodDelete, "/api/v1/secrets/dynamic", "/leases/", "dynamic_secrets", "lease_revoke"},
+	{http.MethodGet, "/api/v1/secrets/dynamic", "/leases", "dynamic_secrets", "lease_list"},
+	{http.MethodPost, "/api/v1/secrets/dynamic", "/credentials/", "dynamic_secrets", "generate"},
+
+	// ---- Parameter store batch / search ----
+	{http.MethodPost, "/api/v1/parameters", "/batch/get", "parameters", "read"},
+	{http.MethodPost, "/api/v1/parameters", "/batch/set", "parameters", "write"},
+	{http.MethodPost, "/api/v1/parameters", "/batch/delete", "parameters", "delete"},
+	{http.MethodPost, "/api/v1/parameters", "/search", "parameters", "search"},
+
+	// ---- Project membership grant / revoke ----
+	{http.MethodPut, "/api/v1/projects", "/permissions/", "project", "grant"},
+	{http.MethodDelete, "/api/v1/projects", "/permissions/", "project", "revoke"},
+	{http.MethodPut, "/api/v1/projects", "", "project", "update"},
+
+	// ---- Ollama embedding ----
+	{http.MethodPost, "/api/v1/ollama", "/embed/batch", "ollama", "embed"},
+	{http.MethodPost, "/api/v1/ollama", "/embed", "ollama", "embed"},
+	// "/models/" (item) is longer than "/models" (collection) so model_info
+	// wins for /models/{model} while /models stays model_list.
+	{http.MethodGet, "/api/v1/ollama", "/models/", "ollama", "model_info"},
+	{http.MethodGet, "/api/v1/ollama", "/models", "ollama", "model_list"},
+	{http.MethodGet, "/api/v1/ollama", "/health", "ollama", "health"},
 }
 
 // mapRequestToPermission translates a request (path, method) into the
 // qrdb-canonical (resource, action). ok is false when no canonical mapping
 // exists for the path; callers decide the posture for unmapped surfaces.
+//
+// pepSpecialRules are consulted first so non-CRUD endpoints (job triggers,
+// publishes, batch operations, ...) resolve to their tailored action; the
+// CRUD-shaped pepMapping is the fallback for the standard resource shapes.
 //
 // The collection-vs-item distinction is structural: a GET on the bare resource
 // prefix (e.g. /api/v1/keys) is a list; a GET on a sub-path (e.g.
@@ -128,6 +285,10 @@ var pepMapping = map[string]pepResource{
 func mapRequestToPermission(path, method string) (resource, action string, ok bool) {
 	normalized := strings.TrimSuffix(path, "/")
 
+	if r, a, found := matchSpecialRule(normalized, method); found {
+		return r, a, true
+	}
+
 	prefix, entry, found := longestPEPPrefix(normalized)
 	if !found {
 		return "", "", false
@@ -135,6 +296,64 @@ func mapRequestToPermission(path, method string) (resource, action string, ok bo
 
 	isCollection := normalized == prefix
 	return entry.resource, actionForMethod(method, entry.verbs, isCollection), true
+}
+
+// matchSpecialRule returns the most specific pepSpecialRule whose method matches
+// and whose prefix scopes the path. Matches are ranked so that the deepest,
+// most-specific endpoint action wins:
+//
+//	tier 2 — the rule suffix is the END of the path (an exact endpoint action,
+//	         e.g. ".../jobs/{id}/trigger" ends with "/trigger");
+//	tier 1 — the rule suffix appears mid-path as a path segment (a sub-resource
+//	         collection, e.g. ".../sessions/{id}/prompt" contains "/sessions/");
+//	tier 0 — the rule has an empty suffix (the surface-wide fallback).
+//
+// Within a tier the longer suffix wins. This guarantees a leaf action like
+// "prompt" beats a containing sub-resource like "sessions" for the same path.
+func matchSpecialRule(path, method string) (resource, action string, ok bool) {
+	var (
+		bestTier  = -1
+		bestLen   = -1
+		bestRes   string
+		bestAct   string
+		bestFound bool
+	)
+	for _, rule := range pepSpecialRules {
+		if !strings.EqualFold(rule.method, method) {
+			continue
+		}
+		if path != rule.prefix && !strings.HasPrefix(path, rule.prefix+"/") {
+			continue
+		}
+		tier := specialRuleTier(path, rule.suffix)
+		if tier < 0 {
+			continue
+		}
+		if tier > bestTier || (tier == bestTier && len(rule.suffix) > bestLen) {
+			bestTier = tier
+			bestLen = len(rule.suffix)
+			bestRes = rule.resource
+			bestAct = rule.action
+			bestFound = true
+		}
+	}
+	return bestRes, bestAct, bestFound
+}
+
+// specialRuleTier ranks how a rule suffix matches a path: 2 = path ends with
+// suffix (leaf endpoint action), 1 = suffix appears as a mid-path segment,
+// 0 = empty suffix (surface fallback), -1 = no match.
+func specialRuleTier(path, suffix string) int {
+	if suffix == "" {
+		return 0
+	}
+	if strings.HasSuffix(path, suffix) {
+		return 2
+	}
+	if strings.Contains(path, suffix) {
+		return 1
+	}
+	return -1
 }
 
 // longestPEPPrefix returns the longest /api/v1 prefix in pepMapping that matches

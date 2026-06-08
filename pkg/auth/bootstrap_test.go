@@ -135,14 +135,14 @@ func TestBootstrap(t *testing.T) {
 		assert.Equal(t, "admin", result.AdminUsername)
 		assert.NotEmpty(t, result.AdminUserID)
 		assert.False(t, result.AlreadyBootstrapped)
-		assert.Equal(t, 3, result.RolesCreated) // admin, readwrite, readonly
+		assert.Equal(t, 0, result.RolesCreated) // roles are seeded and owned by qrdb, not this composer
 		assert.Equal(t, "Bootstrap completed successfully", result.Message)
 
 		// Verify admin user was created
 		adminUser := authManager.userStore.GetByUsername("admin")
 		require.NotNil(t, adminUser)
 		assert.Equal(t, "admin", adminUser.Username)
-		assert.Contains(t, adminUser.Roles, RoleNameAdmin)
+		assert.Contains(t, adminUser.Roles, "admin")
 
 		// Verify bootstrap marker was set
 		isBootstrapped, err := IsBootstrapped(mockStorage)
@@ -260,7 +260,7 @@ func TestBootstrap(t *testing.T) {
 		defer mockStorage.Close()
 
 		// Manually create admin user before bootstrap (no password - certificate auth)
-		_, err := authManager.CreateUser("admin", []string{RoleNameAdmin})
+		_, err := authManager.CreateUser("admin", []string{"admin"})
 		require.NoError(t, err)
 
 		// Bootstrap should detect existing user and not recreate
@@ -323,7 +323,7 @@ func TestBootstrap(t *testing.T) {
 		defer mockStorage.Close()
 
 		// Create a user with the same name to cause conflict
-		_, err := authManager.CreateUser("admin", []string{RoleNameReadOnly})
+		_, err := authManager.CreateUser("admin", []string{"readonly"})
 		require.NoError(t, err)
 
 		config := &BootstrapConfig{
@@ -422,64 +422,6 @@ func TestGetAdminUserID(t *testing.T) {
 	})
 }
 
-func TestCreateDefaultRoles(t *testing.T) {
-	t.Run("create default roles", func(t *testing.T) {
-		mockStorage := NewMockStorage()
-		defer mockStorage.Close()
-
-		log := createTestLogger(t)
-		roleManager, err := NewPersistentRoleManager(mockStorage, log)
-		require.NoError(t, err)
-
-		// Default roles should already be created by NewPersistentRoleManager
-		roles := roleManager.ListRoles()
-		assert.Len(t, roles, 3) // admin, readwrite, readonly
-
-		// Verify each role exists
-		adminRole := roleManager.GetRole(RoleNameAdmin)
-		require.NotNil(t, adminRole)
-		assert.Equal(t, RoleNameAdmin, adminRole.Name)
-
-		rwRole := roleManager.GetRole(RoleNameReadWrite)
-		require.NotNil(t, rwRole)
-		assert.Equal(t, RoleNameReadWrite, rwRole.Name)
-
-		roRole := roleManager.GetRole(RoleNameReadOnly)
-		require.NotNil(t, roRole)
-		assert.Equal(t, RoleNameReadOnly, roRole.Name)
-	})
-
-	t.Run("create default roles is idempotent", func(t *testing.T) {
-		mockStorage := NewMockStorage()
-		defer mockStorage.Close()
-
-		log := createTestLogger(t)
-		roleManager, err := NewPersistentRoleManager(mockStorage, log)
-		require.NoError(t, err)
-
-		// Call CreateDefaultRoles again
-		err = CreateDefaultRoles(roleManager)
-		require.NoError(t, err)
-
-		// Should still have only 3 roles
-		roles := roleManager.ListRoles()
-		assert.Len(t, roles, 3)
-	})
-
-	t.Run("create default roles with storage failure", func(t *testing.T) {
-		failableStorage := NewFailableMockStorage()
-		failableStorage.SetFailSet(true)
-		defer failableStorage.Close()
-
-		log := createTestLogger(t)
-
-		// Should fail during initialization
-		_, err := NewPersistentRoleManager(failableStorage, log)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to initialize built-in roles")
-	})
-}
-
 func TestBootstrapIntegration(t *testing.T) {
 	t.Run("full bootstrap and admin user creation", func(t *testing.T) {
 		authManager, mockStorage := createTestPersistentAuthManager(t)
@@ -498,7 +440,7 @@ func TestBootstrapIntegration(t *testing.T) {
 		// 3. Verify admin user exists in store
 		adminUser := authManager.userStore.GetByUsername("admin")
 		require.NotNil(t, adminUser)
-		assert.Contains(t, adminUser.Roles, RoleNameAdmin)
+		assert.Contains(t, adminUser.Roles, "admin")
 	})
 
 	t.Run("bootstrap persistence across restarts", func(t *testing.T) {
@@ -539,10 +481,6 @@ func TestBootstrapIntegration(t *testing.T) {
 		require.NotNil(t, adminUser)
 		assert.Equal(t, adminUserID, adminUser.ID)
 
-		// Verify roles persist
-		roleManager := authManager2.GetRoleManager()
-		roles := roleManager.ListRoles()
-		assert.Len(t, roles, 3)
 	})
 }
 
@@ -583,33 +521,6 @@ func TestBootstrapEdgeCases(t *testing.T) {
 
 		adminUser := authManager.userStore.GetByUsername(config.AdminUsername)
 		require.NotNil(t, adminUser)
-	})
-
-	t.Run("bootstrap role count with custom roles", func(t *testing.T) {
-		authManager, mockStorage := createTestPersistentAuthManager(t)
-		defer mockStorage.Close()
-
-		// Add a custom role before bootstrap
-		roleManager := authManager.GetRoleManager()
-		customRole := &Role{
-			Name:        "custom",
-			Description: "Custom role",
-			Permissions: []*Permission{
-				{
-					Resource: ResourceKeys,
-					Actions:  []string{ActionRead},
-				},
-			},
-		}
-		err := roleManager.AddRole(customRole)
-		require.NoError(t, err)
-
-		result, err := Bootstrap(authManager, nil)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-
-		// Should count built-in + custom roles
-		assert.Equal(t, 4, result.RolesCreated)
 	})
 
 	t.Run("concurrent bootstrap attempts", func(t *testing.T) {

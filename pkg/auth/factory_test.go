@@ -233,6 +233,9 @@ func TestInMemoryAuthManagerMethods(t *testing.T) {
 	adminUser, ok := adminUserInfo.(*User)
 	require.True(t, ok, "UserInfo should be a *User")
 
+	// Install an allow decision point so issued tokens authorize.
+	am.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
+
 	ctx := context.Background()
 	token, err := am.generateTokens(adminUser)
 	require.NoError(t, err)
@@ -240,11 +243,11 @@ func TestInMemoryAuthManagerMethods(t *testing.T) {
 	assert.NotEmpty(t, token.RefreshToken)
 
 	// Test authorization
-	err = am.Authorize(ctx, token.AccessToken, ResourceKeys, ActionRead)
+	err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
 	assert.NoError(t, err)
 
 	// Test create user (password is ignored)
-	user, err := am.CreateUser("testuser", []string{RoleNameReadWrite})
+	user, err := am.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 	assert.Equal(t, "testuser", user.Username)
 
@@ -258,7 +261,7 @@ func TestInMemoryAuthManagerMethods(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify token is revoked
-	err = am.Authorize(ctx, token.AccessToken, ResourceKeys, ActionRead)
+	err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
 	assert.Error(t, err)
 }
 

@@ -32,9 +32,34 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/providers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/authzfake"
+)
+
+// Vector permission grants in "resource:action" form as produced by the gRPC
+// auth interceptor's mapVectorMethod (resource is "vector", the action is the
+// vector-specific action string). The authzfake double splits on the first
+// colon, so each grant is "vector:<vector-action>".
+const (
+	grantVectorRead      = interfaces.ResourceVector + ":" + interfaces.ActionVectorRead
+	grantVectorWrite     = interfaces.ResourceVector + ":" + interfaces.ActionVectorWrite
+	grantVectorDelete    = interfaces.ResourceVector + ":" + interfaces.ActionVectorDelete
+	grantVectorNamespace = interfaces.ResourceVector + ":" + interfaces.ActionVectorNamespace
+	grantVectorSearch    = interfaces.ResourceVector + ":" + interfaces.ActionVectorSearch
+	grantVectorStats     = interfaces.ResourceVector + ":" + interfaces.ActionVectorStats
+)
+
+// Role grant bundles model the vector-reader / vector-writer / vector-admin
+// roles the deleted fork role manager used to seed. Each test configures the
+// server's authzfake allow-list with the bundle for the role under test.
+var (
+	readerGrants = []string{grantVectorRead, grantVectorSearch, grantVectorStats}
+	writerGrants = []string{grantVectorRead, grantVectorWrite, grantVectorSearch, grantVectorStats}
+	adminGrants  = []string{
+		grantVectorRead, grantVectorWrite, grantVectorDelete,
+		grantVectorNamespace, grantVectorSearch, grantVectorStats,
+	}
 )
 
 // testVectorRBACContext provides infrastructure for vector RBAC tests.
@@ -50,8 +75,9 @@ type testVectorRBACContext struct {
 	conn         *grpc.ClientConn
 }
 
-// newTestVectorRBACContext creates a test context for vector RBAC tests.
-func newTestVectorRBACContext(t *testing.T) *testVectorRBACContext {
+// newTestVectorRBACContext creates a test context for vector RBAC tests. The
+// server authorizes requests whose "resource:action" matches one of allowed.
+func newTestVectorRBACContext(t *testing.T, allowed ...string) *testVectorRBACContext {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 	log, err := logger.New(logger.LogConfig{
@@ -72,16 +98,7 @@ func newTestVectorRBACContext(t *testing.T) *testVectorRBACContext {
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
 
-	roleManager := authManager.GetRoleManager()
-
-	// Setup vector-specific roles with vector-specific action constants
-	setupVectorRoles(t, roleManager)
-
-	rbacProvider, err := providers.NewRBACProvider(roleManager, log)
-	require.NoError(t, err)
-
-	authzService, err := auth.NewAuthorizationService(rbacProvider, log)
-	require.NoError(t, err)
+	authzService := authzfake.New(allowed...)
 
 	// Create gRPC server with auth interceptors
 	unaryInterceptor := auth.UnaryAuthInterceptorWithService(authManager, authzService, log)
@@ -124,75 +141,6 @@ func newTestVectorRBACContext(t *testing.T) *testVectorRBACContext {
 	}
 }
 
-// setupVectorRoles sets up vector-specific roles for testing.
-// Uses vector-specific action constants (vector:read, vector:write, etc.)
-// to match what the auth interceptor expects.
-func setupVectorRoles(t *testing.T, roleManager interfaces.RoleManager) {
-	t.Helper()
-
-	// Create vector-reader role with vector-specific actions
-	err := roleManager.AddRole(&auth.Role{
-		Name:        "vector-reader",
-		Description: "Can read and search vectors",
-		Permissions: []*auth.Permission{
-			{
-				Resource: auth.ResourceVector,
-				Actions: []string{
-					auth.ActionVectorRead,
-					auth.ActionVectorSearch,
-					auth.ActionVectorStats,
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Logf("vector-reader role may already exist: %v", err)
-	}
-
-	// Create vector-writer role with vector-specific actions
-	err = roleManager.AddRole(&auth.Role{
-		Name:        "vector-writer",
-		Description: "Can read, write, and search vectors",
-		Permissions: []*auth.Permission{
-			{
-				Resource: auth.ResourceVector,
-				Actions: []string{
-					auth.ActionVectorRead,
-					auth.ActionVectorWrite,
-					auth.ActionVectorSearch,
-					auth.ActionVectorStats,
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Logf("vector-writer role may already exist: %v", err)
-	}
-
-	// Create vector-admin role with all vector-specific actions
-	err = roleManager.AddRole(&auth.Role{
-		Name:        "vector-admin",
-		Description: "Full vector access including admin operations",
-		Permissions: []*auth.Permission{
-			{
-				Resource: auth.ResourceVector,
-				Actions: []string{
-					auth.ActionVectorRead,
-					auth.ActionVectorWrite,
-					auth.ActionVectorDelete,
-					auth.ActionVectorAdmin,
-					auth.ActionVectorNamespace,
-					auth.ActionVectorSearch,
-					auth.ActionVectorStats,
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Logf("vector-admin role may already exist: %v", err)
-	}
-}
-
 // close shuts down the test context.
 func (c *testVectorRBACContext) close() {
 	if c.conn != nil {
@@ -203,6 +151,9 @@ func (c *testVectorRBACContext) close() {
 	}
 	if c.listener != nil {
 		c.listener.Close()
+	}
+	if c.authzService != nil {
+		c.authzService.Close()
 	}
 	if c.cancel != nil {
 		c.cancel()
@@ -226,7 +177,7 @@ func (c *testVectorRBACContext) createUserToken(_ string, username string, roles
 	ctx := context.Background()
 
 	// Create user with roles - InMemoryAuthManager assigns roles at creation time
-	_, err := c.authManager.CreateUser(username, "password123", roles)
+	_, err := c.authManager.CreateUser(username, roles)
 	if err != nil {
 		c.t.Logf("user may already exist: %v", err)
 	}
@@ -304,13 +255,13 @@ func (s *mockVectorDBServer) ListNamespaces(ctx context.Context, req *pb.ListNam
 
 // TestVectorRBACReadOperations tests that read operations require reader role.
 func TestVectorRBACReadOperations(t *testing.T) {
-	testCtx := newTestVectorRBACContext(t)
-	defer testCtx.close()
-
-	client := pb.NewVectorDBClient(testCtx.conn)
 	ctx := context.Background()
 
 	t.Run("reader can get vector", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, readerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("reader-1", "reader1", []string{"vector-reader"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -323,6 +274,10 @@ func TestVectorRBACReadOperations(t *testing.T) {
 	})
 
 	t.Run("reader can list namespaces", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, readerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("reader-2", "reader2", []string{"vector-reader"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -332,6 +287,10 @@ func TestVectorRBACReadOperations(t *testing.T) {
 	})
 
 	t.Run("unauthenticated user cannot read", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, readerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		_, err := client.GetVector(ctx, &pb.GetVectorRequest{
 			Namespace: "test-ns",
 			Id:        "vec-1",
@@ -345,13 +304,13 @@ func TestVectorRBACReadOperations(t *testing.T) {
 
 // TestVectorRBACWriteOperations tests that write operations require writer role.
 func TestVectorRBACWriteOperations(t *testing.T) {
-	testCtx := newTestVectorRBACContext(t)
-	defer testCtx.close()
-
-	client := pb.NewVectorDBClient(testCtx.conn)
 	ctx := context.Background()
 
 	t.Run("writer can upsert vector", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, writerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("writer-1", "writer1", []string{"vector-writer"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -367,6 +326,10 @@ func TestVectorRBACWriteOperations(t *testing.T) {
 	})
 
 	t.Run("reader cannot upsert vector", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, readerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("reader-3", "reader3", []string{"vector-reader"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -384,6 +347,10 @@ func TestVectorRBACWriteOperations(t *testing.T) {
 	})
 
 	t.Run("writer can also read", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, writerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("writer-2", "writer2", []string{"vector-writer"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -398,13 +365,13 @@ func TestVectorRBACWriteOperations(t *testing.T) {
 
 // TestVectorRBACDeleteOperations tests that delete operations require admin role.
 func TestVectorRBACDeleteOperations(t *testing.T) {
-	testCtx := newTestVectorRBACContext(t)
-	defer testCtx.close()
-
-	client := pb.NewVectorDBClient(testCtx.conn)
 	ctx := context.Background()
 
 	t.Run("admin can delete vector", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, adminGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("admin-1", "admin1", []string{"vector-admin"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -417,6 +384,10 @@ func TestVectorRBACDeleteOperations(t *testing.T) {
 	})
 
 	t.Run("writer cannot delete vector", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, writerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("writer-3", "writer3", []string{"vector-writer"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -431,6 +402,10 @@ func TestVectorRBACDeleteOperations(t *testing.T) {
 	})
 
 	t.Run("reader cannot delete vector", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, readerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("reader-4", "reader4", []string{"vector-reader"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -447,13 +422,13 @@ func TestVectorRBACDeleteOperations(t *testing.T) {
 
 // TestVectorRBACNamespaceOperations tests namespace operations require admin role.
 func TestVectorRBACNamespaceOperations(t *testing.T) {
-	testCtx := newTestVectorRBACContext(t)
-	defer testCtx.close()
-
-	client := pb.NewVectorDBClient(testCtx.conn)
 	ctx := context.Background()
 
 	t.Run("admin can create namespace", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, adminGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("admin-2", "admin2", []string{"vector-admin"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -469,6 +444,10 @@ func TestVectorRBACNamespaceOperations(t *testing.T) {
 	})
 
 	t.Run("admin can delete namespace", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, adminGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("admin-3", "admin3", []string{"vector-admin"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -481,6 +460,10 @@ func TestVectorRBACNamespaceOperations(t *testing.T) {
 	})
 
 	t.Run("writer cannot create namespace", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, writerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("writer-4", "writer4", []string{"vector-writer"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -497,6 +480,10 @@ func TestVectorRBACNamespaceOperations(t *testing.T) {
 	})
 
 	t.Run("writer cannot delete namespace", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, writerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("writer-5", "writer5", []string{"vector-writer"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -510,15 +497,18 @@ func TestVectorRBACNamespaceOperations(t *testing.T) {
 	})
 }
 
-// TestVectorRBACMultipleRoles tests users with multiple roles.
+// TestVectorRBACMultipleRoles tests a user whose combined grants permit read
+// and write but not delete.
 func TestVectorRBACMultipleRoles(t *testing.T) {
-	testCtx := newTestVectorRBACContext(t)
-	defer testCtx.close()
-
-	client := pb.NewVectorDBClient(testCtx.conn)
 	ctx := context.Background()
 
 	t.Run("user with reader and writer roles", func(t *testing.T) {
+		// reader+writer combined grants = writerGrants (read+write+search+stats),
+		// which notably excludes delete.
+		testCtx := newTestVectorRBACContext(t, writerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		token := testCtx.createUserToken("multi-1", "multi1", []string{"vector-reader", "vector-writer"})
 		authCtx := addAuthToContext(ctx, token)
 
@@ -555,13 +545,13 @@ func TestVectorRBACMultipleRoles(t *testing.T) {
 
 // TestVectorRBACInvalidToken tests behavior with invalid tokens.
 func TestVectorRBACInvalidToken(t *testing.T) {
-	testCtx := newTestVectorRBACContext(t)
-	defer testCtx.close()
-
-	client := pb.NewVectorDBClient(testCtx.conn)
 	ctx := context.Background()
 
 	t.Run("malformed token is rejected", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, readerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		authCtx := addAuthToContext(ctx, "not-a-valid-jwt-token")
 
 		_, err := client.GetVector(authCtx, &pb.GetVectorRequest{
@@ -575,9 +565,13 @@ func TestVectorRBACInvalidToken(t *testing.T) {
 	})
 
 	t.Run("empty token is rejected as permission denied", func(t *testing.T) {
-		// An empty authorization header results in anonymous access,
-		// which is then denied by the RBAC provider (PermissionDenied).
-		// This is different from a missing authorization header (Unauthenticated).
+		// An empty authorization header results in anonymous access, which is
+		// then denied by the authorization service (PermissionDenied). This is
+		// different from a missing authorization header (Unauthenticated).
+		testCtx := newTestVectorRBACContext(t, readerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		authCtx := addAuthToContext(ctx, "")
 
 		_, err := client.GetVector(authCtx, &pb.GetVectorRequest{
@@ -587,12 +581,14 @@ func TestVectorRBACInvalidToken(t *testing.T) {
 		require.Error(t, err)
 		st, ok := status.FromError(err)
 		require.True(t, ok)
-		// Empty token with "Bearer " prefix is treated as anonymous access,
-		// which fails authorization (not authentication).
 		assert.Equal(t, codes.PermissionDenied, st.Code())
 	})
 
 	t.Run("tampered token is rejected", func(t *testing.T) {
+		testCtx := newTestVectorRBACContext(t, readerGrants...)
+		defer testCtx.close()
+		client := pb.NewVectorDBClient(testCtx.conn)
+
 		validToken := testCtx.createUserToken("tamper-1", "tamper1", []string{"vector-reader"})
 		tamperedToken := validToken[:len(validToken)-5] + "XXXXX"
 		authCtx := addAuthToContext(ctx, tamperedToken)

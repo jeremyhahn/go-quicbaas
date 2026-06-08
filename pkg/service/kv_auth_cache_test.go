@@ -64,39 +64,6 @@ func (m *kvAuthCacheMock) Close() error { return nil }
 // Put - Auth Check Rejects Unauthorized
 // =============================================================================
 
-func TestKVService_Put_AuthEnabled_Unauthorized(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			return nil
-		},
-	}
-
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth))
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer bad-token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	req := &PutRequest{
-		EntityType: "user",
-		ID:         1,
-		Data:       []byte(`{"name":"test"}`),
-	}
-
-	resp, err := svc.Put(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // Put - With Cache (successful write populates cache)
 // =============================================================================
@@ -303,34 +270,6 @@ func TestKVService_Get_PopulatesCacheOnRead(t *testing.T) {
 // Delete - Auth Check Rejects Unauthorized
 // =============================================================================
 
-func TestKVService_Delete_AuthEnabled_Unauthorized(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth))
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer bad-token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	req := &DeleteRequest{
-		EntityType: "user",
-		ID:         1,
-	}
-
-	resp, err := svc.Delete(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // Delete - Cache Invalidation
 // =============================================================================
@@ -364,33 +303,6 @@ func TestKVService_Delete_InvalidatesCache(t *testing.T) {
 // =============================================================================
 // List - Auth Check Rejects Unauthorized
 // =============================================================================
-
-func TestKVService_List_AuthEnabled_Unauthorized(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth))
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer bad-token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	req := &ListRequest{
-		EntityType: "user",
-	}
-
-	stream := make(chan *ListResponse, 10)
-	err := svc.List(ctx, req, stream)
-	require.Error(t, err)
-}
 
 // =============================================================================
 // Put - With Specific ShardID

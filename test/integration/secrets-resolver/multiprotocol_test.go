@@ -136,7 +136,7 @@ func (c *EmbeddedClient) StoreSecret(ctx context.Context, path string, data []by
 		}
 	}
 
-	_, err := c.client.Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
+	_, err := c.client.Security().Secrets().Store(ctx, &quicbaas.StoreSecretRequest{
 		Path: path,
 		Data: dataMap,
 	})
@@ -153,7 +153,7 @@ func (c *EmbeddedClient) GetSecret(ctx context.Context, path string) ([]byte, er
 		return nil, ErrEmbeddedClientNotInitialized{}
 	}
 
-	secret, err := c.client.Secrets().Get(ctx, path)
+	secret, err := c.client.Security().Secrets().Get(ctx, path)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
 			return nil, &secrets.SecretNotFoundError{
@@ -186,7 +186,7 @@ func (c *EmbeddedClient) DeleteSecret(ctx context.Context, path string) error {
 		return ErrEmbeddedClientNotInitialized{}
 	}
 
-	err := c.client.Secrets().Delete(ctx, path)
+	err := c.client.Security().Secrets().Delete(ctx, path)
 	if err != nil && !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "NotFound") {
 		return &qberrors.WrappedMessageError{Message: "deleting secret via embedded SDK", Cause: err}
 	}
