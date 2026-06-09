@@ -94,16 +94,37 @@ type Options struct {
 	// Clock overrides the time source used for exp checks and JWKS cache TTL.
 	// Nil uses the system clock. Injected for deterministic tests.
 	Clock func() time.Time
+	// LivenessChecker is the injected base (uncached) online liveness backend.
+	// It is required for the online and hybrid authz modes and unused for the
+	// offline mode. The validator never constructs the in-process backend
+	// itself; callers supply an IntrospectionLivenessChecker or an in-process
+	// implementation.
+	LivenessChecker LivenessChecker
+	// ModeResolver resolves the per-tenant authorization mode. Nil resolves to
+	// AuthzModeHybrid for every tenant.
+	ModeResolver ModeResolver
+	// LivenessCacheTTL bounds how long a positive liveness result is cached on
+	// the hybrid path. Zero disables caching (every hybrid request live-checks).
+	// The value is honored verbatim; no implicit default is injected here.
+	LivenessCacheTTL time.Duration
+	// ReplayCache is the DPoP proof replay cache used when Authorize verifies a
+	// sender-constrained token. Required only when sender-constrained tokens are
+	// authorized through Authorize.
+	ReplayCache dpop.ReplayCache
 }
 
 // Validator verifies platform access tokens for one trusted issuer and one
 // service audience. It is safe for concurrent use.
 type Validator struct {
-	issuer   string
-	audience string
-	keys     keySource
-	nowFunc  func() time.Time
-	parser   *jwt.Parser
+	issuer         string
+	audience       string
+	keys           keySource
+	nowFunc        func() time.Time
+	parser         *jwt.Parser
+	liveness       LivenessChecker
+	cachedLiveness LivenessChecker
+	modeResolver   ModeResolver
+	replayCache    dpop.ReplayCache
 }
 
 // NewValidator constructs a Validator. It requires an issuer, an audience, and
@@ -141,13 +162,20 @@ func NewValidator(opts Options) (*Validator, error) {
 		jwt.WithTimeFunc(nowFunc),
 	)
 
-	return &Validator{
-		issuer:   opts.Issuer,
-		audience: opts.Audience,
-		keys:     src,
-		nowFunc:  nowFunc,
-		parser:   parser,
-	}, nil
+	v := &Validator{
+		issuer:       opts.Issuer,
+		audience:     opts.Audience,
+		keys:         src,
+		nowFunc:      nowFunc,
+		parser:       parser,
+		liveness:     opts.LivenessChecker,
+		modeResolver: opts.ModeResolver,
+		replayCache:  opts.ReplayCache,
+	}
+	if opts.LivenessChecker != nil {
+		v.cachedLiveness = NewCachedLivenessChecker(opts.LivenessChecker, opts.LivenessCacheTTL, nowFunc)
+	}
+	return v, nil
 }
 
 // ValidatePlatformToken verifies a platform access token: signature against the
