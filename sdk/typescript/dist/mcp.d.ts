@@ -55,6 +55,7 @@ export declare class McpClient implements Client {
     readonly kms: any;
     readonly secrets: any;
     readonly barrier: BarrierClient;
+    readonly tenantBarrier: any;
     readonly ceremony: CeremonyClient;
     readonly bootstrap: BootstrapClient;
     readonly seal: any;

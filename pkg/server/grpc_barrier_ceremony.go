@@ -38,15 +38,23 @@ import (
 // "service not yet wired" status instead of an Unimplemented error.
 // =============================================================================
 
-// registerBarrierCeremonyServices registers the Barrier and Ceremony
-// gRPC service implementations against the supplied grpc.Server. The
-// returned facades are wired against the qrdb SDK client bound to the
-// platform shard.
+// registerBarrierCeremonyServices registers the Barrier, Ceremony, and
+// TenantBarrier gRPC service implementations against the supplied grpc.Server.
+// The facades are wired against the qrdb SDK client bound to the platform shard.
 func (s *Server) registerBarrierCeremonyServices(grpcServer *ggrpc.Server) {
 	barrierSvc, ceremonySvc := s.buildBarrierCeremonyServices()
 	grpcapi.RegisterBarrierServer(grpcServer, barrierSvc, s.logger)
 	grpcapi.RegisterCeremonyServer(grpcServer, ceremonySvc, s.logger)
 	s.logger.Info("Registered Barrier and Ceremony gRPC services")
+
+	// Register the per-tenant barrier gRPC service. The handler delegates to
+	// the TenantBarrierServicer facade which forwards to the embedded qrdb
+	// TenantClient — quicbaas owns no barrier logic. When the qrdb client is
+	// not yet available (typical pre-wire state) the facade is nil; every RPC
+	// then short-circuits with codes.Unavailable instead of Unimplemented.
+	tenantBarrierSvc := s.buildTenantBarrierService()
+	grpcapi.RegisterTenantBarrierGRPCServer(grpcServer, tenantBarrierSvc, s.logger)
+	s.logger.Info("Registered TenantBarrier gRPC service")
 }
 
 // buildBarrierCeremonyServices constructs the BarrierServicer and

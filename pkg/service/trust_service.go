@@ -76,7 +76,7 @@ type TrustCA interface {
 
 	// ImportIssuingCAs recursively imports the issuing CA certificates
 	// referenced by cert's AIA extension into the certificate store.
-	ImportIssuingCAs(cert *x509.Certificate) error
+	ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) error
 }
 
 // CrossSignedRootPoolRequest carries no parameters; the pool is derived
@@ -199,7 +199,7 @@ func (s *trustService) AutoImportAIA(ctx context.Context, req *AutoImportAIARequ
 		if err != nil {
 			return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "TrustService.AutoImportAIA", Err: err}
 		}
-		if err := s.ca.ImportIssuingCAs(cert); err != nil {
+		if err := s.ca.ImportIssuingCAs(ctx, cert); err != nil {
 			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "TrustService.AutoImportAIA", Err: err}
 		}
 		imported++

@@ -1,6 +1,6 @@
 // Package file re-exports go-xkms's file-storage backend.
 package file
 
-import xkmsfile "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-var New = xkmsfile.New
+var New = xkmssdk.NewFileStorageBackend

@@ -76,6 +76,7 @@
   import KMSView from './security/KMSView.svelte';
   import SecretsView from './security/SecretsView.svelte';
   import BarrierView from './security/BarrierView.svelte';
+  import TenantBarrierView from './security/TenantBarrierView.svelte';
   import CeremonyView from './security/CeremonyView.svelte';
   import BootstrapView from './security/BootstrapView.svelte';
   import SSHKeysView from './security/SSHKeysView.svelte';
@@ -122,6 +123,7 @@
     Key,
     EyeOff,
     Lock,
+    LockKeyhole,
     Server,
     Network,
     HardDrive,
@@ -216,6 +218,7 @@
         { id: 'kms',       label: 'KMS',       icon: Key,      implemented: true },
         { id: 'secrets',   label: 'Secrets',   icon: EyeOff,   implemented: true },
         { id: 'barrier',   label: 'Barrier',   icon: Lock,     implemented: true },
+        { id: 'tenant-barrier', label: 'Tenant Barrier', icon: LockKeyhole, implemented: true },
         { id: 'ceremony',  label: 'Ceremony',  icon: Users,    implemented: true },
         { id: 'bootstrap', label: 'Bootstrap', icon: Compass,  implemented: true },
         { id: 'ssh-keys',  label: 'SSH Keys',  icon: KeyRound, implemented: true },
@@ -571,6 +574,9 @@
             {:else if routerStore.name === 'barrier'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">Barrier</li>
+            {:else if routerStore.name === 'tenant-barrier'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Tenant Barrier</li>
             {:else if routerStore.name === 'ceremony'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">Ceremony</li>
@@ -864,6 +870,11 @@
       {:else if routerStore.name === 'barrier'}
         <div class="flex-1 overflow-y-auto">
           <BarrierView />
+        </div>
+
+      {:else if routerStore.name === 'tenant-barrier'}
+        <div class="flex-1 overflow-y-auto">
+          <TenantBarrierView />
         </div>
 
       {:else if routerStore.name === 'ceremony'}

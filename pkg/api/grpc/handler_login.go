@@ -146,6 +146,7 @@ func (s *LoginServer) FinishLogin(ctx context.Context, in *pb.FinishLoginRequest
 		SessionID:      in.GetSessionId(),
 		Type:           qrdbtransport.FactorType(in.GetType()),
 		LookupKey:      in.GetLookupKey(),
+		AltLookupKeys:  in.GetAltLookupKeys(),
 		Signature:      in.GetSignature(),
 		MethodMetadata: in.GetMethodMetadata(),
 	}

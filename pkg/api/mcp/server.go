@@ -239,13 +239,17 @@ func (s *Server) SetAuthorizationService(authService interfaces.AuthorizationSer
 	s.tools.SetAuthorizationChecker(s.authChecker)
 }
 
-// EnableQRDBAuthzMapping switches the authorization checker to the qrdb-canonical
-// tool -> permission mapper and the default-deny posture for unmapped tools. It
-// is called by lifecycle wiring when the qrdb-backed authorization service is
-// installed under RequireAuthz=true.
-func (s *Server) EnableQRDBAuthzMapping() {
+// SetValidatorAuthorizer installs the unified platform-token Validator as the
+// MCP authorization decision point. When set it REPLACES the OIDC-validate +
+// online qrdb role-PDP path: a SINGLE validator.Authorize call performs offline
+// token validation (sig / iss / aud / exp), DPoP sender-constraint for
+// cnf.jkt-bound tokens, the offline scp -> permission decision against the
+// qrdb-canonical "resource:action", and the per-tenant liveness/revocation
+// check. It is wired by lifecycle (pkg/server) under RequireAuthz=true and
+// implies the qrdb-canonical tool mapper.
+func (s *Server) SetValidatorAuthorizer(v ValidatorAuthorizer) {
 	if s.authChecker != nil {
-		s.authChecker.EnableQRDBMapping()
+		s.authChecker.SetValidatorAuthorizer(v)
 	}
 }
 
@@ -293,6 +297,17 @@ func (s *Server) SetCeremonyService(svc service.CeremonyServicer) {
 func (s *Server) SetCredentialService(svc qrdbsdk.ServiceCredentialServicer) {
 	if s.tools != nil {
 		s.tools.SetCredentialService(svc)
+	}
+}
+
+// SetTenantBarrierService installs the TenantBarrierServicer used by every
+// qrdb_tenant_barrier_* MCP tool. Lifecycle wiring calls this once the qrdb
+// SDK TenantClient is online. Passing nil takes the per-tenant barrier surface
+// offline; tools then return TenantBarrierServiceUnavailableError so callers
+// can distinguish "no service" from a transient failure.
+func (s *Server) SetTenantBarrierService(svc service.TenantBarrierServicer) {
+	if s.tools != nil {
+		s.tools.SetTenantBarrierService(svc)
 	}
 }
 
@@ -359,17 +374,29 @@ func (s *Server) Stop() error {
 func (s *Server) startStdioTransport() error {
 	s.logger.Info("Starting stdio transport")
 
+	// Build a context that is cancelled when the server shuts down so that
+	// in-flight stdio requests are not left running after Stop() returns.
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.handleStdioRequests()
+		defer shutdownCancel()
+		<-s.shutdown
+	}()
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.handleStdioRequests(shutdownCtx)
 	}()
 
 	return nil
 }
 
-// handleStdioRequests handles JSON-RPC requests from stdin and writes responses to stdout.
-func (s *Server) handleStdioRequests() {
+// handleStdioRequests handles JSON-RPC requests from stdin and writes responses
+// to stdout. shutdownCtx is cancelled when the server shuts down; request
+// contexts are derived from it so in-flight requests are cancelled on shutdown.
+func (s *Server) handleStdioRequests(shutdownCtx context.Context) {
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
 
@@ -393,10 +420,11 @@ func (s *Server) handleStdioRequests() {
 				continue
 			}
 
-			// Handle request with timeout
-			ctx, cancel := context.WithTimeout(context.Background(), s.config.RequestTimeout)
-			resp := s.handleRequest(ctx, &req)
-			cancel()
+			// Handle request with timeout. Derive from shutdownCtx so the
+			// request is cancelled when the server shuts down.
+			reqCtx, reqCancel := context.WithTimeout(shutdownCtx, s.config.RequestTimeout)
+			resp := s.handleRequest(reqCtx, &req)
+			reqCancel()
 
 			// Write response
 			if err := encoder.Encode(resp); err != nil {
@@ -830,6 +858,10 @@ func (s *Server) handleAuthError(id interface{}, authErr *AuthorizationError) *J
 		code = InvalidToken
 	case AuthErrorPermissionDenied:
 		code = PermissionDenied
+	case AuthErrorMisconfigured:
+		// Server-side wiring error: deny fail-closed with a server error code, not
+		// a client auth error. The caller is not at fault.
+		code = InternalError
 	default:
 		code = InternalError
 	}

@@ -562,20 +562,20 @@ func (m *mockCertificateAuthority) Sign(_ io.Reader, _ []byte, _ crypto.SignerOp
 }
 
 // Lifecycle
-func (m *mockCertificateAuthority) Init() error         { return m.initErr }
-func (m *mockCertificateAuthority) Load() error         { return m.loadErr }
-func (m *mockCertificateAuthority) IsInitialized() bool { return m.initErr == nil }
+func (m *mockCertificateAuthority) Init(_ context.Context) error { return m.initErr }
+func (m *mockCertificateAuthority) Load(_ context.Context) error { return m.loadErr }
+func (m *mockCertificateAuthority) IsInitialized() bool          { return m.initErr == nil }
 
 // CSR
-func (m *mockCertificateAuthority) SignCSR(_ []byte, _ *xkmsca.SignOptions) (*x509.Certificate, error) {
+func (m *mockCertificateAuthority) SignCSR(_ context.Context, _ []byte, _ *xkmsca.SignOptions) (*x509.Certificate, error) {
 	return nil, nil
 }
-func (m *mockCertificateAuthority) CreateCSR(_ *xkmsca.CertificateRequest) ([]byte, error) {
+func (m *mockCertificateAuthority) CreateCSR(_ context.Context, _ *xkmsca.CertificateRequest) ([]byte, error) {
 	return nil, nil
 }
 
 // Certificate Issuance
-func (m *mockCertificateAuthority) IssueCertificate(request *xkmsca.CertificateRequest) (*xkmsca.IssuedCertificate, error) {
+func (m *mockCertificateAuthority) IssueCertificate(_ context.Context, request *xkmsca.CertificateRequest) (*xkmsca.IssuedCertificate, error) {
 	if m.issueCertFn != nil {
 		return m.issueCertFn(request)
 	}
@@ -584,7 +584,7 @@ func (m *mockCertificateAuthority) IssueCertificate(request *xkmsca.CertificateR
 	}
 	return m.issuedCert, nil
 }
-func (m *mockCertificateAuthority) IssueCertificateWithProfile(_ *xkmsca.CertificateRequest, _ string) (*xkmsca.IssuedCertificate, error) {
+func (m *mockCertificateAuthority) IssueCertificateWithProfile(_ context.Context, _ *xkmsca.CertificateRequest, _ string) (*xkmsca.IssuedCertificate, error) {
 	return nil, nil
 }
 
@@ -604,24 +604,24 @@ func (m *mockCertificateAuthority) Verify(_ *x509.Certificate, _ ...crypto.Signe
 }
 
 // Revocation
-func (m *mockCertificateAuthority) Revoke(_ *big.Int, _ int) error     { return nil }
-func (m *mockCertificateAuthority) GenerateCRL() ([]byte, error)       { return nil, nil }
-func (m *mockCertificateAuthority) IsRevoked(_ *big.Int) (bool, error) { return false, nil }
+func (m *mockCertificateAuthority) Revoke(_ context.Context, _ *big.Int, _ int) error { return nil }
+func (m *mockCertificateAuthority) GenerateCRL(_ context.Context) ([]byte, error)     { return nil, nil }
+func (m *mockCertificateAuthority) IsRevoked(_ *big.Int) (bool, error)                { return false, nil }
 
 // TLS
-func (m *mockCertificateAuthority) TLSCertificate(_ *xkmstypes.KeyAttributes) (tls.Certificate, error) {
+func (m *mockCertificateAuthority) TLSCertificate(_ context.Context, _ *xkmstypes.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, nil
 }
-func (m *mockCertificateAuthority) TLSConfig(_ *xkmstypes.KeyAttributes) (*tls.Config, error) {
+func (m *mockCertificateAuthority) TLSConfig(_ context.Context, _ *xkmstypes.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
 func (m *mockCertificateAuthority) TLSConfigWithOptions(_ *xkmstypes.KeyAttributes, _ *xkmsca.TLSConfigOptions) (*tls.Config, error) {
 	return nil, nil
 }
-func (m *mockCertificateAuthority) ServerTLSConfig(_ *xkmstypes.KeyAttributes, _ bool) (*tls.Config, error) {
+func (m *mockCertificateAuthority) ServerTLSConfig(_ context.Context, _ *xkmstypes.KeyAttributes, _ bool) (*tls.Config, error) {
 	return nil, nil
 }
-func (m *mockCertificateAuthority) ClientTLSConfig(_ *xkmstypes.KeyAttributes, _ string) (*tls.Config, error) {
+func (m *mockCertificateAuthority) ClientTLSConfig(_ context.Context, _ *xkmstypes.KeyAttributes, _ string) (*tls.Config, error) {
 	return nil, nil
 }
 func (m *mockCertificateAuthority) MutualTLSConfig(_ *xkmstypes.KeyAttributes) (*tls.Config, error) {
@@ -640,7 +640,7 @@ func (m *mockCertificateAuthority) TrustedIntermediateCertPool(_ *x509.Certifica
 	return nil, nil
 }
 func (m *mockCertificateAuthority) OSTrustStore() (*x509.CertPool, error) { return nil, nil }
-func (m *mockCertificateAuthority) QuantumSafeTLSConfig(_ *xkmstypes.KeyAttributes) (*tls.Config, error) {
+func (m *mockCertificateAuthority) QuantumSafeTLSConfig(_ context.Context, _ *xkmstypes.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
 

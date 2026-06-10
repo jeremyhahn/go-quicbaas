@@ -131,7 +131,7 @@ func (a *xkmsCAServicer) GetCACertificate(_ context.Context, _ *xkmstransport.Ge
 // SignCSR signs a CSR and returns the leaf and chain PEMs. Profile and
 // ValidityDays flow into SignOptions so the CA can apply the matching
 // certificate profile.
-func (a *xkmsCAServicer) SignCSR(_ context.Context, req *xkmstransport.SignCSRRequest) (*xkmstransport.SignCSRResponse, error) {
+func (a *xkmsCAServicer) SignCSR(ctx context.Context, req *xkmstransport.SignCSRRequest) (*xkmstransport.SignCSRResponse, error) {
 	if req == nil {
 		return nil, ErrXKMSCANilRequest
 	}
@@ -141,7 +141,7 @@ func (a *xkmsCAServicer) SignCSR(_ context.Context, req *xkmstransport.SignCSRRe
 
 	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID)
 
-	cert, err := a.ca.SignCSR(req.CSRPEM, opts)
+	cert, err := a.ca.SignCSR(ctx, req.CSRPEM, opts)
 	if err != nil {
 		return nil, &XKMSCAOperationError{Op: "sign csr", Err: err}
 	}
@@ -204,7 +204,7 @@ func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int,
 // IssueCertificate generates a fresh keypair, signs the certificate, and
 // returns cert/chain/private-key PEM. Mirrors XKMSService.IssueCertificate
 // in go-xkms so REST clients see a consistent surface.
-func (a *xkmsCAServicer) IssueCertificate(_ context.Context, req *xkmstransport.IssueCertificateRequest) (*xkmstransport.IssueCertificateResponse, error) {
+func (a *xkmsCAServicer) IssueCertificate(ctx context.Context, req *xkmstransport.IssueCertificateRequest) (*xkmstransport.IssueCertificateResponse, error) {
 	if req == nil {
 		return nil, ErrXKMSCANilRequest
 	}
@@ -237,9 +237,9 @@ func (a *xkmsCAServicer) IssueCertificate(_ context.Context, req *xkmstransport.
 	var issued *xkmssdk.TrustedCAIssuedCertificate
 	var err error
 	if strings.TrimSpace(req.Profile) != "" {
-		issued, err = a.ca.IssueCertificateWithProfile(certReq, req.Profile)
+		issued, err = a.ca.IssueCertificateWithProfile(ctx, certReq, req.Profile)
 	} else {
-		issued, err = a.ca.IssueCertificate(certReq)
+		issued, err = a.ca.IssueCertificate(ctx, certReq)
 	}
 	if err != nil {
 		return nil, &XKMSCAOperationError{Op: "issue certificate", Err: err}
@@ -258,7 +258,7 @@ func (a *xkmsCAServicer) IssueCertificate(_ context.Context, req *xkmstransport.
 
 // RevokeCertificate marks a serial as revoked using the RFC 5280 reason
 // code supplied by the caller.
-func (a *xkmsCAServicer) RevokeCertificate(_ context.Context, req *xkmstransport.RevokeCertificateRequest) (*xkmstransport.RevokeCertificateResponse, error) {
+func (a *xkmsCAServicer) RevokeCertificate(ctx context.Context, req *xkmstransport.RevokeCertificateRequest) (*xkmstransport.RevokeCertificateResponse, error) {
 	if req == nil {
 		return nil, ErrXKMSCANilRequest
 	}
@@ -271,7 +271,7 @@ func (a *xkmsCAServicer) RevokeCertificate(_ context.Context, req *xkmstransport
 		return nil, err
 	}
 
-	if err := a.ca.Revoke(serial, req.Reason); err != nil {
+	if err := a.ca.Revoke(ctx, serial, req.Reason); err != nil {
 		return nil, &XKMSCAOperationError{Op: "revoke", Err: err}
 	}
 
@@ -283,8 +283,8 @@ func (a *xkmsCAServicer) RevokeCertificate(_ context.Context, req *xkmstransport
 
 // GenerateCRL produces a signed PEM-encoded CRL covering all currently
 // revoked certificates.
-func (a *xkmsCAServicer) GenerateCRL(_ context.Context, _ *xkmstransport.GenerateCRLRequest) (*xkmstransport.GenerateCRLResponse, error) {
-	crlDER, err := a.ca.GenerateCRL()
+func (a *xkmsCAServicer) GenerateCRL(ctx context.Context, _ *xkmstransport.GenerateCRLRequest) (*xkmstransport.GenerateCRLResponse, error) {
+	crlDER, err := a.ca.GenerateCRL(ctx)
 	if err != nil {
 		return nil, &XKMSCAOperationError{Op: "generate crl", Err: err}
 	}

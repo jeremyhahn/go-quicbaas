@@ -22,7 +22,7 @@ export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } fro
 // Barrier / Ceremony / Bootstrap REST clients — exported so callers can
 // construct each sub-client directly without going through the full
 // RestClient. The convenience factory functions in factory.ts wrap these.
-export { RestBarrierClient, RestCeremonyClient, RestBootstrapClient } from './rest.js';
+export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBootstrapClient, } from './rest.js';
 // Stub transport error types — exported so callers can catch them explicitly.
 export { GrpcWebNotImplementedError } from './grpc_web.js';
 export { UnixNotImplementedError } from './unix.js';

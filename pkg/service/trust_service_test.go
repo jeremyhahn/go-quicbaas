@@ -48,7 +48,7 @@ func (f *fakeTrustCA) CrossSignedRootPEMs() ([][]byte, error) {
 	return f.rootPEMs, nil
 }
 
-func (f *fakeTrustCA) ImportIssuingCAs(cert *x509.Certificate) error {
+func (f *fakeTrustCA) ImportIssuingCAs(_ context.Context, cert *x509.Certificate) error {
 	if f.importErr != nil {
 		return f.importErr
 	}

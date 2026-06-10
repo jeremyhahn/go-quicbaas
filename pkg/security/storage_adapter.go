@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"sync"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -30,6 +31,12 @@ import (
 // as storage for go-xkms encryption keys.
 type ObjStoreAdapter struct {
 	objstore common.Storage
+
+	// putIfAbsentMu serializes the Exists+Put performed by PutIfAbsent within
+	// this process. go-objstore exposes no conditional-put primitive, so this
+	// guarantees uniqueness for single-process access; true cross-node atomicity
+	// is not available through the object-store abstraction.
+	putIfAbsentMu sync.Mutex
 }
 
 // NewObjStoreAdapter creates a new adapter that wraps a go-objstore Storage backend.
@@ -63,6 +70,27 @@ func (a *ObjStoreAdapter) Delete(_ context.Context, key string) error {
 	return a.objstore.Delete(key)
 }
 
+// PutIfAbsent atomically stores value at key only if key does not already
+// exist, returning stored=true when written and stored=false when the key was
+// already present. Atomicity holds for single-process access via putIfAbsentMu;
+// the object-store abstraction offers no cross-node compare-and-swap.
+func (a *ObjStoreAdapter) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	a.putIfAbsentMu.Lock()
+	defer a.putIfAbsentMu.Unlock()
+
+	exists, err := a.Exists(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return false, nil
+	}
+	if err := a.Put(ctx, key, value); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // List returns all keys with the given prefix.
 func (a *ObjStoreAdapter) List(_ context.Context, prefix string) ([]string, error) {
 	return a.objstore.List(prefix)
@@ -88,8 +116,8 @@ func (a *ObjStoreAdapter) Scan(ctx context.Context, prefix string, fn func(strin
 }
 
 // Exists checks if a key exists in storage.
-func (a *ObjStoreAdapter) Exists(_ context.Context, key string) (bool, error) {
-	return a.objstore.Exists(context.Background(), key)
+func (a *ObjStoreAdapter) Exists(ctx context.Context, key string) (bool, error) {
+	return a.objstore.Exists(ctx, key)
 }
 
 // Close releases any resources held by the backend.

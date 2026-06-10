@@ -63,6 +63,7 @@ type ceremonyFinishLoginRequest struct {
 	SessionID      string            `json:"session_id"`
 	Type           string            `json:"type"`
 	LookupKey      []byte            `json:"lookup_key,omitempty"`
+	AltLookupKeys  [][]byte          `json:"alt_lookup_keys,omitempty"`
 	Signature      []byte            `json:"signature,omitempty"`
 	MethodMetadata map[string]string `json:"method_metadata,omitempty"`
 }
@@ -217,6 +218,7 @@ func (h *IAMHandler) CeremonyFinishLogin(w http.ResponseWriter, r *http.Request)
 		SessionID:      req.SessionID,
 		Type:           qrdbtransport.FactorType(req.Type),
 		LookupKey:      req.LookupKey,
+		AltLookupKeys:  req.AltLookupKeys,
 		Signature:      req.Signature,
 		MethodMetadata: req.MethodMetadata,
 	})

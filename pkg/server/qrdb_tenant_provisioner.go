@@ -18,7 +18,6 @@ package server
 import (
 	"context"
 
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -47,7 +46,7 @@ func newQRDBTenantProvisionerAdapter(svc qrdbsdk.ServiceTenantServicer) iam.QRDB
 // isolationType is cast to tenant.IsolationType; an empty string uses the
 // engine default (IsolationBarrier).
 func (a *qrdbTenantProvisionerAdapter) CreateTenant(ctx context.Context, id, name, isolationType string) error {
-	_, err := a.svc.CreateTenant(ctx, id, name, qrdbtenant.IsolationType(isolationType))
+	_, err := a.svc.CreateTenant(ctx, id, name, qrdbsdk.TenantIsolationType(isolationType))
 	return err
 }
 

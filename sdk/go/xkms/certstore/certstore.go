@@ -1,6 +1,6 @@
 // Package certstore re-exports go-xkms's certificate-store types.
 package certstore
 
-import xkmscs "github.com/jeremyhahn/go-xkms/pkg/certstore"
+import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-type CertStore = xkmscs.CertStore
+type CertStore = xkmssdk.CertStore

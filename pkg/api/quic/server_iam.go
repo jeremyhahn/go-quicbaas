@@ -48,14 +48,15 @@ func getIAMServiceOption(svc service.QuicBaaS) HandlerOption {
 
 // getMFAServiceOption returns a handler option that injects the MFA service.
 // The MFA manager is obtained from the QuicBaaS service which delegates to
-// the IAM service provider when IAM is enabled.
-func getMFAServiceOption(svc service.QuicBaaS) HandlerOption {
+// the IAM service provider when IAM is enabled. ctx must be the live request
+// context so cancellation and deadline propagate into the manager lookup.
+func getMFAServiceOption(ctx context.Context, svc service.QuicBaaS) HandlerOption {
 	provider, ok := svc.(mfaManagerProvider)
 	if !ok {
 		return func(h *Handler) {}
 	}
 
-	mfaMgr, err := provider.GetMFAManager(context.Background())
+	mfaMgr, err := provider.GetMFAManager(ctx)
 	if err != nil || mfaMgr == nil {
 		return func(h *Handler) {}
 	}

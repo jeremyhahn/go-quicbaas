@@ -1,8 +1,8 @@
 // Package knownhosts re-exports go-xkms's known_hosts store.
 package knownhosts
 
-import xkmskh "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
+import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-type Store = xkmskh.Store
+type Store = xkmssdk.SSHKnownHostsStore
 
-var NewBackendStore = xkmskh.NewBackendStore
+var NewBackendStore = xkmssdk.NewSSHKnownHostsBackendStore

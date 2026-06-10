@@ -18,7 +18,6 @@ package benchmark
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"testing"
 	"time"
@@ -157,7 +156,7 @@ func setupQuicBaaSStandalone(b *testing.B, readMode, writeMode string) cacheBack
 	// Create SDK client connecting to standalone instance
 	client, err := quicbaas.NewClient(
 		"localhost:50051",
-		quicbaas.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}),
+		quicbaas.WithTLSConfig(benchTLSConfig()),
 		quicbaas.WithTimeout(5*time.Second),
 	)
 	if err != nil {
@@ -194,7 +193,7 @@ func setupQuicBaaSCluster(b *testing.B, readMode, writeMode string) cacheBackend
 	// The cluster has 3 nodes (localhost:50051, 50052, 50053) but we can connect to any one
 	client, err := quicbaas.NewClient(
 		"localhost:50051",
-		quicbaas.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}),
+		quicbaas.WithTLSConfig(benchTLSConfig()),
 		quicbaas.WithTimeout(5*time.Second),
 	)
 	if err != nil {

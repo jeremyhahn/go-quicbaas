@@ -1981,7 +1981,7 @@ func newDeadGRPCClient(t *testing.T) *grpc.Client {
 
 	client, err := grpc.NewClient("127.0.0.1:1",
 		grpc.WithLogger(log),
-		grpc.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}), //nolint:gosec // G402: unit test
+		grpc.WithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS13}),
 		grpc.WithTimeout(100*time.Millisecond),
 		grpc.WithRetry(0, 10*time.Millisecond),
 	)

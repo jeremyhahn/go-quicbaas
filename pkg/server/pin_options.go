@@ -19,9 +19,7 @@ import (
 	"path/filepath"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/pinadapter"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
@@ -70,11 +68,11 @@ func (p softwarePINProvider) Storage() (qrdbsdk.PINStorage, error) {
 	if err := os.MkdirAll(pinDir, 0o700); err != nil {
 		return nil, &PINBackendError{Stage: "mkdir pin dir", Cause: err}
 	}
-	fs, err := filestorage.New(pinDir)
+	fs, err := xkmssdk.NewFileStorageBackend(pinDir)
 	if err != nil {
 		return nil, &PINBackendError{Stage: "open pin file storage", Cause: err}
 	}
-	adapter, err := pinadapter.New(fs)
+	adapter, err := xkmssdk.NewPINStoreAdapter(fs)
 	if err != nil {
 		return nil, &PINBackendError{Stage: "wrap pin storage adapter", Cause: err}
 	}
@@ -101,7 +99,7 @@ func buildPINBackend(cfg *config.Config, logger *slog.Logger) (qrdbsdk.PINBacken
 	if cfg != nil {
 		dataDir = cfg.Storage.DataDir
 	}
-	backend, err := pinselect.Select(pinselect.Config{
+	backend, err := xkmssdk.SelectPINBackend(xkmssdk.PINSelectConfig{
 		Software: softwarePINProvider{dataDir: dataDir},
 		Logger:   logger,
 	})

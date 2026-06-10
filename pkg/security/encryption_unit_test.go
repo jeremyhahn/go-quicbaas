@@ -16,6 +16,7 @@
 package security
 
 import (
+	"context"
 	"crypto/rand"
 	"io"
 	"testing"
@@ -304,7 +305,7 @@ func TestKeyring_LoadOrGenerateKeyWithoutBackend(t *testing.T) {
 		backend: nil, // No backend initialized
 	}
 
-	key, err := kr.loadOrGenerateKey()
+	key, err := kr.loadOrGenerateKey(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, key)
 	assert.Contains(t, err.Error(), "backend not initialized")
@@ -397,7 +398,7 @@ func TestKeyring_RotateKeyWithoutBackend(t *testing.T) {
 		backend: nil, // No backend
 	}
 
-	key, err := kr.RotateKey()
+	key, err := kr.RotateKey(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, key)
 	assert.Contains(t, err.Error(), "backend not initialized")

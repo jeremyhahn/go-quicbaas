@@ -4,7 +4,7 @@
 // directly.
 package fido2
 
-import xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
+import xkmsfido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 
 type (
 	AuthenticationConfig = xkmsfido2.AuthenticationConfig

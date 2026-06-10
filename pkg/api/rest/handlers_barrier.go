@@ -100,7 +100,7 @@ type barrierRootTokenRequest struct {
 // requireBarrierService writes a 503 Service Unavailable response when the
 // barrier facade is unwired. Returns true when the service is present.
 func (s *Server) requireBarrierService(w http.ResponseWriter, r *http.Request) bool {
-	if s.barrierSvc == nil {
+	if s.barrierService() == nil {
 		RespondError(w, r, http.StatusServiceUnavailable, ErrBarrierServiceUnavailable)
 		return false
 	}

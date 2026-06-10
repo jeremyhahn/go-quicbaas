@@ -27,6 +27,9 @@ package platformtoken
 type AuthorizedContext struct {
 	// Subject is the stable user/service id (sub); used for audit.
 	Subject string
+	// Username is the human-facing name (from the token name claim), surfaced so
+	// a resource server can match principals by username in addition to Subject.
+	Username string
 	// TenantID is the tenant the request operates within. Downstream services
 	// set this as the row-level-security tenant (e.g. app.current_tenant).
 	TenantID string
@@ -43,6 +46,7 @@ type AuthorizedContext struct {
 func Authorize(claims *Claims) *AuthorizedContext {
 	return &AuthorizedContext{
 		Subject:      claims.Subject,
+		Username:     claims.Name,
 		TenantID:     claims.TenantID,
 		Scopes:       claims.scopes(),
 		Roles:        claims.Roles,

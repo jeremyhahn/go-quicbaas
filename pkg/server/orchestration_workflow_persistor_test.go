@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -78,8 +78,9 @@ func TestKVWorkflowPersistor_RoundTrip(t *testing.T) {
 	// Phase E: the bare ShardedClient no longer provides a working in-process
 	// transport; the qrdb node is required for all embedded mode operations.
 	ctx := context.Background()
-	qcfg := &qrdbconfig.Config{}
-	qcfg.Databases = []qrdbconfig.DatabaseConfig{
+	qcfg := &qrdbsdk.DaemonConfig{}
+	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
+	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		{Name: "default", Engine: "mvcc", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
@@ -125,8 +126,9 @@ func TestKVWorkflowPersistor_RoundTrip(t *testing.T) {
 func TestKVWorkflowPersistor_LoadAll_SkipsMalformedEntries(t *testing.T) {
 	// Phase E: use a real qrdb standalone node.
 	ctx := context.Background()
-	qcfg := &qrdbconfig.Config{}
-	qcfg.Databases = []qrdbconfig.DatabaseConfig{
+	qcfg := &qrdbsdk.DaemonConfig{}
+	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
+	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		{Name: "default", Engine: "mvcc", Backend: "memory"},
 	}
 	node, nodeErr := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
@@ -156,8 +158,9 @@ func TestKVWorkflowPersistor_LoadAll_SkipsMalformedEntries(t *testing.T) {
 func newClosedPersistorClient(t *testing.T) *kvWorkflowPersistor {
 	t.Helper()
 	ctx := context.Background()
-	qcfg := &qrdbconfig.Config{}
-	qcfg.Databases = []qrdbconfig.DatabaseConfig{
+	qcfg := &qrdbsdk.DaemonConfig{}
+	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
+	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		{Name: "default", Engine: "mvcc", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
@@ -199,8 +202,9 @@ func TestKVWorkflowPersistor_LoadAll_ScanError(t *testing.T) {
 // is skipped (it is not a usable workflow) rather than returned.
 func TestKVWorkflowPersistor_LoadAll_SkipsEmptyName(t *testing.T) {
 	ctx := context.Background()
-	qcfg := &qrdbconfig.Config{}
-	qcfg.Databases = []qrdbconfig.DatabaseConfig{
+	qcfg := &qrdbsdk.DaemonConfig{}
+	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
+	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		{Name: "default", Engine: "mvcc", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)

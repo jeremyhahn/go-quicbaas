@@ -112,10 +112,13 @@ func TestCeremonyFinishLogin_MTLS_NoPeerCert_FailsClosed(t *testing.T) {
 }
 
 // TestCeremonyFinishLogin_MTLS_PeerCertWins is the anti-spoofing test: the body
-// carries a different key than the verified peer cert; the cert wins.
+// carries a different key than the verified peer cert; the cert wins. The
+// primary key is the renewal-stable SPKI thumbprint; the legacy
+// SHA-256(cert.Raw) key rides in AltLookupKeys.
 func TestCeremonyFinishLogin_MTLS_PeerCertWins(t *testing.T) {
 	cert := ceremonyTestCert(t)
-	wantKey := sha256.Sum256(cert.Raw)
+	wantKey := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	wantAlt := sha256.Sum256(cert.Raw)
 
 	fake := &ceremonyFakeLoginClient{finishResp: &qrdbtransport.FinishLoginResponse{
 		Bearer:    "ok",
@@ -140,6 +143,8 @@ func TestCeremonyFinishLogin_MTLS_PeerCertWins(t *testing.T) {
 	require.True(t, fake.finishInvoked)
 	assert.NotEqual(t, []byte("spoofed-victim-hash"), fake.finishReq.LookupKey, "spoofed key forwarded")
 	assert.Equal(t, wantKey[:], fake.finishReq.LookupKey, "peer cert must determine lookup key")
+	require.Len(t, fake.finishReq.AltLookupKeys, 1)
+	assert.Equal(t, wantAlt[:], fake.finishReq.AltLookupKeys[0], "legacy cert.Raw key must ride in AltLookupKeys")
 }
 
 // TestCeremonyFinishLogin_PIV_ForwardsUnchanged asserts a PIV request forwards

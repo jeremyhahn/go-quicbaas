@@ -24,6 +24,8 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // =============================================================================
@@ -87,7 +89,10 @@ func (m *MockKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	}
 	val, ok := m.data[key]
 	if !ok {
-		return nil, errors.New("key not found")
+		// Match the production KVStore contract: missing keys surface as
+		// QBError{ErrNotFound} so callers can distinguish absence from
+		// transient failures.
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "mock.get"}
 	}
 	return append([]byte(nil), val...), nil
 }
@@ -205,12 +210,15 @@ func TestKVStoreStorageAdapter_Get_StoreError(t *testing.T) {
 	adapter, err := NewKVStoreStorageAdapter(mockStore)
 	require.NoError(t, err)
 
-	// Configure the mock to return an error
-	mockStore.SetError("Get", errors.New("storage unavailable"))
+	// Configure the mock to return a transient error. It must propagate
+	// as-is, NOT be conflated with "key not found".
+	storeErr := errors.New("storage unavailable")
+	mockStore.SetError("Get", storeErr)
 
 	value, err := adapter.Get(ctx, "any-key")
 	assert.Nil(t, value)
-	assert.ErrorIs(t, err, xkmssdk.ErrStorageNotFound)
+	assert.ErrorIs(t, err, storeErr)
+	assert.NotErrorIs(t, err, xkmssdk.ErrStorageNotFound)
 }
 
 func TestKVStoreStorageAdapter_Put_Success(t *testing.T) {
@@ -428,12 +436,14 @@ func TestKVStoreStorageAdapter_Exists_StoreError(t *testing.T) {
 	adapter, err := NewKVStoreStorageAdapter(mockStore)
 	require.NoError(t, err)
 
-	// Configure error - Exists returns false on error (per implementation)
-	mockStore.SetError("Get", errors.New("storage error"))
+	// A transient store error must propagate so PutIfAbsent never mistakes
+	// "store unreachable" for "key absent" and overwrites existing data.
+	storeErr := errors.New("storage error")
+	mockStore.SetError("Exists", storeErr)
 
 	exists, err := adapter.Exists(ctx, "any-key")
-	require.NoError(t, err)
-	assert.False(t, exists, "should return false when Get returns error")
+	assert.ErrorIs(t, err, storeErr)
+	assert.False(t, exists)
 }
 
 func TestKVStoreStorageAdapter_Close(t *testing.T) {

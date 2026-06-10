@@ -121,6 +121,12 @@ type TenantSettings struct {
 	// OIDC carries the tenant's OIDC issuance overrides. Nil defers entirely to
 	// the global/server defaults (single broker issuer, shared signing key).
 	OIDC *TenantOIDCConfig `json:"oidc,omitempty" yaml:"oidc,omitempty"`
+
+	// AuthzMode optionally overrides the deployment-level security.authz_mode for
+	// this tenant. It governs whether an online liveness/revocation check is
+	// enforced in addition to the always-offline scope decision. Valid values:
+	// "offline", "online", "hybrid". Empty means "use the deployment default".
+	AuthzMode string `json:"authz_mode,omitempty" yaml:"authz_mode,omitempty"`
 }
 
 // TenantWebAuthnConfig is the per-tenant WebAuthn relying-party override. Each

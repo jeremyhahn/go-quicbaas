@@ -30,20 +30,6 @@ type PersistentAuthManager struct {
 	storage    interfaces.Storage
 	tokenStore TokenStoreInterface
 	userStore  UserStoreInterface
-
-	// qrdbAuthz, when set, routes the authorization DECISION through qrdb's
-	// policy decision point. Wired at server lifecycle under the iam build tag
-	// when RequireAuthz is enabled. When nil the manager fails closed
-	// (Authorize returns AuthorizerNotConfiguredError); it never makes a local
-	// RBAC decision.
-	qrdbAuthz QRDBDecisionPoint
-}
-
-// SetQRDBDecisionPoint installs the qrdb-backed authorization decision point.
-// Passing it routes Authorize through qrdb's PDP. Without it the manager fails
-// closed.
-func (pam *PersistentAuthManager) SetQRDBDecisionPoint(dp QRDBDecisionPoint) {
-	pam.qrdbAuthz = dp
 }
 
 // UserStoreInterface abstracts user storage for both in-memory and persistent implementations.
@@ -166,49 +152,20 @@ func (pam *PersistentAuthManager) IssueTokenForUser(ctx context.Context, user in
 
 // Authorize checks if a token has permission to perform an action on a resource.
 //
-// The authorization DECISION belongs to qrdb. When a qrdb decision point has
-// been installed (RequireAuthz under iam), Authorize delegates to it. When no
-// decision point is configured the manager fails closed and returns
+// The authorization DECISION belongs to qrdb's policy decision point, reached
+// through the SDK platform-token validator at the transport layer. The in-process
+// auth manager carries no authorization authority of its own, so when
+// authentication is enabled it fails closed and returns
 // AuthorizerNotConfiguredError — it never makes a local RBAC decision.
 func (pam *PersistentAuthManager) Authorize(ctx context.Context, token, resource, action string) error {
 	if !pam.config.Enabled {
 		return nil // Authentication disabled, allow all
 	}
 
-	// Fail closed: without a qrdb decision point there is no authority to
-	// authorize against. This is a server-side misconfiguration, not a silent
-	// allow and not a fork RBAC decision.
-	if pam.qrdbAuthz == nil {
-		return api.NewAuthorizerNotConfiguredError("auth.Authorize")
-	}
-
-	if token == "" {
-		return api.NewTokenRequiredError("auth.Authorize")
-	}
-
-	// 1. Validate token
-	claims, err := pam.validateToken(token)
-	if err != nil {
-		return err
-	}
-
-	// 2. Check if token is revoked
-	if pam.tokenStore.IsRevoked(token) {
-		return api.NewTokenRevokedError("auth.Authorize")
-	}
-
-	// 3. Delegate the permission decision to qrdb's policy decision point.
-	if err := pam.qrdbAuthz.Authorize(ctx, QRDBSubject{
-		ID:       claims.UserID,
-		TenantID: claims.TenantID,
-		Roles:    claims.Roles,
-	}, resource, action); err != nil {
-		pam.logger.Warnf("Authorization denied (qrdb PDP): user=%s resource=%s action=%s: %v",
-			claims.Username, resource, action, err)
-		return api.NewInsufficientPermissionsError("auth.Authorize")
-	}
-
-	return nil
+	// Fail closed: the manager has no authority to authorize against. The
+	// authorization decision belongs to qrdb via the platform-token validator at
+	// the transport layer, not to this in-process manager.
+	return api.NewAuthorizerNotConfiguredError("auth.Authorize")
 }
 
 // RefreshToken generates a new access token from a refresh token.

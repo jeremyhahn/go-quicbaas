@@ -19,9 +19,6 @@ import (
 	"os"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
-	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -183,7 +180,7 @@ func buildHardwareSealStrategies(cfg *config.Config) ([]qrdbsdk.SealingStrategy,
 func buildTPM2Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 	tpmCfg := cfg.Seal.TPM2
 
-	backendCfg := &tpm2backend.Config{
+	backendCfg := &xkmssdk.TPM2BackendConfig{
 		Device:          tpmCfg.Device,
 		KeyDir:          tpmCfg.KeyDir,
 		UseSimulator:    tpmCfg.UseSimulator,
@@ -195,13 +192,13 @@ func buildTPM2Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 		PlatformPCRBank: tpmCfg.PCRBank,
 	}
 
-	backend, err := tpm2backend.NewBackend(backendCfg)
+	backend, err := xkmssdk.NewTPM2Backend(backendCfg)
 	if err == nil {
 		return xkmssdk.NewTPM2Strategy(backend, nil), nil
 	}
 
 	// First-boot path: provision the TPM when it reports uninitialized and retry.
-	if !errors.Is(err, tpm2backend.ErrNotInitialized) {
+	if !errors.Is(err, xkmssdk.ErrTPM2BackendNotInitialized) {
 		return nil, &StrategyBuildError{Backend: "tpm2", Cause: err}
 	}
 
@@ -223,7 +220,7 @@ func buildTPM2Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 //
 // provisionTPM2Backend is called at most once per daemon boot (subsequent starts
 // find a provisioned TPM and NewBackend succeeds without reaching this path).
-func provisionTPM2Backend(cfg *tpm2backend.Config) (*tpm2backend.Backend, error) {
+func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig) (*xkmssdk.TPM2Backend, error) {
 	if cfg.KeyDir == "" {
 		cfg.KeyDir = "./tpm2-keys"
 	}
@@ -231,7 +228,7 @@ func provisionTPM2Backend(cfg *tpm2backend.Config) (*tpm2backend.Backend, error)
 		return nil, err
 	}
 
-	storageFactory, err := tpmstore.NewStorageFactory(nil, cfg.KeyDir)
+	storageFactory, err := xkmssdk.NewTPMStorageFactory(nil, cfg.KeyDir)
 	if err != nil {
 		return nil, err
 	}
@@ -241,23 +238,23 @@ func provisionTPM2Backend(cfg *tpm2backend.Config) (*tpm2backend.Backend, error)
 		tpmConfig.Hash = "SHA-256"
 	}
 	if tpmConfig.PlatformPCRBank == "" {
-		tpmConfig.PlatformPCRBank = pkgtpm2.PCRBankSHA256
+		tpmConfig.PlatformPCRBank = xkmssdk.PCRBankSHA256
 	}
 	if tpmConfig.EK == nil {
-		tpmConfig.EK = &pkgtpm2.EKConfig{
+		tpmConfig.EK = &xkmssdk.EKConfig{
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
-			HierarchyAuth: tpmstore.DEFAULT_PASSWORD,
+			HierarchyAuth: xkmssdk.TPM_DEFAULT_PASSWORD,
 			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
+			RSAConfig:     &xkmssdk.RSAConfig{KeySize: 2048},
 		}
 	}
 	if tpmConfig.SSRK == nil {
-		tpmConfig.SSRK = &pkgtpm2.SRKConfig{
+		tpmConfig.SSRK = &xkmssdk.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: tpmstore.DEFAULT_PASSWORD,
+			HierarchyAuth: xkmssdk.TPM_DEFAULT_PASSWORD,
 			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
+			RSAConfig:     &xkmssdk.RSAConfig{KeySize: 2048},
 		}
 	}
 	// IAK config is required by pkgtpm2.Provision — a nil IAK causes a nil
@@ -267,28 +264,28 @@ func provisionTPM2Backend(cfg *tpm2backend.Config) (*tpm2backend.Backend, error)
 	// provisioning strategy IAK_IDEVID_SINGLE_PASS is the go-xkms default and
 	// is suitable for software TPMs and basic hardware deployments.
 	if tpmConfig.IAK == nil {
-		tpmConfig.IAK = &pkgtpm2.IAKConfig{
+		tpmConfig.IAK = &xkmssdk.IAKConfig{
 			CN:                 "quicbaas-iak",
 			Hash:               "SHA-256",
 			Handle:             0x81010002,
 			KeyAlgorithm:       x509.RSA.String(),
-			RSAConfig:          &tpmstore.RSAConfig{KeySize: 2048},
+			RSAConfig:          &xkmssdk.RSAConfig{KeySize: 2048},
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		}
 	}
 	if tpmConfig.IdentityProvisioningStrategy == "" {
-		tpmConfig.IdentityProvisioningStrategy = string(pkgtpm2.EnrollmentStrategyIAK)
+		tpmConfig.IdentityProvisioningStrategy = string(xkmssdk.TPMEnrollmentStrategyIAK)
 	}
 
-	params := &pkgtpm2.Params{
+	params := &xkmssdk.TPMParams{
 		Config:    tpmConfig,
 		BlobStore: storageFactory.BlobStore(),
 		Backend:   storageFactory.KeyBackend(),
 	}
 
-	tpm, newErr := pkgtpm2.NewTPM2(params)
+	tpm, newErr := xkmssdk.NewTPM2(params)
 	if newErr != nil {
-		if !errors.Is(newErr, pkgtpm2.ErrNotInitialized) || tpm == nil {
+		if !errors.Is(newErr, xkmssdk.ErrTPMNotInitialized) || tpm == nil {
 			return nil, newErr
 		}
 		if provErr := tpm.Provision(nil); provErr != nil {
@@ -297,7 +294,7 @@ func provisionTPM2Backend(cfg *tpm2backend.Config) (*tpm2backend.Backend, error)
 		}
 	}
 
-	backend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
+	backend, err := xkmssdk.NewTPM2BackendWithTPM(&xkmssdk.TPM2BackendExternalConfig{
 		TPM:        tpm,
 		KeyBackend: storageFactory.KeyBackend(),
 	})

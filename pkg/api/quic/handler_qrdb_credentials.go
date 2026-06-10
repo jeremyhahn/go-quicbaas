@@ -183,6 +183,13 @@ func (s *Server) buildQRDBHandlers() map[string]qrdbMethodHandler {
 		"barrier.RecoveryStatus":     s.qrdbBarrierRecoveryStatus,
 		"barrier.RootToken":          s.qrdbBarrierRootToken,
 
+		// Per-tenant barrier lifecycle surface.
+		"tenant.BarrierInit":        s.qrdbTenantBarrierInit,
+		"tenant.BarrierUnseal":      s.qrdbTenantBarrierUnseal,
+		"tenant.BarrierUnsealShare": s.qrdbTenantBarrierUnsealShare,
+		"tenant.BarrierSeal":        s.qrdbTenantBarrierSeal,
+		"tenant.BarrierStatus":      s.qrdbTenantBarrierStatus,
+
 		// Initialization ceremony surface.
 		"ceremony.Initialize":            s.qrdbCeremonyInitialize,
 		"ceremony.Status":                s.qrdbCeremonyStatus,

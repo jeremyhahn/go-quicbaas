@@ -783,8 +783,8 @@ func TestTransportHealthy(t *testing.T) {
 func TestTransportTLS(t *testing.T) {
 	t.Run("TLS configuration", func(t *testing.T) {
 		tlsConfig := &tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: true,
+			MinVersion:             tls.VersionTLS13,
+			SessionTicketsDisabled: true,
 		}
 
 		tr, err := New(&transport.Config{

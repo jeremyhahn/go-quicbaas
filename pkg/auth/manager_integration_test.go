@@ -24,8 +24,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 func TestRefreshToken(t *testing.T) {
@@ -44,9 +42,6 @@ func TestRefreshToken(t *testing.T) {
 	user, err := am.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 
-	// Install an allow decision point so refreshed tokens authorize.
-	am.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
-
 	ctx := context.Background()
 
 	// Generate token directly (password auth is disabled)
@@ -63,9 +58,11 @@ func TestRefreshToken(t *testing.T) {
 	assert.NotEmpty(t, newToken.AccessToken)
 	assert.NotEqual(t, initialToken.AccessToken, newToken.AccessToken)
 
-	// Verify new token works
-	err = am.Authorize(ctx, newToken.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
-	assert.NoError(t, err)
+	// Verify the refreshed token validates and carries the user's claims
+	result, err := am.ValidateToken(ctx, newToken.AccessToken)
+	require.NoError(t, err)
+	assert.True(t, result.Valid)
+	assert.Contains(t, result.Roles, "readwrite")
 
 	// Test invalid refresh token
 	_, err = am.RefreshToken(ctx, "invalid-refresh-token")

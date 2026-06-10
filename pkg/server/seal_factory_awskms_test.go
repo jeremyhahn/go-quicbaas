@@ -25,9 +25,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	awskmsbackend "github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -94,10 +91,10 @@ func TestAWSKMSSealKeyAttributes(t *testing.T) {
 	if attrs.CN != "alias/barrier-root" {
 		t.Errorf("expected CN alias/barrier-root, got %q", attrs.CN)
 	}
-	if attrs.StoreType != xkmstypes.StoreAWSKMS {
-		t.Errorf("expected store %s, got %s", xkmstypes.StoreAWSKMS, attrs.StoreType)
+	if attrs.StoreType != xkmssdk.StoreAWSKMS {
+		t.Errorf("expected store %s, got %s", xkmssdk.StoreAWSKMS, attrs.StoreType)
 	}
-	if attrs.SymmetricAlgorithm != xkmstypes.SymmetricAES256GCM {
+	if attrs.SymmetricAlgorithm != xkmssdk.SymmetricAES256GCM {
 		t.Errorf("expected AES-256-GCM, got %s", attrs.SymmetricAlgorithm)
 	}
 }
@@ -117,7 +114,7 @@ func TestAWSKMSStrategy_SealUnsealRoundTrip(t *testing.T) {
 	// The mock KMS encrypts by reversing the plaintext into an opaque blob and
 	// decrypts by reversing it back, so the round-trip is deterministic without
 	// touching real AWS. It also echoes the key for DescribeKey lookups.
-	mock := &awskmsbackend.MockKMSClient{
+	mock := &xkmssdk.AWSKMSMockClient{
 		EncryptFunc: func(ctx context.Context, params *kms.EncryptInput, _ ...func(*kms.Options)) (*kms.EncryptOutput, error) {
 			blob := make([]byte, len(params.Plaintext))
 			for i := range params.Plaintext {
@@ -134,13 +131,13 @@ func TestAWSKMSStrategy_SealUnsealRoundTrip(t *testing.T) {
 		},
 	}
 
-	backendCfg := &awskmsbackend.Config{
+	backendCfg := &xkmssdk.AWSKMSBackendConfig{
 		Region:      "us-east-1",
 		KeyID:       keyID,
-		KeyStorage:  storage.New(),
-		CertStorage: storage.New(),
+		KeyStorage:  xkmssdk.NewStorageMemory(),
+		CertStorage: xkmssdk.NewStorageMemory(),
 	}
-	backend, err := awskmsbackend.NewBackendWithClient(backendCfg, mock)
+	backend, err := xkmssdk.NewAWSKMSBackendWithClient(backendCfg, mock)
 	if err != nil {
 		t.Fatalf("NewBackendWithClient failed: %v", err)
 	}
@@ -188,14 +185,14 @@ func TestAWSKMSStrategy_SealUnsealRoundTrip(t *testing.T) {
 func TestEnsureAWSKMSSealKey_Idempotent(t *testing.T) {
 	const keyID = "alias/barrier-root"
 
-	mock := &awskmsbackend.MockKMSClient{}
-	backendCfg := &awskmsbackend.Config{
+	mock := &xkmssdk.AWSKMSMockClient{}
+	backendCfg := &xkmssdk.AWSKMSBackendConfig{
 		Region:      "us-east-1",
 		KeyID:       keyID,
-		KeyStorage:  storage.New(),
-		CertStorage: storage.New(),
+		KeyStorage:  xkmssdk.NewStorageMemory(),
+		CertStorage: xkmssdk.NewStorageMemory(),
 	}
-	backend, err := awskmsbackend.NewBackendWithClient(backendCfg, mock)
+	backend, err := xkmssdk.NewAWSKMSBackendWithClient(backendCfg, mock)
 	if err != nil {
 		t.Fatalf("NewBackendWithClient failed: %v", err)
 	}
@@ -209,7 +206,7 @@ func TestEnsureAWSKMSSealKey_Idempotent(t *testing.T) {
 		t.Fatalf("second ensureAWSKMSSealKey failed (not idempotent): %v", err)
 	}
 
-	if _, err := backend.SymmetricEncrypter(attrs); err != nil {
+	if _, err := backend.SymmetricEncrypter(context.Background(), attrs); err != nil {
 		t.Fatalf("sealing key not resolvable after re-registration: %v", err)
 	}
 }

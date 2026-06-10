@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"testing"
 	"time"
 
@@ -33,8 +34,12 @@ import (
 // Test Helpers
 // =============================================================================
 
-func generateTestTLSConfig(t *testing.T) *tls.Config {
-	// Generate a self-signed certificate for testing
+// generateTestTLSConfigWithPool generates a self-signed TLS config and a CA pool
+// for use in integration tests. The CA pool allows clients to verify the server
+// certificate without InsecureSkipVerify.
+func generateTestTLSConfigWithPool(t *testing.T) (*tls.Config, *x509.CertPool) {
+	t.Helper()
+
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("failed to generate private key: %v", err)
@@ -55,10 +60,12 @@ func generateTestTLSConfig(t *testing.T) *tls.Config {
 		},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		DNSNames:              []string{"localhost"},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
@@ -74,11 +81,27 @@ func generateTestTLSConfig(t *testing.T) *tls.Config {
 		t.Fatalf("failed to parse key pair: %v", err)
 	}
 
-	return &tls.Config{
+	parsed, err := x509.ParseCertificate(derBytes)
+	if err != nil {
+		t.Fatalf("failed to parse certificate DER: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(parsed)
+
+	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
 		NextProtos:   []string{"quic-quicbaas"},
 	}
+	return tlsCfg, pool
+}
+
+// generateTestTLSConfig generates a self-signed TLS config for use as a server
+// certificate in tests where the client CA pool is not needed.
+func generateTestTLSConfig(t *testing.T) *tls.Config {
+	t.Helper()
+	cfg, _ := generateTestTLSConfigWithPool(t)
+	return cfg
 }
 
 func createServerTestLogger() *logger.Logger {

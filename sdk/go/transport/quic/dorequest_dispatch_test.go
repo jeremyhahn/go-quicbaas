@@ -34,14 +34,14 @@ func newDispatchTestTransport(t *testing.T, server *mockQUICServer) *Transport {
 	t.Helper()
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	require.NoError(t, err)
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{

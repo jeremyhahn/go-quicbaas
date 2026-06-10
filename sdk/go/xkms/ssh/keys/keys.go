@@ -1,8 +1,8 @@
 // Package keys re-exports go-xkms's SSH key handling.
 package keys
 
-import xkmskeys "github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
+import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-type Key = xkmskeys.Key
+type Key = xkmssdk.SSHKey
 
-var ParsePEM = xkmskeys.ParsePEM
+var ParsePEM = xkmssdk.SSHParsePEM

@@ -22,7 +22,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 
-	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // XKMSWebAuthnManager implements the multi-tenant WebAuthn surface that
@@ -306,4 +306,4 @@ func parseCredentialAssertionMap(m map[string]interface{}) (*protocol.ParsedCred
 }
 
 // Compile-time interface guard: xkms.User implements WebAuthnUser.
-var _ xkmswebauthn.User = (*xkmswebauthn.DefaultUser)(nil)
+var _ xkmssdk.WebAuthnUser = (*xkmssdk.WebAuthnDefaultUser)(nil)

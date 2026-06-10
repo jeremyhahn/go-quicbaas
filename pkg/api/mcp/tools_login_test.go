@@ -170,12 +170,14 @@ func TestExecuteLoginFinish_DecodesFieldsAndError(t *testing.T) {
 	t.Run("decodes_base64_and_metadata", func(t *testing.T) {
 		sig := base64.StdEncoding.EncodeToString([]byte("proof"))
 		lk := base64.StdEncoding.EncodeToString([]byte("key"))
+		alt := base64.StdEncoding.EncodeToString([]byte("alt-key"))
 		login := &fakeLoginServicer{
 			finishFunc: func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
 				assert.Equal(t, "sess", req.SessionID)
 				assert.Equal(t, qrdbtransport.FactorType("piv"), req.Type)
 				assert.Equal(t, []byte("proof"), req.Signature)
 				assert.Equal(t, []byte("key"), req.LookupKey)
+				assert.Equal(t, [][]byte{[]byte("alt-key")}, req.AltLookupKeys)
 				assert.Equal(t, "9a", req.MethodMetadata["slot"])
 				return &qrdbtransport.FinishLoginResponse{Bearer: "b1"}, nil
 			},
@@ -185,6 +187,7 @@ func TestExecuteLoginFinish_DecodesFieldsAndError(t *testing.T) {
 			"type":            "piv",
 			"signature":       sig,
 			"lookup_key":      lk,
+			"alt_lookup_keys": []interface{}{alt},
 			"method_metadata": map[string]interface{}{"slot": "9a", "ignored": 7},
 		})
 		require.NoError(t, err)
@@ -216,6 +219,37 @@ func TestDecodeLoginBase64(t *testing.T) {
 	t.Run("valid_decodes", func(t *testing.T) {
 		enc := base64.StdEncoding.EncodeToString([]byte("hello"))
 		assert.Equal(t, []byte("hello"), decodeLoginBase64(map[string]interface{}{"sig": enc}, "sig"))
+	})
+}
+
+// =============================================================================
+// decodeLoginBase64Array
+// =============================================================================
+
+func TestDecodeLoginBase64Array(t *testing.T) {
+	t.Run("absent_returns_nil", func(t *testing.T) {
+		assert.Nil(t, decodeLoginBase64Array(map[string]interface{}{}, "alt"))
+	})
+	t.Run("wrong_type_returns_nil", func(t *testing.T) {
+		assert.Nil(t, decodeLoginBase64Array(map[string]interface{}{"alt": "string"}, "alt"))
+	})
+	t.Run("empty_array_returns_nil", func(t *testing.T) {
+		assert.Nil(t, decodeLoginBase64Array(map[string]interface{}{"alt": []interface{}{}}, "alt"))
+	})
+	t.Run("all_invalid_entries_returns_nil", func(t *testing.T) {
+		assert.Nil(t, decodeLoginBase64Array(map[string]interface{}{
+			"alt": []interface{}{"!!!not-base64!!!", 7, ""},
+		}, "alt"))
+	})
+	t.Run("decodes_in_order_skipping_invalid", func(t *testing.T) {
+		k1 := base64.StdEncoding.EncodeToString([]byte("first"))
+		k2 := base64.StdEncoding.EncodeToString([]byte("second"))
+		out := decodeLoginBase64Array(map[string]interface{}{
+			"alt": []interface{}{k1, "!!!bad!!!", k2},
+		}, "alt")
+		require.Len(t, out, 2)
+		assert.Equal(t, []byte("first"), out[0])
+		assert.Equal(t, []byte("second"), out[1])
 	})
 }
 

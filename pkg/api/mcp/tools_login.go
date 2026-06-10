@@ -77,6 +77,7 @@ func (r *ToolRegistry) registerLoginTools() {
 				"session_id":      map[string]interface{}{"type": "string", "description": "Session id from begin step."},
 				"type":            map[string]interface{}{"type": "string", "description": "Factor type: mtls, fido2, or piv."},
 				"lookup_key":      map[string]interface{}{"type": "string", "description": "Base64 lookup key (ignored for mtls over a network transport)."},
+				"alt_lookup_keys": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Base64 fallback lookup keys tried in order after lookup_key misses (ignored for mtls over a network transport)."},
 				"signature":       map[string]interface{}{"type": "string", "description": "Base64 proof signature."},
 				"method_metadata": map[string]interface{}{"type": "object", "description": "Factor-specific extras."},
 			},
@@ -136,6 +137,7 @@ func executeLoginFinish(ctx context.Context, login service.LoginServicer, args m
 		SessionID:      getString(args, "session_id"),
 		Type:           qrdbtransport.FactorType(getString(args, "type")),
 		LookupKey:      decodeLoginBase64(args, "lookup_key"),
+		AltLookupKeys:  decodeLoginBase64Array(args, "alt_lookup_keys"),
 		Signature:      decodeLoginBase64(args, "signature"),
 		MethodMetadata: decodeLoginStringMap(args, "method_metadata"),
 	}
@@ -159,6 +161,33 @@ func decodeLoginBase64(args map[string]interface{}, key string) []byte {
 		return nil
 	}
 	return b
+}
+
+// decodeLoginBase64Array decodes an array of base64-encoded byte fields from
+// the tool arguments. The SDK MCP transport JSON-encodes [][]byte fields as
+// arrays of base64 strings. Returns nil when absent; undecodable entries are
+// skipped so a malformed fallback key cannot abort an otherwise valid login.
+func decodeLoginBase64Array(args map[string]interface{}, key string) [][]byte {
+	raw, ok := args[key].([]interface{})
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make([][]byte, 0, len(raw))
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok || s == "" {
+			continue
+		}
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			continue
+		}
+		out = append(out, b)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // decodeLoginStringMap extracts a string->string map from the tool arguments.

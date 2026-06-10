@@ -16,14 +16,11 @@
 package server
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	vaultbackend "github.com/jeremyhahn/go-xkms/pkg/backend/vault"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -106,17 +103,17 @@ func buildVaultStrategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 		return nil, &StrategyBuildError{Backend: "vault", Cause: &VaultConfigError{Field: "key_name"}}
 	}
 
-	backendCfg := &vaultbackend.Config{
+	backendCfg := &xkmssdk.VaultBackendConfig{
 		Address:       v.Address,
 		Token:         v.Token,
 		TransitPath:   v.TransitPath,
 		Namespace:     v.Namespace,
 		TLSSkipVerify: v.TLSSkipVerify,
-		KeyStorage:    storage.New(),
-		CertStorage:   storage.New(),
+		KeyStorage:    xkmssdk.NewStorageMemory(),
+		CertStorage:   xkmssdk.NewStorageMemory(),
 	}
 
-	backend, err := vaultbackend.NewBackend(backendCfg)
+	backend, err := xkmssdk.NewVaultBackend(backendCfg)
 	if err != nil {
 		return nil, &StrategyBuildError{Backend: "vault", Cause: err}
 	}
@@ -149,8 +146,8 @@ func buildVaultStrategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 // success — the key is already registered and resolvable — so the routine never
 // rotates or destroys an existing key. Any other failure is wrapped in
 // *VaultKeyRegistrationError.
-func ensureVaultSealKey(b *vaultbackend.Backend, keyAttrs *xkmstypes.KeyAttributes) error {
-	if _, err := b.GenerateSymmetricKey(keyAttrs); err != nil && !errors.Is(err, backend.ErrKeyAlreadyExists) {
+func ensureVaultSealKey(b *xkmssdk.VaultBackend, keyAttrs *xkmssdk.KeyAttributes) error {
+	if _, err := b.GenerateSymmetricKey(context.Background(), keyAttrs); err != nil && !errors.Is(err, xkmssdk.ErrBackendKeyAlreadyExists) {
 		return &VaultKeyRegistrationError{KeyName: keyAttrs.CN, Cause: err}
 	}
 	return nil
@@ -165,13 +162,13 @@ func ensureVaultSealKey(b *vaultbackend.Backend, keyAttrs *xkmstypes.KeyAttribut
 // Vault store. SymmetricAlgorithm being non-empty is what makes the backend
 // treat the request as a symmetric seal (Backend.Seal rejects asymmetric keys);
 // KeyType KeyTypeEncryption marks the key's purpose.
-func vaultSealKeyAttributes(keyName string) *xkmstypes.KeyAttributes {
-	return &xkmstypes.KeyAttributes{
+func vaultSealKeyAttributes(keyName string) *xkmssdk.KeyAttributes {
+	return &xkmssdk.KeyAttributes{
 		CN:                 keyName,
-		StoreType:          xkmstypes.StoreVault,
-		KeyType:            xkmstypes.KeyTypeEncryption,
+		StoreType:          xkmssdk.StoreVault,
+		KeyType:            xkmssdk.KeyTypeEncryption,
 		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
-		SymmetricAlgorithm: xkmstypes.SymmetricAES256GCM,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
 	}
 }
 

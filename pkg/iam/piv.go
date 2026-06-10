@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // PIVActivatorDependencies contains required dependencies for PIVActivator.
@@ -111,7 +111,7 @@ func (a *PIVActivator) Activate(ctx context.Context, token string, certPEM []byt
 	}
 
 	// 3. Verify the certificate chain (ClientAuth EKU enforced inside VerifyChain).
-	if err := pivcert.VerifyChain(cert, a.roots, a.intermediates); err != nil {
+	if err := xkmssdk.PIVVerifyChain(cert, a.roots, a.intermediates); err != nil {
 		return ErrPIVCertRejected
 	}
 
@@ -123,7 +123,7 @@ func (a *PIVActivator) Activate(ctx context.Context, token string, certPEM []byt
 	}
 
 	// 4. Compute thumbprint.
-	thumbprint := pivcert.ThumbprintSHA256(cert)
+	thumbprint := xkmssdk.PIVThumbprintSHA256(cert)
 
 	// 5. Fetch the pending user.
 	user, err := a.userStorage.GetUser(ctx, invite.TenantID, invite.UserID)

@@ -19,9 +19,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // EnforceDefaultDeny is the default-deny scope -> RBAC authorization gate for the
@@ -139,11 +139,11 @@ func clusterServicePrincipal(r *http.Request, pinnedTrustDomain string) bool {
 	}
 	leaf := chain[0]
 
-	id, err := qrdbspiffe.TenantFromCert(leaf, pinnedTrustDomain)
+	id, err := qrdbsdk.TenantFromCert(leaf, pinnedTrustDomain)
 	if err != nil {
 		return false
 	}
-	return id.Kind == qrdbspiffe.KindService
+	return id.Kind == qrdbsdk.SpiffeKindService
 }
 
 // defaultDenyPublicPrefixes are the path prefixes that bypass authorization under

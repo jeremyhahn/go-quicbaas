@@ -25,7 +25,6 @@ import (
 
 	ggrpc "google.golang.org/grpc"
 
-	atrestpkg "github.com/jeremyhahn/go-qrdb/pkg/atrest"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
@@ -259,7 +258,7 @@ type Server struct {
 	// (KV shards, time-series, vector) so their sstable/WAL/manifest files
 	// are transparently encrypted at rest. A nil barrier produces a no-op
 	// Encryptor; plaintext operation is preserved when seal is not configured.
-	dataPlaneEncryptor *atrestpkg.Encryptor
+	dataPlaneEncryptor *qrdbsdk.AtRestEncryptor
 
 	// cachedDataPlaneBarrierSvc holds the BaasBarrierService built by
 	// initDataPlaneEncryptor for injection into the sharded client in
@@ -476,6 +475,19 @@ func (s *Server) initialize() error {
 	s.logger.Info("Starting server components...")
 	s.logger.Infof("Server mode: %s", s.getEffectiveMode())
 	s.logger.Infof("Storage backend: %s", s.config.Storage.Backend)
+
+	// Emit a loud startup warning when InsecureDevMode is active. This flag
+	// bypasses bootstrap-password validation and allows weak dev credentials.
+	// It must NEVER be set in production. The warning is emitted unconditionally
+	// so it appears in every log (stdout + file) even when the log level is set
+	// to error.
+	if s.config.Auth.InsecureDevMode {
+		const insecureDevBanner = "WARNING: auth.insecure_dev_mode=true is active. " +
+			"Bootstrap password validation is disabled and weak credentials are permitted. " +
+			"This setting MUST NOT be used in production deployments."
+		s.logger.Warn(insecureDevBanner)
+		s.logger.Warn("WARNING: auth.insecure_dev_mode=true — INSECURE DEV MODE ACTIVE")
+	}
 
 	// Generate TLS certificates if needed (auto-generate on first startup)
 	if err := initializeCAFn(s); err != nil {

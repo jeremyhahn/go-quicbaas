@@ -19,21 +19,6 @@ import (
 	"net/http"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-
-	// NOTE: direct pkg/ import retained intentionally.
-	//
-	// NewCAHandlers constructs go-xkms's REST CA handler set so quicbaasd
-	// can mount the 7 CA routes under /api/v1/xkms/ca/*. The go-xkms SDK
-	// (github.com/jeremyhahn/go-xkms/sdk/go) does NOT re-export this
-	// factory today — doing so would pull net/http, encoding/json, and
-	// handler wiring into the SDK surface, which is otherwise HTTP-free.
-	// The required SDK symbol would be a pair like:
-	//     var NewCAHandlers = rest.NewCAHandlers
-	//     type CAHandlers   = rest.CAHandlers
-	// Until those re-exports exist, this is the sole remaining non-test
-	// pkg/ import from go-xkms in go-quicbaas and is guarded by the
-	// caHandlerSet structural interface below.
-	xkmsrest "github.com/jeremyhahn/go-xkms/pkg/api/rest"
 )
 
 // caHandlerSet is the minimum interface the xkms CA handler wiring must
@@ -54,7 +39,7 @@ type caHandlerSet interface {
 // Compile-time assertion that go-xkms's *CAHandlers satisfies the
 // caHandlerSet interface shape. Guards against interface drift across
 // go-xkms releases.
-var _ caHandlerSet = (*xkmsrest.CAHandlers)(nil)
+var _ caHandlerSet = (*xkmssdk.CAHandlers)(nil)
 
 // SetCertificateAuthority installs a TrustedCA-backed CA handler set on
 // the REST server. After this call, the /api/v1/xkms/ca/* routes delegate
@@ -84,7 +69,7 @@ func (s *Server) SetCertificateAuthority(ca xkmssdk.TrustedCA) {
 
 	// nil logger → CAHandlers falls back to slog.Default(), which is
 	// already configured by the server process.
-	s.xkmsCAHandlers = xkmsrest.NewCAHandlers(servicer, nil)
+	s.xkmsCAHandlers = xkmssdk.NewCAHandlers(servicer, nil)
 }
 
 // caHandlers returns the currently installed CA handler set, or nil if

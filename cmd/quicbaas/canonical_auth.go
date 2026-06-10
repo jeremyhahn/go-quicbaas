@@ -37,7 +37,7 @@ import (
 	"github.com/spf13/cobra"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
-	xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
+	xkmsfido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 )
 
 // canonicalValidFactorTypes is the canonical "--type" set per
@@ -531,6 +531,8 @@ func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddF
 		}
 		sum := sha256.Sum256(cert.Raw)
 		params["credential_sha256"] = hex.EncodeToString(sum[:])
+		spkiSum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+		params["spki_sha256"] = hex.EncodeToString(spkiSum[:])
 		params["reader"] = f.pivReader
 		params["slot"] = f.pivSlot
 		params["cert_serial"] = cert.SerialNumber.String()
@@ -548,7 +550,9 @@ func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddF
 
 // canonicalLoadCertFingerprint reads a PEM certificate from path,
 // computes a hex-encoded SHA-256 fingerprint of the DER bytes, and
-// returns selected metadata.
+// returns selected metadata. The metadata includes "spki_sha256" — the hex
+// SHA-256 of the certificate's SubjectPublicKeyInfo — which the SDK promotes
+// into the factor's renewal-stable SPKI lookup credential.
 func canonicalLoadCertFingerprint(path string) (string, map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -564,7 +568,9 @@ func canonicalLoadCertFingerprint(path string) (string, map[string]any, error) {
 	}
 	sum := sha256.Sum256(cert.Raw)
 	fingerprint := hex.EncodeToString(sum[:])
+	spkiSum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 	meta := map[string]any{
+		"spki_sha256":     hex.EncodeToString(spkiSum[:]),
 		"cert_cn":         cert.Subject.CommonName,
 		"cert_serial":     cert.SerialNumber.String(),
 		"cert_not_before": cert.NotBefore.UTC().Format("2006-01-02T15:04:05Z"),

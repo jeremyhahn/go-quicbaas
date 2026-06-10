@@ -69,7 +69,7 @@ func wsRequestFrame(t *testing.T, verb, path string, content []byte) []byte {
 func newWSServer(t *testing.T, frame []byte) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("ws accept: %v", err)
 			return

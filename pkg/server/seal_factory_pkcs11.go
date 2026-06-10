@@ -16,14 +16,11 @@
 package server
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -116,17 +113,17 @@ func buildPKCS11Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 		return nil, &StrategyBuildError{Backend: "pkcs11", Cause: &PKCS11ConfigError{Field: "key_label"}}
 	}
 
-	backendCfg := &pkcs11backend.Config{
+	backendCfg := &xkmssdk.PKCS11BackendConfig{
 		CN:          p11.KeyLabel,
 		Library:     p11.Library,
 		TokenLabel:  p11.TokenLabel,
 		Slot:        p11.Slot,
 		PIN:         p11.PIN,
-		KeyStorage:  storage.New(),
-		CertStorage: storage.New(),
+		KeyStorage:  xkmssdk.NewStorageMemory(),
+		CertStorage: xkmssdk.NewStorageMemory(),
 	}
 
-	backend, err := pkcs11backend.NewBackend(backendCfg)
+	backend, err := xkmssdk.NewPKCS11Backend(backendCfg)
 	if err != nil {
 		return nil, &StrategyBuildError{Backend: "pkcs11", Cause: err}
 	}
@@ -157,18 +154,18 @@ func buildPKCS11Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 // factory never rotates or destroys it, so previously-sealed data unseals after
 // a restart. Login or any non-not-found lookup failure (and a generation
 // failure) is wrapped in *PKCS11KeyRegistrationError.
-func ensurePKCS11SealKey(b *pkcs11backend.Backend, keyAttrs *xkmstypes.KeyAttributes) error {
+func ensurePKCS11SealKey(b *xkmssdk.PKCS11Backend, keyAttrs *xkmssdk.KeyAttributes) error {
 	if err := b.Login(); err != nil {
 		return &PKCS11KeyRegistrationError{KeyLabel: keyAttrs.CN, Cause: err}
 	}
 
-	if _, err := b.GetSymmetricKey(keyAttrs); err == nil {
+	if _, err := b.GetSymmetricKey(context.Background(), keyAttrs); err == nil {
 		return nil
-	} else if !errors.Is(err, backend.ErrKeyNotFound) {
+	} else if !errors.Is(err, xkmssdk.ErrBackendKeyNotFound) {
 		return &PKCS11KeyRegistrationError{KeyLabel: keyAttrs.CN, Cause: err}
 	}
 
-	if _, err := b.GenerateSymmetricKey(keyAttrs); err != nil {
+	if _, err := b.GenerateSymmetricKey(context.Background(), keyAttrs); err != nil {
 		return &PKCS11KeyRegistrationError{KeyLabel: keyAttrs.CN, Cause: err}
 	}
 	return nil
@@ -183,13 +180,13 @@ func ensurePKCS11SealKey(b *pkcs11backend.Backend, keyAttrs *xkmstypes.KeyAttrib
 // PKCS#11 store. SymmetricAlgorithm being non-empty is what makes the backend
 // treat the request as a symmetric seal (Backend.Seal rejects asymmetric keys);
 // KeyType KeyTypeEncryption marks the key's purpose.
-func pkcs11SealKeyAttributes(keyLabel string) *xkmstypes.KeyAttributes {
-	return &xkmstypes.KeyAttributes{
+func pkcs11SealKeyAttributes(keyLabel string) *xkmssdk.KeyAttributes {
+	return &xkmssdk.KeyAttributes{
 		CN:                 keyLabel,
-		StoreType:          xkmstypes.StorePKCS11,
-		KeyType:            xkmstypes.KeyTypeEncryption,
+		StoreType:          xkmssdk.StorePKCS11,
+		KeyType:            xkmssdk.KeyTypeEncryption,
 		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
-		SymmetricAlgorithm: xkmstypes.SymmetricAES256GCM,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
 	}
 }
 

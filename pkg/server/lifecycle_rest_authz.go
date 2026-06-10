@@ -22,11 +22,7 @@ import (
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/qrdbauthz"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
 // ErrOIDCProviderUnavailable indicates the IAM OIDC provider that signs and
@@ -221,51 +217,22 @@ func (s *Server) configureRESTAuthz(restServer *restapi.Server) {
 	// off by default so current behavior (anonymous data-plane access) is
 	// unchanged until the fleet has migrated to authenticated clients.
 	if s.config.Security.RequireAuthz {
-		// Build the single qrdb-backed authorizer adapter. It late-binds the
-		// qrdb RBAC client (the node client is constructed during lifecycle, so
-		// it is resolved per request via GetQRDBNodeClient().RBAC()). The ABAC
-		// overlay is optional and left nil here; when present it would deny-
-		// override a qrdb allow.
-		rbacResolver := func() qrdbtransport.RBACClient {
-			node := s.GetQRDBNodeClient()
-			if node == nil {
-				return nil
-			}
-			return node.RBAC()
-		}
-		adapter, err := qrdbauthz.New(rbacResolver, nil)
+		// Build the single central platform-token Validator and install the
+		// reference (REST) enforcement gate. One Validator call per request does
+		// offline signature / iss / aud / exp verification, DPoP sender-constraint
+		// (RFC 9449) for cnf.jkt-bound tokens, the offline scp -> permission
+		// decision, and the per-tenant liveness/revocation check. This REPLACES the
+		// prior online qrdb role-PDP path on REST.
+		platformValidator, err := s.buildPlatformValidator(context.Background())
 		if err != nil {
-			s.logger.WithError(err).Error("REST authz disabled: failed to build qrdb authorizer adapter")
+			s.logger.WithError(err).Error("REST authz disabled: failed to build platform-token validator")
 			return
 		}
-		restServer.SetQRDBAuthzEnforcement(validator, &restQRDBAuthorizer{adapter: adapter})
-		s.logger.Info("REST qrdb PDP authorization installed (RequireAuthz=true)")
+		restServer.SetValidatorAuthzEnforcement(platformValidator)
+		s.logger.Info("REST platform-token validator authorization installed (RequireAuthz=true)")
 		return
 	}
 
 	restServer.SetTokenBindingEnforcement(validator)
 	s.logger.Info("REST token-binding (DPoP/mTLS) enforcement installed; RBAC decision deferred (role propagation pending cluster validation)")
-}
-
-// restQRDBAuthorizer adapts the qrdbauthz.Adapter to the REST server's narrow
-// QRDBAuthorizer seam. It maps the transport-agnostic interfaces.Subject the
-// middleware builds from the validated token onto the adapter's Subject and
-// delegates the decision to qrdb's policy decision point. This is the single
-// REST PEP -> PDP bridge; it adds no policy logic of its own.
-type restQRDBAuthorizer struct {
-	adapter *qrdbauthz.Adapter
-}
-
-// Compile-time check that restQRDBAuthorizer satisfies the REST authorizer seam.
-var _ restapi.QRDBAuthorizer = (*restQRDBAuthorizer)(nil)
-
-// AuthorizeSubject maps the REST subject onto the qrdbauthz subject and
-// delegates to the qrdb-backed adapter.
-func (a *restQRDBAuthorizer) AuthorizeSubject(ctx context.Context, subject interfaces.Subject, resource, action string) error {
-	return a.adapter.Authorize(ctx, qrdbauthz.Subject{
-		ID:         subject.ID,
-		TenantID:   subject.TenantID,
-		Roles:      subject.Roles,
-		Attributes: subject.Attributes,
-	}, resource, action)
 }

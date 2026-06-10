@@ -233,18 +233,16 @@ func TestInMemoryAuthManagerMethods(t *testing.T) {
 	adminUser, ok := adminUserInfo.(*User)
 	require.True(t, ok, "UserInfo should be a *User")
 
-	// Install an allow decision point so issued tokens authorize.
-	am.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
-
 	ctx := context.Background()
 	token, err := am.generateTokens(adminUser)
 	require.NoError(t, err)
 	assert.NotEmpty(t, token.AccessToken)
 	assert.NotEmpty(t, token.RefreshToken)
 
-	// Test authorization
-	err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
-	assert.NoError(t, err)
+	// Verify the issued token validates
+	validation, err := am.ValidateToken(ctx, token.AccessToken)
+	require.NoError(t, err)
+	assert.True(t, validation.Valid)
 
 	// Test create user (password is ignored)
 	user, err := am.CreateUser("testuser", []string{"readwrite"})
@@ -260,9 +258,10 @@ func TestInMemoryAuthManagerMethods(t *testing.T) {
 	err = am.RevokeToken(ctx, token.AccessToken)
 	assert.NoError(t, err)
 
-	// Verify token is revoked
-	err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
-	assert.Error(t, err)
+	// Verify token is reported revoked
+	validation, err = am.ValidateToken(ctx, token.AccessToken)
+	require.NoError(t, err)
+	assert.True(t, validation.IsRevoked)
 }
 
 func TestFactoryDetectsStorageType(t *testing.T) {

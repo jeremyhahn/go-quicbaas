@@ -23,39 +23,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
-
-// GRPCIdentity is the authenticated principal the authorization interceptor
-// resolves from the inbound bearer token. It carries exactly the fields the
-// qrdb policy decision point and the per-key service layer consume.
-type GRPCIdentity struct {
-	// ID is the qrdb identity subject (the token's user id).
-	ID string
-	// Username is the human-readable subject name.
-	Username string
-	// TenantID is the principal's home tenant (the token's tenant claim).
-	TenantID string
-	// Roles are the qrdb-canonical role names from the token.
-	Roles []string
-}
-
-// GRPCTokenValidator validates an inbound bearer token and returns the
-// authenticated identity. It is satisfied by the server-layer OIDC validator
-// (the same provider that validates REST / MCP / QUIC tokens). A validation
-// failure returns a non-nil error and the interceptor responds Unauthenticated.
-type GRPCTokenValidator interface {
-	ValidateGRPCToken(ctx context.Context, token string) (*GRPCIdentity, error)
-}
-
-// GRPCAuthorizer is the narrow authorization contract the gRPC PEP depends on.
-// It is satisfied by the server-layer bridge over pkg/auth/qrdbauthz.Adapter,
-// which delegates the decision to qrdb's policy decision point. resource and
-// action are qrdb-canonical; the join "resource:action" is a registered qrdb
-// permission. Authorize returns nil to allow and a typed error to deny.
-type GRPCAuthorizer interface {
-	AuthorizeGRPC(ctx context.Context, id *GRPCIdentity, resource, action string) error
-}
 
 // UnmappedMethodError is returned by the gRPC PEP when a protected method has no
 // qrdb-canonical permission mapping. Under RequireAuthz the gate is default-deny,
@@ -99,13 +69,22 @@ func bearerFromContext(ctx context.Context) string {
 
 // authorizeGRPCRequest is the shared decision path for the unary and stream
 // interceptors. It is the single gRPC (and Unix-over-gRPC) policy enforcement
-// point. On allow it returns the context enriched with the authenticated
-// Subject; on deny it returns a gRPC status error.
+// point, backed by the central platform-token Validator: ONE Authorize call does
+// offline signature / iss / aud / exp verification, DPoP sender-constraint for
+// cnf.jkt-bound tokens, the offline scp -> permission decision, and the
+// per-tenant liveness/revocation check. This REPLACES the prior online qrdb
+// role-PDP two-step (validate token + authorize).
+//
+// On allow it returns the context enriched with the authenticated Subject
+// reconstructed from the verified AuthorizedContext; on deny it returns a gRPC
+// status error mapped by validatorGRPCStatus.
 //
 // The decision is default-deny under RequireAuthz: a public method bypasses; a
-// missing token, an unmapped method, an invalid token, or a qrdb denial all
-// reject the call.
-func authorizeGRPCRequest(ctx context.Context, fullMethod string, validator GRPCTokenValidator, authorizer GRPCAuthorizer) (context.Context, error) {
+// missing token, an unmapped method, an invalid/inactive token, or a missing
+// scope all reject the call. The gRPC metadata path carries no DPoP proof, so
+// the empty dpopProof / htm / htu args are passed deliberately (see
+// GRPCValidatorAuthorizer).
+func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRPCValidatorAuthorizer) (context.Context, error) {
 	if isPublicGRPCMethod(fullMethod) {
 		return ctx, nil
 	}
@@ -120,34 +99,44 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, validator GRPC
 		return ctx, status.Error(codes.Unauthenticated, (&MissingTokenError{Method: fullMethod}).Error())
 	}
 
-	id, err := validator.ValidateGRPCToken(ctx, token)
+	authzCtx, err := authorizer.Authorize(ctx, token, resource+":"+action, "", "", "")
 	if err != nil {
-		return ctx, status.Error(codes.Unauthenticated, "invalid token")
+		return ctx, validatorGRPCStatus(err)
 	}
 
-	if err := authorizer.AuthorizeGRPC(ctx, id, resource, action); err != nil {
-		return ctx, status.Error(codes.PermissionDenied, "permission denied: "+err.Error())
-	}
-
-	// Inject the verified principal for service-layer per-key authorization.
+	// Reconstruct the principal from the verified AuthorizedContext so the
+	// service-layer per-key authorization (auth.SubjectFromContext) sees an
+	// authenticated subject. The AuthorizedContext is the canonical
+	// post-validation identity; Username carries the token name claim so
+	// principal matching by username (in addition to ID) is preserved.
 	ctx = auth.SubjectIntoContext(ctx, interfaces.Subject{
-		ID:            id.ID,
-		Username:      id.Username,
-		TenantID:      id.TenantID,
-		Roles:         id.Roles,
+		ID:            authzCtx.Subject,
+		Username:      authzCtx.Username,
+		TenantID:      authzCtx.TenantID,
+		Roles:         authzCtx.Roles,
 		Authenticated: true,
+		Attributes:    make(map[string]interface{}),
 	})
+
+	// Inject the tenant context key so the service / storage layer resolves
+	// row-level isolation from iam.TenantFromContext (the canonical RLS source),
+	// matching the REST and MCP validator-allow paths. Only set it when the
+	// token carries a tenant; an empty TenantID leaves single-tenant behavior
+	// unchanged.
+	if authzCtx.TenantID != "" {
+		ctx = iam.ContextWithTenant(ctx, authzCtx.TenantID)
+	}
 	return ctx, nil
 }
 
-// UnaryAuthorizationInterceptor enforces qrdb-backed authorization on every
+// UnaryAuthorizationInterceptor enforces platform-token authorization on every
 // unary RPC. It is installed only when RequireAuthz=true; when authz is off this
 // interceptor is never added to the chain, so behavior is unchanged. Both the
 // TCP gRPC listener and the Unix-domain-socket gRPC listener share this chain,
 // so a single installation covers both the gRPC and Unix transports.
-func UnaryAuthorizationInterceptor(validator GRPCTokenValidator, authorizer GRPCAuthorizer) grpc.UnaryServerInterceptor {
+func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		authedCtx, err := authorizeGRPCRequest(ctx, info.FullMethod, validator, authorizer)
+		authedCtx, err := authorizeGRPCRequest(ctx, info.FullMethod, authorizer)
 		if err != nil {
 			return nil, err
 		}
@@ -158,9 +147,9 @@ func UnaryAuthorizationInterceptor(validator GRPCTokenValidator, authorizer GRPC
 // StreamAuthorizationInterceptor is the streaming counterpart of
 // UnaryAuthorizationInterceptor. It authorizes the stream open and wraps the
 // stream so downstream handlers observe the authenticated context.
-func StreamAuthorizationInterceptor(validator GRPCTokenValidator, authorizer GRPCAuthorizer) grpc.StreamServerInterceptor {
+func StreamAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer) grpc.StreamServerInterceptor {
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		authedCtx, err := authorizeGRPCRequest(ss.Context(), info.FullMethod, validator, authorizer)
+		authedCtx, err := authorizeGRPCRequest(ss.Context(), info.FullMethod, authorizer)
 		if err != nil {
 			return err
 		}

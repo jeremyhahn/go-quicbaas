@@ -1050,7 +1050,7 @@ func setupE2ETestEnv(t *testing.T) *e2eTestEnv {
 	t.Helper()
 
 	// Generate self-signed TLS config and fix ALPN protocol to match client
-	serverTLS := generateTestTLSConfig(t)
+	serverTLS, serverCAPool := generateTestTLSConfigWithPool(t)
 	serverTLS.NextProtos = []string{"quicbaas-quic"}
 
 	// Find a free UDP port
@@ -1139,10 +1139,9 @@ func setupE2ETestEnv(t *testing.T) *e2eTestEnv {
 
 	// Connect client
 	clientTLS := &tls.Config{
-		//nolint:gosec
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"quicbaas-quic"},
-		MinVersion:         tls.VersionTLS13,
+		RootCAs:    serverCAPool,
+		NextProtos: []string{"quicbaas-quic"},
+		MinVersion: tls.VersionTLS13,
 	}
 
 	client, err := NewClient(addr,

@@ -2764,13 +2764,10 @@ func TestNewServer_NilLogger(t *testing.T) {
 	}
 }
 
-// TestNewServer_WithOptions verifies functional options are applied.
-func TestNewServer_WithOptions(t *testing.T) {
+// TestNewServer_NoOptions verifies the server constructs with default options.
+func TestNewServer_NoOptions(t *testing.T) {
 	tlsCfg := generateTestTLS(t)
-	s, err := NewServer(&mockService{}, &Config{TLSConfig: tlsCfg}, createTestLogger(),
-		WithAuthorizationService(nil),
-		WithAuthManager(nil),
-	)
+	s, err := NewServer(&mockService{}, &Config{TLSConfig: tlsCfg}, createTestLogger())
 	if err != nil {
 		t.Fatalf("Expected success, got: %v", err)
 	}
@@ -2859,32 +2856,6 @@ func TestGetSchedulerService_ReturnsNilScheduler(t *testing.T) {
 // =============================================================================
 // Server Functional Options Tests - Target 0% coverage functions
 // =============================================================================
-
-func TestWithAuthorizationService_Coverage(t *testing.T) {
-	t.Parallel()
-	server := &Server{}
-
-	// Just test that WithAuthorizationService returns a valid option
-	opt := WithAuthorizationService(nil)
-	opt(server)
-
-	if server.authzService != nil {
-		t.Error("WithAuthorizationService set value for nil input")
-	}
-}
-
-func TestWithAuthManager_Coverage(t *testing.T) {
-	t.Parallel()
-	server := &Server{}
-
-	// Just test that WithAuthManager returns a valid option
-	opt := WithAuthManager(nil)
-	opt(server)
-
-	if server.authManager != nil {
-		t.Error("WithAuthManager set value for nil input")
-	}
-}
 
 // =============================================================================
 // Barrier Handler Tests - Service Error Paths

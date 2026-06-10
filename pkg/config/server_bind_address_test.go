@@ -69,11 +69,23 @@ func TestRequireAuthzSecureDefault(t *testing.T) {
 	assert.True(t, DefaultSecurityConfig().RequireAuthz)
 }
 
-// TestRequireAuthzDisabledInDevAndEmbedded verifies the dev/embedded presets opt
-// out of the gate so local anonymous data-plane access keeps working.
-func TestRequireAuthzDisabledInDevAndEmbedded(t *testing.T) {
+// TestRequireAuthzDisabledInDev verifies the dev preset opts out of the gate
+// so local anonymous data-plane access keeps working during development.
+func TestRequireAuthzDisabledInDev(t *testing.T) {
 	assert.False(t, DevelopmentConfig().Security.RequireAuthz)
-	assert.False(t, EmbeddedConfig().Security.RequireAuthz)
+}
+
+// TestEmbeddedConfigSecureDefaults verifies that EmbeddedConfig uses secure
+// defaults: RequireAuthz=true, AllowAnonymous=false, and a non-empty system
+// principal. All network transports are disabled so RequireAuthz has no
+// network-surface effect, but the flag documents intent and the RBAC posture
+// ensures service-layer guards enforce identity checks.
+func TestEmbeddedConfigSecureDefaults(t *testing.T) {
+	cfg := EmbeddedConfig()
+	assert.True(t, cfg.Security.RequireAuthz, "EmbeddedConfig must keep RequireAuthz=true (secure default)")
+	assert.False(t, cfg.Security.Authorization.RBAC.AllowAnonymous, "EmbeddedConfig must not allow anonymous access")
+	assert.NotEmpty(t, cfg.Security.EmbeddedSystemPrincipal, "EmbeddedConfig must name a system principal")
+	assert.Equal(t, EmbeddedSystemPrincipalDefault, cfg.Security.EmbeddedSystemPrincipal)
 }
 
 // TestRequireAuthzSettable verifies the flag can be toggled off.

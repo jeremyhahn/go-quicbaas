@@ -28,7 +28,6 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
@@ -44,14 +43,11 @@ type Server struct {
 	logger   *logger.Logger
 	config   *Config
 
-	// Authorization dependencies
-	authzService interfaces.AuthorizationService
-	authManager  interfaces.AuthManager
-
-	// authzTokenValidator is the qrdb-PDP authz token-validation seam, installed
-	// via SetAuthzEnforcement when RequireAuthz=true. nil leaves QUIC on its
-	// legacy allow-all / token-only path.
-	authzTokenValidator AuthzTokenValidator
+	// validatorAuthorizer is the unified platform-token authorization seam,
+	// installed via SetValidatorEnforcement when RequireAuthz=true. The
+	// per-request handler performs ONE validator.Authorize call per opcode. nil
+	// leaves QUIC on its no-enforcement path (RequireAuthz=false).
+	validatorAuthorizer ValidatorAuthorizer
 
 	// barrierService is the storage barrier facade used to serve OpBarrier
 	// requests. Wired by lifecycle via SetBarrierService once the qrdb SDK
@@ -69,6 +65,12 @@ type Server struct {
 	// is online; nil before wiring completes.
 	qrdbCredentialSvc qrdbsdk.ServiceCredentialServicer
 
+	// tenantBarrierSvc is the per-tenant barrier facade used to serve
+	// tenant.BarrierInit / Unseal / UnsealShare / Seal / Status methods over
+	// the qrdb-quic ALPN. Wired by lifecycle via SetTenantBarrierService once
+	// the qrdb SDK TenantClient is online; nil before wiring completes.
+	tenantBarrierSvc service.TenantBarrierServicer
+
 	// tenantResolver derives the caller's tenant from the verified mTLS peer
 	// certificate and stamps it onto the request context. Wired by lifecycle
 	// via SetTenantResolver; nil before wiring (and in non-iam builds), in
@@ -76,9 +78,9 @@ type Server struct {
 	// permissive: it never rejects a request for lack of a tenant.
 	tenantResolver TenantContextFunc
 
-	// svcMu guards barrierService, ceremonyService, and qrdbCredentialSvc
-	// against the racey lifecycle pattern where the server starts before
-	// the facades are installed concurrently.
+	// svcMu guards barrierService, ceremonyService, qrdbCredentialSvc, and
+	// tenantBarrierSvc against the racey lifecycle pattern where the server
+	// starts before the facades are installed concurrently.
 	svcMu sync.RWMutex
 
 	// Server state
@@ -163,20 +165,6 @@ func DefaultConfig() *Config {
 
 // ServerOption is a functional option for configuring the Server.
 type ServerOption func(*Server)
-
-// WithAuthorizationService sets the authorization service for the server.
-func WithAuthorizationService(authz interfaces.AuthorizationService) ServerOption {
-	return func(s *Server) {
-		s.authzService = authz
-	}
-}
-
-// WithAuthManager sets the authentication manager for the server.
-func WithAuthManager(auth interfaces.AuthManager) ServerOption {
-	return func(s *Server) {
-		s.authManager = auth
-	}
-}
 
 // WithServerBarrierService installs the BarrierServicer used by the OpBarrier
 // handler tree. Wired by lifecycle before Start() is invoked; safe to call
@@ -315,7 +303,7 @@ func (s *Server) Start() error {
 		"max_streams":       s.config.MaxStreams,
 		"max_idle_timeout":  s.config.MaxIdleTimeout,
 		"keep_alive_period": s.config.KeepAlivePeriod,
-		"auth_enabled":      s.authzService != nil,
+		"auth_enabled":      s.validatorAuthorizer != nil,
 	}).Info("QUIC server started")
 
 	// Start accepting connections
@@ -520,16 +508,15 @@ func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger, 
 		}
 	}
 
-	// Create handler with service dependencies and process request
-	// Include IAM and MFA service options (provided by server_iam.go when IAM is enabled)
+	// Create handler with service dependencies and process request.
+	// Thread the live request context into IAM/MFA option resolution so
+	// cancellation and deadline propagate; do not use context.Background().
 	handler := NewHandler(s.service, kmsService, secretsService, cryptoService, streamLogger,
-		WithHandlerAuthManager(s.authManager),
-		WithHandlerAuthorizationService(s.authzService),
-		WithHandlerTokenValidator(s.authzTokenValidator),
+		WithHandlerValidatorAuthorizer(s.validatorAuthorizer),
 		WithBarrierService(barrierService),
 		WithCeremonyService(ceremonyService),
 		getIAMServiceOption(s.service),
-		getMFAServiceOption(s.service),
+		getMFAServiceOption(requestCtx, s.service),
 	)
 	resp := handler.HandleRequest(requestCtx, req)
 
@@ -581,6 +568,17 @@ func (s *Server) SetCeremonyService(svc service.CeremonyServicer) {
 	s.svcMu.Unlock()
 }
 
+// SetTenantBarrierService installs (or replaces) the TenantBarrierServicer
+// used by the tenant.Barrier* method handlers on the qrdb-quic ALPN. Lifecycle
+// wiring invokes this once the qrdb SDK TenantClient is online. Passing nil
+// disables the surface; handlers respond with the not-configured error. Safe to
+// call concurrently with request handling.
+func (s *Server) SetTenantBarrierService(svc service.TenantBarrierServicer) {
+	s.svcMu.Lock()
+	s.tenantBarrierSvc = svc
+	s.svcMu.Unlock()
+}
+
 // TenantContextFunc derives the caller's tenant from a VERIFIED mTLS peer
 // certificate and returns a context carrying it. It is supplied by the server
 // layer (which owns the SPIFFE trust domain + home-realm directory) so this
@@ -597,15 +595,15 @@ type TenantContextFunc func(ctx context.Context, cert *x509.Certificate) context
 // Lifecycle wiring invokes this with a resolver bound to the operator-
 // configured SPIFFE trust domain and home-realm directory. Safe to call
 // concurrently with request handling.
-// SetAuthzEnforcement installs the qrdb-PDP authorization decision point and its
-// OIDC-backed token validator on the QUIC server. It is called by lifecycle
-// wiring ONLY when RequireAuthz=true; when authz is off neither is installed and
-// the QUIC handler keeps its legacy allow-all / token-only behaviour. The
-// validator and authzService take effect on the next request because the
-// per-request handler reads them from the server.
-func (s *Server) SetAuthzEnforcement(validator AuthzTokenValidator, authz interfaces.AuthorizationService) {
-	s.authzTokenValidator = validator
-	s.authzService = authz
+
+// SetValidatorEnforcement installs the unified platform-token authorization
+// decision point on the QUIC server. It is called by lifecycle wiring ONLY when
+// RequireAuthz=true; when authz is off it is not installed and the QUIC handler
+// performs no authorization enforcement. The per-request handler performs a
+// single Authorize call per opcode and reads the validator from the server, so
+// it takes effect on the next request.
+func (s *Server) SetValidatorEnforcement(validator ValidatorAuthorizer) {
+	s.validatorAuthorizer = validator
 }
 
 func (s *Server) SetTenantResolver(resolve TenantContextFunc) {

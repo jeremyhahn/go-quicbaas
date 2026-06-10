@@ -17,8 +17,10 @@ package quicbaas
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"math/rand"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -147,10 +149,30 @@ func BenchmarkMixedWorkload(b *testing.B) {
 
 // Helper functions
 
+// perfTLSConfig returns a TLS configuration for performance test clients.
+// It reads the CA certificate from the QUICBAAS_CA_FILE environment variable.
+// If not set, the system certificate pool is used.
+func perfTLSConfig() *tls.Config {
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	if caFile := os.Getenv("QUICBAAS_CA_FILE"); caFile != "" {
+		pem, err := os.ReadFile(caFile)
+		if err == nil {
+			pool.AppendCertsFromPEM(pem)
+		}
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    pool,
+	}
+}
+
 func setupClient(b *testing.B) quicbaas.Client {
 	b.Helper()
 
-	client, err := quicbaas.NewClient("localhost:50051", quicbaas.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	client, err := quicbaas.NewClient("localhost:50051", quicbaas.WithTLSConfig(perfTLSConfig()))
 	if err != nil {
 		b.Fatalf("Failed to create client: %v", err)
 	}

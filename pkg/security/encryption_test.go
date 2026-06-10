@@ -280,7 +280,7 @@ func TestKeyring_RotateKeyWithHistory(t *testing.T) {
 	assert.True(t, key1.Active)
 
 	// Rotate key
-	key2, err := kr.RotateKey()
+	key2, err := kr.RotateKey(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, byte(2), key2.Version)
 	assert.True(t, key2.Active)
@@ -308,8 +308,8 @@ func TestKeyring_GetKeyMetadata(t *testing.T) {
 	defer kr.Close()
 
 	// Rotate a few times
-	kr.RotateKey()
-	kr.RotateKey()
+	kr.RotateKey(context.Background())
+	kr.RotateKey(context.Background())
 
 	metadata := kr.GetKeyMetadata()
 	assert.Equal(t, 3, len(metadata))
@@ -829,7 +829,7 @@ func TestKeyring_LoadOrGenerateKey_GenerateFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	// First call generates new key
-	key, err := kr.loadOrGenerateKey()
+	key, err := kr.loadOrGenerateKey(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, key)
 	assert.Equal(t, byte(1), key.Version)
@@ -1354,7 +1354,7 @@ func TestEncryptionManager_RotateKeys_Success(t *testing.T) {
 	log := createTestLogger(t)
 	em, err := NewEncryptionManager(&EncryptionConfig{Enabled: true, Algorithm: DefaultAlgorithm, KeyProvider: "local"}, log)
 	require.NoError(t, err)
-	assert.NoError(t, em.RotateKeys())
+	assert.NoError(t, em.RotateKeys(context.Background()))
 }
 
 func TestNewKeyring_InvalidAlgorithm(t *testing.T) {
@@ -1534,7 +1534,7 @@ func TestEncryptionManager_EncryptAfterRotate(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rotate keys
-	require.NoError(t, em.RotateKeys())
+	require.NoError(t, em.RotateKeys(context.Background()))
 
 	// Encrypt and decrypt with new key should work
 	plaintext := []byte("data after rotation")
@@ -1604,7 +1604,7 @@ func TestKeyring_LoadOrGenerateKey(t *testing.T) {
 		}
 
 		// Should generate a new key
-		key, err := kr.loadOrGenerateKey()
+		key, err := kr.loadOrGenerateKey(context.Background())
 		assert.NoError(t, err)
 		assert.NotNil(t, key)
 		assert.Equal(t, byte(1), key.Version)
@@ -1634,7 +1634,7 @@ func TestKeyring_LoadOrGenerateKey(t *testing.T) {
 		}
 
 		// Generate key first time
-		key1, err := kr.loadOrGenerateKey()
+		key1, err := kr.loadOrGenerateKey(context.Background())
 		require.NoError(t, err)
 
 		// Create new keyring with same config
@@ -1650,7 +1650,7 @@ func TestKeyring_LoadOrGenerateKey(t *testing.T) {
 		}
 
 		// Should load existing key
-		key2, err := kr2.loadOrGenerateKey()
+		key2, err := kr2.loadOrGenerateKey(context.Background())
 		assert.NoError(t, err)
 		assert.NotNil(t, key2)
 		assert.Equal(t, key1.Version, key2.Version)
@@ -1671,7 +1671,7 @@ func TestKeyring_LoadOrGenerateKey(t *testing.T) {
 		}
 
 		// Should fail with nil backend
-		key, err := kr.loadOrGenerateKey()
+		key, err := kr.loadOrGenerateKey(context.Background())
 		assert.Error(t, err)
 		assert.Nil(t, key)
 		assert.Contains(t, err.Error(), "backend not initialized")
@@ -1710,7 +1710,7 @@ func TestKeyring_LoadOrGenerateKey(t *testing.T) {
 					logger: log,
 				}
 
-				key, err := kr.loadOrGenerateKey()
+				key, err := kr.loadOrGenerateKey(context.Background())
 				assert.NoError(t, err)
 				assert.NotNil(t, key)
 				assert.Equal(t, algo, key.Algorithm)
@@ -1898,7 +1898,7 @@ func TestKeyring_RotateKeyNilBackend(t *testing.T) {
 		keys:   make(map[byte]*EncryptionKey),
 	}
 
-	_, err := kr.RotateKey()
+	_, err := kr.RotateKey(context.Background())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "backend not initialized")
 }
@@ -2022,7 +2022,7 @@ func TestKeyring_RotateKey(t *testing.T) {
 	assert.Equal(t, byte(1), kr.GetCurrentKey().Version)
 
 	// Rotate and verify version increment
-	newKey, err := kr.RotateKey()
+	newKey, err := kr.RotateKey(context.Background())
 	require.NoError(t, err)
 	assert.NotNil(t, newKey)
 	assert.Equal(t, byte(2), newKey.Version)
@@ -2332,7 +2332,7 @@ func TestEncryptionManager_RotateKeysSuccess(t *testing.T) {
 	oldVersion := em.GetKeyVersion()
 	assert.Equal(t, byte(1), oldVersion)
 
-	err = em.RotateKeys()
+	err = em.RotateKeys(context.Background())
 	require.NoError(t, err)
 
 	newVersion := em.GetKeyVersion()
@@ -2345,7 +2345,7 @@ func TestEncryptionManager_RotateKeysDisabledIsNoop(t *testing.T) {
 	em, err := NewEncryptionManager(cfg, log)
 	require.NoError(t, err)
 
-	err = em.RotateKeys()
+	err = em.RotateKeys(context.Background())
 	assert.NoError(t, err)
 }
 
@@ -2379,7 +2379,7 @@ func TestKeyring_RotateKeyWithNilBackend(t *testing.T) {
 		keys:   make(map[byte]*EncryptionKey),
 	}
 
-	_, err := kr.RotateKey()
+	_, err := kr.RotateKey(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "backend not initialized")
 }
@@ -2923,7 +2923,7 @@ func TestKeyring_LoadOrGenerateKey_Generate(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Load or generate (will generate since key doesn't exist)
-	key, err := kr.loadOrGenerateKey()
+	key, err := kr.loadOrGenerateKey(context.Background())
 	assert.NoError(t, err)
 	assert.NotNil(t, key)
 	assert.Equal(t, "new-test-key", "new-test-key")
@@ -2944,7 +2944,7 @@ func TestEncryptionManager_RotateKeys(t *testing.T) {
 
 	oldVersion := em.GetKeyVersion()
 
-	err = em.RotateKeys()
+	err = em.RotateKeys(context.Background())
 	assert.NoError(t, err)
 
 	newVersion := em.GetKeyVersion()
@@ -2961,7 +2961,7 @@ func TestEncryptionManager_RotateKeysDisabled(t *testing.T) {
 	em, err := NewEncryptionManager(cfg, log)
 	require.NoError(t, err)
 
-	err = em.RotateKeys()
+	err = em.RotateKeys(context.Background())
 	assert.NoError(t, err)
 }
 

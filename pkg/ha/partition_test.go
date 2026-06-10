@@ -17,6 +17,7 @@ package ha
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -38,8 +39,8 @@ import (
 
 // newHealthServer starts an httptest TLS server that serves GET /health with
 // the given status code. t.Cleanup registers Close so the caller need not.
-// pingPeer probes via https:// with InsecureSkipVerify, so the self-signed
-// certificate from httptest.NewTLSServer is accepted without additional setup.
+// Use caPoolFromServer to obtain the CA pool and pass it as PartitionConfig.ClusterCA
+// so pingPeer can verify the server's self-signed certificate.
 func newHealthServer(t *testing.T, status int) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -51,10 +52,47 @@ func newHealthServer(t *testing.T, status int) *httptest.Server {
 	return srv
 }
 
+// caPoolFromServer extracts an *x509.CertPool that trusts the self-signed
+// certificate served by an httptest.NewTLSServer. Pass the returned pool as
+// PartitionConfig.ClusterCA so peer health probes verify the cert properly.
+func caPoolFromServer(srv *httptest.Server) *x509.CertPool {
+	pool := x509.NewCertPool()
+	if srv.TLS != nil {
+		for _, cert := range srv.TLS.Certificates {
+			for _, der := range cert.Certificate {
+				c, err := x509.ParseCertificate(der)
+				if err == nil {
+					pool.AddCert(c)
+				}
+			}
+		}
+	}
+	return pool
+}
+
+// caPoolFromServers merges the CA pools of multiple httptest TLS servers into
+// a single *x509.CertPool. Use this when a PartitionConfig references more
+// than one test server so all peer certificates are trusted.
+func caPoolFromServers(srvs ...*httptest.Server) *x509.CertPool {
+	pool := x509.NewCertPool()
+	for _, srv := range srvs {
+		if srv == nil || srv.TLS == nil {
+			continue
+		}
+		for _, cert := range srv.TLS.Certificates {
+			for _, der := range cert.Certificate {
+				c, err := x509.ParseCertificate(der)
+				if err == nil {
+					pool.AddCert(c)
+				}
+			}
+		}
+	}
+	return pool
+}
+
 // serverHostPort strips the "https://" scheme from the TLS test-server URL
-// and returns the bare host:port to pass as a Peers address. pingPeer will
-// prepend "https://" and use InsecureSkipVerify, so the self-signed cert is
-// accepted.
+// and returns the bare host:port to pass as a Peers address.
 func serverHostPort(srv *httptest.Server) string {
 	// srv.URL = "https://127.0.0.1:PORT"
 	if len(srv.URL) > len("https://") {
@@ -166,6 +204,7 @@ func TestPartitionDetector_StartStop(t *testing.T) {
 		Peers: map[uint64]string{
 			2: serverHostPort(srv),
 		},
+		ClusterCA: caPoolFromServer(srv),
 	}
 
 	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
@@ -204,6 +243,7 @@ func TestPartitionDetector_MonitorLoopTicker(t *testing.T) {
 		Peers: map[uint64]string{
 			2: serverHostPort(srv),
 		},
+		ClusterCA: caPoolFromServer(srv),
 	}
 
 	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
@@ -324,6 +364,7 @@ func TestPartitionDetector_DetectPartition(t *testing.T) {
 			config := &PartitionConfig{
 				Peers:              tt.setupPeers,
 				HealthCheckTimeout: 500 * time.Millisecond,
+				ClusterCA:          caPoolFromServers(reachableSrv2, reachableSrv3),
 			}
 
 			pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
@@ -367,6 +408,7 @@ func TestPartitionDetector_DetectPartitionHealing(t *testing.T) {
 			2: serverHostPort(srv),
 		},
 		HealthCheckTimeout: 500 * time.Millisecond,
+		ClusterCA:          caPoolFromServer(srv),
 	}
 
 	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
@@ -611,6 +653,7 @@ func TestPartitionDetector_CheckPeerReachability(t *testing.T) {
 			3: unreachableAddr,
 		},
 		HealthCheckTimeout: 500 * time.Millisecond,
+		ClusterCA:          caPoolFromServer(srv),
 	}
 
 	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
@@ -638,6 +681,7 @@ func TestPartitionDetector_PingPeer_Reachable(t *testing.T) {
 			2: serverHostPort(srv),
 		},
 		HealthCheckTimeout: 2 * time.Second,
+		ClusterCA:          caPoolFromServer(srv),
 	}
 
 	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
@@ -664,6 +708,7 @@ func TestPartitionDetector_PingPeer_Sealed(t *testing.T) {
 			2: serverHostPort(srv),
 		},
 		HealthCheckTimeout: 2 * time.Second,
+		ClusterCA:          caPoolFromServer(srv),
 	}
 
 	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
@@ -712,6 +757,7 @@ func TestPartitionDetector_PingPeer_UnhealthyStatus(t *testing.T) {
 			2: serverHostPort(srv),
 		},
 		HealthCheckTimeout: 2 * time.Second,
+		ClusterCA:          caPoolFromServer(srv),
 	}
 
 	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())

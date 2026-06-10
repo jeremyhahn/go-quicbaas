@@ -22,7 +22,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
@@ -159,7 +159,7 @@ type WebAuthnServiceFactory struct {
 	logger *slog.Logger
 
 	// services caches one *xkmswebauthn.Service per tenant.
-	services sync.Map // map[tenantID]*xkmswebauthn.Service
+	services sync.Map // map[tenantID]*xkmssdk.WebAuthnService
 
 	// constructLock serialises ServiceFor calls for the same tenant id
 	// so concurrent lookups don't construct duplicate services. The
@@ -201,12 +201,12 @@ func NewWebAuthnServiceFactory(params WebAuthnFactoryParams) (*WebAuthnServiceFa
 // relying-party configuration is resolved from the settings provider
 // (when wired) with per-field fallback to the global Config; a tenant
 // that configures nothing keeps the global RP unchanged.
-func (f *WebAuthnServiceFactory) ServiceFor(ctx context.Context, tenantID string) (*xkmswebauthn.Service, error) {
+func (f *WebAuthnServiceFactory) ServiceFor(ctx context.Context, tenantID string) (*xkmssdk.WebAuthnService, error) {
 	if tenantID == "" {
 		return nil, &WebAuthnFactoryConfigError{Field: "tenantID"}
 	}
 	if v, ok := f.services.Load(tenantID); ok {
-		return v.(*xkmswebauthn.Service), nil
+		return v.(*xkmssdk.WebAuthnService), nil
 	}
 
 	// Per-tenant construction lock to prevent duplicate construction.
@@ -218,7 +218,7 @@ func (f *WebAuthnServiceFactory) ServiceFor(ctx context.Context, tenantID string
 	// Re-check after acquiring the lock — another goroutine may have
 	// constructed the service while we waited.
 	if v, ok := f.services.Load(tenantID); ok {
-		return v.(*xkmswebauthn.Service), nil
+		return v.(*xkmssdk.WebAuthnService), nil
 	}
 
 	svc, err := f.buildService(ctx, tenantID)
@@ -272,12 +272,12 @@ func (f *WebAuthnServiceFactory) resolveConfig(ctx context.Context, tenantID str
 // store is the lightweight in-memory store that ships with xkms —
 // ceremony sessions are short-lived (~60s) and process-local, so the
 // in-memory implementation is a deliberate fit.
-func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID string) (*xkmswebauthn.Service, error) {
+func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID string) (*xkmssdk.WebAuthnService, error) {
 	resolved, err := f.resolveConfig(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	cfg := &xkmswebauthn.Config{
+	cfg := &xkmssdk.WebAuthnConfig{
 		RPID:                    resolved.RPID,
 		RPDisplayName:           resolved.RPDisplayName,
 		RPOrigins:               resolved.RPOrigins,
@@ -288,7 +288,7 @@ func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID stri
 		AuthenticatorAttachment: resolved.AuthenticatorAttachment,
 		Debug:                   resolved.Debug,
 	}
-	users, creds, err := xkmswebauthn.NewQRDBUserStoreAdapter(xkmswebauthn.QRDBUserStoreOptions{
+	users, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
 		Users:    f.params.QRDB.Users(),
 		KV:       f.params.QRDB.KV(),
 		TenantID: tenantID,
@@ -296,8 +296,8 @@ func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID stri
 	if err != nil {
 		return nil, err
 	}
-	sessions := xkmswebauthn.NewMemorySessionStore()
-	return xkmswebauthn.NewService(xkmswebauthn.ServiceParams{
+	sessions := xkmssdk.NewWebAuthnMemorySessionStore()
+	return xkmssdk.NewWebAuthnService(xkmssdk.WebAuthnServiceParams{
 		Config:          cfg,
 		UserStore:       users,
 		SessionStore:    sessions,

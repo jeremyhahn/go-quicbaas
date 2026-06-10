@@ -116,10 +116,12 @@ func TestQUICHandleFinishLogin_MTLS_NoPeerCert_FailsClosed(t *testing.T) {
 
 // TestQUICHandleFinishLogin_MTLS_PeerCertWins asserts the QUIC handler derives
 // the lookup key from the verified peer cert (placed on ctx by the server),
-// overriding the spoofed request value.
+// overriding the spoofed request value. The primary key is the renewal-stable
+// SPKI thumbprint; the legacy SHA-256(cert.Raw) key rides in AltLookupKeys.
 func TestQUICHandleFinishLogin_MTLS_PeerCertWins(t *testing.T) {
 	cert := quicLoginCert(t)
-	wantKey := sha256.Sum256(cert.Raw)
+	wantKey := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	wantAlt := sha256.Sum256(cert.Raw)
 
 	fake := &quicLoginFakeClient{}
 	h := newQUICLoginHandler(fake)
@@ -142,6 +144,11 @@ func TestQUICHandleFinishLogin_MTLS_PeerCertWins(t *testing.T) {
 	}
 	if !bytes.Equal(fake.finishReq.LookupKey, wantKey[:]) {
 		t.Fatalf("lookup key = %x, want %x", fake.finishReq.LookupKey, wantKey[:])
+	}
+	if len(fake.finishReq.AltLookupKeys) != 1 ||
+		!bytes.Equal(fake.finishReq.AltLookupKeys[0], wantAlt[:]) {
+		t.Fatalf("alt lookup keys = %x, want one legacy SHA-256(cert.Raw) = %x",
+			fake.finishReq.AltLookupKeys, wantAlt[:])
 	}
 }
 

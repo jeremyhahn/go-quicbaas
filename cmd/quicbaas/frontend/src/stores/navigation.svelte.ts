@@ -43,6 +43,7 @@ export type ViewID =
   | 'kms'
   | 'secrets'
   | 'barrier'
+  | 'tenant-barrier'
   | 'ceremony'
   | 'bootstrap'
   | 'ssh-keys'
@@ -80,6 +81,7 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   kms:           '/kms',
   secrets:       '/secrets',
   barrier:       '/barrier',
+  'tenant-barrier': '/tenant-barrier',
   ceremony:      '/ceremony',
   bootstrap:     '/bootstrap',
   'ssh-keys':    '/ssh-keys',
@@ -121,6 +123,7 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   kms:              'kms',
   secrets:          'secrets',
   barrier:          'barrier',
+  'tenant-barrier': 'tenant-barrier',
   ceremony:         'ceremony',
   bootstrap:        'bootstrap',
   'ssh-keys':       'ssh-keys',

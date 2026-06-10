@@ -20,7 +20,7 @@ import (
 	"crypto/x509"
 	"errors"
 
-	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // TenantUnresolvedError is the transport-neutral signal that a caller's tenant
@@ -73,11 +73,11 @@ func (e *TenantUnresolvedError) Unwrap() error {
 func TenantFromPeerCert(ctx context.Context, cert *x509.Certificate, trustDomain string, hrd HomeRealmResolver, hints RealmHints) (string, error) {
 	// 1. SPIFFE SAN (pinned trust domain).
 	if cert != nil {
-		id, err := qrdbspiffe.TenantFromCert(cert, trustDomain)
+		id, err := qrdbsdk.TenantFromCert(cert, trustDomain)
 		switch {
 		case err == nil:
 			return id.TenantID, nil
-		case errors.Is(err, qrdbspiffe.ErrNoTenantSPIFFEID):
+		case errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID):
 			// No SPIFFE SAN on this cert: fall through to HRD (covers external
 			// PIV/CAC and browser/WebAuthn flows).
 		default:
@@ -100,7 +100,7 @@ func TenantFromPeerCert(ctx context.Context, cert *x509.Certificate, trustDomain
 	//    distinguish a reissue-required cert from a no-cert miss.
 	var cause error
 	if cert != nil {
-		cause = qrdbspiffe.ErrNoTenantSPIFFEID
+		cause = qrdbsdk.ErrSpiffeNoTenantID
 	}
 	return "", &TenantUnresolvedError{Cause: cause}
 }

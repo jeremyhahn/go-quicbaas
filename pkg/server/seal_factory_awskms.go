@@ -20,9 +20,6 @@ import (
 	"encoding/json"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	awskmsbackend "github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -102,18 +99,18 @@ func buildAWSKMSStrategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 		return nil, &StrategyBuildError{Backend: "awskms", Cause: &AWSKMSConfigError{Field: "region"}}
 	}
 
-	backendCfg := &awskmsbackend.Config{
+	backendCfg := &xkmssdk.AWSKMSBackendConfig{
 		Region:          aws.Region,
 		KeyID:           aws.KeyID,
 		AccessKeyID:     aws.AccessKeyID,
 		SecretAccessKey: aws.SecretAccessKey,
 		SessionToken:    aws.SessionToken,
 		Endpoint:        aws.Endpoint,
-		KeyStorage:      storage.New(),
-		CertStorage:     storage.New(),
+		KeyStorage:      xkmssdk.NewStorageMemory(),
+		CertStorage:     xkmssdk.NewStorageMemory(),
 	}
 
-	backend, err := awskmsbackend.NewBackend(backendCfg)
+	backend, err := xkmssdk.NewAWSKMSBackend(backendCfg)
 	if err != nil {
 		return nil, &StrategyBuildError{Backend: "awskms", Cause: err}
 	}
@@ -143,12 +140,12 @@ func buildAWSKMSStrategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 // the identical "key_id" mapping. No KMS key is created, rotated, or deleted; a
 // restart resolves the same operator CMK and previously-sealed data unseals. A
 // failure is wrapped in *AWSKMSKeyRegistrationError.
-func ensureAWSKMSSealKey(backend *awskmsbackend.Backend, keyAttrs *xkmstypes.KeyAttributes, keyID string) error {
+func ensureAWSKMSSealKey(backend *xkmssdk.AWSKMSBackend, keyAttrs *xkmssdk.KeyAttributes, keyID string) error {
 	metadata, err := json.Marshal(map[string]interface{}{"key_id": keyID})
 	if err != nil {
 		return &AWSKMSKeyRegistrationError{KeyID: keyID, Cause: err}
 	}
-	if err := backend.Save(keyAttrs, metadata, xkmstypes.FSExtPrivateBlob, true); err != nil {
+	if err := backend.Save(keyAttrs, metadata, xkmssdk.FSExtPrivateBlob, true); err != nil {
 		return &AWSKMSKeyRegistrationError{KeyID: keyID, Cause: err}
 	}
 	return nil
@@ -163,13 +160,13 @@ func ensureAWSKMSSealKey(backend *awskmsbackend.Backend, keyAttrs *xkmstypes.Key
 // AWS KMS store. SymmetricAlgorithm being non-empty is what makes the backend
 // treat the request as a symmetric seal (Backend.Seal rejects asymmetric keys);
 // KeyType KeyTypeEncryption marks the key's purpose.
-func awsKMSSealKeyAttributes(keyID string) *xkmstypes.KeyAttributes {
-	return &xkmstypes.KeyAttributes{
+func awsKMSSealKeyAttributes(keyID string) *xkmssdk.KeyAttributes {
+	return &xkmssdk.KeyAttributes{
 		CN:                 keyID,
-		StoreType:          xkmstypes.StoreAWSKMS,
-		KeyType:            xkmstypes.KeyTypeEncryption,
+		StoreType:          xkmssdk.StoreAWSKMS,
+		KeyType:            xkmssdk.KeyTypeEncryption,
 		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
-		SymmetricAlgorithm: xkmstypes.SymmetricAES256GCM,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
 	}
 }
 

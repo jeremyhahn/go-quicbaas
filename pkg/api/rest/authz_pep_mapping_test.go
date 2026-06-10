@@ -69,6 +69,15 @@ func TestMapRequestToPermission(t *testing.T) {
 		{"roles list", "/api/v1/roles", http.MethodGet, "roles", "list", true},
 		{"tenants create", "/api/v1/tenants", http.MethodPost, "tenants", "create", true},
 
+		// Per-tenant barrier — the leaf special rules MUST win over the
+		// /api/v1/tenants prefix (resource "tenants"), so these authorize as
+		// tenant_barrier, tenant-scoped. unseal-share maps to the unseal action.
+		{"tenant barrier init", "/api/v1/tenants/acme/barrier/init", http.MethodPost, "tenant_barrier", "init", true},
+		{"tenant barrier unseal", "/api/v1/tenants/acme/barrier/unseal", http.MethodPost, "tenant_barrier", "unseal", true},
+		{"tenant barrier unseal-share", "/api/v1/tenants/acme/barrier/unseal-share", http.MethodPost, "tenant_barrier", "unseal", true},
+		{"tenant barrier seal", "/api/v1/tenants/acme/barrier/seal", http.MethodPost, "tenant_barrier", "seal", true},
+		{"tenant barrier status", "/api/v1/tenants/acme/barrier/status", http.MethodGet, "tenant_barrier", "status", true},
+
 		// Data services.
 		{"timeseries query", "/api/v1/timeseries", http.MethodGet, "timeseries", "query", true},
 		{"timeseries write", "/api/v1/timeseries", http.MethodPost, "timeseries", "write", true},
@@ -183,11 +192,76 @@ func TestMapRequestToPermission(t *testing.T) {
 	}
 }
 
-// TestActionForMethod_DefaultFallsBackToGet asserts an unrecognized method maps
-// to the resource's get verb rather than panicking or returning empty.
-func TestActionForMethod_DefaultFallsBackToGet(t *testing.T) {
+// TestActionForMethod_KnownMethods asserts every method in the registered set
+// resolves to the expected verb, including the collection-vs-item GET split, and
+// does NOT regress when the fail-closed default was tightened.
+func TestActionForMethod_KnownMethods(t *testing.T) {
 	verbs := crudVerbs{get: "get", list: "list", create: "put", del: "delete"}
-	if got := actionForMethod("PROPFIND", verbs, false); got != "get" {
-		t.Errorf("actionForMethod(PROPFIND) = %q, want get", got)
+	tests := []struct {
+		name         string
+		method       string
+		isCollection bool
+		wantAction   string
+	}{
+		{"GET item", http.MethodGet, false, "get"},
+		{"GET collection", http.MethodGet, true, "list"},
+		{"HEAD item", http.MethodHead, false, "get"},
+		{"HEAD collection", http.MethodHead, true, "list"},
+		{"OPTIONS item", http.MethodOptions, false, "get"},
+		{"OPTIONS collection", http.MethodOptions, true, "list"},
+		{"POST", http.MethodPost, false, "put"},
+		{"PUT", http.MethodPut, false, "put"},
+		{"PATCH", http.MethodPatch, false, "put"},
+		{"DELETE", http.MethodDelete, false, "delete"},
+		// Case-insensitive method matching is preserved.
+		{"lowercase get", "get", false, "get"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			action, ok := actionForMethod(tt.method, verbs, tt.isCollection)
+			if !ok {
+				t.Fatalf("actionForMethod(%q) ok = false, want true", tt.method)
+			}
+			if action != tt.wantAction {
+				t.Errorf("actionForMethod(%q) = %q, want %q", tt.method, action, tt.wantAction)
+			}
+		})
+	}
+}
+
+// TestActionForMethod_UnknownMethodFailsClosed asserts that any HTTP method
+// outside the registered set returns ok=false (no action) rather than silently
+// coercing to a read. The PEP is a closed set; an unknown verb must deny.
+func TestActionForMethod_UnknownMethodFailsClosed(t *testing.T) {
+	verbs := crudVerbs{get: "get", list: "list", create: "put", del: "delete"}
+	for _, method := range []string{http.MethodTrace, http.MethodConnect, "PROPFIND", "FROBNICATE", ""} {
+		t.Run(method, func(t *testing.T) {
+			action, ok := actionForMethod(method, verbs, false)
+			if ok {
+				t.Fatalf("actionForMethod(%q) ok = true, want false (fail-closed)", method)
+			}
+			if action != "" {
+				t.Errorf("actionForMethod(%q) action = %q, want empty", method, action)
+			}
+		})
+	}
+}
+
+// TestMapRequestToPermission_UnknownMethodUnmapped asserts that an unexpected
+// HTTP verb on an otherwise-mapped path resolves to ok=false so the validator
+// gate denies it via the UnmappedResourceError path, instead of authorizing it
+// as a read.
+func TestMapRequestToPermission_UnknownMethodUnmapped(t *testing.T) {
+	mappedPath := "/api/v1/keys"
+	for _, method := range []string{http.MethodTrace, http.MethodConnect, "FROBNICATE"} {
+		t.Run(method, func(t *testing.T) {
+			resource, action, ok := mapRequestToPermission(mappedPath, method)
+			if ok {
+				t.Fatalf("mapRequestToPermission(%q, %q) ok = true, want false", mappedPath, method)
+			}
+			if resource != "" || action != "" {
+				t.Errorf("mapRequestToPermission(%q, %q) = (%q, %q), want empty", mappedPath, method, resource, action)
+			}
+		})
 	}
 }

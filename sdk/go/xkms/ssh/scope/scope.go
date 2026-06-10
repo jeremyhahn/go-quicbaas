@@ -1,8 +1,8 @@
 // Package scope re-exports go-xkms's SSH scope helpers.
 package scope
 
-import xkmsscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
+import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-type Scope = xkmsscope.Scope
+type Scope = xkmssdk.SSHScope
 
-const Service = xkmsscope.Service
+const Service = xkmssdk.SSHScopeService

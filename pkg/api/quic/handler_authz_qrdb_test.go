@@ -21,8 +21,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 func TestGetQRDBPermission_Mapped(t *testing.T) {
@@ -78,109 +76,12 @@ func TestGetQRDBPermission_Unmapped(t *testing.T) {
 	}
 }
 
-// fakeQUICAuthzService permits a configured (resource, action) and denies the
-// rest, recording what it saw.
-type fakeQUICAuthzService struct {
-	allowResource string
-	allowAction   string
-	lastReq       *interfaces.AuthorizationRequest
-}
-
-func (f *fakeQUICAuthzService) Authorize(_ context.Context, req *interfaces.AuthorizationRequest) (*interfaces.AuthorizationDecision, error) {
-	f.lastReq = req
-	if req.Resource == f.allowResource && req.Action == f.allowAction {
-		return &interfaces.AuthorizationDecision{Allowed: true}, nil
-	}
-	return &interfaces.AuthorizationDecision{Allowed: false, Reason: "denied"}, nil
-}
-
-func (f *fakeQUICAuthzService) BatchAuthorize(_ context.Context, _ []*interfaces.AuthorizationRequest) ([]*interfaces.AuthorizationDecision, error) {
-	return nil, nil
-}
-func (f *fakeQUICAuthzService) GetProvider() interfaces.AuthorizationProvider { return nil }
-func (f *fakeQUICAuthzService) GetProviderType() string                       { return "fake" }
-func (f *fakeQUICAuthzService) Close() error                                  { return nil }
-
-// fakeQUICValidator validates a fixed token to a fixed identity.
-type fakeQUICValidator struct {
-	token string
-	id    *AuthzIdentity
-}
-
-func (f *fakeQUICValidator) ValidateAuthzToken(_ context.Context, token string) (*AuthzIdentity, error) {
-	if token != f.token {
-		return nil, assertErr
-	}
-	return f.id, nil
-}
-
-var assertErr = &validatorError{}
-
-type validatorError struct{}
-
-func (*validatorError) Error() string { return "invalid token" }
-
-func newAuthzHandler(authz interfaces.AuthorizationService, v AuthzTokenValidator) *Handler {
-	return NewHandler(nil, nil, nil, nil, nil,
-		WithHandlerAuthorizationService(authz),
-		WithHandlerTokenValidator(v),
-	)
-}
-
-func TestQRDBAuthorizeAndInject_AllowAndDeny(t *testing.T) {
-	validator := &fakeQUICValidator{token: "good", id: &AuthzIdentity{ID: "u1", TenantID: "system", Roles: []string{"admin"}}}
-
-	// Allow: Put maps to kv:put, which the authz service permits.
-	allowSvc := &fakeQUICAuthzService{allowResource: "kv", allowAction: "put"}
-	h := newAuthzHandler(allowSvc, validator)
-	_, resp := h.authorizeAndInject(context.Background(), &Request{Opcode: OpPut, Token: "good"})
-	assert.Nil(t, resp, "permitted op must be allowed")
-	require.NotNil(t, allowSvc.lastReq)
-	assert.Equal(t, "kv", allowSvc.lastReq.Resource)
-	assert.Equal(t, "put", allowSvc.lastReq.Action)
-	assert.Equal(t, "system", allowSvc.lastReq.Subject.TenantID)
-
-	// Deny: Delete maps to kv:delete, which the same service does not permit.
-	h2 := newAuthzHandler(&fakeQUICAuthzService{allowResource: "kv", allowAction: "put"}, validator)
-	_, resp2 := h2.authorizeAndInject(context.Background(), &Request{Opcode: OpDelete, Token: "good"})
-	require.NotNil(t, resp2)
-	assert.Equal(t, StatusPermissionDenied, resp2.Status)
-}
-
-func TestQRDBAuthorizeAndInject_UnmappedDenied(t *testing.T) {
-	validator := &fakeQUICValidator{token: "good", id: &AuthzIdentity{ID: "u1", TenantID: "system", Roles: []string{"admin"}}}
-	// authz service would allow anything, but the opcode has no qrdb permission
-	// (embedding has no qrdb resource family after Stage 0.5).
-	svc := &fakeQUICAuthzService{allowResource: "*", allowAction: "*"}
-	h := newAuthzHandler(svc, validator)
-	_, resp := h.authorizeAndInject(context.Background(), &Request{Opcode: OpEmbeddingGenerate, Token: "good"})
-	require.NotNil(t, resp)
-	assert.Equal(t, StatusPermissionDenied, resp.Status)
-	assert.Nil(t, svc.lastReq, "unmapped opcode must not reach the authz service")
-}
-
-func TestQRDBAuthorizeAndInject_MissingToken(t *testing.T) {
-	validator := &fakeQUICValidator{token: "good", id: &AuthzIdentity{ID: "u1", TenantID: "system"}}
-	h := newAuthzHandler(&fakeQUICAuthzService{allowResource: "kv", allowAction: "put"}, validator)
-	_, resp := h.authorizeAndInject(context.Background(), &Request{Opcode: OpPut, Token: ""})
-	require.NotNil(t, resp)
-	assert.Equal(t, StatusUnauthorized, resp.Status)
-}
-
-func TestQRDBAuthorizeAndInject_InvalidToken(t *testing.T) {
-	validator := &fakeQUICValidator{token: "good", id: &AuthzIdentity{ID: "u1", TenantID: "system"}}
-	h := newAuthzHandler(&fakeQUICAuthzService{allowResource: "kv", allowAction: "put"}, validator)
-	_, resp := h.authorizeAndInject(context.Background(), &Request{Opcode: OpPut, Token: "bad"})
-	require.NotNil(t, resp)
-	assert.Equal(t, StatusUnauthorized, resp.Status)
-}
-
-func TestQRDBAuthorizeAndInject_RequireAuthzOff_NoNewDenial(t *testing.T) {
-	// With NO authz service, NO validator, and NO auth manager — today's
-	// RequireAuthz=false posture — every non-public op is allowed (allow-all).
+func TestAuthorizeAndInject_RequireAuthzOff_NoEnforcement(t *testing.T) {
+	// With NO validator installed — the RequireAuthz=false posture — every
+	// non-public op is allowed (no enforcement).
 	h := NewHandler(nil, nil, nil, nil, nil)
 	_, resp := h.authorizeAndInject(context.Background(), &Request{Opcode: OpPut, Token: ""})
-	assert.Nil(t, resp, "RequireAuthz=false must preserve allow-all (no token, no denial)")
+	assert.Nil(t, resp, "RequireAuthz=false must perform no enforcement (no token, no denial)")
 
 	// A public op is always allowed.
 	_, respPub := h.authorizeAndInject(context.Background(), &Request{Opcode: OpHealth})

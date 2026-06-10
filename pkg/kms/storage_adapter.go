@@ -17,10 +17,12 @@ package kms
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -47,6 +49,12 @@ const TenantKeyPrefix = "kms/tenant/"
 type KVStoreStorageAdapter struct {
 	kvstore  interfaces.KVStore
 	tenantID string // empty = single-tenant (backward compatible)
+
+	// putIfAbsentMu serializes the Exists+Put performed by PutIfAbsent within
+	// this process. The underlying interfaces.KVStore exposes no compare-and-swap
+	// primitive, so this guarantees uniqueness for single-process access; true
+	// cross-node atomicity would require a CAS method on interfaces.KVStore.
+	putIfAbsentMu sync.Mutex
 }
 
 // NewKVStoreStorageAdapter creates a new adapter wrapping QuicBaaS's KVStore interface.
@@ -103,7 +111,10 @@ func (k *KVStoreStorageAdapter) Get(ctx context.Context, key string) ([]byte, er
 	defer cancel()
 	data, err := k.kvstore.Get(kvCtx, k.buildKey(key))
 	if err != nil {
-		return nil, xkms.ErrStorageNotFound
+		if dberrors.IsNotFound(err) {
+			return nil, xkms.ErrStorageNotFound
+		}
+		return nil, err
 	}
 	return data, nil
 }
@@ -113,6 +124,27 @@ func (k *KVStoreStorageAdapter) Put(ctx context.Context, key string, value []byt
 	kvCtx, cancel := context.WithTimeout(ctx, kvStoreTimeout)
 	defer cancel()
 	return k.kvstore.Put(kvCtx, k.buildKey(key), value)
+}
+
+// PutIfAbsent atomically stores value at key only if key does not already
+// exist, returning stored=true when written and stored=false when the key was
+// already present. Atomicity holds for single-process access via putIfAbsentMu;
+// the underlying KVStore offers no cross-node compare-and-swap.
+func (k *KVStoreStorageAdapter) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	k.putIfAbsentMu.Lock()
+	defer k.putIfAbsentMu.Unlock()
+
+	exists, err := k.Exists(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return false, nil
+	}
+	if err := k.Put(ctx, key, value); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Delete removes the key and its value from KVStore.
@@ -162,15 +194,14 @@ func (k *KVStoreStorageAdapter) Scan(ctx context.Context, prefix string, fn func
 	})
 }
 
-// Exists checks if a key exists in KVStore.
+// Exists checks if a key exists in KVStore. It delegates to the KVStore's
+// own Exists so transient errors (timeouts, leadership changes) propagate
+// instead of being conflated with "key absent" — PutIfAbsent depends on
+// that distinction to avoid overwriting existing keys.
 func (k *KVStoreStorageAdapter) Exists(ctx context.Context, key string) (bool, error) {
 	kvCtx, cancel := context.WithTimeout(ctx, kvStoreTimeout)
 	defer cancel()
-	_, err := k.kvstore.Get(kvCtx, k.buildKey(key))
-	if err != nil {
-		return false, nil
-	}
-	return true, nil
+	return k.kvstore.Exists(kvCtx, k.buildKey(key))
 }
 
 // Close is a no-op since KVStore lifecycle is managed by QuicBaaS.

@@ -24,6 +24,7 @@ import type {
   ObjectListResponse,
   ObjectsClient,
   BarrierClient,
+  TenantBarrierClient,
   CeremonyClient,
   BootstrapClient,
   SealClient,
@@ -189,6 +190,10 @@ import type {
   BarrierHasRecoveryKeysResponse,
   BarrierGenerateRootTokenRequest,
   BarrierRootTokenResponse,
+  TenantBarrierInitRequest,
+  TenantBarrierInitResponse,
+  TenantBarrierUnsealShareResponse,
+  TenantBarrierStatusResponse,
   CeremonyInitializeRequest,
   CeremonyInitializeResponse,
   CeremonyStatusResponse,
@@ -2692,6 +2697,70 @@ export class RestBarrierClient implements BarrierClient {
 }
 
 // ---------------------------------------------------------------------------
+// RestTenantBarrierClient — /api/v1/tenants/{id}/barrier surface.
+// ---------------------------------------------------------------------------
+
+// RestTenantBarrierClient implements TenantBarrierClient by routing to the
+// broker's per-tenant barrier REST endpoints. Each call is scoped to a tenant
+// ID; the surface is distinct from RestBarrierClient, which drives the
+// process-wide system barrier.
+export class RestTenantBarrierClient implements TenantBarrierClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  private base(tenantId: string): string {
+    return `/api/v1/tenants/${encodeURIComponent(tenantId)}/barrier`;
+  }
+
+  async tenantBarrierInit(
+    tenantId: string,
+    req: TenantBarrierInitRequest,
+  ): Promise<TenantBarrierInitResponse | undefined> {
+    // The shamir strategy returns 200 with the minted shares; the none and
+    // passphrase strategies return 204 No Content. fetchJSON yields undefined
+    // on a 204, so the union return type already covers both cases.
+    return this.http.fetchJSON<TenantBarrierInitResponse | undefined>(
+      `${this.base(tenantId)}/init`,
+      {
+        method: 'POST',
+        body: JSON.stringify(req),
+      },
+    );
+  }
+
+  async tenantBarrierUnseal(tenantId: string, key: string): Promise<void> {
+    await this.http.fetchVoid(`${this.base(tenantId)}/unseal`, {
+      method: 'POST',
+      body: JSON.stringify({ key }),
+    });
+  }
+
+  async tenantBarrierUnsealShare(
+    tenantId: string,
+    share: string,
+  ): Promise<TenantBarrierUnsealShareResponse> {
+    return this.http.fetchJSON<TenantBarrierUnsealShareResponse>(
+      `${this.base(tenantId)}/unseal-share`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ share }),
+      },
+    );
+  }
+
+  async tenantBarrierSeal(tenantId: string): Promise<void> {
+    await this.http.fetchVoid(`${this.base(tenantId)}/seal`, { method: 'POST' });
+  }
+
+  async tenantBarrierStatus(tenantId: string): Promise<TenantBarrierStatusResponse> {
+    return this.http.fetchJSON<TenantBarrierStatusResponse>(`${this.base(tenantId)}/status`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // RestCeremonyClient — /api/v1/init surface.
 // ---------------------------------------------------------------------------
 
@@ -3257,6 +3326,7 @@ export class RestClient implements Client {
   readonly kms: KMSClient;
   readonly secrets: SecretsClient;
   readonly barrier: BarrierClient;
+  readonly tenantBarrier: TenantBarrierClient;
   readonly ceremony: CeremonyClient;
   readonly bootstrap: BootstrapClient;
   /** @deprecated Use barrier. The legacy seal accessor is kept for one release. */
@@ -3289,6 +3359,7 @@ export class RestClient implements Client {
     this.kms = new RestKMSClient(baseUrl, config);
     this.secrets = new RestSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
+    this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
     this.ceremony = new RestCeremonyClient(baseUrl, config);
     this.bootstrap = new RestBootstrapClient(baseUrl, config);
     // RestSealClient is a deprecated alias retained for one release. Construction

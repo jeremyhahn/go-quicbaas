@@ -13,6 +13,47 @@
 
 package grpc
 
+import (
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"google.golang.org/grpc"
+)
+
+// brokerServiceDescs is the canonical list of gRPC service descriptors that the
+// QuicBaaS broker registers. The exhaustive guard test
+// (TestGRPCPermissions_EveryMethodMapped) iterates this slice and verifies that
+// every method in every descriptor is either mapped in grpcMethodPermissions or
+// declared public in publicGRPCMethods. Any new service registered by the
+// broker MUST be added here.
+//
+// Services whose methods are intentionally unmapped (embedding, RAG, agent
+// runtime) are NOT listed here; they are denied by default-deny and their
+// absence from this slice documents that posture explicitly.
+var brokerServiceDescs = []grpc.ServiceDesc{
+	pb.QuicBaaS_ServiceDesc,
+	pb.Barrier_ServiceDesc,
+	pb.TenantBarrier_ServiceDesc,
+	pb.Ceremony_ServiceDesc,
+	pb.Login_ServiceDesc,
+	pb.KeyManagement_ServiceDesc,
+	pb.SecretsManagement_ServiceDesc,
+	pb.Crypto_ServiceDesc,
+	pb.DEKManagement_ServiceDesc,
+	pb.CertificateService_ServiceDesc,
+	pb.TrustService_ServiceDesc,
+	pb.VectorDB_ServiceDesc,
+	pb.VectorAdmin_ServiceDesc,
+	pb.ObjectStorageService_ServiceDesc,
+	pb.ObjectStorageAdmin_ServiceDesc,
+	pb.ObjectTransferService_ServiceDesc,
+	pb.OrchestratorService_ServiceDesc,
+	pb.MessagingService_ServiceDesc,
+	pb.SchedulerService_ServiceDesc,
+	pb.ParameterStore_ServiceDesc,
+	pb.DynamicSecretsService_ServiceDesc,
+	pb.ProjectService_ServiceDesc,
+	pb.OllamaService_ServiceDesc,
+}
+
 // This file maps gRPC FullMethod names onto qrdb-canonical (resource, action)
 // permission tuples. The qrdb policy decision point joins the tuple into the
 // registered "resource:action" permission (e.g. "kv:put"); the vocabulary here
@@ -44,6 +85,7 @@ package grpc
 // before any bearer token exists) bypass the authz gate entirely.
 var publicGRPCMethods = map[string]bool{
 	"/quicbaas.v1.QuicBaaS/Health":         true,
+	"/quicbaas.v1.QuicBaaS/Login":          true, // legacy unauthenticated login entry point
 	"/quicbaas.login.v1.Login/BeginLogin":  true,
 	"/quicbaas.login.v1.Login/FinishLogin": true,
 }
@@ -146,6 +188,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.kms.v1.KeyManagement/ListKeyVersions":        {"keys", "list"},
 	"/quicbaas.kms.v1.KeyManagement/RotateKey":              {"keys", "rotate"},
 	"/quicbaas.kms.v1.KeyManagement/DeleteKey":              {"keys", "delete"},
+	"/quicbaas.kms.v1.KeyManagement/DeleteKeyPolicy":       {"keys", "delete"},
 	"/quicbaas.kms.v1.KeyManagement/RevokeKey":              {"keys", "delete"},
 	"/quicbaas.kms.v1.KeyManagement/SetKeyPolicy":           {"keys", "rotate"},
 	"/quicbaas.kms.v1.KeyManagement/SetKeySafety":           {"keys", "rotate"},
@@ -182,6 +225,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.kms.v1.DEKManagement/GetDEKStatus":            {"keys", "get"},
 	"/quicbaas.kms.v1.DEKManagement/SetDEKSafety":            {"keys", "rotate"},
 	"/quicbaas.kms.v1.DEKManagement/ClearDEKSafety":          {"keys", "rotate"},
+	"/quicbaas.kms.v1.DEKManagement/StartReencryption":       {"keys", "rotate"},
 	"/quicbaas.kms.v1.DEKManagement/GetReencryptionProgress": {"keys", "get"},
 
 	// ---- quicbaas.kms.v1.SecretsManagement (named credentials) ----
@@ -212,7 +256,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       {"certs", "generate"},
 	"/quicbaas.certificate.v1.TrustService/PublishDANE":         {"certs", "generate"},
 
-	// ---- quicbaas.barrier.v1.Barrier (tenant barrier lifecycle) ----
+	// ---- quicbaas.barrier.v1.Barrier (system barrier lifecycle) ----
 	"/quicbaas.barrier.v1.Barrier/BarrierStatus":                {"tenant_barrier", "status"},
 	"/quicbaas.barrier.v1.Barrier/BarrierInitialize":            {"tenant_barrier", "init"},
 	"/quicbaas.barrier.v1.Barrier/BarrierUnseal":                {"tenant_barrier", "unseal"},
@@ -230,6 +274,13 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.barrier.v1.Barrier/BarrierShamirVerify":          {"seal", "status"},
 	"/quicbaas.barrier.v1.Barrier/BarrierShamirDeleteShare":     {"seal", "rekey"},
 	"/quicbaas.barrier.v1.Barrier/BarrierShamirDeleteAllShares": {"seal", "rekey"},
+
+	// ---- quicbaas.tenant.v1.TenantBarrier (per-tenant barrier lifecycle) ----
+	"/quicbaas.tenant.v1.TenantBarrier/Init":        {"tenant_barrier", "init"},
+	"/quicbaas.tenant.v1.TenantBarrier/Unseal":      {"tenant_barrier", "unseal"},
+	"/quicbaas.tenant.v1.TenantBarrier/UnsealShare": {"tenant_barrier", "unseal"},
+	"/quicbaas.tenant.v1.TenantBarrier/Seal":        {"tenant_barrier", "seal"},
+	"/quicbaas.tenant.v1.TenantBarrier/Status":      {"tenant_barrier", "status"},
 
 	// ---- quicbaas.ceremony.v1.Ceremony ----
 	"/quicbaas.ceremony.v1.Ceremony/CeremonyInitialize":            {"ceremony", "initialize"},
@@ -257,18 +308,36 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.vector.v1.VectorDB/SearchByMetadata":      {"vector", "search_by_metadata"},
 	"/quicbaas.vector.v1.VectorDB/HybridSearch":          {"vector", "hybrid_search"},
 	"/quicbaas.vector.v1.VectorDB/SearchById":            {"vector", "search_by_id"},
+	"/quicbaas.vector.v1.VectorDB/UpsertVector":          {"vector", "upsert"},
+	"/quicbaas.vector.v1.VectorDB/GetVector":             {"vector", "get"},
+	"/quicbaas.vector.v1.VectorDB/DeleteVector":          {"vector", "delete"},
+	"/quicbaas.vector.v1.VectorDB/BatchDeleteVectors":    {"vector", "batch_delete"},
+	"/quicbaas.vector.v1.VectorDB/BatchUpsertVectors":    {"vector", "batch_upsert"},
+	"/quicbaas.vector.v1.VectorDB/SearchByID":            {"vector", "search_by_id"},
+	"/quicbaas.vector.v1.VectorDB/ListVectors":           {"vector", "list"},
+	"/quicbaas.vector.v1.VectorDB/UpdateNamespace":       {"vector", "namespace_create"},
+	"/quicbaas.vector.v1.VectorDB/GetVectorStats":        {"vector", "get_index_stats"},
+	"/quicbaas.vector.v1.VectorDB/GetIndexProgress":      {"vector", "get_rebuild_progress"},
+	"/quicbaas.vector.v1.VectorDB/Health":                {"vector", "namespace_list"},
 	"/quicbaas.vector.v1.VectorDB/RebuildIndex":          {"vector", "rebuild_index"},
 	"/quicbaas.vector.v1.VectorDB/GetRebuildProgress":    {"vector", "get_rebuild_progress"},
 	"/quicbaas.vector.v1.VectorDB/GetIndexStats":         {"vector", "get_index_stats"},
 	"/quicbaas.vector.v1.VectorDB/Compact":               {"vector", "compact"},
 	"/quicbaas.vector.v1.VectorDB/GetCompactionProgress": {"vector", "get_compaction_progress"},
 
-	// ---- quicbaas.vector.v1.VectorAdmin (index lifecycle) ----
+	// ---- quicbaas.vector.v1.VectorAdmin (index lifecycle + cluster management) ----
 	"/quicbaas.vector.v1.VectorAdmin/RebuildIndex":          {"vector", "rebuild_index"},
 	"/quicbaas.vector.v1.VectorAdmin/GetRebuildProgress":    {"vector", "get_rebuild_progress"},
 	"/quicbaas.vector.v1.VectorAdmin/GetIndexStats":         {"vector", "get_index_stats"},
 	"/quicbaas.vector.v1.VectorAdmin/Compact":               {"vector", "compact"},
+	"/quicbaas.vector.v1.VectorAdmin/CompactNamespace":      {"vector", "compact"},
 	"/quicbaas.vector.v1.VectorAdmin/GetCompactionProgress": {"vector", "get_compaction_progress"},
+	"/quicbaas.vector.v1.VectorAdmin/GetClusterStats":       {"vector", "get_index_stats"},
+	"/quicbaas.vector.v1.VectorAdmin/CreateScalarIndex":     {"vector", "rebuild_index"},
+	"/quicbaas.vector.v1.VectorAdmin/DropScalarIndex":       {"vector", "rebuild_index"},
+	"/quicbaas.vector.v1.VectorAdmin/ListScalarIndexes":     {"vector", "get_index_stats"},
+	"/quicbaas.vector.v1.VectorAdmin/ExportVectors":         {"vector", "list"},
+	"/quicbaas.vector.v1.VectorAdmin/ImportVectors":         {"vector", "batch_upsert"},
 
 	// ---- Stage 0.5: broker data-plane surfaces (qrdb-registered) ----
 

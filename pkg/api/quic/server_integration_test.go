@@ -42,7 +42,8 @@ func TestServer_HandleConnection_Success(t *testing.T) {
 	}
 
 	config := DefaultConfig()
-	config.TLSConfig = generateTestTLSConfig(t)
+	serverTLSCfg, serverCAPool := generateTestTLSConfigWithPool(t)
+	config.TLSConfig = serverTLSCfg
 	config.ListenAddr = "127.0.0.1:0"
 	log := createServerTestLogger()
 
@@ -61,8 +62,8 @@ func TestServer_HandleConnection_Success(t *testing.T) {
 
 	// Setup client
 	clientTLSConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"quic-quicbaas"},
+		RootCAs:    serverCAPool,
+		NextProtos: []string{"quic-quicbaas"},
 	}
 
 	// Connect to server
@@ -132,7 +133,8 @@ func TestServer_HandleConnection_MultipleStreams(t *testing.T) {
 	}
 
 	config := DefaultConfig()
-	config.TLSConfig = generateTestTLSConfig(t)
+	serverTLSCfg, serverCAPool := generateTestTLSConfigWithPool(t)
+	config.TLSConfig = serverTLSCfg
 	config.ListenAddr = "127.0.0.1:0"
 	config.MaxStreams = 10
 	log := createServerTestLogger()
@@ -152,8 +154,8 @@ func TestServer_HandleConnection_MultipleStreams(t *testing.T) {
 
 	// Setup client
 	clientTLSConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"quic-quicbaas"},
+		RootCAs:    serverCAPool,
+		NextProtos: []string{"quic-quicbaas"},
 	}
 
 	conn, err := quicgo.DialAddr(context.Background(), actualAddr, clientTLSConfig, nil)
@@ -231,7 +233,8 @@ func TestServer_HandleStream_InvalidRequest(t *testing.T) {
 	svc := &mockService{}
 
 	config := DefaultConfig()
-	config.TLSConfig = generateTestTLSConfig(t)
+	serverTLSCfg, serverCAPool := generateTestTLSConfigWithPool(t)
+	config.TLSConfig = serverTLSCfg
 	config.ListenAddr = "127.0.0.1:0"
 	log := createServerTestLogger()
 
@@ -249,8 +252,8 @@ func TestServer_HandleStream_InvalidRequest(t *testing.T) {
 
 	// Setup client
 	clientTLSConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"quic-quicbaas"},
+		RootCAs:    serverCAPool,
+		NextProtos: []string{"quic-quicbaas"},
 	}
 
 	conn, err := quicgo.DialAddr(context.Background(), actualAddr, clientTLSConfig, nil)
@@ -300,7 +303,8 @@ func TestServer_AcceptConnections_MaxStreamsLimit(t *testing.T) {
 	}
 
 	config := DefaultConfig()
-	config.TLSConfig = generateTestTLSConfig(t)
+	serverTLSCfg, serverCAPool := generateTestTLSConfigWithPool(t)
+	config.TLSConfig = serverTLSCfg
 	config.ListenAddr = "127.0.0.1:0"
 	config.MaxStreams = 2
 	log := createServerTestLogger()
@@ -318,8 +322,8 @@ func TestServer_AcceptConnections_MaxStreamsLimit(t *testing.T) {
 	actualAddr := server.listener.Addr().String()
 
 	clientTLSConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"quic-quicbaas"},
+		RootCAs:    serverCAPool,
+		NextProtos: []string{"quic-quicbaas"},
 	}
 
 	conn, err := quicgo.DialAddr(context.Background(), actualAddr, clientTLSConfig, nil)
@@ -395,7 +399,8 @@ func TestServer_HandleConnection_ContextCancellation(t *testing.T) {
 	svc := &mockService{}
 
 	config := DefaultConfig()
-	config.TLSConfig = generateTestTLSConfig(t)
+	serverTLSCfg, serverCAPool := generateTestTLSConfigWithPool(t)
+	config.TLSConfig = serverTLSCfg
 	config.ListenAddr = "127.0.0.1:0"
 	log := createServerTestLogger()
 
@@ -411,8 +416,8 @@ func TestServer_HandleConnection_ContextCancellation(t *testing.T) {
 	actualAddr := server.listener.Addr().String()
 
 	clientTLSConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"quic-quicbaas"},
+		RootCAs:    serverCAPool,
+		NextProtos: []string{"quic-quicbaas"},
 	}
 
 	conn, err := quicgo.DialAddr(context.Background(), actualAddr, clientTLSConfig, nil)
@@ -447,7 +452,8 @@ func TestServer_AcceptConnections_ErrorHandling(t *testing.T) {
 	svc := &mockService{}
 
 	config := DefaultConfig()
-	config.TLSConfig = generateTestTLSConfig(t)
+	serverTLSCfg, _ := generateTestTLSConfigWithPool(t)
+	config.TLSConfig = serverTLSCfg
 	config.ListenAddr = "127.0.0.1:0"
 	log := createServerTestLogger()
 
@@ -487,7 +493,8 @@ func TestServer_HandleConnection_MultipleConnections(t *testing.T) {
 	}
 
 	config := DefaultConfig()
-	config.TLSConfig = generateTestTLSConfig(t)
+	serverTLSCfg, serverCAPool := generateTestTLSConfigWithPool(t)
+	config.TLSConfig = serverTLSCfg
 	config.ListenAddr = "127.0.0.1:0"
 	log := createServerTestLogger()
 
@@ -504,8 +511,8 @@ func TestServer_HandleConnection_MultipleConnections(t *testing.T) {
 	actualAddr := server.listener.Addr().String()
 
 	clientTLSConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"quic-quicbaas"},
+		RootCAs:    serverCAPool,
+		NextProtos: []string{"quic-quicbaas"},
 	}
 
 	// Create multiple connections
@@ -594,7 +601,8 @@ func TestServer_HandleStream_AllOpcodes(t *testing.T) {
 	}
 
 	config := DefaultConfig()
-	config.TLSConfig = generateTestTLSConfig(t)
+	serverTLSCfg, serverCAPool := generateTestTLSConfigWithPool(t)
+	config.TLSConfig = serverTLSCfg
 	config.ListenAddr = "127.0.0.1:0"
 	log := createServerTestLogger()
 
@@ -611,8 +619,8 @@ func TestServer_HandleStream_AllOpcodes(t *testing.T) {
 	actualAddr := server.listener.Addr().String()
 
 	clientTLSConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"quic-quicbaas"},
+		RootCAs:    serverCAPool,
+		NextProtos: []string{"quic-quicbaas"},
 	}
 
 	tests := []struct {

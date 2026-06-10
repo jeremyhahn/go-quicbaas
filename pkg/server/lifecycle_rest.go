@@ -240,6 +240,7 @@ func (s *Server) startRESTServer() error {
 	barrierSvc, ceremonySvc := s.buildBarrierCeremonyServices()
 	restServer.SetBarrierService(barrierSvc)
 	restServer.SetCeremonyService(ceremonySvc)
+	restServer.SetTenantBarrierService(s.buildTenantBarrierService())
 	s.logger.Info("Barrier and ceremony services wired into REST server")
 
 	// Wire the seal service into the QuicBaaS facade so that REST

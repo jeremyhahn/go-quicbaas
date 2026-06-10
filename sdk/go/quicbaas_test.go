@@ -1715,8 +1715,7 @@ func TestOptionFunctions(t *testing.T) {
 	t.Run("WithTLSConfig_SetsTLSConfig", func(t *testing.T) {
 		opts := defaultOptions()
 		tlsConfig := &tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: true,
+			MinVersion: tls.VersionTLS13,
 		}
 		err := WithTLSConfig(tlsConfig)(opts)
 		if err != nil {

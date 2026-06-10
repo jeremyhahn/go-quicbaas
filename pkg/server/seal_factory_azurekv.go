@@ -16,15 +16,12 @@
 package server
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	azurekvbackend "github.com/jeremyhahn/go-xkms/pkg/backend/azurekv"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -104,16 +101,16 @@ func buildAzureKVStrategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 		return nil, &StrategyBuildError{Backend: "azurekv", Cause: &AzureKVConfigError{Field: "key_name"}}
 	}
 
-	backendCfg := &azurekvbackend.Config{
+	backendCfg := &xkmssdk.AzureKVBackendConfig{
 		VaultURL:     az.VaultURL,
 		TenantID:     az.TenantID,
 		ClientID:     az.ClientID,
 		ClientSecret: az.ClientSecret,
-		KeyStorage:   storage.New(),
-		CertStorage:  storage.New(),
+		KeyStorage:   xkmssdk.NewStorageMemory(),
+		CertStorage:  xkmssdk.NewStorageMemory(),
 	}
 
-	backend, err := azurekvbackend.NewBackend(backendCfg)
+	backend, err := xkmssdk.NewAzureKVBackend(backendCfg)
 	if err != nil {
 		return nil, &StrategyBuildError{Backend: "azurekv", Cause: err}
 	}
@@ -149,7 +146,7 @@ func buildAzureKVStrategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 //
 // This path can only be validated end to end against a real Azure Key Vault:
 // the symmetric-key secret store has no local emulator.
-func ensureAzureKVSealKey(b *azurekvbackend.Backend, keyAttrs *xkmstypes.KeyAttributes) error {
+func ensureAzureKVSealKey(b *xkmssdk.AzureKVBackend, keyAttrs *xkmssdk.KeyAttributes) error {
 	metadata, err := json.Marshal(map[string]interface{}{
 		"cn":        keyAttrs.CN,
 		"algorithm": string(keyAttrs.SymmetricAlgorithm),
@@ -159,17 +156,17 @@ func ensureAzureKVSealKey(b *azurekvbackend.Backend, keyAttrs *xkmstypes.KeyAttr
 	if err != nil {
 		return &AzureKVKeyRegistrationError{KeyName: keyAttrs.CN, Cause: err}
 	}
-	if err := b.Save(keyAttrs, metadata, xkmstypes.FSExtPrivateBlob, true); err != nil {
+	if err := b.Save(keyAttrs, metadata, xkmssdk.FSExtPrivateBlob, true); err != nil {
 		return &AzureKVKeyRegistrationError{KeyName: keyAttrs.CN, Cause: err}
 	}
 
-	if _, err := b.GetSymmetricKey(keyAttrs); err == nil {
+	if _, err := b.GetSymmetricKey(context.Background(), keyAttrs); err == nil {
 		return nil
-	} else if !errors.Is(err, backend.ErrKeyNotFound) {
+	} else if !errors.Is(err, xkmssdk.ErrBackendKeyNotFound) {
 		return &AzureKVKeyRegistrationError{KeyName: keyAttrs.CN, Cause: err}
 	}
 
-	if _, err := b.GenerateSymmetricKey(keyAttrs); err != nil {
+	if _, err := b.GenerateSymmetricKey(context.Background(), keyAttrs); err != nil {
 		return &AzureKVKeyRegistrationError{KeyName: keyAttrs.CN, Cause: err}
 	}
 	return nil
@@ -184,13 +181,13 @@ func ensureAzureKVSealKey(b *azurekvbackend.Backend, keyAttrs *xkmstypes.KeyAttr
 // Azure Key Vault store. SymmetricAlgorithm being non-empty is what makes the
 // backend treat the request as a symmetric seal (Backend.Seal rejects
 // asymmetric keys); KeyType KeyTypeEncryption marks the key's purpose.
-func azureKVSealKeyAttributes(keyName string) *xkmstypes.KeyAttributes {
-	return &xkmstypes.KeyAttributes{
+func azureKVSealKeyAttributes(keyName string) *xkmssdk.KeyAttributes {
+	return &xkmssdk.KeyAttributes{
 		CN:                 keyName,
-		StoreType:          xkmstypes.StoreAzureKV,
-		KeyType:            xkmstypes.KeyTypeEncryption,
+		StoreType:          xkmssdk.StoreAzureKV,
+		KeyType:            xkmssdk.KeyTypeEncryption,
 		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
-		SymmetricAlgorithm: xkmstypes.SymmetricAES256GCM,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
 	}
 }
 

@@ -126,6 +126,10 @@ import type {
   BarrierHasRecoveryKeysResponse,
   BarrierGenerateRootTokenRequest,
   BarrierRootTokenResponse,
+  TenantBarrierInitRequest,
+  TenantBarrierInitResponse,
+  TenantBarrierUnsealShareResponse,
+  TenantBarrierStatusResponse,
   CeremonyInitializeRequest,
   CeremonyInitializeResponse,
   CeremonyStatusResponse,
@@ -884,6 +888,46 @@ export interface BarrierClient {
   generateRootToken(req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse>;
 }
 
+// ---------------------------------------------------------------------------
+// Tenant-barrier sub-client
+// ---------------------------------------------------------------------------
+
+// TenantBarrierClient manages the dedicated cryptographic barrier owned by a
+// single tenant. It is distinct from BarrierClient, which operates the
+// process-wide system barrier. Each method is scoped to a tenant ID and maps
+// to the broker's /api/v1/tenants/{id}/barrier/* REST surface.
+export interface TenantBarrierClient {
+  // tenantBarrierInit initializes the tenant's barrier with the chosen
+  // strategy. The "shamir" strategy returns the minted shares; the "none" and
+  // "passphrase" strategies return 204 No Content (undefined).
+  // Maps to POST /api/v1/tenants/{id}/barrier/init.
+  tenantBarrierInit(
+    tenantId: string,
+    req: TenantBarrierInitRequest,
+  ): Promise<TenantBarrierInitResponse | undefined>;
+
+  // tenantBarrierUnseal unseals the tenant's barrier with a single master key
+  // (passphrase strategy). The key is the base64-encoded master-key bytes.
+  // Maps to POST /api/v1/tenants/{id}/barrier/unseal.
+  tenantBarrierUnseal(tenantId: string, key: string): Promise<void>;
+
+  // tenantBarrierUnsealShare submits a single Shamir share toward the tenant's
+  // unseal quorum and reports progress.
+  // Maps to POST /api/v1/tenants/{id}/barrier/unseal-share.
+  tenantBarrierUnsealShare(
+    tenantId: string,
+    share: string,
+  ): Promise<TenantBarrierUnsealShareResponse>;
+
+  // tenantBarrierSeal transitions the tenant's barrier to the sealed state.
+  // Maps to POST /api/v1/tenants/{id}/barrier/seal.
+  tenantBarrierSeal(tenantId: string): Promise<void>;
+
+  // tenantBarrierStatus returns the current state of the tenant's barrier.
+  // Maps to GET /api/v1/tenants/{id}/barrier/status.
+  tenantBarrierStatus(tenantId: string): Promise<TenantBarrierStatusResponse>;
+}
+
 /**
  * SealClient is the legacy alias for BarrierClient. Its surface is preserved
  * for one release so existing callers continue to compile. New code must use
@@ -1095,6 +1139,12 @@ export interface Client {
    * Replaces the legacy seal accessor; new code must use barrier.
    */
   readonly barrier: BarrierClient;
+  /**
+   * tenantBarrier operates the per-tenant cryptographic barrier for tenants
+   * that select the "barrier" isolation mode. It is scoped per tenant ID and
+   * is independent of the process-wide system barrier exposed by `barrier`.
+   */
+  readonly tenantBarrier: TenantBarrierClient;
   /**
    * ceremony drives the initialization ceremony lifecycle (M-of-N officer
    * enrollment, certificate claims, share distribution, CSR signing).

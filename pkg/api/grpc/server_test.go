@@ -578,9 +578,8 @@ func TestServer_GetTLSConfig_Success(t *testing.T) {
 
 	mockCertSvc.On("GetTLSConfig", mock.Anything, mock.Anything).Return(&service.GetTLSConfigResponse{
 		Config: &tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			MaxVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: false,
+			MinVersion: tls.VersionTLS13,
+			MaxVersion: tls.VersionTLS13,
 		},
 	}, nil).Once()
 

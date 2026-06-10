@@ -1,12 +1,12 @@
 // Package transport re-exports go-xkms's API transport types.
 package transport
 
-import xkmstr "github.com/jeremyhahn/go-xkms/pkg/api/transport"
+import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 type (
-	GeneratePIVKeyRequest      = xkmstr.GeneratePIVKeyRequest
-	GetPIVCertificateRequest   = xkmstr.GetPIVCertificateRequest
-	ListPIVSlotsRequest        = xkmstr.ListPIVSlotsRequest
-	PIVSlotStatus              = xkmstr.PIVSlotStatus
-	StorePIVCertificateRequest = xkmstr.StorePIVCertificateRequest
+	GeneratePIVKeyRequest      = xkmssdk.GeneratePIVKeyRequest
+	GetPIVCertificateRequest   = xkmssdk.GetPIVCertificateRequest
+	ListPIVSlotsRequest        = xkmssdk.ListPIVSlotsRequest
+	PIVSlotStatus              = xkmssdk.PIVSlotStatus
+	StorePIVCertificateRequest = xkmssdk.StorePIVCertificateRequest
 )

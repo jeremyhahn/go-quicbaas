@@ -1,0 +1,151 @@
+// QuicBaaS Per-Tenant Barrier Protocol Buffer Definitions v1
+// Per-tenant barrier lifecycle exposed by the QuicBaaS daemon.
+//
+// QuicBaaS itself owns no per-tenant barrier logic; the embedded go-qrdb
+// instance does. These RPCs are a thin gRPC facade so that gRPC-only clients
+// connecting to the QuicBaaS endpoint can drive per-tenant barrier operations
+// without dialling qrdb directly. The shape mirrors the REST surface served
+// from /api/v1/tenants/{tenant_id}/barrier/* and the underlying go-qrdb
+// TenantBarrierService.
+//
+// Authorization: callers must hold tenant_barrier:{init,unseal,seal,status}
+// for the target tenant. The system tenant is denied at the transport layer
+// before these RPCs are reached.
+//
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+
+syntax = "proto3";
+
+package quicbaas.tenant.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// TenantBarrier Service
+// =============================================================================
+
+// TenantBarrier exposes per-tenant barrier lifecycle through gRPC.
+// All RPCs delegate to the embedded go-qrdb TenantBarrierServicer facade.
+// The system tenant is rejected at the authz layer before reaching these RPCs.
+service TenantBarrier {
+  // Init initializes the per-tenant barrier with the selected strategy.
+  // For the Shamir strategy the response carries the generated shares (returned
+  // exactly once, never persisted). For none/passphrase, shares is empty and
+  // a google.protobuf.Empty is the effective response (but Init always returns
+  // TenantBarrierInitResponse to keep the shape uniform).
+  rpc Init(TenantBarrierInitRequest) returns (TenantBarrierInitResponse);
+
+  // Unseal unseals the per-tenant barrier with a single key (passphrase
+  // strategy). Empty key material is rejected by qrdb.
+  rpc Unseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty);
+
+  // UnsealShare submits a single Shamir share toward the per-tenant barrier's
+  // quorum threshold. Unseals automatically once enough distinct shares have
+  // been submitted.
+  rpc UnsealShare(TenantBarrierUnsealShareRequest) returns (TenantBarrierUnsealProgress);
+
+  // Seal seals the per-tenant barrier.
+  rpc Seal(TenantBarrierSealRequest) returns (google.protobuf.Empty);
+
+  // Status reports the per-tenant barrier's sealed/initialized state and
+  // active strategy metadata, including Shamir threshold/total.
+  rpc Status(TenantBarrierStatusRequest) returns (TenantBarrierStatusResponse);
+}
+
+// =============================================================================
+// Messages
+// =============================================================================
+
+// TenantBarrierInitRequest initializes the per-tenant barrier.
+message TenantBarrierInitRequest {
+  // tenant_id identifies the target tenant.
+  string tenant_id = 1;
+  // passphrase is the sealing passphrase (passphrase strategy).
+  string passphrase = 2;
+  // threshold is the Shamir quorum threshold (Shamir strategy).
+  int32 threshold = 3;
+  // shares is the total number of Shamir shares (Shamir strategy).
+  int32 shares = 4;
+  // strategy selects the sealing strategy: "none", "passphrase", or "shamir".
+  string strategy = 5;
+}
+
+// TenantBarrierInitResponse carries the init outcome. For the Shamir strategy
+// the shares field contains the generated shares (returned exactly once).
+// For none/passphrase the shares field is empty.
+message TenantBarrierInitResponse {
+  // tenant_id echoes the target tenant.
+  string tenant_id = 1;
+  // strategy is the active sealing strategy after initialization.
+  string strategy = 2;
+  // shares contains Shamir shares when strategy is "shamir"; otherwise empty.
+  repeated string shares = 3;
+  // threshold is the Shamir quorum threshold; zero for non-Shamir strategies.
+  int32 threshold = 4;
+  // total_shares is the total Shamir share count; zero for non-Shamir strategies.
+  int32 total_shares = 5;
+}
+
+// TenantBarrierUnsealRequest carries single-key unseal material.
+message TenantBarrierUnsealRequest {
+  // tenant_id identifies the target tenant.
+  string tenant_id = 1;
+  // key is the raw unseal key (passphrase bytes).
+  bytes key = 2;
+}
+
+// TenantBarrierUnsealShareRequest carries one Shamir share.
+message TenantBarrierUnsealShareRequest {
+  // tenant_id identifies the target tenant.
+  string tenant_id = 1;
+  // share is the Shamir share value.
+  string share = 2;
+}
+
+// TenantBarrierUnsealProgress reports quorum progress for a Shamir unseal.
+message TenantBarrierUnsealProgress {
+  // tenant_id echoes the target tenant.
+  string tenant_id = 1;
+  // required is the number of shares required to reach the threshold.
+  int32 required = 2;
+  // submitted is the number of distinct shares submitted so far.
+  int32 submitted = 3;
+  // complete is true when the threshold has been reached and the barrier
+  // has been unsealed.
+  bool complete = 4;
+  // sealed reflects whether the barrier is still sealed after this share.
+  bool sealed = 5;
+}
+
+// TenantBarrierSealRequest seals the barrier for tenant_id.
+message TenantBarrierSealRequest {
+  // tenant_id identifies the target tenant.
+  string tenant_id = 1;
+}
+
+// TenantBarrierStatusRequest queries the barrier state for tenant_id.
+message TenantBarrierStatusRequest {
+  // tenant_id identifies the target tenant.
+  string tenant_id = 1;
+}
+
+// TenantBarrierStatusResponse reports the per-tenant barrier state.
+message TenantBarrierStatusResponse {
+  // tenant_id echoes the target tenant.
+  string tenant_id = 1;
+  // sealed is true when the barrier is currently sealed.
+  bool sealed = 2;
+  // initialized is true when the barrier has been initialized.
+  bool initialized = 3;
+  // strategy is the active sealing strategy.
+  string strategy = 4;
+  // hardware_backed is true when the strategy uses a hardware security module.
+  bool hardware_backed = 5;
+  // shamir_threshold is the Shamir quorum threshold; zero for non-Shamir strategies.
+  int32 shamir_threshold = 6;
+  // shamir_total is the total Shamir share count; zero for non-Shamir strategies.
+  int32 shamir_total = 7;
+}

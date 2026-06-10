@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -37,8 +37,11 @@ import (
 func newTestNodeBackedClient(t *testing.T) *ShardedClient {
 	t.Helper()
 	ctx := context.Background()
-	qcfg := &qrdbconfig.Config{}
-	qcfg.Databases = []qrdbconfig.DatabaseConfig{
+	qcfg := &qrdbsdk.DaemonConfig{}
+	// Vector storage is PebbleDB-backed and requires a data directory even
+	// when the KV data plane runs in memory.
+	qcfg.Raft.DataDir = t.TempDir()
+	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		{Name: "default", Engine: "mvcc", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)

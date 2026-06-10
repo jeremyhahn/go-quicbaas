@@ -21,6 +21,7 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
@@ -50,16 +51,13 @@ type Handler struct {
 	// ObjectTransfer registry for peer-to-peer object data transfer
 	objectTransferRegistry *ObjectTransferRegistry
 
-	// Authorization dependencies
-	authManager  interfaces.AuthManager
-	authzService interfaces.AuthorizationService
-
-	// tokenValidator is the qrdb-PDP authz token-validation seam. When set
-	// (RequireAuthz=true via SetAuthzEnforcement), it validates the inbound
-	// bearer against the OIDC provider — the SAME tokens REST and gRPC accept —
-	// and is preferred over authManager for building the authorization Subject.
-	// nil preserves the legacy authManager path.
-	tokenValidator AuthzTokenValidator
+	// validatorAuthorizer is the unified platform-token authorization seam. When
+	// set (RequireAuthz=true, installed by lifecycle via the QUIC server), a SINGLE
+	// call validates the inbound bearer offline (sig / iss / aud / exp), enforces
+	// DPoP sender-constraint for cnf.jkt tokens, runs the offline scp decision
+	// against the opcode's qrdb-canonical permission, and applies the per-tenant
+	// liveness mode. nil leaves QUIC on its no-enforcement path (RequireAuthz=false).
+	validatorAuthorizer ValidatorAuthorizer
 
 	// Messaging service
 	msgService *messaging.PushService
@@ -68,42 +66,12 @@ type Handler struct {
 // HandlerOption is a functional option for configuring the Handler.
 type HandlerOption func(*Handler)
 
-// WithHandlerAuthManager sets the authentication manager for the handler.
-func WithHandlerAuthManager(auth interfaces.AuthManager) HandlerOption {
+// WithHandlerValidatorAuthorizer installs the unified platform-token
+// authorization seam. When set the handler performs ONE validator.Authorize call
+// per opcode. nil leaves QUIC on its no-enforcement path (RequireAuthz=false).
+func WithHandlerValidatorAuthorizer(v ValidatorAuthorizer) HandlerOption {
 	return func(h *Handler) {
-		h.authManager = auth
-	}
-}
-
-// WithHandlerAuthorizationService sets the authorization service for the handler.
-func WithHandlerAuthorizationService(authz interfaces.AuthorizationService) HandlerOption {
-	return func(h *Handler) {
-		h.authzService = authz
-	}
-}
-
-// AuthzIdentity is the authenticated principal an AuthzTokenValidator resolves
-// from the inbound bearer token. It carries exactly the fields the qrdb policy
-// decision point and the service layer consume.
-type AuthzIdentity struct {
-	ID       string
-	Username string
-	TenantID string
-	Roles    []string
-}
-
-// AuthzTokenValidator validates an inbound bearer token and returns the
-// authenticated identity. It is satisfied by the server-layer OIDC validator
-// (the same provider REST and gRPC validate against). A failure returns a
-// non-nil error and the handler responds Unauthorized.
-type AuthzTokenValidator interface {
-	ValidateAuthzToken(ctx context.Context, token string) (*AuthzIdentity, error)
-}
-
-// WithHandlerTokenValidator installs the qrdb-PDP authz token-validation seam.
-func WithHandlerTokenValidator(v AuthzTokenValidator) HandlerOption {
-	return func(h *Handler) {
-		h.tokenValidator = v
+		h.validatorAuthorizer = v
 	}
 }
 
@@ -461,21 +429,23 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 // returns the context enriched with the authenticated Subject so that
 // service-layer per-key authorization can access the principal. On denial
 // it returns a non-nil *Response and the original ctx.
+//
+// Enforcement runs exclusively through the unified platform-token validator
+// installed by lifecycle when RequireAuthz=true. When the validator is not
+// installed (RequireAuthz=false) QUIC performs no authorization enforcement,
+// exactly as before.
 func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context.Context, *Response) {
-	// Skip authorization for public operations
+	// Skip authorization for public operations.
 	if isPublicOperation(req.Opcode) {
 		return ctx, nil
 	}
 
-	// If no auth wiring is configured, allow all requests (backward
-	// compatibility). The qrdb-PDP authz token validator participates in this
-	// gate: when RequireAuthz is off none of these are wired and QUIC stays
-	// allow-all, exactly as before.
-	if h.authzService == nil && h.authManager == nil && h.tokenValidator == nil {
+	// No enforcement is wired (RequireAuthz=false): allow all requests.
+	if h.validatorAuthorizer == nil {
 		return ctx, nil
 	}
 
-	// Check for missing token
+	// A non-public op requires a bearer token under the validator posture.
 	if req.Token == "" {
 		return ctx, &Response{
 			Status:  StatusUnauthorized,
@@ -483,207 +453,91 @@ func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context
 		}
 	}
 
-	// Validate token. The qrdb-PDP authz validator (OIDC-backed, the same tokens
-	// REST and gRPC accept) takes precedence when installed; otherwise the legacy
-	// authManager path is used.
-	var subject interfaces.Subject
-	if h.tokenValidator != nil {
-		id, err := h.tokenValidator.ValidateAuthzToken(ctx, req.Token)
-		if err != nil || id == nil {
-			if h.logger != nil && err != nil {
-				h.logger.WithError(err).Debug("Token validation failed")
-			}
-			return ctx, &Response{
-				Status:  StatusUnauthorized,
-				Payload: []byte("invalid token"),
-			}
-		}
-		subject = interfaces.Subject{
-			ID:            id.ID,
-			Username:      id.Username,
-			TenantID:      id.TenantID,
-			Roles:         id.Roles,
-			Authenticated: true,
-		}
-	} else if h.authManager != nil {
-		result, err := h.authManager.ValidateToken(ctx, req.Token)
-		if err != nil {
-			if h.logger != nil {
-				h.logger.WithError(err).Debug("Token validation failed")
-			}
-			return ctx, &Response{
-				Status:  StatusUnauthorized,
-				Payload: []byte("invalid token"),
-			}
-		}
+	// Unified platform-token path: a SINGLE call maps the opcode to its
+	// qrdb-canonical permission and authorizes the bearer in one shot (offline
+	// sig / iss / aud / exp, DPoP sender-constraint for cnf.jkt tokens, offline
+	// scp decision, per-tenant liveness). QUIC carries no DPoP, so the proof /
+	// htm / htu are empty: bearer / service tokens pass and cnf.jkt tokens are
+	// rejected because they cannot prove possession over QUIC.
+	return h.authorizeViaValidator(ctx, req)
+}
 
-		// Extract subject from validation result
-		// The result is *auth.TokenValidationResult
-		if validationResult, ok := result.(*auth.TokenValidationResult); ok && validationResult.Valid {
-			subject = interfaces.Subject{
-				ID:            validationResult.UserID,
-				Username:      validationResult.Username,
-				TenantID:      validationResult.TenantID,
-				Roles:         validationResult.Roles,
-				Authenticated: true,
-			}
-		} else {
-			return ctx, &Response{
-				Status:  StatusUnauthorized,
-				Payload: []byte("invalid token"),
-			}
+// authorizeViaValidator is the unified platform-token authorization gate. A
+// SINGLE validator.Authorize call performs signature + iss + aud + exp, DPoP
+// sender-constraint (RFC 9449) for cnf.jkt-bound tokens, the offline scp ->
+// permission decision against the opcode's qrdb-canonical permission, and the
+// per-tenant liveness / revocation check.
+//
+// It is default-deny: an opcode with no qrdb permission mapping is denied (there
+// is no registered permission to admit it). On allow it reconstructs the
+// principal Subject from the verified AuthorizedContext (Username included so
+// service-layer principal matching by username is preserved) and injects it for
+// downstream handlers. QUIC carries no DPoP, so the proof / htm / htu are empty
+// — a cnf.jkt-bound token is therefore rejected because it cannot prove
+// possession over this transport.
+func (h *Handler) authorizeViaValidator(ctx context.Context, req *Request) (context.Context, *Response) {
+	resource, action, mapped := getQRDBPermission(req.Opcode)
+	if !mapped {
+		return ctx, &Response{
+			Status:  StatusPermissionDenied,
+			Payload: []byte(fmt.Sprintf("permission denied: no qrdb permission mapping for opcode 0x%02X", req.Opcode)),
 		}
-	} else {
-		// No auth manager, but authz service is present - use a default subject
-		// This allows testing authz without full auth setup
-		subject = interfaces.Subject{
-			ID:            "unknown",
-			Authenticated: true,
+	}
+	requiredPerm := resource + ":" + action
+
+	authzCtx, err := h.validatorAuthorizer.Authorize(ctx, req.Token, requiredPerm, "", "", "")
+	if err != nil {
+		status := validatorErrorStatus(err)
+		if h.logger != nil {
+			h.logger.WithError(err).WithFields(map[string]interface{}{
+				"opcode":   fmt.Sprintf("0x%02X", req.Opcode),
+				"resource": resource,
+				"action":   action,
+			}).Debug("QUIC authorization denied (platform-token validator)")
+		}
+		return ctx, &Response{
+			Status:  status,
+			Payload: []byte(validatorDenyMessage(status)),
 		}
 	}
 
-	// Perform authorization check if service is available. The mapper emits
-	// qrdb-canonical (resource, action); an opcode with no registered qrdb
-	// permission is denied under the default-deny posture (an installed authz
-	// service means RequireAuthz is active).
-	if h.authzService != nil {
-		resource, action, mapped := getQRDBPermission(req.Opcode)
-		if !mapped {
-			return ctx, &Response{
-				Status:  StatusPermissionDenied,
-				Payload: []byte(fmt.Sprintf("permission denied: no qrdb permission mapping for opcode 0x%02X", req.Opcode)),
-			}
-		}
-
-		authzReq := &interfaces.AuthorizationRequest{
-			Subject:  subject,
-			Resource: resource,
-			Action:   action,
-		}
-
-		decision, err := h.authzService.Authorize(ctx, authzReq)
-		if err != nil {
-			if h.logger != nil {
-				h.logger.WithError(err).Error("Authorization check failed")
-			}
-			return ctx, &Response{
-				Status:  StatusInternalError,
-				Payload: []byte("authorization check failed"),
-			}
-		}
-
-		if !decision.Allowed {
-			reason := decision.Reason
-			if reason == "" {
-				reason = fmt.Sprintf("access denied to %s:%s", resource, action)
-			}
-			return ctx, &Response{
-				Status:  StatusPermissionDenied,
-				Payload: []byte(fmt.Sprintf("permission denied: %s", reason)),
-			}
-		}
+	// Reconstruct the principal from the verified AuthorizedContext so the
+	// service-layer per-key authorization (auth.SubjectFromContext) sees an
+	// authenticated subject. Username carries the token name claim so principal
+	// matching by username (in addition to ID) is preserved.
+	subject := interfaces.Subject{
+		ID:            authzCtx.Subject,
+		Username:      authzCtx.Username,
+		TenantID:      authzCtx.TenantID,
+		Roles:         authzCtx.Roles,
+		Authenticated: true,
+		Attributes:    make(map[string]interface{}),
 	}
-
-	// Inject Subject into context for service-layer per-key authorization.
 	ctx = auth.SubjectIntoContext(ctx, subject)
+
+	// Inject the tenant context key so the service / storage layer resolves
+	// row-level isolation from iam.TenantFromContext (the canonical RLS source),
+	// matching the REST and MCP validator-allow paths. Only set it when the
+	// token carries a tenant; an empty TenantID leaves single-tenant behavior
+	// unchanged.
+	if authzCtx.TenantID != "" {
+		ctx = iam.ContextWithTenant(ctx, authzCtx.TenantID)
+	}
 	return ctx, nil
 }
 
-// authorize checks if the request is authorized.
-// Returns nil if authorized, or an error response if not.
-// Deprecated: use authorizeAndInject which also populates Subject in context.
-func (h *Handler) authorize(ctx context.Context, req *Request) *Response {
-	// Skip authorization for public operations
-	if isPublicOperation(req.Opcode) {
-		return nil
+// validatorDenyMessage returns the opaque deny payload for a QUIC validator
+// status, keeping the wire response consistent across deny reasons without
+// leaking validation detail to the caller.
+func validatorDenyMessage(status byte) string {
+	switch status {
+	case StatusPermissionDenied:
+		return "permission denied: authorization denied"
+	case StatusInternalError:
+		return "authorization check failed"
+	default:
+		return "invalid token"
 	}
-
-	// If no auth service configured, allow all requests (backward compatibility)
-	if h.authzService == nil && h.authManager == nil {
-		return nil
-	}
-
-	// Check for missing token
-	if req.Token == "" {
-		return &Response{
-			Status:  StatusUnauthorized,
-			Payload: []byte("authentication required"),
-		}
-	}
-
-	// Validate token
-	var subject interfaces.Subject
-	if h.authManager != nil {
-		result, err := h.authManager.ValidateToken(ctx, req.Token)
-		if err != nil {
-			if h.logger != nil {
-				h.logger.WithError(err).Debug("Token validation failed")
-			}
-			return &Response{
-				Status:  StatusUnauthorized,
-				Payload: []byte("invalid token"),
-			}
-		}
-
-		// Extract subject from validation result
-		// The result is *auth.TokenValidationResult
-		if validationResult, ok := result.(*auth.TokenValidationResult); ok && validationResult.Valid {
-			subject = interfaces.Subject{
-				ID:            validationResult.UserID,
-				Username:      validationResult.Username,
-				TenantID:      validationResult.TenantID,
-				Roles:         validationResult.Roles,
-				Authenticated: true,
-			}
-		} else {
-			return &Response{
-				Status:  StatusUnauthorized,
-				Payload: []byte("invalid token"),
-			}
-		}
-	} else {
-		// No auth manager, but authz service is present - use a default subject
-		// This allows testing authz without full auth setup
-		subject = interfaces.Subject{
-			ID:            "unknown",
-			Authenticated: true,
-		}
-	}
-
-	// Perform authorization check if service is available.
-	if h.authzService != nil {
-		resource, action := getResourceAndAction(req.Opcode)
-
-		authzReq := &interfaces.AuthorizationRequest{
-			Subject:  subject,
-			Resource: resource,
-			Action:   action,
-		}
-
-		decision, err := h.authzService.Authorize(ctx, authzReq)
-		if err != nil {
-			if h.logger != nil {
-				h.logger.WithError(err).Error("Authorization check failed")
-			}
-			return &Response{
-				Status:  StatusInternalError,
-				Payload: []byte("authorization check failed"),
-			}
-		}
-
-		if !decision.Allowed {
-			reason := decision.Reason
-			if reason == "" {
-				reason = fmt.Sprintf("access denied to %s:%s", resource, action)
-			}
-			return &Response{
-				Status:  StatusPermissionDenied,
-				Payload: []byte(fmt.Sprintf("permission denied: %s", reason)),
-			}
-		}
-	}
-
-	return nil
 }
 
 // HandleRequest processes a protocol request and returns a response.

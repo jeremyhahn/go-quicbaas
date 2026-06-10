@@ -508,7 +508,7 @@ func createTestECDSAKey(t *testing.T, keyID string) (*xkmssdk.KeyAttributes, str
 		},
 	}
 
-	_, err := GenerateKey(attrs)
+	_, err := GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Return full key ID format: software:signing:ecdsa-p256:keyname
@@ -531,7 +531,7 @@ func createTestRSAKey(t *testing.T, keyID string) (*xkmssdk.KeyAttributes, strin
 		},
 	}
 
-	_, err := GenerateKey(attrs)
+	_, err := GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Return full key ID format: software:signing:rsa:keyname
@@ -554,7 +554,7 @@ func createTestEncryptionRSAKey(t *testing.T, keyID string) (*xkmssdk.KeyAttribu
 		},
 	}
 
-	_, err := GenerateKey(attrs)
+	_, err := GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Return full key ID format: software:encryption:rsa:keyname
@@ -606,7 +606,7 @@ func createJWTWithKID(t *testing.T, signer crypto.Signer, kid string, claims JWT
 func TestPublicKey_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := PublicKey("software:signing:ecdsa-p256:test-key")
+	_, err := PublicKey(context.Background(), "software:signing:ecdsa-p256:test-key")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -615,7 +615,7 @@ func TestPublicKey_Success(t *testing.T) {
 	_, fullKeyID := createTestECDSAKey(t, "public-key-test")
 
 	// Use SignerByID with full key ID (ID-based lookup now works correctly)
-	signer, err := SignerByID(fullKeyID)
+	signer, err := SignerByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 
 	pub := signer.Public()
@@ -629,7 +629,7 @@ func TestPublicKey_Success(t *testing.T) {
 func TestPublicKey_NotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := PublicKey("software:signing:ecdsa-p256:non-existent-key")
+	_, err := PublicKey(context.Background(), "software:signing:ecdsa-p256:non-existent-key")
 	require.Error(t, err)
 }
 
@@ -682,7 +682,7 @@ func TestParseCertificateID_Success(t *testing.T) {
 func TestGenerateKey_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := GenerateKey(&xkmssdk.KeyAttributes{})
+	_, err := GenerateKey(context.Background(), &xkmssdk.KeyAttributes{})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -699,7 +699,7 @@ func TestGenerateKey_Success(t *testing.T) {
 		},
 	}
 
-	key, err := GenerateKey(attrs)
+	key, err := GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 }
@@ -714,7 +714,7 @@ func TestGenerateKey_InvalidAttributes(t *testing.T) {
 		KeyAlgorithm: x509.ECDSA,
 	}
 
-	_, err := GenerateKey(attrs)
+	_, err := GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
 }
@@ -722,7 +722,7 @@ func TestGenerateKey_InvalidAttributes(t *testing.T) {
 func TestGenerateKeyWithBackend_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := GenerateKeyWithBackend("software", &xkmssdk.KeyAttributes{})
+	_, err := GenerateKeyWithBackend(context.Background(), "software", &xkmssdk.KeyAttributes{})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -739,7 +739,7 @@ func TestGenerateKeyWithBackend_Success(t *testing.T) {
 		},
 	}
 
-	key, err := GenerateKeyWithBackend("software", attrs)
+	key, err := GenerateKeyWithBackend(context.Background(), "software", attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 }
@@ -751,7 +751,7 @@ func TestGenerateKeyWithBackend_InvalidBackend(t *testing.T) {
 		CN: "test-key",
 	}
 
-	_, err := GenerateKeyWithBackend("non-existent", attrs)
+	_, err := GenerateKeyWithBackend(context.Background(), "non-existent", attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
 }
@@ -763,7 +763,7 @@ func TestGenerateKeyWithBackend_InvalidBackend(t *testing.T) {
 func TestKey_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := Key(&xkmssdk.KeyAttributes{CN: "test"})
+	_, err := Key(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -771,7 +771,7 @@ func TestKey_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, _ := createTestECDSAKey(t, "retrieve-key-test")
 
-	key, err := Key(attrs)
+	key, err := Key(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 }
@@ -785,7 +785,7 @@ func TestKey_NotFound(t *testing.T) {
 		KeyType:   xkmssdk.KeyTypeSigning,
 	}
 
-	_, err := Key(attrs)
+	_, err := Key(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 }
@@ -793,7 +793,7 @@ func TestKey_NotFound(t *testing.T) {
 func TestKeyByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := KeyByID("software:signing:ecdsa-p256:test-key")
+	_, err := KeyByID(context.Background(), "software:signing:ecdsa-p256:test-key")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -802,7 +802,7 @@ func TestKeyByID_Success(t *testing.T) {
 	attrs, _ := createTestECDSAKey(t, "key-by-id-test")
 
 	// Use attribute-based lookup (attribute-based lookup works correctly)
-	key, err := Key(attrs)
+	key, err := Key(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 }
@@ -810,7 +810,7 @@ func TestKeyByID_Success(t *testing.T) {
 func TestKeyByID_NotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := KeyByID("software:signing:ecdsa-p256:non-existent-key")
+	_, err := KeyByID(context.Background(), "software:signing:ecdsa-p256:non-existent-key")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 }
@@ -822,7 +822,7 @@ func TestKeyByID_NotFound(t *testing.T) {
 func TestDeleteKey_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := DeleteKey(&xkmssdk.KeyAttributes{CN: "test"})
+	err := DeleteKey(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -830,18 +830,18 @@ func TestDeleteKey_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, _ := createTestECDSAKey(t, "delete-key-test")
 
-	err := DeleteKey(attrs)
+	err := DeleteKey(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify key no longer exists
-	_, err = Key(attrs)
+	_, err = Key(context.Background(), attrs)
 	require.Error(t, err)
 }
 
 func TestDeleteKeyByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := DeleteKeyByID("software:signing:ecdsa-p256:test-key")
+	err := DeleteKeyByID(context.Background(), "software:signing:ecdsa-p256:test-key")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -849,11 +849,11 @@ func TestDeleteKeyByID_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, fullKeyID := createTestECDSAKey(t, "delete-key-by-id-test")
 
-	err := DeleteKeyByID(fullKeyID)
+	err := DeleteKeyByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 
 	// Verify key no longer exists using attribute-based lookup
-	_, err = Key(attrs)
+	_, err = Key(context.Background(), attrs)
 	require.Error(t, err)
 }
 
@@ -864,7 +864,7 @@ func TestDeleteKeyByID_Success(t *testing.T) {
 func TestRotateKey_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := RotateKey("software:signing:ecdsa-p256:test-key")
+	_, err := RotateKey(context.Background(), "software:signing:ecdsa-p256:test-key")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -873,7 +873,7 @@ func TestRotateKey_Success(t *testing.T) {
 	attrs, fullKeyID := createTestECDSAKey(t, "rotate-key-test")
 
 	// Get original signer to capture original public key
-	origSigner, err := Signer(attrs)
+	origSigner, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	origPublicKey := origSigner.Public().(*ecdsa.PublicKey)
 
@@ -883,12 +883,12 @@ func TestRotateKey_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rotate using fullKeyID
-	newKey, err := RotateKey(fullKeyID)
+	newKey, err := RotateKey(context.Background(), fullKeyID)
 	require.NoError(t, err)
 	assert.NotNil(t, newKey)
 
 	// Get new signer to verify rotation
-	newSigner, err := Signer(attrs)
+	newSigner, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	newPublicKey := newSigner.Public().(*ecdsa.PublicKey)
 
@@ -910,7 +910,7 @@ func TestRotateKey_Success(t *testing.T) {
 func TestRotateKey_NotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := RotateKey("software:signing:ecdsa-p256:non-existent-key")
+	_, err := RotateKey(context.Background(), "software:signing:ecdsa-p256:non-existent-key")
 	require.Error(t, err)
 }
 
@@ -921,7 +921,7 @@ func TestRotateKey_NotFound(t *testing.T) {
 func TestListKeys_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := ListKeys()
+	_, err := ListKeys(context.Background())
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -930,7 +930,7 @@ func TestListKeys_Success(t *testing.T) {
 	createTestECDSAKey(t, "list-key-1")
 	createTestECDSAKey(t, "list-key-2")
 
-	keys, err := ListKeys()
+	keys, err := ListKeys(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(keys), 2)
 }
@@ -939,7 +939,7 @@ func TestListKeys_SpecificBackend(t *testing.T) {
 	setupFullTestXKMS(t)
 	createTestECDSAKey(t, "backend-list-key")
 
-	keys, err := ListKeys("software")
+	keys, err := ListKeys(context.Background(), "software")
 	require.NoError(t, err)
 	assert.NotNil(t, keys)
 }
@@ -951,7 +951,7 @@ func TestListKeys_SpecificBackend(t *testing.T) {
 func TestSigner_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := Signer(&xkmssdk.KeyAttributes{CN: "test"})
+	_, err := Signer(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -959,7 +959,7 @@ func TestSigner_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, _ := createTestECDSAKey(t, "signer-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, signer)
 	assert.NotNil(t, signer.Public())
@@ -968,7 +968,7 @@ func TestSigner_Success(t *testing.T) {
 func TestSignerByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := SignerByID("software:signing:ecdsa-p256:test-key")
+	_, err := SignerByID(context.Background(), "software:signing:ecdsa-p256:test-key")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -977,7 +977,7 @@ func TestSignerByID_Success(t *testing.T) {
 	_, fullKeyID := createTestECDSAKey(t, "signer-by-id-test")
 
 	// Use SignerByID with full key ID (ID-based lookup now works correctly)
-	signer, err := SignerByID(fullKeyID)
+	signer, err := SignerByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 	assert.NotNil(t, signer)
 }
@@ -985,7 +985,7 @@ func TestSignerByID_Success(t *testing.T) {
 func TestSignerByID_NotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := SignerByID("software:signing:ecdsa-p256:non-existent-key")
+	_, err := SignerByID(context.Background(), "software:signing:ecdsa-p256:non-existent-key")
 	require.Error(t, err)
 }
 
@@ -996,7 +996,7 @@ func TestSignerByID_NotFound(t *testing.T) {
 func TestDecrypter_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := Decrypter(&xkmssdk.KeyAttributes{CN: "test"})
+	_, err := Decrypter(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1006,7 +1006,7 @@ func TestDecrypter_Success(t *testing.T) {
 	// Create RSA key for decryption
 	attrs, _ := createTestEncryptionRSAKey(t, "decrypter-test")
 
-	dec, err := Decrypter(attrs)
+	dec, err := Decrypter(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, dec)
 }
@@ -1014,7 +1014,7 @@ func TestDecrypter_Success(t *testing.T) {
 func TestDecrypterByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := DecrypterByID("software:encryption:rsa:test-key")
+	_, err := DecrypterByID(context.Background(), "software:encryption:rsa:test-key")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1025,7 +1025,7 @@ func TestDecrypterByID_Success(t *testing.T) {
 	_, fullKeyID := createTestEncryptionRSAKey(t, "decrypter-by-id-test")
 
 	// Use DecrypterByID with full key ID (ID-based lookup now works correctly)
-	dec, err := DecrypterByID(fullKeyID)
+	dec, err := DecrypterByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 	assert.NotNil(t, dec)
 }
@@ -1037,7 +1037,7 @@ func TestDecrypterByID_Success(t *testing.T) {
 func TestSign_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := Sign("software:signing:ecdsa-p256:test-key", []byte("data"), nil)
+	_, err := Sign(context.Background(), "software:signing:ecdsa-p256:test-key", []byte("data"), nil)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1046,7 +1046,7 @@ func TestSign_Success(t *testing.T) {
 	_, fullKeyID := createTestECDSAKey(t, "sign-test")
 
 	data := []byte("test data to sign")
-	sig, err := Sign(fullKeyID, data, &SignOptions{
+	sig, err := Sign(context.Background(), fullKeyID, data, &SignOptions{
 		Hash: crypto.SHA256,
 	})
 	require.NoError(t, err)
@@ -1056,7 +1056,7 @@ func TestSign_Success(t *testing.T) {
 func TestSign_InvalidKey(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := Sign("software:signing:ecdsa-p256:non-existent-key", []byte("data"), nil)
+	_, err := Sign(context.Background(), "software:signing:ecdsa-p256:non-existent-key", []byte("data"), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSigningFailed)
 }
@@ -1064,7 +1064,7 @@ func TestSign_InvalidKey(t *testing.T) {
 func TestVerify_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := Verify("software:signing:ecdsa-p256:test-key", []byte("data"), []byte("sig"), nil)
+	err := Verify(context.Background(), "software:signing:ecdsa-p256:test-key", []byte("data"), []byte("sig"), nil)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1075,13 +1075,13 @@ func TestVerify_Success(t *testing.T) {
 	data := []byte("test data to sign and verify")
 
 	// Sign first
-	sig, err := Sign(fullKeyID, data, &SignOptions{
+	sig, err := Sign(context.Background(), fullKeyID, data, &SignOptions{
 		Hash: crypto.SHA256,
 	})
 	require.NoError(t, err)
 
 	// Verify
-	err = Verify(fullKeyID, data, sig, &xkmssdk.VerifyOpts{
+	err = Verify(context.Background(), fullKeyID, data, sig, &xkmssdk.VerifyOpts{
 		Hash: crypto.SHA256,
 	})
 	require.NoError(t, err)
@@ -1094,7 +1094,7 @@ func TestVerify_InvalidSignature(t *testing.T) {
 	data := []byte("test data")
 	invalidSig := []byte("invalid signature")
 
-	err := Verify(fullKeyID, data, invalidSig, &xkmssdk.VerifyOpts{
+	err := Verify(context.Background(), fullKeyID, data, invalidSig, &xkmssdk.VerifyOpts{
 		Hash: crypto.SHA256,
 	})
 	require.Error(t, err)
@@ -1108,7 +1108,7 @@ func TestVerify_InvalidSignature(t *testing.T) {
 func TestEncrypt_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := Encrypt("software:symmetric:aes256:test-key", []byte("data"), nil)
+	_, err := Encrypt(context.Background(), "software:symmetric:aes256:test-key", []byte("data"), nil)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1117,7 +1117,7 @@ func TestEncrypt_BackendNotSupported(t *testing.T) {
 
 	// PKCS8 backend does not support symmetric encryption
 	// This should fail because the backend doesn't support symmetric operations
-	_, err := Encrypt("software:symmetric:aes256:test-key", []byte("data"), nil)
+	_, err := Encrypt(context.Background(), "software:symmetric:aes256:test-key", []byte("data"), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrEncryptionFailed)
 }
@@ -1128,14 +1128,14 @@ func TestDecrypt_NotInitialized(t *testing.T) {
 	encData := &xkmssdk.EncryptedData{
 		Ciphertext: []byte("encrypted"),
 	}
-	_, err := Decrypt("software:symmetric:aes256:test-key", encData, nil)
+	_, err := Decrypt(context.Background(), "software:symmetric:aes256:test-key", encData, nil)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestDecrypt_NilData(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := Decrypt("software:symmetric:aes256:test-key", nil, nil)
+	_, err := Decrypt(context.Background(), "software:symmetric:aes256:test-key", nil, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrDecryptionFailed)
 }
@@ -1147,7 +1147,7 @@ func TestDecrypt_BackendNotSupported(t *testing.T) {
 		Ciphertext: []byte("encrypted"),
 	}
 	// PKCS8 backend does not support symmetric decryption
-	_, err := Decrypt("software:symmetric:aes256:test-key", encData, nil)
+	_, err := Decrypt(context.Background(), "software:symmetric:aes256:test-key", encData, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrDecryptionFailed)
 }
@@ -1163,7 +1163,7 @@ func TestGenerateSymmetricKey_NotInitialized(t *testing.T) {
 		CN:      "test-sym-key",
 		KeyType: xkmssdk.KeyTypeSecret,
 	}
-	_, err := GenerateSymmetricKey("software", attrs)
+	_, err := GenerateSymmetricKey(context.Background(), "software", attrs)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1176,7 +1176,7 @@ func TestGenerateSymmetricKey_BackendNotSupported(t *testing.T) {
 		StoreType: xkmssdk.StoreSoftware,
 	}
 	// PKCS8 backend does not support symmetric key generation
-	_, err := GenerateSymmetricKey("software", attrs)
+	_, err := GenerateSymmetricKey(context.Background(), "software", attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
 }
@@ -1184,7 +1184,7 @@ func TestGenerateSymmetricKey_BackendNotSupported(t *testing.T) {
 func TestGetSymmetricKey_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := GetSymmetricKey("software:symmetric:aes256:test-key")
+	_, err := GetSymmetricKey(context.Background(), "software:symmetric:aes256:test-key")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1192,7 +1192,7 @@ func TestGetSymmetricKey_BackendNotSupported(t *testing.T) {
 	setupFullTestXKMS(t)
 
 	// PKCS8 backend does not support symmetric key retrieval
-	_, err := GetSymmetricKey("software:symmetric:aes256:test-key")
+	_, err := GetSymmetricKey(context.Background(), "software:symmetric:aes256:test-key")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 }
@@ -1204,7 +1204,7 @@ func TestGetSymmetricKey_BackendNotSupported(t *testing.T) {
 func TestImportSymmetricKey_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := ImportSymmetricKey("software", &xkmssdk.KeyAttributes{}, []byte("key"))
+	err := ImportSymmetricKey(context.Background(), "software", &xkmssdk.KeyAttributes{}, []byte("key"))
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1215,7 +1215,7 @@ func TestImportSymmetricKey_InvalidBackend(t *testing.T) {
 		CN: "import-test",
 	}
 
-	err := ImportSymmetricKey("non-existent", attrs, []byte("key-material"))
+	err := ImportSymmetricKey(context.Background(), "non-existent", attrs, []byte("key-material"))
 	require.Error(t, err)
 }
 
@@ -1229,7 +1229,7 @@ func TestImportSymmetricKey_BackendNotSupported(t *testing.T) {
 	}
 
 	// PKCS8 backend does not support symmetric operations
-	err := ImportSymmetricKey("software", attrs, []byte("key-material-32-bytes-for-aes!"))
+	err := ImportSymmetricKey(context.Background(), "software", attrs, []byte("key-material-32-bytes-for-aes!"))
 	require.Error(t, err)
 }
 
@@ -1507,7 +1507,7 @@ func TestUnsealWithBackend_InvalidBackend(t *testing.T) {
 func TestCertificate_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := Certificate(&xkmssdk.KeyAttributes{CN: "test"})
+	_, err := Certificate(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1516,16 +1516,16 @@ func TestCertificate_Success(t *testing.T) {
 	attrs, _ := createTestECDSAKey(t, "cert-test")
 
 	// Get signer for cert creation
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Create and save cert
 	cert := createTestCertificate(t, signer)
-	err = SaveCertificate(attrs, cert)
+	err = SaveCertificate(context.Background(), attrs, cert)
 	require.NoError(t, err)
 
 	// Retrieve cert
-	retrieved, err := Certificate(attrs)
+	retrieved, err := Certificate(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.Equal(t, cert.SerialNumber, retrieved.SerialNumber)
 }
@@ -1538,7 +1538,7 @@ func TestCertificate_NotFound(t *testing.T) {
 		StoreType: xkmssdk.StoreSoftware,
 	}
 
-	_, err := Certificate(attrs)
+	_, err := Certificate(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrCertificateOperationFailed)
 }
@@ -1546,7 +1546,7 @@ func TestCertificate_NotFound(t *testing.T) {
 func TestCertificateByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := CertificateByID("software:signing:ecdsa-p256:test-cert")
+	_, err := CertificateByID(context.Background(), "software:signing:ecdsa-p256:test-cert")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1555,14 +1555,14 @@ func TestCertificateByID_Success(t *testing.T) {
 	attrs, fullKeyID := createTestECDSAKey(t, "cert-by-id-test")
 
 	// Get signer and create cert
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificateByID(fullKeyID, cert)
+	err = SaveCertificateByID(context.Background(), fullKeyID, cert)
 	require.NoError(t, err)
 
-	retrieved, err := CertificateByID(fullKeyID)
+	retrieved, err := CertificateByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 	assert.NotNil(t, retrieved)
 }
@@ -1570,7 +1570,7 @@ func TestCertificateByID_Success(t *testing.T) {
 func TestCertificateByID_NotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := CertificateByID("software:signing:ecdsa-p256:non-existent-cert")
+	_, err := CertificateByID(context.Background(), "software:signing:ecdsa-p256:non-existent-cert")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrCertificateOperationFailed)
 }
@@ -1582,14 +1582,14 @@ func TestCertificateByID_NotFound(t *testing.T) {
 func TestSaveCertificate_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := SaveCertificate(&xkmssdk.KeyAttributes{}, &x509.Certificate{})
+	err := SaveCertificate(context.Background(), &xkmssdk.KeyAttributes{}, &x509.Certificate{})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestSaveCertificateByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := SaveCertificateByID("software:signing:ecdsa-p256:test", &x509.Certificate{})
+	err := SaveCertificateByID(context.Background(), "software:signing:ecdsa-p256:test", &x509.Certificate{})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1600,7 +1600,7 @@ func TestSaveCertificateByID_NotInitialized(t *testing.T) {
 func TestDeleteCertificate_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := DeleteCertificate(&xkmssdk.KeyAttributes{CN: "test"})
+	err := DeleteCertificate(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1608,25 +1608,25 @@ func TestDeleteCertificate_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, _ := createTestECDSAKey(t, "delete-cert-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificate(attrs, cert)
+	err = SaveCertificate(context.Background(), attrs, cert)
 	require.NoError(t, err)
 
-	err = DeleteCertificate(attrs)
+	err = DeleteCertificate(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Verify cert no longer exists
-	_, err = Certificate(attrs)
+	_, err = Certificate(context.Background(), attrs)
 	require.Error(t, err)
 }
 
 func TestDeleteCertificateByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := DeleteCertificateByID("software:signing:ecdsa-p256:test-cert")
+	err := DeleteCertificateByID(context.Background(), "software:signing:ecdsa-p256:test-cert")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1634,14 +1634,14 @@ func TestDeleteCertificateByID_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, fullKeyID := createTestECDSAKey(t, "delete-cert-by-id-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificateByID(fullKeyID, cert)
+	err = SaveCertificateByID(context.Background(), fullKeyID, cert)
 	require.NoError(t, err)
 
-	err = DeleteCertificateByID(fullKeyID)
+	err = DeleteCertificateByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 }
 
@@ -1652,7 +1652,7 @@ func TestDeleteCertificateByID_Success(t *testing.T) {
 func TestCertificateExists_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := CertificateExists(&xkmssdk.KeyAttributes{CN: "test"})
+	_, err := CertificateExists(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1660,14 +1660,14 @@ func TestCertificateExists_True(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, _ := createTestECDSAKey(t, "cert-exists-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificate(attrs, cert)
+	err = SaveCertificate(context.Background(), attrs, cert)
 	require.NoError(t, err)
 
-	exists, err := CertificateExists(attrs)
+	exists, err := CertificateExists(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.True(t, exists)
 }
@@ -1680,7 +1680,7 @@ func TestCertificateExists_False(t *testing.T) {
 		StoreType: xkmssdk.StoreSoftware,
 	}
 
-	exists, err := CertificateExists(attrs)
+	exists, err := CertificateExists(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
@@ -1688,7 +1688,7 @@ func TestCertificateExists_False(t *testing.T) {
 func TestCertificateExistsByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := CertificateExistsByID("software:signing:ecdsa-p256:test-cert")
+	_, err := CertificateExistsByID(context.Background(), "software:signing:ecdsa-p256:test-cert")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1696,14 +1696,14 @@ func TestCertificateExistsByID_True(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, fullKeyID := createTestECDSAKey(t, "cert-exists-by-id-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificateByID(fullKeyID, cert)
+	err = SaveCertificateByID(context.Background(), fullKeyID, cert)
 	require.NoError(t, err)
 
-	exists, err := CertificateExistsByID(fullKeyID)
+	exists, err := CertificateExistsByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 	assert.True(t, exists)
 }
@@ -1711,7 +1711,7 @@ func TestCertificateExistsByID_True(t *testing.T) {
 func TestCertificateExistsByID_False(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	exists, err := CertificateExistsByID("software:signing:ecdsa-p256:non-existent-cert")
+	exists, err := CertificateExistsByID(context.Background(), "software:signing:ecdsa-p256:non-existent-cert")
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
@@ -1723,7 +1723,7 @@ func TestCertificateExistsByID_False(t *testing.T) {
 func TestListCertificates_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := ListCertificates()
+	_, err := ListCertificates(context.Background())
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1731,14 +1731,14 @@ func TestListCertificates_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, _ := createTestECDSAKey(t, "list-cert-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificate(attrs, cert)
+	err = SaveCertificate(context.Background(), attrs, cert)
 	require.NoError(t, err)
 
-	certs, err := ListCertificates()
+	certs, err := ListCertificates(context.Background())
 	require.NoError(t, err)
 	assert.NotNil(t, certs)
 }
@@ -1747,14 +1747,14 @@ func TestListCertificates_SpecificBackend(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, _ := createTestECDSAKey(t, "list-cert-backend-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificate(attrs, cert)
+	err = SaveCertificate(context.Background(), attrs, cert)
 	require.NoError(t, err)
 
-	certs, err := ListCertificates("software")
+	certs, err := ListCertificates(context.Background(), "software")
 	require.NoError(t, err)
 	assert.NotNil(t, certs)
 }
@@ -1766,7 +1766,7 @@ func TestListCertificates_SpecificBackend(t *testing.T) {
 func TestCertificateChain_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := CertificateChain(&xkmssdk.KeyAttributes{CN: "test"})
+	_, err := CertificateChain(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1774,15 +1774,15 @@ func TestCertificateChain_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, _ := createTestECDSAKey(t, "cert-chain-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
 	// Save as chain
-	err = SaveCertificateChain(attrs, []*x509.Certificate{cert})
+	err = SaveCertificateChain(context.Background(), attrs, []*x509.Certificate{cert})
 	require.NoError(t, err)
 
-	chain, err := CertificateChain(attrs)
+	chain, err := CertificateChain(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotEmpty(t, chain)
 }
@@ -1795,7 +1795,7 @@ func TestCertificateChain_NotFound(t *testing.T) {
 		StoreType: xkmssdk.StoreSoftware,
 	}
 
-	_, err := CertificateChain(attrs)
+	_, err := CertificateChain(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrCertificateOperationFailed)
 }
@@ -1803,7 +1803,7 @@ func TestCertificateChain_NotFound(t *testing.T) {
 func TestCertificateChainByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := CertificateChainByID("software:signing:ecdsa-p256:test-chain")
+	_, err := CertificateChainByID(context.Background(), "software:signing:ecdsa-p256:test-chain")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1811,14 +1811,14 @@ func TestCertificateChainByID_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, fullKeyID := createTestECDSAKey(t, "cert-chain-by-id-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificateChainByID(fullKeyID, []*x509.Certificate{cert})
+	err = SaveCertificateChainByID(context.Background(), fullKeyID, []*x509.Certificate{cert})
 	require.NoError(t, err)
 
-	chain, err := CertificateChainByID(fullKeyID)
+	chain, err := CertificateChainByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 	assert.NotEmpty(t, chain)
 }
@@ -1826,7 +1826,7 @@ func TestCertificateChainByID_Success(t *testing.T) {
 func TestCertificateChainByID_NotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := CertificateChainByID("software:signing:ecdsa-p256:non-existent-chain")
+	_, err := CertificateChainByID(context.Background(), "software:signing:ecdsa-p256:non-existent-chain")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrCertificateOperationFailed)
 }
@@ -1838,14 +1838,14 @@ func TestCertificateChainByID_NotFound(t *testing.T) {
 func TestSaveCertificateChain_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := SaveCertificateChain(&xkmssdk.KeyAttributes{}, []*x509.Certificate{})
+	err := SaveCertificateChain(context.Background(), &xkmssdk.KeyAttributes{}, []*x509.Certificate{})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestSaveCertificateChainByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := SaveCertificateChainByID("software:signing:ecdsa-p256:test", []*x509.Certificate{})
+	err := SaveCertificateChainByID(context.Background(), "software:signing:ecdsa-p256:test", []*x509.Certificate{})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1856,7 +1856,7 @@ func TestSaveCertificateChainByID_NotInitialized(t *testing.T) {
 func TestTLSCertificate_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := TLSCertificate(&xkmssdk.KeyAttributes{CN: "test"})
+	_, err := TLSCertificate(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1864,14 +1864,14 @@ func TestTLSCertificate_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, _ := createTestECDSAKey(t, "tls-cert-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificate(attrs, cert)
+	err = SaveCertificate(context.Background(), attrs, cert)
 	require.NoError(t, err)
 
-	tlsCert, err := TLSCertificate(attrs)
+	tlsCert, err := TLSCertificate(context.Background(), attrs)
 	require.NoError(t, err)
 	assert.NotNil(t, tlsCert.PrivateKey)
 	assert.NotEmpty(t, tlsCert.Certificate)
@@ -1880,7 +1880,7 @@ func TestTLSCertificate_Success(t *testing.T) {
 func TestTLSCertificateByID_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := TLSCertificateByID("software:signing:ecdsa-p256:test-cert")
+	_, err := TLSCertificateByID(context.Background(), "software:signing:ecdsa-p256:test-cert")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1888,14 +1888,14 @@ func TestTLSCertificateByID_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 	attrs, fullKeyID := createTestECDSAKey(t, "tls-cert-by-id-test")
 
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	cert := createTestCertificate(t, signer)
 
-	err = SaveCertificateByID(fullKeyID, cert)
+	err = SaveCertificateByID(context.Background(), fullKeyID, cert)
 	require.NoError(t, err)
 
-	tlsCert, err := TLSCertificateByID(fullKeyID)
+	tlsCert, err := TLSCertificateByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 	assert.NotNil(t, tlsCert.PrivateKey)
 }
@@ -1974,7 +1974,7 @@ func TestGetBackendCapabilities_NotFound(t *testing.T) {
 func TestGetImportParameters_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := GetImportParameters("software", &xkmssdk.KeyAttributes{}, xkmssdk.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := GetImportParameters(context.Background(), "software", &xkmssdk.KeyAttributes{}, xkmssdk.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -1988,7 +1988,7 @@ func TestGetImportParameters_Success(t *testing.T) {
 	}
 
 	// This tests the success path - PKCS8 backend may or may not support this
-	_, err := GetImportParameters("software", attrs, xkmssdk.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	_, err := GetImportParameters(context.Background(), "software", attrs, xkmssdk.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	// We just verify it doesn't panic - it may return an error if unsupported
 	_ = err
 }
@@ -1996,7 +1996,7 @@ func TestGetImportParameters_Success(t *testing.T) {
 func TestWrapKey_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := WrapKey("software", []byte("key"), nil)
+	_, err := WrapKey(context.Background(), "software", []byte("key"), nil)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -2004,7 +2004,7 @@ func TestWrapKey_Success(t *testing.T) {
 	setupFullTestXKMS(t)
 
 	// This tests the success path - PKCS8 backend may or may not support this
-	_, err := WrapKey("software", []byte("key-material"), nil)
+	_, err := WrapKey(context.Background(), "software", []byte("key-material"), nil)
 	// We just verify it doesn't panic - it may return an error if params are nil
 	_ = err
 }
@@ -2012,7 +2012,7 @@ func TestWrapKey_Success(t *testing.T) {
 func TestImportKey_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := ImportKey("software", &xkmssdk.KeyAttributes{}, nil)
+	err := ImportKey(context.Background(), "software", &xkmssdk.KeyAttributes{}, nil)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -2026,7 +2026,7 @@ func TestImportKey_Success(t *testing.T) {
 	}
 
 	// This tests the success path - calling with nil material should error but not panic
-	err := ImportKey("software", attrs, nil)
+	err := ImportKey(context.Background(), "software", attrs, nil)
 	// We just verify it doesn't panic - it should return an error
 	require.Error(t, err)
 }
@@ -2038,7 +2038,7 @@ func TestImportKey_Success(t *testing.T) {
 func TestWrapKeyWithECDHES_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := WrapKeyWithECDHES("software:signing:ecdsa-p256:test-key", []byte("material"), "ECDH-ES+A256KW")
+	_, err := WrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:test-key", []byte("material"), "ECDH-ES+A256KW")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -2047,7 +2047,7 @@ func TestWrapKeyWithECDHES_Success(t *testing.T) {
 	attrs, _ := createTestECDSAKey(t, "ecdh-wrap-test")
 
 	// Get the public key using attribute-based lookup
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	ecPublicKey := signer.Public().(*ecdsa.PublicKey)
 
@@ -2065,7 +2065,7 @@ func TestWrapKeyWithECDHES_Success(t *testing.T) {
 func TestWrapKeyWithECDHES_KeyNotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := WrapKeyWithECDHES("software:signing:ecdsa-p256:non-existent", []byte("material"), "ECDH-ES+A256KW")
+	_, err := WrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:non-existent", []byte("material"), "ECDH-ES+A256KW")
 	require.Error(t, err)
 }
 
@@ -2074,7 +2074,7 @@ func TestWrapKeyWithECDHES_NotECKey(t *testing.T) {
 	_, fullKeyID := createTestRSAKey(t, "rsa-key-ecdh-test")
 
 	// This should error because RSA keys are not valid for ECDH-ES
-	_, err := WrapKeyWithECDHES(fullKeyID, []byte("material"), "ECDH-ES+A256KW")
+	_, err := WrapKeyWithECDHES(context.Background(), fullKeyID, []byte("material"), "ECDH-ES+A256KW")
 	require.Error(t, err)
 	// Just verify we get an error - the exact message may vary based on library implementation
 }
@@ -2084,7 +2084,7 @@ func TestWrapKeyWithECDHES_AlgorithmMapping(t *testing.T) {
 	attrs, _ := createTestECDSAKey(t, "ecdh-algo-test")
 
 	// Get the public key using attribute-based lookup
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	ecPublicKey := signer.Public().(*ecdsa.PublicKey)
 
@@ -2112,7 +2112,7 @@ func TestWrapKeyWithECDHES_AlgorithmMapping(t *testing.T) {
 func TestUnwrapKeyWithECDHES_NotInitialized(t *testing.T) {
 	Reset()
 
-	_, err := UnwrapKeyWithECDHES("software:signing:ecdsa-p256:test-key", "jwe-data")
+	_, err := UnwrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:test-key", "jwe-data")
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -2141,7 +2141,7 @@ func TestUnwrapKeyWithECDHES_Success(t *testing.T) {
 func TestUnwrapKeyWithECDHES_KeyNotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := UnwrapKeyWithECDHES("software:signing:ecdsa-p256:non-existent", "invalid-jwe")
+	_, err := UnwrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:non-existent", "invalid-jwe")
 	require.Error(t, err)
 }
 
@@ -2188,7 +2188,7 @@ func TestNewJWTSigner_SignWithKeyID(t *testing.T) {
 	claims := JWTClaims{"sub": "user123"}
 
 	// Use SignerByID with full key ID (ID-based lookup now works correctly)
-	signer, err := SignerByID(fullKeyID)
+	signer, err := SignerByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 
 	token, err := JWTSignWithSigner(signer, claims, "ES256")
@@ -2216,7 +2216,7 @@ func TestJWTSign_Success(t *testing.T) {
 	attrs, _ := createTestECDSAKey(t, "jwt-sign-test")
 
 	// Get key and sign directly
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	claims := JWTClaims{
@@ -2253,7 +2253,7 @@ func TestJWTSignWithAlgorithm_Success(t *testing.T) {
 	attrs, _ := createTestECDSAKey(t, "jwt-sign-alg-test")
 
 	// Get key and sign directly
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	claims := JWTClaims{"sub": "user123"}
@@ -2304,7 +2304,7 @@ func TestJWTVerify_Success(t *testing.T) {
 	attrs, _ := createTestECDSAKey(t, "jwt-verify-test")
 
 	// Get key and sign directly
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	claims := JWTClaims{"sub": "user123"}
@@ -2338,7 +2338,7 @@ func TestJWTVerifyAuto_Success(t *testing.T) {
 	_, fullKeyID := createTestECDSAKey(t, "jwt-verify-auto-test")
 
 	// Use SignerByID with full key ID (ID-based lookup now works correctly)
-	signer, err := SignerByID(fullKeyID)
+	signer, err := SignerByID(context.Background(), fullKeyID)
 	require.NoError(t, err)
 
 	// Create a JWT with the KID header
@@ -2365,7 +2365,7 @@ func TestJWTExtractKID_Success(t *testing.T) {
 	attrs, fullKeyID := createTestECDSAKey(t, "jwt-extract-kid-test")
 
 	// Get signer from xkms
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	// Create a JWT with the KID header using our helper
@@ -2389,7 +2389,7 @@ func TestJWTParse_Success(t *testing.T) {
 	attrs, _ := createTestECDSAKey(t, "jwt-parse-test")
 
 	// Get key and sign directly
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	originalClaims := JWTClaims{
@@ -2670,7 +2670,7 @@ func TestJWTAlgorithmConstants(t *testing.T) {
 	attrs, _ := createTestRSAKey(t, "rsa-alg-test")
 
 	// Get key and sign directly
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	claims := JWTClaims{"sub": "user123"}
@@ -2884,7 +2884,7 @@ func TestWrapKeyWithECDHES_FullAPISuccess(t *testing.T) {
 
 	keyMaterial := []byte("secret-key-material-32-bytes!!")
 
-	wrapped, err := WrapKeyWithECDHES(fullKeyID, keyMaterial, "ECDH-ES+A256KW")
+	wrapped, err := WrapKeyWithECDHES(context.Background(), fullKeyID, keyMaterial, "ECDH-ES+A256KW")
 	require.NoError(t, err)
 	require.NotNil(t, wrapped)
 	assert.NotEmpty(t, wrapped.JWE)
@@ -2921,7 +2921,7 @@ func TestWrapKeyWithECDHES_FullAPIAlgorithmVariants(t *testing.T) {
 			_, fullKeyID := createTestECDSAKey(t, keyName)
 			keyMaterial := []byte("test-material-32-bytes-long!!!")
 
-			wrapped, err := WrapKeyWithECDHES(fullKeyID, keyMaterial, alg.algorithm)
+			wrapped, err := WrapKeyWithECDHES(context.Background(), fullKeyID, keyMaterial, alg.algorithm)
 			require.NoError(t, err)
 			assert.Equal(t, alg.algorithm, wrapped.Algorithm)
 			assert.Equal(t, alg.expectedEnc, wrapped.ContentEncryption)
@@ -2939,7 +2939,7 @@ func TestUnwrapKeyWithECDHES_FullAPISoftwareKeySuccess(t *testing.T) {
 	keyMaterial := []byte("secret-key-material-32-bytes!!")
 
 	// Get the public key to wrap with
-	signer, err := Signer(attrs)
+	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 	ecPublicKey := signer.Public().(*ecdsa.PublicKey)
 
@@ -2950,7 +2950,7 @@ func TestUnwrapKeyWithECDHES_FullAPISoftwareKeySuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	// Unwrap through the package API
-	unwrapped, err := UnwrapKeyWithECDHES(fullKeyID, jweStr)
+	unwrapped, err := UnwrapKeyWithECDHES(context.Background(), fullKeyID, jweStr)
 	require.NoError(t, err)
 	assert.Equal(t, keyMaterial, unwrapped)
 }
@@ -2961,7 +2961,7 @@ func TestUnwrapKeyWithECDHES_NotECKey(t *testing.T) {
 	setupFullTestXKMS(t)
 	_, fullKeyID := createTestRSAKey(t, "rsa-key-unwrap-test")
 
-	_, err := UnwrapKeyWithECDHES(fullKeyID, "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiQTI1NkdDTSJ9.invalid.iv.cipher.tag")
+	_, err := UnwrapKeyWithECDHES(context.Background(), fullKeyID, "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiQTI1NkdDTSJ9.invalid.iv.cipher.tag")
 	require.Error(t, err)
 }
 
@@ -2974,11 +2974,11 @@ func TestWrapUnwrapKeyWithECDHES_RoundTrip(t *testing.T) {
 	originalMaterial := []byte("round-trip-secret-key-material!")
 
 	// Wrap
-	wrapped, err := WrapKeyWithECDHES(fullKeyID, originalMaterial, "ECDH-ES+A256KW")
+	wrapped, err := WrapKeyWithECDHES(context.Background(), fullKeyID, originalMaterial, "ECDH-ES+A256KW")
 	require.NoError(t, err)
 
 	// Unwrap
-	unwrapped, err := UnwrapKeyWithECDHES(fullKeyID, wrapped.JWE)
+	unwrapped, err := UnwrapKeyWithECDHES(context.Background(), fullKeyID, wrapped.JWE)
 	require.NoError(t, err)
 
 	assert.Equal(t, originalMaterial, unwrapped)
@@ -3055,7 +3055,7 @@ func TestNewJWTVerifier_VerifySuccess(t *testing.T) {
 	attrs, fullKeyID := createTestECDSAKey(t, "jwt-verifier-test")
 
 	// Sign with key
-	signerKey, err := Signer(attrs)
+	signerKey, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
 	claims := JWTClaims{
@@ -3079,7 +3079,7 @@ func TestEncrypt_ErrorWrapping(t *testing.T) {
 	setupFullTestXKMS(t)
 
 	// Non-existent key should trigger error wrapping
-	_, err := Encrypt("non-existent-key", []byte("data"), nil)
+	_, err := Encrypt(context.Background(), "non-existent-key", []byte("data"), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrEncryptionFailed)
 }
@@ -3094,7 +3094,7 @@ func TestDecrypt_DecryptError(t *testing.T) {
 		Nonce:      []byte("fake-nonce"),
 		Algorithm:  "AES-256-GCM",
 	}
-	_, err := Decrypt("non-existent-key", encData, nil)
+	_, err := Decrypt(context.Background(), "non-existent-key", encData, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrDecryptionFailed)
 }
@@ -3108,7 +3108,7 @@ func TestGenerateSymmetricKey_Error(t *testing.T) {
 		KeyType:   xkmssdk.KeyTypeSecret,
 		StoreType: xkmssdk.StoreSoftware,
 	}
-	_, err := GenerateSymmetricKey("software", attrs)
+	_, err := GenerateSymmetricKey(context.Background(), "software", attrs)
 	// PKCS8 does not support symmetric key generation
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
@@ -3118,7 +3118,7 @@ func TestGenerateSymmetricKey_Error(t *testing.T) {
 func TestGetSymmetricKey_Error(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := GetSymmetricKey("non-existent-ref")
+	_, err := GetSymmetricKey(context.Background(), "non-existent-ref")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 }
@@ -3268,7 +3268,7 @@ func TestGenerateKey_ErrorWrapping(t *testing.T) {
 		KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
 	}
 
-	_, err := GenerateKey(attrs)
+	_, err := GenerateKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
 }
@@ -3284,7 +3284,7 @@ func TestGenerateKeyWithBackend_ErrorWrapping(t *testing.T) {
 		KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
 	}
 
-	_, err := GenerateKeyWithBackend("software", attrs)
+	_, err := GenerateKeyWithBackend(context.Background(), "software", attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
 }
@@ -3293,7 +3293,7 @@ func TestGenerateKeyWithBackend_ErrorWrapping(t *testing.T) {
 func TestWrapKeyWithECDHES_NonExistentKey(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := WrapKeyWithECDHES("software:signing:ecdsa-p256:nonexistent", []byte("data"), "ECDH-ES+A256KW")
+	_, err := WrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:nonexistent", []byte("data"), "ECDH-ES+A256KW")
 	require.Error(t, err)
 }
 
@@ -3301,7 +3301,7 @@ func TestWrapKeyWithECDHES_NonExistentKey(t *testing.T) {
 func TestUnwrapKeyWithECDHES_NonExistentKey(t *testing.T) {
 	setupFullTestXKMS(t)
 
-	_, err := UnwrapKeyWithECDHES("software:signing:ecdsa-p256:nonexistent", "fake-jwe")
+	_, err := UnwrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:nonexistent", "fake-jwe")
 	require.Error(t, err)
 }
 
@@ -3310,7 +3310,7 @@ func TestWrapKeyWithECDHES_UnsupportedAlgorithm(t *testing.T) {
 	setupFullTestXKMS(t)
 	_, fullKeyID := createTestECDSAKey(t, "ecdh-unsupported-alg")
 
-	_, err := WrapKeyWithECDHES(fullKeyID, []byte("data"), "UNSUPPORTED-ALG")
+	_, err := WrapKeyWithECDHES(context.Background(), fullKeyID, []byte("data"), "UNSUPPORTED-ALG")
 	require.Error(t, err)
 }
 

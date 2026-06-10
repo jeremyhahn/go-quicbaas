@@ -36,7 +36,7 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
-	xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
+	xkmsfido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 )
 
 // canonicalAuthLoginOptions consolidates the canonical "auth login"
@@ -341,17 +341,21 @@ func runCanonicalAuthLoginV2(ctx context.Context, opts *canonicalAuthLoginOption
 
 	// 2. Produce the proof from the challenge using the local factor device.
 	var (
-		lookupKey []byte
-		signature []byte
-		meta      map[string]string
+		lookupKey     []byte
+		altLookupKeys [][]byte
+		signature     []byte
+		meta          map[string]string
 	)
 	switch method {
 	case "mtls":
+		// The server derives the mtls lookup keys (SPKI-first, cert.Raw
+		// fallback) from the VERIFIED peer certificate; the client value is
+		// advisory at best.
 		lookupKey, signature, meta, err = proveCanonicalMTLS(ctx, opts, begin)
 	case "fido2":
 		lookupKey, signature, meta, err = proveCanonicalFIDO2(ctx, opts, begin)
 	case "piv":
-		lookupKey, signature, meta, err = proveCanonicalPIV(ctx, opts, begin)
+		lookupKey, altLookupKeys, signature, meta, err = proveCanonicalPIV(ctx, opts, begin)
 	default:
 		return &InvalidAuthMethodError{Method: method}
 	}
@@ -365,6 +369,7 @@ func runCanonicalAuthLoginV2(ctx context.Context, opts *canonicalAuthLoginOption
 		SessionID:      begin.SessionID,
 		Type:           factorType,
 		LookupKey:      lookupKey,
+		AltLookupKeys:  altLookupKeys,
 		Signature:      signature,
 		MethodMetadata: meta,
 	})
@@ -488,21 +493,27 @@ func proveCanonicalMTLS(_ context.Context, opts *canonicalAuthLoginOptions, _ *q
 // Signing the server nonce (rather than a client-chosen value) gives the
 // ceremony replay protection; the qrdb PIV authenticator verifies the
 // signature over begin.Nonce against the enrolled certificate.
-func proveCanonicalPIV(ctx context.Context, opts *canonicalAuthLoginOptions, begin *qrdbtransport.BeginLoginResponse) (lookupKey, signature []byte, meta map[string]string, err error) {
+//
+// The primary lookup key is the renewal-stable SHA-256 of the slot
+// certificate's SubjectPublicKeyInfo; altLookupKeys carries the legacy
+// SHA-256(cert DER) so factors enrolled before the SPKI index existed keep
+// resolving. The lookup keys only locate the factor — possession is proven
+// by the signature the server verifies against the enrolled certificate.
+func proveCanonicalPIV(ctx context.Context, opts *canonicalAuthLoginOptions, begin *qrdbtransport.BeginLoginResponse) (lookupKey []byte, altLookupKeys [][]byte, signature []byte, meta map[string]string, err error) {
 	piv, perr := canonicalAuthPIV("auth login --method piv")
 	if perr != nil {
-		return nil, nil, nil, perr
+		return nil, nil, nil, nil, perr
 	}
 	readers, rerr := piv.ListReaders(ctx)
 	if rerr != nil {
-		return nil, nil, nil, &PIVOperationError{Op: "ListReaders", Cause: rerr}
+		return nil, nil, nil, nil, &PIVOperationError{Op: "ListReaders", Cause: rerr}
 	}
 	if readers == nil || len(readers.Readers) == 0 {
-		return nil, nil, nil, &PIVOperationError{Op: "ListReaders", Cause: errors.New("no PC/SC readers detected")}
+		return nil, nil, nil, nil, &PIVOperationError{Op: "ListReaders", Cause: errors.New("no PC/SC readers detected")}
 	}
 	reader, derr := selectCanonicalPIVReader(readers.Readers, opts.reader)
 	if derr != nil {
-		return nil, nil, nil, derr
+		return nil, nil, nil, nil, derr
 	}
 	slot := opts.slot
 	if slot == "" {
@@ -510,13 +521,13 @@ func proveCanonicalPIV(ctx context.Context, opts *canonicalAuthLoginOptions, beg
 	}
 	cert, cerr := piv.GetCertificate(ctx, reader.Name, slot)
 	if cerr != nil {
-		return nil, nil, nil, &PIVOperationError{Op: "GetCertificate", Cause: cerr}
+		return nil, nil, nil, nil, &PIVOperationError{Op: "GetCertificate", Cause: cerr}
 	}
 	if cert == nil {
-		return nil, nil, nil, &PIVOperationError{Op: "GetCertificate", Cause: errors.New("nil certificate")}
+		return nil, nil, nil, nil, &PIVOperationError{Op: "GetCertificate", Cause: errors.New("nil certificate")}
 	}
 	if opts.pin == "" {
-		return nil, nil, nil, &PIVPINRequiredError{}
+		return nil, nil, nil, nil, &PIVPINRequiredError{}
 	}
 	digest := sha256.Sum256(begin.Nonce)
 	signResp, serr := piv.Sign(ctx, &quicbaas.PIVSignRequest{
@@ -527,12 +538,13 @@ func proveCanonicalPIV(ctx context.Context, opts *canonicalAuthLoginOptions, beg
 		Algo:   pivAlgoFromCanonicalCert(cert),
 	})
 	if serr != nil {
-		return nil, nil, nil, &PIVOperationError{Op: "Sign", Cause: serr}
+		return nil, nil, nil, nil, &PIVOperationError{Op: "Sign", Cause: serr}
 	}
 	if signResp == nil {
-		return nil, nil, nil, &PIVOperationError{Op: "Sign", Cause: errors.New("nil signature response")}
+		return nil, nil, nil, nil, &PIVOperationError{Op: "Sign", Cause: errors.New("nil signature response")}
 	}
 	sum := sha256.Sum256(cert.Raw)
+	spkiSum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 	meta = map[string]string{
 		"reader":      reader.Name,
 		"slot":        slot,
@@ -540,7 +552,7 @@ func proveCanonicalPIV(ctx context.Context, opts *canonicalAuthLoginOptions, beg
 		"cert_cn":     cert.Subject.CommonName,
 		"cert_serial": cert.SerialNumber.String(),
 	}
-	return sum[:], signResp.Signature, meta, nil
+	return spkiSum[:], [][]byte{sum[:]}, signResp.Signature, meta, nil
 }
 
 // canonicalFIDO2AssertFunc drives a connected CTAP2 authenticator through a

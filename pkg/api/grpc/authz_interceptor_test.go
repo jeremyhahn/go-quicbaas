@@ -15,7 +15,6 @@ package grpc
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,38 +25,45 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
-// fakeGRPCValidator validates a fixed token to a fixed identity. Any other token
-// errors. It lets the interceptor tests exercise the auth path without a real
-// OIDC provider.
-type fakeGRPCValidator struct {
-	token string
-	id    *GRPCIdentity
+// fakeValidatorAuthorizer is a test double for the central platform-token
+// Validator seam (GRPCValidatorAuthorizer). It models the offline scp + liveness
+// decision the real Validator performs:
+//
+//   - a token other than the configured one is rejected as invalid (the real
+//     Validator fails signature / iss / aud / exp verification);
+//   - a granted requiredPerm returns the configured AuthorizedContext;
+//   - an ungranted requiredPerm returns *ScopeDeniedError (offline scp deny);
+//   - an explicitly seeded denyErr overrides the decision so tests can exercise
+//     the inactive / config / generic error -> status mappings.
+//
+// It records the last call so tests can assert the requiredPerm join and that
+// the DPoP args are passed empty over gRPC.
+type fakeValidatorAuthorizer struct {
+	token       string
+	grantedPerm string
+	authzCtx    *platformtoken.AuthorizedContext
+	denyErr     error
+
+	lastPerm     string
+	lastDPoPArgs [3]string
 }
 
-func (f *fakeGRPCValidator) ValidateGRPCToken(_ context.Context, token string) (*GRPCIdentity, error) {
+func (f *fakeValidatorAuthorizer) Authorize(_ context.Context, token, requiredPerm, dpopProof, htm, htu string) (*platformtoken.AuthorizedContext, error) {
+	f.lastPerm = requiredPerm
+	f.lastDPoPArgs = [3]string{dpopProof, htm, htu}
+	if f.denyErr != nil {
+		return nil, f.denyErr
+	}
 	if token != f.token {
-		return nil, errors.New("invalid token")
+		return nil, &platformtoken.InvalidTokenError{Detail: "signature did not verify"}
 	}
-	return f.id, nil
-}
-
-// fakeGRPCAuthorizer permits the configured (resource, action) pair and denies
-// everything else. It records the last identity it saw so tests can assert the
-// subject/tenant plumbing.
-type fakeGRPCAuthorizer struct {
-	allowResource string
-	allowAction   string
-	lastID        *GRPCIdentity
-}
-
-func (f *fakeGRPCAuthorizer) AuthorizeGRPC(_ context.Context, id *GRPCIdentity, resource, action string) error {
-	f.lastID = id
-	if resource == f.allowResource && action == f.allowAction {
-		return nil
+	if requiredPerm != f.grantedPerm {
+		return nil, &platformtoken.ScopeDeniedError{Required: requiredPerm}
 	}
-	return errors.New("permission denied")
+	return f.authzCtx, nil
 }
 
 func ctxWithBearer(token string) context.Context {
@@ -96,6 +102,12 @@ func TestGRPCResourceAndAction_Mapped(t *testing.T) {
 		{"/quicbaas.project.v1.ProjectService/GetProjectByName", "project", "read"},
 		{"/quicbaas.ollama.v1.OllamaService/Embed", "ollama", "embed"},
 		{"/quicbaas.ollama.v1.OllamaService/GetModelInfo", "ollama", "model_info"},
+		// Per-tenant barrier (quicbaas.tenant.v1.TenantBarrier).
+		{"/quicbaas.tenant.v1.TenantBarrier/Init", "tenant_barrier", "init"},
+		{"/quicbaas.tenant.v1.TenantBarrier/Unseal", "tenant_barrier", "unseal"},
+		{"/quicbaas.tenant.v1.TenantBarrier/UnsealShare", "tenant_barrier", "unseal"},
+		{"/quicbaas.tenant.v1.TenantBarrier/Seal", "tenant_barrier", "seal"},
+		{"/quicbaas.tenant.v1.TenantBarrier/Status", "tenant_barrier", "status"},
 	}
 	for _, c := range cases {
 		res, act, ok := grpcResourceAndAction(c.method)
@@ -135,14 +147,27 @@ func TestBearerFromContext(t *testing.T) {
 	assert.Equal(t, "", bearerFromContext(context.Background()))
 }
 
+// TestUnaryAuthorizationInterceptor_Allow asserts the validator-backed gate
+// admits a token whose scp grants the required permission and reconstructs the
+// principal (id + username + tenant) from the verified AuthorizedContext.
 func TestUnaryAuthorizationInterceptor_Allow(t *testing.T) {
-	validator := &fakeGRPCValidator{token: "good", id: &GRPCIdentity{ID: "u1", TenantID: "system", Roles: []string{"admin"}}}
-	authorizer := &fakeGRPCAuthorizer{allowResource: "kv", allowAction: "put"}
-	interceptor := UnaryAuthorizationInterceptor(validator, authorizer)
+	authorizer := &fakeValidatorAuthorizer{
+		token:       "good",
+		grantedPerm: "kv:put",
+		authzCtx: &platformtoken.AuthorizedContext{
+			Subject:  "u1",
+			Username: "admin",
+			TenantID: "system",
+			Roles:    []string{"admin"},
+			Scopes:   []string{"kv:put"},
+		},
+	}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
 
 	var sawSubject bool
 	handler := func(ctx context.Context, _ interface{}) (interface{}, error) {
-		if subj, ok := auth.SubjectFromContext(ctx); ok && subj.ID == "u1" && subj.TenantID == "system" {
+		if subj, ok := auth.SubjectFromContext(ctx); ok &&
+			subj.ID == "u1" && subj.Username == "admin" && subj.TenantID == "system" && subj.Authenticated {
 			sawSubject = true
 		}
 		return "ok", nil
@@ -153,13 +178,21 @@ func TestUnaryAuthorizationInterceptor_Allow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok", resp)
 	assert.True(t, sawSubject, "authenticated subject must be injected into context")
-	assert.Equal(t, "u1", authorizer.lastID.ID)
+	// The required permission is the qrdb-canonical colon join.
+	assert.Equal(t, "kv:put", authorizer.lastPerm)
+	// gRPC carries no DPoP: the validator is always called with empty proof args.
+	assert.Equal(t, [3]string{"", "", ""}, authorizer.lastDPoPArgs)
 }
 
+// TestUnaryAuthorizationInterceptor_DenyUnpermitted asserts an offline scp deny
+// (*ScopeDeniedError) maps to PermissionDenied and the handler never runs.
 func TestUnaryAuthorizationInterceptor_DenyUnpermitted(t *testing.T) {
-	validator := &fakeGRPCValidator{token: "good", id: &GRPCIdentity{ID: "u1", TenantID: "system", Roles: []string{"reader"}}}
-	authorizer := &fakeGRPCAuthorizer{allowResource: "kv", allowAction: "get"} // not put
-	interceptor := UnaryAuthorizationInterceptor(validator, authorizer)
+	authorizer := &fakeValidatorAuthorizer{
+		token:       "good",
+		grantedPerm: "kv:get", // not put
+		authzCtx:    &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "system"},
+	}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
 
 	called := false
 	handler := func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil }
@@ -172,34 +205,35 @@ func TestUnaryAuthorizationInterceptor_DenyUnpermitted(t *testing.T) {
 }
 
 func TestUnaryAuthorizationInterceptor_PublicBypass(t *testing.T) {
-	validator := &fakeGRPCValidator{token: "good", id: &GRPCIdentity{ID: "u1", TenantID: "system"}}
-	authorizer := &fakeGRPCAuthorizer{} // denies everything
-	interceptor := UnaryAuthorizationInterceptor(validator, authorizer)
+	authorizer := &fakeValidatorAuthorizer{denyErr: &platformtoken.InvalidTokenError{Detail: "should never be called"}}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
 
-	// No token at all; a public method must still be served.
+	// No token at all; a public method must still be served without the validator.
 	resp, err := interceptor(context.Background(), nil,
 		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Health"},
 		func(context.Context, interface{}) (interface{}, error) { return "healthy", nil })
 	require.NoError(t, err)
 	assert.Equal(t, "healthy", resp)
+	assert.Equal(t, "", authorizer.lastPerm, "validator must not be consulted for a public method")
 }
 
 func TestUnaryAuthorizationInterceptor_MissingToken(t *testing.T) {
-	validator := &fakeGRPCValidator{token: "good", id: &GRPCIdentity{ID: "u1", TenantID: "system"}}
-	authorizer := &fakeGRPCAuthorizer{allowResource: "kv", allowAction: "put"}
-	interceptor := UnaryAuthorizationInterceptor(validator, authorizer)
+	authorizer := &fakeValidatorAuthorizer{token: "good", grantedPerm: "kv:put"}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
 
 	_, err := interceptor(context.Background(), nil,
 		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"},
 		func(context.Context, interface{}) (interface{}, error) { return nil, nil })
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	assert.Equal(t, "", authorizer.lastPerm, "validator must not be consulted without a token")
 }
 
+// TestUnaryAuthorizationInterceptor_InvalidToken asserts a token-validation
+// failure (generic platform-token error) maps to Unauthenticated.
 func TestUnaryAuthorizationInterceptor_InvalidToken(t *testing.T) {
-	validator := &fakeGRPCValidator{token: "good", id: &GRPCIdentity{ID: "u1", TenantID: "system"}}
-	authorizer := &fakeGRPCAuthorizer{allowResource: "kv", allowAction: "put"}
-	interceptor := UnaryAuthorizationInterceptor(validator, authorizer)
+	authorizer := &fakeValidatorAuthorizer{token: "good", grantedPerm: "kv:put"}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
 
 	_, err := interceptor(ctxWithBearer("bad"), nil,
 		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"},
@@ -208,38 +242,62 @@ func TestUnaryAuthorizationInterceptor_InvalidToken(t *testing.T) {
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }
 
+// TestUnaryAuthorizationInterceptor_InactiveToken asserts a revoked / disabled
+// token (*TokenInactiveError from the liveness check) maps to Unauthenticated.
+func TestUnaryAuthorizationInterceptor_InactiveToken(t *testing.T) {
+	authorizer := &fakeValidatorAuthorizer{
+		token:       "good",
+		grantedPerm: "kv:put",
+		denyErr:     &platformtoken.TokenInactiveError{Subject: "u1", JTI: "j1"},
+	}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
+
+	_, err := interceptor(ctxWithBearer("good"), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"},
+		func(context.Context, interface{}) (interface{}, error) { return nil, nil })
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+// TestUnaryAuthorizationInterceptor_Misconfigured asserts a server-side
+// misconfiguration (*ConfigError) fails closed with Internal — the request is
+// denied, not admitted.
+func TestUnaryAuthorizationInterceptor_Misconfigured(t *testing.T) {
+	authorizer := &fakeValidatorAuthorizer{
+		token:       "good",
+		grantedPerm: "kv:put",
+		denyErr:     &platformtoken.ConfigError{Detail: "liveness checker required but absent"},
+	}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
+
+	called := false
+	_, err := interceptor(ctxWithBearer("good"), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"},
+		func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil })
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.False(t, called, "handler must not run on a misconfiguration deny")
+}
+
 func TestUnaryAuthorizationInterceptor_UnmappedDenied(t *testing.T) {
-	validator := &fakeGRPCValidator{token: "good", id: &GRPCIdentity{ID: "u1", TenantID: "system"}}
-	authorizer := &fakeGRPCAuthorizer{} // would deny anyway
-	interceptor := UnaryAuthorizationInterceptor(validator, authorizer)
+	authorizer := &fakeValidatorAuthorizer{denyErr: &platformtoken.InvalidTokenError{Detail: "should never be called"}}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
 
 	_, err := interceptor(ctxWithBearer("good"), nil,
 		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.orchestrator.v1.OrchestratorService/Spawn"},
 		func(context.Context, interface{}) (interface{}, error) { return nil, nil })
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
-func TestAuthorizeGRPC_TenantFallbackFromContext(t *testing.T) {
-	// When the identity carries no tenant, the bridge in the server layer falls
-	// back to the cert-derived tenant. Here we assert the interceptor still passes
-	// the identity through to the authorizer unchanged so the bridge can do that.
-	validator := &fakeGRPCValidator{token: "good", id: &GRPCIdentity{ID: "u1", TenantID: "", Roles: []string{"admin"}}}
-	authorizer := &fakeGRPCAuthorizer{allowResource: "kv", allowAction: "put"}
-	interceptor := UnaryAuthorizationInterceptor(validator, authorizer)
-
-	_, err := interceptor(ctxWithBearer("good"), nil,
-		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"},
-		func(context.Context, interface{}) (interface{}, error) { return nil, nil })
-	require.NoError(t, err)
-	require.NotNil(t, authorizer.lastID)
-	assert.Equal(t, "", authorizer.lastID.TenantID)
+	assert.Equal(t, "", authorizer.lastPerm, "validator must not be consulted for an unmapped method")
 }
 
 func TestStreamAuthorizationInterceptor_AllowAndDeny(t *testing.T) {
-	validator := &fakeGRPCValidator{token: "good", id: &GRPCIdentity{ID: "u1", TenantID: "system", Roles: []string{"admin"}}}
-	authorizer := &fakeGRPCAuthorizer{allowResource: "watch", allowAction: "watch"}
-	interceptor := StreamAuthorizationInterceptor(validator, authorizer)
+	authorizer := &fakeValidatorAuthorizer{
+		token:       "good",
+		grantedPerm: "watch:watch",
+		authzCtx:    &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "system", Roles: []string{"admin"}},
+	}
+	interceptor := StreamAuthorizationInterceptor(authorizer)
 
 	// Allow: Watch maps to watch:watch.
 	served := false
@@ -249,7 +307,7 @@ func TestStreamAuthorizationInterceptor_AllowAndDeny(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, served)
 
-	// Deny: a method whose permission is not allowed by the authorizer.
+	// Deny: a method whose permission is not granted by the token's scp set.
 	served = false
 	err = interceptor(nil, &dummyStream{ctx: ctxWithBearer("good")},
 		&grpc.StreamServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/StreamBatchPut"},
@@ -257,4 +315,41 @@ func TestStreamAuthorizationInterceptor_AllowAndDeny(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	assert.False(t, served)
+}
+
+// TestGRPCPermissions_EveryMethodMapped is a descriptor-exhaustive guard that
+// enumerates every method in every registered broker service descriptor and
+// asserts it is either mapped in grpcMethodPermissions or declared public in
+// publicGRPCMethods. Any future RPC added to a registered service without a
+// corresponding authz mapping will fail this test, preventing silent
+// default-deny regressions from going unnoticed.
+func TestGRPCPermissions_EveryMethodMapped(t *testing.T) {
+	for _, desc := range brokerServiceDescs {
+		for _, method := range desc.Methods {
+			fullMethod := "/" + desc.ServiceName + "/" + method.MethodName
+			_, _, mapped := grpcResourceAndAction(fullMethod)
+			if !mapped && !isPublicGRPCMethod(fullMethod) {
+				t.Errorf("gRPC method %q is neither mapped in grpcMethodPermissions nor declared public; add a permission mapping or declare it public", fullMethod)
+			}
+		}
+		for _, stream := range desc.Streams {
+			fullMethod := "/" + desc.ServiceName + "/" + stream.StreamName
+			_, _, mapped := grpcResourceAndAction(fullMethod)
+			if !mapped && !isPublicGRPCMethod(fullMethod) {
+				t.Errorf("gRPC stream method %q is neither mapped in grpcMethodPermissions nor declared public; add a permission mapping or declare it public", fullMethod)
+			}
+		}
+	}
+}
+
+// TestValidatorGRPCStatus_Mapping pins the error -> code mapping fail-closed.
+func TestValidatorGRPCStatus_Mapping(t *testing.T) {
+	assert.Equal(t, codes.PermissionDenied,
+		status.Code(validatorGRPCStatus(&platformtoken.ScopeDeniedError{Required: "kv:put"})))
+	assert.Equal(t, codes.Unauthenticated,
+		status.Code(validatorGRPCStatus(&platformtoken.TokenInactiveError{Subject: "u1"})))
+	assert.Equal(t, codes.Internal,
+		status.Code(validatorGRPCStatus(&platformtoken.ConfigError{Detail: "x"})))
+	assert.Equal(t, codes.Unauthenticated,
+		status.Code(validatorGRPCStatus(&platformtoken.InvalidTokenError{Detail: "bad sig"})))
 }

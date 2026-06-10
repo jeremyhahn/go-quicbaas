@@ -201,13 +201,13 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	// Generate key using go-xkms
 	if isSymmetric {
 		// Generate symmetric key
-		_, err := xkms.GenerateSymmetricKey(string(kb.backendType), attrs)
+		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs)
 		if err != nil {
 			return nil, api.NewSymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
 		}
 	} else {
 		// Generate asymmetric key
-		_, err := xkms.GenerateKeyWithBackend(string(kb.backendType), attrs)
+		_, err := xkms.GenerateKeyWithBackend(ctx, string(kb.backendType), attrs)
 		if err != nil {
 			return nil, api.NewAsymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
 		}
@@ -255,7 +255,7 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	// For symmetric keys, use the xkms import functionality
 	if kb.isSymmetricAlgorithm(algorithm) {
 		// Import the symmetric key material
-		err := xkms.ImportSymmetricKey(string(kb.backendType), attrs, material)
+		err := xkms.ImportSymmetricKey(ctx, string(kb.backendType), attrs, material)
 		if err != nil {
 			return nil, api.NewKeyImportError("XKMSBackend.ImportKey", "symmetric", err)
 		}
@@ -327,7 +327,7 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 
 	for _, sf := range signingFormats {
 		kid := fmt.Sprintf("%s:signing:%s:%s", kb.backendType, sf.format, keyID)
-		if _, err := xkms.SignerByID(kid); err == nil {
+		if _, err := xkms.SignerByID(ctx, kid); err == nil {
 			foundAlgorithm = sf.algo
 			break
 		}
@@ -346,7 +346,7 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 
 		for _, sf := range symmetricFormats {
 			kid := fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, sf.format, keyID)
-			if _, err := xkms.GetSymmetricKey(kid); err == nil {
+			if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
 				foundAlgorithm = sf.algo
 				break
 			}
@@ -361,9 +361,9 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 		}
 
 		// Try to get signer with just CN
-		if _, err := xkms.Signer(attrs); err != nil {
+		if _, err := xkms.Signer(ctx, attrs); err != nil {
 			// Try symmetric key by ID
-			if _, err := xkms.GetSymmetricKey(keyID); err != nil {
+			if _, err := xkms.GetSymmetricKey(ctx, keyID); err != nil {
 				return nil, ErrKeyNotFound
 			}
 			foundAlgorithm = "AES-256-GCM" // Default for symmetric
@@ -400,7 +400,7 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 	var result []*KeyMetadata
 
 	// Get keys from go-xkms
-	keys, err := xkms.ListKeys(string(kb.backendType))
+	keys, err := xkms.ListKeys(ctx, string(kb.backendType))
 	if err != nil {
 		// Log but don't fail - we'll try the cache
 		kb.logger.WithField("error", err.Error()).Warn("failed to list keys from xkms, using cache")
@@ -488,12 +488,12 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 	// Generate new key with versioned ID
 	// Note: We don't use go-xkms's RotateKey because it destroys the old key
 	if kb.isSymmetricAlgorithm(meta.Algorithm) {
-		_, err := xkms.GenerateSymmetricKey(string(kb.backendType), attrs)
+		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs)
 		if err != nil {
 			return nil, api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
 		}
 	} else {
-		_, err := xkms.GenerateKeyWithBackend(string(kb.backendType), attrs)
+		_, err := xkms.GenerateKeyWithBackend(ctx, string(kb.backendType), attrs)
 		if err != nil {
 			return nil, api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
 		}
@@ -611,7 +611,7 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	}
 
 	// Delete from go-xkms using attributes
-	if err := xkms.DeleteKey(attrs); err != nil {
+	if err := xkms.DeleteKey(ctx, attrs); err != nil {
 		if stderrors.Is(err, xkms.ErrKeyNotFound) {
 			return ErrKeyNotFound
 		}
@@ -622,7 +622,7 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 			KeyType:            kctypes.KeyTypeEncryption,
 			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
 		}
-		if err2 := xkms.DeleteKey(defaultAttrs); err2 != nil {
+		if err2 := xkms.DeleteKey(ctx, defaultAttrs); err2 != nil {
 			if stderrors.Is(err2, xkms.ErrKeyNotFound) {
 				return ErrKeyNotFound
 			}
@@ -741,7 +741,7 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 		AdditionalData: aad,
 	}
 
-	encrypted, err := xkms.Encrypt(kid, plaintext, opts)
+	encrypted, err := xkms.Encrypt(ctx, kid, plaintext, opts)
 	if err != nil {
 		return nil, api.NewEncryptionOperationError("XKMSBackend.Encrypt", err)
 	}
@@ -807,7 +807,7 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 		AdditionalData: aad,
 	}
 
-	plaintext, err := xkms.Decrypt(kid, encrypted, opts)
+	plaintext, err := xkms.Decrypt(ctx, kid, encrypted, opts)
 	if err != nil {
 		return nil, api.NewDecryptionOperationError("XKMSBackend.Decrypt", err)
 	}
@@ -835,7 +835,7 @@ func (kb *XKMSBackend) Sign(ctx context.Context, keyID string, digest []byte, al
 	// Get the signer directly from go-xkms
 	// This avoids the xkms.Sign() helper which always hashes the input,
 	// causing double-hashing when digest is already a hash (e.g., from x509.CreateCertificate)
-	signer, err := xkms.SignerByID(kid)
+	signer, err := xkms.SignerByID(ctx, kid)
 	if err != nil {
 		return nil, api.NewSignerRetrievalError("XKMSBackend.Sign", err)
 	}
@@ -873,7 +873,7 @@ func (kb *XKMSBackend) Verify(ctx context.Context, keyID string, digest, signatu
 	// Get the signer directly from go-xkms to extract the public key
 	// This avoids the xkms.Verify() helper which always hashes the input,
 	// causing double-hashing when digest is already a hash
-	signer, err := xkms.SignerByID(kid)
+	signer, err := xkms.SignerByID(ctx, kid)
 	if err != nil {
 		return false, api.NewSignerRetrievalError("XKMSBackend.Verify", err)
 	}
@@ -936,7 +936,7 @@ func (kb *XKMSBackend) ExportPublicKey(ctx context.Context, keyID string) ([]byt
 	kid := kb.buildSigningKeyID(keyID, meta.Algorithm)
 
 	// Get the signer which has access to the public key
-	signer, err := xkms.SignerByID(kid)
+	signer, err := xkms.SignerByID(ctx, kid)
 	if err != nil {
 		return nil, api.NewSignerRetrievalError("XKMSBackend.ExportPublicKey", err)
 	}

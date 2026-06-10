@@ -21,10 +21,6 @@ import (
 	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	gcpkmsbackend "github.com/jeremyhahn/go-xkms/pkg/backend/gcpkms"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -116,17 +112,17 @@ func buildGCPKMSStrategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 		return nil, &StrategyBuildError{Backend: "gcpkms", Cause: &GCPKMSConfigError{Field: "key_id"}}
 	}
 
-	backendCfg := &gcpkmsbackend.Config{
+	backendCfg := &xkmssdk.GCPKMSBackendConfig{
 		ProjectID:       gcp.ProjectID,
 		LocationID:      gcp.LocationID,
 		KeyRingID:       gcp.KeyRingID,
 		CredentialsFile: gcp.CredentialsFile,
 		Endpoint:        gcp.Endpoint,
-		KeyStorage:      storage.New(),
-		CertStorage:     storage.New(),
+		KeyStorage:      xkmssdk.NewStorageMemory(),
+		CertStorage:     xkmssdk.NewStorageMemory(),
 	}
 
-	backend, err := gcpkmsbackend.NewBackend(context.Background(), backendCfg)
+	backend, err := xkmssdk.NewGCPKMSBackend(context.Background(), backendCfg)
 	if err != nil {
 		return nil, &StrategyBuildError{Backend: "gcpkms", Cause: err}
 	}
@@ -155,14 +151,14 @@ func buildGCPKMSStrategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 // data unseals after a restart. Only the not-found path creates a key. Any
 // other GetSymmetricKey error (or a creation failure) is wrapped in
 // *GCPKMSKeyRegistrationError.
-func ensureGCPKMSSealKey(b *gcpkmsbackend.Backend, keyAttrs *xkmstypes.KeyAttributes) error {
-	if _, err := b.GetSymmetricKey(keyAttrs); err == nil {
+func ensureGCPKMSSealKey(b *xkmssdk.GCPKMSBackend, keyAttrs *xkmssdk.KeyAttributes) error {
+	if _, err := b.GetSymmetricKey(context.Background(), keyAttrs); err == nil {
 		return nil
-	} else if !errors.Is(err, backend.ErrKeyNotFound) {
+	} else if !errors.Is(err, xkmssdk.ErrBackendKeyNotFound) {
 		return &GCPKMSKeyRegistrationError{KeyID: keyAttrs.CN, Cause: err}
 	}
 
-	if _, err := b.GenerateSymmetricKey(keyAttrs); err != nil {
+	if _, err := b.GenerateSymmetricKey(context.Background(), keyAttrs); err != nil {
 		return &GCPKMSKeyRegistrationError{KeyID: keyAttrs.CN, Cause: err}
 	}
 	return nil
@@ -178,13 +174,13 @@ func ensureGCPKMSSealKey(b *gcpkmsbackend.Backend, keyAttrs *xkmstypes.KeyAttrib
 // GCP KMS store. SymmetricAlgorithm being non-empty is what makes the backend
 // treat the request as a symmetric seal (Backend.Seal rejects asymmetric keys);
 // KeyType KeyTypeEncryption marks the key's purpose.
-func gcpKMSSealKeyAttributes(keyID string) *xkmstypes.KeyAttributes {
-	return &xkmstypes.KeyAttributes{
+func gcpKMSSealKeyAttributes(keyID string) *xkmssdk.KeyAttributes {
+	return &xkmssdk.KeyAttributes{
 		CN:                 keyID,
-		StoreType:          xkmstypes.StoreGCPKMS,
-		KeyType:            xkmstypes.KeyTypeEncryption,
+		StoreType:          xkmssdk.StoreGCPKMS,
+		KeyType:            xkmssdk.KeyTypeEncryption,
 		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
-		SymmetricAlgorithm: xkmstypes.SymmetricAES256GCM,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
 	}
 }
 

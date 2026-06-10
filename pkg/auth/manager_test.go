@@ -101,21 +101,21 @@ func TestRevokeToken(t *testing.T) {
 	token, err := am.generateTokens(user)
 	require.NoError(t, err)
 
-	// Install an allow decision point so a valid token authorizes; the
-	// token-revocation check runs before the decision point.
-	am.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
-
-	// Verify token works before revocation
-	err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
-	assert.NoError(t, err)
+	// Verify token validates before revocation
+	result, err := am.ValidateToken(ctx, token.AccessToken)
+	require.NoError(t, err)
+	assert.True(t, result.Valid)
+	assert.False(t, result.IsRevoked)
 
 	// Revoke token
 	err = am.RevokeToken(ctx, token.AccessToken)
 	assert.NoError(t, err)
 
-	// Verify token no longer works
-	err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
-	assert.Error(t, err)
+	// Verify token is now reported revoked
+	result, err = am.ValidateToken(ctx, token.AccessToken)
+	require.NoError(t, err)
+	assert.True(t, result.IsRevoked)
+	assert.False(t, result.Valid)
 }
 
 func TestCreateUser(t *testing.T) {
@@ -281,9 +281,6 @@ func TestIssueTokenForUser(t *testing.T) {
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
 
-	// Install an allow decision point so issued tokens authorize.
-	am.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
-
 	ctx := context.Background()
 
 	t.Run("issue token for existing user", func(t *testing.T) {
@@ -300,9 +297,12 @@ func TestIssueTokenForUser(t *testing.T) {
 		assert.NotEmpty(t, token.AccessToken)
 		assert.NotEmpty(t, token.RefreshToken)
 
-		// Verify the token works for authorization
-		err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
-		assert.NoError(t, err)
+		// Verify the issued token validates and carries the user's claims
+		result, err := am.ValidateToken(ctx, token.AccessToken)
+		require.NoError(t, err)
+		assert.True(t, result.Valid)
+		assert.Equal(t, "certuser", result.Username)
+		assert.Contains(t, result.Roles, "readwrite")
 	})
 
 	t.Run("issue token with user lookup by username", func(t *testing.T) {
@@ -320,9 +320,11 @@ func TestIssueTokenForUser(t *testing.T) {
 
 		assert.NotEmpty(t, token.AccessToken)
 
-		// Verify admin permissions
-		err = am.Authorize(ctx, token.AccessToken, interfaces.ResourceUsers, interfaces.ActionAdmin)
-		assert.NoError(t, err)
+		// Verify the looked-up user's admin role is carried in the token
+		result, err := am.ValidateToken(ctx, token.AccessToken)
+		require.NoError(t, err)
+		assert.True(t, result.Valid)
+		assert.Contains(t, result.Roles, "admin")
 	})
 
 	t.Run("issue token for non-existent user fails", func(t *testing.T) {

@@ -8,6 +8,7 @@
 package server
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -36,14 +37,14 @@ type externalCAMock struct {
 	serverErr error
 }
 
-func (m *externalCAMock) IssueCertificate(_ *xkmsca.CertificateRequest) (*xkmsca.IssuedCertificate, error) {
+func (m *externalCAMock) IssueCertificate(_ context.Context, _ *xkmsca.CertificateRequest) (*xkmsca.IssuedCertificate, error) {
 	if m.issueErr != nil {
 		return nil, m.issueErr
 	}
 	return &xkmsca.IssuedCertificate{}, nil
 }
 
-func (m *externalCAMock) ServerTLSConfig(_ *xkmstypes.KeyAttributes, _ bool) (*tls.Config, error) {
+func (m *externalCAMock) ServerTLSConfig(_ context.Context, _ *xkmstypes.KeyAttributes, _ bool) (*tls.Config, error) {
 	return m.serverCfg, m.serverErr
 }
 

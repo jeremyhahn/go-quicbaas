@@ -216,6 +216,7 @@ func (h *authHandler) handleFinishLogin(ctx context.Context, req interface{}) (i
 		SessionId:      r.SessionID,
 		Type:           string(r.Type),
 		LookupKey:      r.LookupKey,
+		AltLookupKeys:  r.AltLookupKeys,
 		Signature:      r.Signature,
 		MethodMetadata: r.MethodMetadata,
 	})

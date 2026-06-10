@@ -37,15 +37,17 @@ import (
 )
 
 // generateTestCertificate generates a self-signed certificate for testing.
-func generateTestCertificate() (tls.Certificate, error) {
+// It returns the TLS certificate, a CA pool containing that certificate, and any error.
+// The CA pool is used by clients to verify the server without InsecureSkipVerify.
+func generateTestCertificate() (tls.Certificate, *x509.CertPool, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, nil, err
 	}
 
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, nil, err
 	}
 
 	template := x509.Certificate{
@@ -58,24 +60,37 @@ func generateTestCertificate() (tls.Certificate, error) {
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
+		IsCA:                  true,
 		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
 		DNSNames:              []string{"localhost"},
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, nil, err
 	}
 
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
 	privDER, err := x509.MarshalECPrivateKey(priv)
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, nil, err
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER})
 
-	return tls.X509KeyPair(certPEM, keyPEM)
+	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+
+	parsed, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(parsed)
+
+	return tlsCert, pool, nil
 }
 
 // TestTransportNew tests transport creation.
@@ -640,11 +655,14 @@ type mockQUICServer struct {
 	wg       sync.WaitGroup
 	handlers map[byte]func(*Request) *Response
 	mu       sync.Mutex
+	// caPool holds the CA pool for the server's self-signed certificate.
+	// Clients use this pool to verify the server without InsecureSkipVerify.
+	caPool *x509.CertPool
 }
 
 // newMockQUICServer creates a new mock QUIC server.
 func newMockQUICServer(t *testing.T) (*mockQUICServer, error) {
-	cert, err := generateTestCertificate()
+	cert, caPool, err := generateTestCertificate()
 	if err != nil {
 		return nil, err
 	}
@@ -665,6 +683,7 @@ func newMockQUICServer(t *testing.T) (*mockQUICServer, error) {
 		listener: listener,
 		addr:     listener.Addr().String(),
 		handlers: make(map[byte]func(*Request) *Response),
+		caPool:   caPool,
 	}
 
 	return server, nil
@@ -782,14 +801,14 @@ func TestTransportWithServer(t *testing.T) {
 	server.Start()
 
 	// Create client
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate client cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -922,14 +941,14 @@ func TestTransportStream(t *testing.T) {
 	server.Start()
 
 	// Create client
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate client cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1250,14 +1269,14 @@ func TestStreamSendRecv(t *testing.T) {
 	server.Start()
 
 	// Create client
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate client cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1400,10 +1419,10 @@ func TestTransportConnectionNil(t *testing.T) {
 	defer server.Close()
 	server.Start()
 
-	cert, _ := generateTestCertificate()
+	cert, _, _ := generateTestCertificate()
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1508,14 +1527,14 @@ func TestTransport_NewWithOptions(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1556,14 +1575,14 @@ func TestTransport_NewWithOptionsTLSConfig(t *testing.T) {
 	defer server.Close()
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	optTLSConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1602,14 +1621,14 @@ func TestTransport_RequestWithRetry_ContextCanceled(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1668,14 +1687,14 @@ func TestTransport_RequestWithRetry_Exhausted(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1718,14 +1737,14 @@ func TestTransport_DoRequest_StreamCloseError(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1768,14 +1787,14 @@ func TestTransport_DoRequest_NonOKStatusWithPayload(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1818,14 +1837,14 @@ func TestTransport_DoRequest_NonOKStatusNoPayload(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1865,14 +1884,14 @@ func TestStream_RecvNonOKStatus(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1928,14 +1947,14 @@ func TestStream_RecvOKStatusWithPayload(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -1989,14 +2008,14 @@ func TestStream_RecvOKStatusEmptyPayload(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -2053,14 +2072,14 @@ func TestStream_RecvNonOKStatusNoPayload(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -2110,14 +2129,14 @@ func TestStream_DoubleClose(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -2162,14 +2181,14 @@ func TestTransport_CloseWithError(t *testing.T) {
 	defer server.Close()
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -2277,14 +2296,14 @@ func TestTransport_SetAuthTokenAndRequest(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -2334,14 +2353,14 @@ func TestTransport_RequestWithEmptyAuthToken(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -2382,14 +2401,14 @@ func TestTransport_DoRequest_EmptyResponsePayload(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}
@@ -2481,14 +2500,14 @@ func TestRequestStream_WithInitialRequest(t *testing.T) {
 	})
 	server.Start()
 
-	cert, err := generateTestCertificate()
+	cert, _, err := generateTestCertificate()
 	if err != nil {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
+		RootCAs:            server.caPool,
 		NextProtos:         []string{alpnProtocol},
 		MinVersion:         tls.VersionTLS13,
 	}

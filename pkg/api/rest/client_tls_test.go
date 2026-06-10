@@ -88,8 +88,8 @@ func TestWithTLSConfig(t *testing.T) {
 
 	t.Run("sets TLS config correctly", func(t *testing.T) {
 		tlsConfig := &tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: true,
+			MinVersion:             tls.VersionTLS13,
+			SessionTicketsDisabled: true,
 		}
 		client, err := NewRESTClient("http://localhost:8080", log, WithTLSConfig(tlsConfig))
 		require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestWithTLSConfig(t *testing.T) {
 		transport, ok := client.httpClient.Transport.(*http.Transport)
 		require.True(t, ok)
 		assert.Equal(t, uint16(tls.VersionTLS13), transport.TLSClientConfig.MinVersion)
-		assert.True(t, transport.TLSClientConfig.InsecureSkipVerify)
+		assert.True(t, transport.TLSClientConfig.SessionTicketsDisabled)
 	})
 }
 

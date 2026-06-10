@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -215,6 +216,14 @@ func (p *OIDCProvider) GetJWKS() *jose.JSONWebKeySet {
 		return p.config.SigningKeyManager.JWKS()
 	}
 	return p.jwks
+}
+
+// Issuer returns the configured OIDC issuer URL (the iss this provider stamps on
+// the tokens it signs). The platform-token validator uses it as both the trusted
+// issuer and -- under the AS==RS audience convention -- the required audience
+// when validating tokens this provider minted.
+func (p *OIDCProvider) Issuer() string {
+	return p.config.Issuer
 }
 
 // OAuthASMetadata represents OAuth 2.0 Authorization Server Metadata per RFC 8414.
@@ -527,15 +536,14 @@ func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (
 		return &IntrospectionResponse{Active: false}, nil
 	}
 
-	// Derive the tenant from the verified claim and scope the context so the
-	// per-tenant revocation lookup resolves. There is no global token table;
-	// the tenant_id claim is the authoritative routing key.
-	if claims.TenantID != "" {
-		ctx = ContextWithTenant(ctx, claims.TenantID)
-	}
-
-	revoked, err := p.tokenService.storage.IsTokenRevoked(ctx, claims.JTI)
-	if err == nil && revoked {
+	// Liveness: the token's jti must not be revoked AND its subject must be an
+	// enabled user. TokenLiveness derives the tenant from the verified claim and
+	// scopes the context so the per-tenant revocation lookup resolves (there is
+	// no global token table; the tenant_id claim is the authoritative routing
+	// key). It is fail-closed: any store error yields a non-live result, so a
+	// revocation-store outage reports active=false rather than leaking claims.
+	live, err := p.TokenLiveness(ctx, claims.TenantID, claims.Subject, claims.JTI)
+	if err != nil || !live {
 		return &IntrospectionResponse{Active: false}, nil
 	}
 
@@ -569,6 +577,75 @@ func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (
 		resp.NotBefore = claims.NotBefore.Unix()
 	}
 	return resp, nil
+}
+
+// TokenLiveness reports whether an already-signature-verified token is still
+// live. It is the single in-process liveness authority shared by RFC 7662
+// introspection (this provider) and the SDK platform-token validator's
+// request-time authorization, so a token's "still good?" decision has exactly
+// one implementation.
+//
+// Liveness is two independent signals, evaluated in order and fail-closed:
+//
+//  1. Revocation. The jti must not be present in the per-tenant revocation
+//     store. The tenant is scoped from tenantID (the authoritative routing key;
+//     there is no global token table). Any store error returns (false, err) so
+//     a revocation-store outage denies rather than admits.
+//  2. Subject enablement. The subject is looked up as a user. A subject that is
+//     not a user (ErrUserNotFound) is a service/non-user token (e.g. a
+//     client_credentials "app_*" subject); revocation already passed, so it is
+//     live. Any other GetUser error returns (false, err) (fail-closed). A real
+//     user is live only when none of the three disable signals are set:
+//     live == !Suspended && !Locked && State != UserStateDisabled. Explicit
+//     negative states deny; active/pending/unset states are live, so legacy
+//     users whose State was never persisted are not spuriously denied while all
+//     three disable signals are still honored.
+func (p *OIDCProvider) TokenLiveness(ctx context.Context, tenantID, subject, jti string) (bool, error) {
+	if tenantID != "" {
+		ctx = ContextWithTenant(ctx, tenantID)
+	}
+
+	revoked, err := p.tokenService.storage.IsTokenRevoked(ctx, jti)
+	if err != nil {
+		return false, err
+	}
+	if revoked {
+		return false, nil
+	}
+
+	user, err := p.identityStore.GetUser(ctx, tenantID, subject)
+	if err != nil {
+		// A subject with no backing user is a service/non-user token; it passed
+		// revocation, so it is live. This is what keeps client_credentials
+		// service tokens authorized.
+		if errors.Is(err, ErrUserNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+
+	live := !user.Suspended && !user.Locked && user.State != UserStateDisabled
+	return live, nil
+}
+
+// TenantAuthzMode returns the per-tenant authorization-mode override stored in
+// TenantSettings.AuthzMode for the given tenant. An empty return value means the
+// tenant has no override and the deployment-level default applies. A lookup
+// failure (e.g. unknown tenant or unavailable tenant manager) is surfaced to the
+// caller, which is expected to fail SAFE by falling back to the deployment
+// default rather than panicking.
+func (p *OIDCProvider) TenantAuthzMode(ctx context.Context, tenantID string) (string, error) {
+	if tenantID == "" {
+		return "", nil
+	}
+	tenant, err := p.identityStore.GetTenant(ctx, tenantID)
+	if err != nil {
+		return "", err
+	}
+	if tenant == nil {
+		return "", nil
+	}
+	return tenant.Settings.AuthzMode, nil
 }
 
 // parseVerifiedAccessTokenClaims verifies a token signature and returns its

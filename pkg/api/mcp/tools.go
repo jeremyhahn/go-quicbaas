@@ -56,6 +56,13 @@ type ToolRegistry struct {
 	// service is online; nil during early boot and unit tests, in which
 	// case the credential dispatcher returns CredentialServiceUnavailableError.
 	credentialSvc qrdbsdk.ServiceCredentialServicer
+
+	// tenantBarrierSvc backs every qrdb_tenant_barrier_* tool. Wired
+	// post-construction via SetTenantBarrierService once the qrdb SDK
+	// TenantClient is online; nil during early boot and unit tests, in which
+	// case the tenant barrier dispatcher returns
+	// TenantBarrierServiceUnavailableError.
+	tenantBarrierSvc service.TenantBarrierServicer
 }
 
 // ToolDefinition describes an MCP tool.
@@ -228,6 +235,9 @@ func (r *ToolRegistry) registerTools() {
 
 	// Register qrdb credential management tools (qrdb_credential_*).
 	r.registerCredentialTools()
+
+	// Register per-tenant barrier tools (qrdb_tenant_barrier_*).
+	r.registerTenantBarrierTools()
 
 	// Register XKMS-compatible tools
 
@@ -883,6 +893,13 @@ func (r *ToolRegistry) SetCeremonyService(svc service.CeremonyServicer) {
 	r.ceremonySvc = svc
 }
 
+// SetTenantBarrierService installs the TenantBarrierServicer used by every
+// qrdb_tenant_barrier_* tool. Pass nil to take the surface offline; tools will
+// then return TenantBarrierServiceUnavailableError.
+func (r *ToolRegistry) SetTenantBarrierService(svc service.TenantBarrierServicer) {
+	r.tenantBarrierSvc = svc
+}
+
 // ExecuteTool executes a tool by name with the given arguments.
 func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	r.logger.WithFields(map[string]interface{}{
@@ -1355,6 +1372,11 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// Check if it is a qrdb credential management tool.
 		if isCredentialTool(name) {
 			return r.executeCredentialTool(ctx, name, args)
+		}
+
+		// Check if it is a per-tenant barrier tool.
+		if isTenantBarrierTool(name) {
+			return r.executeTenantBarrierTool(ctx, name, args)
 		}
 
 		return nil, api.NewUnknownToolError(name)

@@ -101,7 +101,9 @@ func DefaultConfig() *Config {
 			// platform token carrying the required "<svc>.<verb>" scope; token-less
 			// requests are denied. Operators needing the legacy anonymous
 			// data-plane posture set require_authz=false explicitly.
-			RequireAuthz: true,
+			RequireAuthz:     true,
+			AuthzMode:        DefaultAuthzMode,
+			LivenessCacheTTL: DefaultLivenessCacheTTL,
 			Authorization: AuthorizationConfig{
 				Provider: "rbac",
 				RBAC:     RBACAuthzConfig{Enabled: true, AllowAnonymous: false},
@@ -356,8 +358,11 @@ func DefaultSecurityConfig() SecurityConfig {
 		SealEnabled:         false,
 		// Secure default: enforce the default-deny scope -> RBAC gate. See the
 		// RequireAuthz field doc in config.go.
-		RequireAuthz:  true,
-		Authorization: DefaultAuthorizationConfig(),
+		RequireAuthz:            true,
+		EmbeddedSystemPrincipal: EmbeddedSystemPrincipalDefault,
+		AuthzMode:               DefaultAuthzMode,
+		LivenessCacheTTL:        DefaultLivenessCacheTTL,
+		Authorization:           DefaultAuthorizationConfig(),
 		TenantIsolation: TenantIsolationConfig{
 			Mode: TenantIsolationKeyspace,
 		},
@@ -692,7 +697,21 @@ func TestConfig() *Config {
 	}
 }
 
+// EmbeddedSystemPrincipalDefault is the system identity used for in-process
+// calls when the server runs in embedded mode. It matches the reserved
+// system-tenant convention and is used to label the composition context so
+// daemon-internal operations carry an explicit identity.
+const EmbeddedSystemPrincipalDefault = "system"
+
 // EmbeddedConfig returns a configuration optimized for embedded mode usage.
+//
+// Security posture: all network transports are disabled, so RequireAuthz
+// governs no network-facing gate. Embedded callers are trusted in-process
+// code; anonymous access is NOT permitted. Callers that need to bypass
+// service-layer per-key authorization must use auth.NewSystemContext on the
+// request context. InsecureDevMode and explicit AllowAnonymous overrides are
+// reserved for development-only builds; production configs must never set
+// them.
 func EmbeddedConfig() *Config {
 	cfg := DefaultConfig()
 
@@ -715,12 +734,20 @@ func EmbeddedConfig() *Config {
 	cfg.Storage.WALDir = "./data/wal"
 	cfg.Storage.CacheSize = 128 * 1024 * 1024
 
-	// Disable security by default for embedded
+	// Secure embedded defaults: all network transports are disabled so
+	// RequireAuthz has no effect on the network surface, but we keep it true
+	// to document the intent and prevent accidental re-enabling of a transport
+	// with the wrong posture.  Anonymous access is explicitly prohibited;
+	// embedded callers must carry auth.NewSystemContext or an injected Subject.
+	// TLS is unnecessary for in-process calls.
 	cfg.Security.TLSEnabled = false
 	cfg.Security.EncryptionEnabled = false
-	// Embedded mode dispatches in-process via the anonymous path; the REST
-	// default-deny gate does not apply, so keep it off.
-	cfg.Security.RequireAuthz = false
+	cfg.Security.RequireAuthz = true
+	cfg.Security.Authorization.RBAC.AllowAnonymous = false
+	// Bind the in-process system identity so service-layer guards that inspect
+	// auth.IsSystemContext() can distinguish daemon-internal calls from
+	// unauthenticated ones.
+	cfg.Security.EmbeddedSystemPrincipal = EmbeddedSystemPrincipalDefault
 
 	// Disable most services
 	cfg.KMS.Enabled = false

@@ -18,6 +18,7 @@ package ha
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,6 +79,12 @@ type PartitionConfig struct {
 
 	// Peers is the map of peer nodeID to address
 	Peers map[uint64]string
+
+	// ClusterCA is the certificate pool used to verify peer TLS certificates
+	// during health probes. When nil, the system trust store is used. Set this
+	// to the cluster's internal CA pool so peer certificates are verified
+	// without relying on public CAs.
+	ClusterCA *x509.CertPool
 }
 
 // Partition represents a network partition.
@@ -483,11 +490,18 @@ func (pd *PartitionDetector) pingPeer(ctx context.Context, peer *PeerState) (boo
 	// Use an ad-hoc client per probe; sharing a persistent client across all
 	// ping goroutines would require additional locking without meaningful benefit
 	// given the low frequency of health checks.
+	//
+	// Peer certificates are verified against ClusterCA when provided, or
+	// against the system trust store otherwise. InsecureSkipVerify is
+	// never used — peer liveness is a security boundary because a spoofed
+	// health response could cause a healthy minority to incorrectly enter
+	// read-only mode.
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // liveness probe, not a security boundary
+				RootCAs:    pd.config.ClusterCA, // nil → system pool
+				MinVersion: tls.VersionTLS13,
 			},
 		},
 	}

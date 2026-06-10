@@ -237,6 +237,17 @@ type QRDBTenantBarrierStatusRequest = qrdbtransport.TenantBarrierStatusRequest
 // QRDBTenantBarrierStatusResponse is a re-export of the qrdb TenantBarrierStatusResponse type.
 type QRDBTenantBarrierStatusResponse = qrdbtransport.TenantBarrierStatusResponse
 
+// QRDBTenantBarrierInitResponse is a re-export of the qrdb TenantBarrierInitResponse type.
+// For the Shamir strategy it carries the generated M-of-N shares (returned
+// exactly once, never persisted) plus the threshold/total.
+type QRDBTenantBarrierInitResponse = qrdbtransport.TenantBarrierInitResponse
+
+// QRDBTenantBarrierUnsealShareRequest is a re-export of the qrdb TenantBarrierUnsealShareRequest type.
+type QRDBTenantBarrierUnsealShareRequest = qrdbtransport.TenantBarrierUnsealShareRequest
+
+// QRDBTenantBarrierUnsealProgress is a re-export of the qrdb TenantBarrierUnsealProgress type.
+type QRDBTenantBarrierUnsealProgress = qrdbtransport.TenantBarrierUnsealProgress
+
 // =============================================================================
 // QRDB Barrier Request/Response Re-exports
 // =============================================================================

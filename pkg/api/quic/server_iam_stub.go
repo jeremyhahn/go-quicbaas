@@ -16,6 +16,8 @@
 package quic
 
 import (
+	"context"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -25,6 +27,6 @@ func getIAMServiceOption(_ service.QuicBaaS) HandlerOption {
 }
 
 // getMFAServiceOption returns a no-op handler option when IAM is not enabled.
-func getMFAServiceOption(_ service.QuicBaaS) HandlerOption {
+func getMFAServiceOption(_ context.Context, _ service.QuicBaaS) HandlerOption {
 	return func(h *Handler) {}
 }

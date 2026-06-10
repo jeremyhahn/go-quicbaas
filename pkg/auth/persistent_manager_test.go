@@ -489,22 +489,24 @@ func TestPersistentRevokeToken(t *testing.T) {
 	user, err := pam.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
 
-	// Install an allow decision point so a valid token authorizes; the
-	// revocation check runs before the decision point.
-	pam.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
-
 	ctx := context.Background()
 	token, err := pam.generateTokens(user)
 	require.NoError(t, err)
 
-	err = pam.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
-	assert.NoError(t, err)
+	// Verify token validates before revocation
+	result, err := pam.ValidateToken(ctx, token.AccessToken)
+	require.NoError(t, err)
+	assert.True(t, result.Valid)
+	assert.False(t, result.IsRevoked)
 
 	err = pam.RevokeToken(ctx, token.AccessToken)
 	assert.NoError(t, err)
 
-	err = pam.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
-	assert.Error(t, err)
+	// Verify token is reported revoked
+	result, err = pam.ValidateToken(ctx, token.AccessToken)
+	require.NoError(t, err)
+	assert.True(t, result.IsRevoked)
+	assert.False(t, result.Valid)
 }
 
 // TestPersistentCreateUser tests the CreateUser method.
@@ -659,9 +661,6 @@ func TestPersistentConcurrentAccess(t *testing.T) {
 	require.NoError(t, err)
 	defer pam.Close()
 
-	// Install an allow decision point so issued tokens authorize.
-	pam.SetQRDBDecisionPoint(&recordingDecisionPoint{ret: nil})
-
 	// Create users and store their references for token generation
 	users := make([]*User, 5)
 	for i := 0; i < 5; i++ {
@@ -681,8 +680,9 @@ func TestPersistentConcurrentAccess(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NotNil(t, token)
 
-			err = pam.Authorize(ctx, token.AccessToken, interfaces.ResourceKeys, interfaces.ActionRead)
+			result, err := pam.ValidateToken(ctx, token.AccessToken)
 			assert.NoError(t, err)
+			assert.True(t, result.Valid)
 
 			done <- true
 		}(i)

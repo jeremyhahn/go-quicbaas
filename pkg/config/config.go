@@ -1170,13 +1170,41 @@ type SecurityConfig struct {
 	EncryptionKeyFile string `mapstructure:"encryption_key_file"`
 
 	// RequireAuthz enables the default-deny scope -> RBAC authorization gate on
-	// the REST surface. When false (the default) the REST server keeps its
-	// existing token-binding enforcement posture and anonymous requests to the
-	// data plane pass through unchanged. When true, non-public, non-cluster-mTLS
-	// REST requests must present a valid platform token carrying the required
-	// scope; token-less requests are denied. Flipping this on requires clients to
-	// authenticate and is intended to be enabled only after the fleet has migrated.
+	// the network transports (REST, gRPC, QUIC, MCP, Unix). When true,
+	// non-public, non-cluster-mTLS requests must present a valid platform token
+	// carrying the required scope; token-less requests are denied. In embedded
+	// mode all network transports are disabled so this flag has no effect on
+	// data-plane calls — embedded callers rely on NewSystemContext or an injected
+	// Subject to satisfy service-layer authorization checks. Production configs
+	// must leave this true (the default); only InsecureDevMode configs set it
+	// false.
 	RequireAuthz bool `mapstructure:"require_authz"`
+
+	// EmbeddedSystemPrincipal is the named system identity used for in-process
+	// calls when the server runs in embedded mode. It must be non-empty when
+	// RequireAuthz is true and the server is embedded. The value is bound to the
+	// composition context via auth.NewSystemContext so all daemon-internal
+	// operations (schedulers, KMS rotation, CA issuance) carry an explicit
+	// identity rather than relying on anonymous access. The default value
+	// "system" matches the reserved system-tenant convention. Changing this in
+	// production has no security effect — it is a label only; actual
+	// authorization bypass is governed by auth.IsSystemContext.
+	// This field is ignored when InsecureDevMode is true.
+	EmbeddedSystemPrincipal string `mapstructure:"embedded_system_principal"`
+
+	// AuthzMode is the deployment-level default platform-token authorization mode.
+	// It governs whether an online liveness/revocation check is enforced in
+	// addition to the always-offline scope decision. Valid values: "offline"
+	// (trust signed scopes + expiry only), "online" (uncached liveness check every
+	// request), "hybrid" (cached liveness check; the default). A per-tenant override
+	// in TenantSettings.AuthzMode takes precedence; an empty per-tenant value falls
+	// back to this deployment default. Default: "hybrid".
+	AuthzMode string `mapstructure:"authz_mode"`
+
+	// LivenessCacheTTL bounds how long a positive hybrid-mode liveness result is
+	// cached before the next request live-checks again. Ignored in offline and
+	// online modes. When zero, DefaultLivenessCacheTTL (15s) is used.
+	LivenessCacheTTL time.Duration `mapstructure:"liveness_cache_ttl"`
 
 	// Authorization configures the unified authorization system.
 	Authorization AuthorizationConfig `mapstructure:"authorization"`

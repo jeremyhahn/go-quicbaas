@@ -821,9 +821,9 @@ func (r *ToolRegistry) handleXKMSGenerateKey(ctx context.Context, args map[strin
 	var err error
 
 	if backendName != "" {
-		privKey, err = xkmssdk.ServiceGenerateKeyWithBackend(backendName, attrs)
+		privKey, err = xkmssdk.ServiceGenerateKeyWithBackend(ctx, backendName, attrs)
 	} else {
-		privKey, err = xkmssdk.ServiceGenerateKey(attrs)
+		privKey, err = xkmssdk.ServiceGenerateKey(ctx, attrs)
 	}
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "generateKey", Cause: err}
@@ -847,7 +847,7 @@ func (r *ToolRegistry) handleXKMSGetKey(ctx context.Context, args map[string]int
 
 	attrs := xkmsKeyAttrsFromArgs(ctx, args)
 
-	privKey, err := xkmssdk.ServiceKey(attrs)
+	privKey, err := xkmssdk.ServiceKey(ctx, attrs)
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "getKey", Cause: err}
 	}
@@ -871,7 +871,7 @@ func (r *ToolRegistry) handleXKMSDeleteKey(ctx context.Context, args map[string]
 
 	attrs := xkmsKeyAttrsFromArgs(ctx, args)
 
-	if err := xkmssdk.ServiceDeleteKey(attrs); err != nil {
+	if err := xkmssdk.ServiceDeleteKey(ctx, attrs); err != nil {
 		return nil, &XKMSOperationError{Operation: "deleteKey", Cause: err}
 	}
 
@@ -882,16 +882,16 @@ func (r *ToolRegistry) handleXKMSDeleteKey(ctx context.Context, args map[string]
 }
 
 // handleXKMSListKeys lists all keys, optionally filtered by backend.
-func (r *ToolRegistry) handleXKMSListKeys(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSListKeys(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	backend := getString(args, "backend")
 
 	var keys []*xkmssdk.KeyAttributes
 	var err error
 
 	if backend != "" {
-		keys, err = xkmssdk.ServiceListKeys(backend)
+		keys, err = xkmssdk.ServiceListKeys(ctx, backend)
 	} else {
-		keys, err = xkmssdk.ServiceListKeys()
+		keys, err = xkmssdk.ServiceListKeys(ctx)
 	}
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "listKeys", Cause: err}
@@ -910,7 +910,7 @@ func (r *ToolRegistry) handleXKMSListKeys(_ context.Context, args map[string]int
 }
 
 // handleXKMSRotateKey rotates an existing key.
-func (r *ToolRegistry) handleXKMSRotateKey(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSRotateKey(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
@@ -922,7 +922,7 @@ func (r *ToolRegistry) handleXKMSRotateKey(_ context.Context, args map[string]in
 		kid = backend + ":::" + keyID
 	}
 
-	privKey, err := xkmssdk.ServiceRotateKey(kid)
+	privKey, err := xkmssdk.ServiceRotateKey(ctx, kid)
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "rotateKey", Cause: err}
 	}
@@ -936,7 +936,7 @@ func (r *ToolRegistry) handleXKMSRotateKey(_ context.Context, args map[string]in
 }
 
 // handleXKMSSign signs data using a cryptographic key.
-func (r *ToolRegistry) handleXKMSSign(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSSign(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
@@ -959,7 +959,7 @@ func (r *ToolRegistry) handleXKMSSign(_ context.Context, args map[string]interfa
 		kid = backend + ":::" + keyID
 	}
 
-	signature, err := xkmssdk.ServiceSign(kid, data, &xkmssdk.SignOptions{Hash: hashAlg})
+	signature, err := xkmssdk.ServiceSign(ctx, kid, data, &xkmssdk.SignOptions{Hash: hashAlg})
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "sign", Cause: err}
 	}
@@ -970,7 +970,7 @@ func (r *ToolRegistry) handleXKMSSign(_ context.Context, args map[string]interfa
 }
 
 // handleXKMSVerify verifies a signature against data.
-func (r *ToolRegistry) handleXKMSVerify(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSVerify(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
@@ -1001,7 +1001,7 @@ func (r *ToolRegistry) handleXKMSVerify(_ context.Context, args map[string]inter
 		kid = backend + ":::" + keyID
 	}
 
-	verifyErr := xkmssdk.ServiceVerify(kid, data, signature, &xkmssdk.VerifyOpts{Hash: hashAlg})
+	verifyErr := xkmssdk.ServiceVerify(ctx, kid, data, signature, &xkmssdk.VerifyOpts{Hash: hashAlg})
 
 	return marshalResult(map[string]interface{}{
 		"valid": verifyErr == nil,
@@ -1009,7 +1009,7 @@ func (r *ToolRegistry) handleXKMSVerify(_ context.Context, args map[string]inter
 }
 
 // handleXKMSEncrypt encrypts data using a symmetric key.
-func (r *ToolRegistry) handleXKMSEncrypt(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSEncrypt(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
@@ -1038,7 +1038,7 @@ func (r *ToolRegistry) handleXKMSEncrypt(_ context.Context, args map[string]inte
 		AdditionalData: aad,
 	}
 
-	encrypted, err := xkmssdk.ServiceEncrypt(kid, plaintext, opts)
+	encrypted, err := xkmssdk.ServiceEncrypt(ctx, kid, plaintext, opts)
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "encrypt", Cause: err}
 	}
@@ -1051,7 +1051,7 @@ func (r *ToolRegistry) handleXKMSEncrypt(_ context.Context, args map[string]inte
 }
 
 // handleXKMSDecrypt decrypts data using a symmetric key.
-func (r *ToolRegistry) handleXKMSDecrypt(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSDecrypt(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
@@ -1096,7 +1096,7 @@ func (r *ToolRegistry) handleXKMSDecrypt(_ context.Context, args map[string]inte
 		Tag:        tag,
 	}
 
-	plaintext, err := xkmssdk.ServiceDecrypt(kid, encrypted, opts)
+	plaintext, err := xkmssdk.ServiceDecrypt(ctx, kid, encrypted, opts)
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "decrypt", Cause: err}
 	}
@@ -1107,7 +1107,7 @@ func (r *ToolRegistry) handleXKMSDecrypt(_ context.Context, args map[string]inte
 }
 
 // handleXKMSSaveCert saves a certificate by key identifier.
-func (r *ToolRegistry) handleXKMSSaveCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSSaveCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
@@ -1128,7 +1128,7 @@ func (r *ToolRegistry) handleXKMSSaveCert(_ context.Context, args map[string]int
 		return nil, &XKMSCertificateParseError{Cause: err}
 	}
 
-	if err := xkmssdk.ServiceSaveCertificateByID(keyID, cert); err != nil {
+	if err := xkmssdk.ServiceSaveCertificateByID(ctx, keyID, cert); err != nil {
 		return nil, &XKMSOperationError{Operation: "saveCert", Cause: err}
 	}
 
@@ -1138,13 +1138,13 @@ func (r *ToolRegistry) handleXKMSSaveCert(_ context.Context, args map[string]int
 }
 
 // handleXKMSGetCert retrieves a certificate by key identifier.
-func (r *ToolRegistry) handleXKMSGetCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSGetCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
 	}
 
-	cert, err := xkmssdk.ServiceCertificateByID(keyID)
+	cert, err := xkmssdk.ServiceCertificateByID(ctx, keyID)
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "getCert", Cause: err}
 	}
@@ -1161,13 +1161,13 @@ func (r *ToolRegistry) handleXKMSGetCert(_ context.Context, args map[string]inte
 }
 
 // handleXKMSDeleteCert deletes a certificate by key identifier.
-func (r *ToolRegistry) handleXKMSDeleteCert(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSDeleteCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
 	}
 
-	if err := xkmssdk.ServiceDeleteCertificateByID(keyID); err != nil {
+	if err := xkmssdk.ServiceDeleteCertificateByID(ctx, keyID); err != nil {
 		return nil, &XKMSOperationError{Operation: "deleteCert", Cause: err}
 	}
 
@@ -1177,16 +1177,16 @@ func (r *ToolRegistry) handleXKMSDeleteCert(_ context.Context, args map[string]i
 }
 
 // handleXKMSListCerts lists all certificate identifiers.
-func (r *ToolRegistry) handleXKMSListCerts(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSListCerts(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	backend := getString(args, "backend")
 
 	var certs []string
 	var err error
 
 	if backend != "" {
-		certs, err = xkmssdk.ServiceListCertificates(backend)
+		certs, err = xkmssdk.ServiceListCertificates(ctx, backend)
 	} else {
-		certs, err = xkmssdk.ServiceListCertificates()
+		certs, err = xkmssdk.ServiceListCertificates(ctx)
 	}
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "listCerts", Cause: err}
@@ -1202,13 +1202,13 @@ func (r *ToolRegistry) handleXKMSListCerts(_ context.Context, args map[string]in
 }
 
 // handleXKMSCertExists checks if a certificate exists for a key.
-func (r *ToolRegistry) handleXKMSCertExists(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSCertExists(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
 	}
 
-	exists, err := xkmssdk.ServiceCertificateExistsByID(keyID)
+	exists, err := xkmssdk.ServiceCertificateExistsByID(ctx, keyID)
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "certExists", Cause: err}
 	}
@@ -1219,7 +1219,7 @@ func (r *ToolRegistry) handleXKMSCertExists(_ context.Context, args map[string]i
 }
 
 // handleXKMSSaveCertChain saves a certificate chain for a key.
-func (r *ToolRegistry) handleXKMSSaveCertChain(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSSaveCertChain(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
@@ -1243,7 +1243,7 @@ func (r *ToolRegistry) handleXKMSSaveCertChain(_ context.Context, args map[strin
 		chain = append(chain, cert)
 	}
 
-	if err := xkmssdk.ServiceSaveCertificateChainByID(keyID, chain); err != nil {
+	if err := xkmssdk.ServiceSaveCertificateChainByID(ctx, keyID, chain); err != nil {
 		return nil, &XKMSOperationError{Operation: "saveCertChain", Cause: err}
 	}
 
@@ -1253,13 +1253,13 @@ func (r *ToolRegistry) handleXKMSSaveCertChain(_ context.Context, args map[strin
 }
 
 // handleXKMSGetCertChain retrieves a certificate chain by key identifier.
-func (r *ToolRegistry) handleXKMSGetCertChain(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) handleXKMSGetCertChain(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
 	}
 
-	chain, err := xkmssdk.ServiceCertificateChainByID(keyID)
+	chain, err := xkmssdk.ServiceCertificateChainByID(ctx, keyID)
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "getCertChain", Cause: err}
 	}

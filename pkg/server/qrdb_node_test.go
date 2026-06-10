@@ -262,6 +262,9 @@ func TestInitStandaloneQRDBNode_SetsQRDBNode(t *testing.T) {
 		logger: log,
 	}
 	s.config.Storage.Backend = config.StorageBackendMemory
+	// Vector storage is PebbleDB-backed and requires a data dir even when
+	// the KV data plane runs in memory.
+	s.config.Storage.DataDir = t.TempDir()
 
 	require.NoError(t, s.initStandaloneQRDBNode())
 	require.NotNil(t, s.qrdbNode, "qrdbNode must be set after successful init")
@@ -281,13 +284,16 @@ func TestStopQRDBNode_NilNodeIsNoop(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // buildMemoryStandaloneNode creates a real *qrdbnode.Node backed by an
-// in-memory storage engine. It is suitable for unit tests that need a live
-// node without touching the filesystem. The caller must call node.Close().
+// in-memory storage engine. The KV data plane stays in memory; a temp
+// DataDir is still required because qrdb's vector storage subsystem is
+// PebbleDB-backed and BuildServices rejects an empty data directory.
+// The caller must call node.Close(); the temp dir is cleaned up by t.
 func buildMemoryStandaloneNode(t *testing.T) *qrdbnode.Node {
 	t.Helper()
 
 	cfg := &config.Config{}
 	cfg.Storage.Backend = config.StorageBackendMemory
+	cfg.Storage.DataDir = t.TempDir()
 
 	qcfg := buildQRDBConfig(cfg, false)
 	// Disable all protocol listeners: we only need the embedded transport.
@@ -564,6 +570,10 @@ func TestInitClusteredQRDBNode_SingleNode_BootsAndStops(t *testing.T) {
 		logger: log,
 	}
 	s.config.Storage.Backend = config.StorageBackendMemory
+	// A temp DataDir keeps the clustered node from defaulting to ./data
+	// in the package directory (and from flock-colliding with concurrent
+	// runs); vector storage also requires a data dir.
+	s.config.Storage.DataDir = t.TempDir()
 	s.config.Raft.NodeID = 1
 	// No JoinAddresses: buildClusterMembers returns a single-node map
 	// with replicaID=1 → WithoutTransport is applied by NewClusteredNode.
@@ -591,6 +601,7 @@ func TestInitClusteredQRDBNode_MemoryKVRoundTrip(t *testing.T) {
 		logger: log,
 	}
 	s.config.Storage.Backend = config.StorageBackendMemory
+	s.config.Storage.DataDir = t.TempDir() // avoid ./data default + flock collisions
 	s.config.Raft.NodeID = 1
 
 	require.NoError(t, s.initClusteredQRDBNode())
@@ -648,6 +659,7 @@ func TestNewNodeBackedShardedClient_FromClusteredNode(t *testing.T) {
 		logger: log,
 	}
 	s.config.Storage.Backend = config.StorageBackendMemory
+	s.config.Storage.DataDir = t.TempDir() // avoid ./data default + flock collisions
 	s.config.Raft.NodeID = 1
 
 	require.NoError(t, s.initClusteredQRDBNode())

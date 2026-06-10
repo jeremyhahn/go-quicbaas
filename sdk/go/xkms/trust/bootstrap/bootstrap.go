@@ -17,7 +17,7 @@
 // reached through the SDK) talk to trust bootstrap through the SDK
 // path rather than reaching into go-xkms directly.
 //
-// All types are pure aliases of `xkms/pkg/trust/bootstrap`. There is
+// All types are pure aliases of `xkms/sdk/go/bootstrap`. There is
 // no transport, no client, no shimming — the package exists solely so
 // the platform repo can write
 //
@@ -27,7 +27,7 @@
 // platform/CLAUDE.md §"SDK Consumption Invariant".
 package bootstrap
 
-import xkmsbootstrap "github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+import xkmsbootstrap "github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 
 // =============================================================================
 // Mode + constants
@@ -81,4 +81,39 @@ type FetchError = xkmsbootstrap.FetchError
 var (
 	Fetch           = xkmsbootstrap.Fetch
 	DeriveNoiseAddr = xkmsbootstrap.DeriveNoiseAddr
+)
+
+// =============================================================================
+// Server-side Noise_NK bootstrap surface
+// =============================================================================
+
+type (
+	// BundleProvider provides CA certificate bundles for trust bootstrapping.
+	BundleProvider = xkmsbootstrap.BundleProvider
+
+	// NoiseStaticKey is a Curve25519 static key pair for the Noise_NK handshake.
+	NoiseStaticKey = xkmsbootstrap.NoiseStaticKey
+
+	// NoiseServer serves CA bundles over Noise_NK encrypted TCP connections.
+	NoiseServer = xkmsbootstrap.NoiseServer
+
+	// NoiseServerConfig configures the Noise_NK bootstrap server.
+	NoiseServerConfig = xkmsbootstrap.NoiseServerConfig
+
+	// NoiseBundleProvider is the bundle source consumed by the Noise server.
+	NoiseBundleProvider = xkmsbootstrap.NoiseBundleProvider
+)
+
+var (
+	// NewNoiseServer constructs a Noise_NK bootstrap server.
+	NewNoiseServer = xkmsbootstrap.NewNoiseServer
+
+	// GenerateNoiseStaticKey generates a Curve25519 static key pair.
+	GenerateNoiseStaticKey = xkmsbootstrap.GenerateNoiseStaticKey
+
+	// EncodeNoiseStaticKey encodes a Noise static key as a hex string.
+	EncodeNoiseStaticKey = xkmsbootstrap.EncodeNoiseStaticKey
+
+	// DecodeNoiseStaticKey decodes a hex-encoded Noise static key.
+	DecodeNoiseStaticKey = xkmsbootstrap.DecodeNoiseStaticKey
 )

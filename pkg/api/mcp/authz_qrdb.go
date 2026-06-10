@@ -278,6 +278,13 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"qrdb_barrier_root_token":      {"seal", "bootstrap"},
 	"qrdb_barrier":                 {"tenant_barrier", "status"},
 
+	// Per-tenant barrier -> tenant_barrier
+	"qrdb_tenant_barrier_init":         {"tenant_barrier", "init"},
+	"qrdb_tenant_barrier_unseal":       {"tenant_barrier", "unseal"},
+	"qrdb_tenant_barrier_unseal_share": {"tenant_barrier", "unseal"},
+	"qrdb_tenant_barrier_seal":         {"tenant_barrier", "seal"},
+	"qrdb_tenant_barrier_status":       {"tenant_barrier", "status"},
+
 	// Ceremony (qrdb mirror) -> ceremony
 	"qrdb_ceremony_status": {"ceremony", "status"},
 	"qrdb_ceremony":        {"ceremony", "status"},

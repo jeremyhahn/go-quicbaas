@@ -20,8 +20,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 func TestGetIAMQRDBPermission_Mapped(t *testing.T) {
@@ -64,18 +62,4 @@ func TestGetIAMQRDBPermission_Unmapped(t *testing.T) {
 		_, _, ok := getIAMQRDBPermission(op)
 		assert.False(t, ok, "opcode 0x%02X should be unmapped", op)
 	}
-}
-
-// TestSetAuthzEnforcement verifies the QUIC server setter installs the validator
-// and authz service so the next request's handler enforces them.
-func TestSetAuthzEnforcement(t *testing.T) {
-	srv := &Server{}
-	validator := &fakeQUICValidator{token: "good", id: &AuthzIdentity{ID: "u1", TenantID: "system"}}
-	authz := &fakeQUICAuthzService{allowResource: "kv", allowAction: "put"}
-
-	srv.SetAuthzEnforcement(validator, authz)
-
-	var got interfaces.AuthorizationService = srv.authzService
-	require.NotNil(t, got)
-	require.NotNil(t, srv.authzTokenValidator)
 }

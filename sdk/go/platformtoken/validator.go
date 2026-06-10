@@ -58,6 +58,9 @@ type Claims struct {
 	Scope string `json:"scope,omitempty"`
 	// Roles is optional supplemental RBAC input.
 	Roles []string `json:"roles,omitempty"`
+	// Name is the human-facing display name / username claim. It is surfaced so a
+	// resource server can match principals by username in addition to subject id.
+	Name string `json:"name,omitempty"`
 	// Confirmation is the cnf sender-constraint binding (DPoP jkt / mTLS x5t).
 	Confirmation *Confirmation `json:"cnf,omitempty"`
 }
@@ -86,6 +89,11 @@ type Options struct {
 	// JWKSURL, when set (and JWKS is nil), is the issuer JWKS endpoint the
 	// validator fetches and caches by kid.
 	JWKSURL string
+	// KeySetFunc, when set (and JWKS/JWKSURL are nil), supplies the issuer JWKS
+	// live from memory on each cache miss -- used in-process by the token issuer
+	// to verify its own multi-tenant tokens (covers key rotation and newly added
+	// tenant keys without an HTTP fetch).
+	KeySetFunc func() *jose.JSONWebKeySet
 	// HTTPClient overrides the client used for JWKS fetches. Inject a test
 	// server client to override TLS trust without touching production code.
 	HTTPClient *http.Client
@@ -128,7 +136,7 @@ type Validator struct {
 }
 
 // NewValidator constructs a Validator. It requires an issuer, an audience, and
-// exactly one key source (JWKS or JWKSURL).
+// exactly one key source (JWKS, JWKSURL, or KeySetFunc).
 func NewValidator(opts Options) (*Validator, error) {
 	if strings.TrimSpace(opts.Issuer) == "" {
 		return nil, &ConfigError{Detail: "issuer is required"}
@@ -136,8 +144,18 @@ func NewValidator(opts Options) (*Validator, error) {
 	if strings.TrimSpace(opts.Audience) == "" {
 		return nil, &ConfigError{Detail: "audience is required"}
 	}
-	if opts.JWKS == nil && strings.TrimSpace(opts.JWKSURL) == "" {
-		return nil, &ConfigError{Detail: "one of JWKS or JWKSURL is required"}
+	sourceCount := 0
+	if opts.JWKS != nil {
+		sourceCount++
+	}
+	if strings.TrimSpace(opts.JWKSURL) != "" {
+		sourceCount++
+	}
+	if opts.KeySetFunc != nil {
+		sourceCount++
+	}
+	if sourceCount == 0 {
+		return nil, &ConfigError{Detail: "one of JWKS, JWKSURL, or KeySetFunc is required"}
 	}
 
 	nowFunc := opts.Clock
@@ -146,13 +164,16 @@ func NewValidator(opts Options) (*Validator, error) {
 	}
 
 	var src keySource
-	if opts.JWKS != nil {
+	switch {
+	case opts.JWKS != nil:
 		s, err := newStaticKeySource(opts.JWKS)
 		if err != nil {
 			return nil, err
 		}
 		src = s
-	} else {
+	case opts.KeySetFunc != nil:
+		src = newInProcessKeySource(opts.KeySetFunc)
+	default:
 		src = newRemoteKeySource(opts.JWKSURL, opts.HTTPClient, opts.CacheTTL, nowFunc)
 	}
 

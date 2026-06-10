@@ -20,17 +20,19 @@ import (
 	"path/filepath"
 	"strings"
 
-	qrdbcluster "github.com/jeremyhahn/go-qrdb/pkg/cluster"
-	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	quicraftconfig "github.com/jeremyhahn/go-quicraft/pkg/config"
-	xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/factor/fido2"
-	xkmspiv "github.com/jeremyhahn/go-xkms/pkg/factor/piv"
-	xkmspkcs11 "github.com/jeremyhahn/go-xkms/pkg/factor/pkcs11"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
+
+// defaultVolumePoolDirName is the subdirectory under the node data dir that
+// holds the single default volume pool. Its Pebble instances are assigned to
+// barrier-mode tenants by the barrier registry when RegisterTenant is called
+// without an explicit storage backend.
+const defaultVolumePoolDirName = "tenant-pools/default"
 
 // QRDBNodeError describes a failure in the standalone qrdb node lifecycle
 // (construction, shutdown). Stage names the step that failed; Cause is the
@@ -51,14 +53,14 @@ func (e *QRDBNodeError) Error() string {
 // Unwrap returns the underlying cause for errors.Is/As traversal.
 func (e *QRDBNodeError) Unwrap() error { return e.Cause }
 
-// buildQRDBConfig maps a quicbaas *config.Config to a *qrdbconfig.Config.
+// buildQRDBConfig maps a quicbaas *config.Config to a *qrdbsdk.DaemonConfig.
 // When clusterMode is false (standalone), Raft and Discovery fields are left
 // at zero values — the standalone node builder uses a LocalBackend with no
 // quicraft host. When clusterMode is true, Raft address, shard/replica IDs,
 // deployment ID, static peer list, and the discovery method are populated
 // from the quicbaas Raft and Discovery config sections.
-func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbconfig.Config {
-	qcfg := &qrdbconfig.Config{}
+func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbsdk.DaemonConfig {
+	qcfg := &qrdbsdk.DaemonConfig{}
 
 	// ------------------------------------------------------------------ //
 	// Data directory: quicbaas uses Storage.DataDir; qrdb uses Raft.DataDir
@@ -91,7 +93,7 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbconfig.Config {
 	if !ok {
 		qrdbBackend = "memory"
 	}
-	qcfg.Databases = []qrdbconfig.DatabaseConfig{
+	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		{Name: "default", Engine: "mvcc", Backend: qrdbBackend},
 	}
 
@@ -105,6 +107,18 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbconfig.Config {
 	}
 	qcfg.Seal.ShamirThreshold = cfg.Seal.Threshold
 	qcfg.Seal.ShamirTotal = cfg.Seal.TotalShares
+
+	// Provision a default volume pool so the barrier registry can satisfy
+	// RegisterTenant calls that do not supply an explicit storage backend.
+	// Without this the node returns ErrPoolNotConfigured for every per-tenant
+	// barrier registration. The pool is skipped for pure in-memory nodes
+	// (dataDir == "") because there is no durable path to anchor it to.
+	if dataDir != "" && len(qcfg.Storage.VolumePools) == 0 {
+		poolPath := filepath.Join(dataDir, defaultVolumePoolDirName)
+		qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{
+			{Name: "default", Paths: []string{poolPath}, Strategy: "round_robin"},
+		}
+	}
 
 	if !clusterMode {
 		// Standalone: no Raft host, no discovery. The node builder applies
@@ -303,16 +317,16 @@ func buildXKMSFactors(cfg *config.Config) []qrdbsdk.AuthFactorPlugin {
 		rpID = cfg.IAM.WebAuthn.RPID
 	}
 	return []qrdbsdk.AuthFactorPlugin{
-		xkmsfido2.New(xkmsfido2.Config{RPID: rpID}),
-		xkmspiv.New(xkmspiv.Config{}),
-		xkmspkcs11.New(xkmspkcs11.Config{}),
+		xkmssdk.NewFIDO2Factor(xkmssdk.FIDO2FactorConfig{RPID: rpID}),
+		xkmssdk.NewPIVFactor(xkmssdk.PIVFactorConfig{}),
+		xkmssdk.NewPKCS11Factor(xkmssdk.PKCS11FactorConfig{}),
 	}
 }
 
 // initStandaloneQRDBNode constructs the real qrdb standalone node for
 // quicbaas standalone mode. It:
 //
-//  1. Builds a *qrdbconfig.Config from the quicbaas config.
+//  1. Builds a *qrdbsdk.DaemonConfig from the quicbaas config.
 //  2. Calls XKMSCryptoOptions to inject hardware crypto strategies
 //     from the seal_factory_*.go registry into qrdb's server.New.
 //  3. Calls qrdbnode.NewStandaloneNode with the composed server options so
@@ -424,7 +438,7 @@ func (s *Server) stopQRDBNode() error {
 // initClusteredQRDBNode constructs the real qrdb clustered node for
 // quicbaas cluster mode. It:
 //
-//  1. Builds a *qrdbconfig.Config from the quicbaas config with Raft and
+//  1. Builds a *qrdbsdk.DaemonConfig from the quicbaas config with Raft and
 //     Discovery fields populated for multi-node operation.
 //  2. Parses the members map (replicaID → raftAddress) from the static
 //     peer list in cfg.Raft.JoinAddresses (format: "id=host:port").
@@ -554,7 +568,7 @@ func buildClusterMembers(cfg *config.Config) (map[uint64]string, error) {
 	}
 
 	if len(peerStrings) > 0 {
-		return qrdbcluster.ParsePeers(peerStrings)
+		return qrdbsdk.ParsePeers(peerStrings)
 	}
 
 	// No id-prefixed peers: single-node clustered mode.

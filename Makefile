@@ -1171,6 +1171,11 @@ integration-test-seal: ## Run cloud-backed barrier seal integration tests (awskm
 	fi; \
 	exit $$RESULT
 
+.PHONY: integration-test-tenantbarrier
+integration-test-tenantbarrier: ## Run per-tenant barrier REST integration tests against the shared integration cluster
+	@echo "$(BLUE)Running per-tenant barrier integration tests...$(NC)"
+	QUICBAAS_TEST_FILTER="./test/integration/tenantbarrier/..." $(MAKE) integration-test
+
 .PHONY: integration-test-seal-hardware
 integration-test-seal-hardware: ## Run hardware-backed barrier seal integration tests (swtpm + SoftHSM2) in Docker
 	@echo "$(BLUE)Running hardware-seal integration tests (tpm2/swtpm + pkcs11/SoftHSM2)...$(NC)"

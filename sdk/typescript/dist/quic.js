@@ -154,6 +154,9 @@ export class QuicClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     secrets = null;
     barrier;
+    // Per-tenant barrier is a REST-only surface; non-REST transports stub it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tenantBarrier = null;
     ceremony;
     bootstrap;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -442,7 +442,7 @@ func (failingTokenSource) Token() (*oauth2.Token, error) {
 func TestEventForwarder_Dial_TLSPath(t *testing.T) {
 	tlsForwarder := newTestForwarder(t, EventForwarderConfig{
 		ServerAddr: "127.0.0.1:9",
-		TLSConfig:  &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only
+		TLSConfig:  &tls.Config{MinVersion: tls.VersionTLS13},
 	})
 	conn, err := tlsForwarder.dial(context.Background())
 	if err != nil {

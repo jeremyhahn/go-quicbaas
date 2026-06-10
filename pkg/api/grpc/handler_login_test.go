@@ -129,10 +129,12 @@ func TestLoginServer_FinishLogin_MTLS_NoPeerCert_FailsClosed(t *testing.T) {
 
 // TestLoginServer_FinishLogin_MTLS_PeerCertWins asserts the gRPC handler
 // derives the lookup key from the verified peer cert, overriding a spoofed
-// request value (anti-spoofing).
+// request value (anti-spoofing). The primary key is the renewal-stable SPKI
+// thumbprint; the legacy SHA-256(cert.Raw) key rides in AltLookupKeys.
 func TestLoginServer_FinishLogin_MTLS_PeerCertWins(t *testing.T) {
 	cert := grpcTestCert(t)
-	wantKey := sha256.Sum256(cert.Raw)
+	wantKey := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	wantAlt := sha256.Sum256(cert.Raw)
 
 	fake := &fakeLoginClient{finishResp: &qrdbtransport.FinishLoginResponse{
 		Bearer:    "ok",
@@ -158,6 +160,11 @@ func TestLoginServer_FinishLogin_MTLS_PeerCertWins(t *testing.T) {
 	}
 	if !bytes.Equal(fake.finishReq.LookupKey, wantKey[:]) {
 		t.Fatalf("lookup key = %x, want %x", fake.finishReq.LookupKey, wantKey[:])
+	}
+	if len(fake.finishReq.AltLookupKeys) != 1 ||
+		!bytes.Equal(fake.finishReq.AltLookupKeys[0], wantAlt[:]) {
+		t.Fatalf("alt lookup keys = %x, want one legacy SHA-256(cert.Raw) = %x",
+			fake.finishReq.AltLookupKeys, wantAlt[:])
 	}
 	if resp.GetBearer() != "ok" || resp.GetIdentity().GetSubject() != "grpc-user" {
 		t.Fatalf("unexpected response: %+v", resp)

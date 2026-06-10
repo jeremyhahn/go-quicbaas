@@ -21,8 +21,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	xkmswebauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
 // MountXKMSWebAuthnRoutes registers xkms's native WebAuthn HTTP
@@ -37,10 +38,12 @@ import (
 // the new path is the recommended canonical surface for tenant-scoped
 // FIDO2 ceremonies.
 //
-// The xkms-backed manager must be available; the route mount is
-// skipped silently otherwise (the legacy handlers continue to work).
-func (h *IAMHandler) MountXKMSWebAuthnRoutes(router chi.Router) {
-	factory := h.resolveWebAuthnFactory()
+// ctx is the initialization context used for the WebAuthn manager lookup;
+// callers must supply a context tied to server startup rather than
+// context.Background(). The route mount is skipped silently when the
+// xkms-backed manager is unavailable (the legacy handlers continue to work).
+func (h *IAMHandler) MountXKMSWebAuthnRoutes(ctx context.Context, router chi.Router) {
+	factory := h.resolveWebAuthnFactory(ctx)
 	if factory == nil {
 		return
 	}
@@ -57,8 +60,10 @@ func (h *IAMHandler) MountXKMSWebAuthnRoutes(router chi.Router) {
 // resolveWebAuthnFactory pulls the xkms-backed factory out of the
 // service layer when the WebAuthn manager is the multi-tenant
 // XKMSWebAuthnManager. Returns nil otherwise (legacy code path or
-// uninitialized).
-func (h *IAMHandler) resolveWebAuthnFactory() *iam.WebAuthnServiceFactory {
+// uninitialized). ctx is the initialization context used for the manager
+// lookup; it should be a short-lived context tied to server startup, not
+// context.Background().
+func (h *IAMHandler) resolveWebAuthnFactory(ctx context.Context) *iam.WebAuthnServiceFactory {
 	if h.server == nil || h.server.service == nil {
 		return nil
 	}
@@ -68,7 +73,7 @@ func (h *IAMHandler) resolveWebAuthnFactory() *iam.WebAuthnServiceFactory {
 	if !ok {
 		return nil
 	}
-	mgr, err := getter.GetWebAuthnManager(context.Background())
+	mgr, err := getter.GetWebAuthnManager(ctx)
 	if err != nil || mgr == nil {
 		return nil
 	}
@@ -102,7 +107,7 @@ func buildXKMSWebAuthnDispatcher(factory *iam.WebAuthnServiceFactory) http.Handl
 			http.Error(w, "tenant webauthn service unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		handler := xkmswebauthnhttp.NewHandler(svc)
+		handler := xkmssdk.NewWebAuthnHTTPHandler(svc)
 
 		// Compute the suffix the xkms HandlerFunc expects: strip the
 		// "/api/v1/iam/{tenantID}/webauthn" prefix from r.URL.Path.

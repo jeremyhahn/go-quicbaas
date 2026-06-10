@@ -117,11 +117,13 @@ func TestLoginService_FinishLogin_MTLS_NetworkNoCert_FailsClosed(t *testing.T) {
 
 // TestLoginService_FinishLogin_MTLS_PeerCertWins is the anti-spoofing test: the
 // request carries a DIFFERENT lookup key than the verified peer certificate.
-// The facade MUST overwrite the request key with SHA-256(peerCert.Raw) so the
-// spoofed value is rejected.
+// The facade MUST overwrite the request key with the renewal-stable SPKI
+// thumbprint SHA-256(peerCert.RawSubjectPublicKeyInfo) — carrying the legacy
+// SHA-256(peerCert.Raw) key in AltLookupKeys — so the spoofed value is rejected.
 func TestLoginService_FinishLogin_MTLS_PeerCertWins(t *testing.T) {
 	cert := newTestCert(t, "real-user")
-	expectedKey := sha256.Sum256(cert.Raw)
+	expectedKey := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	expectedAlt := sha256.Sum256(cert.Raw)
 
 	fake := &fakeLoginClient{finishResp: &qrdbtransport.FinishLoginResponse{Bearer: "ok"}}
 	svc := NewLoginService(fake)
@@ -143,8 +145,13 @@ func TestLoginService_FinishLogin_MTLS_PeerCertWins(t *testing.T) {
 		t.Fatal("spoofed lookup key was forwarded; peer cert did NOT win")
 	}
 	if !bytes.Equal(fake.gotFinishReq.LookupKey, expectedKey[:]) {
-		t.Fatalf("forwarded lookup key = %x, want SHA-256(cert.Raw) = %x",
+		t.Fatalf("forwarded lookup key = %x, want SHA-256(cert.RawSubjectPublicKeyInfo) = %x",
 			fake.gotFinishReq.LookupKey, expectedKey[:])
+	}
+	if len(fake.gotFinishReq.AltLookupKeys) != 1 ||
+		!bytes.Equal(fake.gotFinishReq.AltLookupKeys[0], expectedAlt[:]) {
+		t.Fatalf("alt lookup keys = %x, want one legacy SHA-256(cert.Raw) = %x",
+			fake.gotFinishReq.AltLookupKeys, expectedAlt[:])
 	}
 }
 
@@ -222,7 +229,7 @@ func TestLoginService_FinishLogin_FIDO2_ForwardsUnchanged(t *testing.T) {
 // overrides the in-process trust shortcut).
 func TestLoginService_FinishLogin_MTLS_CertWinsEvenWhenEmbeddedMarked(t *testing.T) {
 	cert := newTestCert(t, "real-user")
-	expectedKey := sha256.Sum256(cert.Raw)
+	expectedKey := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 
 	fake := &fakeLoginClient{finishResp: &qrdbtransport.FinishLoginResponse{Bearer: "ok"}}
 	svc := NewLoginService(fake)

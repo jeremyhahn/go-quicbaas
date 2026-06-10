@@ -66,6 +66,10 @@ type TenantSettings struct {
 	SessionIdleTimeout time.Duration       `json:"session_idle_timeout,omitempty" yaml:"session_idle_timeout,omitempty"`
 	TokenTTL           time.Duration       `json:"token_ttl,omitempty" yaml:"token_ttl,omitempty"`
 	RefreshTokenTTL    time.Duration       `json:"refresh_token_ttl,omitempty" yaml:"refresh_token_ttl,omitempty"`
+	// AuthzMode optionally overrides the deployment-level security.authz_mode
+	// for this tenant. Valid values: "offline", "online", "hybrid". Empty means
+	// "use the deployment default".
+	AuthzMode string `json:"authz_mode,omitempty" yaml:"authz_mode,omitempty"`
 }
 
 // TenantQuotas defines BaaS-layer IAM resource limits for a tenant.

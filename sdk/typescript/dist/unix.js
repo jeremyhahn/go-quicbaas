@@ -116,6 +116,8 @@ export class UnixClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     barrier = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tenantBarrier = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ceremony = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     bootstrap = null;

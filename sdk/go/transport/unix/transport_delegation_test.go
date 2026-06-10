@@ -23,7 +23,7 @@ func newWiredTransport(t *testing.T) *Transport {
 	cfg := &transport.Config{
 		Address:   "/tmp/quicbaas-unix-delegation-test.sock",
 		Timeout:   100 * time.Millisecond,
-		TLSConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13},
 	}
 	tr, err := New(cfg)
 	if err != nil {

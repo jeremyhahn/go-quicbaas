@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -64,7 +64,7 @@ func (i *oidcSessionIssuer) SetProvider(p *iam.OIDCProvider) {
 var _ qrdbembedded.SessionIssuer = (*oidcSessionIssuer)(nil)
 
 // Issue mints an OIDC access token for a verified login identity.
-func (i *oidcSessionIssuer) Issue(ctx context.Context, identity *qrdbauth.Identity) (string, time.Time, error) {
+func (i *oidcSessionIssuer) Issue(ctx context.Context, identity *qrdbsdk.Identity) (string, time.Time, error) {
 	if identity == nil {
 		return "", time.Time{}, &NilLoginIdentityError{}
 	}
@@ -94,7 +94,7 @@ func (i *oidcSessionIssuer) Issue(ctx context.Context, identity *qrdbauth.Identi
 }
 
 // Resolve validates a previously issued bearer and reconstructs the identity.
-func (i *oidcSessionIssuer) Resolve(ctx context.Context, bearer string) (*qrdbauth.Identity, error) {
+func (i *oidcSessionIssuer) Resolve(ctx context.Context, bearer string) (*qrdbsdk.Identity, error) {
 	provider := i.provider.Load()
 	if provider == nil {
 		return nil, &LoginCeremonyUnavailableError{}
@@ -103,7 +103,7 @@ func (i *oidcSessionIssuer) Resolve(ctx context.Context, bearer string) (*qrdbau
 	if err != nil {
 		return nil, err
 	}
-	identity := &qrdbauth.Identity{
+	identity := &qrdbsdk.Identity{
 		Subject:  claims.Subject,
 		TenantID: claims.TenantID,
 		Roles:    claims.Roles,

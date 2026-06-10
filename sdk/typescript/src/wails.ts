@@ -679,6 +679,8 @@ export class WailsClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly barrier: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly tenantBarrier: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly ceremony: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly bootstrap: any = null;

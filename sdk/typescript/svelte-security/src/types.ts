@@ -95,6 +95,27 @@ export interface BarrierClient {
 }
 
 // ---------------------------------------------------------------------------
+// Per-tenant barrier initialization
+//
+// The per-tenant barrier supports three initialization strategies. These
+// mirror the broker's REST contract so the BarrierStrategyPicker can emit a
+// request the parent forwards verbatim to the SDK tenant-barrier client.
+// ---------------------------------------------------------------------------
+
+/** TenantBarrierStrategy identifies how a tenant's barrier is sealed. */
+export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
+
+/**
+ * TenantBarrierInitParams is the discriminated init payload emitted by
+ * BarrierStrategyPicker. Each variant carries only the parameters relevant to
+ * its strategy so the parent never has to validate field presence.
+ */
+export type TenantBarrierInitParams =
+  | { strategy: 'none' }
+  | { strategy: 'passphrase'; passphrase: string }
+  | { strategy: 'shamir'; threshold: number; shares: number };
+
+// ---------------------------------------------------------------------------
 // Ceremony
 // ---------------------------------------------------------------------------
 

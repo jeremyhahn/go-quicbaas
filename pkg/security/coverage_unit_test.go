@@ -133,7 +133,7 @@ func TestEncMgr_RotateKeysSucceeds(t *testing.T) {
 
 	assert.Equal(t, byte(1), em.GetKeyVersion())
 
-	err = em.RotateKeys()
+	err = em.RotateKeys(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, byte(2), em.GetKeyVersion())
 }
@@ -142,7 +142,7 @@ func TestEncMgr_RotateKeysNoopDisabled(t *testing.T) {
 	log := createTestLogger(t)
 	em, err := NewEncryptionManager(&EncryptionConfig{Enabled: false}, log)
 	require.NoError(t, err)
-	assert.NoError(t, em.RotateKeys())
+	assert.NoError(t, em.RotateKeys(context.Background()))
 }
 
 func TestEncMgr_GetKeyVersionZeroDisabled(t *testing.T) {
@@ -239,7 +239,7 @@ func TestEncMgr_EncryptDecryptAfterRotation(t *testing.T) {
 	defer em.keyring.Close()
 
 	// Rotate to v2
-	require.NoError(t, em.RotateKeys())
+	require.NoError(t, em.RotateKeys(context.Background()))
 	assert.Equal(t, byte(2), em.GetKeyVersion())
 
 	// Encrypt and decrypt with v2
@@ -305,7 +305,7 @@ func TestKR_RotateKeyDeactivatesOld(t *testing.T) {
 	require.NoError(t, err)
 	defer kr.Close()
 
-	newKey, err := kr.RotateKey()
+	newKey, err := kr.RotateKey(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, byte(2), newKey.Version)
 	assert.True(t, newKey.Active)
@@ -322,7 +322,7 @@ func TestKR_GetKeyMetadataAfterRotation(t *testing.T) {
 	defer kr.Close()
 
 	assert.Len(t, kr.GetKeyMetadata(), 1)
-	_, err = kr.RotateKey()
+	_, err = kr.RotateKey(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, kr.GetKeyMetadata(), 2)
 }

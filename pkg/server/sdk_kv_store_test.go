@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
@@ -40,8 +39,9 @@ func createTestSDKKVStore(t *testing.T) *sdkKVStore {
 	t.Helper()
 
 	ctx := context.Background()
-	cfg := &qrdbconfig.Config{}
-	cfg.Databases = []qrdbconfig.DatabaseConfig{
+	cfg := &qrdbsdk.DaemonConfig{}
+	cfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		{Name: "default", Engine: "mvcc", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)

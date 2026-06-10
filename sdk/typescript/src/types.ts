@@ -1655,6 +1655,85 @@ export interface BarrierRekeyResponse {
   total_shares: number;
 }
 
+// ---------------------------------------------------------------------------
+// Per-tenant barrier
+//
+// The broker exposes a dedicated per-tenant barrier under
+// /api/v1/tenants/{id}/barrier/*. Unlike the system barrier (a single
+// process-wide cryptographic boundary), each tenant that selects the
+// "barrier" isolation mode owns an independent barrier whose strategy,
+// sealed state, and Shamir quorum are scoped to that tenant. The request and
+// response shapes below mirror the broker's REST contract exactly (snake_case
+// wire fields) so the SDK round-trips the JSON without transformation.
+// ---------------------------------------------------------------------------
+
+/** TenantBarrierStrategy identifies how a tenant's barrier is sealed. */
+export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
+
+// TenantBarrierInitRequest initializes a tenant's barrier with the chosen
+// strategy. passphrase is required for the "passphrase" strategy; threshold
+// and shares are required for the "shamir" strategy and ignored otherwise.
+export interface TenantBarrierInitRequest {
+  /** Sealing strategy to provision for the tenant. */
+  strategy: TenantBarrierStrategy;
+  /** Passphrase used to derive the master key (passphrase strategy). */
+  passphrase?: string;
+  /** Minimum shares required to reconstruct the master key (shamir strategy). */
+  threshold?: number;
+  /** Total shares to generate (shamir strategy). */
+  shares?: number;
+}
+
+// TenantBarrierInitResponse is returned for the shamir strategy and carries
+// the freshly minted shares. The "none" and "passphrase" strategies return
+// 204 No Content, so callers receive undefined for those.
+export interface TenantBarrierInitResponse {
+  /** Tenant whose barrier was initialized. */
+  tenant_id: string;
+  /** Sealing strategy that was provisioned. */
+  strategy: TenantBarrierStrategy;
+  /** Shamir shares for distribution — returned exactly once. */
+  shares: string[];
+  /** Threshold required for reconstruction. */
+  threshold: number;
+  /** Total shares generated. */
+  total_shares: number;
+}
+
+// TenantBarrierUnsealShareResponse reports progress toward the tenant's unseal
+// quorum after submitting a single Shamir share.
+export interface TenantBarrierUnsealShareResponse {
+  /** Tenant whose barrier received the share. */
+  tenant_id: string;
+  /** Number of shares required to unseal. */
+  required: number;
+  /** Number of shares submitted so far. */
+  submitted: number;
+  /** True when the quorum threshold has been met. */
+  complete: boolean;
+  /** True while the tenant barrier remains sealed. */
+  sealed: boolean;
+}
+
+// TenantBarrierStatusResponse describes the current state of a tenant's
+// dedicated barrier.
+export interface TenantBarrierStatusResponse {
+  /** Tenant the status describes. */
+  tenant_id: string;
+  /** True when the tenant barrier is sealed. */
+  sealed: boolean;
+  /** True once the tenant barrier has been initialized. */
+  initialized: boolean;
+  /** Active sealing strategy ("none", "passphrase", "shamir"). */
+  strategy: TenantBarrierStrategy;
+  /** True when the active strategy uses dedicated cryptographic hardware. */
+  hardware_backed: boolean;
+  /** Minimum shares required to unseal (shamir strategy). */
+  shamir_threshold: number;
+  /** Total shares minted by the last init (shamir strategy). */
+  shamir_total: number;
+}
+
 // BarrierGenerateRecoveryKeysRequest holds parameters for generating
 // recovery keys. Mirrors transport.BarrierGenerateRecoveryKeysRequest.
 export interface BarrierGenerateRecoveryKeysRequest {

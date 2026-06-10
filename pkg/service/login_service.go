@@ -125,12 +125,22 @@ func isEmbeddedTrusted(ctx context.Context) bool {
 	return trusted
 }
 
-// mtlsLookupKey returns the canonical login lookup key for an mtls factor:
+// mtlsLookupKey returns the legacy login lookup key for an mtls factor:
 // SHA-256 over the certificate's DER encoding. This MUST match the key the
 // factor was enrolled with — go-qrdb pkg/auth.CredentialKey(cert.Raw) — so the
 // resolver's LookupByCredentialKey finds the enrolled mtls factor.
 func mtlsLookupKey(cert *x509.Certificate) []byte {
 	sum := sha256.Sum256(cert.Raw)
+	return sum[:]
+}
+
+// mtlsSPKILookupKey returns the renewal-stable login lookup key for an mtls
+// factor: SHA-256 over the certificate's SubjectPublicKeyInfo. This MUST
+// match go-qrdb pkg/auth.SPKICredentialKey(cert) — the key the factor's
+// SPKICredential index was enrolled with — so a certificate renewed with the
+// same keypair keeps resolving to its factor after the cert.Raw key changed.
+func mtlsSPKILookupKey(cert *x509.Certificate) []byte {
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 	return sum[:]
 }
 
@@ -200,9 +210,14 @@ func (s *LoginService) FinishLogin(ctx context.Context, req *qrdbtransport.Finis
 		cert := VerifiedPeerCertFromContext(ctx)
 		switch {
 		case cert != nil:
-			// Authoritative: overwrite whatever the client sent.
+			// Authoritative: overwrite whatever the client sent. Try the
+			// renewal-stable SPKI key first, then fall back to the legacy
+			// SHA-256(cert.Raw) key for factors enrolled before the SPKI
+			// index existed. Both keys ride in ONE FinishLogin call because
+			// the node consumes the login session before resolution.
 			out := *req
-			out.LookupKey = mtlsLookupKey(cert)
+			out.LookupKey = mtlsSPKILookupKey(cert)
+			out.AltLookupKeys = [][]byte{mtlsLookupKey(cert)}
 			return s.client.FinishLogin(ctx, out)
 		case isEmbeddedTrusted(ctx):
 			// In-process trust: the caller runs inside the daemon. The

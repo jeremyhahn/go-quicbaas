@@ -194,7 +194,7 @@ func (a *caServiceAdapter) IssueCertificate(
 
 	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID)
 
-	cert, err := a.getCA().SignCSR(csrPEM, opts)
+	cert, err := a.getCA().SignCSR(ctx, csrPEM, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +310,7 @@ func (a *caServiceAdapter) SignCSR(
 
 	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID)
 
-	cert, err := a.getCA().SignCSR(req.CSRPEM, opts)
+	cert, err := a.getCA().SignCSR(ctx, req.CSRPEM, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func (a *caServiceAdapter) SignCSR(
 //
 // The default sign profile is applied (no SPIFFE synthesis): ACME issuance is
 // driven by the requester's CSR identifiers, not a tenant-scoped login leaf.
-func (a *caServiceAdapter) SignCSRPEM(_ context.Context, csrPEM []byte) (certPEM, chainPEM []byte, err error) {
+func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, csrPEM []byte) (certPEM, chainPEM []byte, err error) {
 	if len(csrPEM) == 0 {
 		return nil, nil, ErrCAServiceAdapterInvalidPEM
 	}
@@ -341,7 +341,7 @@ func (a *caServiceAdapter) SignCSRPEM(_ context.Context, csrPEM []byte) (certPEM
 	if ca == nil {
 		return nil, nil, ErrCAServiceAdapterNilCA
 	}
-	cert, err := ca.SignCSR(csrPEM, nil)
+	cert, err := ca.SignCSR(ctx, csrPEM, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -371,7 +371,7 @@ func (a *caServiceAdapter) RevokeCertificate(
 		return nil, ErrCAServiceAdapterInvalidSerial
 	}
 
-	if err := a.getCA().Revoke(serial, req.Reason); err != nil {
+	if err := a.getCA().Revoke(ctx, serial, req.Reason); err != nil {
 		return &xkmstransport.RevokeCertificateResponse{
 			Success: false,
 			Message: err.Error(),
@@ -429,7 +429,7 @@ func (a *caServiceAdapter) GenerateCRL(
 	req *xkmstransport.GenerateCRLRequest,
 ) (*xkmstransport.GenerateCRLResponse, error) {
 
-	crlDER, err := a.getCA().GenerateCRL()
+	crlDER, err := a.getCA().GenerateCRL(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -545,12 +545,12 @@ func (a *caServiceAdapter) CrossSignedRootPEMs() ([][]byte, error) {
 // referenced by cert's AIA extension into the certificate store,
 // satisfying service.TrustCA. It delegates directly to the wrapped
 // TrustedCA, which owns the canonical AIA-walk implementation.
-func (a *caServiceAdapter) ImportIssuingCAs(cert *x509.Certificate) error {
+func (a *caServiceAdapter) ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) error {
 	ca := a.getCA()
 	if ca == nil {
 		return ErrCAServiceAdapterNilCA
 	}
-	return ca.ImportIssuingCAs(cert)
+	return ca.ImportIssuingCAs(ctx, cert)
 }
 
 // parseTransportSANs converts the prefixed-string SAN format used by

@@ -126,6 +126,13 @@ func (s *Server) startQUICServer() error {
 	quicServer.SetCeremonyService(ceremonySvc)
 	s.logger.Info("Barrier and Ceremony services wired into QUIC server (qrdb-quic ALPN)")
 
+	// Wire the per-tenant barrier facade into the QUIC server so the
+	// qrdb-quic ALPN dispatcher can serve tenant.Barrier* RPCs. Same facade
+	// as gRPC/REST/MCP — quicbaas owns no barrier logic. When nil (qrdb not
+	// yet online) the handlers return the not-configured error.
+	quicServer.SetTenantBarrierService(s.buildTenantBarrierService())
+	s.logger.Info("Tenant barrier service wired into QUIC server (qrdb-quic ALPN)")
+
 	// Wire the best-effort tenant-derivation hook. It derives the caller's
 	// tenant from the verified mTLS peer certificate (pinned SPIFFE trust
 	// domain, then home-realm discovery) and stamps it onto the request context

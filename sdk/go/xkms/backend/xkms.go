@@ -4,16 +4,16 @@
 // Imported by trusted-platform's PIV backend adapter.
 package backend
 
-import xkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
+import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-type Backend = xkms.Backend
+type Backend = xkmssdk.ServiceBackend
 
 var (
-	GeneratePIVKey       = xkms.GeneratePIVKey
-	GetPIVCertificate    = xkms.GetPIVCertificate
-	InitializePIV        = xkms.InitializePIV
-	ListPIVSlots         = xkms.ListPIVSlots
-	StorePIVCertificate  = xkms.StorePIVCertificate
-	ErrPIVInvalidSlot    = xkms.ErrPIVInvalidSlot
-	ErrPIVNotInitialized = xkms.ErrPIVNotInitialized
+	GeneratePIVKey       = xkmssdk.GeneratePIVKey
+	GetPIVCertificate    = xkmssdk.GetPIVCertificate
+	InitializePIV        = xkmssdk.InitializePIV
+	ListPIVSlots         = xkmssdk.ListPIVSlots
+	StorePIVCertificate  = xkmssdk.StorePIVCertificate
+	ErrPIVInvalidSlot    = xkmssdk.ServiceErrPIVInvalidSlot
+	ErrPIVNotInitialized = xkmssdk.ServiceErrPIVNotInitialized
 )

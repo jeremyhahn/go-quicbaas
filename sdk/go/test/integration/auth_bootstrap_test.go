@@ -29,20 +29,83 @@ import (
 )
 
 // dataPlaneScopes are the qrdb-canonical colon "resource:action" scopes the SDK
-// integration suite needs to exercise the protected data plane under the
-// default-deny gate (QUICBAAS_SECURITY_REQUIRE_AUTHZ=true). They mirror the
-// gate's scope table in pkg/api/rest/authz_default_deny.go for the surfaces the
-// suite touches: entity KV (kv:get / kv:put) plus the scheduler (no specific
-// scope, just a valid token). For the client_credentials grant (no user/roles)
-// the scp claim falls back to these requested scopes, so they must be the colon
-// grammar the gate now matches. Requesting them broadly keeps a single
-// bootstrap token usable across every authed helper.
+// integration suite requests for its single bootstrap token under the
+// default-deny gate (QUICBAAS_SECURITY_REQUIRE_AUTHZ=true).
+//
+// Why requested scopes end up in the token's scp: the suite authenticates via
+// the public client_credentials grant (DCR client, no user, no qrdb roles). For
+// that grant the issuer's scp precedence (pkg/iam/oidc_tokens.go
+// GenerateAccessToken) resolves the subject's effective qrdb permissions FIRST,
+// but a roleless service account resolves to the empty set
+// (go-qrdb pkg/role/store.go ResolvePermissions over zero roles), so scp falls
+// through to parseScopes(claims.Scope) — i.e. the OAuth-requested scopes carried
+// here. The offline platform validator's RequireScope then matches scp against
+// the colon perm each PEP demands. Requesting the full registered colon set keeps
+// one bootstrap token usable across every authed helper.
+//
+// Each entry is a REGISTERED qrdb permission (resource:action) and aligns with
+// the REST gate tables the suite is exercised against:
+//   - default-deny scope table (pkg/api/rest/authz_default_deny.go)
+//   - PEP CRUD + special-rule maps  (pkg/api/rest/authz_pep_mapping.go)
+//
+// Surfaces the suite actually touches today: entity KV (/api/v1/entities ->
+// kv:*) and the scheduler (/api/v1/scheduler/jobs* -> scheduler:*; the scheduler
+// is absent from the default-deny scope table so it needs only a valid token,
+// but the scheduler verbs are requested anyway so the token authorizes if the
+// gate is ever tightened). The remaining data-plane families are requested so a
+// single token covers the broader REST data plane (kv/keys/certs/credentials/
+// tenants plus the broker data-plane families that have a registered perm set).
 var dataPlaneScopes = []string{
-	"kv:get", "kv:put",
-	"tenants:read", "tenants:create",
-	"credentials:retrieve", "credentials:store",
-	"keys:get", "keys:create",
-	"certs:read", "certs:generate",
+	// KV data plane (entities/keys/kv/query/entity-types/batch).
+	"kv:get", "kv:put", "kv:delete", "kv:list",
+
+	// Cryptographic key operations (kms/crypto/dek).
+	"keys:get", "keys:list", "keys:create", "keys:delete",
+
+	// Certificate / trust / ACME control plane.
+	"certs:read", "certs:list", "certs:generate", "certs:revoke",
+
+	// Secret / named-credential rotation.
+	"credentials:retrieve", "credentials:list", "credentials:store", "credentials:delete",
+
+	// IAM tenant/user/role admin surface.
+	"tenants:read", "tenants:list", "tenants:create", "tenants:delete",
+
+	// Transactions / timeseries data services.
+	"transaction:execute",
+	"timeseries:query", "timeseries:write",
+
+	// Tenant barrier + ceremony lifecycle.
+	"tenant_barrier:status", "tenant_barrier:init", "tenant_barrier:seal", "tenant_barrier:unseal",
+	"ceremony:status", "ceremony:initialize",
+
+	// Scheduler job lifecycle (heavily exercised by scheduler_test.go).
+	"scheduler:read", "scheduler:list", "scheduler:create", "scheduler:update",
+	"scheduler:delete", "scheduler:trigger", "scheduler:pause", "scheduler:resume",
+	"scheduler:cancel", "scheduler:history", "scheduler:status",
+
+	// Object storage.
+	"objstore:get", "objstore:list", "objstore:put", "objstore:delete",
+
+	// Orchestrator.
+	"orchestrator:status", "orchestrator:list", "orchestrator:spawn", "orchestrator:close",
+
+	// Messaging.
+	"messaging:channel_read", "messaging:channel_list", "messaging:channel_create",
+	"messaging:channel_delete", "messaging:publish", "messaging:subscribe",
+
+	// Parameter store.
+	"parameters:read", "parameters:list", "parameters:write", "parameters:delete",
+
+	// Dynamic secrets.
+	"dynamic_secrets:role_read", "dynamic_secrets:role_list", "dynamic_secrets:role_create",
+	"dynamic_secrets:role_delete", "dynamic_secrets:generate",
+
+	// Project + membership.
+	"project:read", "project:list", "project:create", "project:delete",
+
+	// Ollama embedding inference.
+	"ollama:health", "ollama:model_list", "ollama:embed",
 }
 
 var (

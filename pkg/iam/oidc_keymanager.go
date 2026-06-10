@@ -16,6 +16,7 @@
 package iam
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/sha256"
@@ -157,19 +158,19 @@ func es256KeyAttributes(cn, tenantID, storeType string) *xkmssdk.KeyAttributes {
 // generates the key and returns the new signer. This is idempotent across
 // restarts because xkms keystores persist key material; the first Signer call
 // succeeds for any previously created key.
-func loadSignerForAttrs(attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
-	signer, err := xkms.Signer(attrs)
+func loadSignerForAttrs(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
+	signer, err := xkms.Signer(ctx, attrs)
 	if err == nil {
 		return signer, nil
 	}
 
 	// Generate on first boot (or when the key was removed). GenerateKey
 	// surfaces a real error if the backend cannot create the key.
-	if _, genErr := xkms.GenerateKey(attrs); genErr != nil {
+	if _, genErr := xkms.GenerateKey(ctx, attrs); genErr != nil {
 		return nil, genErr
 	}
 
-	signer, err = xkms.Signer(attrs)
+	signer, err = xkms.Signer(ctx, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +210,7 @@ func NewSigningKeyManagerFromXKMS(cn string, tenantID string) (*SigningKeyManage
 	}
 
 	attrs := es256KeyAttributes(cn, tenantID, storeType)
-	signer, err := loadSignerForAttrs(attrs)
+	signer, err := loadSignerForAttrs(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -337,11 +338,11 @@ func (m *SigningKeyManager) Rotate() error {
 	// fresh material (a new key with a new public key, hence a new derived
 	// kid). We then fetch the signer for that material; backends may return a
 	// handle whose private key never leaves the device.
-	if _, err := xkms.RotateKey(m.rotationKID()); err != nil {
+	if _, err := xkms.RotateKey(context.Background(), m.rotationKID()); err != nil {
 		return err
 	}
 
-	signer, err := xkms.Signer(attrs)
+	signer, err := xkms.Signer(context.Background(), attrs)
 	if err != nil {
 		return err
 	}

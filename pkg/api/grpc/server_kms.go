@@ -40,7 +40,6 @@ import (
 // KMSServer wraps the KMS manager for gRPC endpoints.
 type KMSServer struct {
 	pb.UnimplementedKeyManagementServer
-	pb.UnimplementedDeleteKeyPolicyServer
 	pb.UnimplementedKeyRotationPolicyServer
 	kmsMgr   interfaces.KMSManager
 	kmsSvc   service.KMSService // optional: for service-layer operations

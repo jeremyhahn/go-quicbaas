@@ -20,10 +20,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
-	"github.com/jeremyhahn/go-xkms/pkg/auth_factors"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -76,7 +76,7 @@ func (v *tenantWebAuthnVerifier) Type() qrdbtransport.FactorType {
 // tenantService resolves the per-tenant xkms WebAuthn verifier for the given
 // login tenant. It fails closed when the tenant is empty or the factory is
 // unbound — never returning a verifier scoped to a different tenant.
-func (v *tenantWebAuthnVerifier) tenantVerifier(ctx context.Context, tenantID string, op string) (*auth_factors.WebAuthnFactorVerifier, error) {
+func (v *tenantWebAuthnVerifier) tenantVerifier(ctx context.Context, tenantID string, op string) (*xkmssdk.WebAuthnFactorVerifier, error) {
 	if tenantID == "" {
 		return nil, &EmptyLoginTenantError{Op: op}
 	}
@@ -88,7 +88,7 @@ func (v *tenantWebAuthnVerifier) tenantVerifier(ctx context.Context, tenantID st
 	if err != nil {
 		return nil, err
 	}
-	return auth_factors.NewWebAuthnFactorVerifier(svc)
+	return xkmssdk.NewWebAuthnFactorVerifier(svc)
 }
 
 // BeginChallenge opens a tenant-scoped WebAuthn assertion ceremony on the login
@@ -109,7 +109,7 @@ func (v *tenantWebAuthnVerifier) BeginChallenge(ctx context.Context, tenantID st
 // authenticating principal, never a default tenant. It fails closed when the
 // tenant is empty or the factory is unbound, and delegates the actual
 // verification crypto (including revoked-factor rejection) to the xkms verifier.
-func (v *tenantWebAuthnVerifier) VerifyTenant(ctx context.Context, tenantID string, factor *qrdbauth.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
+func (v *tenantWebAuthnVerifier) VerifyTenant(ctx context.Context, tenantID string, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
 	verifier, err := v.tenantVerifier(ctx, tenantID, "VerifyTenant")
 	if err != nil {
 		return err
@@ -123,7 +123,7 @@ func (v *tenantWebAuthnVerifier) VerifyTenant(ctx context.Context, tenantID stri
 // VerifyTenant (this type implements TenantFactorVerifier), so this method is a
 // defense-in-depth guard against the tenant-less standalone factor path silently
 // verifying against an undefined relying party.
-func (v *tenantWebAuthnVerifier) Verify(ctx context.Context, factor *qrdbauth.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
+func (v *tenantWebAuthnVerifier) Verify(ctx context.Context, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
 	return &NonTenantWebAuthnVerifyError{}
 }
 
@@ -143,7 +143,7 @@ func (v *tenantWebAuthnVerifier) Verify(ctx context.Context, factor *qrdbauth.Au
 // verification over the nonce, and revoked-factor rejection — is performed by
 // the xkms verifier; this type only resolves the dependency and fails closed.
 type lateBoundPIVVerifier struct {
-	inner atomic.Pointer[auth_factors.PIVHardwareFactorVerifier]
+	inner atomic.Pointer[xkmssdk.PIVHardwareFactorVerifier]
 }
 
 // newLateBoundPIVVerifier creates an unbound PIV login verifier. Call
@@ -153,7 +153,7 @@ func newLateBoundPIVVerifier() *lateBoundPIVVerifier {
 }
 
 // setVerifier attaches (or replaces) the xkms PIV verifier.
-func (v *lateBoundPIVVerifier) setVerifier(inner *auth_factors.PIVHardwareFactorVerifier) {
+func (v *lateBoundPIVVerifier) setVerifier(inner *xkmssdk.PIVHardwareFactorVerifier) {
 	v.inner.Store(inner)
 }
 
@@ -169,7 +169,7 @@ func (v *lateBoundPIVVerifier) Type() qrdbtransport.FactorType {
 // certificate chain against the CA trust roots, verifies the signature over the
 // challenge nonce, and rejects revoked factors. It fails closed when the verifier
 // is unbound (CA trust roots not yet available) rather than accepting the proof.
-func (v *lateBoundPIVVerifier) Verify(ctx context.Context, factor *qrdbauth.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
+func (v *lateBoundPIVVerifier) Verify(ctx context.Context, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
 	inner := v.inner.Load()
 	if inner == nil {
 		return &UnboundPIVVerifierError{}
@@ -239,7 +239,7 @@ func (s *Server) bindPIVLoginVerifier(ver *lateBoundPIVVerifier) {
 		s.logger.Warn("PIV login verifier left unbound: CA returned nil trust roots")
 		return
 	}
-	inner, err := auth_factors.NewPIVHardwareFactorVerifier(roots, nil)
+	inner, err := xkmssdk.NewPIVHardwareFactorVerifier(roots, nil)
 	if err != nil {
 		s.logger.WithError(err).Warn("PIV login verifier left unbound: failed to build xkms PIV verifier")
 		return

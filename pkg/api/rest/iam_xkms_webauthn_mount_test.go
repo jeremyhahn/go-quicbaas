@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -108,7 +109,7 @@ func TestBuildXKMSWebAuthnDispatcher_RoutesAfterPrefixStrip(t *testing.T) {
 func TestMountXKMSWebAuthnRoutes_NoOpWhenFactoryUnavailable(t *testing.T) {
 	h := &IAMHandler{} // no server, no factory resolution path
 	router := chi.NewRouter()
-	h.MountXKMSWebAuthnRoutes(router) // must not panic
+	h.MountXKMSWebAuthnRoutes(context.Background(), router) // must not panic
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/iam/acme/webauthn/registration/begin",

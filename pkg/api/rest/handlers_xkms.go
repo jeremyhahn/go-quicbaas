@@ -279,9 +279,9 @@ func (s *Server) HandleXKMSGenerateKey(w http.ResponseWriter, r *http.Request) {
 	var privKey crypto.PrivateKey
 	var genErr error
 	if req.Backend != "" {
-		privKey, genErr = xkmssdk.ServiceGenerateKeyWithBackend(req.Backend, attrs)
+		privKey, genErr = xkmssdk.ServiceGenerateKeyWithBackend(r.Context(), req.Backend, attrs)
 	} else {
-		privKey, genErr = xkmssdk.ServiceGenerateKey(attrs)
+		privKey, genErr = xkmssdk.ServiceGenerateKey(r.Context(), attrs)
 	}
 	if genErr != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
@@ -317,9 +317,9 @@ func (s *Server) HandleXKMSListKeys(w http.ResponseWriter, r *http.Request) {
 	var keyAttrs []*xkmssdk.KeyAttributes
 	var listErr error
 	if backend != "" {
-		keyAttrs, listErr = xkmssdk.ServiceListKeys(backend)
+		keyAttrs, listErr = xkmssdk.ServiceListKeys(r.Context(), backend)
 	} else {
-		keyAttrs, listErr = xkmssdk.ServiceListKeys()
+		keyAttrs, listErr = xkmssdk.ServiceListKeys(r.Context())
 	}
 	if listErr != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
@@ -361,7 +361,7 @@ func (s *Server) HandleXKMSGetKey(w http.ResponseWriter, r *http.Request) {
 
 	backend := r.URL.Query().Get("backend")
 
-	privKey, err := xkmssdk.ServiceKeyByID(keyID)
+	privKey, err := xkmssdk.ServiceKeyByID(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusNotFound, &XKMSKeyNotFoundError{
 			KeyID: keyID,
@@ -399,7 +399,7 @@ func (s *Server) HandleXKMSDeleteKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := xkmssdk.ServiceDeleteKeyByID(keyID); err != nil {
+	if err := xkmssdk.ServiceDeleteKeyByID(r.Context(), keyID); err != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
 			Op:     "DeleteKey",
 			Detail: err.Error(),
@@ -428,7 +428,7 @@ func (s *Server) HandleXKMSRotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	privKey, err := xkmssdk.ServiceRotateKey(keyID)
+	privKey, err := xkmssdk.ServiceRotateKey(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
 			Op:     "RotateKey",
@@ -482,7 +482,7 @@ func (s *Server) HandleXKMSSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	signer, err := xkmssdk.ServiceSignerByID(keyID)
+	signer, err := xkmssdk.ServiceSignerByID(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusNotFound, &XKMSKeyNotFoundError{
 			KeyID: keyID,
@@ -540,7 +540,7 @@ func (s *Server) HandleXKMSVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	privKey, err := xkmssdk.ServiceKeyByID(keyID)
+	privKey, err := xkmssdk.ServiceKeyByID(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusNotFound, &XKMSKeyNotFoundError{
 			KeyID: keyID,
@@ -589,7 +589,7 @@ func (s *Server) HandleXKMSEncrypt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// For RSA keys, use the public key for encryption (OAEP)
-	privKey, err := xkmssdk.ServiceKeyByID(keyID)
+	privKey, err := xkmssdk.ServiceKeyByID(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusNotFound, &XKMSKeyNotFoundError{
 			KeyID: keyID,
@@ -644,7 +644,7 @@ func (s *Server) HandleXKMSDecrypt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decrypter, err := xkmssdk.ServiceDecrypterByID(keyID)
+	decrypter, err := xkmssdk.ServiceDecrypterByID(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusNotFound, &XKMSKeyNotFoundError{
 			KeyID: keyID,
@@ -714,7 +714,7 @@ func (s *Server) HandleXKMSSaveCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := xkmssdk.ServiceSaveCertificateByID(keyID, cert); err != nil {
+	if err := xkmssdk.ServiceSaveCertificateByID(r.Context(), keyID, cert); err != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
 			Op:     "SaveCertificate",
 			Detail: err.Error(),
@@ -737,9 +737,9 @@ func (s *Server) HandleXKMSListCerts(w http.ResponseWriter, r *http.Request) {
 	var certIDs []string
 	var listErr error
 	if backend != "" {
-		certIDs, listErr = xkmssdk.ServiceListCertificates(backend)
+		certIDs, listErr = xkmssdk.ServiceListCertificates(r.Context(), backend)
 	} else {
-		certIDs, listErr = xkmssdk.ServiceListCertificates()
+		certIDs, listErr = xkmssdk.ServiceListCertificates(r.Context())
 	}
 	if listErr != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
@@ -776,7 +776,7 @@ func (s *Server) HandleXKMSGetCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cert, err := xkmssdk.ServiceCertificateByID(keyID)
+	cert, err := xkmssdk.ServiceCertificateByID(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusNotFound, &XKMSOperationError{
 			Op:     "GetCertificate",
@@ -811,7 +811,7 @@ func (s *Server) HandleXKMSDeleteCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := xkmssdk.ServiceDeleteCertificateByID(keyID); err != nil {
+	if err := xkmssdk.ServiceDeleteCertificateByID(r.Context(), keyID); err != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
 			Op:     "DeleteCertificate",
 			Detail: err.Error(),
@@ -841,7 +841,7 @@ func (s *Server) HandleXKMSCertExists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exists, err := xkmssdk.ServiceCertificateExists(attrs)
+	exists, err := xkmssdk.ServiceCertificateExists(r.Context(), attrs)
 	if err != nil || !exists {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -992,7 +992,7 @@ func (s *Server) HandleXKMSListKeyVersions(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Verify the key exists by attempting to retrieve it
-	_, err := xkmssdk.ServiceKeyByID(keyID)
+	_, err := xkmssdk.ServiceKeyByID(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusNotFound, &XKMSKeyNotFoundError{
 			KeyID: keyID,

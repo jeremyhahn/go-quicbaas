@@ -344,9 +344,9 @@ func TestCloneTLSConfig_NilConfig(t *testing.T) {
 
 func TestCloneTLSConfig_ValidConfig(t *testing.T) {
 	original := &tls.Config{
-		MinVersion:         tls.VersionTLS13,
-		ServerName:         "example.com",
-		InsecureSkipVerify: true,
+		MinVersion:             tls.VersionTLS13,
+		ServerName:             "example.com",
+		SessionTicketsDisabled: true,
 	}
 
 	clone := CloneTLSConfig(original)
@@ -363,8 +363,8 @@ func TestCloneTLSConfig_ValidConfig(t *testing.T) {
 	if clone.ServerName != original.ServerName {
 		t.Error("ServerName should be copied")
 	}
-	if clone.InsecureSkipVerify != original.InsecureSkipVerify {
-		t.Error("InsecureSkipVerify should be copied")
+	if clone.SessionTicketsDisabled != original.SessionTicketsDisabled {
+		t.Error("SessionTicketsDisabled should be copied")
 	}
 }
 

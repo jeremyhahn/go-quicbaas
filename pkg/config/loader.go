@@ -160,6 +160,14 @@ func (l *Loader) applyEnvironmentOverrides(cfg *Config) {
 	if val := os.Getenv("QUICBAAS_SECURITY_REQUIRE_AUTHZ"); val != "" {
 		cfg.Security.RequireAuthz = parseBool(val)
 	}
+	if val := os.Getenv("QUICBAAS_SECURITY_AUTHZ_MODE"); val != "" {
+		cfg.Security.AuthzMode = val
+	}
+	if val := os.Getenv("QUICBAAS_SECURITY_LIVENESS_CACHE_TTL"); val != "" {
+		if duration, err := time.ParseDuration(val); err == nil {
+			cfg.Security.LivenessCacheTTL = duration
+		}
+	}
 
 	// Raft configuration
 	if val := os.Getenv("QUICBAAS_RAFT_MUTUAL_TLS"); val != "" {

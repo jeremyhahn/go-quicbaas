@@ -225,7 +225,7 @@ func (i *XKMSAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *Ag
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 
-	issued, err := i.ca.IssueCertificate(certRequest)
+	issued, err := i.ca.IssueCertificate(ctx, certRequest)
 	if err != nil {
 		return nil, &AgentCertIssueError{Op: "issue agent certificate", Cause: err}
 	}

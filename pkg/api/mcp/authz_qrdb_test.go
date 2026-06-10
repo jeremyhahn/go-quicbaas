@@ -18,10 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 func TestGetToolQRDBPermission_Mapped(t *testing.T) {
@@ -57,6 +54,12 @@ func TestGetToolQRDBPermission_Mapped(t *testing.T) {
 		{"project_grant_agent", "project", "grant"},
 		{"quicbaas_ollama_embed", "ollama", "embed"},
 		{"quicbaas_ollama_model_info", "ollama", "model_info"},
+		// Per-tenant barrier tools (qrdb_tenant_barrier_* prefix).
+		{"qrdb_tenant_barrier_init", "tenant_barrier", "init"},
+		{"qrdb_tenant_barrier_unseal", "tenant_barrier", "unseal"},
+		{"qrdb_tenant_barrier_unseal_share", "tenant_barrier", "unseal"},
+		{"qrdb_tenant_barrier_seal", "tenant_barrier", "seal"},
+		{"qrdb_tenant_barrier_status", "tenant_barrier", "status"},
 	}
 	for _, c := range cases {
 		res, act, ok := getToolQRDBPermission(c.tool)
@@ -81,68 +84,6 @@ func TestGetToolQRDBPermission_Unmapped(t *testing.T) {
 	}
 }
 
-// newQRDBChecker builds a checker wired like the RequireAuthz=true path: OIDC
-// validation + qrdb-backed authService + canonical mapping.
-func newQRDBChecker(oidc interfaces.OIDCProvider, authz interfaces.AuthorizationService) *AuthorizationChecker {
-	ac := NewAuthorizationChecker(authz, nil)
-	ac.SetOIDCProvider(oidc)
-	ac.EnableQRDBMapping()
-	return ac
-}
-
-func TestCheckToolAuthorization_QRDBMapping_AllowAndDeny(t *testing.T) {
-	oidc := new(MockOIDCProvider)
-	claims := &MockOIDCClaims{Subject: "u1", Name: "admin", TenantID: "system", Roles: []string{"admin"}}
-	oidc.On("ValidateAccessToken", mock.Anything, "good").Return(claims, nil)
-
-	authz := new(MockAuthorizationService)
-	// Allow kv:put, deny kv:delete — assert the canonical (resource, action)
-	// and the tenant reach the authz service.
-	authz.On("Authorize", mock.Anything, mock.MatchedBy(func(req *interfaces.AuthorizationRequest) bool {
-		return req.Resource == "kv" && req.Action == "put" && req.Subject.TenantID == "system"
-	})).Return(&interfaces.AuthorizationDecision{Allowed: true}, nil)
-	authz.On("Authorize", mock.Anything, mock.MatchedBy(func(req *interfaces.AuthorizationRequest) bool {
-		return req.Resource == "kv" && req.Action == "delete"
-	})).Return(&interfaces.AuthorizationDecision{Allowed: false, Reason: "denied"}, nil)
-
-	ac := newQRDBChecker(oidc, authz)
-
-	// Allow.
-	err := ac.CheckToolAuthorization(context.Background(), "quicbaas_put", "good")
-	assert.Nil(t, err, "permitted tool must be allowed")
-
-	// Deny.
-	derr := ac.CheckToolAuthorization(context.Background(), "quicbaas_delete", "good")
-	require.NotNil(t, derr)
-	assert.Equal(t, AuthErrorPermissionDenied, derr.Type)
-
-	authz.AssertExpectations(t)
-}
-
-func TestCheckToolAuthorization_QRDBMapping_UnmappedDenied(t *testing.T) {
-	oidc := new(MockOIDCProvider)
-	claims := &MockOIDCClaims{Subject: "u1", Name: "admin", TenantID: "system", Roles: []string{"admin"}}
-	oidc.On("ValidateAccessToken", mock.Anything, "good").Return(claims, nil)
-
-	authz := new(MockAuthorizationService) // would allow, but tool is unmapped
-	ac := newQRDBChecker(oidc, authz)
-
-	// A tool with no qrdb permission family (KMS) is denied before reaching authz.
-	err := ac.CheckToolAuthorization(context.Background(), "quicbaas_kms_generate", "good")
-	require.NotNil(t, err)
-	assert.Equal(t, AuthErrorPermissionDenied, err.Type)
-	authz.AssertNotCalled(t, "Authorize", mock.Anything, mock.Anything)
-}
-
-func TestCheckToolAuthorization_QRDBMapping_PublicBypass(t *testing.T) {
-	oidc := new(MockOIDCProvider)
-	authz := new(MockAuthorizationService)
-	ac := newQRDBChecker(oidc, authz)
-	// Public tool: allowed without a token or authz call.
-	assert.Nil(t, ac.CheckToolAuthorization(context.Background(), "quicbaas_health", ""))
-	authz.AssertNotCalled(t, "Authorize", mock.Anything, mock.Anything)
-}
-
 func TestCheckToolAuthorization_RequireAuthzOff_NoNewDenial(t *testing.T) {
 	// RequireAuthz=false posture: no authService, no oidc, no authManager.
 	// CheckToolAuthorization allows every tool (auth disabled) — today's
@@ -150,14 +91,4 @@ func TestCheckToolAuthorization_RequireAuthzOff_NoNewDenial(t *testing.T) {
 	ac := NewAuthorizationChecker(nil, nil)
 	assert.Nil(t, ac.CheckToolAuthorization(context.Background(), "quicbaas_put", ""))
 	assert.Nil(t, ac.CheckToolAuthorization(context.Background(), "quicbaas_kms_generate", ""))
-}
-
-// TestServer_EnableQRDBAuthzMapping verifies the MCP server delegates the
-// canonical-mapping switch to its authorization checker.
-func TestServer_EnableQRDBAuthzMapping(t *testing.T) {
-	srv := NewServer(nil, &Config{}, nil)
-	srv.SetAuthorizationService(new(MockAuthorizationService), nil)
-	srv.EnableQRDBAuthzMapping()
-	require.NotNil(t, srv.authChecker)
-	assert.True(t, srv.authChecker.useQRDBMapping)
 }

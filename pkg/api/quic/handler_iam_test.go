@@ -2315,30 +2315,31 @@ func TestIAMHandler91_GetIAMServiceOption(t *testing.T) {
 
 func TestIAMHandler91_GetMFAServiceOption(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 	t.Run("NonProvider", func(t *testing.T) {
 		h := createTestHandler()
-		getMFAServiceOption(&mockService{})(h)
+		getMFAServiceOption(ctx, &mockService{})(h)
 		if h.getMFAService() != nil {
 			t.Fatal("expected nil")
 		}
 	})
 	t.Run("WithMFAProvider", func(t *testing.T) {
 		h := createTestHandler()
-		getMFAServiceOption(&mockServiceWithMFA{mfaSvc: &mockMFAService91{}})(h)
+		getMFAServiceOption(ctx, &mockServiceWithMFA{mfaSvc: &mockMFAService91{}})(h)
 		if h.getMFAService() == nil {
 			t.Fatal("expected non-nil")
 		}
 	})
 	t.Run("WithMFAProviderError", func(t *testing.T) {
 		h := createTestHandler()
-		getMFAServiceOption(&mockServiceWithMFA{mfaErr: errors.New("no mfa")})(h)
+		getMFAServiceOption(ctx, &mockServiceWithMFA{mfaErr: errors.New("no mfa")})(h)
 		if h.getMFAService() != nil {
 			t.Fatal("expected nil")
 		}
 	})
 	t.Run("WithMFAProviderNilReturn", func(t *testing.T) {
 		h := createTestHandler()
-		getMFAServiceOption(&mockServiceWithMFA{mfaSvc: nil})(h)
+		getMFAServiceOption(ctx, &mockServiceWithMFA{mfaSvc: nil})(h)
 		if h.getMFAService() != nil {
 			t.Fatal("expected nil")
 		}

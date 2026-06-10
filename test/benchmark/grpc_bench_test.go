@@ -18,7 +18,6 @@ package benchmark
 
 import (
 	"context"
-	"crypto/tls"
 	"os"
 	"testing"
 	"time"
@@ -44,7 +43,7 @@ func benchEndpoint() string {
 func setupBenchClient(b *testing.B) (pb.QuicBaaSClient, func()) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	conn, err := grpc.DialContext(ctx, benchEndpoint(),
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})),
+		grpc.WithTransportCredentials(credentials.NewTLS(benchTLSConfig())),
 		grpc.WithBlock(),
 	)
 	if err != nil {

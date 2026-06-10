@@ -63,7 +63,7 @@ func (f *fakeTrustedCATrust) CrossSignedPEM(_ *xkmssdk.KeyAttributes) ([]byte, e
 	return f.crossSignedPEM, nil
 }
 
-func (f *fakeTrustedCATrust) ImportIssuingCAs(cert *x509.Certificate) error {
+func (f *fakeTrustedCATrust) ImportIssuingCAs(_ context.Context, cert *x509.Certificate) error {
 	f.importCert = cert
 	return f.importErr
 }
@@ -230,7 +230,7 @@ func TestCAServiceAdapter_ImportIssuingCAs(t *testing.T) {
 		ca := newFakeTrustedCATrust(t)
 		adapter, _ := newCAServiceAdapter(ca)
 		cert := buildSelfSignedRoot(t, "Leaf")
-		if err := adapter.ImportIssuingCAs(cert); err != nil {
+		if err := adapter.ImportIssuingCAs(context.Background(), cert); err != nil {
 			t.Fatalf("ImportIssuingCAs: %v", err)
 		}
 		if ca.importCert != cert {
@@ -242,7 +242,7 @@ func TestCAServiceAdapter_ImportIssuingCAs(t *testing.T) {
 		ca := newFakeTrustedCATrust(t)
 		ca.importErr = errors.New("aia walk failed")
 		adapter, _ := newCAServiceAdapter(ca)
-		if err := adapter.ImportIssuingCAs(buildSelfSignedRoot(t, "Leaf")); err == nil {
+		if err := adapter.ImportIssuingCAs(context.Background(), buildSelfSignedRoot(t, "Leaf")); err == nil {
 			t.Fatal("expected delegate error to propagate")
 		}
 	})
@@ -250,7 +250,7 @@ func TestCAServiceAdapter_ImportIssuingCAs(t *testing.T) {
 	t.Run("nil CA returns nil-CA error", func(t *testing.T) {
 		adapter, _ := newCAServiceAdapter(newFakeTrustedCATrust(t))
 		adapter.ca = nil
-		if err := adapter.ImportIssuingCAs(buildSelfSignedRoot(t, "Leaf")); !errors.Is(err, ErrCAServiceAdapterNilCA) {
+		if err := adapter.ImportIssuingCAs(context.Background(), buildSelfSignedRoot(t, "Leaf")); !errors.Is(err, ErrCAServiceAdapterNilCA) {
 			t.Fatalf("want ErrCAServiceAdapterNilCA, got %v", err)
 		}
 	})

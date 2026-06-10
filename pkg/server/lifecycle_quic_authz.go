@@ -17,35 +17,10 @@ package server
 
 import (
 	"context"
-	"errors"
 
 	quicapi "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/qrdbauthz"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
-
-// errQUICOIDCProviderUnavailable indicates the IAM OIDC provider is not yet
-// initialized. The QUIC authz validator treats this as a token-validation
-// failure rather than a server error.
-var errQUICOIDCProviderUnavailable = errors.New("oidc provider unavailable")
-
-// QUICAuthzError wraps a failure that occurs while validating a QUIC bearer
-// token. It carries the failing operation and the underlying cause.
-type QUICAuthzError struct {
-	Op    string
-	Cause error
-}
-
-func (e *QUICAuthzError) Error() string {
-	if e.Cause != nil {
-		return "quic authz: " + e.Op + ": " + e.Cause.Error()
-	}
-	return "quic authz: " + e.Op
-}
-
-func (e *QUICAuthzError) Unwrap() error { return e.Cause }
 
 // quicOIDCProviderGetter is the narrow accessor the QUIC authz wiring uses to
 // reach the IAM OIDC provider. It mirrors the REST and gRPC authz getters so the
@@ -54,49 +29,15 @@ type quicOIDCProviderGetter interface {
 	GetOIDCProvider(ctx context.Context) (*iam.OIDCProvider, error)
 }
 
-// quicOIDCTokenValidator adapts the IAM OIDCProvider to the QUIC handler's
-// AuthzTokenValidator seam. It verifies the inbound bearer against the
-// provider's signing key and projects the OIDC claims onto a
-// *quicapi.AuthzIdentity. It is the single QUIC token-validation seam and
-// accepts the SAME OIDC tokens the daemon issues across REST and gRPC.
-type quicOIDCTokenValidator struct {
-	getter quicOIDCProviderGetter
-}
-
-// Compile-time check that quicOIDCTokenValidator satisfies the QUIC seam.
-var _ quicapi.AuthzTokenValidator = (*quicOIDCTokenValidator)(nil)
-
-// ValidateAuthzToken verifies the access token and returns the authenticated
-// identity. Any verification failure surfaces as a typed error so the QUIC
-// handler responds Unauthorized.
-func (v *quicOIDCTokenValidator) ValidateAuthzToken(ctx context.Context, token string) (*quicapi.AuthzIdentity, error) {
-	provider, err := v.getter.GetOIDCProvider(ctx)
-	if err != nil {
-		return nil, &QUICAuthzError{Op: "get oidc provider", Cause: err}
-	}
-	if provider == nil {
-		return nil, &QUICAuthzError{Op: "get oidc provider", Cause: errQUICOIDCProviderUnavailable}
-	}
-
-	claims, err := provider.ValidateAccessToken(ctx, token)
-	if err != nil {
-		return nil, &QUICAuthzError{Op: "validate access token", Cause: err}
-	}
-
-	return &quicapi.AuthzIdentity{
-		ID:       claims.Subject,
-		Username: claims.Name,
-		TenantID: claims.TenantID,
-		Roles:    claims.Roles,
-	}, nil
-}
-
-// configureQUICAuthz installs the qrdb-backed authorization decision point and
-// its OIDC-backed token validator on the QUIC server when RequireAuthz=true. It
-// is a no-op otherwise, leaving the QUIC handler on its legacy allow-all path so
-// current behaviour is unchanged. It mirrors configureRESTAuthz and the gRPC
-// authz interceptor wiring: every transport routes authorization to the same
-// qrdb PDP.
+// configureQUICAuthz installs the unified platform-token authorization decision
+// point on the QUIC server when RequireAuthz=true. It is a no-op otherwise,
+// leaving the QUIC handler on its no-enforcement path so current behaviour is
+// unchanged. It mirrors configureRESTAuthz: every transport routes authorization
+// through the same central platform-token Validator. A single Validator call per
+// opcode does offline signature / iss / aud / exp verification, DPoP
+// sender-constraint (RFC 9449) for cnf.jkt-bound tokens, the offline scp ->
+// permission decision against the opcode's qrdb-canonical permission, and the
+// per-tenant liveness / revocation check.
 func (s *Server) configureQUICAuthz(quicServer *quicapi.Server) {
 	if s.config == nil || !s.config.Security.RequireAuthz {
 		return
@@ -112,24 +53,16 @@ func (s *Server) configureQUICAuthz(quicServer *quicapi.Server) {
 		return
 	}
 
-	// Build the single qrdb-backed authorizer adapter. It late-binds the qrdb
-	// RBAC client (resolved per request via GetQRDBNodeClient().RBAC()).
-	rbacResolver := func() qrdbtransport.RBACClient {
-		node := s.GetQRDBNodeClient()
-		if node == nil {
-			return nil
-		}
-		return node.RBAC()
-	}
-	adapter, err := qrdbauthz.New(rbacResolver, nil)
+	// Build the single central platform-token Validator and install the unified
+	// QUIC enforcement seam. QUIC carries no DPoP, so cnf.jkt-bound tokens are
+	// rejected by the validator's sender-constraint check (they cannot prove
+	// possession over this transport); bearer / service tokens pass.
+	platformValidator, err := s.buildPlatformValidator(context.Background())
 	if err != nil {
-		s.logger.WithError(err).Error("QUIC authz disabled: failed to build qrdb authorizer adapter")
+		s.logger.WithError(err).Error("QUIC authz disabled: failed to build platform-token validator")
 		return
 	}
 
-	quicServer.SetAuthzEnforcement(
-		&quicOIDCTokenValidator{getter: getter},
-		newQRDBAuthzService(adapter),
-	)
-	s.logger.Info("QUIC qrdb PDP authorization installed (RequireAuthz=true)")
+	quicServer.SetValidatorEnforcement(platformValidator)
+	s.logger.Info("QUIC platform-token validator authorization installed (RequireAuthz=true)")
 }

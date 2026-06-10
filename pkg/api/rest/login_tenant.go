@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"strings"
 
-	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -79,10 +79,10 @@ func (s *Server) deriveLoginTenant(ctx context.Context, r *http.Request, cert *x
 	var unresolved *iam.TenantUnresolvedError
 	if errors.As(err, &unresolved) {
 		switch {
-		case errors.Is(unresolved.Cause, qrdbspiffe.ErrTrustDomainMismatch):
+		case errors.Is(unresolved.Cause, qrdbsdk.ErrSpiffeTrustDomainMismatch):
 			// Foreign trust domain: fail closed.
 			return "", ErrLoginTenantUnresolved
-		case unresolved.Cause != nil && !errors.Is(unresolved.Cause, qrdbspiffe.ErrNoTenantSPIFFEID):
+		case unresolved.Cause != nil && !errors.Is(unresolved.Cause, qrdbsdk.ErrSpiffeNoTenantID):
 			// Malformed SPIFFE SAN: fail closed.
 			return "", ErrLoginTenantUnresolved
 		case cert != nil:

@@ -21,12 +21,12 @@ import (
 )
 
 // This file is the REST Policy Enforcement Point (PEP) mapping: it translates an
-// HTTP (path, method) pair into the qrdb-canonical (resource, action) pair the
-// qrdbauthz adapter passes to qrdb's policy decision point.
+// HTTP (path, method) pair into the qrdb-canonical (resource, action) pair whose
+// colon join is the permission the platformtoken validator enforces against the
+// token's scp claim.
 //
 // qrdb's permission registry uses colon-joined "resource:action" permissions
-// (e.g. "kv:get", "keys:create", "tenant_barrier:init"). The adapter passes
-// resource and action SEPARATELY and qrdb joins them internally, so this mapper
+// (e.g. "kv:get", "keys:create", "tenant_barrier:init"), so this mapper
 // must emit a resource and an action whose join is a REGISTERED qrdb permission.
 // A coarse read/write that does not correspond to a registered action would be
 // denied by qrdb, so the mapping is per (path-prefix, method) and intentionally
@@ -92,9 +92,13 @@ type pepResource struct {
 // longest matching prefix wins. Every (resource, action) pair produced here is
 // a registered qrdb permission (see go-qrdb/pkg/permission/constants.go).
 var pepMapping = map[string]pepResource{
-	// KV data plane: /api/v1/keys and /api/v1/kv both address key-value data.
-	"/api/v1/keys": {resource: "kv", verbs: crudVerbs{get: "get", list: "list", create: "put", del: "delete"}},
-	"/api/v1/kv":   {resource: "kv", verbs: crudVerbs{get: "get", list: "list", create: "put", del: "delete"}},
+	// KV data plane: /api/v1/keys and /api/v1/kv both address key-value data;
+	// the entity store and entity-type surfaces are structured views over the
+	// same KV data plane (matching the defaultDenyScopeTable kv mapping).
+	"/api/v1/keys":         {resource: "kv", verbs: crudVerbs{get: "get", list: "list", create: "put", del: "delete"}},
+	"/api/v1/kv":           {resource: "kv", verbs: crudVerbs{get: "get", list: "list", create: "put", del: "delete"}},
+	"/api/v1/entities":     {resource: "kv", verbs: crudVerbs{get: "get", list: "list", create: "put", del: "delete"}},
+	"/api/v1/entity-types": {resource: "kv", verbs: crudVerbs{get: "get", list: "list", create: "put", del: "delete"}},
 
 	// Cryptographic key operations.
 	"/api/v1/kms":    {resource: "keys", verbs: crudVerbs{get: "get", list: "list", create: "create", del: "delete"}},
@@ -268,6 +272,16 @@ var pepSpecialRules = []pepSpecialRule{
 	{http.MethodGet, "/api/v1/ollama", "/models/", "ollama", "model_info"},
 	{http.MethodGet, "/api/v1/ollama", "/models", "ollama", "model_list"},
 	{http.MethodGet, "/api/v1/ollama", "/health", "ollama", "health"},
+
+	// ---- Per-tenant barrier lifecycle ----
+	// These leaf actions (tier 2) win over the surface-wide "/api/v1/tenants"
+	// prefix mapping (resource "tenants"), so per-tenant barrier ops authorize
+	// as the tenant_barrier resource. unseal-share maps to the unseal action.
+	{http.MethodPost, "/api/v1/tenants", "/barrier/init", "tenant_barrier", "init"},
+	{http.MethodPost, "/api/v1/tenants", "/barrier/unseal-share", "tenant_barrier", "unseal"},
+	{http.MethodPost, "/api/v1/tenants", "/barrier/unseal", "tenant_barrier", "unseal"},
+	{http.MethodPost, "/api/v1/tenants", "/barrier/seal", "tenant_barrier", "seal"},
+	{http.MethodGet, "/api/v1/tenants", "/barrier/status", "tenant_barrier", "status"},
 }
 
 // mapRequestToPermission translates a request (path, method) into the
@@ -295,7 +309,11 @@ func mapRequestToPermission(path, method string) (resource, action string, ok bo
 	}
 
 	isCollection := normalized == prefix
-	return entry.resource, actionForMethod(method, entry.verbs, isCollection), true
+	action, ok = actionForMethod(method, entry.verbs, isCollection)
+	if !ok {
+		return "", "", false
+	}
+	return entry.resource, action, true
 }
 
 // matchSpecialRule returns the most specific pepSpecialRule whose method matches
@@ -378,19 +396,22 @@ func longestPEPPrefix(path string) (string, pepResource, bool) {
 
 // actionForMethod resolves the qrdb action for an HTTP method against a
 // resource's verb table. A GET on a collection maps to list; a GET on an item
-// maps to get.
-func actionForMethod(method string, verbs crudVerbs, isCollection bool) string {
+// maps to get. ok is false for any HTTP method outside the registered set
+// (e.g. TRACE / CONNECT): the PEP is a closed, registered set, so an unknown
+// verb has no canonical action and must be treated as unmapped -> denied, never
+// silently coerced to a read.
+func actionForMethod(method string, verbs crudVerbs, isCollection bool) (action string, ok bool) {
 	switch strings.ToUpper(method) {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		if isCollection {
-			return verbs.list
+			return verbs.list, true
 		}
-		return verbs.get
+		return verbs.get, true
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		return verbs.create
+		return verbs.create, true
 	case http.MethodDelete:
-		return verbs.del
+		return verbs.del, true
 	default:
-		return verbs.get
+		return "", false
 	}
 }

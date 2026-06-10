@@ -44,6 +44,13 @@ const (
 
 	// AuthErrorPermissionDenied indicates the user lacks required permissions.
 	AuthErrorPermissionDenied
+
+	// AuthErrorMisconfigured indicates the authorization decision could not be
+	// made because of a server-side wiring error (e.g. the platform-token
+	// validator's liveness checker or replay cache required by the tenant's authz
+	// mode is absent). The request is denied fail-closed; the operator must fix
+	// the wiring. It maps to a JSON-RPC InternalError, not a client auth error.
+	AuthErrorMisconfigured
 )
 
 // Error implements the error interface.
@@ -337,19 +344,24 @@ type AuthorizationChecker struct {
 	mcpAuthConfig *MCPAuthConfig
 	oidcProvider  interfaces.OIDCProvider
 
-	// useQRDBMapping selects the qrdb-canonical tool -> permission mapper and the
-	// default-deny posture for unmapped tools. It is enabled by lifecycle wiring
-	// when the qrdb-backed authService (the qrdbauthz bridge) is installed under
-	// RequireAuthz=true. When false the checker keeps the legacy broker-name
-	// mapper and behaviour, so a standalone RBAC authService is unaffected.
-	useQRDBMapping bool
+	// validatorAuthorizer, when set, is the unified platform-token authorization
+	// decision point: a SINGLE call validates the bearer offline (sig / iss / aud
+	// / exp), enforces DPoP sender-constraint for cnf.jkt-bound tokens, runs the
+	// offline scp -> permission decision against the qrdb-canonical permission,
+	// and applies the per-tenant liveness/revocation check. When installed it
+	// REPLACES the OIDC-validate + online authService PDP path entirely. It is
+	// wired by lifecycle (pkg/server) under RequireAuthz=true.
+	validatorAuthorizer ValidatorAuthorizer
 }
 
-// EnableQRDBMapping switches the checker to the qrdb-canonical tool -> permission
-// mapper and the default-deny posture for unmapped tools. It is called by
-// lifecycle wiring when the qrdb-backed authorization service is installed.
-func (ac *AuthorizationChecker) EnableQRDBMapping() {
-	ac.useQRDBMapping = true
+// SetValidatorAuthorizer installs the unified platform-token Validator as the
+// request-time authorization decision point. When set it REPLACES the
+// OIDC-validate + online authService PDP path: the validator performs token
+// validation, DPoP sender-constraint, the offline scp decision, and the
+// per-tenant liveness check in one call. The validator authorizes on the
+// qrdb-canonical colon "resource:action".
+func (ac *AuthorizationChecker) SetValidatorAuthorizer(v ValidatorAuthorizer) {
+	ac.validatorAuthorizer = v
 }
 
 // NewAuthorizationChecker creates a new authorization checker.
@@ -382,10 +394,21 @@ func (ac *AuthorizationChecker) SetMCPAuthConfig(config *MCPAuthConfig) {
 // CheckToolAuthorization validates that the given token has permission to execute the tool.
 // Returns nil if authorized, or an AuthorizationError if not.
 //
-// Token validation priority:
+// When the unified platform-token validator is installed (RequireAuthz=true), the
+// decision is made by a SINGLE validator.Authorize call: offline token validation
+// + DPoP sender-constraint + offline scp decision + per-tenant liveness. This
+// REPLACES the OIDC-validate + online authService PDP path below.
+//
+// Legacy token validation priority (validator NOT installed):
 // 1. If OIDCProvider is configured, use it for validation (supports federation)
 // 2. Fall back to AuthManager if OIDC validation fails or is not configured.
 func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, toolName, token string) *AuthorizationError {
+	// Unified platform-token validator path (RequireAuthz=true). One call decides.
+	if ac.validatorAuthorizer != nil {
+		_, authErr := ac.authorizeViaValidator(ctx, toolName, token)
+		return authErr
+	}
+
 	// Check if tool is public (no auth required)
 	// Public tools like quicbaas_health, quicbaas_version, etc. bypass all auth checks.
 	if IsPublicTool(toolName) {
@@ -514,22 +537,10 @@ func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, tool
 		return nil
 	}
 
-	// Get resource and action for this tool. Under the qrdb-canonical posture an
-	// unmapped tool is denied (default-deny): there is no registered qrdb
-	// permission to admit it. The legacy posture keeps the broker-name mapper.
-	var resource, action string
-	if ac.useQRDBMapping {
-		var mapped bool
-		resource, action, mapped = getToolQRDBPermission(toolName)
-		if !mapped {
-			return &AuthorizationError{
-				Type:    AuthErrorPermissionDenied,
-				Message: "permission denied: no qrdb permission mapping for tool " + toolName,
-			}
-		}
-	} else {
-		resource, action = getToolResourceAction(toolName)
-	}
+	// Get resource and action for this tool from the broker-name mapper. This is
+	// the legacy AuthzService path, reached only when a non-nil authService is
+	// installed without the platform-token validator (RequireAuthz=false).
+	resource, action := getToolResourceAction(toolName)
 
 	// Build authorization request
 	authReq := &interfaces.AuthorizationRequest{
@@ -575,6 +586,21 @@ func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, tool
 // claim is not an error here — tenant enforcement is not this method's job.
 // On denial it returns the original ctx and a non-nil *AuthorizationError.
 func (ac *AuthorizationChecker) CheckToolAuthorizationWithContext(ctx context.Context, toolName, token string) (context.Context, *AuthorizationError) {
+	// Unified platform-token validator path (RequireAuthz=true). The single
+	// Authorize call both decides and returns the canonical post-validation
+	// identity, from which the principal + tenant are reconstructed and injected.
+	if ac.validatorAuthorizer != nil {
+		authzCtx, authErr := ac.authorizeViaValidator(ctx, toolName, token)
+		if authErr != nil {
+			return ctx, authErr
+		}
+		// authzCtx is nil for public tools (no token, no principal to inject).
+		if authzCtx != nil {
+			ctx = injectPrincipalFromAuthorizedContext(ctx, authzCtx)
+		}
+		return ctx, nil
+	}
+
 	// Reuse existing logic for auth check.
 	if authErr := ac.CheckToolAuthorization(ctx, toolName, token); authErr != nil {
 		return ctx, authErr

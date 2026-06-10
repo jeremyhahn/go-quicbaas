@@ -52,6 +52,10 @@ func (b *deleteFaultBackend) Put(ctx context.Context, key string, data []byte) e
 	return b.inner.Put(ctx, key, data)
 }
 
+func (b *deleteFaultBackend) PutIfAbsent(ctx context.Context, key string, data []byte) (bool, error) {
+	return b.inner.PutIfAbsent(ctx, key, data)
+}
+
 func (b *deleteFaultBackend) Delete(ctx context.Context, key string) error {
 	if b.deleteErr != nil {
 		return b.deleteErr

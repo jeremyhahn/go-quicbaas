@@ -247,6 +247,7 @@ type restFinishLoginRequest struct {
 	SessionID      string            `json:"session_id"`
 	Type           string            `json:"type"`
 	LookupKey      []byte            `json:"lookup_key,omitempty"`
+	AltLookupKeys  [][]byte          `json:"alt_lookup_keys,omitempty"`
 	Signature      []byte            `json:"signature,omitempty"`
 	MethodMetadata map[string]string `json:"method_metadata,omitempty"`
 }
@@ -308,6 +309,7 @@ func (h *authRESTHandler) handleFinishLogin(ctx context.Context, req interface{}
 		SessionID:      r.SessionID,
 		Type:           string(r.Type),
 		LookupKey:      r.LookupKey,
+		AltLookupKeys:  r.AltLookupKeys,
 		Signature:      r.Signature,
 		MethodMetadata: r.MethodMetadata,
 	}

@@ -41,27 +41,28 @@ type AuthzMiddlewareConfig struct {
 	TokenValidator TokenValidator
 	// AuthzService performs authorization checks.
 	AuthzService interfaces.AuthorizationService
-	// QRDBAuthorizer, when set, routes the Authorize gate's decision through
-	// qrdb's policy decision point via the qrdb-canonical PEP mapping instead
-	// of the legacy AuthzService. It is installed only under RequireAuthz=true.
-	QRDBAuthorizer QRDBAuthorizer
+	// ValidatorAuthorizer, when set, routes the AuthorizeViaValidator gate
+	// through the central platform-token Validator: one call does offline
+	// signature/iss/aud/exp + DPoP + scp + per-tenant liveness. It is installed
+	// only under RequireAuthz=true and is the reference (REST) enforcement path.
+	ValidatorAuthorizer ValidatorAuthorizer
 }
 
 // AuthzMiddleware provides unified authorization middleware for REST API.
 type AuthzMiddleware struct {
-	logger         *logger.Logger
-	tokenValidator TokenValidator
-	authzService   interfaces.AuthorizationService
-	qrdbAuthorizer QRDBAuthorizer
+	logger              *logger.Logger
+	tokenValidator      TokenValidator
+	authzService        interfaces.AuthorizationService
+	validatorAuthorizer ValidatorAuthorizer
 }
 
 // NewAuthzMiddleware creates a new authorization middleware with the given configuration.
 func NewAuthzMiddleware(cfg *AuthzMiddlewareConfig) *AuthzMiddleware {
 	return &AuthzMiddleware{
-		logger:         cfg.Logger,
-		tokenValidator: cfg.TokenValidator,
-		authzService:   cfg.AuthzService,
-		qrdbAuthorizer: cfg.QRDBAuthorizer,
+		logger:              cfg.Logger,
+		tokenValidator:      cfg.TokenValidator,
+		authzService:        cfg.AuthzService,
+		validatorAuthorizer: cfg.ValidatorAuthorizer,
 	}
 }
 
@@ -137,13 +138,7 @@ func (e *RevokedTokenError) Error() string { return "token has been revoked" }
 
 // Authorize is the middleware function that enforces authorization on requests.
 // It extracts the JWT token, validates it, extracts resource and action from the request,
-// and calls the authorization decision point to make an access control decision.
-//
-// When a QRDBAuthorizer is installed (RequireAuthz=true), the decision is routed
-// through qrdb's policy decision point via the qrdb-canonical PEP mapping
-// (mapRequestToPermission). Otherwise it falls back to the legacy AuthzService
-// path using extractAuthzResource / mapHTTPMethodToAction, preserving prior
-// behavior.
+// and calls the AuthzService to make an access control decision.
 func (m *AuthzMiddleware) Authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip authorization for public endpoints
@@ -172,20 +167,6 @@ func (m *AuthzMiddleware) Authorize(next http.Handler) http.Handler {
 		if err != nil {
 			m.logUnauthorized(r, "token validation failed: "+err.Error())
 			respondUnauthorized(w, r, "Invalid or expired token")
-			return
-		}
-
-		// qrdb policy decision point path (RequireAuthz=true): map the request to
-		// a qrdb-canonical (resource, action) and delegate the decision to qrdb's
-		// authorizer. A denial surfaces as 403; a mapping miss is default-deny.
-		if m.qrdbAuthorizer != nil {
-			if err := m.authorizeViaQRDB(ctx, subject, r.URL.Path, r.Method); err != nil {
-				m.logQRDBDenied(r, subject, err)
-				respondForbidden(w, r, "Authorization denied")
-				return
-			}
-			ctx = injectPrincipal(ctx, subject, authzCtx)
-			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
@@ -599,20 +580,4 @@ func (m *AuthzMiddleware) logAllowed(r *http.Request, req *interfaces.Authorizat
 		"decision_id":    decision.DecisionID,
 		"evaluation_ns":  decision.EvaluationTimeNs,
 	}).Debug("Authorization allowed")
-}
-
-// logQRDBDenied logs a denial from the qrdb policy decision point path.
-func (m *AuthzMiddleware) logQRDBDenied(r *http.Request, subject interfaces.Subject, err error) {
-	if m.logger == nil {
-		return
-	}
-	m.logger.WithError(err).WithFields(map[string]interface{}{
-		"path":       r.URL.Path,
-		"method":     r.Method,
-		"ip_address": getClientIP(r),
-		"subject_id": subject.ID,
-		"username":   subject.Username,
-		"tenant_id":  subject.TenantID,
-		"request_id": GetRequestID(r.Context()),
-	}).Info("Authorization denied (qrdb PDP)")
 }

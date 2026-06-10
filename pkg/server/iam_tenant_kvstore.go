@@ -18,8 +18,7 @@ package server
 import (
 	"context"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/permission"
-	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -55,7 +54,7 @@ func (s *Server) iamTenantKVStore() interfaces.KVStore {
 // tenant's live in the shared store; a sealed barrier tenant fails closed
 // (tenant.ErrTenantSealed). The resolver is installed on the REST RBAC provider
 // so an admitted permission is gated by its scope in the subject's own tenant.
-func (s *Server) iamTenantScopeStore() permission.ScopeResolver {
+func (s *Server) iamTenantScopeStore() qrdbsdk.PermissionScopeResolver {
 	if s.qrdbNode == nil {
 		return nil
 	}
@@ -63,7 +62,7 @@ func (s *Server) iamTenantScopeStore() permission.ScopeResolver {
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil
 	}
-	store, err := permission.NewTenantScopeStore(svcs.StoreResolver)
+	store, err := qrdbsdk.NewTenantScopeStore(svcs.StoreResolver)
 	if err != nil {
 		s.logger.WithError(err).Warn("iam: failed to build tenant scope store; per-tenant permission scopes disabled")
 		return nil
@@ -86,7 +85,7 @@ type storeResolver interface {
 // index methods on top of the six core verbs), so it satisfies the narrower
 // interface directly.
 type resolverAdapter struct {
-	inner tenant.StoreResolver
+	inner qrdbsdk.TenantStoreResolver
 }
 
 // Resolve routes to the qrdb StoreResolver and returns the per-tenant store

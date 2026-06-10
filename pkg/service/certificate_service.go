@@ -28,7 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 
-	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -601,9 +601,9 @@ func usageToProfile(usage string) string {
 // ambiguity given the locked profile set.
 func SPIFFEKindForProfile(profile string) string {
 	if strings.EqualFold(strings.TrimSpace(profile), "client") {
-		return qrdbspiffe.KindUser
+		return qrdbsdk.SpiffeKindUser
 	}
-	return qrdbspiffe.KindService
+	return qrdbsdk.SpiffeKindService
 }
 
 // =============================================================================

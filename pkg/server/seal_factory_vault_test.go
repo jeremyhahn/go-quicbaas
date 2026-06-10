@@ -216,7 +216,7 @@ func TestVaultStrategy_SealUnsealRoundTrip(t *testing.T) {
 	// Provision the Transit key + KeyStorage metadata through the backend's own
 	// public API, which the sealer's SymmetricEncrypter relies on to resolve the
 	// key name. This exercises the real metadata path rather than seeding it.
-	if _, err := backend.GenerateSymmetricKey(attrs); err != nil {
+	if _, err := backend.GenerateSymmetricKey(context.Background(), attrs); err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
 	}
 
@@ -347,7 +347,7 @@ func TestEnsureVaultSealKey_Idempotent(t *testing.T) {
 	if err := ensureVaultSealKey(b2, attrs); err != nil {
 		t.Fatalf("second-boot ensureVaultSealKey failed (not idempotent): %v", err)
 	}
-	if _, err := b2.SymmetricEncrypter(attrs); err != nil {
+	if _, err := b2.SymmetricEncrypter(context.Background(), attrs); err != nil {
 		t.Fatalf("sealing key not resolvable after re-registration: %v", err)
 	}
 

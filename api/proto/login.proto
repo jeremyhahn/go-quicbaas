@@ -71,6 +71,11 @@ message FinishLoginRequest {
   bytes lookup_key = 3;
   bytes signature = 4;
   map<string, string> method_metadata = 5;
+  // alt_lookup_keys are fallback lookup keys tried in order after lookup_key
+  // misses (e.g. the legacy SHA-256(cert DER) key after the renewal-stable
+  // SPKI key). Ignored for mtls over a network transport, where the server
+  // derives both keys from the verified peer certificate.
+  repeated bytes alt_lookup_keys = 6;
 }
 
 // FinishLoginResponse delivers the issued bearer and the resolved identity.

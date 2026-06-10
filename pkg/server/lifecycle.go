@@ -34,7 +34,7 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/atrest"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -290,9 +290,9 @@ func (s *Server) initializeCA() error {
 	}
 
 	// Try Load first; if not initialized, Init instead
-	if loadErr := xkmsCA.Load(); loadErr != nil {
+	if loadErr := xkmsCA.Load(context.Background()); loadErr != nil {
 		// Load failed - try initializing from scratch
-		if initErr := xkmsCA.Init(); initErr != nil {
+		if initErr := xkmsCA.Init(context.Background()); initErr != nil {
 			return api.NewOperationFailedError("initialize certificate authority", initErr)
 		}
 		s.logger.Info("Certificate authority initialized with new keys and certificates")
@@ -396,7 +396,7 @@ func (s *Server) initializeCA() error {
 		Valid: s.config.CA.DefaultValidityDays,
 	}
 
-	issuedCert, err := xkmsCA.IssueCertificate(serverRequest)
+	issuedCert, err := xkmsCA.IssueCertificate(context.Background(), serverRequest)
 	if err != nil && !errors.Is(err, xkmssdk.ErrCertificateAlreadyExists) {
 		return api.NewOperationFailedError("issue server TLS certificate", err)
 	}
@@ -412,7 +412,7 @@ func (s *Server) initializeCA() error {
 	// Get in-memory TLS config backed by OpaqueKey. ServerTLSConfig
 	// (not bare TLSConfig) makes server intent explicit and silences
 	// the false-positive "ServerName not specified" WARN.
-	s.tlsConfig, err = xkmsCA.ServerTLSConfig(serverKeyAttrs, false)
+	s.tlsConfig, err = xkmsCA.ServerTLSConfig(context.Background(), serverKeyAttrs, false)
 	if err != nil {
 		return api.NewOperationFailedError("create server TLS config", err)
 	}
@@ -528,7 +528,7 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 		Valid: s.config.CA.DefaultValidityDays,
 	}
 
-	_, err := s.xkmsCA.IssueCertificate(serverRequest)
+	_, err := s.xkmsCA.IssueCertificate(context.Background(), serverRequest)
 	if err != nil && !errors.Is(err, xkmssdk.ErrCertificateAlreadyExists) {
 		return api.NewOperationFailedError("issue server TLS certificate from external CA", err)
 	}
@@ -570,7 +570,7 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 	// Get in-memory TLS config backed by the external CA's OpaqueKey.
 	// ServerTLSConfig (not bare TLSConfig) makes server intent explicit
 	// and silences the false-positive "ServerName not specified" WARN.
-	s.tlsConfig, err = s.xkmsCA.ServerTLSConfig(serverKeyAttrs, false)
+	s.tlsConfig, err = s.xkmsCA.ServerTLSConfig(context.Background(), serverKeyAttrs, false)
 	if err != nil {
 		return api.NewOperationFailedError("create server TLS config from external CA", err)
 	}
@@ -698,7 +698,7 @@ func (s *Server) initDataPlaneEncryptor() error {
 	}
 	// Build the single atrest.Encryptor. A nil barrier produces a no-op
 	// Encryptor so callers do not need to nil-check before passing it on.
-	s.dataPlaneEncryptor = atrest.New(rawBarrier)
+	s.dataPlaneEncryptor = qrdbsdk.NewAtRestEncryptor(rawBarrier)
 	return nil
 }
 
@@ -1706,7 +1706,7 @@ func (s *Server) startGRPCServer() error {
 		grpcapi.StreamTenantInterceptor(tenantResolve),
 	}
 
-	// Install the qrdb-backed authorization interceptors after the tenant
+	// Install the platform-token authorization interceptors after the tenant
 	// interceptor (so the cert-derived tenant is already on the context) when
 	// RequireAuthz=true. When authz is off the builder returns nil and the chain
 	// is unchanged — gRPC adds no authorization gate, exactly as before. The same
@@ -1715,7 +1715,7 @@ func (s *Server) startGRPCServer() error {
 	if unaryAuthz, streamAuthz := s.grpcAuthorizationInterceptors(); unaryAuthz != nil {
 		unaryInterceptors = append(unaryInterceptors, unaryAuthz)
 		streamInterceptors = append(streamInterceptors, streamAuthz)
-		s.logger.Info("gRPC qrdb PDP authorization installed (RequireAuthz=true)")
+		s.logger.Info("gRPC platform-token validator authorization installed (RequireAuthz=true)")
 	}
 
 	grpcOpts = append(grpcOpts,

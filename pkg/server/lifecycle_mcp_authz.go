@@ -19,10 +19,7 @@ import (
 	"context"
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth/qrdbauthz"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
 // mcpOIDCProviderGetter is the narrow accessor the MCP authz wiring uses to
@@ -32,18 +29,27 @@ type mcpOIDCProviderGetter interface {
 	GetOIDCProvider(ctx context.Context) (*iam.OIDCProvider, error)
 }
 
-// configureMCPQRDBAuthz installs the qrdb-backed authorization decision point on
-// the MCP server when RequireAuthz=true. It wires the OIDC provider (so the tool
-// authorization checker validates the SAME tokens REST / gRPC / QUIC accept and
-// resolves the caller's roles + tenant), installs the qrdb-backed authorization
-// service, and switches the checker to the qrdb-canonical tool -> permission
-// mapper with the default-deny posture for unmapped tools.
+// configureMCPQRDBAuthz installs the unified platform-token authorization
+// decision point on the MCP server when RequireAuthz=true. It builds the single
+// central platform-token Validator (the SAME validator the REST gate uses) and
+// installs it through the MCP enforcement seam: per tool call, ONE
+// validator.Authorize performs offline signature / iss / aud / exp verification,
+// DPoP sender-constraint (RFC 9449) for cnf.jkt-bound tokens, the offline scp ->
+// permission decision against the qrdb-canonical "resource:action" the tool
+// requires, and the per-tenant liveness/revocation check. This REPLACES the prior
+// online qrdb role-PDP path on MCP.
+//
+// MCP carries no DPoP proof channel; the validator is called with an empty proof
+// per tool call. A cnf.jkt-bound token presented over MCP is therefore denied —
+// intended, not a relaxation.
 //
 // It is a no-op when RequireAuthz=false (and the caller leaves the prior
 // SetAuthorizationService(nil, authManager) wiring intact), so MCP keeps its
 // legacy token-only behaviour: a non-public tool requires a valid token but the
-// authorization decision is not enforced. Returns true when enforcement was
-// installed so the caller can skip the legacy wiring.
+// authorization decision is not enforced. It returns true when enforcement was
+// installed so the caller can skip the legacy wiring. On a validator-build
+// failure it logs and returns false, mirroring configureRESTAuthz: enforcement is
+// not installed and the legacy token-only path is left in place.
 func (s *Server) configureMCPQRDBAuthz(mcpServer *mcpapi.Server) bool {
 	if s.config == nil || !s.config.Security.RequireAuthz {
 		return false
@@ -60,26 +66,17 @@ func (s *Server) configureMCPQRDBAuthz(mcpServer *mcpapi.Server) bool {
 		return false
 	}
 
-	// Build the single qrdb-backed authorizer adapter. It late-binds the qrdb
-	// RBAC client (resolved per request via GetQRDBNodeClient().RBAC()).
-	rbacResolver := func() qrdbtransport.RBACClient {
-		node := s.GetQRDBNodeClient()
-		if node == nil {
-			return nil
-		}
-		return node.RBAC()
-	}
-	adapter, err := qrdbauthz.New(rbacResolver, nil)
+	// Build the single central platform-token Validator and install the unified
+	// enforcement seam. One Validator call per tool decides: offline token
+	// validation, DPoP sender-constraint for cnf.jkt-bound tokens, the offline scp
+	// -> permission decision, and the per-tenant liveness/revocation check.
+	platformValidator, err := s.buildPlatformValidator(context.Background())
 	if err != nil {
-		s.logger.WithError(err).Error("MCP authz disabled: failed to build qrdb authorizer adapter")
+		s.logger.WithError(err).Error("MCP authz disabled: failed to build platform-token validator")
 		return false
 	}
 
-	// Validate tokens against the OIDC provider (roles + tenant), enforce the
-	// decision through the qrdb PDP, and use the qrdb-canonical tool mapper.
-	mcpServer.SetOIDCProvider(iam.NewOIDCProviderAdapter(provider))
-	mcpServer.SetAuthorizationService(newQRDBAuthzService(adapter), nil)
-	mcpServer.EnableQRDBAuthzMapping()
-	s.logger.Info("MCP qrdb PDP authorization installed (RequireAuthz=true)")
+	mcpServer.SetValidatorAuthorizer(platformValidator)
+	s.logger.Info("MCP platform-token validator authorization installed (RequireAuthz=true)")
 	return true
 }

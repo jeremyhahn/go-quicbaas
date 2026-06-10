@@ -265,6 +265,9 @@ export class QuicClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly secrets: any = null;
   readonly barrier: BarrierClient;
+  // Per-tenant barrier is a REST-only surface; non-REST transports stub it.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly tenantBarrier: any = null;
   readonly ceremony: CeremonyClient;
   readonly bootstrap: BootstrapClient;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

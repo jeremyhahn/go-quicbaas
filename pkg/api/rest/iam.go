@@ -116,6 +116,21 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		r.Put("/{tenant_id}", h.UpdateTenant)
 		r.Delete("/{tenant_id}", h.DeleteTenant)
 
+		// Per-tenant barrier lifecycle (delegates to the embedded qrdb node via
+		// the broker's TenantBarrierServicer facade). Authorized as the
+		// tenant_barrier resource (see pepSpecialRules), tenant-scoped.
+		// The IAM route group is registered outside the standard BodyLimitMiddleware
+		// group (pkg/api/rest/server.go), so body limiting is applied explicitly here
+		// using the same MaxBodySize knob as the standard API routes.
+		r.Route("/{tenant_id}/barrier", func(r chi.Router) {
+			r.Use(BodyLimitMiddleware(h.server.config.MaxBodySize))
+			r.Post("/init", h.server.HandleTenantBarrierInit)
+			r.Post("/unseal", h.server.HandleTenantBarrierUnseal)
+			r.Post("/unseal-share", h.server.HandleTenantBarrierUnsealShare)
+			r.Post("/seal", h.server.HandleTenantBarrierSeal)
+			r.Get("/status", h.server.HandleTenantBarrierStatus)
+		})
+
 		// Tenant-scoped resources
 		r.Route("/{tenant_id}/users", func(r chi.Router) {
 			r.Get("/", h.ListUsers)
@@ -262,8 +277,12 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	// Mount xkms's native WebAuthn routes under /api/v1/iam/{tenant_id}/webauthn.
 	// This is the canonical surface for tenant-scoped FIDO2 ceremonies; the
 	// legacy /api/v1/tenants/{tenant_id}/webauthn routes above remain wired
-	// for clients that have not yet migrated.
-	h.MountXKMSWebAuthnRoutes(router)
+	// for clients that have not yet migrated. Use a bounded initialization
+	// context instead of context.Background() so the manager lookup respects
+	// a startup timeout.
+	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer initCancel()
+	h.MountXKMSWebAuthnRoutes(initCtx, router)
 }
 
 // Type aliases to iam package interfaces.

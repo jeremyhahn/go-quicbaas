@@ -16,6 +16,9 @@ package benchmark
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"os"
 	"runtime"
 	"sort"
 	"sync"
@@ -29,6 +32,27 @@ var (
 	_ = warmupBenchmark
 	_ = warmupServer
 )
+
+// benchTLSConfig returns a TLS configuration for benchmark clients.
+// It reads the CA certificate from the QUICBAAS_CA_FILE environment variable.
+// If the variable is not set or the file cannot be read, the system certificate
+// pool is used so benchmarks can run against servers with publicly-trusted certs.
+func benchTLSConfig() *tls.Config {
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	if caFile := os.Getenv("QUICBAAS_CA_FILE"); caFile != "" {
+		pem, err := os.ReadFile(caFile)
+		if err == nil {
+			pool.AppendCertsFromPEM(pem)
+		}
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    pool,
+	}
+}
 
 // LatencyStats holds latency percentile statistics.
 type LatencyStats struct {

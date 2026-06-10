@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"encoding/pem"
 	"math/big"
 	"strings"
@@ -77,7 +78,7 @@ func (a *caServiceAdapter) RevokeBySerial(serialHex string, reason int) error {
 	if ca == nil {
 		return ErrCAServiceAdapterNilCA
 	}
-	return ca.Revoke(serial, reason)
+	return ca.Revoke(context.Background(), serial, reason)
 }
 
 // normalizeSerial parses a hex serial number, tolerating an optional "0x"

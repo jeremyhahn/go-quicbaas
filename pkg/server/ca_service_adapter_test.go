@@ -70,7 +70,7 @@ func (f *fakeTrustedCA) CertStore() xkmssdk.CertStore {
 }
 
 func (f *fakeTrustedCA) IssueCertificateWithProfile(
-	req *xkmssdk.TrustedCACertificateRequest, _ string,
+	_ context.Context, req *xkmssdk.TrustedCACertificateRequest, _ string,
 ) (*xkmssdk.TrustedCAIssuedCertificate, error) {
 	if f.issueErr != nil {
 		return nil, f.issueErr
@@ -113,12 +113,12 @@ func (f *fakeTrustedCA) IssueCertificateWithProfile(
 // profile-aware path. Lets the fake satisfy callers (e.g. the agent cert
 // issuer) that invoke the no-profile signature.
 func (f *fakeTrustedCA) IssueCertificate(
-	req *xkmssdk.TrustedCACertificateRequest,
+	ctx context.Context, req *xkmssdk.TrustedCACertificateRequest,
 ) (*xkmssdk.TrustedCAIssuedCertificate, error) {
-	return f.IssueCertificateWithProfile(req, "")
+	return f.IssueCertificateWithProfile(ctx, req, "")
 }
 
-func (f *fakeTrustedCA) SignCSR(csrPEM []byte, opts *xkmssdk.TrustedCASignOptions) (*x509.Certificate, error) {
+func (f *fakeTrustedCA) SignCSR(_ context.Context, csrPEM []byte, opts *xkmssdk.TrustedCASignOptions) (*x509.Certificate, error) {
 	f.lastSignOpts = opts
 	if f.signErr != nil {
 		return nil, f.signErr
@@ -162,7 +162,7 @@ func (f *fakeTrustedCA) SignCSR(csrPEM []byte, opts *xkmssdk.TrustedCASignOption
 	return x509.ParseCertificate(der)
 }
 
-func (f *fakeTrustedCA) Revoke(serial *big.Int, _ int) error {
+func (f *fakeTrustedCA) Revoke(_ context.Context, serial *big.Int, _ int) error {
 	if f.revokeErr != nil {
 		return f.revokeErr
 	}
@@ -187,7 +187,7 @@ func (f *fakeTrustedCA) CACertificate() (*x509.Certificate, error) {
 	return f.caCert, nil
 }
 
-func (f *fakeTrustedCA) GenerateCRL() ([]byte, error) {
+func (f *fakeTrustedCA) GenerateCRL(_ context.Context) ([]byte, error) {
 	if f.crlErr != nil {
 		return nil, f.crlErr
 	}

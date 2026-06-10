@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -30,6 +31,26 @@ import (
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
+
+// newTLSConfig returns a TLS configuration for the pipelined perf tool.
+// The CA certificate is loaded from the QUICBAAS_CA_FILE environment variable.
+// If not set, the system certificate pool is used.
+func newTLSConfig() *tls.Config {
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	if caFile := os.Getenv("QUICBAAS_CA_FILE"); caFile != "" {
+		pem, err := os.ReadFile(caFile)
+		if err == nil {
+			pool.AppendCertsFromPEM(pem)
+		}
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    pool,
+	}
+}
 
 type Stats struct {
 	totalRequests   atomic.Uint64
@@ -81,7 +102,7 @@ func main() {
 	fmt.Printf("===============================================================\n\n")
 
 	// Create SDK client
-	client, err := quicbaas.NewClient(*address, quicbaas.WithTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}))
+	client, err := quicbaas.NewClient(*address, quicbaas.WithTLSConfig(newTLSConfig()))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
 		os.Exit(1)

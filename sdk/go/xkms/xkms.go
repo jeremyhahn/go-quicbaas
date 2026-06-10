@@ -32,7 +32,6 @@
 package xkms
 
 import (
-	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -87,7 +86,7 @@ var (
 // pkg/types so we promote it here directly — quote-verification
 // code uses it to pick between rsa.VerifyPSS and
 // rsa.VerifyPKCS1v15.
-var IsRSAPSS = xkmstypes.IsRSAPSS
+var IsRSAPSS = xkmssdk.IsRSAPSS
 
 // ---------------------------------------------------------
 // Type aliases

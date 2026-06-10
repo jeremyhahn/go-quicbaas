@@ -83,6 +83,7 @@ export type RouteName =
   | 'kms'
   | 'secrets'
   | 'barrier'
+  | 'tenant-barrier'
   | 'ceremony'
   | 'bootstrap'
   | 'ssh-keys'
@@ -205,6 +206,9 @@ function parseHash(hash: string): Route {
     // /seal is a legacy alias kept so existing bookmarks resolve to the
     // renamed Barrier surface without a hard 404.
     return { name: 'barrier', params: {}, hash };
+  }
+  if (path === '/tenant-barrier') {
+    return { name: 'tenant-barrier', params: {}, hash };
   }
   if (path === '/ceremony') {
     return { name: 'ceremony', params: {}, hash };
@@ -332,6 +336,7 @@ export function routeIAMTab(tab: 'users' | 'tenants' | 'roles' | 'policies'): vo
 export function routeKMS(): void { navigateTo('/kms'); }
 export function routeSecrets(): void { navigateTo('/secrets'); }
 export function routeBarrier(): void { navigateTo('/barrier'); }
+export function routeTenantBarrier(): void { navigateTo('/tenant-barrier'); }
 export function routeCeremony(): void { navigateTo('/ceremony'); }
 export function routeBootstrap(): void { navigateTo('/bootstrap'); }
 /** @deprecated Use routeBarrier — /seal is the legacy hash. */

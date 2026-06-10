@@ -213,6 +213,14 @@ type Server struct {
 	// bindingEnforcementOnly when set.
 	defaultDenyEnforcement bool
 
+	// validatorEnforcement selects the central platform-token Validator gate
+	// (AuthorizeViaValidator) on the /api/v1 group. When true, every protected
+	// request is authorized in a SINGLE Validator call (offline signature / iss /
+	// aud / exp + DPoP + scp decision + per-tenant liveness). It is the
+	// reference (REST) RequireAuthz=true posture and supersedes the qrdb online
+	// role-PDP Authorize gate. Mutually exclusive with the other selectors.
+	validatorEnforcement bool
+
 	// hookTaskStore is the task store used by Claude Code hook handlers (optional)
 	hookTaskStore orchestration.TaskStore
 
@@ -262,6 +270,11 @@ type Server struct {
 	// SetBarrierService once the qrdb SDK BarrierClient is available. Nil
 	// before wiring; the handlers report 503 Service Unavailable.
 	barrierSvc service.BarrierServicer
+
+	// tenantBarrierSvc serves /api/v1/tenants/{id}/barrier endpoints. Wired by
+	// lifecycle via SetTenantBarrierService once the qrdb SDK TenantClient is
+	// available. Nil before wiring; the handlers report 503.
+	tenantBarrierSvc service.TenantBarrierServicer
 
 	// ceremonySvc serves /api/v1/init endpoints. Wired by lifecycle via
 	// SetCeremonyService once the qrdb SDK CeremonyClient is available.
@@ -370,13 +383,17 @@ func (s *Server) setupRouter() {
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Apply authorization middleware if configured. When only token-binding
-		// enforcement is requested, install the proof-of-possession gate
-		// (EnforceTokenBinding); otherwise install the full RBAC Authorize gate.
+		// Apply authorization middleware if configured. Selector precedence:
+		// the central platform-token Validator gate (AuthorizeViaValidator) when
+		// enabled; then proof-of-possession-only token binding
+		// (EnforceTokenBinding); otherwise the legacy RBAC Authorize gate.
 		if s.authzMiddleware != nil && !s.defaultDenyEnforcement {
-			if s.bindingEnforcementOnly {
+			switch {
+			case s.validatorEnforcement:
+				r.Use(s.authzMiddleware.AuthorizeViaValidator)
+			case s.bindingEnforcementOnly:
 				r.Use(s.authzMiddleware.EnforceTokenBinding)
-			} else {
+			default:
 				r.Use(s.authzMiddleware.Authorize)
 			}
 		}
@@ -992,6 +1009,32 @@ func (s *Server) SetBarrierService(svc service.BarrierServicer) {
 	s.barrierSvc = svc
 }
 
+// SetTenantBarrierService installs the per-tenant barrier facade used by the
+// /api/v1/tenants/{id}/barrier handlers. Lifecycle wiring calls this once the
+// qrdb SDK TenantClient is available. Passing nil disables the surface
+// (handlers report 503).
+func (s *Server) SetTenantBarrierService(svc service.TenantBarrierServicer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tenantBarrierSvc = svc
+}
+
+// barrierService returns the wired system barrier facade under the read lock,
+// or nil when not yet wired. Use this instead of reading s.barrierSvc directly.
+func (s *Server) barrierService() service.BarrierServicer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.barrierSvc
+}
+
+// tenantBarrierService returns the wired per-tenant barrier facade under the
+// read lock, or nil when not yet wired.
+func (s *Server) tenantBarrierService() service.TenantBarrierServicer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tenantBarrierSvc
+}
+
 // SetCeremonyService installs the ceremony facade used by /api/v1/init
 // handlers. Lifecycle wiring calls this once the qrdb SDK CeremonyClient
 // is available. Passing nil disables the surface (handlers report 503).
@@ -1072,6 +1115,8 @@ func (s *Server) SetTokenBindingEnforcement(tokenValidator TokenValidator) {
 		// the injected AuthorizedContext.
 	})
 	s.bindingEnforcementOnly = true
+	s.defaultDenyEnforcement = false
+	s.validatorEnforcement = false
 
 	// Rebuild the router with the binding-enforcement middleware.
 	s.setupRouter()
@@ -1108,6 +1153,7 @@ func (s *Server) SetDefaultDenyEnforcement(tokenValidator TokenValidator) {
 	})
 	s.defaultDenyEnforcement = true
 	s.bindingEnforcementOnly = false
+	s.validatorEnforcement = false
 
 	// Rebuild the router with the default-deny middleware on the top router.
 	s.setupRouter()
@@ -1115,38 +1161,39 @@ func (s *Server) SetDefaultDenyEnforcement(tokenValidator TokenValidator) {
 	s.logger.Info("Default-deny scope -> RBAC enforcement middleware enabled")
 }
 
-// SetQRDBAuthzEnforcement installs the full RBAC Authorize gate backed by qrdb's
-// policy decision point (the qrdbauthz adapter). Unlike SetDefaultDenyEnforcement
-// (scope presence) and SetTokenBindingEnforcement (binding only), this routes
-// every protected /api/v1 request through qrdb's authorizer using the
-// qrdb-canonical PEP mapping: the request is mapped to a registered
-// "resource:action" permission and qrdb decides allow/deny. It is the opt-in
-// RequireAuthz=true posture for Stage 1.1a.
+// SetValidatorAuthzEnforcement installs the central platform-token Validator gate
+// (AuthorizeViaValidator) on the /api/v1 group: every protected request is
+// authorized in a SINGLE Validator call that performs offline signature / iss /
+// aud / exp verification, DPoP sender-constraint (RFC 9449) for cnf.jkt-bound
+// tokens, the offline scp -> permission decision, and the per-tenant
+// liveness/revocation check. It REPLACES the prior bespoke token-validate +
+// online qrdb role-PDP path and is the reference (REST) RequireAuthz=true
+// posture.
 //
-// Both tokenValidator and authorizer must be non-nil. This method recreates the
-// router with the Authorize gate (neither defaultDeny nor bindingOnly) applied to
-// the /api/v1 group.
-func (s *Server) SetQRDBAuthzEnforcement(tokenValidator TokenValidator, authorizer QRDBAuthorizer) {
+// authorizer must be non-nil. This method recreates the router with the
+// validator gate (neither defaultDeny, bindingOnly, nor the legacy Authorize
+// gate) applied to the /api/v1 group.
+func (s *Server) SetValidatorAuthzEnforcement(authorizer ValidatorAuthorizer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if tokenValidator == nil || authorizer == nil {
-		s.logger.Warn("SetQRDBAuthzEnforcement called with nil dependency, enforcement not enabled")
+	if authorizer == nil {
+		s.logger.Warn("SetValidatorAuthzEnforcement called with nil authorizer, enforcement not enabled")
 		return
 	}
 
 	s.authzMiddleware = NewAuthzMiddleware(&AuthzMiddlewareConfig{
-		Logger:         s.logger,
-		TokenValidator: tokenValidator,
-		QRDBAuthorizer: authorizer,
+		Logger:              s.logger,
+		ValidatorAuthorizer: authorizer,
 	})
+	s.validatorEnforcement = true
 	s.defaultDenyEnforcement = false
 	s.bindingEnforcementOnly = false
 
-	// Rebuild the router with the Authorize gate on the /api/v1 group.
+	// Rebuild the router with the validator gate on the /api/v1 group.
 	s.setupRouter()
 
-	s.logger.Info("REST qrdb PDP authorization (Authorize gate) enabled")
+	s.logger.Info("REST platform-token validator authorization (offline scp + liveness) enabled")
 }
 
 // HasAuthorizationMiddleware returns true if authorization middleware is configured.

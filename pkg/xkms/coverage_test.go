@@ -6,6 +6,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -79,7 +80,7 @@ func parseJWTHeader(t *testing.T, token string) map[string]interface{} {
 func TestGenerateSymmetricKey_SuccessWithSymmetricBackend(t *testing.T) {
 	setupSymmetricTestXKMS(t)
 
-	key, err := GenerateSymmetricKey("software", symmetricKeyAttrs("gen-sym-success"))
+	key, err := GenerateSymmetricKey(context.Background(), "software", symmetricKeyAttrs("gen-sym-success"))
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 }
@@ -90,11 +91,11 @@ func TestGetSymmetricKey_SuccessWithSymmetricBackend(t *testing.T) {
 	setupSymmetricTestXKMS(t)
 
 	attrs := symmetricKeyAttrs("get-sym-success")
-	_, err := GenerateSymmetricKey("software", attrs)
+	_, err := GenerateSymmetricKey(context.Background(), "software", attrs)
 	require.NoError(t, err)
 
 	// Reference format is backend:type:algo:keyname.
-	key, err := GetSymmetricKey("software:secret:aes256:get-sym-success")
+	key, err := GetSymmetricKey(context.Background(), "software:secret:aes256:get-sym-success")
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 }
@@ -110,7 +111,7 @@ func TestImportSymmetricKey_SuccessImportExportFlow(t *testing.T) {
 	_, err := rand.Read(material)
 	require.NoError(t, err)
 
-	err = ImportSymmetricKey("software", symmetricKeyAttrs("import-sym-success"), material)
+	err = ImportSymmetricKey(context.Background(), "software", symmetricKeyAttrs("import-sym-success"), material)
 	require.NoError(t, err)
 }
 

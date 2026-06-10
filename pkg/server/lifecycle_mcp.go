@@ -82,6 +82,13 @@ func (s *Server) startMCPServer() error {
 	mcpServer.SetCeremonyService(ceremonySvc)
 	s.logger.Info("Barrier and Ceremony services wired into MCP server")
 
+	// Wire the per-tenant barrier facade into the MCP server so the
+	// qrdb_tenant_barrier_* tools serve real responses. Same facade as
+	// gRPC/REST/QUIC — quicbaas owns no barrier logic. When nil (qrdb not
+	// yet online) the tools return TenantBarrierServiceUnavailableError.
+	mcpServer.SetTenantBarrierService(s.buildTenantBarrierService())
+	s.logger.Info("Tenant barrier service wired into MCP server")
+
 	// Start MCP server in a goroutine (non-blocking for HTTP transport)
 	go func() {
 		if err := mcpServer.Start(); err != nil {

@@ -16,6 +16,7 @@ export declare class WailsClient implements Client {
     readonly kms: any;
     readonly secrets: any;
     readonly barrier: any;
+    readonly tenantBarrier: any;
     readonly ceremony: any;
     readonly bootstrap: any;
     readonly seal: any;

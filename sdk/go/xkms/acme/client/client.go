@@ -1,9 +1,9 @@
 // Package client re-exports go-xkms's ACME RFC 8555 client types.
 package client
 
-import xkmsac "github.com/jeremyhahn/go-xkms/pkg/acme/client"
+import xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 
 type (
-	Client             = xkmsac.Client
-	CertificateRequest = xkmsac.CertificateRequest
+	Client             = xkmsacme.ACMEClient
+	CertificateRequest = xkmsacme.ACMECertificateRequest
 )

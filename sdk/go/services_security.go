@@ -1566,6 +1566,39 @@ func authFactorCredentialFor(factorType string, req *AuthFactorEnrollRequest) ([
 	}
 }
 
+// authFactorSPKICredentialFor derives the optional renewal-stable SPKI lookup
+// credential for the given factor type.
+//
+//	mtls / piv: MethodParams["spki_sha256"] is the hex SHA-256 of the
+//	            certificate's SubjectPublicKeyInfo — the raw-byte form of
+//	            go-qrdb pkg/auth.SPKICredentialKey(cert). When present the
+//	            qrdb store indexes it alongside the SHA-256(cert) credential
+//	            so login survives certificate renewal with the same keypair.
+//	fido2     : no SPKI concept; always nil.
+//
+// The parameter is optional: factors enrolled without it simply resolve
+// through the legacy credential key only.
+func authFactorSPKICredentialFor(factorType string, req *AuthFactorEnrollRequest) ([]byte, error) {
+	switch factorType {
+	case "mtls", "piv":
+		hexKey := authFactorMethodParam(req, "spki_sha256")
+		if hexKey == "" {
+			return nil, nil
+		}
+		raw, err := hex.DecodeString(hexKey)
+		if err != nil {
+			return nil, sdkerrors.Wrap(err, sdkerrors.CodeInvalidInput, "authfactors.Add",
+				"spki_sha256 is not valid hex")
+		}
+		if len(raw) == 0 {
+			return nil, sdkerrors.NewInvalidInput("authfactors.Add", "spki_sha256 decoded to empty bytes")
+		}
+		return raw, nil
+	default:
+		return nil, nil
+	}
+}
+
 // authFactorMetadata projects the non-credential MethodParams entries into a
 // string metadata map for the stored factor. The credential lookup key is
 // kept narrow (in Credential); descriptive context (cert CN, serial, reader,
@@ -1576,7 +1609,7 @@ func authFactorMetadata(req *AuthFactorEnrollRequest) map[string]string {
 	}
 	out := make(map[string]string, len(req.MethodParams))
 	for k, v := range req.MethodParams {
-		if k == "credential_sha256" || k == "credential_id" || k == "label" {
+		if k == "credential_sha256" || k == "spki_sha256" || k == "credential_id" || k == "label" {
 			continue
 		}
 		if s, ok := v.(string); ok {
@@ -1655,6 +1688,10 @@ func (c *authFactorsImpl) Add(ctx context.Context, req *AuthFactorEnrollRequest)
 	if err != nil {
 		return nil, err
 	}
+	spkiCredential, err := authFactorSPKICredentialFor(req.FactorName, req)
+	if err != nil {
+		return nil, err
+	}
 
 	qrdb, uaf, err := c.userFactors()
 	if err != nil {
@@ -1666,12 +1703,13 @@ func (c *authFactorsImpl) Add(ctx context.Context, req *AuthFactorEnrollRequest)
 	}
 
 	addResp, err := uaf.AddAuthFactor(ctx, &qrdbtransport.AuthFactorAddRequest{
-		UserID:     userID,
-		Type:       req.FactorName,
-		Label:      authFactorMethodParam(req, "label"),
-		Credential: credential,
-		Metadata:   authFactorMetadata(req),
-		CreatedBy:  "self",
+		UserID:         userID,
+		Type:           req.FactorName,
+		Label:          authFactorMethodParam(req, "label"),
+		Credential:     credential,
+		SPKICredential: spkiCredential,
+		Metadata:       authFactorMetadata(req),
+		CreatedBy:      "self",
 	})
 	if err != nil {
 		return nil, err
@@ -1765,6 +1803,10 @@ func (c *authFactorsImpl) Rotate(ctx context.Context, oldID string, newFactor *A
 	if err != nil {
 		return nil, err
 	}
+	spkiCredential, err := authFactorSPKICredentialFor(newFactor.FactorName, newFactor)
+	if err != nil {
+		return nil, err
+	}
 	qrdb, uaf, err := c.userFactors()
 	if err != nil {
 		return nil, err
@@ -1777,12 +1819,13 @@ func (c *authFactorsImpl) Rotate(ctx context.Context, oldID string, newFactor *A
 	rotateResp, err := uaf.RotateAuthFactor(ctx, &qrdbtransport.AuthFactorRotateRequest{
 		OldFactorID: oldID,
 		NewFactor: qrdbtransport.AuthFactorAddRequest{
-			UserID:     userID,
-			Type:       newFactor.FactorName,
-			Label:      authFactorMethodParam(newFactor, "label"),
-			Credential: credential,
-			Metadata:   authFactorMetadata(newFactor),
-			CreatedBy:  "self",
+			UserID:         userID,
+			Type:           newFactor.FactorName,
+			Label:          authFactorMethodParam(newFactor, "label"),
+			Credential:     credential,
+			SPKICredential: spkiCredential,
+			Metadata:       authFactorMetadata(newFactor),
+			CreatedBy:      "self",
 		},
 	})
 	if err != nil {
