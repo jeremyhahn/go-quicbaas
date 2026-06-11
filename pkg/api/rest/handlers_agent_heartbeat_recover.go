@@ -1,4 +1,4 @@
-//go:build rest && iam
+//go:build rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -37,7 +37,7 @@ type recoverLogger interface {
 }
 
 // =============================================================================
-// Heartbeat Self-Healing Recovery (iam build tag)
+// Heartbeat Self-Healing Recovery
 // =============================================================================
 //
 // Background. The central QuicBaaS daemon keeps the agent registry in
@@ -57,8 +57,8 @@ type recoverLogger interface {
 //
 // This file implements that recovery. The recoverer is wired in by
 // pkg/server lifecycle alongside the existing AgentRegistrar adapter;
-// builds without the iam tag never compile this file and the heartbeat
-// handler falls through to its original 404 path.
+// when no recoverer is wired the heartbeat handler falls through to its
+// original 404 path.
 
 // IAMHeartbeatRecovererDeps bundles the collaborators the recoverer
 // needs. All fields are required.

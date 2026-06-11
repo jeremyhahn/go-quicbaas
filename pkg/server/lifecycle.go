@@ -1687,8 +1687,8 @@ func (s *Server) startGRPCServer() error {
 
 	// Add interceptors. The tenant interceptor runs after recovery so a panic
 	// is still trapped, and before the handlers so tenant-scoped operations
-	// observe the caller's tenant. It is best-effort: tenantResolve is nil in
-	// non-iam builds (and the interceptor is a no-op pass-through), and even
+	// observe the caller's tenant. It is best-effort: tenantResolve is nil
+	// until wired (the interceptor is then a no-op pass-through), and even
 	// when wired it never rejects a call for lack of a tenant.
 	tenantResolve := s.tenantContextFunc()
 	unaryInterceptors := []ggrpc.UnaryServerInterceptor{
@@ -1845,7 +1845,7 @@ func (s *Server) startGRPCServer() error {
 		s.logger.Info("Registered Embedding gRPC service")
 	}
 
-	// Register IAM service (no-op when iam build tag is not set)
+	// Register IAM service
 	s.registerIAMService(grpcServer)
 
 	// Register Ollama service (no-op when rag build tag is not set)

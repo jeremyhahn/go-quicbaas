@@ -1,4 +1,4 @@
-//go:build rest && iam
+//go:build rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -37,6 +37,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -105,12 +107,19 @@ func setupPIVFullHandler(t *testing.T, leaf *x509.Certificate, tenant string, re
 
 	if registerUser {
 		thumb := sha256.Sum256(leaf.Raw)
-		require.NoError(t, memStorage.CreateUser(context.Background(), &iam.User{
-			ID:                "piv-user",
-			TenantID:          tenant,
-			Email:             "piv@example.com",
-			PIVCertThumbprint: hex.EncodeToString(thumb[:]),
-		}))
+		pivUser := &iam.User{
+			ID:       "piv-user",
+			TenantID: tenant,
+			// A decoy PIV binding precedes the matching one so the lookup
+			// exercises multi-binding resolution (C1-D): the user is bound to
+			// more than one PIV cert and the presented cert matches the second.
+			CertBindings: []qrdbsdk.CertBinding{
+				{Thumbprint: "decoy-piv-binding", Kind: qrdbsdk.CertBindingPIVAttested},
+				{Thumbprint: hex.EncodeToString(thumb[:]), Kind: qrdbsdk.CertBindingPIVAttested},
+			},
+			Email: "piv@example.com",
+		}
+		require.NoError(t, memStorage.CreateUser(context.Background(), pivUser))
 	}
 
 	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
@@ -181,6 +190,113 @@ func TestPIVLogin_Success(t *testing.T) {
 
 	require.NotEmpty(t, audit.events)
 	assert.Equal(t, "auth.login.piv.success", audit.events[len(audit.events)-1].Action)
+}
+
+// TestPIVLogin_MultiBinding_ResolvesSecondBinding is the C1-D transport-level
+// regression: a user bound to more than one PIV certificate authenticates when
+// the presented cert matches a non-first binding. Before the CertBindings
+// migration the user carried a single PIVCertThumbprint and a second card was
+// unrepresentable.
+func TestPIVLogin_MultiBinding_ResolvesSecondBinding(t *testing.T) {
+	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
+	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+	handler, audit, cleanup := setupPIVFullHandler(t, leaf, "tenant-piv", true)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	handler.PIVLogin(w, pivRequestWithSpiffe(leaf))
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	require.NotEmpty(t, audit.events)
+	assert.Equal(t, "auth.login.piv.success", audit.events[len(audit.events)-1].Action)
+}
+
+// TestPIVLogin_SPKIBoundCertLogsIn is the C1-E SPKI-cutover regression: a user
+// bound by the canonical SPKI thumbprint (no legacy hex binding) authenticates
+// because the handler tries the SPKI thumbprint first. TestPIVLogin_Success
+// already covers the legacy-hex-bound path (it registers sha256(cert.Raw)), so
+// the two together prove SPKI-first-then-legacy resolution.
+func TestPIVLogin_SPKIBoundCertLogsIn(t *testing.T) {
+	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
+	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+	handler, audit, cleanup := setupPIVFullHandlerSPKI(t, leaf, "tenant-piv")
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	handler.PIVLogin(w, pivRequestWithSpiffe(leaf))
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.NotEmpty(t, resp["access_token"])
+	require.NotEmpty(t, audit.events)
+	assert.Equal(t, "auth.login.piv.success", audit.events[len(audit.events)-1].Action)
+}
+
+// setupPIVFullHandlerSPKI mirrors setupPIVFullHandler but binds the user by the
+// canonical SPKI thumbprint instead of the legacy hex digest.
+func setupPIVFullHandlerSPKI(t *testing.T, leaf *x509.Certificate, tenant string) (*IAMHandler, *captureAuditLogger, func()) {
+	t.Helper()
+
+	memStorage := iam.NewMemoryStorage()
+	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  memStorage,
+		GroupStorage: memStorage,
+		RoleStorage:  memStorage,
+		Tenants:      &testTenantManager{storage: memStorage},
+	})
+
+	pivUser := &iam.User{
+		ID:       "piv-user",
+		TenantID: tenant,
+		CertBindings: []qrdbsdk.CertBinding{
+			{Thumbprint: qrdbsdk.ComputeSPKIThumbprint(leaf), Kind: qrdbsdk.CertBindingPIVAttested},
+		},
+		Email: "piv-spki@example.com",
+	}
+	require.NoError(t, memStorage.CreateUser(context.Background(), pivUser))
+
+	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	require.NoError(t, err)
+	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
+		Issuer:           "https://" + pivTrustDomain,
+		SigningAlgorithm: "RS256",
+		SigningKey:       privateKey,
+		AccessTokenTTL:   15 * time.Minute,
+		RefreshTokenTTL:  24 * time.Hour,
+		IDTokenTTL:       15 * time.Minute,
+		AuthCodeTTL:      10 * time.Minute,
+	}, iam.OIDCDependencies{
+		IdentityStore: store,
+		AppStorage:    iam.NewBackendStorage(newIntrospectMemKV()),
+		TokenStorage:  iam.NewBackendStorage(newIntrospectMemKV()),
+	})
+	require.NoError(t, err)
+
+	auditLogger := &captureAuditLogger{}
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+
+	mockSvc := &pivFullMockService{
+		MockQuicBaaS: testutil.NewMockQuicBaaS(),
+		store:        store,
+		provider:     provider,
+		auditLogger:  auditLogger,
+	}
+	cfg := DefaultConfig()
+	cfg.Address = ":0"
+	cfg.SPIFFETrustDomain = pivTrustDomain
+	cfg.PIVClientCert.Enabled = true
+	server, err := NewServer(mockSvc.MockQuicBaaS, cfg, log)
+	require.NoError(t, err)
+	server.service = mockSvc
+
+	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
+	cleanup := func() {
+		_ = auditLogger.Close()
+		server.Close()
+	}
+	return handler, auditLogger, cleanup
 }
 
 // A presented cert whose thumbprint matches no registered user fails closed.
@@ -256,6 +372,61 @@ func TestPIVLogin_TrustedIssuerAllowed(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.PIVLogin(w, pivRequestWithSpiffe(leaf))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+}
+
+// pivNilOIDCService resolves the identity store and a registered user but hands
+// back a nil OIDC provider, driving PIVLogin's "OIDC provider not configured"
+// fail-closed branch after a successful cert-binding lookup.
+type pivNilOIDCService struct {
+	*testutil.MockQuicBaaS
+	store *iam.IdentityStore
+}
+
+func (m *pivNilOIDCService) GetIdentityStore(_ context.Context) (*iam.IdentityStore, error) {
+	return m.store, nil
+}
+
+func (m *pivNilOIDCService) GetOIDCProvider(_ context.Context) (*iam.OIDCProvider, error) {
+	return nil, nil
+}
+
+// A resolvable PIV user with no OIDC provider available fails closed with a 500
+// instead of minting a token. This guards the post-lookup token-issuance wiring
+// that the C1-D binding migration feeds into.
+func TestPIVLogin_OIDCProviderUnavailable(t *testing.T) {
+	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
+	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+
+	memStorage := iam.NewMemoryStorage()
+	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  memStorage,
+		GroupStorage: memStorage,
+		RoleStorage:  memStorage,
+		Tenants:      &testTenantManager{storage: memStorage},
+	})
+	thumb := sha256.Sum256(leaf.Raw)
+	pivUser := &iam.User{ID: "piv-user", TenantID: "tenant-piv", Email: "piv@example.com"}
+	pivUser.SetPIVThumbprint(hex.EncodeToString(thumb[:]))
+	require.NoError(t, memStorage.CreateUser(context.Background(), pivUser))
+
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+	mockSvc := &pivNilOIDCService{MockQuicBaaS: testutil.NewMockQuicBaaS(), store: store}
+	cfg := DefaultConfig()
+	cfg.Address = ":0"
+	cfg.SPIFFETrustDomain = pivTrustDomain
+	cfg.PIVClientCert.Enabled = true
+	server, err := NewServer(mockSvc.MockQuicBaaS, cfg, log)
+	require.NoError(t, err)
+	server.service = mockSvc
+	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
+	defer server.Close()
+
+	w := httptest.NewRecorder()
+	handler.PIVLogin(w, pivRequestWithSpiffe(leaf))
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "OIDC provider not configured")
 }
 
 // logPIVLoginAudit / logPIVLoginFailureAudit no-op when the service exposes no

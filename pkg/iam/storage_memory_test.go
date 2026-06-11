@@ -1,5 +1,3 @@
-//go:build iam
-
 package iam
 
 import (
@@ -1288,7 +1286,7 @@ func TestMemoryStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
 	}
 
 	// Bind thumbprint via UpdateUser (the bootstrap-admin path).
-	user.PIVCertThumbprint = "thumb-1"
+	user.SetPIVThumbprint("thumb-1")
 	if err := storage.UpdateUser(ctx, user); err != nil {
 		t.Fatalf("UpdateUser failed: %v", err)
 	}
@@ -1301,7 +1299,7 @@ func TestMemoryStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
 	}
 
 	// Rotate thumbprint; the old binding must be removed.
-	user.PIVCertThumbprint = "thumb-2"
+	user.SetPIVThumbprint("thumb-2")
 	if err := storage.UpdateUser(ctx, user); err != nil {
 		t.Fatalf("UpdateUser rotate failed: %v", err)
 	}
@@ -1317,7 +1315,7 @@ func TestMemoryStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
 	}
 
 	// Clear the thumbprint; lookup must fail.
-	user.PIVCertThumbprint = ""
+	user.SetPIVThumbprint("")
 	if err := storage.UpdateUser(ctx, user); err != nil {
 		t.Fatalf("UpdateUser clear failed: %v", err)
 	}
@@ -1335,7 +1333,8 @@ func TestMemoryStorage_DeleteUser_PIVThumbprintCleanup(t *testing.T) {
 	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
-	user := &User{ID: "u1", TenantID: "t1", Email: "a@test.com", PIVCertThumbprint: "thumb-1"}
+	user := &User{ID: "u1", TenantID: "t1", Email: "a@test.com"}
+	user.SetPIVThumbprint("thumb-1")
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}

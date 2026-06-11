@@ -734,7 +734,6 @@ func TestValidator_ValidateKMS(t *testing.T) {
 		cfg.Storage.WALDir = tmpDir + "/wal"
 		cfg.Storage.Backend = StorageBackendPebble
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 
 		err := Validate(cfg)
 		assert.NoError(t, err)
@@ -749,7 +748,6 @@ func TestValidator_ValidateKMS(t *testing.T) {
 		cfg.Storage.WALDir = tmpDir + "/wal"
 		cfg.Storage.Backend = StorageBackendPebble
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 
 		err := Validate(cfg)
 		require.Error(t, err)
@@ -765,7 +763,6 @@ func TestValidator_ValidateKMS(t *testing.T) {
 		cfg.Storage.WALDir = tmpDir + "/wal"
 		cfg.Storage.Backend = StorageBackendPebble
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 
 		err := Validate(cfg)
 		assert.NoError(t, err)
@@ -784,7 +781,6 @@ func TestValidator_ValidateKMS(t *testing.T) {
 		cfg.Storage.WALDir = tmpDir + "/wal"
 		cfg.Storage.Backend = StorageBackendPebble
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 
 		err := Validate(cfg)
 		require.Error(t, err)

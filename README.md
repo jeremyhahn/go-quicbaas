@@ -97,8 +97,7 @@ make build-fips
 Exclude specific features at build time:
 
 ```bash
-# Without IAM (~96 commands excluded)
-make build WITH_IAM=0
+# IAM is always compiled and cannot be excluded.
 
 # Without time series (~7 commands excluded)
 make build WITH_TIMESERIES=0
@@ -110,7 +109,7 @@ make build WITH_VECTOR=0 WITH_RAG=0 WITH_MCP=0
 make build WITH_REST=0
 
 # Multiple exclusions
-make build WITH_IAM=0 WITH_TIMESERIES=0 WITH_QUIC=0
+make build WITH_TIMESERIES=0 WITH_QUIC=0
 ```
 
 ### Build Tag Reference
@@ -118,7 +117,6 @@ make build WITH_IAM=0 WITH_TIMESERIES=0 WITH_QUIC=0
 | Tag | Default | Commands | Description |
 |-----|---------|----------|-------------|
 | `raft` | ON | - | Distributed consensus and clustering |
-| `iam` | ON | ~96 | IAM/ABAC multi-tenant authorization |
 | `timeseries` | ON | 7 | Time series metrics storage |
 | `vector` | ON | - | Vector database (HNSW indexing) |
 | `rag` | ON | - | RAG pipelines (requires vector) |
@@ -126,6 +124,10 @@ make build WITH_IAM=0 WITH_TIMESERIES=0 WITH_QUIC=0
 | `quic` | ON | - | QUIC protocol support |
 | `mcp` | ON | - | MCP AI agent tools |
 | `fips` | OFF | - | FIPS 140-3 cryptography |
+
+IAM/ABAC (~96 commands) is always compiled into every binary and has no build
+tag; QuicBaaS is the central identity broker, so a no-IAM artifact is not
+supported.
 
 See [docs/BUILD_TAGS.md](docs/BUILD_TAGS.md) for complete reference including KMS backends, codecs, and object storage tags.
 

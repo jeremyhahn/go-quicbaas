@@ -142,9 +142,10 @@ are equivalent; the canonical path is recommended for new clients.
 
 ## Verification
 
-- `go test -tags 'iam rest'` clean for `pkg/iam/...`, `pkg/api/...`,
+- `go test -tags 'rest'` clean for `pkg/iam/...`, `pkg/api/...`,
   `pkg/server/...`, `pkg/service/...`, `pkg/config/...`.
-- `go vet -tags 'iam rest'` clean.
+- `go vet -tags 'rest'` clean.
+  (Historical: the `iam` build tag was removed; IAM is always compiled.)
 - LOC delta: -3,742 (deleted) + ~700 (new factory + manager + tests
   + config + mount) = net ~-3,000 LOC.
 

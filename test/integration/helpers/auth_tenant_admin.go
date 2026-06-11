@@ -286,7 +286,7 @@ func createTenantAdminUser(ctx context.Context, baseURL, tenantID, email, adminB
 
 // activateUserWithCert calls the PIV invite-activation endpoint to bind the
 // given cert PEM to the pending user identified by inviteToken. After this
-// call the user's PIVCertThumbprint is set and the user transitions to Active.
+// call the user's PIV-attested cert binding is set and the user transitions to Active.
 // The endpoint is public (no auth bearer required).
 func activateUserWithCert(ctx context.Context, baseURL, inviteToken string, certPEM []byte) error {
 	reqBody := map[string]interface{}{

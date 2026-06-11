@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -85,9 +83,17 @@ type UserStorage interface {
 	// GetUserByEmail retrieves a user by email (global lookup).
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 
-	// GetUserByPIVThumbprint retrieves a user by their registered PIV certificate
-	// SHA-256 thumbprint. Returns ErrNotFound when no user owns that thumbprint.
+	// GetUserByPIVThumbprint retrieves a user by one of their registered
+	// PIV-attested cert-binding lookup thumbprints (hex SHA-256 of the cert
+	// DER). A user may hold multiple PIV bindings; any of them resolves the
+	// user. Returns ErrNotFound when no user owns that thumbprint.
 	GetUserByPIVThumbprint(ctx context.Context, thumbprint string) (*User, error)
+
+	// GetUserByUsername retrieves a user by tenant-scoped username. qrdb owns
+	// the username index natively; the local stores maintain a username->id
+	// index. Returns ErrUserNotFound when no user has that username in the
+	// tenant. This is the seam the RBAC AssignRole/RevokeRole redirect uses.
+	GetUserByUsername(ctx context.Context, tenantID, username string) (*User, error)
 
 	// UpdateUser updates an existing user.
 	UpdateUser(ctx context.Context, user *User) error
@@ -347,7 +353,10 @@ type UpdateUserOptions struct {
 	// AuthMethods, when non-nil, replaces the allowed authentication methods.
 	AuthMethods *[]string
 
-	// PIVCertThumbprint, when non-nil, sets or clears the PIV certificate thumbprint.
+	// PIVCertThumbprint, when non-nil, replaces the user's PIV-attested cert
+	// bindings with a single binding for this lookup thumbprint (hex SHA-256 of
+	// the cert DER). A blank value clears all PIV-attested bindings. Non-PIV
+	// bindings are preserved.
 	PIVCertThumbprint *string
 
 	// InviteToken, when non-nil, sets or clears the pending invite token.

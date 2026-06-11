@@ -12,12 +12,11 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // coverage_local_test.go raises unit coverage for pkg/server functions that
-// are reachable under the default (non-iam) build configuration. Sibling
-// coverage suites that target these same generic functions are gated behind
-// the iam build tag and therefore do not run when the package is built with
-// only the "local" / "hashicorpmetrics" tags; this file re-exercises the
-// build-tag-independent behaviour so the lifecycle/composition layer is
-// covered in every build matrix. Every test is hermetic: no network listener,
+// are reachable under the minimal ("local" / "hashicorpmetrics") build
+// configuration. It re-exercises the transport-independent lifecycle and
+// composition behaviour so that layer is covered in every build matrix,
+// including builds without the rest/grpc/quic/mcp transport tags. Every test
+// is hermetic: no network listener,
 // daemon, or host mutation; goroutine coordination uses channels, never
 // time.Sleep.
 
@@ -46,16 +45,8 @@ import (
 )
 
 // =============================================================================
-// errors.go — error types only exercised under the iam build elsewhere
+// errors.go — error types exercised by transport-tagged suites elsewhere
 // =============================================================================
-
-func TestBootstrapPasswordTooShortError_ErrorAndUnwrap(t *testing.T) {
-	err := &BootstrapPasswordTooShortError{MinLength: 12}
-	assert.Contains(t, err.Error(), "12", "message must embed the minimum length")
-	assert.Contains(t, err.Error(), "at least", "message must describe the constraint")
-	assert.True(t, errors.Is(err, ErrInsecureBootstrapPassword),
-		"Unwrap must surface the sentinel for errors.Is")
-}
 
 func TestFirstBootBootstrapError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("kv write failed")
@@ -234,35 +225,6 @@ func TestServer_RegisterCertificateService_Local_SkipsWhenServiceNil(t *testing.
 	srv.registerCertificateService(gs, nil)
 	assert.Empty(t, gs.GetServiceInfo(),
 		"no certificate service may be registered when the facade is absent")
-}
-
-// =============================================================================
-// iam_init_stub.go / lifecycle_iam_mtls_stub.go — non-iam no-op paths
-// =============================================================================
-
-func TestServer_RegisterIAMService_Local_NoOp(t *testing.T) {
-	srv := withTempServer(t)
-	gs := ggrpc.NewServer()
-	t.Cleanup(gs.Stop)
-
-	// Under the non-iam build registerIAMService is a no-op; it must not
-	// register anything or panic.
-	srv.registerIAMService(gs)
-	assert.Empty(t, gs.GetServiceInfo(),
-		"IAM service must not be registered under the non-iam build")
-}
-
-func TestServer_InitializeIAMComponents_Local_ReturnsNil(t *testing.T) {
-	srv := withTempServer(t)
-	components, err := srv.initializeIAMComponents()
-	require.NoError(t, err)
-	assert.Nil(t, components, "non-iam build must return nil IAM components")
-}
-
-func TestServer_WireIAMMTLSAuthenticators_Local_NoOp(t *testing.T) {
-	srv := withTempServer(t)
-	require.NoError(t, srv.wireIAMMTLSAuthenticators(),
-		"non-iam build must treat mTLS authenticator wiring as a no-op")
 }
 
 // =============================================================================

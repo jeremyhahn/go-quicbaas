@@ -247,6 +247,194 @@ func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *qrdbtrans
 	return &resp, nil
 }
 
+// OfficerRegister registers a Security Officer for the system barrier by
+// calling the qrdb_barrier_officer_register MCP tool. The signed certificate
+// in the response must be delivered to the officer out of band.
+func (t *Transport) OfficerRegister(ctx context.Context, req *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.OfficerRegister", "request is required")
+	}
+	args := map[string]interface{}{
+		"username": req.Username,
+		"csr_pem":  string(req.CSRPEM),
+	}
+	if req.AuthenticatorType != "" {
+		args["authenticator_type"] = req.AuthenticatorType
+	}
+	if req.AuthenticatorRef != "" {
+		args["authenticator_ref"] = req.AuthenticatorRef
+	}
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_officer_register", args)
+	if err != nil {
+		return nil, err
+	}
+	var resp qrdbtransport.OfficerRegisterResponse
+	if err := remarshalBarrier(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.OfficerRegister", "failed to decode response")
+	}
+	return &resp, nil
+}
+
+// OfficerList lists all registered Security Officers for the system barrier
+// by calling the qrdb_barrier_officer_list MCP tool.
+func (t *Transport) OfficerList(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error) {
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_officer_list", nil)
+	if err != nil {
+		return nil, err
+	}
+	var wire struct {
+		Officers []*qrdbtransport.OfficerStatus `json:"officers"`
+	}
+	if err := remarshalBarrier(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.OfficerList", "failed to decode response")
+	}
+	return wire.Officers, nil
+}
+
+// OfficerClaimStatus returns per-officer claim status (no share data) by
+// calling the qrdb_barrier_officer_claim_status MCP tool.
+func (t *Transport) OfficerClaimStatus(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error) {
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_officer_claim_status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var wire struct {
+		Officers []*qrdbtransport.OfficerStatus `json:"officers"`
+	}
+	if err := remarshalBarrier(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.OfficerClaimStatus", "failed to decode response")
+	}
+	return wire.Officers, nil
+}
+
+// ShareClaimBegin issues a challenge nonce to the named Security Officer by
+// calling the qrdb_barrier_share_claim_begin MCP tool.
+func (t *Transport) ShareClaimBegin(ctx context.Context, req *qrdbtransport.ShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.ShareClaimBegin", "request is required")
+	}
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_share_claim_begin", map[string]interface{}{
+		"username": req.Username,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var resp qrdbtransport.ShareClaimBeginResponse
+	if err := remarshalBarrier(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.ShareClaimBegin", "failed to decode response")
+	}
+	return &resp, nil
+}
+
+// ShareClaimComplete verifies the officer's nonce signature and returns the
+// share bytes exactly once by calling the qrdb_barrier_share_claim_complete
+// MCP tool. The caller must wipe ShareBytes after use.
+func (t *Transport) ShareClaimComplete(ctx context.Context, req *qrdbtransport.ShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.ShareClaimComplete", "request is required")
+	}
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_share_claim_complete", map[string]interface{}{
+		"username":  req.Username,
+		"nonce_hex": req.NonceHex,
+		"signature": req.Signature,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var resp qrdbtransport.ShareClaimCompleteResponse
+	if err := remarshalBarrier(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.ShareClaimComplete", "failed to decode response")
+	}
+	return &resp, nil
+}
+
+// ShamirSealVote submits a Shamir share as a seal vote for a Shamir-protected
+// system barrier by calling the qrdb_barrier_shamir_seal_vote MCP tool.
+func (t *Transport) ShamirSealVote(ctx context.Context, req *qrdbtransport.ShamirSealVoteRequest) (*qrdbtransport.ShamirSealVoteResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.ShamirSealVote", "request is required")
+	}
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_shamir_seal_vote", map[string]interface{}{
+		"share": req.Share,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var resp qrdbtransport.ShamirSealVoteResponse
+	if err := remarshalBarrier(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.ShamirSealVote", "failed to decode response")
+	}
+	return &resp, nil
+}
+
+// RecoveryOfficerRegister registers a Security Officer for recovery key
+// distribution by calling the qrdb_barrier_recovery_officer_register MCP tool.
+func (t *Transport) RecoveryOfficerRegister(ctx context.Context, req *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.RecoveryOfficerRegister", "request is required")
+	}
+	args := map[string]interface{}{
+		"username": req.Username,
+		"csr_pem":  string(req.CSRPEM),
+	}
+	if req.AuthenticatorType != "" {
+		args["authenticator_type"] = req.AuthenticatorType
+	}
+	if req.AuthenticatorRef != "" {
+		args["authenticator_ref"] = req.AuthenticatorRef
+	}
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_recovery_officer_register", args)
+	if err != nil {
+		return nil, err
+	}
+	var resp qrdbtransport.OfficerRegisterResponse
+	if err := remarshalBarrier(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.RecoveryOfficerRegister", "failed to decode response")
+	}
+	return &resp, nil
+}
+
+// RecoveryShareClaimBegin issues a challenge nonce for a recovery officer by
+// calling the qrdb_barrier_recovery_share_claim_begin MCP tool.
+func (t *Transport) RecoveryShareClaimBegin(ctx context.Context, req *qrdbtransport.ShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.RecoveryShareClaimBegin", "request is required")
+	}
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_recovery_share_claim_begin", map[string]interface{}{
+		"username": req.Username,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var resp qrdbtransport.ShareClaimBeginResponse
+	if err := remarshalBarrier(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.RecoveryShareClaimBegin", "failed to decode response")
+	}
+	return &resp, nil
+}
+
+// RecoveryShareClaimComplete verifies the recovery officer's nonce signature
+// and returns the recovery share bytes exactly once by calling the
+// qrdb_barrier_recovery_share_claim_complete MCP tool.
+func (t *Transport) RecoveryShareClaimComplete(ctx context.Context, req *qrdbtransport.ShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.RecoveryShareClaimComplete", "request is required")
+	}
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_recovery_share_claim_complete", map[string]interface{}{
+		"username":  req.Username,
+		"nonce_hex": req.NonceHex,
+		"signature": req.Signature,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var resp qrdbtransport.ShareClaimCompleteResponse
+	if err := remarshalBarrier(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.RecoveryShareClaimComplete", "failed to decode response")
+	}
+	return &resp, nil
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

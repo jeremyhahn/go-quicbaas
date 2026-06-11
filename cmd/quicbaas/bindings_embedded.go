@@ -256,7 +256,6 @@ func (b *EmbeddedServerBinding) buildConfig(opts EmbeddedStartOptions) (*config.
 	cfg.Logging.Level = logLevel
 
 	cfg.Security.TLSEnabled = false
-	cfg.Security.EncryptionEnabled = false
 	cfg.Discovery.Enabled = false
 	cfg.Backup.Enabled = false
 	cfg.KMS.Enabled = false

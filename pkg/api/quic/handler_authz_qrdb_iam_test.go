@@ -1,4 +1,4 @@
-//go:build quic && iam
+//go:build quic
 
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
@@ -49,7 +49,7 @@ func TestGetIAMQRDBPermission_Mapped(t *testing.T) {
 		assert.Equal(t, c.action, act, "opcode 0x%02X", c.opcode)
 
 		// And the top-level getQRDBPermission must delegate to it.
-		r2, a2, ok2 := getQRDBPermission(c.opcode)
+		r2, a2, ok2 := getQRDBPermission(c.opcode, nil)
 		require.True(t, ok2)
 		assert.Equal(t, c.resource, r2)
 		assert.Equal(t, c.action, a2)

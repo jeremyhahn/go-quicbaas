@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam
-
 package server
 
 import (
@@ -55,8 +53,8 @@ func TestBuildXKMSFactors(t *testing.T) {
 	cfg := config.TestConfig()
 	cfg.IAM.WebAuthn.RPID = "example.test"
 	withRPID := buildXKMSFactors(cfg)
-	assert.Len(t, withRPID, 3, "FIDO2 + PIV + PKCS#11 plugins must be registered")
+	assert.Len(t, withRPID, 4, "PIV + PKCS#11 + FIDO2 + mTLS plugins must be registered")
 
 	nilCfg := buildXKMSFactors(nil)
-	assert.Len(t, nilCfg, 3, "a nil config must still yield the default plugins")
+	assert.Len(t, nilCfg, 4, "a nil config must still yield the default plugins")
 }

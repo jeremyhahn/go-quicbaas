@@ -26,38 +26,40 @@ import (
 func TestGetQRDBPermission_Mapped(t *testing.T) {
 	cases := []struct {
 		opcode   byte
+		payload  []byte
 		resource string
 		action   string
 	}{
-		{OpGet, "kv", "get"},
-		{OpPut, "kv", "put"},
-		{OpDelete, "kv", "delete"},
-		{OpTransaction, "transaction", "execute"},
-		{OpKMSGenerateKey, "keys", "create"},
-		{OpCryptoSign, "keys", "sign"},
-		{OpSecretsStore, "credentials", "store"},
-		{OpCertIssue, "certs", "generate"},
-		{OpBarrier, "tenant_barrier", "status"},
-		{OpCeremony, "ceremony", "status"},
-		{OpVectorSearchSimilar, "vector", "search_similar"},
-		{OpCreateUser, "users", "create"},
+		{OpGet, nil, "kv", "get"},
+		{OpPut, nil, "kv", "put"},
+		{OpDelete, nil, "kv", "delete"},
+		{OpTransaction, nil, "transaction", "execute"},
+		{OpKMSGenerateKey, nil, "keys", "create"},
+		{OpCryptoSign, nil, "keys", "sign"},
+		{OpSecretsStore, nil, "credentials", "store"},
+		{OpCertIssue, nil, "certs", "generate"},
+		// OpBarrier is sub-op-aware; payload[0] must select the sub-operation.
+		{OpBarrier, []byte{SubOpBarrierStatus}, "tenant_barrier", "status"},
+		{OpCeremony, nil, "ceremony", "status"},
+		{OpVectorSearchSimilar, nil, "vector", "search_similar"},
+		{OpCreateUser, nil, "users", "create"},
 		// Stage 0.5 broker data-plane surfaces.
-		{OpOSPutObject, "objstore", "put"},
-		{OpOSGetObject, "objstore", "get"},
-		{OpOSBatchPutObjects, "objstore", "batch"},
-		{OpOSAdmin, "objstore", "admin"},
-		{OpOllamaEmbed, "ollama", "embed"},
-		{OpOllamaGetModelInfo, "ollama", "model_info"},
-		{OpDynamicSecretsGenerate, "dynamic_secrets", "generate"},
-		{OpDynamicSecretsCreateRole, "dynamic_secrets", "role_create"},
-		{OpParameterSet, "parameters", "write"},
-		{OpParameterSearch, "parameters", "search"},
-		{OpScheduler, "scheduler", "status"},
-		{OpOrchestrator, "orchestrator", "status"},
+		{OpOSPutObject, nil, "objstore", "put"},
+		{OpOSGetObject, nil, "objstore", "get"},
+		{OpOSBatchPutObjects, nil, "objstore", "batch"},
+		{OpOSAdmin, nil, "objstore", "admin"},
+		{OpOllamaEmbed, nil, "ollama", "embed"},
+		{OpOllamaGetModelInfo, nil, "ollama", "model_info"},
+		{OpDynamicSecretsGenerate, nil, "dynamic_secrets", "generate"},
+		{OpDynamicSecretsCreateRole, nil, "dynamic_secrets", "role_create"},
+		{OpParameterSet, nil, "parameters", "write"},
+		{OpParameterSearch, nil, "parameters", "search"},
+		{OpScheduler, nil, "scheduler", "status"},
+		{OpOrchestrator, nil, "orchestrator", "status"},
 	}
 	for _, c := range cases {
-		res, act, ok := getQRDBPermission(c.opcode)
-		require.True(t, ok, "opcode 0x%02X", c.opcode)
+		res, act, ok := getQRDBPermission(c.opcode, c.payload)
+		require.True(t, ok, "opcode 0x%02X payload %v", c.opcode, c.payload)
 		assert.Equal(t, c.resource, res, "opcode 0x%02X", c.opcode)
 		assert.Equal(t, c.action, act, "opcode 0x%02X", c.opcode)
 	}
@@ -71,7 +73,7 @@ func TestGetQRDBPermission_Unmapped(t *testing.T) {
 		OpEmbeddingBatchGenerate,
 		OpEmbeddingListProviders,
 	} {
-		_, _, ok := getQRDBPermission(op)
+		_, _, ok := getQRDBPermission(op, nil)
 		assert.False(t, ok, "opcode 0x%02X should be unmapped", op)
 	}
 }

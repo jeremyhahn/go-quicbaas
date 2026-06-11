@@ -469,18 +469,30 @@ func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context
 // per-tenant liveness / revocation check.
 //
 // It is default-deny: an opcode with no qrdb permission mapping is denied (there
-// is no registered permission to admit it). On allow it reconstructs the
-// principal Subject from the verified AuthorizedContext (Username included so
-// service-layer principal matching by username is preserved) and injects it for
-// downstream handlers. QUIC carries no DPoP, so the proof / htm / htu are empty
-// — a cnf.jkt-bound token is therefore rejected because it cannot prove
+// is no registered permission to admit it). For OpBarrier, the payload is
+// inspected to extract the sub-op byte (payload[0]); an empty payload or an
+// unknown sub-op is denied without consulting the validator. This closes the
+// privilege-escalation gap where a single coarse read-only permission was
+// admitted for the entire barrier dispatch surface. On allow it reconstructs
+// the principal Subject from the verified AuthorizedContext (Username included
+// so service-layer principal matching by username is preserved) and injects it
+// for downstream handlers. QUIC carries no DPoP, so the proof / htm / htu are
+// empty — a cnf.jkt-bound token is therefore rejected because it cannot prove
 // possession over this transport.
 func (h *Handler) authorizeViaValidator(ctx context.Context, req *Request) (context.Context, *Response) {
-	resource, action, mapped := getQRDBPermission(req.Opcode)
+	resource, action, mapped := getQRDBPermission(req.Opcode, req.Payload)
 	if !mapped {
+		msg := fmt.Sprintf("permission denied: no qrdb permission mapping for opcode 0x%02X", req.Opcode)
+		if req.Opcode == OpBarrier {
+			subOp := byte(0)
+			if len(req.Payload) > 0 {
+				subOp = req.Payload[0]
+			}
+			msg = fmt.Sprintf("permission denied: no qrdb permission mapping for opcode 0x%02X sub-op 0x%02X", req.Opcode, subOp)
+		}
 		return ctx, &Response{
 			Status:  StatusPermissionDenied,
-			Payload: []byte(fmt.Sprintf("permission denied: no qrdb permission mapping for opcode 0x%02X", req.Opcode)),
+			Payload: []byte(msg),
 		}
 	}
 	requiredPerm := resource + ":" + action
@@ -1077,8 +1089,8 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 		// Direct PEP Operations (0x5B-0x5D)
 		OpPEPCheck, OpPEPCheckBatch, OpPEPSubscribe,
 		// IAM sub-dispatch operations (0xFD-0xFF) - App, MFA, PEP
-		// These opcodes are defined in protocol_iam.go (iam build tag)
-		// but must route here for tryHandleIAMRequest dispatch.
+		// These opcodes are defined in protocol_iam.go and route here
+		// for tryHandleIAMRequest dispatch.
 		0xFD, 0xFE, 0xFF:
 		if resp := h.tryHandleIAMRequest(ctx, req); resp != nil {
 			return resp

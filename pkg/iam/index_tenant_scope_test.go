@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -24,49 +22,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Scenario (e): the email index is tenant-scoped. The same email registered in
-// two tenants resolves to the correct user per tenant, with no global
-// collision.
-func TestEmailIndex_TenantScoped_NoCollision(t *testing.T) {
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-
-	ctxA := ContextWithTenant(context.Background(), "tenant-a")
-	ctxB := ContextWithTenant(context.Background(), "tenant-b")
-
-	require.NoError(t, storage.CreateUser(ctxA, &User{ID: "ua", TenantID: "tenant-a", Email: "shared@example.com"}))
-	require.NoError(t, storage.CreateUser(ctxB, &User{ID: "ub", TenantID: "tenant-b", Email: "shared@example.com"}))
-
-	gotA, err := storage.GetUserByEmail(ctxA, "shared@example.com")
-	require.NoError(t, err)
-	assert.Equal(t, "ua", gotA.ID)
-
-	gotB, err := storage.GetUserByEmail(ctxB, "shared@example.com")
-	require.NoError(t, err)
-	assert.Equal(t, "ub", gotB.ID)
-
-	assert.NotEqual(t, gotA.ID, gotB.ID, "email index must be tenant-scoped")
-}
-
-// Scenario (e): the PIV thumbprint index is tenant-scoped.
-func TestPIVIndex_TenantScoped_NoCollision(t *testing.T) {
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-
-	ctxA := ContextWithTenant(context.Background(), "tenant-a")
-	ctxB := ContextWithTenant(context.Background(), "tenant-b")
-
-	require.NoError(t, storage.CreateUser(ctxA, &User{ID: "ua", TenantID: "tenant-a", PIVCertThumbprint: "THUMB-SHARED"}))
-	require.NoError(t, storage.CreateUser(ctxB, &User{ID: "ub", TenantID: "tenant-b", PIVCertThumbprint: "THUMB-SHARED"}))
-
-	gotA, err := storage.GetUserByPIVThumbprint(ctxA, "THUMB-SHARED")
-	require.NoError(t, err)
-	assert.Equal(t, "ua", gotA.ID)
-
-	gotB, err := storage.GetUserByPIVThumbprint(ctxB, "THUMB-SHARED")
-	require.NoError(t, err)
-	assert.Equal(t, "ub", gotB.ID)
-}
+// User email/PIV-thumbprint index scoping tests were removed in phase C1-F:
+// BackendStorage no longer persists users or those lookup indexes (qrdb owns
+// the user record). Tenant scoping of the user lookup indexes is covered by the
+// qrdbadapter test suite. The app/token tenant-scoping tests below remain — the
+// app and token indexes are still BaaS-owned.
 
 // Scenario (e): OAuth app keys are tenant-scoped; the clientID encodes the
 // tenant (app_<tenant>_<suffix>), so two tenants' apps never collide.

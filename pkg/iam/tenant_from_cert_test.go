@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -167,5 +165,30 @@ func TestTenantFromPeerCert_NilCertNoHRD(t *testing.T) {
 	var unresolved *TenantUnresolvedError
 	if !errors.As(err, &unresolved) {
 		t.Fatalf("expected *TenantUnresolvedError, got %v", err)
+	}
+}
+
+// TestTenantUnresolvedError_ErrorAndUnwrap exercises the typed error's message
+// formatting (with and without a cause) and its Unwrap contract directly, since
+// the message text is surfaced to operators on a fail-closed login.
+func TestTenantUnresolvedError_ErrorAndUnwrap(t *testing.T) {
+	// Without a cause: the bare message is returned and Unwrap is nil.
+	bare := &TenantUnresolvedError{}
+	if got := bare.Error(); got != "tenant could not be resolved from peer certificate or routing hints" {
+		t.Fatalf("bare Error() = %q", got)
+	}
+	if bare.Unwrap() != nil {
+		t.Fatalf("bare Unwrap() = %v, want nil", bare.Unwrap())
+	}
+
+	// With a cause: the cause text is appended and Unwrap exposes it for errors.Is.
+	cause := errors.New("spiffe san malformed")
+	wrapped := &TenantUnresolvedError{Cause: cause}
+	want := "tenant could not be resolved from peer certificate or routing hints: spiffe san malformed"
+	if got := wrapped.Error(); got != want {
+		t.Fatalf("wrapped Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(wrapped, cause) {
+		t.Fatal("Unwrap must expose the underlying cause for errors.Is")
 	}
 }

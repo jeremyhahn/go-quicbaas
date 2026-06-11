@@ -245,10 +245,7 @@ func (s *sealService) Initialize(ctx context.Context, req *SealInitRequest) (*Se
 	}
 
 	if s.logger != nil {
-		s.logger.WithFields(map[string]interface{}{
-			"shares_count":        len(initResp.Shares),
-			"recovery_keys_count": len(initResp.RecoveryKeys),
-		}).Info("seal initialized successfully")
+		s.logger.WithField("version", initResp.Version).Info("seal initialized successfully")
 	}
 
 	return initResp, nil
@@ -416,10 +413,7 @@ func (s *sealService) Rekey(ctx context.Context, req *RekeyRequest) (*RekeyRespo
 	}
 
 	if s.logger != nil {
-		s.logger.WithFields(map[string]interface{}{
-			"shares_count": len(rekeyResp.Shares),
-			"version":      rekeyResp.Version,
-		}).Info("rekey completed successfully")
+		s.logger.WithField("version", rekeyResp.Version).Info("rekey completed successfully")
 	}
 
 	return rekeyResp, nil
@@ -470,9 +464,9 @@ func (s *sealService) GenerateRecoveryKey(ctx context.Context, req *GenerateReco
 		return nil, err
 	}
 
-	// Generate recovery keys via seal manager
-	recoveryKeys, err := s.sealManager.GenerateRecoveryKeys(ctx, req.RecoveryThreshold, req.RecoveryTotalKeys)
-	if err != nil {
+	// Generate recovery keys via seal manager. Key material is never
+	// returned (qrdb share-free contract).
+	if _, err := s.sealManager.GenerateRecoveryKeys(ctx, req.RecoveryThreshold, req.RecoveryTotalKeys); err != nil {
 		if s.logger != nil {
 			s.logger.WithField("error", err).Error("generate recovery keys failed")
 		}
@@ -480,12 +474,11 @@ func (s *sealService) GenerateRecoveryKey(ctx context.Context, req *GenerateReco
 	}
 
 	resp := &GenerateRecoveryKeyResponse{
-		RecoveryKeys: recoveryKeys,
-		Timestamp:    time.Now(),
+		Timestamp: time.Now(),
 	}
 
 	if s.logger != nil {
-		s.logger.WithField("count", len(resp.RecoveryKeys)).Info("recovery keys generated successfully")
+		s.logger.Info("recovery keys generated successfully")
 	}
 
 	return resp, nil

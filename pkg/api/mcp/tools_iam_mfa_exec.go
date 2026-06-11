@@ -1,4 +1,4 @@
-//go:build mcp && iam
+//go:build mcp
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

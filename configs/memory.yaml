@@ -46,7 +46,6 @@ object_storage:
 security:
   tls_enabled: false
   api_key_enabled: false
-  encryption_enabled: false
   fips_mode: false
   authorization:
     provider: "rbac"
@@ -68,3 +67,13 @@ logging:
   level: "debug"
   format: "console"
   output: "stdout"
+
+# Trust resolver configuration (outbound TLS trust strategy chain).
+# Remove tofu from strategies once DANE is published for this deployment.
+# tofu must NEVER be an implicit fallback — only explicit listing enables it.
+trust:
+  scopes:
+    default:
+      strategies: [dane, noise, spki, tofu]
+      server-url: ""
+      per-method-timeout: 5s

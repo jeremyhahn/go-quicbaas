@@ -79,13 +79,15 @@ func (s *Server) qrdbTenantBarrierInit(ctx context.Context, payload []byte) ([]b
 	if err != nil {
 		return nil, err
 	}
+	// Share-free contract: share bytes are never returned over the wire;
+	// officers claim their shares individually via the share-claim flow.
 	out := &pb.TenantBarrierInitResponse{}
 	if result != nil {
 		out.TenantId = result.TenantID
 		out.Strategy = result.Strategy
-		out.Shares = result.Shares
 		out.Threshold = int32(result.Threshold)     //nolint:gosec // small count
 		out.TotalShares = int32(result.TotalShares) //nolint:gosec // small count
+		out.ShareCount = int32(result.ShareCount)   //nolint:gosec // small count
 	}
 	resp, marshalErr := proto.Marshal(out)
 	if marshalErr != nil {

@@ -52,8 +52,42 @@ type stubBarrierClient struct {
 	rootTokenResp *transport.BarrierRootTokenResponse
 	rootTokenErr  error
 
-	lastInitSecret   string
-	lastUnsealSecret string
+	officerRegisterResp *transport.OfficerRegisterResponse
+	officerRegisterErr  error
+
+	officerListResp []*transport.OfficerStatus
+	officerListErr  error
+
+	claimStatusResp []*transport.OfficerStatus
+	claimStatusErr  error
+
+	claimBeginResp *transport.ShareClaimBeginResponse
+	claimBeginErr  error
+
+	claimCompleteResp *transport.ShareClaimCompleteResponse
+	claimCompleteErr  error
+
+	sealVoteResp *transport.ShamirSealVoteResponse
+	sealVoteErr  error
+
+	recoveryRegisterResp *transport.OfficerRegisterResponse
+	recoveryRegisterErr  error
+
+	recoveryClaimBeginResp *transport.ShareClaimBeginResponse
+	recoveryClaimBeginErr  error
+
+	recoveryClaimCompleteResp *transport.ShareClaimCompleteResponse
+	recoveryClaimCompleteErr  error
+
+	lastInitSecret       string
+	lastUnsealSecret     string
+	lastOfficerRegister  *transport.OfficerRegisterRequest
+	lastClaimBegin       *transport.ShareClaimBeginRequest
+	lastClaimComplete    *transport.ShareClaimCompleteRequest
+	lastSealVoteShare    string
+	lastRecoveryRegister *transport.OfficerRegisterRequest
+	lastRecoveryBegin    *transport.ShareClaimBeginRequest
+	lastRecoveryComplete *transport.ShareClaimCompleteRequest
 }
 
 func (s *stubBarrierClient) BarrierInitialize(_ context.Context, req *transport.BarrierInitializeRequest) error {
@@ -106,6 +140,49 @@ func (s *stubBarrierClient) BarrierHasRecoveryKeys(_ context.Context) (*transpor
 
 func (s *stubBarrierClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
 	return s.rootTokenResp, s.rootTokenErr
+}
+
+func (s *stubBarrierClient) OfficerRegister(_ context.Context, req *transport.OfficerRegisterRequest) (*transport.OfficerRegisterResponse, error) {
+	s.lastOfficerRegister = req
+	return s.officerRegisterResp, s.officerRegisterErr
+}
+
+func (s *stubBarrierClient) OfficerList(_ context.Context) ([]*transport.OfficerStatus, error) {
+	return s.officerListResp, s.officerListErr
+}
+
+func (s *stubBarrierClient) OfficerClaimStatus(_ context.Context) ([]*transport.OfficerStatus, error) {
+	return s.claimStatusResp, s.claimStatusErr
+}
+
+func (s *stubBarrierClient) ShareClaimBegin(_ context.Context, req *transport.ShareClaimBeginRequest) (*transport.ShareClaimBeginResponse, error) {
+	s.lastClaimBegin = req
+	return s.claimBeginResp, s.claimBeginErr
+}
+
+func (s *stubBarrierClient) ShareClaimComplete(_ context.Context, req *transport.ShareClaimCompleteRequest) (*transport.ShareClaimCompleteResponse, error) {
+	s.lastClaimComplete = req
+	return s.claimCompleteResp, s.claimCompleteErr
+}
+
+func (s *stubBarrierClient) ShamirSealVote(_ context.Context, req *transport.ShamirSealVoteRequest) (*transport.ShamirSealVoteResponse, error) {
+	s.lastSealVoteShare = req.Share
+	return s.sealVoteResp, s.sealVoteErr
+}
+
+func (s *stubBarrierClient) RecoveryOfficerRegister(_ context.Context, req *transport.OfficerRegisterRequest) (*transport.OfficerRegisterResponse, error) {
+	s.lastRecoveryRegister = req
+	return s.recoveryRegisterResp, s.recoveryRegisterErr
+}
+
+func (s *stubBarrierClient) RecoveryShareClaimBegin(_ context.Context, req *transport.ShareClaimBeginRequest) (*transport.ShareClaimBeginResponse, error) {
+	s.lastRecoveryBegin = req
+	return s.recoveryClaimBeginResp, s.recoveryClaimBeginErr
+}
+
+func (s *stubBarrierClient) RecoveryShareClaimComplete(_ context.Context, req *transport.ShareClaimCompleteRequest) (*transport.ShareClaimCompleteResponse, error) {
+	s.lastRecoveryComplete = req
+	return s.recoveryClaimCompleteResp, s.recoveryClaimCompleteErr
 }
 
 func TestQRDBBarrierClientServicer_Initialize(t *testing.T) {
@@ -227,14 +304,14 @@ func TestQRDBBarrierClientServicer_Shamir(t *testing.T) {
 	ctx := context.Background()
 
 	c := &stubBarrierClient{shamirResp: &transport.BarrierInitializeShamirResponse{
-		Shares: []string{"a", "b"}, Threshold: 2, TotalShares: 3,
+		Threshold: 2, TotalShares: 3, ShareCount: 3,
 	}}
 	s := newQRDBBarrierClientServicer(c)
 	info, err := s.BarrierInitializeShamir(ctx, "secret", 2, 3)
 	if err != nil {
 		t.Fatalf("BarrierInitializeShamir: %v", err)
 	}
-	if len(info.Shares) != 2 || info.Threshold != 2 || info.TotalShares != 3 {
+	if info.Threshold != 2 || info.TotalShares != 3 || info.ShareCount != 3 {
 		t.Fatalf("shamir mapping wrong: %+v", info)
 	}
 
@@ -290,14 +367,14 @@ func TestQRDBBarrierClientServicer_Rekey(t *testing.T) {
 	ctx := context.Background()
 
 	c := &stubBarrierClient{rekeyResp: &transport.BarrierRekeyResponse{
-		Shares: []string{"x"}, Threshold: 1, TotalShares: 1,
+		Threshold: 1, TotalShares: 1, ShareCount: 1,
 	}}
 	s := newQRDBBarrierClientServicer(c)
 	info, err := s.BarrierRekey(ctx, 1, 1)
 	if err != nil {
 		t.Fatalf("BarrierRekey: %v", err)
 	}
-	if len(info.Shares) != 1 || info.Threshold != 1 || info.TotalShares != 1 {
+	if info.Threshold != 1 || info.TotalShares != 1 || info.ShareCount != 1 {
 		t.Fatalf("rekey mapping wrong: %+v", info)
 	}
 
@@ -313,14 +390,14 @@ func TestQRDBBarrierClientServicer_RecoveryKeys(t *testing.T) {
 	ctx := context.Background()
 
 	c := &stubBarrierClient{recoveryResp: &transport.BarrierRecoveryKeysResponse{
-		Keys: []string{"r1", "r2"}, Threshold: 2, Total: 3,
+		Threshold: 2, Total: 3, ShareCount: 3,
 	}}
 	s := newQRDBBarrierClientServicer(c)
 	info, err := s.BarrierGenerateRecoveryKeys(ctx, 2, 3)
 	if err != nil {
 		t.Fatalf("BarrierGenerateRecoveryKeys: %v", err)
 	}
-	if len(info.Keys) != 2 || info.Threshold != 2 || info.Total != 3 {
+	if info.Threshold != 2 || info.Total != 3 || info.ShareCount != 3 {
 		t.Fatalf("recovery mapping wrong: %+v", info)
 	}
 
@@ -391,5 +468,245 @@ func TestQRDBBarrierClientServicer_GenerateRootToken(t *testing.T) {
 	s2 := newQRDBBarrierClientServicer(c2)
 	if _, err := s2.BarrierGenerateRootToken(ctx, nil); !errors.Is(err, want) {
 		t.Fatalf("expected err, got %v", err)
+	}
+}
+
+func TestQRDBBarrierClientServicer_OfficerRegister(t *testing.T) {
+	ctx := context.Background()
+
+	c := &stubBarrierClient{officerRegisterResp: &transport.OfficerRegisterResponse{
+		CertPEM: []byte("cert"), ShareIndex: 2,
+	}}
+	s := newQRDBBarrierClientServicer(c)
+	result, err := s.BarrierOfficerRegister(ctx, &qrdbsdk.BarrierOfficerRegisterRequest{
+		Username:          "so-1",
+		CSRPEM:            []byte("csr"),
+		AuthenticatorType: "piv",
+		AuthenticatorRef:  "slot-9a",
+	})
+	if err != nil {
+		t.Fatalf("BarrierOfficerRegister: %v", err)
+	}
+	if string(result.CertPEM) != "cert" || result.ShareIndex != 2 {
+		t.Fatalf("register mapping wrong: %+v", result)
+	}
+	req := c.lastOfficerRegister
+	if req.Username != "so-1" || string(req.CSRPEM) != "csr" ||
+		req.AuthenticatorType != "piv" || req.AuthenticatorRef != "slot-9a" {
+		t.Fatalf("register request not propagated: %+v", req)
+	}
+
+	want := errors.New("register fail")
+	c2 := &stubBarrierClient{officerRegisterErr: want}
+	s2 := newQRDBBarrierClientServicer(c2)
+	if _, err := s2.BarrierOfficerRegister(ctx, &qrdbsdk.BarrierOfficerRegisterRequest{Username: "x"}); !errors.Is(err, want) {
+		t.Fatalf("expected err, got %v", err)
+	}
+}
+
+func TestQRDBBarrierClientServicer_OfficerListClaimStatus(t *testing.T) {
+	ctx := context.Background()
+
+	enrolled := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	claimed := enrolled.Add(time.Hour)
+	officers := []*transport.OfficerStatus{
+		nil, // nil entries are skipped, never dereferenced
+		{
+			Username:       "so-1",
+			CertThumbprint: "thumb",
+			ShareIndex:     1,
+			AuthFactor:     "piv",
+			EnrolledAt:     enrolled,
+			ClaimedAt:      claimed,
+			SharePending:   true,
+		},
+	}
+
+	c := &stubBarrierClient{officerListResp: officers, claimStatusResp: officers}
+	s := newQRDBBarrierClientServicer(c)
+
+	for name, call := range map[string]func() ([]*qrdbsdk.BarrierOfficerStatus, error){
+		"OfficerList":        func() ([]*qrdbsdk.BarrierOfficerStatus, error) { return s.BarrierOfficerList(ctx) },
+		"OfficerClaimStatus": func() ([]*qrdbsdk.BarrierOfficerStatus, error) { return s.BarrierOfficerClaimStatus(ctx) },
+	} {
+		got, err := call()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("%s: expected nil entry skipped, got %d entries", name, len(got))
+		}
+		o := got[0]
+		if o.Username != "so-1" || o.CertThumbprint != "thumb" || o.ShareIndex != 1 ||
+			o.AuthFactor != "piv" || !o.EnrolledAt.Equal(enrolled) ||
+			!o.ClaimedAt.Equal(claimed) || !o.SharePending {
+			t.Fatalf("%s mapping wrong: %+v", name, o)
+		}
+	}
+
+	want := errors.New("list fail")
+	c2 := &stubBarrierClient{officerListErr: want, claimStatusErr: want}
+	s2 := newQRDBBarrierClientServicer(c2)
+	if _, err := s2.BarrierOfficerList(ctx); !errors.Is(err, want) {
+		t.Fatalf("list err: %v", err)
+	}
+	if _, err := s2.BarrierOfficerClaimStatus(ctx); !errors.Is(err, want) {
+		t.Fatalf("claim status err: %v", err)
+	}
+}
+
+func TestQRDBBarrierClientServicer_ShareClaimBegin(t *testing.T) {
+	ctx := context.Background()
+
+	expires := time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
+	c := &stubBarrierClient{claimBeginResp: &transport.ShareClaimBeginResponse{
+		NonceHex: "abcd", ExpiresAt: expires,
+	}}
+	s := newQRDBBarrierClientServicer(c)
+	challenge, err := s.BarrierShareClaimBegin(ctx, "so-1", "local-thumbprint-ignored")
+	if err != nil {
+		t.Fatalf("BarrierShareClaimBegin: %v", err)
+	}
+	if challenge.NonceHex != "abcd" || !challenge.ExpiresAt.Equal(expires) {
+		t.Fatalf("claim begin mapping wrong: %+v", challenge)
+	}
+	if c.lastClaimBegin.Username != "so-1" {
+		t.Fatalf("username not propagated: %+v", c.lastClaimBegin)
+	}
+
+	want := errors.New("begin fail")
+	c2 := &stubBarrierClient{claimBeginErr: want}
+	s2 := newQRDBBarrierClientServicer(c2)
+	if _, err := s2.BarrierShareClaimBegin(ctx, "so-1", ""); !errors.Is(err, want) {
+		t.Fatalf("expected err, got %v", err)
+	}
+}
+
+func TestQRDBBarrierClientServicer_ShareClaimComplete(t *testing.T) {
+	ctx := context.Background()
+
+	c := &stubBarrierClient{claimCompleteResp: &transport.ShareClaimCompleteResponse{
+		ShareIndex: 3, ShareBytes: []byte("share"),
+	}}
+	s := newQRDBBarrierClientServicer(c)
+	result, err := s.BarrierShareClaimComplete(ctx, "so-1", "abcd", []byte("sig"), "local-thumbprint-ignored")
+	if err != nil {
+		t.Fatalf("BarrierShareClaimComplete: %v", err)
+	}
+	if result.ShareIndex != 3 || string(result.ShareBytes) != "share" {
+		t.Fatalf("claim complete mapping wrong: %+v", result)
+	}
+	req := c.lastClaimComplete
+	if req.Username != "so-1" || req.NonceHex != "abcd" || string(req.Signature) != "sig" {
+		t.Fatalf("claim complete request not propagated: %+v", req)
+	}
+
+	want := errors.New("complete fail")
+	c2 := &stubBarrierClient{claimCompleteErr: want}
+	s2 := newQRDBBarrierClientServicer(c2)
+	if _, err := s2.BarrierShareClaimComplete(ctx, "so-1", "n", nil, ""); !errors.Is(err, want) {
+		t.Fatalf("expected err, got %v", err)
+	}
+}
+
+func TestQRDBBarrierClientServicer_ShamirSealVote(t *testing.T) {
+	ctx := context.Background()
+
+	c := &stubBarrierClient{sealVoteResp: &transport.ShamirSealVoteResponse{
+		Required: 3, Submitted: 2, Complete: false,
+	}}
+	s := newQRDBBarrierClientServicer(c)
+	prog, err := s.BarrierShamirSealVote(ctx, "share-1")
+	if err != nil {
+		t.Fatalf("BarrierShamirSealVote: %v", err)
+	}
+	if prog.Required != 3 || prog.Submitted != 2 || prog.Complete {
+		t.Fatalf("seal vote mapping wrong: %+v", prog)
+	}
+	if c.lastSealVoteShare != "share-1" {
+		t.Fatalf("share not propagated: %q", c.lastSealVoteShare)
+	}
+
+	want := errors.New("vote fail")
+	c2 := &stubBarrierClient{sealVoteErr: want}
+	s2 := newQRDBBarrierClientServicer(c2)
+	if _, err := s2.BarrierShamirSealVote(ctx, "x"); !errors.Is(err, want) {
+		t.Fatalf("expected err, got %v", err)
+	}
+}
+
+func TestQRDBBarrierClientServicer_RecoveryOfficerRegister(t *testing.T) {
+	ctx := context.Background()
+
+	c := &stubBarrierClient{recoveryRegisterResp: &transport.OfficerRegisterResponse{
+		CertPEM: []byte("rcert"), ShareIndex: 4,
+	}}
+	s := newQRDBBarrierClientServicer(c)
+	result, err := s.BarrierRecoveryOfficerRegister(ctx, &qrdbsdk.BarrierOfficerRegisterRequest{
+		Username: "ro-1", CSRPEM: []byte("rcsr"),
+	})
+	if err != nil {
+		t.Fatalf("BarrierRecoveryOfficerRegister: %v", err)
+	}
+	if string(result.CertPEM) != "rcert" || result.ShareIndex != 4 {
+		t.Fatalf("recovery register mapping wrong: %+v", result)
+	}
+	if c.lastRecoveryRegister.Username != "ro-1" || string(c.lastRecoveryRegister.CSRPEM) != "rcsr" {
+		t.Fatalf("recovery register request not propagated: %+v", c.lastRecoveryRegister)
+	}
+
+	want := errors.New("rr fail")
+	c2 := &stubBarrierClient{recoveryRegisterErr: want}
+	s2 := newQRDBBarrierClientServicer(c2)
+	if _, err := s2.BarrierRecoveryOfficerRegister(ctx, &qrdbsdk.BarrierOfficerRegisterRequest{Username: "x"}); !errors.Is(err, want) {
+		t.Fatalf("expected err, got %v", err)
+	}
+}
+
+func TestQRDBBarrierClientServicer_RecoveryShareClaim(t *testing.T) {
+	ctx := context.Background()
+
+	expires := time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
+	c := &stubBarrierClient{
+		recoveryClaimBeginResp: &transport.ShareClaimBeginResponse{
+			NonceHex: "ef01", ExpiresAt: expires,
+		},
+		recoveryClaimCompleteResp: &transport.ShareClaimCompleteResponse{
+			ShareIndex: 5, ShareBytes: []byte("rshare"),
+		},
+	}
+	s := newQRDBBarrierClientServicer(c)
+
+	challenge, err := s.BarrierRecoveryShareClaimBegin(ctx, "ro-1", "local-thumbprint-ignored")
+	if err != nil {
+		t.Fatalf("BarrierRecoveryShareClaimBegin: %v", err)
+	}
+	if challenge.NonceHex != "ef01" || !challenge.ExpiresAt.Equal(expires) {
+		t.Fatalf("recovery begin mapping wrong: %+v", challenge)
+	}
+	if c.lastRecoveryBegin.Username != "ro-1" {
+		t.Fatalf("recovery begin username not propagated: %+v", c.lastRecoveryBegin)
+	}
+
+	result, err := s.BarrierRecoveryShareClaimComplete(ctx, "ro-1", "ef01", []byte("rsig"), "local-thumbprint-ignored")
+	if err != nil {
+		t.Fatalf("BarrierRecoveryShareClaimComplete: %v", err)
+	}
+	if result.ShareIndex != 5 || string(result.ShareBytes) != "rshare" {
+		t.Fatalf("recovery complete mapping wrong: %+v", result)
+	}
+	req := c.lastRecoveryComplete
+	if req.Username != "ro-1" || req.NonceHex != "ef01" || string(req.Signature) != "rsig" {
+		t.Fatalf("recovery complete request not propagated: %+v", req)
+	}
+
+	want := errors.New("recovery claim fail")
+	c2 := &stubBarrierClient{recoveryClaimBeginErr: want, recoveryClaimCompleteErr: want}
+	s2 := newQRDBBarrierClientServicer(c2)
+	if _, err := s2.BarrierRecoveryShareClaimBegin(ctx, "ro-1", ""); !errors.Is(err, want) {
+		t.Fatalf("recovery begin err: %v", err)
+	}
+	if _, err := s2.BarrierRecoveryShareClaimComplete(ctx, "ro-1", "n", nil, ""); !errors.Is(err, want) {
+		t.Fatalf("recovery complete err: %v", err)
 	}
 }

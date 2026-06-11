@@ -1,4 +1,4 @@
-//go:build raft && rest && grpc && quic && mcp && vector && rag && timeseries
+//go:build !integration && raft && rest && quic && mcp && vector && rag && timeseries
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

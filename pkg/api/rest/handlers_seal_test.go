@@ -107,9 +107,7 @@ func TestHandleSealInit(t *testing.T) {
 				m.On("Initialize", mock.Anything, mock.MatchedBy(func(req *service.SealInitRequest) bool {
 					return req.Threshold == 3 && req.TotalShares == 5
 				})).Return(&service.SealInitResponse{
-					Shares:       [][]byte{[]byte("share1"), []byte("share2"), []byte("share3"), []byte("share4"), []byte("share5")},
-					RecoveryKeys: [][]byte{[]byte("recovery-key")},
-					RootToken:    "root-token-123",
+					RootToken: "root-token-123",
 				}, nil).Once()
 			},
 			expectedStatus: http.StatusOK,
@@ -323,7 +321,7 @@ func TestHandleRekey(t *testing.T) {
 				m.On("Rekey", mock.Anything, mock.MatchedBy(func(req *service.RekeyRequest) bool {
 					return req.NewThreshold == 3 && req.NewTotalShares == 5
 				})).Return(&service.RekeyResponse{
-					Shares: [][]byte{[]byte("share1"), []byte("share2"), []byte("share3"), []byte("share4"), []byte("share5")},
+					Version: 2,
 				}, nil).Once()
 			},
 			expectedStatus: http.StatusOK,
@@ -418,9 +416,7 @@ func TestHandleGenerateRecoveryKey(t *testing.T) {
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("GenerateRecoveryKey", mock.Anything, mock.MatchedBy(func(req *service.GenerateRecoveryKeyRequest) bool {
 					return req.RecoveryThreshold == 2 && req.RecoveryTotalKeys == 3
-				})).Return(&service.GenerateRecoveryKeyResponse{
-					RecoveryKeys: [][]byte{[]byte("rkey1"), []byte("rkey2"), []byte("rkey3")},
-				}, nil).Once()
+				})).Return(&service.GenerateRecoveryKeyResponse{}, nil).Once()
 			},
 			expectedStatus: http.StatusOK,
 		},

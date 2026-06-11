@@ -143,33 +143,64 @@ func (e *introspectionStatusError) Error() string {
 	return fmt.Sprintf("introspection endpoint returned HTTP %d", e.status)
 }
 
+// DefaultLivenessCacheMaxEntries bounds the positive-result cache when no
+// explicit cap is supplied. It prevents an attacker (or merely high token
+// cardinality) from growing the cache without limit, since entries would
+// otherwise only be reclaimed when the same key is re-read after expiry.
+const DefaultLivenessCacheMaxEntries = 10000
+
 // CachedLivenessChecker decorates a base LivenessChecker with a short-TTL cache
 // of POSITIVE results only. A negative (inactive) result is never cached, so a
 // revocation or subject-disablement is reflected on the very next request. The
 // cache is keyed by token jti (claims.ID), falling back to the subject when jti
 // is empty. It is safe for concurrent use.
+//
+// The cache is bounded to maxEntries. When an insert would exceed the cap, the
+// checker first evicts every expired entry; if the cache is still full it then
+// evicts the entries expiring soonest until there is room. This opportunistic
+// sweep keeps memory bounded without a background goroutine.
 type CachedLivenessChecker struct {
-	base LivenessChecker
-	ttl  time.Duration
-	now  func() time.Time
+	base       LivenessChecker
+	ttl        time.Duration
+	now        func() time.Time
+	maxEntries int
 
 	mu      sync.Mutex
 	entries map[string]time.Time // key -> expiry instant of a cached positive
 }
 
+// CachedLivenessOption customizes a CachedLivenessChecker at construction.
+type CachedLivenessOption func(*CachedLivenessChecker)
+
+// WithLivenessCacheMaxEntries caps the number of cached positive results. A
+// value <= 0 is ignored and the default cap applies.
+func WithLivenessCacheMaxEntries(max int) CachedLivenessOption {
+	return func(c *CachedLivenessChecker) {
+		if max > 0 {
+			c.maxEntries = max
+		}
+	}
+}
+
 // NewCachedLivenessChecker wraps base with a TTL cache of positive liveness
 // results. A ttl of zero disables caching (every call delegates to base). A nil
-// now uses time.Now.
-func NewCachedLivenessChecker(base LivenessChecker, ttl time.Duration, now func() time.Time) *CachedLivenessChecker {
+// now uses time.Now. The cache is bounded to DefaultLivenessCacheMaxEntries
+// unless overridden via WithLivenessCacheMaxEntries.
+func NewCachedLivenessChecker(base LivenessChecker, ttl time.Duration, now func() time.Time, opts ...CachedLivenessOption) *CachedLivenessChecker {
 	if now == nil {
 		now = time.Now
 	}
-	return &CachedLivenessChecker{
-		base:    base,
-		ttl:     ttl,
-		now:     now,
-		entries: make(map[string]time.Time),
+	c := &CachedLivenessChecker{
+		base:       base,
+		ttl:        ttl,
+		now:        now,
+		maxEntries: DefaultLivenessCacheMaxEntries,
+		entries:    make(map[string]time.Time),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // cacheKey derives the cache key for a token: jti when present, else subject.
@@ -206,8 +237,48 @@ func (c *CachedLivenessChecker) CheckLiveness(ctx context.Context, token string,
 	}
 	if active {
 		c.mu.Lock()
+		c.evictForInsertLocked(key, now)
 		c.entries[key] = now.Add(c.ttl)
 		c.mu.Unlock()
 	}
 	return active, nil
+}
+
+// evictForInsertLocked makes room for a new key when the cache is at capacity.
+// It first sweeps every expired entry; if the cache is still full it evicts the
+// entries expiring soonest until one slot is free. Refreshing an existing key
+// needs no eviction. The caller must hold c.mu.
+func (c *CachedLivenessChecker) evictForInsertLocked(key string, now time.Time) {
+	if _, exists := c.entries[key]; exists {
+		return
+	}
+	if len(c.entries) < c.maxEntries {
+		return
+	}
+
+	for k, expiry := range c.entries {
+		if !now.Before(expiry) {
+			delete(c.entries, k)
+		}
+	}
+
+	// Evict the soonest-expiring entries until a slot opens up. The cap is
+	// small relative to request volume, so the linear scan per eviction is
+	// acceptable and avoids a heap or background sweeper.
+	for len(c.entries) >= c.maxEntries {
+		var oldestKey string
+		var oldestExpiry time.Time
+		first := true
+		for k, expiry := range c.entries {
+			if first || expiry.Before(oldestExpiry) {
+				oldestKey = k
+				oldestExpiry = expiry
+				first = false
+			}
+		}
+		if first {
+			break
+		}
+		delete(c.entries, oldestKey)
+	}
 }

@@ -37,24 +37,6 @@ func TestIAMComponentInitError_FormatAndUnwrap(t *testing.T) {
 	assert.True(t, errors.Is(e, ErrIAMComponentInit))
 }
 
-func TestBootstrapPasswordRequiredError_Format(t *testing.T) {
-	e := &BootstrapPasswordRequiredError{}
-	assert.Contains(t, e.Error(), "required")
-	assert.True(t, errors.Is(e, ErrInsecureBootstrapPassword))
-}
-
-func TestBootstrapPasswordNotAllowedError_Format(t *testing.T) {
-	e := &BootstrapPasswordNotAllowedError{}
-	assert.Contains(t, e.Error(), "not allowed")
-	assert.True(t, errors.Is(e, ErrInsecureBootstrapPassword))
-}
-
-func TestBootstrapPasswordMatchesUsernameError_Format(t *testing.T) {
-	e := &BootstrapPasswordMatchesUsernameError{}
-	assert.Contains(t, e.Error(), "must not match")
-	assert.True(t, errors.Is(e, ErrInsecureBootstrapPassword))
-}
-
 func TestUpdateCANotReadyError_FormatAndUnwrap(t *testing.T) {
 	e := UpdateCANotReadyError{}
 	assert.Contains(t, e.Error(), "CA adapter not ready")

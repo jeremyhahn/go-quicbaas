@@ -145,12 +145,14 @@ func barrierStatusToResponse(info *service.BarrierStatusInfo) map[string]interfa
 	return resp
 }
 
-// shamirInitToResponse maps a ShamirInitInfo to its JSON wire shape.
+// shamirInitToResponse maps a ShamirInitInfo to its JSON wire shape. Share
+// material is never present; officers claim shares via the qrdb share-claim
+// flow.
 func shamirInitToResponse(info *service.ShamirInitInfo) map[string]interface{} {
 	return map[string]interface{}{
-		"shares":       info.Shares,
 		"threshold":    info.Threshold,
 		"total_shares": info.TotalShares,
+		"share_count":  info.ShareCount,
 	}
 }
 
@@ -163,12 +165,14 @@ func unsealShareProgressToResponse(p *service.UnsealShareProgress) map[string]in
 	}
 }
 
-// recoveryKeysToResponse maps a RecoveryKeysInfo to its JSON shape.
+// recoveryKeysToResponse maps a RecoveryKeysInfo to its JSON shape. Recovery
+// share material is never present; officers claim shares via the qrdb
+// recovery share-claim flow.
 func recoveryKeysToResponse(info *service.RecoveryKeysInfo) map[string]interface{} {
 	return map[string]interface{}{
-		"keys":      info.Keys,
-		"threshold": info.Threshold,
-		"total":     info.Total,
+		"threshold":   info.Threshold,
+		"total":       info.Total,
+		"share_count": info.ShareCount,
 	}
 }
 

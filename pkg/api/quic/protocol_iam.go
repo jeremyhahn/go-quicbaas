@@ -1,4 +1,4 @@
-//go:build quic && iam
+//go:build quic
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -15,7 +15,7 @@
 
 package quic
 
-// IAM Operation codes (0xF0-0xFF) - enabled only when iam build tag is set.
+// IAM Operation codes (0xF0-0xFF).
 // Note: Byte values are limited to 0-255, so we use the remaining opcodes 0xF0-0xFF
 // for IAM operations. This provides 16 primary slots which we'll use creatively.
 const (

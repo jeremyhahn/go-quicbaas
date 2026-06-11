@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam
-
 // Package service provides high-level service types for IAM operations.
 // These types define the request/response contracts used across the IAM service layer.
 package service

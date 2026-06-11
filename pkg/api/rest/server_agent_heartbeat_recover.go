@@ -22,11 +22,10 @@ import (
 
 // AgentHeartbeatRecoverer is the contract the orchestrator heartbeat
 // handler uses to recover from a missing-registry-entry condition. The
-// production implementation lives in handlers_agent_heartbeat_recover.go
-// (built under the iam tag) and walks the request's mTLS peer cert + the
-// AgentRegistrar to re-publish the agent. Builds without iam leave the
-// recoverer unset and the heartbeat handler falls through to its
-// original 404 path.
+// production implementation (IAMHeartbeatRecoverer) lives in
+// handlers_agent_heartbeat_recover.go and walks the request's mTLS peer
+// cert + the AgentRegistrar to re-publish the agent. When no recoverer is
+// wired, the heartbeat handler falls through to its original 404 path.
 //
 // Recover returns true ONLY when it has just made the heartbeat
 // idempotent — i.e. a follow-up AgentHeartbeat call against the same
@@ -41,11 +40,11 @@ type AgentHeartbeatRecoverer interface {
 // HandleOrchestratorAgentHeartbeat to self-heal after a central restart
 // drops its in-memory registry. Pass nil (or never call) to disable —
 // the handler then preserves the original 404 contract. Wired from
-// pkg/server lifecycle once the iam components are initialized.
+// pkg/server lifecycle once the IAM components are initialized.
 //
-// Stored as interface{} so the core rest package does not need the iam
-// build tag; the iam-tagged tryRecoverAgentHeartbeat implementation
-// performs the type assertion at call time.
+// Stored as interface{} so the core rest server type stays decoupled from
+// the concrete recoverer; tryRecoverAgentHeartbeat performs the type
+// assertion at call time.
 func (s *Server) SetAgentHeartbeatRecoverer(recoverer interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -61,16 +60,12 @@ func (s *Server) agentHeartbeatRecovererSnapshot() interface{} {
 	return s.agentHeartbeatRecoverer
 }
 
-// tryRecoverAgentHeartbeat is the default (no-iam) implementation that
-// reports "no recovery available". Builds with the iam tag override
-// this method via build-tag specialisation in
-// handlers_agent_heartbeat_recover.go so the production type assertion
-// stays out of the core rest package.
-//
-// The split keeps pkg/api/rest/server.go free of the iam dependency
-// while still presenting a single call site in
-// HandleOrchestratorAgentHeartbeat — the handler does not branch on
-// build tags.
+// tryRecoverAgentHeartbeat type-asserts the wired recoverer to the
+// AgentHeartbeatRecoverer interface and delegates to it. When no recoverer
+// is wired it reports "no recovery available", preserving the original 404
+// contract. Keeping the type assertion behind this single method gives
+// HandleOrchestratorAgentHeartbeat one call site without depending on the
+// concrete IAMHeartbeatRecoverer.
 func (s *Server) tryRecoverAgentHeartbeat(ctx context.Context, r *http.Request, tenantID, agentID string, payload *heartbeatBody) bool {
 	rec := s.agentHeartbeatRecovererSnapshot()
 	if rec == nil {

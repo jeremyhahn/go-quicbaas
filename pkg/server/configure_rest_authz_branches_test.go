@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build rest && iam
+//go:build rest
 
 // configure_rest_authz_branches_test.go covers the OIDC-provider-unavailable
 // early-return branch of configureRESTAuthz: when the service implements

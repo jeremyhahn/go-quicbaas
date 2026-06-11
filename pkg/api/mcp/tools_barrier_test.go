@@ -180,16 +180,16 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 			InitializedAt:  now,
 		},
 		shamirInit: &service.ShamirInitInfo{
-			Shares:      []string{"a", "b", "c"},
 			Threshold:   2,
 			TotalShares: 3,
+			ShareCount:  3,
 		},
 		unsealShare: &service.UnsealShareProgress{Required: 2, Submitted: 1, Complete: false},
-		rekey:       &service.ShamirInitInfo{Shares: []string{"d", "e"}, Threshold: 2, TotalShares: 2},
+		rekey:       &service.ShamirInitInfo{Threshold: 2, TotalShares: 2, ShareCount: 2},
 		recoveryKeys: &service.RecoveryKeysInfo{
-			Keys:      []string{"r1", "r2"},
-			Threshold: 2,
-			Total:     2,
+			Threshold:  2,
+			Total:      2,
+			ShareCount: 2,
 		},
 		hasRecoveryKeys: true,
 		rootToken:       &service.RootTokenInfo{Token: "tok-123", CreatedAt: now},
@@ -236,7 +236,9 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 		m := out.(map[string]interface{})
 		assert.Equal(t, 2, m["threshold"])
 		assert.Equal(t, 3, m["total_shares"])
-		assert.Equal(t, []string{"a", "b", "c"}, m["shares"])
+		assert.Equal(t, 3, m["share_count"])
+		// Share-free contract: share material must never appear in tool output.
+		assert.NotContains(t, m, "shares")
 		assert.Equal(t, "boot", fake.gotShamirSecret)
 	})
 
@@ -273,7 +275,11 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 		})
 		require.NoError(t, err)
 		m := out.(map[string]interface{})
-		assert.Equal(t, []string{"d", "e"}, m["shares"])
+		assert.Equal(t, 2, m["threshold"])
+		assert.Equal(t, 2, m["total_shares"])
+		assert.Equal(t, 2, m["share_count"])
+		// Share-free contract: share material must never appear in tool output.
+		assert.NotContains(t, m, "shares")
 		assert.Equal(t, 2, fake.gotRekeyThr)
 		assert.Equal(t, 2, fake.gotRekeyTotal)
 	})
@@ -285,7 +291,11 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 		})
 		require.NoError(t, err)
 		m := out.(map[string]interface{})
-		assert.Equal(t, []string{"r1", "r2"}, m["keys"])
+		assert.Equal(t, 2, m["threshold"])
+		assert.Equal(t, 2, m["total"])
+		assert.Equal(t, 2, m["share_count"])
+		// Share-free contract: recovery key material must never appear in tool output.
+		assert.NotContains(t, m, "keys")
 		assert.Equal(t, 2, fake.gotRecGenThr)
 		assert.Equal(t, 2, fake.gotRecGenTotal)
 	})

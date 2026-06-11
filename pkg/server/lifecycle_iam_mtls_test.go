@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build rest && iam
+//go:build rest
 
 package server
 
@@ -31,7 +31,6 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
 // writeCertPEM writes a self-signed CA certificate to a temporary PEM file
@@ -351,16 +350,6 @@ func buildMinimalTestConfig(caFile string) *config.Config {
 	cfg := &config.Config{}
 	cfg.IAM.MTLS.TLSClientAuthCAFile = caFile
 	return cfg
-}
-
-// buildTestLogger builds a logger suitable for tests (discards output).
-func buildTestLogger(t *testing.T) *logger.Logger {
-	t.Helper()
-	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	if err != nil {
-		t.Fatalf("failed to create test logger: %v", err)
-	}
-	return log
 }
 
 // isError is a type-check helper that avoids the errors.As import.

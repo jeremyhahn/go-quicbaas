@@ -1676,14 +1676,10 @@ type SealInitRequest struct {
 	RecoveryTotalKeys int `json:"recovery_total_keys"`
 }
 
-// SealInitResponse returns initialization result.
+// SealInitResponse returns initialization result. Share material is never
+// returned (qrdb share-free contract): officers claim their shares through
+// the identity-gated claim endpoints.
 type SealInitResponse struct {
-	// Shares are the Shamir shares (STORE SECURELY!)
-	Shares [][]byte `json:"shares"`
-
-	// RecoveryKeys are recovery keys (STORE SECURELY!)
-	RecoveryKeys [][]byte `json:"recovery_keys,omitempty"`
-
 	// RootToken is the initial root token
 	RootToken string `json:"root_token"`
 
@@ -1733,11 +1729,10 @@ type RekeyRequest struct {
 	NewTotalShares int `json:"new_total_shares"`
 }
 
-// RekeyResponse returns new shares.
+// RekeyResponse confirms a share rotation. New share material is never
+// returned (qrdb share-free contract): officers re-claim their shares
+// through the identity-gated claim endpoints after a rekey.
 type RekeyResponse struct {
-	// Shares are the new Shamir shares (STORE SECURELY!)
-	Shares [][]byte `json:"shares"`
-
 	// Version is the new seal configuration version
 	Version uint64 `json:"version"`
 
@@ -1754,11 +1749,10 @@ type GenerateRecoveryKeyRequest struct {
 	RecoveryTotalKeys int `json:"recovery_total_keys"`
 }
 
-// GenerateRecoveryKeyResponse returns recovery keys.
+// GenerateRecoveryKeyResponse confirms recovery key generation. Recovery
+// key material is never returned (qrdb share-free contract): custodians
+// claim their keys through the identity-gated claim endpoints.
 type GenerateRecoveryKeyResponse struct {
-	// RecoveryKeys are the recovery keys (STORE SECURELY!)
-	RecoveryKeys [][]byte `json:"recovery_keys"`
-
 	// Timestamp is when recovery keys were generated
 	Timestamp time.Time `json:"timestamp"`
 }

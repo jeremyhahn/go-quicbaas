@@ -31,9 +31,8 @@ func TestValidateValidConfig(t *testing.T) {
 	cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 	cfg.Storage.Backend = StorageBackendPebble
 
-	// Disable TLS/encryption for this test (they require cert/key files)
+	// Disable TLS for this test (it requires cert/key files)
 	cfg.Security.TLSEnabled = false
-	cfg.Security.EncryptionEnabled = false
 
 	err := Validate(cfg)
 	assert.NoError(t, err)
@@ -170,9 +169,8 @@ func TestValidateServerConfig(t *testing.T) {
 			// Disable raft to avoid raft validation issues
 			cfg.Raft.NodeID = 0
 
-			// Disable TLS/encryption for tests that don't expect security errors
+			// Disable TLS for tests that do not expect security errors
 			cfg.Security.TLSEnabled = false
-			cfg.Security.EncryptionEnabled = false
 
 			tt.modify(cfg)
 
@@ -276,9 +274,8 @@ func TestValidateServerMode(t *testing.T) {
 			// Disable raft to avoid raft validation issues by default
 			cfg.Raft.NodeID = 0
 
-			// Disable TLS/encryption for tests that don't expect security errors
+			// Disable TLS for tests that do not expect security errors
 			cfg.Security.TLSEnabled = false
-			cfg.Security.EncryptionEnabled = false
 
 			tt.modify(cfg)
 
@@ -414,9 +411,8 @@ func TestValidateRaftConfig(t *testing.T) {
 			cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 			cfg.Storage.Backend = StorageBackendPebble
 
-			// Disable TLS/encryption for tests that don't expect security errors
+			// Disable TLS for tests that do not expect security errors
 			cfg.Security.TLSEnabled = false
-			cfg.Security.EncryptionEnabled = false
 
 			tt.modify(cfg)
 
@@ -570,9 +566,8 @@ func TestValidateStorageConfig(t *testing.T) {
 			// Disable raft to avoid raft validation issues
 			cfg.Raft.NodeID = 0
 
-			// Disable TLS/encryption for tests that don't expect security errors
+			// Disable TLS for tests that do not expect security errors
 			cfg.Security.TLSEnabled = false
-			cfg.Security.EncryptionEnabled = false
 
 			tt.modify(cfg)
 
@@ -595,12 +590,10 @@ func TestValidateSecurityConfig(t *testing.T) {
 	certFile := filepath.Join(tmpDir, "cert.pem")
 	keyFile := filepath.Join(tmpDir, "key.pem")
 	caFile := filepath.Join(tmpDir, "ca.pem")
-	encKeyFile := filepath.Join(tmpDir, "enc.key")
 
 	os.WriteFile(certFile, []byte("cert"), 0o644)
 	os.WriteFile(keyFile, []byte("key"), 0o644)
 	os.WriteFile(caFile, []byte("ca"), 0o644)
-	os.WriteFile(encKeyFile, []byte("enckey"), 0o644)
 
 	tests := []struct {
 		name        string
@@ -612,7 +605,6 @@ func TestValidateSecurityConfig(t *testing.T) {
 			name: "valid security config - disabled",
 			modify: func(cfg *Config) {
 				cfg.Security.TLSEnabled = false
-				cfg.Security.EncryptionEnabled = false
 			},
 			expectError: false,
 		},
@@ -622,7 +614,6 @@ func TestValidateSecurityConfig(t *testing.T) {
 				cfg.Security.TLSEnabled = true
 				cfg.Security.TLSCertFile = certFile
 				cfg.Security.TLSKeyFile = keyFile
-				cfg.Security.EncryptionEnabled = false
 			},
 			expectError: false,
 		},
@@ -632,7 +623,6 @@ func TestValidateSecurityConfig(t *testing.T) {
 				cfg.Security.TLSEnabled = true
 				cfg.Security.TLSCertFile = ""
 				cfg.Security.TLSKeyFile = keyFile
-				cfg.Security.EncryptionEnabled = false
 			},
 			expectError: true,
 			errorField:  "security.tls_cert_file",
@@ -643,7 +633,6 @@ func TestValidateSecurityConfig(t *testing.T) {
 				cfg.Security.TLSEnabled = true
 				cfg.Security.TLSCertFile = "/nonexistent/cert.pem"
 				cfg.Security.TLSKeyFile = keyFile
-				cfg.Security.EncryptionEnabled = false
 			},
 			expectError: true,
 			errorField:  "security.tls_cert_file",
@@ -654,7 +643,25 @@ func TestValidateSecurityConfig(t *testing.T) {
 				cfg.Security.TLSEnabled = true
 				cfg.Security.TLSCertFile = certFile
 				cfg.Security.TLSKeyFile = ""
-				cfg.Security.EncryptionEnabled = false
+			},
+			expectError: true,
+			errorField:  "security.tls_cert_file",
+		},
+		{
+			name: "TLS enabled with no cert material auto-provisions via built-in CA",
+			modify: func(cfg *Config) {
+				cfg.Security.TLSEnabled = true
+				cfg.Security.TLSCertFile = ""
+				cfg.Security.TLSKeyFile = ""
+			},
+			expectError: false,
+		},
+		{
+			name: "TLS enabled but key file doesn't exist",
+			modify: func(cfg *Config) {
+				cfg.Security.TLSEnabled = true
+				cfg.Security.TLSCertFile = certFile
+				cfg.Security.TLSKeyFile = "/nonexistent/key.pem"
 			},
 			expectError: true,
 			errorField:  "security.tls_key_file",
@@ -667,29 +674,9 @@ func TestValidateSecurityConfig(t *testing.T) {
 				cfg.Security.TLSKeyFile = keyFile
 				cfg.Security.TLSClientAuth = true
 				cfg.Security.TLSCAFile = ""
-				cfg.Security.EncryptionEnabled = false
 			},
 			expectError: true,
 			errorField:  "security.tls_ca_file",
-		},
-		{
-			name: "encryption enabled but missing key file",
-			modify: func(cfg *Config) {
-				cfg.Security.TLSEnabled = false
-				cfg.Security.EncryptionEnabled = true
-				cfg.Security.EncryptionKeyFile = ""
-			},
-			expectError: true,
-			errorField:  "security.encryption_key_file",
-		},
-		{
-			name: "valid encryption config",
-			modify: func(cfg *Config) {
-				cfg.Security.TLSEnabled = false
-				cfg.Security.EncryptionEnabled = true
-				cfg.Security.EncryptionKeyFile = encKeyFile
-			},
-			expectError: false,
 		},
 	}
 
@@ -779,9 +766,8 @@ func TestValidateLoggingConfig(t *testing.T) {
 			// Disable raft to avoid raft validation issues
 			cfg.Raft.NodeID = 0
 
-			// Disable TLS/encryption for tests that don't expect security errors
+			// Disable TLS for tests that do not expect security errors
 			cfg.Security.TLSEnabled = false
-			cfg.Security.EncryptionEnabled = false
 
 			tt.modify(cfg)
 
@@ -953,9 +939,8 @@ func TestValidateRaftWithClusterMode(t *testing.T) {
 		cfg.Storage.Backend = StorageBackendPebble
 		cfg.Raft.NodeID = 0
 
-		// Disable TLS/encryption for this test
+		// Disable TLS for this test
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 
 		err := Validate(cfg)
 		require.Error(t, err)
@@ -972,9 +957,8 @@ func TestValidateRaftWithClusterMode(t *testing.T) {
 		cfg.Raft.NodeID = 1
 		cfg.Raft.RaftAddress = ""
 
-		// Disable TLS/encryption for this test
+		// Disable TLS for this test
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 
 		err := Validate(cfg)
 		require.Error(t, err)
@@ -990,9 +974,8 @@ func TestValidateRaftWithClusterMode(t *testing.T) {
 		cfg.Storage.Backend = StorageBackendPebble
 		cfg.Raft.NodeID = 0
 
-		// Disable TLS/encryption for this test
+		// Disable TLS for this test
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 
 		err := Validate(cfg)
 		assert.NoError(t, err)
@@ -1004,9 +987,8 @@ func TestValidateRaftWithClusterMode(t *testing.T) {
 		cfg.Storage.Backend = StorageBackendMemory
 		cfg.Raft.NodeID = 0
 
-		// Disable TLS/encryption for this test
+		// Disable TLS for this test
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 
 		err := Validate(cfg)
 		assert.NoError(t, err)
@@ -1021,15 +1003,178 @@ func TestRaftBackendIsNoLongerValid(t *testing.T) {
 		cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 		cfg.Storage.Backend = "raft" // No longer valid
 
-		// Disable TLS/encryption for this test
+		// Disable TLS for this test
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 
 		err := Validate(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "storage.backend")
 		assert.Contains(t, err.Error(), "no longer valid")
 		assert.Contains(t, err.Error(), "server.mode")
+	})
+}
+
+// newAuthzPostureConfig returns a baseline config that validates cleanly
+// (writable storage, no TLS) so that the only validation outcome under test is
+// the authorization-posture gate.
+func newAuthzPostureConfig(t *testing.T) *Config {
+	t.Helper()
+	cfg := Default()
+	tmpDir := t.TempDir()
+	cfg.Storage.DataDir = tmpDir
+	cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
+	cfg.Storage.Backend = StorageBackendPebble
+	cfg.Security.TLSEnabled = false
+	return cfg
+}
+
+func TestValidateAuthzPosture(t *testing.T) {
+	t.Run("require_authz=false + REST enabled + no ack fails", func(t *testing.T) {
+		cfg := newAuthzPostureConfig(t)
+		cfg.Security.RequireAuthz = false
+		cfg.Security.InsecureDevMode = false
+		cfg.Server.REST.Enabled = true
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.QUIC.Enabled = false
+		cfg.Server.MCP.Enabled = false
+
+		err := Validate(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "security.require_authz")
+		assert.Contains(t, err.Error(), "server.rest")
+		assert.Contains(t, err.Error(), "insecure_dev_mode")
+	})
+
+	t.Run("require_authz=false + InsecureDevMode=true passes", func(t *testing.T) {
+		cfg := newAuthzPostureConfig(t)
+		cfg.Security.RequireAuthz = false
+		cfg.Security.InsecureDevMode = true
+		cfg.Server.REST.Enabled = true
+
+		err := Validate(cfg)
+		assert.NoError(t, err)
+	})
+
+	t.Run("require_authz=false + all network transports disabled passes without ack", func(t *testing.T) {
+		cfg := newAuthzPostureConfig(t)
+		cfg.Security.RequireAuthz = false
+		cfg.Security.InsecureDevMode = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.QUIC.Enabled = false
+		cfg.Server.MCP.Enabled = false
+		// Unix domain socket is NOT a network transport and must not trip the gate.
+		cfg.Server.Unix.Enabled = true
+
+		err := Validate(cfg)
+		assert.NoError(t, err)
+	})
+
+	t.Run("require_authz=true is unaffected", func(t *testing.T) {
+		cfg := newAuthzPostureConfig(t)
+		cfg.Security.RequireAuthz = true
+		cfg.Security.InsecureDevMode = false
+		cfg.Server.REST.Enabled = true
+		cfg.Server.GRPC.Enabled = true
+		cfg.Server.QUIC.Enabled = true
+		cfg.Server.MCP.Enabled = true
+
+		err := Validate(cfg)
+		assert.NoError(t, err)
+	})
+
+	t.Run("error names every offending network transport", func(t *testing.T) {
+		cfg := newAuthzPostureConfig(t)
+		cfg.Security.RequireAuthz = false
+		cfg.Security.InsecureDevMode = false
+		cfg.Server.REST.Enabled = true
+		cfg.Server.GRPC.Enabled = true
+		cfg.Server.QUIC.Enabled = true
+		cfg.Server.MCP.Enabled = true
+
+		err := Validate(cfg)
+		require.Error(t, err)
+		for _, transport := range []string{"server.rest", "server.grpc", "server.quic", "server.mcp"} {
+			assert.Contains(t, err.Error(), transport)
+		}
+	})
+
+	t.Run("gRPC-only offending transport is named", func(t *testing.T) {
+		cfg := newAuthzPostureConfig(t)
+		cfg.Security.RequireAuthz = false
+		cfg.Security.InsecureDevMode = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = true
+		cfg.Server.QUIC.Enabled = false
+		cfg.Server.MCP.Enabled = false
+
+		err := Validate(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "server.grpc")
+		assert.NotContains(t, err.Error(), "server.rest")
+	})
+}
+
+func TestDevelopmentConfigValidatesClean(t *testing.T) {
+	cfg := DevelopmentConfig()
+	tmpDir := t.TempDir()
+	cfg.Storage.DataDir = tmpDir
+	cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
+	cfg.Storage.Backend = StorageBackendMemory
+
+	// DevelopmentConfig disables authz but enables network transports; it must
+	// pass validation by virtue of acknowledging InsecureDevMode.
+	require.False(t, cfg.Security.RequireAuthz)
+	require.True(t, cfg.Security.InsecureDevMode)
+
+	err := Validate(cfg)
+	assert.NoError(t, err)
+}
+
+// TestDefaultConfigValidatesClean guards the quicbaasd boot gate: runDaemon
+// refuses to start when config.Validate fails, so the production defaults must
+// validate cleanly. Storage paths are redirected to a temp dir because the
+// validator probes directory writability (the daemon creates the real data
+// directory in prepareDaemon before Validate runs, mirroring this setup).
+func TestDefaultConfigValidatesClean(t *testing.T) {
+	cfg := DefaultConfig()
+	tmpDir := t.TempDir()
+	cfg.Storage.DataDir = tmpDir
+	cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
+
+	// Production defaults are fail-closed: authz required, no dev-mode ack.
+	require.True(t, cfg.Security.RequireAuthz)
+	require.False(t, cfg.Security.InsecureDevMode)
+
+	err := Validate(cfg)
+	assert.NoError(t, err)
+}
+
+func TestLoaderBindsInsecureDevMode(t *testing.T) {
+	t.Run("env true sets InsecureDevMode", func(t *testing.T) {
+		t.Setenv("QUICBAAS_SECURITY_INSECURE_DEV_MODE", "true")
+		cfg := Default()
+		cfg.Security.InsecureDevMode = false
+		NewLoader().applyEnvironmentOverrides(cfg)
+		assert.True(t, cfg.Security.InsecureDevMode)
+	})
+
+	t.Run("env false sets InsecureDevMode", func(t *testing.T) {
+		t.Setenv("QUICBAAS_SECURITY_INSECURE_DEV_MODE", "false")
+		cfg := Default()
+		cfg.Security.InsecureDevMode = true
+		NewLoader().applyEnvironmentOverrides(cfg)
+		assert.False(t, cfg.Security.InsecureDevMode)
+	})
+
+	t.Run("file binds insecure_dev_mode via mapstructure", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "quicbaas.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("security:\n  insecure_dev_mode: true\n"), 0o600))
+
+		cfg, err := NewLoader().Load(path)
+		require.NoError(t, err)
+		assert.True(t, cfg.Security.InsecureDevMode)
 	})
 }
 
@@ -1041,9 +1186,8 @@ func BenchmarkValidate(b *testing.B) {
 	cfg.Storage.Backend = StorageBackendPebble
 	cfg.Raft.NodeID = 0
 
-	// Disable TLS/encryption for benchmark
+	// Disable TLS for benchmark
 	cfg.Security.TLSEnabled = false
-	cfg.Security.EncryptionEnabled = false
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

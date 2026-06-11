@@ -127,16 +127,10 @@ func parseSealInitResponse(result interface{}) (*service.SealInitResponse, error
 	}
 
 	resp := &service.SealInitResponse{
-		Shares:    parseBytesSlice(data, "shares"),
 		RootToken: getString(data, "root_token"),
 		Version:   uint64(getInt64(data, "version")),
 		Timestamp: time.Now(),
 	}
-
-	if recoveryKeys := parseBytesSlice(data, "recovery_keys"); len(recoveryKeys) > 0 {
-		resp.RecoveryKeys = recoveryKeys
-	}
-
 	return resp, nil
 }
 
@@ -188,45 +182,10 @@ func parseRekeyResponse(result interface{}) (*service.RekeyResponse, error) {
 	}
 
 	resp := &service.RekeyResponse{
-		Shares:    parseBytesSlice(data, "shares"),
 		Version:   uint64(getInt64(data, "version")),
 		Timestamp: time.Now(),
 	}
 	return resp, nil
-}
-
-// parseBytesSlice extracts a slice of byte slices from a map.
-// Handles both base64-encoded strings and raw byte arrays.
-func parseBytesSlice(m map[string]interface{}, key string) [][]byte {
-	if m == nil {
-		return nil
-	}
-
-	raw, ok := m[key]
-	if !ok {
-		return nil
-	}
-
-	arr, ok := raw.([]interface{})
-	if !ok {
-		return nil
-	}
-
-	result := make([][]byte, 0, len(arr))
-	for _, item := range arr {
-		switch v := item.(type) {
-		case string:
-			decoded, decodeErr := base64.StdEncoding.DecodeString(v)
-			if decodeErr != nil {
-				result = append(result, []byte(v))
-			} else {
-				result = append(result, decoded)
-			}
-		case []byte:
-			result = append(result, v)
-		}
-	}
-	return result
 }
 
 // Compile-time interface check.

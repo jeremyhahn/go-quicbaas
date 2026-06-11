@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -44,4 +42,18 @@ func (m *DefaultTenantManager) SetQRDBTenantProvisioner(p QRDBTenantProvisioner)
 // QRDBTenantProvisioner returns the configured qrdb tenant provisioner, or nil.
 func (m *DefaultTenantManager) QRDBProvisioner() QRDBTenantProvisioner {
 	return m.qrdbProvisioner
+}
+
+// SetUserStorage wires the routed (qrdb-backed) user store at server init so
+// DeleteTenant can deprovision the tenant's users through it — purging the
+// broker profile, IDMap, and email/legacy-PIV index records that the legacy
+// BackendStorage cascade no longer reaches. When unset, DeleteTenant's
+// user-deprovision step is a no-op.
+func (m *DefaultTenantManager) SetUserStorage(s UserStorage) {
+	m.userStorage = s
+}
+
+// UserStorage returns the configured user store, or nil.
+func (m *DefaultTenantManager) UserStorage() UserStorage {
+	return m.userStorage
 }

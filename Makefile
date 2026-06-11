@@ -12,7 +12,7 @@ APP_NAME := quicbaas
 VERSION := $(shell cat VERSION 2>/dev/null | tr -d '\n' || git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-dev")
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-GO_VERSION := 1.26.1
+GO_VERSION := 1.26.4
 
 # Directories
 BIN_DIR := bin
@@ -62,12 +62,6 @@ BENCHTIME ?= 100ms
 # ------------------------------------------------------------------------------
 # Raft cluster mode (includes Discovery + Cluster DEK)
 WITH_RAFT        ?= 1
-
-# ------------------------------------------------------------------------------
-# Advanced Auth (default: enabled)
-# ------------------------------------------------------------------------------
-# ABAC/IAM advanced authorization
-WITH_IAM         ?= 1
 
 # ------------------------------------------------------------------------------
 # Data Models (default: enabled)
@@ -162,11 +156,6 @@ BUILD_TAGS := hashicorpmetrics local
 # Distributed features
 ifeq ($(WITH_RAFT),1)
   BUILD_TAGS += raft
-endif
-
-# Auth features
-ifeq ($(WITH_IAM),1)
-  BUILD_TAGS += iam
 endif
 
 # Data model features
@@ -664,7 +653,7 @@ build-embedded: ## Build single-node embedded binary (no Raft, no extra APIs)
 build-minimal: ## Build minimal binary (core + gRPC only, no optional features)
 	@echo "$(BLUE)Building minimal binary...$(NC)"
 	$(MAKE) build \
-		WITH_RAFT=0 WITH_IAM=0 \
+		WITH_RAFT=0 \
 		WITH_TIMESERIES=0 WITH_VECTOR=0 WITH_RAG=0 \
 		WITH_REST=0 WITH_QUIC=0 WITH_MCP=0
 
@@ -762,16 +751,11 @@ install: build ## Install the binary
 # Note: Go 1.25+ requires space-separated tags, not comma-separated
 TEST_TAGS := !integration $(strip $(BUILD_TAGS))
 
-# IAM_TEST_TAGS: TEST_TAGS guaranteed to include the 'iam' build tag.
-# Every file under pkg/iam/... and pkg/iam/qrdbadapter/... carries a
-# //go:build iam directive, so test/coverage/bench targets that touch
-# those packages must pass the iam tag even when WITH_IAM is not set
-# on the command line.
-ifeq ($(findstring iam,$(TEST_TAGS)),)
-  IAM_TEST_TAGS := $(TEST_TAGS) iam
-else
-  IAM_TEST_TAGS := $(TEST_TAGS)
-endif
+# IAM_TEST_TAGS: retained alias for TEST_TAGS. IAM is now always compiled
+# (the 'iam' build tag was removed in phase C1-G), so no extra tag is needed
+# for packages under pkg/iam/... or pkg/server/. Kept as an alias so existing
+# test/coverage/bench targets continue to reference a stable variable name.
+IAM_TEST_TAGS := $(TEST_TAGS)
 
 .PHONY: test
 test: ## Run unit tests (excludes integration tests)
@@ -2595,9 +2579,8 @@ integration-bench: ## Run integration benchmarks
 # ==============================================================================
 
 # IAM package tests
-# Every file in pkg/iam/... and pkg/iam/qrdbadapter/... has a //go:build iam
-# directive, so test/coverage/bench targets must always pass the iam tag --
-# regardless of whether WITH_IAM=1 was supplied to make.
+# IAM is always compiled (no build tag), so these targets use the standard
+# test tag set.
 .PHONY: test-iam
 test-iam: ## Run IAM unit tests
 	go test -v -race -count=1 -tags '$(IAM_TEST_TAGS)' ./pkg/iam/...
@@ -2695,27 +2678,27 @@ coverage-agent: ## Generate coverage report for agent daemon package
 .PHONY: integration-test-rag
 integration-test-rag: ## Run RAG integration tests (Ollama via local CPU container; pass GPU_HOST=<host> to use a remote GPU)
 	@echo "$(BLUE)Running RAG integration tests...$(NC)"
-	@QUICBAAS_TEST_FILTER="./test/integration/rag/..." OLLAMA_CPU=$${OLLAMA_CPU:-1} WITH_RAFT=1 WITH_REST=1 WITH_RAG=1 WITH_VECTOR=1 WITH_IAM=1 $(MAKE) integration-test
+	@QUICBAAS_TEST_FILTER="./test/integration/rag/..." OLLAMA_CPU=$${OLLAMA_CPU:-1} WITH_RAFT=1 WITH_REST=1 WITH_RAG=1 WITH_VECTOR=1 $(MAKE) integration-test
 
 .PHONY: integration-test-timeseries
 integration-test-timeseries: ## Run Time Series integration tests (requires timeseries build tag)
 	@echo "$(BLUE)Running Time Series integration tests...$(NC)"
-	@QUICBAAS_TEST_FILTER="./test/integration/timeseries/..." WITH_RAFT=1 WITH_REST=1 WITH_TIMESERIES=1 WITH_IAM=1 $(MAKE) integration-test
+	@QUICBAAS_TEST_FILTER="./test/integration/timeseries/..." WITH_RAFT=1 WITH_REST=1 WITH_TIMESERIES=1 $(MAKE) integration-test
 
 .PHONY: integration-test-backup
 integration-test-backup: ## Run Backup multi-backend integration tests
 	@echo "$(BLUE)Running Backup multi-backend integration tests...$(NC)"
-	@QUICBAAS_TEST_FILTER="./test/integration/backup/..." WITH_RAFT=1 WITH_REST=1 WITH_IAM=1 $(MAKE) integration-test
+	@QUICBAAS_TEST_FILTER="./test/integration/backup/..." WITH_RAFT=1 WITH_REST=1 $(MAKE) integration-test
 
 .PHONY: integration-test-iam
 integration-test-iam: ## Run IAM integration tests
 	@echo "$(BLUE)Running IAM integration tests...$(NC)"
-	@QUICBAAS_TEST_FILTER="./test/integration/iam/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 WITH_IAM=1 $(MAKE) integration-test
+	@QUICBAAS_TEST_FILTER="./test/integration/iam/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
 
 .PHONY: integration-test-login
 integration-test-login: ## Run unified login ceremony integration tests (mTLS + PIV across REST/gRPC/QUIC/Unix)
 	@echo "$(BLUE)Running unified login ceremony integration tests...$(NC)"
-	@QUICBAAS_TEST_FILTER="./test/integration/login/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 WITH_IAM=1 $(MAKE) integration-test
+	@QUICBAAS_TEST_FILTER="./test/integration/login/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
 
 .PHONY: integration-test-factors
 integration-test-factors: ## Run cross-vendor hardware factor integration tests (spec §M13)
@@ -3214,7 +3197,7 @@ verify: verify-naming verify-cli-flags verify-api-shapes ## Run all cross-projec
 # =============================================================================
 
 .PHONY: coverage-server-iam
-coverage-server-iam: ## Generate coverage report for pkg/server with the iam build tag
+coverage-server-iam: ## Generate coverage report for pkg/server (IAM always compiled)
 	@mkdir -p $(COVERAGE_DIR)
 	$(GOTEST) -count=1 -tags '$(IAM_TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-server-iam.out -covermode=atomic ./pkg/server/
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-server-iam.out -o $(COVERAGE_DIR)/coverage-server-iam.html
@@ -3231,7 +3214,7 @@ coverage-server-full: ## Merge unit + integration coverage for pkg/server (real 
 	@# gocovmerge union the unit profile with the daemon's textfmt profile.
 	@# Full integration build tags are used so the instrumented source blocks line
 	@# up with the daemon binary (which is built with the same tag set).
-	@$(GOTEST) -count=1 -tags 'iam $(INTEGRATION_BUILD_TAGS)' \
+	@$(GOTEST) -count=1 -tags '$(INTEGRATION_BUILD_TAGS)' \
 		-coverpkg=github.com/jeremyhahn/go-quicbaas/pkg/server \
 		-coverprofile=$(COVERAGE_DIR)/coverage-server-unit.out \
 		-covermode=atomic ./pkg/server/

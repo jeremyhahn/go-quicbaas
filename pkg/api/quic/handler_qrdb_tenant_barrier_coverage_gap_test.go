@@ -160,7 +160,7 @@ func TestQRDBTenantBarrierInit(t *testing.T) {
 	// Happy path: response marshaled with the facade result.
 	svc.initErr = nil
 	svc.initResp = &qrdbtransport.TenantBarrierInitResponse{
-		TenantID: "t1", Strategy: "shamir", Shares: []string{"s1", "s2", "s3"}, Threshold: 2, TotalShares: 3,
+		TenantID: "t1", Strategy: "shamir", Threshold: 2, TotalShares: 3, ShareCount: 3,
 	}
 	out, err := server.qrdbTenantBarrierInit(ctx, mustMarshal(t, &pb.TenantBarrierInitRequest{
 		TenantId: "t1", Passphrase: "", Threshold: 2, Shares: 3, Strategy: "shamir",
@@ -172,6 +172,7 @@ func TestQRDBTenantBarrierInit(t *testing.T) {
 	require.Equal(t, "shamir", resp.GetStrategy())
 	require.Equal(t, int32(2), resp.GetThreshold())
 	require.Equal(t, int32(3), resp.GetTotalShares())
+	require.Equal(t, int32(3), resp.GetShareCount())
 	require.Equal(t, 2, svc.gotThreshold)
 	require.Equal(t, "shamir", svc.gotStrategy)
 }

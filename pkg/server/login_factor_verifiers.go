@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -177,11 +175,13 @@ func (v *lateBoundPIVVerifier) Verify(ctx context.Context, factor *qrdbsdk.AuthF
 	return inner.Verify(ctx, factor, challenge)
 }
 
-// buildLoginFactorVerifiers constructs the two late-bound verifier shells (PIV +
-// tenant-aware WebAuthn) and stores them on the server so
+// buildLoginFactorVerifiers constructs the three login verifier shells (PIV +
+// tenant-aware WebAuthn + PKCS#11) and stores them on the server so
 // initStandaloneQRDBNode / initClusteredQRDBNode can inject them into the qrdb
-// node via WithLoginFactorVerifier. Called before node construction; the
-// dependencies are attached later by bindLoginCeremonyProvider. Idempotent.
+// node via WithLoginFactorVerifier. Called before node construction; PIV and
+// WebAuthn dependencies are attached later by bindLoginCeremonyProvider. The
+// PKCS#11 verifier requires no external dependencies and is ready immediately.
+// Idempotent.
 func (s *Server) buildLoginFactorVerifiers() {
 	if len(s.loginFactorVerifiers) > 0 {
 		return
@@ -189,6 +189,7 @@ func (s *Server) buildLoginFactorVerifiers() {
 	s.loginFactorVerifiers = []qrdbembedded.FactorVerifier{
 		newLateBoundPIVVerifier(),
 		newTenantWebAuthnVerifier(),
+		xkmssdk.NewPKCS11FactorVerifier(),
 	}
 }
 
@@ -199,6 +200,9 @@ func (s *Server) buildLoginFactorVerifiers() {
 //     service factory from the IAM webauthn manager.
 //   - The PIV verifier receives an xkms PIV verifier built from the CA trust
 //     roots (s.xkmsCA.CABundleCertPool()).
+//   - The PKCS#11 verifier needs no binding: it is a stateless possession-only
+//     verifier whose only inputs are the factor record's enrolled public key and
+//     the challenge nonce+signature submitted at login time.
 //
 // Binding is best-effort per verifier: a missing WebAuthn manager leaves the
 // WebAuthn verifier unbound (it fails closed), and an absent CA leaves the PIV

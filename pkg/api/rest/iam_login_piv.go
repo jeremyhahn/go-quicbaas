@@ -1,4 +1,4 @@
-//go:build rest && iam
+//go:build rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -23,6 +23,8 @@ import (
 	"strings"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -30,7 +32,8 @@ import (
 //
 // This endpoint performs mTLS-based PIV smartcard authentication. The client
 // must present a valid TLS client certificate. The certificate's SHA-256
-// thumbprint is matched against a registered user's PIVCertThumbprint field.
+// thumbprint (hex of the cert DER) is matched against a registered user's
+// PIV-attested cert bindings (user.CertBindings) via the PIV thumbprint index.
 //
 // Gate: the endpoint returns 501 when PIV login is not enabled in configuration.
 // To enable, set IAM.PIVClientCert.Enabled = true and configure the TLS listener
@@ -54,10 +57,20 @@ func (h *IAMHandler) PIVLogin(w http.ResponseWriter, r *http.Request) {
 
 	cert := r.TLS.PeerCertificates[0]
 
-	// Compute SHA-256 thumbprint of the DER-encoded certificate.
-	raw := cert.Raw
-	digest := sha256.Sum256(raw)
-	thumbprint := hex.EncodeToString(digest[:])
+	// Compute BOTH PIV lookup thumbprints. The primary is the canonical SPKI
+	// thumbprint (SHA-256 over SubjectPublicKeyInfo, base64url) qrdb's
+	// UserByCertThumbprint resolves natively; the fallback is the legacy hex
+	// SHA-256 of the certificate DER, resolved via the broker-side legacy-PIV
+	// index. Resolution tries SPKI first, then legacy — mirroring the
+	// login-service mTLS primary + alt-lookup order — so a renewed cert (same
+	// key, new DER) resolves via the stable SPKI thumbprint while persisted
+	// legacy-only bindings keep resolving via the fallback.
+	spkiThumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
+	legacyDigest := sha256.Sum256(cert.Raw)
+	legacyThumbprint := hex.EncodeToString(legacyDigest[:])
+	// thumbprint is the value carried into audit records; the SPKI thumbprint is
+	// the canonical identifier.
+	thumbprint := spkiThumbprint
 
 	// Defense-in-depth: verify the issuing CA's Subject DN against the
 	// operator-configured TrustedIssuers list. Empty list = permissive.
@@ -111,7 +124,12 @@ func (h *IAMHandler) PIVLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx = loginContextWithTenant(ctx, tenantID)
 
-	user, err := store.GetUserByPIVThumbprint(ctx, thumbprint)
+	// SPKI first, then legacy hex digest. Either resolves the same user; an
+	// unknown thumbprint fails closed.
+	user, err := store.GetUserByPIVThumbprint(ctx, spkiThumbprint)
+	if err != nil || user == nil {
+		user, err = store.GetUserByPIVThumbprint(ctx, legacyThumbprint)
+	}
 	if err != nil || user == nil {
 		h.logPIVLoginFailureAudit(ctx, "", thumbprint, ErrUnauthorized,
 			"no user found for the presented certificate", r)

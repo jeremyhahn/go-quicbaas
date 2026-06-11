@@ -156,7 +156,6 @@ Located in `lifecycle.go` and conditional compilation files:
 WITH_REST=1        # REST/HTTP API (includes WebSocket)
 WITH_QUIC=1        # QUIC protocol
 WITH_MCP=1         # Model Context Protocol
-WITH_IAM=1         # Advanced authorization
 WITH_TIMESERIES=1  # Time series database
 WITH_VECTOR=0      # Vector/embedding search (disabled by default)
 WITH_RAG=0         # Retrieval-Augmented Generation (requires VECTOR)

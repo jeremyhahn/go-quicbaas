@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam
-
 // Package service internal tests for Gap 2: DisableAgent side-effects.
 // This file is in package service (not service_test) to access unexported
 // setters (SetAppClientRevoker, SetStreamCloser, SetAuditLogger). The mock

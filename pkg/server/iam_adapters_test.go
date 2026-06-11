@@ -1,4 +1,4 @@
-//go:build iam && !integration
+//go:build !integration
 
 package server
 

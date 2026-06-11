@@ -769,6 +769,15 @@ func runDaemon(modeName string) error {
 		return err
 	}
 
+	// Refuse to start on an invalid configuration. This is the boot-time
+	// compliance gate: a fail-open posture (require_authz=false with network
+	// transports enabled and no insecure_dev_mode acknowledgment) or any other
+	// invalid configuration must prevent the daemon from starting.
+	if err := config.Validate(cfg); err != nil {
+		log.WithError(err).Error("Invalid configuration")
+		return err
+	}
+
 	// Collect optional server construction options.
 	var srvOpts []server.ServerOption
 

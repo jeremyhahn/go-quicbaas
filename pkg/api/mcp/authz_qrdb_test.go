@@ -14,7 +14,6 @@
 package mcp
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,7 +31,6 @@ func TestGetToolQRDBPermission_Mapped(t *testing.T) {
 		{"qrdb_delete", "kv", "delete"},
 		{"quicbaas_user_create", "users", "create"},
 		{"quicbaas_role_assign", "roles", "assign"},
-		{"qrdb_barrier_status", "tenant_barrier", "status"},
 		{"qrdb_ceremony_status", "ceremony", "status"},
 		{"qrdb_vector_search", "vector", "search_similar"},
 		{"qrdb_credential_list", "credentials", "list"},
@@ -84,11 +82,62 @@ func TestGetToolQRDBPermission_Unmapped(t *testing.T) {
 	}
 }
 
-func TestCheckToolAuthorization_RequireAuthzOff_NoNewDenial(t *testing.T) {
-	// RequireAuthz=false posture: no authService, no oidc, no authManager.
-	// CheckToolAuthorization allows every tool (auth disabled) — today's
-	// behaviour preserved.
-	ac := NewAuthorizationChecker(nil, nil)
-	assert.Nil(t, ac.CheckToolAuthorization(context.Background(), "quicbaas_put", ""))
-	assert.Nil(t, ac.CheckToolAuthorization(context.Background(), "quicbaas_kms_generate", ""))
+// TestBarrierToolsGranularAuthzMapping is a per-tool exhaustive guard that
+// enumerates every entry in barrierToolNames (the authoritative dispatch map
+// in tools_barrier.go) and asserts that getToolQRDBPermission resolves it to
+// the canonical per-operation permission expected by the gRPC canon
+// (pkg/api/grpc/authz_mapping.go lines 259-276). A tool present in
+// barrierToolNames but absent from qrdbToolExactMapping would otherwise be
+// default-denied at the gate, making it unreachable even to authorised callers.
+func TestBarrierToolsGranularAuthzMapping(t *testing.T) {
+	// wantBarrierPerms is the exact gRPC-canonical table for the 13 barrier
+	// tools. Values are copied from pkg/api/grpc/authz_mapping.go.
+	wantBarrierPerms := map[string]qrdbToolResource{
+		"qrdb_barrier_status":               {"tenant_barrier", "status"},
+		"qrdb_barrier_initialize":           {"tenant_barrier", "init"},
+		"qrdb_barrier_unseal":               {"tenant_barrier", "unseal"},
+		"qrdb_barrier_seal":                 {"tenant_barrier", "seal"},
+		"qrdb_barrier_shamir_initialize":    {"seal", "initialize_shamir"},
+		"qrdb_barrier_shamir_unseal_share":  {"barrier", "unseal-share"},
+		"qrdb_barrier_shamir_unseal_shares": {"barrier", "unseal-share"},
+		"qrdb_barrier_rekey":                {"seal", "rekey"},
+		"qrdb_barrier_recovery_generate":    {"seal", "generate_recovery"},
+		"qrdb_barrier_recovery_recover":     {"seal", "recover_with_keys"},
+		"qrdb_barrier_recovery_delete":      {"seal", "generate_recovery"},
+		"qrdb_barrier_recovery_status":      {"seal", "status"},
+		"qrdb_barrier_root_token":           {"seal", "bootstrap"},
+	}
+
+	// Assert the expectation table covers every tool in the dispatch map so
+	// this test fails loudly when a new tool is added to barrierToolNames
+	// without a corresponding entry here and in qrdbToolExactMapping.
+	for name := range barrierToolNames {
+		if _, ok := wantBarrierPerms[name]; !ok {
+			t.Errorf("barrierToolNames contains %q which has no entry in wantBarrierPerms; add it to both the exact mapping and this table", name)
+		}
+	}
+	for name := range wantBarrierPerms {
+		if _, ok := barrierToolNames[name]; !ok {
+			t.Errorf("wantBarrierPerms contains %q which is not in barrierToolNames; remove the stale expectation", name)
+		}
+	}
+
+	for name, want := range wantBarrierPerms {
+		t.Run(name, func(t *testing.T) {
+			res, act, ok := getToolQRDBPermission(name)
+			require.Truef(t, ok, "tool %q is unmapped — privilege-escalation gap: default-deny blocks authorised callers", name)
+			assert.Equalf(t, want.resource, res, "tool %q: wrong resource", name)
+			assert.Equalf(t, want.action, act, "tool %q: wrong action", name)
+		})
+	}
+}
+
+// TestBarrierToolsFailClosedOnUnknownTool asserts that a hypothetical future
+// barrier tool that is registered in barrierToolNames but not yet added to
+// qrdbToolExactMapping is default-denied rather than silently admitted via a
+// catch-all. The "qrdb_barrier" prefix catch-all was removed precisely to
+// enforce this posture.
+func TestBarrierToolsFailClosedOnUnknownTool(t *testing.T) {
+	_, _, ok := getToolQRDBPermission("qrdb_barrier_export_shares")
+	assert.False(t, ok, "hypothetical future barrier tool must be default-denied, not admitted via a catch-all")
 }

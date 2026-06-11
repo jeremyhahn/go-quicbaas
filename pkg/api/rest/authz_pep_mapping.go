@@ -41,7 +41,7 @@ import (
 //	kms / crypto            ->  keys        (cryptographic key operations)
 //	certificate             ->  certs
 //	secrets / credential    ->  credentials
-//	barrier                 ->  tenant_barrier
+//	barrier                 ->  tenant_barrier / seal (per-op granular)
 //	iam users               ->  users
 //	iam roles               ->  roles
 //	iam tenants             ->  tenants
@@ -56,6 +56,15 @@ import (
 // object storage (objstore), orchestrator, messaging, scheduler, parameters,
 // dynamic_secrets, project, ollama. These previously returned ok=false and were
 // blanket-denied under RequireAuthz; they now resolve to a registered qrdb perm.
+//
+// Barrier surface (Stage 1): both /api/v1/barrier and the qrdb-SDK root-mount
+// /v1/barrier carry per-operation granular permissions that mirror the gRPC
+// canon (pkg/api/grpc/authz_mapping.go lines 259-276). The 13 registered
+// operations are encoded in barrierGranularOps and wired into pepSpecialRules
+// for both prefixes so that POST /barrier/rekey authorizes as seal:rekey (not
+// the coarse tenant_barrier:init a flat-prefix entry would produce).
+// pepMapping retains a coarse-fallback entry for both prefixes so any future
+// unregistered sub-paths degrade to a mapped (not unmapped/denied) posture.
 //
 // Unmapped surfaces return ok=false; the caller decides the posture for those
 // (see the middleware). This keeps the mapping a closed, registered set rather
@@ -88,6 +97,68 @@ type pepResource struct {
 	verbs crudVerbs
 }
 
+// barrierGranularOp encodes one granular barrier operation: the path suffix
+// that uniquely identifies the endpoint, the HTTP method, and the qrdb-canonical
+// (resource, action). The scope string is "resource:action" for use by the
+// default-deny gate without an extra allocation.
+type barrierGranularOp struct {
+	suffix   string
+	method   string
+	resource string
+	action   string
+	scope    string // resource + ":" + action, pre-computed
+}
+
+// barrierGranularOps is the single source of truth for all 13 barrier
+// operations registered on both /api/v1/barrier and /v1/barrier. The table
+// mirrors the gRPC canon in pkg/api/grpc/authz_mapping.go lines 259-276.
+// Suffixes are ordered longest-first so that the tier-2 suffix matching
+// (HasSuffix) resolves ambiguities correctly — e.g. "/shamir/initialize"
+// (len 19) beats "/initialize" (len 11) for the same path.
+var barrierGranularOps = []barrierGranularOp{
+	// Longest suffixes first to guarantee correct tier-2 wins.
+	{"/shamir/initialize", http.MethodPost, "seal", "initialize_shamir", "seal:initialize_shamir"},
+	{"/shamir/unseal-shares", http.MethodPost, "barrier", "unseal-share", "barrier:unseal-share"},
+	{"/shamir/unseal-share", http.MethodPost, "barrier", "unseal-share", "barrier:unseal-share"},
+	{"/recovery/generate", http.MethodPost, "seal", "generate_recovery", "seal:generate_recovery"},
+	{"/recovery/recover", http.MethodPost, "seal", "recover_with_keys", "seal:recover_with_keys"},
+	{"/recovery/status", http.MethodGet, "seal", "status", "seal:status"},
+	{"/recovery", http.MethodDelete, "seal", "generate_recovery", "seal:generate_recovery"},
+	{"/root-token", http.MethodPost, "seal", "bootstrap", "seal:bootstrap"},
+	{"/rekey", http.MethodPost, "seal", "rekey", "seal:rekey"},
+	{"/initialize", http.MethodPost, "tenant_barrier", "init", "tenant_barrier:init"},
+	{"/unseal", http.MethodPost, "tenant_barrier", "unseal", "tenant_barrier:unseal"},
+	{"/seal", http.MethodPost, "tenant_barrier", "seal", "tenant_barrier:seal"},
+	{"/status", http.MethodGet, "tenant_barrier", "status", "tenant_barrier:status"},
+}
+
+// barrierPrefixes lists every path prefix for the barrier surface — both the
+// canonical API mount and the qrdb-SDK root-wire mount.
+var barrierPrefixes = []string{
+	"/api/v1/barrier",
+	"/v1/barrier",
+}
+
+// buildBarrierSpecialRules generates the pepSpecialRule entries for the barrier
+// surface from barrierGranularOps × barrierPrefixes. Each (prefix, op) pair
+// becomes one pepSpecialRule, keeping the 13-op source of truth in a single
+// slice and avoiding 26-entry hand-written duplication.
+func buildBarrierSpecialRules() []pepSpecialRule {
+	rules := make([]pepSpecialRule, 0, len(barrierPrefixes)*len(barrierGranularOps))
+	for _, prefix := range barrierPrefixes {
+		for _, op := range barrierGranularOps {
+			rules = append(rules, pepSpecialRule{
+				method:   op.method,
+				prefix:   prefix,
+				suffix:   op.suffix,
+				resource: op.resource,
+				action:   op.action,
+			})
+		}
+	}
+	return rules
+}
+
 // pepMapping is the table-driven REST PEP. Keys are /api/v1 path prefixes; the
 // longest matching prefix wins. Every (resource, action) pair produced here is
 // a registered qrdb permission (see go-qrdb/pkg/permission/constants.go).
@@ -111,8 +182,12 @@ var pepMapping = map[string]pepResource{
 	// Secret / named-credential rotation.
 	"/api/v1/secrets": {resource: "credentials", verbs: crudVerbs{get: "retrieve", list: "list", create: "store", del: "delete"}},
 
-	// Tenant barrier lifecycle.
+	// Tenant barrier lifecycle — coarse fallback for both mounts. The 13
+	// registered operations resolve via pepSpecialRules (barrierGranularOps)
+	// before this fallback is consulted, so the fallback only fires for any
+	// future sub-paths not yet in barrierGranularOps.
 	"/api/v1/barrier": {resource: "tenant_barrier", verbs: crudVerbs{get: "status", list: "status", create: "init", del: "seal"}},
+	"/v1/barrier":     {resource: "tenant_barrier", verbs: crudVerbs{get: "status", list: "status", create: "init", del: "seal"}},
 
 	// IAM management surfaces.
 	"/api/v1/users":   {resource: "users", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
@@ -177,11 +252,14 @@ type pepSpecialRule struct {
 	action string
 }
 
-// pepSpecialRules captures the broker data-plane endpoints whose action is not a
-// plain CRUD verb. They are consulted BEFORE the CRUD prefix table so a tailored
-// (resource, action) wins for sub-action routes. Each (resource, action) here is
-// a registered qrdb permission (go-qrdb/pkg/permission/broker_dataplane_scope.go).
-var pepSpecialRules = []pepSpecialRule{
+// pepSpecialRulesBase holds the broker data-plane endpoints whose action is not
+// a plain CRUD verb. It is combined with the barrier-granular rules
+// (buildBarrierSpecialRules) into pepSpecialRules at package init time so the
+// barrier surface has a single authoritative source of truth for both the PEP
+// mapping and the default-deny gate (see authz_default_deny.go).
+// Each (resource, action) here is a registered qrdb permission
+// (go-qrdb/pkg/permission/broker_dataplane_scope.go).
+var pepSpecialRulesBase = []pepSpecialRule{
 	// ---- Scheduler job lifecycle sub-actions ----
 	{http.MethodGet, "/api/v1/scheduler", "/jobs/", "scheduler", "read"},
 	{http.MethodGet, "/api/v1/scheduler", "/jobs", "scheduler", "list"},
@@ -283,6 +361,19 @@ var pepSpecialRules = []pepSpecialRule{
 	{http.MethodPost, "/api/v1/tenants", "/barrier/seal", "tenant_barrier", "seal"},
 	{http.MethodGet, "/api/v1/tenants", "/barrier/status", "tenant_barrier", "status"},
 }
+
+// pepSpecialRules is the active special-rule list consulted by
+// matchSpecialRule. It is the union of pepSpecialRulesBase (all non-barrier
+// broker surfaces) and the barrier-granular rules for both /api/v1/barrier and
+// /v1/barrier generated from barrierGranularOps. Combining them here keeps
+// a single source of truth for the 13 barrier operations.
+var pepSpecialRules = func() []pepSpecialRule {
+	barrier := buildBarrierSpecialRules()
+	combined := make([]pepSpecialRule, 0, len(pepSpecialRulesBase)+len(barrier))
+	combined = append(combined, pepSpecialRulesBase...)
+	combined = append(combined, barrier...)
+	return combined
+}()
 
 // mapRequestToPermission translates a request (path, method) into the
 // qrdb-canonical (resource, action). ok is false when no canonical mapping

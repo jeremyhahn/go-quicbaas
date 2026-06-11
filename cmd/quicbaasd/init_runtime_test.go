@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -14,10 +12,9 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // init_runtime_test.go exercises the real init flow against an embedded
-// Server. The tests rely on the iam build tag because the persistence
-// contract (admin assignment + invite + roles surviving a daemon restart)
-// only holds when the IAM subsystem compiles in. All tests use t.TempDir()
-// so they leave no host-side state behind.
+// Server, asserting the persistence contract (admin assignment + invite +
+// roles surviving a daemon restart). All tests use t.TempDir() so they leave
+// no host-side state behind.
 
 package main
 

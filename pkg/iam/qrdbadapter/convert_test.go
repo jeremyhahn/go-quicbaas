@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -33,28 +31,30 @@ func fullIAMUser() *iam.User {
 	created := time.Now().Add(-240 * time.Hour).UTC()
 	updated := time.Now().Add(-1 * time.Hour).UTC()
 	return &iam.User{
-		ID:                "uuid-abc",
-		Email:             "bob@example.com",
-		Name:              "bob",
-		TenantID:          "acme",
-		Roles:             []string{"admin", "operator"},
-		Groups:            []string{"g1", "g2"},
-		Attributes:        map[string]interface{}{"dept": "eng", "clearance": "high"},
-		Created:           created,
-		Updated:           updated,
-		LastAuth:          &lastAuth,
-		MFAEnabled:        true,
-		MFAMethod:         iam.MFAMethodWebAuthn,
-		MFAEnrolledAt:     &enrolled,
-		MFAVerified:       true,
-		MFATimestamp:      &mfaTS,
-		Suspended:         false,
-		Locked:            false,
-		State:             iam.UserStateActive,
-		AuthMethods:       []string{"webauthn", "piv"},
-		PIVCertThumbprint: "deadbeef",
-		InviteToken:       "inv-tok",
-		InviteExpiresAt:   &invite,
+		ID:            "uuid-abc",
+		Email:         "bob@example.com",
+		Name:          "bob",
+		TenantID:      "acme",
+		Roles:         []string{"admin", "operator"},
+		Groups:        []string{"g1", "g2"},
+		Attributes:    map[string]interface{}{"dept": "eng", "clearance": "high"},
+		Created:       created,
+		Updated:       updated,
+		LastAuth:      &lastAuth,
+		MFAEnabled:    true,
+		MFAMethod:     iam.MFAMethodWebAuthn,
+		MFAEnrolledAt: &enrolled,
+		MFAVerified:   true,
+		MFATimestamp:  &mfaTS,
+		Suspended:     false,
+		Locked:        false,
+		State:         iam.UserStateActive,
+		AuthMethods:   []string{"webauthn", "piv"},
+		CertBindings: []qrdbsdk.CertBinding{
+			{Thumbprint: "deadbeef", Kind: qrdbsdk.CertBindingPIVAttested},
+		},
+		InviteToken:     "inv-tok",
+		InviteExpiresAt: &invite,
 	}
 }
 
@@ -114,7 +114,7 @@ func assertUserEqual(t *testing.T, want, got *iam.User) {
 	if got.MFAEnabled != want.MFAEnabled || got.MFAMethod != want.MFAMethod || got.MFAVerified != want.MFAVerified {
 		t.Fatalf("mfa mismatch: %+v", got)
 	}
-	if got.PIVCertThumbprint != want.PIVCertThumbprint || got.InviteToken != want.InviteToken {
+	if !reflect.DeepEqual(got.CertBindings, want.CertBindings) || got.InviteToken != want.InviteToken {
 		t.Fatalf("piv/invite mismatch: %+v", got)
 	}
 	assertTimeEq(t, "Created", got.Created, want.Created)
@@ -163,6 +163,39 @@ func TestUserRoundTrip_MinimalUser(t *testing.T) {
 	}
 	if got.ID != "uuid-min" || got.Name != "min" || got.TenantID != "acme" {
 		t.Fatalf("minimal user identity mismatch: %+v", got)
+	}
+}
+
+// TestUserRoundTrip_MultipleCertBindings verifies that a user holding more than
+// one cert binding (a renewed PIV card plus an SPKI binding) survives the
+// FromIAMUser -> BrokerProfile -> ToIAMUser round trip with every binding
+// intact and without aliasing the original backing slice.
+func TestUserRoundTrip_MultipleCertBindings(t *testing.T) {
+	notAfter := time.Now().Add(48 * time.Hour).UTC()
+	orig := &iam.User{
+		ID:       "uuid-multi",
+		Name:     "multi",
+		TenantID: "acme",
+		CertBindings: []qrdbsdk.CertBinding{
+			{Thumbprint: "piv-old", Kind: qrdbsdk.CertBindingPIVAttested, NotAfter: notAfter},
+			{Thumbprint: "piv-new", Kind: qrdbsdk.CertBindingPIVAttested},
+			{Thumbprint: "spki-1", Kind: qrdbsdk.CertBindingSPKIThumbprint},
+		},
+	}
+
+	core, profile, entry := FromIAMUser(orig, 7)
+	if len(profile.CertBindings) != 3 {
+		t.Fatalf("profile must carry all 3 bindings, got %d", len(profile.CertBindings))
+	}
+	got := ToIAMUser(core, profile, entry.UUID)
+	if !reflect.DeepEqual(got.CertBindings, orig.CertBindings) {
+		t.Fatalf("cert bindings mismatch after round trip:\n got %+v\nwant %+v", got.CertBindings, orig.CertBindings)
+	}
+
+	// The round-tripped slice must not alias the original backing array.
+	orig.CertBindings[0].Thumbprint = "mutated"
+	if got.CertBindings[0].Thumbprint == "mutated" {
+		t.Fatal("round-tripped cert bindings must not alias the original slice")
 	}
 }
 

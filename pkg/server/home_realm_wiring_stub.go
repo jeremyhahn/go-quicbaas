@@ -1,4 +1,4 @@
-//go:build !iam || !rest
+//go:build !rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -17,6 +17,6 @@ package server
 
 import restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 
-// attachHomeRealmResolver is a no-op when the iam build tag is not set: there
-// is no IAM home-realm directory to wire.
+// attachHomeRealmResolver is a no-op when the rest build tag is not set: there
+// is no REST config to attach the IAM home-realm directory to.
 func (s *Server) attachHomeRealmResolver(_ *restapi.Config) {}

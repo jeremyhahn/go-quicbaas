@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -178,26 +176,54 @@ func TestConvertPermissions_Roundtrip(t *testing.T) {
 	}
 }
 
+// assertNilDependency asserts err is a *NilDependencyError naming want.
+func assertNilDependency(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected NilDependencyError(%q), got nil", want)
+	}
+	var nde *NilDependencyError
+	if !errors.As(err, &nde) {
+		t.Fatalf("expected *NilDependencyError, got %T: %v", err, err)
+	}
+	if nde.Name != want {
+		t.Fatalf("NilDependencyError.Name = %q, want %q", nde.Name, want)
+	}
+}
+
+func TestNilDependencyError_Error(t *testing.T) {
+	err := &NilDependencyError{Name: "TenantManager"}
+	if got := err.Error(); got != "qrdbadapter: nil TenantManager" {
+		t.Fatalf("Error() = %q, want %q", got, "qrdbadapter: nil TenantManager")
+	}
+}
+
+func TestTenantAdapter_CreateTenant_NilManagerErrors(t *testing.T) {
+	a := WrapTenant(nil)
+	_, err := a.CreateTenant(context.Background(), "t1", "Tenant 1", "")
+	assertNilDependency(t, err, "TenantManager")
+}
+
 func TestRoleAdapter_CreateRole_NilStoreErrors(t *testing.T) {
 	a := WrapRole(nil)
 	_, err := a.CreateRole(context.Background(), &qrdbsdk.CreateRoleRequest{Name: "admin"})
-	if err == nil {
-		t.Fatal("CreateRole(nil store) = nil err, want non-nil")
-	}
+	assertNilDependency(t, err, "IdentityStore")
+}
+
+func TestRoleAdapter_CreateRole_NilRequestErrors(t *testing.T) {
+	a := WrapRole(&iam.IdentityStore{})
+	_, err := a.CreateRole(context.Background(), nil)
+	assertNilDependency(t, err, "CreateRoleRequest")
 }
 
 func TestUserAdapter_CreateUser_NilStoreErrors(t *testing.T) {
 	a := WrapUser(nil)
 	_, err := a.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "admin"})
-	if err == nil {
-		t.Fatal("CreateUser(nil store) = nil err, want non-nil")
-	}
+	assertNilDependency(t, err, "IdentityStore")
 }
 
 func TestUserAdapter_CreateUser_NilRequestErrors(t *testing.T) {
 	a := WrapUser(&iam.IdentityStore{})
 	_, err := a.CreateUser(context.Background(), nil)
-	if err == nil {
-		t.Fatal("CreateUser(nil req) = nil err, want non-nil")
-	}
+	assertNilDependency(t, err, "CreateUserRequest")
 }

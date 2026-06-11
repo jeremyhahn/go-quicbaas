@@ -183,15 +183,3 @@ func TestShardedClientClosedError(t *testing.T) {
 		assert.True(t, errors.Is(err, ErrShardedClientClosed))
 	})
 }
-
-func TestInsecureBootstrapPasswordError(t *testing.T) {
-	t.Run("formats message with reason", func(t *testing.T) {
-		err := &InsecureBootstrapPasswordError{Reason: "too short"}
-		assert.Equal(t, "insecure bootstrap admin password: too short", err.Error())
-	})
-
-	t.Run("unwraps to sentinel", func(t *testing.T) {
-		err := &InsecureBootstrapPasswordError{Reason: "default value"}
-		assert.True(t, errors.Is(err, ErrInsecureBootstrapPassword))
-	})
-}

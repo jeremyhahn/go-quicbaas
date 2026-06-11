@@ -34,6 +34,55 @@ barrier:
 When `barrier.enabled: false`, the daemon runs without encryption-at-rest
 and the sealed-window middleware is not installed.
 
+## Authorization (per-operation, all transports)
+
+Barrier operations are authorized **per operation** on every transport,
+aligned to go-qrdb's gRPC canon. The service facade
+(`pkg/service/barrier_service.go`) is pure delegation to the qrdb SDK
+`BarrierClient` and performs **no** authorization — the transport-level
+PEP map is the only request-time gate, so each transport maps every
+barrier operation to its exact permission and default-denies anything
+unmapped:
+
+| Operation | Permission |
+|-----------|------------|
+| status | `tenant_barrier:status` |
+| initialize | `tenant_barrier:init` |
+| unseal | `tenant_barrier:unseal` |
+| seal | `tenant_barrier:seal` |
+| shamir initialize | `seal:initialize_shamir` |
+| unseal-share / unseal-shares | `barrier:unseal-share` |
+| rekey | `seal:rekey` |
+| recovery generate / delete | `seal:generate_recovery` |
+| recovery recover | `seal:recover_with_keys` |
+| recovery status | `seal:status` |
+| root-token | `seal:bootstrap` |
+
+Transport gates:
+
+- **gRPC** — `pkg/api/grpc/authz_mapping.go` (the canon).
+- **QUIC** — `pkg/api/quic/handler_authz_qrdb.go`: `OpBarrier` is
+  sub-op-aware; the gate inspects `payload[0]` and resolves the
+  permission from `barrierSubOpPermissions`. Empty payload or an unknown
+  sub-op is denied before dispatch.
+- **MCP** — `pkg/api/mcp/authz_qrdb.go`: each `qrdb_barrier_*` tool has
+  an exact mapping; there is deliberately **no** `qrdb_barrier` prefix
+  catch-all, so a future barrier tool added without a mapping fails
+  closed.
+- **REST** — `pkg/api/rest/authz_pep_mapping.go`: the single-source
+  `barrierGranularOps` table generates suffix rules for both the
+  `/api/v1/barrier` and `/v1/barrier` mounts and is shared by the
+  validator PEP and the default-deny scope gate
+  (`authz_default_deny.go`). The legacy `/api/v1/seal/*` routes are
+  granular in the default-deny gate only and remain unmapped (denied)
+  under the validator posture.
+
+Guard tests enforce bidirectional set equality between each transport's
+barrier dispatch surface and its permission table
+(`handler_barrier_authz_guard_test.go`, `authz_qrdb_test.go`,
+`authz_barrier_granular_test.go`), so adding a barrier operation without
+an explicit permission mapping fails CI.
+
 When `barrier.enabled: true`, the daemon:
 
 1. Builds the seal sub-store (`<data-dir>/seal/`).

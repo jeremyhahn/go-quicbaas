@@ -1,5 +1,3 @@
-//go:build iam
-
 package iam
 
 import (
@@ -132,49 +130,9 @@ func TestBackendStorage_TenantCRUD(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestBackendStorage_UserCRUD(t *testing.T) {
-	ctx := ContextWithTenant(context.Background(), "tenant-1")
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-
-	user := &User{
-		ID:       "user-1",
-		TenantID: "tenant-1",
-		Email:    "test@example.com",
-		Name:     "Test User",
-	}
-
-	// Create
-	err := storage.CreateUser(ctx, user)
-	require.NoError(t, err)
-
-	// Get
-	retrieved, err := storage.GetUser(ctx, user.TenantID, user.ID)
-	require.NoError(t, err)
-	assert.Equal(t, user.ID, retrieved.ID)
-	assert.Equal(t, user.Email, retrieved.Email)
-
-	// Get by email
-	retrieved, err = storage.GetUserByEmail(ctx, user.Email)
-	require.NoError(t, err)
-	assert.Equal(t, user.ID, retrieved.ID)
-
-	// Update
-	user.Name = "Updated User"
-	err = storage.UpdateUser(ctx, user)
-	require.NoError(t, err)
-
-	retrieved, err = storage.GetUser(ctx, user.TenantID, user.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "Updated User", retrieved.Name)
-
-	// Delete
-	err = storage.DeleteUser(ctx, user.TenantID, user.ID)
-	require.NoError(t, err)
-
-	_, err = storage.GetUser(ctx, user.TenantID, user.ID)
-	assert.Error(t, err)
-}
+// BackendStorage user CRUD tests were removed in phase C1-F: user persistence
+// is owned by qrdb (qrdbadapter.QRDBUserStorage), not BackendStorage. The
+// UserStorage seam is exercised against MemoryStorage and the qrdbadapter suite.
 
 func TestBackendStorage_GroupCRUD(t *testing.T) {
 	ctx := context.Background()
@@ -471,10 +429,6 @@ func TestBackendStorage_NotFoundErrors(t *testing.T) {
 	assert.Error(t, err)
 	assert.True(t, dberrors.IsNotFound(err))
 
-	// Get nonexistent user
-	_, err = storage.GetUser(ctx, "tenant", "nonexistent")
-	assert.Error(t, err)
-
 	// Get nonexistent group
 	_, err = storage.GetGroup(ctx, "tenant", "nonexistent")
 	assert.Error(t, err)
@@ -496,50 +450,15 @@ func TestBackendStorage_NotFoundErrors(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestBackendStorage_ListOperations(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "list-test-tenant"
-
-	// Create multiple users
-	for i := 0; i < 5; i++ {
-		user := &User{
-			ID:       "user-" + string(rune('0'+i)),
-			TenantID: tenantID,
-			Email:    "user" + string(rune('0'+i)) + "@example.com",
-			Name:     "User " + string(rune('0'+i)),
-		}
-		err := storage.CreateUser(ctx, user)
-		require.NoError(t, err)
-	}
-
-	// List all users
-	users, err := storage.ListUsers(ctx, tenantID, ListOptions{})
-	require.NoError(t, err)
-	assert.Len(t, users, 5)
-
-	// List with limit
-	users, err = storage.ListUsers(ctx, tenantID, ListOptions{Limit: 2})
-	require.NoError(t, err)
-	assert.Len(t, users, 2)
-
-	// List with offset
-	users, err = storage.ListUsers(ctx, tenantID, ListOptions{Offset: 3})
-	require.NoError(t, err)
-	assert.Len(t, users, 2)
-}
+// TestBackendStorage_ListOperations (user listing) was removed in phase C1-F:
+// BackendStorage no longer persists users. User listing pagination is covered by
+// the MemoryStorage suite and the qrdbadapter suite.
 
 // TestBackendStorage_KeyPrefixes ensures keys are properly formatted
 func TestBackendStorage_KeyPrefixes(t *testing.T) {
 	// Test tenant key
 	key := tenantKey("test-tenant")
 	assert.Equal(t, "__iam:tenant:test-tenant", key)
-
-	// Test user key
-	key = userKey("tenant-1", "user-1")
-	assert.Equal(t, "__iam:tenant:tenant-1:user:user-1", key)
 
 	// Test group key
 	key = groupKey("tenant-1", "group-1")
@@ -563,11 +482,6 @@ func TestBackendStorage_KeyPrefixes(t *testing.T) {
 	assert.Equal(t, "__iam:token:tenant-1:jti-123", key)
 	assert.Equal(t, "__iam:token:jti-123", legacyTokenKey("jti-123"))
 
-	// Test email index key (tenant-scoped) + legacy variant
-	key = emailIndexKey("tenant-1", "TEST@EXAMPLE.COM")
-	assert.Equal(t, "__iam:idx:email:tenant-1:test@example.com", key)
-	assert.Equal(t, "__iam:idx:email:test@example.com", legacyEmailIndexKey("TEST@EXAMPLE.COM"))
-
 	// Test session key
 	key = sessionKey("tenant-1", "session-123")
 	assert.Equal(t, "__iam:tenant:tenant-1:session:session-123", key)
@@ -585,22 +499,6 @@ func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 		Name: "Cascade Test Tenant",
 	}
 	require.NoError(t, storage.CreateTenant(ctx, tenant))
-
-	// Create users
-	user1 := &User{
-		ID:       "user-1",
-		TenantID: tenantID,
-		Email:    "user1@example.com",
-		Name:     "User 1",
-	}
-	user2 := &User{
-		ID:       "user-2",
-		TenantID: tenantID,
-		Email:    "user2@example.com",
-		Name:     "User 2",
-	}
-	require.NoError(t, storage.CreateUser(ctx, user1))
-	require.NoError(t, storage.CreateUser(ctx, user2))
 
 	// Create groups
 	group := &Group{
@@ -643,12 +541,6 @@ func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 	_, err := storage.GetTenant(ctx, tenantID)
 	require.NoError(t, err, "tenant should exist")
 
-	_, err = storage.GetUser(ctx, tenantID, user1.ID)
-	require.NoError(t, err, "user1 should exist")
-
-	_, err = storage.GetUserByEmail(ctx, user1.Email)
-	require.NoError(t, err, "user1 email index should exist")
-
 	_, err = storage.GetGroup(ctx, tenantID, group.ID)
 	require.NoError(t, err, "group should exist")
 
@@ -668,18 +560,6 @@ func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 	// Verify all entities are deleted
 	_, err = storage.GetTenant(ctx, tenantID)
 	assert.Error(t, err, "tenant should be deleted")
-
-	_, err = storage.GetUser(ctx, tenantID, user1.ID)
-	assert.Error(t, err, "user1 should be deleted")
-
-	_, err = storage.GetUser(ctx, tenantID, user2.ID)
-	assert.Error(t, err, "user2 should be deleted")
-
-	_, err = storage.GetUserByEmail(ctx, user1.Email)
-	assert.Error(t, err, "user1 email index should be deleted")
-
-	_, err = storage.GetUserByEmail(ctx, user2.Email)
-	assert.Error(t, err, "user2 email index should be deleted")
 
 	_, err = storage.GetGroup(ctx, tenantID, group.ID)
 	assert.Error(t, err, "group should be deleted")
@@ -704,42 +584,8 @@ func TestBackendStorage_DeleteTenantCascade_NotFound(t *testing.T) {
 	assert.Error(t, err, "should error for non-existent tenant")
 }
 
-// Benchmark tests
-func BenchmarkBackendStorage_CreateUser(b *testing.B) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		user := &User{
-			ID:       "user-bench-" + string(rune(i)),
-			TenantID: "tenant-1",
-			Email:    "bench" + string(rune(i)) + "@example.com",
-		}
-		_ = storage.CreateUser(ctx, user)
-	}
-}
-
-func BenchmarkBackendStorage_GetUser(b *testing.B) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-
-	// Create user first
-	user := &User{
-		ID:       "user-bench",
-		TenantID: "tenant-1",
-		Email:    "bench@example.com",
-	}
-	_ = storage.CreateUser(ctx, user)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = storage.GetUser(ctx, "tenant-1", "user-bench")
-	}
-}
-
+// Benchmark tests. The CreateUser/GetUser benchmarks were removed in phase
+// C1-F (BackendStorage no longer persists users; qrdb owns the user record).
 func BenchmarkBackendStorage_JSONMarshal(b *testing.B) {
 	user := &User{
 		ID:       "user-bench",
@@ -2249,54 +2095,8 @@ func TestBackendStorage_SettingsOperations(t *testing.T) {
 // Storage Backend - List operations with pagination
 // =============================================================================
 
-func TestBackendStorage_ListUsersWithPagination(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "list-users-tenant"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "List Users Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create multiple users
-	for i := 0; i < 5; i++ {
-		user := &User{
-			ID:       "user-" + string(rune('a'+i)),
-			TenantID: tenantID,
-			Email:    "user" + string(rune('a'+i)) + "@example.com",
-			Name:     "User " + string(rune('A'+i)),
-			Created:  time.Now(),
-			Updated:  time.Now(),
-		}
-		if err := storage.CreateUser(ctx, user); err != nil {
-			t.Fatalf("CreateUser failed: %v", err)
-		}
-	}
-
-	// List all users
-	users, err := storage.ListUsers(ctx, tenantID, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListUsers failed: %v", err)
-	}
-
-	if len(users) != 5 {
-		t.Errorf("expected 5 users, got %d", len(users))
-	}
-
-	// List with limit
-	usersLimited, err := storage.ListUsers(ctx, tenantID, ListOptions{Limit: 3})
-	if err != nil {
-		t.Fatalf("ListUsers (limited) failed: %v", err)
-	}
-
-	if len(usersLimited) != 3 {
-		t.Errorf("expected 3 users with limit, got %d", len(usersLimited))
-	}
-}
+// TestBackendStorage_ListUsersWithPagination was removed in phase C1-F:
+// BackendStorage no longer persists or lists users (qrdb owns the user record).
 
 func TestBackendStorage_ListGroupsWithPagination(t *testing.T) {
 	ctx := context.Background()
@@ -2658,205 +2458,10 @@ func TestBackendStorage_GetTokenByValue(t *testing.T) {
 // Storage Backend - UpdateUser with email changes
 // =============================================================================
 
-func TestBackendStorage_UpdateUser_EmailChange(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "update-user-tenant"
-
-	// Create a user with an email
-	user := &User{
-		ID:       "user-email-change",
-		TenantID: tenantID,
-		Email:    "old@example.com",
-		Name:     "Test User",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-
-	// Update the user's email
-	user.Email = "new@example.com"
-	user.Updated = time.Now()
-	if err := storage.UpdateUser(ctx, user); err != nil {
-		t.Fatalf("UpdateUser failed: %v", err)
-	}
-
-	// Retrieve by new email should work
-	retrieved, err := storage.GetUserByEmail(ctx, "new@example.com")
-	if err != nil {
-		t.Fatalf("GetUserByEmail (new) failed: %v", err)
-	}
-	if retrieved.ID != user.ID {
-		t.Errorf("expected user ID %s, got %s", user.ID, retrieved.ID)
-	}
-}
-
-// TestBackendStorage_UpdateUser_PIVThumbprintIndex exercises the same bug as the
-// memory-storage regression test: UpdateUser must propagate the PIV thumbprint
-// to its lookup index so the bootstrap-admin rebind path can resolve the user
-// through GetUserByPIVThumbprint after the binding is added, rotated, or cleared.
-func TestBackendStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "piv-thumb-update-tenant"
-	user := &User{
-		ID:       "u-piv-1",
-		TenantID: tenantID,
-		Email:    "admin@example.com",
-		Name:     "Admin",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-
-	// Bind via UpdateUser (the bootstrap-admin path).
-	user.PIVCertThumbprint = "thumb-A"
-	user.Updated = time.Now()
-	if err := storage.UpdateUser(ctx, user); err != nil {
-		t.Fatalf("UpdateUser bind failed: %v", err)
-	}
-	got, err := storage.GetUserByPIVThumbprint(ctx, "thumb-A")
-	if err != nil {
-		t.Fatalf("GetUserByPIVThumbprint after bind: %v", err)
-	}
-	if got.ID != user.ID {
-		t.Fatalf("expected user %s, got %s", user.ID, got.ID)
-	}
-
-	// Rotate: old binding must be removed.
-	user.PIVCertThumbprint = "thumb-B"
-	user.Updated = time.Now()
-	if err := storage.UpdateUser(ctx, user); err != nil {
-		t.Fatalf("UpdateUser rotate failed: %v", err)
-	}
-	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-A"); err == nil {
-		t.Fatal("expected old thumbprint to be unbound after rotate")
-	}
-	got, err = storage.GetUserByPIVThumbprint(ctx, "thumb-B")
-	if err != nil {
-		t.Fatalf("GetUserByPIVThumbprint after rotate: %v", err)
-	}
-	if got.ID != user.ID {
-		t.Fatalf("expected user %s after rotate, got %s", user.ID, got.ID)
-	}
-
-	// Clear: lookup must fail.
-	user.PIVCertThumbprint = ""
-	user.Updated = time.Now()
-	if err := storage.UpdateUser(ctx, user); err != nil {
-		t.Fatalf("UpdateUser clear failed: %v", err)
-	}
-	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-B"); err == nil {
-		t.Fatal("expected cleared thumbprint to be unbound")
-	}
-}
-
-// TestBackendStorage_DeleteUser_PIVThumbprintCleanup ensures the persisted PIV
-// index entry is removed when the user is deleted.
-func TestBackendStorage_DeleteUser_PIVThumbprintCleanup(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	user := &User{
-		ID:                "u-piv-del",
-		TenantID:          "piv-thumb-delete-tenant",
-		Email:             "del@example.com",
-		PIVCertThumbprint: "thumb-del",
-		Created:           time.Now(),
-		Updated:           time.Now(),
-	}
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-	if err := storage.DeleteUser(ctx, user.TenantID, user.ID); err != nil {
-		t.Fatalf("DeleteUser failed: %v", err)
-	}
-	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-del"); err == nil {
-		t.Fatal("expected PIV index to be cleared after DeleteUser")
-	}
-}
-
-func TestBackendStorage_UpdateUser_ClearEmail(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "clear-email-tenant"
-
-	// Create a user with an email
-	user := &User{
-		ID:       "user-clear-email",
-		TenantID: tenantID,
-		Email:    "clear@example.com",
-		Name:     "Test User Clear",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-
-	// Update to clear the email
-	user.Email = ""
-	user.Updated = time.Now()
-	if err := storage.UpdateUser(ctx, user); err != nil {
-		t.Fatalf("UpdateUser (clear email) failed: %v", err)
-	}
-
-	// Get the user directly
-	retrieved, err := storage.GetUser(ctx, tenantID, "user-clear-email")
-	if err != nil {
-		t.Fatalf("GetUser failed: %v", err)
-	}
-	if retrieved.Email != "" {
-		t.Errorf("expected empty email, got %s", retrieved.Email)
-	}
-}
-
-// =============================================================================
-// Storage Backend - DeleteUser with email cleanup
-// =============================================================================
-
-func TestBackendStorage_DeleteUser_EmailCleanup(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "delete-user-tenant"
-
-	// Create a user with an email
-	user := &User{
-		ID:       "user-to-delete",
-		TenantID: tenantID,
-		Email:    "delete@example.com",
-		Name:     "Delete Me",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-
-	// Delete the user
-	if err := storage.DeleteUser(ctx, tenantID, user.ID); err != nil {
-		t.Fatalf("DeleteUser failed: %v", err)
-	}
-
-	// User should not exist anymore
-	_, err := storage.GetUser(ctx, tenantID, user.ID)
-	if err == nil {
-		t.Error("expected error getting deleted user")
-	}
-}
+// BackendStorage UpdateUser/DeleteUser email-and-PIV-index tests were removed in
+// phase C1-F: user persistence and the username/PIV lookup indexes moved to qrdb
+// (qrdbadapter.QRDBUserStorage). The MemoryStorage suite and the qrdbadapter
+// suite cover the UpdateUser/DeleteUser index lifecycle for the UserStorage seam.
 
 // =============================================================================
 // Storage Backend - DeleteTenant
@@ -2945,33 +2550,8 @@ func TestBackendStorage_UpdateTenant_NotFound(t *testing.T) {
 // Storage Backend - CreateUser_AlreadyExists
 // =============================================================================
 
-func TestBackendStorage_CreateUser_AlreadyExists(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "dup-user-tenant"
-
-	user := &User{
-		ID:       "dup-user",
-		TenantID: tenantID,
-		Email:    "dup@example.com",
-		Name:     "Dup User",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-
-	// Create first time
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("CreateUser (first) failed: %v", err)
-	}
-
-	// Create second time - should fail
-	err := storage.CreateUser(ctx, user)
-	if err == nil {
-		t.Error("expected error for duplicate user")
-	}
-}
+// TestBackendStorage_CreateUser_AlreadyExists was removed in phase C1-F:
+// BackendStorage no longer persists users (qrdb owns the user record).
 
 // =============================================================================
 // Storage Backend - DeleteAuthCode
@@ -3721,34 +3301,8 @@ func TestBackendStorage_DeleteRole_NotFound(t *testing.T) {
 }
 
 // Test UpdateUser not found
-func TestBackendStorage_UpdateUser_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	user := &User{
-		ID:       "non-existent-user",
-		TenantID: "tenant",
-		Email:    "test@example.com",
-	}
-
-	err := storage.UpdateUser(ctx, user)
-	if err == nil {
-		t.Error("expected error for non-existent user")
-	}
-}
-
-// Test DeleteUser not found
-func TestBackendStorage_DeleteUser_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.DeleteUser(ctx, "tenant", "non-existent-user")
-	if err == nil {
-		t.Error("expected error for non-existent user")
-	}
-}
+// BackendStorage UpdateUser/DeleteUser not-found tests were removed in phase
+// C1-F: BackendStorage no longer persists users (qrdb owns the user record).
 
 // Test UpdateApp not found
 func TestBackendStorage_UpdateApp_NotFound(t *testing.T) {
@@ -3918,62 +3472,14 @@ func TestBackendStorage_ValidateClientSecret_NotFound(t *testing.T) {
 }
 
 // Test GetUserByEmail not found
-func TestBackendStorage_GetUserByEmail_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetUserByEmail(ctx, "non-existent@example.com")
-	if err == nil {
-		t.Error("expected error for non-existent email")
-	}
-}
+// TestBackendStorage_GetUserByEmail_NotFound and the BackendStorage ListUsers
+// offset tests were removed in phase C1-F: BackendStorage no longer persists or
+// lists users (qrdb owns the user record). User list pagination is covered by
+// the MemoryStorage and qrdbadapter suites.
 
 // =============================================================================
 // Additional tests to boost coverage past 91%
 // =============================================================================
-
-// Test ListUsers with offset
-func TestBackendStorage_ListUsers_WithOffset(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "list-users-offset-tenant"
-
-	// Create 5 users
-	for i := 0; i < 5; i++ {
-		user := &User{
-			ID:       fmt.Sprintf("user-offset-%d", i),
-			TenantID: tenantID,
-			Email:    fmt.Sprintf("user-offset-%d@example.com", i),
-			Name:     fmt.Sprintf("User Offset %d", i),
-			Created:  time.Now(),
-			Updated:  time.Now(),
-		}
-		if err := storage.CreateUser(ctx, user); err != nil {
-			t.Fatalf("CreateUser failed: %v", err)
-		}
-	}
-
-	// List with offset
-	users, err := storage.ListUsers(ctx, tenantID, ListOptions{Offset: 2, Limit: 2})
-	if err != nil {
-		t.Fatalf("ListUsers (offset) failed: %v", err)
-	}
-	if len(users) != 2 {
-		t.Errorf("expected 2 users with offset, got %d", len(users))
-	}
-
-	// List with offset beyond total
-	users, err = storage.ListUsers(ctx, tenantID, ListOptions{Offset: 100})
-	if err != nil {
-		t.Fatalf("ListUsers (offset beyond) failed: %v", err)
-	}
-	if len(users) != 0 {
-		t.Errorf("expected 0 users with offset beyond total, got %d", len(users))
-	}
-}
 
 // Test ListGroups with offset
 func TestBackendStorage_ListGroups_WithOffset(t *testing.T) {
@@ -4156,16 +3662,8 @@ func TestBackendStorage_GetRole_NotFound(t *testing.T) {
 }
 
 // Test GetUser not found
-func TestBackendStorage_GetUser_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetUser(ctx, "tenant", "non-existent-user")
-	if err == nil {
-		t.Error("expected error for non-existent user")
-	}
-}
+// TestBackendStorage_GetUser_NotFound was removed in phase C1-F: BackendStorage
+// no longer persists users (qrdb owns the user record).
 
 // Test GetApp not found
 func TestBackendStorage_GetApp_NotFound(t *testing.T) {
@@ -4653,16 +4151,6 @@ func TestBackendStorage_DeleteTenant_WithSessions(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	// Create some test data
-	user := &User{
-		ID:       "session-user-91",
-		TenantID: tenantID,
-		Email:    "session91@example.com",
-	}
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-
 	// Delete tenant - verifies cascade works without errors
 	if err := storage.DeleteTenant(ctx, tenantID); err != nil {
 		t.Fatalf("DeleteTenant failed: %v", err)
@@ -4830,77 +4318,9 @@ func TestBackendStorage_DeleteApp_IndexCleanup91(t *testing.T) {
 	}
 }
 
-// Test ListUsers with various pagination options
-func TestBackendStorage_ListUsers_AllPaginationPaths91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "users-pagination-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create users
-	for i := 0; i < 5; i++ {
-		user := &User{
-			ID:       fmt.Sprintf("user-91-%d", i),
-			TenantID: tenantID,
-			Email:    fmt.Sprintf("user91-%d@example.com", i),
-		}
-		if err := storage.CreateUser(ctx, user); err != nil {
-			t.Fatalf("CreateUser failed: %v", err)
-		}
-	}
-
-	// Test all users
-	users, err := storage.ListUsers(ctx, tenantID, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListUsers failed: %v", err)
-	}
-	if len(users) != 5 {
-		t.Errorf("expected 5 users, got %d", len(users))
-	}
-
-	// Test with limit
-	users, err = storage.ListUsers(ctx, tenantID, ListOptions{Limit: 3})
-	if err != nil {
-		t.Fatalf("ListUsers failed: %v", err)
-	}
-	if len(users) != 3 {
-		t.Errorf("expected 3 users with limit, got %d", len(users))
-	}
-
-	// Test with offset
-	users, err = storage.ListUsers(ctx, tenantID, ListOptions{Offset: 2})
-	if err != nil {
-		t.Fatalf("ListUsers failed: %v", err)
-	}
-	if len(users) != 3 {
-		t.Errorf("expected 3 users with offset 2, got %d", len(users))
-	}
-
-	// Test with offset and limit
-	users, err = storage.ListUsers(ctx, tenantID, ListOptions{Offset: 1, Limit: 2})
-	if err != nil {
-		t.Fatalf("ListUsers failed: %v", err)
-	}
-	if len(users) != 2 {
-		t.Errorf("expected 2 users with offset 1 limit 2, got %d", len(users))
-	}
-
-	// Test with offset beyond count
-	users, err = storage.ListUsers(ctx, tenantID, ListOptions{Offset: 100})
-	if err != nil {
-		t.Fatalf("ListUsers failed: %v", err)
-	}
-	if len(users) != 0 {
-		t.Errorf("expected 0 users with offset beyond count, got %d", len(users))
-	}
-}
+// TestBackendStorage_ListUsers_AllPaginationPaths91 was removed in phase C1-F:
+// BackendStorage no longer persists or lists users (qrdb owns the user record).
+// User list pagination is covered by the MemoryStorage and qrdbadapter suites.
 
 // Test StoreAuthCode and retrieval
 func TestBackendStorage_StoreAuthCode_Roundtrip91(t *testing.T) {

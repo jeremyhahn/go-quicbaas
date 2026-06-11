@@ -65,8 +65,9 @@ func (s *Server) requireTenantBarrierService(w http.ResponseWriter, r *http.Requ
 }
 
 // HandleTenantBarrierInit handles POST /api/v1/tenants/{tenant_id}/barrier/init.
-// For the Shamir strategy it returns 200 with the generated shares; for
-// none/passphrase it returns 204 No Content.
+// For the Shamir strategy it returns 200 with share-free metadata (threshold,
+// total shares, sealed-share count); officers claim their shares individually
+// via the share-claim flow. For none/passphrase it returns 204 No Content.
 func (s *Server) HandleTenantBarrierInit(w http.ResponseWriter, r *http.Request) {
 	svc, ok := s.requireTenantBarrierService(w, r)
 	if !ok {
@@ -89,10 +90,12 @@ func (s *Server) HandleTenantBarrierInit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Shamir initialization returns shares that the caller must capture exactly
-	// once; surface them in a 200 body. Non-Shamir strategies carry no share
-	// material, so they keep the 204 No Content response.
-	if result != nil && len(result.Shares) > 0 {
+	// Share-free contract: Shamir initialization returns only metadata
+	// (threshold, total shares, sealed-share count) in a 200 body; share bytes
+	// are sealed to officer enclaves and claimed via the share-claim flow.
+	// Non-Shamir strategies carry no share metadata, so they keep the 204 No
+	// Content response.
+	if result != nil && result.TotalShares > 0 {
 		RespondJSON(w, r, http.StatusOK, result)
 		return
 	}

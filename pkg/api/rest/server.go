@@ -226,9 +226,9 @@ type Server struct {
 
 	// agentRegistrar is the fleet-registry registrar used by the mTLS
 	// register handler (handlers_agent_register.go) to publish newly
-	// registered daemons. Stored as interface{} to avoid pulling iam
-	// into the core rest package — the register handler, compiled under
-	// the iam build tag, performs the type assertion itself.
+	// registered daemons. Stored as interface{} to avoid pulling pkg/iam
+	// into the core rest server type — the register handler performs the
+	// type assertion itself.
 	agentRegistrar interface{}
 
 	// eventIngestURL is the gRPC URL the agent register handler hands
@@ -246,8 +246,8 @@ type Server struct {
 	// the central daemon restarts). The recoverer uses the request's
 	// mTLS peer certificate to re-authenticate the agent and re-publish
 	// it into the fleet registry, so the agent never needs to re-enroll.
-	// Stored as interface{} so the core rest package does not pull pkg/iam
-	// — the iam-tagged install file performs the type assertion itself.
+	// Stored as interface{} so the core rest server type does not pull
+	// pkg/iam — the install file performs the type assertion itself.
 	// Nil means recovery is disabled and unknown-agent heartbeats return
 	// 404 (the legacy behaviour).
 	agentHeartbeatRecoverer interface{}
@@ -260,10 +260,10 @@ type Server struct {
 	// server.go does not import the go-xkms rest package directly.
 	xkmsCAHandlers caHandlerSet
 
-	// iamHandler holds the *IAMHandler created during route registration under the
-	// rest && iam build tags. Typed as interface{} so server.go does not need to
+	// iamHandler holds the *IAMHandler created during route registration under
+	// the rest build tag. Typed as interface{} so server.go does not need to
 	// import pkg/iam — lifecycle_iam_mtls.go performs the type assertion.
-	// Nil when IAM is not compiled in.
+	// Nil until route registration wires it.
 	iamHandler interface{}
 
 	// barrierSvc serves /api/v1/barrier endpoints. Wired by lifecycle via
@@ -853,7 +853,7 @@ func (s *Server) setupRouter() {
 		r.Post("/enroll-external-officer", s.HandleCeremonyEnrollExternalOfficer)
 	})
 
-	// IAM routes (no-op when iam build tag is not set)
+	// IAM routes
 	// Note: This is at root level because OIDC endpoints must be at /.well-known/*
 	// The IAM handler internally registers /api/v1/* routes for management APIs
 	s.registerIAMRoutes(r)

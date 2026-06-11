@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag && iam
+//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag
 
 // start_service_grpc_seams_tt_test.go drives two more lifecycle error branches
 // via the established function seams:

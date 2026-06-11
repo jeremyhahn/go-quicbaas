@@ -73,8 +73,8 @@ type Server struct {
 
 	// tenantResolver derives the caller's tenant from the verified mTLS peer
 	// certificate and stamps it onto the request context. Wired by lifecycle
-	// via SetTenantResolver; nil before wiring (and in non-iam builds), in
-	// which case requests proceed without a tenant. Best-effort and
+	// via SetTenantResolver; nil before wiring, in which case requests
+	// proceed without a tenant. Best-effort and
 	// permissive: it never rejects a request for lack of a tenant.
 	tenantResolver TenantContextFunc
 
@@ -582,7 +582,7 @@ func (s *Server) SetTenantBarrierService(svc service.TenantBarrierServicer) {
 // TenantContextFunc derives the caller's tenant from a VERIFIED mTLS peer
 // certificate and returns a context carrying it. It is supplied by the server
 // layer (which owns the SPIFFE trust domain + home-realm directory) so this
-// transport package needs no dependency on the iam build tag.
+// transport package needs no dependency on pkg/iam.
 //
 // The contract is BEST-EFFORT and PERMISSIVE: it MUST return a usable context
 // in every case — a tenant-scoped child context on success, or the input

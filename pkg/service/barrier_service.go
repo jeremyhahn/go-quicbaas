@@ -108,15 +108,17 @@ type BarrierStatusInfo struct {
 }
 
 // ShamirInitInfo contains the output of a Shamir initialisation or rekey.
+// Share material is never present here; Security Officers retrieve their
+// shares via the qrdb share-claim flow using their mTLS certificate.
 type ShamirInitInfo struct {
-	// Shares are the Shamir share values for distribution.
-	Shares []string
-
 	// Threshold is the minimum number of shares required for reconstruction.
 	Threshold int
 
 	// TotalShares is the total number of shares generated.
 	TotalShares int
+
+	// ShareCount is the number of shares successfully sealed to officer enclaves.
+	ShareCount int
 }
 
 // UnsealShareProgress reports the current state of quorum-based unsealing.
@@ -131,16 +133,18 @@ type UnsealShareProgress struct {
 	Complete bool
 }
 
-// RecoveryKeysInfo contains the output of recovery key generation.
+// RecoveryKeysInfo contains the output of recovery key generation. Recovery
+// share material is never present here; recovery officers retrieve their
+// shares via the qrdb recovery share-claim flow.
 type RecoveryKeysInfo struct {
-	// Keys are the recovery share values for distribution.
-	Keys []string
-
 	// Threshold is the minimum number of keys required for recovery.
 	Threshold int
 
 	// Total is the total number of keys generated.
 	Total int
+
+	// ShareCount is the number of recovery shares successfully sealed to officer enclaves.
+	ShareCount int
 }
 
 // RootTokenInfo represents a generated root token.
@@ -282,9 +286,9 @@ func (s *BarrierService) BarrierInitializeShamir(ctx context.Context, secret str
 		return nil, err
 	}
 	return &ShamirInitInfo{
-		Shares:      resp.Shares,
 		Threshold:   resp.Threshold,
 		TotalShares: resp.TotalShares,
+		ShareCount:  resp.ShareCount,
 	}, nil
 }
 
@@ -325,9 +329,9 @@ func (s *BarrierService) BarrierRekey(ctx context.Context, threshold, total int)
 		return nil, err
 	}
 	return &ShamirInitInfo{
-		Shares:      resp.Shares,
 		Threshold:   resp.Threshold,
 		TotalShares: resp.TotalShares,
+		ShareCount:  resp.ShareCount,
 	}, nil
 }
 
@@ -344,9 +348,9 @@ func (s *BarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, thresh
 		return nil, err
 	}
 	return &RecoveryKeysInfo{
-		Keys:      resp.Keys,
-		Threshold: resp.Threshold,
-		Total:     resp.Total,
+		Threshold:  resp.Threshold,
+		Total:      resp.Total,
+		ShareCount: resp.ShareCount,
 	}, nil
 }
 

@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -23,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -122,8 +121,15 @@ func (a *PIVActivator) Activate(ctx context.Context, token string, certPEM []byt
 		return err
 	}
 
-	// 4. Compute thumbprint.
-	thumbprint := xkmssdk.PIVThumbprintSHA256(cert)
+	// 4. Compute both PIV thumbprints. The primary is the canonical SPKI
+	// thumbprint (SHA-256 over SubjectPublicKeyInfo, base64url) that qrdb's
+	// UserByCertThumbprint resolves natively; the fallback is the legacy hex
+	// SHA-256 of the certificate DER, resolved via the broker-side legacy-PIV
+	// index for the migration window. Binding BOTH lets a renewal (same key,
+	// new cert) resolve via the stable SPKI thumbprint while persisted
+	// legacy-only deployments keep resolving via the fallback.
+	spkiThumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
+	legacyThumbprint := xkmssdk.PIVThumbprintSHA256(cert)
 
 	// 5. Fetch the pending user.
 	user, err := a.userStorage.GetUser(ctx, invite.TenantID, invite.UserID)
@@ -136,7 +142,7 @@ func (a *PIVActivator) Activate(ctx context.Context, token string, certPEM []byt
 
 	// 6. Transition user to active.
 	user.State = UserStateActive
-	user.PIVCertThumbprint = thumbprint
+	user.SetPIVThumbprints(spkiThumbprint, legacyThumbprint)
 	user.InviteToken = ""
 	user.InviteExpiresAt = nil
 	now := time.Now().UTC()
@@ -154,7 +160,8 @@ func (a *PIVActivator) Activate(ctx context.Context, token string, certPEM []byt
 		})
 	} else {
 		a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "success", map[string]interface{}{
-			"piv_cert_thumbprint": thumbprint,
+			"piv_spki_thumbprint": spkiThumbprint,
+			"piv_cert_thumbprint": legacyThumbprint,
 		})
 	}
 

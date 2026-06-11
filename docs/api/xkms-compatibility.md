@@ -279,6 +279,55 @@ not a security boundary — see
 | [`cmd/quicbaas/ca.go`](../../cmd/quicbaas/ca.go) | Native CA verb tree (CAInfo + ListCertificates verbs landed Phase 8e) |
 | [`cmd/quicbaas/credential.go`](../../cmd/quicbaas/credential.go) | Native credential verb tree (versioned rotation landed Phase 8e) |
 
+## Trust resolver SDK re-exports and quicbaasd trust: config (Phase C)
+
+### SDK re-export packages
+
+| Package | Re-exports from |
+|---------|----------------|
+| `sdk/go/xkms/trust/resolver` | `go-xkms/sdk/go/trust/resolver` — full resolver surface |
+| `sdk/go/xkms/trust/bootstrap` | `go-xkms/sdk/go/bootstrap` — now includes Phase B1 TOFU additions: `ModeTOFU`, `TOFUConfig`, `Pin`, `PinStore`, `StoragePinStore`, `NewStoragePinStore` |
+
+Platform code imports through the quicbaas re-export, not go-xkms directly:
+
+```go
+import xkmsresolver "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/resolver"
+
+r, err := xkmsresolver.New(&xkmsresolver.Config{
+    Scopes: map[string]*xkmsresolver.ScopeConfig{
+        "default": {
+            Strategies: []xkmsresolver.Strategy{xkmsresolver.StrategyEmbedded},
+        },
+    },
+})
+tlsCfg, err := r.TLSConfig(ctx, "default", "kms.example.com:8443")
+```
+
+### quicbaasd trust: config section
+
+The optional `trust:` section configures quicbaasd's outbound TLS trust
+resolver. When absent, outbound connections use the OS trust store.
+
+```yaml
+trust:
+  scopes:
+    default:
+      # Ordered strategy chain — resolver returns on the first success.
+      # Remove tofu once DANE is published for this deployment.
+      # tofu MUST be explicitly listed; it is never an implicit fallback.
+      strategies: [dane, noise, spki, tofu]
+      server-url: "https://kms.example.com:8443"
+      per-method-timeout: 5s
+```
+
+Strategy reference: `dane` (DNSSEC TLSA), `noise` (Noise_NK channel),
+`spki` (pinned SHA-256 SPKI), `embedded` (OS trust store), `ca-file`
+(local PEM), `provider-ca` (platform CA bundle), `tofu` (trust-on-first-use
+— terminal fallback before DANE is published; remove once DANE is live).
+
+The Go-level `DefaultConfig()` intentionally omits `tofu`; the shipped
+YAML templates include it with an explicit comment.
+
 ## Migration guidance
 
 New integrations should always use the QuicBaaS SDK and target the

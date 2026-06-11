@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -20,6 +18,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 func sampleProfile(tenantID string, qrdbID uint64) *BrokerProfile {
@@ -27,24 +27,26 @@ func sampleProfile(tenantID string, qrdbID uint64) *BrokerProfile {
 	lastAuth := time.Now().Add(-1 * time.Hour).UTC()
 	expires := time.Now().Add(48 * time.Hour).UTC()
 	return &BrokerProfile{
-		QRDBUserID:        qrdbID,
-		TenantID:          tenantID,
-		Email:             "alice@example.com",
-		Name:              "Alice Example",
-		Groups:            []string{"g-eng", "g-admins"},
-		AuthMethods:       []string{"webauthn", "piv"},
-		State:             UserStateActive,
-		Suspended:         false,
-		Locked:            false,
-		MFAEnabled:        true,
-		MFAMethod:         MFAMethodWebAuthn,
-		MFAEnrolledAt:     &enrolled,
-		MFAVerified:       true,
-		MFATimestamp:      &lastAuth,
-		LastAuth:          &lastAuth,
-		PIVCertThumbprint: "ab12cd34",
-		InviteToken:       "tok-123",
-		InviteExpiresAt:   &expires,
+		QRDBUserID:    qrdbID,
+		TenantID:      tenantID,
+		Email:         "alice@example.com",
+		Name:          "Alice Example",
+		Groups:        []string{"g-eng", "g-admins"},
+		AuthMethods:   []string{"webauthn", "piv"},
+		State:         UserStateActive,
+		Suspended:     false,
+		Locked:        false,
+		MFAEnabled:    true,
+		MFAMethod:     MFAMethodWebAuthn,
+		MFAEnrolledAt: &enrolled,
+		MFAVerified:   true,
+		MFATimestamp:  &lastAuth,
+		LastAuth:      &lastAuth,
+		CertBindings: []qrdbsdk.CertBinding{
+			{Thumbprint: "ab12cd34", Kind: qrdbsdk.CertBindingPIVAttested},
+		},
+		InviteToken:     "tok-123",
+		InviteExpiresAt: &expires,
 	}
 }
 
@@ -91,7 +93,7 @@ func assertProfileEqual(t *testing.T, want, got *BrokerProfile) {
 	if got.MFAEnabled != want.MFAEnabled || got.MFAMethod != want.MFAMethod || got.MFAVerified != want.MFAVerified {
 		t.Fatalf("mfa mismatch: %+v", got)
 	}
-	if got.PIVCertThumbprint != want.PIVCertThumbprint || got.InviteToken != want.InviteToken {
+	if !sameCertBindings(got.CertBindings, want.CertBindings) || got.InviteToken != want.InviteToken {
 		t.Fatalf("piv/invite mismatch: %+v", got)
 	}
 	if got.MFAEnrolledAt == nil || !got.MFAEnrolledAt.Equal(*want.MFAEnrolledAt) {
@@ -103,6 +105,21 @@ func assertProfileEqual(t *testing.T, want, got *BrokerProfile) {
 	if got.InviteExpiresAt == nil || !got.InviteExpiresAt.Equal(*want.InviteExpiresAt) {
 		t.Fatalf("InviteExpiresAt mismatch: %v want %v", got.InviteExpiresAt, want.InviteExpiresAt)
 	}
+}
+
+// sameCertBindings reports whether two cert-binding slices are equal by
+// (thumbprint, kind, notAfter). It compares the wall clock with Equal so a
+// JSON round-trip's location change does not register as a difference.
+func sameCertBindings(a, b []qrdbsdk.CertBinding) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Thumbprint != b[i].Thumbprint || a[i].Kind != b[i].Kind || !a[i].NotAfter.Equal(b[i].NotAfter) {
+			return false
+		}
+	}
+	return true
 }
 
 // SaveProfile stamps Created once and advances Updated on re-save.

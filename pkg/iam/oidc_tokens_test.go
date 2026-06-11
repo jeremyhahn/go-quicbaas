@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -19,12 +17,35 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
+
+// jwtHeaderTyp decodes the JOSE header of a compact JWT and returns its "typ"
+// value (empty when absent). It is used to assert RFC 9068 "at+jwt" stamping on
+// access tokens without re-verifying the signature.
+func jwtHeaderTyp(t *testing.T, token string) string {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("malformed JWT: %d segments", len(parts))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		t.Fatalf("decode JWT header: %v", err)
+	}
+	var hdr map[string]interface{}
+	if err := json.Unmarshal(raw, &hdr); err != nil {
+		t.Fatalf("unmarshal JWT header: %v", err)
+	}
+	typ, _ := hdr["typ"].(string)
+	return typ
+}
 
 // Mock TokenStorage for testing
 type mockTokenStorage struct {
@@ -186,6 +207,35 @@ func TestTokenService_GenerateAccessToken(t *testing.T) {
 	}
 	if mapClaims["tenant_id"] != "tenant-1" {
 		t.Errorf("tenant_id = %v, want tenant-1", mapClaims["tenant_id"])
+	}
+
+	// RFC 9068: the access token MUST carry typ "at+jwt".
+	if typ := jwtHeaderTyp(t, tokenString); typ != AccessTokenJWTType {
+		t.Errorf("access token typ = %q, want %q", typ, AccessTokenJWTType)
+	}
+}
+
+// TestTokenService_GenerateIDToken_NotAccessTokenType asserts an ID token does
+// NOT carry the RFC 9068 access-token media type (token-type confusion guard).
+func TestTokenService_GenerateIDToken_NotAccessTokenType(t *testing.T) {
+	service, _ := createTestTokenService(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	idToken, err := service.GenerateIDToken(ctx, &IDTokenClaims{
+		Issuer:    "https://test.example.com",
+		Subject:   "user-123",
+		Audience:  []string{"https://test.example.com"},
+		ExpiresAt: NewUnixTime(now.Add(1 * time.Hour)),
+		IssuedAt:  NewUnixTime(now),
+		AuthTime:  NewUnixTime(now),
+		TenantID:  "tenant-1",
+	})
+	if err != nil {
+		t.Fatalf("GenerateIDToken() error = %v", err)
+	}
+	if typ := jwtHeaderTyp(t, idToken); typ == AccessTokenJWTType {
+		t.Errorf("ID token typ = %q, must not be %q", typ, AccessTokenJWTType)
 	}
 }
 

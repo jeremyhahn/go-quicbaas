@@ -1,4 +1,4 @@
-//go:build iam && !integration
+//go:build !integration
 
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
@@ -13,8 +13,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// server_coverage_boost3_test.go covers IAM-init paths that depend on the
-// iam build tag. Specifically the BindAdminToSOCert fallback branch that
+// server_coverage_boost3_test.go covers IAM-init paths. Specifically the
+// BindAdminToSOCert fallback branch that
 // looks up the admin user by listing the system tenant's users when the
 // in-process bootstrapAdminUserID has not been populated.
 
@@ -78,8 +78,8 @@ func TestBoost3_BindAdminToSOCert_FallbackFindsSystemTenantAdmin(t *testing.T) {
 	user, err := c.identityStore.GetUser(ctx, "system", "admin")
 	require.NoError(t, err)
 	require.NotNil(t, user)
-	assert.NotEmpty(t, user.PIVCertThumbprint,
-		"fallback path must persist the SPKI thumbprint to PIVCertThumbprint")
+	assert.NotEmpty(t, user.PIVThumbprint(),
+		"fallback path must persist the login thumbprint as a PIV-attested binding")
 	assert.Equal(t, iam.UserStateActive, user.State,
 		"fallback path must activate the admin user")
 }
@@ -135,5 +135,5 @@ func TestBoost3_BindAdminToSOCert_FallbackMatchesUserByID(t *testing.T) {
 
 	user, err := c.identityStore.GetUser(ctx, "system", "admin")
 	require.NoError(t, err)
-	assert.NotEmpty(t, user.PIVCertThumbprint)
+	assert.NotEmpty(t, user.PIVThumbprint())
 }

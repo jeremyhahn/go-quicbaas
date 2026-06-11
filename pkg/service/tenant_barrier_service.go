@@ -16,9 +16,9 @@ package service
 import (
 	"context"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
 // =============================================================================

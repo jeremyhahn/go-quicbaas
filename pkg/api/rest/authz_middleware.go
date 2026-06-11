@@ -75,7 +75,7 @@ func NewAuthzMiddleware(cfg *AuthzMiddlewareConfig) *AuthzMiddleware {
 // presentation of a bound token fails closed here. The returned AuthorizedContext
 // is non-nil so handlers can enforce scopes/roles.
 //
-// Plain path (validator without DPoP support, e.g. non-iam builds): the token is
+// Plain path (validator without DPoP support): the token is
 // validated for signature/expiry/revocation only and the AuthorizedContext is
 // nil, preserving prior behavior. The RFC 8705 mTLS binding check still runs on
 // this path for cnf.x5t#S256-bound tokens.
@@ -109,7 +109,6 @@ func (m *AuthzMiddleware) validate(ctx context.Context, r *http.Request, token s
 	}
 
 	// Enforce RFC 8705 §3.1 mTLS proof-of-possession for cnf-bound tokens.
-	// enforceMTLSBinding is a no-op when the iam build tag is absent.
 	if err := enforceMTLSBinding(r, token); err != nil {
 		return interfaces.Subject{}, nil, err
 	}
@@ -160,8 +159,8 @@ func (m *AuthzMiddleware) Authorize(next http.Handler) http.Handler {
 		// cnf.jkt-bound token requires a valid DPoP proof (RFC 9449) over the
 		// request method + absolute URI, verified against the provider's replay
 		// cache. A plain bearer (no cnf.jkt) validates exactly as before. When
-		// the validator is not DPoP-aware (non-iam builds), fall back to plain
-		// bearer validation, preserving prior behavior.
+		// the validator is not DPoP-aware, fall back to plain bearer
+		// validation, preserving prior behavior.
 		ctx := r.Context()
 		subject, authzCtx, err := m.validate(ctx, r, token)
 		if err != nil {

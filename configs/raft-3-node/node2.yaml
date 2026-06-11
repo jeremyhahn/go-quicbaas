@@ -99,7 +99,6 @@ object_storage:
 security:
   tls_enabled: false
   api_key_enabled: false
-  encryption_enabled: false
   fips_mode: false
   authorization:
     provider: "rbac"

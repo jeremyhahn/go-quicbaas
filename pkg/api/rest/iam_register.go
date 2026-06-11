@@ -1,4 +1,4 @@
-//go:build rest && iam
+//go:build rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -37,8 +37,8 @@ func (s *Server) registerIAMRoutes(r chi.Router) {
 	s.registerAgentRegistrationPublicRoutes(r)
 }
 
-// IAMHandler returns the IAMHandler registered on this server, or nil when the
-// iam build tag is not active. Callers must type-assert to *IAMHandler.
+// IAMHandler returns the IAMHandler registered on this server, or nil when no
+// handler has been wired yet. Callers must type-assert to *IAMHandler.
 func (s *Server) IAMHandler() interface{} {
 	return s.iamHandler
 }

@@ -509,7 +509,6 @@ func TestSealInitSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/seal/init", r.URL.Path)
 		json.NewEncoder(w).Encode(service.SealInitResponse{
-			Shares:    [][]byte{[]byte("share1"), []byte("share2"), []byte("share3")},
 			RootToken: "root-token-123",
 			Version:   1,
 			Timestamp: time.Now(),
@@ -523,8 +522,8 @@ func TestSealInitSuccess(t *testing.T) {
 		TotalShares: 3,
 	})
 	require.NoError(t, err)
-	assert.Len(t, resp.Shares, 3)
 	assert.Equal(t, "root-token-123", resp.RootToken)
+	assert.Equal(t, uint64(1), resp.Version)
 }
 
 // TestRekeySuccess tests Rekey success path.
@@ -535,7 +534,6 @@ func TestRekeySuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/seal/rekey", r.URL.Path)
 		json.NewEncoder(w).Encode(service.RekeyResponse{
-			Shares:    [][]byte{[]byte("newshare1"), []byte("newshare2")},
 			Version:   2,
 			Timestamp: time.Now(),
 		})
@@ -548,7 +546,6 @@ func TestRekeySuccess(t *testing.T) {
 		NewTotalShares: 5,
 	})
 	require.NoError(t, err)
-	assert.Len(t, resp.Shares, 2)
 	assert.Equal(t, uint64(2), resp.Version)
 }
 

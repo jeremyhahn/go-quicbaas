@@ -99,9 +99,9 @@ func (m *AuthzMiddleware) EnforceDefaultDeny(pinnedTrustDomain string) func(http
 			// capability) — the path is already non-public and non-cluster.
 			if required := requiredScopeForRequest(path, r.Method); required != "" {
 				if authzCtx == nil {
-					// The validator is not DPoP/platform-aware (e.g. a non-iam
-					// build): no scope set is available to authorize against, so a
-					// scoped surface fails closed.
+					// The validator is not DPoP/platform-aware: no scope set is
+					// available to authorize against, so a scoped surface fails
+					// closed.
 					m.logUnauthorized(r, "default-deny: scope required but no platform context")
 					respondForbidden(w, r, "insufficient_scope")
 					return
@@ -251,13 +251,17 @@ type defaultDenyScopeRule struct {
 // credentials; certificates/trust/acme -> certs; barrier/seal ->
 // tenant_barrier; IAM tenant admin -> tenants. The single vocabulary means the
 // scp the issuer mints (qrdb perm Names) is matched verbatim here.
+//
+// The barrier and legacy seal prefixes are NOT in this table. Instead,
+// requiredScopeForRequest consults barrierScopeForRequest first, which
+// resolves the 13 registered operations to their granular scopes and falls
+// back to the coarse scope entries below only for truly unrecognised sub-paths.
 var defaultDenyScopeTable = map[string]defaultDenyScopeRule{
 	// Crypto / key-management plane (qrdb resource "keys").
 	"/api/v1/kms":     {read: "keys:get", write: "keys:create"},
 	"/api/v1/crypto":  {read: "keys:get", write: "keys:create"},
 	"/api/v1/dek":     {read: "keys:get", write: "keys:create"},
 	"/api/v1/secrets": {read: "credentials:retrieve", write: "credentials:store"},
-	"/api/v1/seal":    {read: "tenant_barrier:status", write: "tenant_barrier:seal"},
 
 	// Certificate / trust / ACME control plane (qrdb resource "certs").
 	"/api/v1/certificates": {read: "certs:read", write: "certs:generate"},
@@ -281,20 +285,136 @@ var defaultDenyScopeTable = map[string]defaultDenyScopeRule{
 
 	// qrdb-wire mounts at the router root.
 	"/v1/credentials": {read: "credentials:retrieve", write: "credentials:store"},
-	"/v1/barrier":     {read: "tenant_barrier:status", write: "tenant_barrier:init"},
-	"/api/v1/barrier": {read: "tenant_barrier:status", write: "tenant_barrier:init"},
 	"/v1/ceremony":    {read: "ceremony:status", write: "ceremony:initialize"},
 	"/v1/init":        {read: "ceremony:status", write: "ceremony:initialize"},
 	"/api/v1/init":    {read: "ceremony:status", write: "ceremony:initialize"},
 }
 
+// barrierScopeTable maps each barrier prefix to a coarse fallback scope rule
+// used when no granular op in barrierGranularOps matches the path+method.
+// The coarse entries cover the barrier surface for unanticipated future
+// sub-paths so they degrade to authenticated+scoped rather than unmapped.
+var barrierScopeTable = map[string]defaultDenyScopeRule{
+	// API mount — canonical broker barrier surface.
+	"/api/v1/barrier": {read: "tenant_barrier:status", write: "tenant_barrier:init"},
+	// Root-wire mount — qrdb SDK compatibility.
+	"/v1/barrier": {read: "tenant_barrier:status", write: "tenant_barrier:init"},
+	// Legacy seal surface (server.go ~line 570). Granular ops below cover the
+	// registered sub-paths; the fallback here catches truly-unknown sub-paths.
+	"/api/v1/seal": {read: "tenant_barrier:status", write: "tenant_barrier:seal"},
+}
+
+// legacySealOps maps the legacy /api/v1/seal sub-paths to their granular
+// qrdb-canonical scopes so the default-deny gate grants the same precision
+// as the /api/v1/barrier surface. Routes are from server.go ~line 570.
+var legacySealOps = []struct {
+	suffix string
+	method string
+	scope  string
+}{
+	{"/status", http.MethodGet, "tenant_barrier:status"},
+	{"/init", http.MethodPost, "tenant_barrier:init"},
+	{"/unseal", http.MethodPost, "tenant_barrier:unseal"},
+	{"/seal", http.MethodPost, "tenant_barrier:seal"},
+	{"/rekey", http.MethodPost, "seal:rekey"},
+	{"/recovery/generate", http.MethodPost, "seal:generate_recovery"},
+	{"/recovery", http.MethodDelete, "seal:generate_recovery"},
+	{"/root/generate", http.MethodPost, "seal:bootstrap"},
+	{"/rotate-root", http.MethodPost, "seal:rekey"},
+}
+
+// barrierScopeForRequest returns the granular qrdb "resource:action" scope for
+// requests targeting either the /api/v1/barrier or /v1/barrier (canonical) or
+// /api/v1/seal (legacy) surfaces. It consults barrierGranularOps (for the two
+// canonical mounts) and legacySealOps (for the legacy mount) using the same
+// tier-2 HasSuffix matching as matchSpecialRule, then falls back to the coarse
+// barrierScopeTable entry when no granular op matches. Returns "" when the
+// path does not belong to any barrier-family prefix.
+func barrierScopeForRequest(path, method string) string {
+	// Identify which barrier-family prefix owns this path.
+	var matchedPrefix string
+	for prefix := range barrierScopeTable {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			if len(prefix) > len(matchedPrefix) {
+				matchedPrefix = prefix
+			}
+		}
+	}
+	if matchedPrefix == "" {
+		return ""
+	}
+
+	// Compute the path suffix relative to the matched prefix so suffix
+	// matching works identically for /api/v1/barrier and /v1/barrier.
+	rel := path[len(matchedPrefix):]
+
+	// Legacy seal surface — consult legacySealOps.
+	if matchedPrefix == "/api/v1/seal" {
+		for _, op := range legacySealOps {
+			if !strings.EqualFold(op.method, method) {
+				continue
+			}
+			if strings.HasSuffix(rel, op.suffix) {
+				return op.scope
+			}
+		}
+		// Coarse fallback for unregistered legacy seal sub-paths.
+		coarse := barrierScopeTable[matchedPrefix]
+		switch mapHTTPMethodToAction(method) {
+		case interfaces.ActionWrite, interfaces.ActionDelete:
+			return coarse.write
+		default:
+			return coarse.read
+		}
+	}
+
+	// Canonical barrier mounts — consult barrierGranularOps.
+	// Use the same longest-suffix-wins logic as matchSpecialRule tier 2.
+	bestLen := -1
+	var bestScope string
+	for _, op := range barrierGranularOps {
+		if !strings.EqualFold(op.method, method) {
+			continue
+		}
+		if !strings.HasSuffix(rel, op.suffix) {
+			continue
+		}
+		if len(op.suffix) > bestLen {
+			bestLen = len(op.suffix)
+			bestScope = op.scope
+		}
+	}
+	if bestLen >= 0 {
+		return bestScope
+	}
+
+	// Coarse fallback for unregistered barrier sub-paths.
+	coarse := barrierScopeTable[matchedPrefix]
+	switch mapHTTPMethodToAction(method) {
+	case interfaces.ActionWrite, interfaces.ActionDelete:
+		return coarse.write
+	default:
+		return coarse.read
+	}
+}
+
 // requiredScopeForRequest returns the qrdb-canonical "resource:action" scope
 // required for the given path + HTTP method, or "" when the path is not in the
 // scope table (a valid token is required but no specific capability). It
-// performs longest-prefix matching so the most specific rule applies to nested
-// paths.
+// resolves the barrier-family surfaces (both canonical mounts and the legacy
+// /api/v1/seal surface) to per-operation granular scopes via
+// barrierScopeForRequest before consulting the coarse defaultDenyScopeTable,
+// ensuring that rekey, recovery, root-token and Shamir init operations are
+// gated with their canonical registered permission rather than the coarse
+// tenant_barrier:init fallback. Longest-prefix matching applies to all other
+// surfaces.
 func requiredScopeForRequest(path, method string) string {
 	path = strings.TrimSuffix(path, "/")
+
+	// Barrier-family surfaces are resolved granularly first.
+	if scope := barrierScopeForRequest(path, method); scope != "" {
+		return scope
+	}
 
 	bestLen := -1
 	var best defaultDenyScopeRule

@@ -17,10 +17,7 @@ import (
 
 func TestParseSealInitResponse(t *testing.T) {
 	t.Run("ValidResponse", func(t *testing.T) {
-		share1 := base64.StdEncoding.EncodeToString([]byte("share-1"))
-		share2 := base64.StdEncoding.EncodeToString([]byte("share-2"))
 		data := map[string]interface{}{
-			"shares":     []interface{}{share1, share2},
 			"root_token": "root-token-abc",
 			"version":    float64(1),
 		}
@@ -28,30 +25,31 @@ func TestParseSealInitResponse(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "root-token-abc", resp.RootToken)
 		assert.Equal(t, uint64(1), resp.Version)
-		assert.Len(t, resp.Shares, 2)
-		assert.Equal(t, []byte("share-1"), resp.Shares[0])
 		assert.False(t, resp.Timestamp.IsZero())
 	})
 
-	t.Run("WithRecoveryKeys", func(t *testing.T) {
+	t.Run("StaleShareKeysIgnored", func(t *testing.T) {
+		// Legacy servers may still emit shares/recovery_keys; the
+		// share-free contract means the parser must ignore them and the
+		// response type carries no fields to receive them.
+		share1 := base64.StdEncoding.EncodeToString([]byte("share-1"))
 		rk := base64.StdEncoding.EncodeToString([]byte("recovery-key"))
 		data := map[string]interface{}{
-			"shares":        []interface{}{},
+			"shares":        []interface{}{share1},
+			"recovery_keys": []interface{}{rk},
 			"root_token":    "root-tok",
 			"version":       float64(2),
-			"recovery_keys": []interface{}{rk},
 		}
 		resp, err := parseSealInitResponse(data)
 		require.NoError(t, err)
-		assert.Len(t, resp.RecoveryKeys, 1)
-		assert.Equal(t, []byte("recovery-key"), resp.RecoveryKeys[0])
+		assert.Equal(t, "root-tok", resp.RootToken)
+		assert.Equal(t, uint64(2), resp.Version)
 	})
 
 	t.Run("NilInput", func(t *testing.T) {
 		resp, err := parseSealInitResponse(nil)
 		require.NoError(t, err)
 		assert.Equal(t, "", resp.RootToken)
-		assert.Nil(t, resp.Shares)
 	})
 
 	t.Run("EmptyMap", func(t *testing.T) {
@@ -143,6 +141,8 @@ func TestParseSealStatusResponse(t *testing.T) {
 
 func TestParseRekeyResponse(t *testing.T) {
 	t.Run("ValidResponse", func(t *testing.T) {
+		// Stale "shares" keys from legacy servers are ignored under the
+		// share-free contract.
 		share := base64.StdEncoding.EncodeToString([]byte("new-share"))
 		data := map[string]interface{}{
 			"shares":  []interface{}{share},
@@ -151,8 +151,6 @@ func TestParseRekeyResponse(t *testing.T) {
 		resp, err := parseRekeyResponse(data)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3), resp.Version)
-		assert.Len(t, resp.Shares, 1)
-		assert.Equal(t, []byte("new-share"), resp.Shares[0])
 		assert.False(t, resp.Timestamp.IsZero())
 	})
 
@@ -160,71 +158,6 @@ func TestParseRekeyResponse(t *testing.T) {
 		resp, err := parseRekeyResponse(nil)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), resp.Version)
-	})
-}
-
-func TestParseBytesSlice(t *testing.T) {
-	t.Run("NilMap", func(t *testing.T) {
-		result := parseBytesSlice(nil, "shares")
-		assert.Nil(t, result)
-	})
-
-	t.Run("MissingKey", func(t *testing.T) {
-		result := parseBytesSlice(map[string]interface{}{}, "shares")
-		assert.Nil(t, result)
-	})
-
-	t.Run("NotASlice", func(t *testing.T) {
-		m := map[string]interface{}{"shares": "not-a-slice"}
-		result := parseBytesSlice(m, "shares")
-		assert.Nil(t, result)
-	})
-
-	t.Run("Base64Strings", func(t *testing.T) {
-		s1 := base64.StdEncoding.EncodeToString([]byte("data-1"))
-		s2 := base64.StdEncoding.EncodeToString([]byte("data-2"))
-		m := map[string]interface{}{
-			"shares": []interface{}{s1, s2},
-		}
-		result := parseBytesSlice(m, "shares")
-		assert.Len(t, result, 2)
-		assert.Equal(t, []byte("data-1"), result[0])
-		assert.Equal(t, []byte("data-2"), result[1])
-	})
-
-	t.Run("InvalidBase64FallsBackToRawString", func(t *testing.T) {
-		m := map[string]interface{}{
-			"shares": []interface{}{"not-valid-base64!!!"},
-		}
-		result := parseBytesSlice(m, "shares")
-		assert.Len(t, result, 1)
-		assert.Equal(t, []byte("not-valid-base64!!!"), result[0])
-	})
-
-	t.Run("ByteSliceItems", func(t *testing.T) {
-		m := map[string]interface{}{
-			"shares": []interface{}{[]byte("raw-bytes")},
-		}
-		result := parseBytesSlice(m, "shares")
-		assert.Len(t, result, 1)
-		assert.Equal(t, []byte("raw-bytes"), result[0])
-	})
-
-	t.Run("MixedTypes", func(t *testing.T) {
-		b64 := base64.StdEncoding.EncodeToString([]byte("encoded"))
-		m := map[string]interface{}{
-			"shares": []interface{}{b64, []byte("raw"), 42}, // 42 is skipped
-		}
-		result := parseBytesSlice(m, "shares")
-		assert.Len(t, result, 2) // only string and []byte
-	})
-
-	t.Run("EmptySlice", func(t *testing.T) {
-		m := map[string]interface{}{
-			"shares": []interface{}{},
-		}
-		result := parseBytesSlice(m, "shares")
-		assert.Empty(t, result)
 	})
 }
 

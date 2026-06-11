@@ -1,4 +1,4 @@
-//go:build mcp && iam
+//go:build mcp
 
 package mcp
 

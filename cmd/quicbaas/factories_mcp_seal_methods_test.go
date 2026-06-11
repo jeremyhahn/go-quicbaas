@@ -27,6 +27,8 @@ func TestMCPSealClient_SealInit(t *testing.T) {
 	share2 := base64.StdEncoding.EncodeToString([]byte("share-2"))
 
 	t.Run("Success", func(t *testing.T) {
+		// Stale "shares" keys from legacy servers are ignored under the
+		// share-free contract.
 		respMap := map[string]interface{}{
 			"shares":     []interface{}{share1, share2},
 			"root_token": "root-tok-123",
@@ -40,10 +42,11 @@ func TestMCPSealClient_SealInit(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "root-tok-123", resp.RootToken)
 		assert.Equal(t, uint64(1), resp.Version)
-		assert.Len(t, resp.Shares, 2)
 	})
 
 	t.Run("WithRecoveryKeys", func(t *testing.T) {
+		// Recovery key material is never returned (share-free contract);
+		// stale "recovery_keys" payload keys are ignored.
 		rk := base64.StdEncoding.EncodeToString([]byte("recovery-key"))
 		respMap := map[string]interface{}{
 			"shares":        []interface{}{share1},
@@ -60,7 +63,8 @@ func TestMCPSealClient_SealInit(t *testing.T) {
 			RecoveryTotalKeys:   3,
 		})
 		require.NoError(t, err)
-		assert.Len(t, resp.RecoveryKeys, 1)
+		assert.Equal(t, "root-tok", resp.RootToken)
+		assert.Equal(t, uint64(1), resp.Version)
 	})
 
 	t.Run("TransportError", func(t *testing.T) {
@@ -171,6 +175,8 @@ func TestMCPSealClient_Rekey(t *testing.T) {
 	share := base64.StdEncoding.EncodeToString([]byte("new-share"))
 
 	t.Run("Success", func(t *testing.T) {
+		// Stale "shares" keys from legacy servers are ignored under the
+		// share-free contract.
 		respMap := map[string]interface{}{
 			"shares":  []interface{}{share},
 			"version": float64(3),
@@ -182,7 +188,6 @@ func TestMCPSealClient_Rekey(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3), resp.Version)
-		assert.Len(t, resp.Shares, 1)
 	})
 
 	t.Run("TransportError", func(t *testing.T) {

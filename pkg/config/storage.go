@@ -92,25 +92,6 @@ func CreateStorageBackendByType(backendType string, config map[string]string) (c
 	return storage, nil
 }
 
-// ResolveKeyStorageBackend returns the storage backend for encryption key storage.
-// It handles backward compatibility with the deprecated EncryptionKeyFile field.
-func ResolveKeyStorageBackend(cfg *Config) (common.Storage, error) {
-	// If KeyStorageBackend is set, use it
-	if cfg.Security.KeyStorageBackend != "" {
-		return GetStorageBackend(cfg.Security.KeyStorageBackend, cfg)
-	}
-
-	// Backward compatibility: if EncryptionKeyFile is set, create a local file backend
-	if cfg.Security.EncryptionKeyFile != "" {
-		return CreateStorageBackendByType("local", map[string]string{
-			"path": cfg.Security.EncryptionKeyFile,
-		})
-	}
-
-	// Default to memory storage
-	return NewMemoryStorage(), nil
-}
-
 // ResolveBackupStorageBackend returns the storage backend for backups.
 func ResolveBackupStorageBackend(cfg *Config) (common.Storage, error) {
 	if !cfg.Backup.Enabled {

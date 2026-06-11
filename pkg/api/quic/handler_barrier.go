@@ -120,11 +120,13 @@ type barrierStatusWireResponse struct {
 	InitializedAt  string `json:"initialized_at,omitempty"`
 }
 
-// shamirInitWireResponse mirrors shamirInitToResponse.
+// shamirInitWireResponse mirrors shamirInitToResponse. Share material is
+// never returned (qrdb share-free contract); ShareCount reports how many
+// shares were sealed to enrolled Security Officer enclaves.
 type shamirInitWireResponse struct {
-	Shares      []string `json:"shares"`
-	Threshold   int      `json:"threshold"`
-	TotalShares int      `json:"total_shares"`
+	Threshold   int `json:"threshold"`
+	TotalShares int `json:"total_shares"`
+	ShareCount  int `json:"share_count"`
 }
 
 // unsealShareProgressWireResponse mirrors unsealShareProgressToResponse.
@@ -134,11 +136,13 @@ type unsealShareProgressWireResponse struct {
 	Complete  bool `json:"complete"`
 }
 
-// recoveryKeysWireResponse mirrors recoveryKeysToResponse.
+// recoveryKeysWireResponse mirrors recoveryKeysToResponse. Recovery key
+// material is never returned (qrdb share-free contract); ShareCount reports
+// how many recovery shares were sealed to enrolled recovery officers.
 type recoveryKeysWireResponse struct {
-	Keys      []string `json:"keys"`
-	Threshold int      `json:"threshold"`
-	Total     int      `json:"total"`
+	Threshold  int `json:"threshold"`
+	Total      int `json:"total"`
+	ShareCount int `json:"share_count"`
 }
 
 // recoveryStatusWireResponse mirrors the JSON shape returned by
@@ -341,9 +345,9 @@ func (h *Handler) handleBarrierShamirInitialize(ctx context.Context, req *Reques
 	}
 
 	payload, err := EncodePayload(&shamirInitWireResponse{
-		Shares:      info.Shares,
 		Threshold:   info.Threshold,
 		TotalShares: info.TotalShares,
+		ShareCount:  info.ShareCount,
 	})
 	if err != nil {
 		return h.errorResponse(err)
@@ -435,9 +439,9 @@ func (h *Handler) handleBarrierRekey(ctx context.Context, req *Request) *Respons
 	}
 
 	payload, err := EncodePayload(&shamirInitWireResponse{
-		Shares:      info.Shares,
 		Threshold:   info.Threshold,
 		TotalShares: info.TotalShares,
+		ShareCount:  info.ShareCount,
 	})
 	if err != nil {
 		return h.errorResponse(err)
@@ -474,9 +478,9 @@ func (h *Handler) handleBarrierRecoveryGenerate(ctx context.Context, req *Reques
 	}
 
 	payload, err := EncodePayload(&recoveryKeysWireResponse{
-		Keys:      info.Keys,
-		Threshold: info.Threshold,
-		Total:     info.Total,
+		Threshold:  info.Threshold,
+		Total:      info.Total,
+		ShareCount: info.ShareCount,
 	})
 	if err != nil {
 		return h.errorResponse(err)

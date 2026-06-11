@@ -301,6 +301,37 @@ type QRDBBarrierGenerateRootTokenRequest = qrdbtransport.BarrierGenerateRootToke
 type QRDBBarrierRootTokenResponse = qrdbtransport.BarrierRootTokenResponse
 
 // =============================================================================
+// QRDB Security Officer / Share-Claim Request/Response Re-exports
+// =============================================================================
+
+// QRDBOfficerRegisterRequest is a re-export of the qrdb OfficerRegisterRequest type.
+type QRDBOfficerRegisterRequest = qrdbtransport.OfficerRegisterRequest
+
+// QRDBOfficerRegisterResponse is a re-export of the qrdb OfficerRegisterResponse type.
+type QRDBOfficerRegisterResponse = qrdbtransport.OfficerRegisterResponse
+
+// QRDBOfficerStatus is a re-export of the qrdb OfficerStatus type.
+type QRDBOfficerStatus = qrdbtransport.OfficerStatus
+
+// QRDBShareClaimBeginRequest is a re-export of the qrdb ShareClaimBeginRequest type.
+type QRDBShareClaimBeginRequest = qrdbtransport.ShareClaimBeginRequest
+
+// QRDBShareClaimBeginResponse is a re-export of the qrdb ShareClaimBeginResponse type.
+type QRDBShareClaimBeginResponse = qrdbtransport.ShareClaimBeginResponse
+
+// QRDBShareClaimCompleteRequest is a re-export of the qrdb ShareClaimCompleteRequest type.
+type QRDBShareClaimCompleteRequest = qrdbtransport.ShareClaimCompleteRequest
+
+// QRDBShareClaimCompleteResponse is a re-export of the qrdb ShareClaimCompleteResponse type.
+type QRDBShareClaimCompleteResponse = qrdbtransport.ShareClaimCompleteResponse
+
+// QRDBShamirSealVoteRequest is a re-export of the qrdb ShamirSealVoteRequest type.
+type QRDBShamirSealVoteRequest = qrdbtransport.ShamirSealVoteRequest
+
+// QRDBShamirSealVoteResponse is a re-export of the qrdb ShamirSealVoteResponse type.
+type QRDBShamirSealVoteResponse = qrdbtransport.ShamirSealVoteResponse
+
+// =============================================================================
 // QRDB Ceremony Request/Response Re-exports
 // =============================================================================
 

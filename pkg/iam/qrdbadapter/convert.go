@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -86,7 +84,7 @@ func ToIAMUser(core qrdbsdk.User, profile *iam.BrokerProfile, uuid string) *iam.
 		u.MFAVerified = profile.MFAVerified
 		u.MFATimestamp = profile.MFATimestamp
 		u.LastAuth = profile.LastAuth
-		u.PIVCertThumbprint = profile.PIVCertThumbprint
+		u.CertBindings = cloneCertBindings(profile.CertBindings)
 		u.InviteToken = profile.InviteToken
 		u.InviteExpiresAt = profile.InviteExpiresAt
 	}
@@ -112,26 +110,26 @@ func FromIAMUser(u *iam.User, qrdbID uint64) (qrdbsdk.User, *iam.BrokerProfile, 
 		UpdatedAt:  u.Updated,
 	}
 	profile := &iam.BrokerProfile{
-		QRDBUserID:        qrdbID,
-		TenantID:          u.TenantID,
-		Email:             u.Email,
-		Name:              u.Name,
-		Groups:            cloneStrings(u.Groups),
-		AuthMethods:       cloneStrings(u.AuthMethods),
-		State:             u.State,
-		Suspended:         u.Suspended,
-		Locked:            u.Locked,
-		MFAEnabled:        u.MFAEnabled,
-		MFAMethod:         u.MFAMethod,
-		MFAEnrolledAt:     u.MFAEnrolledAt,
-		MFAVerified:       u.MFAVerified,
-		MFATimestamp:      u.MFATimestamp,
-		LastAuth:          u.LastAuth,
-		PIVCertThumbprint: u.PIVCertThumbprint,
-		InviteToken:       u.InviteToken,
-		InviteExpiresAt:   u.InviteExpiresAt,
-		Created:           u.Created,
-		Updated:           u.Updated,
+		QRDBUserID:      qrdbID,
+		TenantID:        u.TenantID,
+		Email:           u.Email,
+		Name:            u.Name,
+		Groups:          cloneStrings(u.Groups),
+		AuthMethods:     cloneStrings(u.AuthMethods),
+		State:           u.State,
+		Suspended:       u.Suspended,
+		Locked:          u.Locked,
+		MFAEnabled:      u.MFAEnabled,
+		MFAMethod:       u.MFAMethod,
+		MFAEnrolledAt:   u.MFAEnrolledAt,
+		MFAVerified:     u.MFAVerified,
+		MFATimestamp:    u.MFATimestamp,
+		LastAuth:        u.LastAuth,
+		CertBindings:    cloneCertBindings(u.CertBindings),
+		InviteToken:     u.InviteToken,
+		InviteExpiresAt: u.InviteExpiresAt,
+		Created:         u.Created,
+		Updated:         u.Updated,
 	}
 	entry := IDMapEntry{TenantID: u.TenantID, UUID: u.ID, QRDBUserID: qrdbID}
 	return core, profile, entry
@@ -235,6 +233,51 @@ func cloneStrings(in []string) []string {
 		return nil
 	}
 	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+// legacyPIVThumbprintsFromBindings returns the legacy (hex SHA-256 of the cert
+// DER) PIV-attested thumbprints from a binding slice — the subset the broker
+// keeps in its own legacy-PIV index because qrdb's SPKI index cannot resolve
+// them. It mirrors iam.User.LegacyPIVThumbprints for use on a BrokerProfile's
+// detached binding slice (e.g. reconciling indexes on update/delete).
+func legacyPIVThumbprintsFromBindings(in []qrdbsdk.CertBinding) []string {
+	out := make([]string, 0, len(in))
+	for i := range in {
+		b := in[i]
+		if b.Kind == qrdbsdk.CertBindingPIVAttested && b.Thumbprint != "" && isLegacyHexThumbprint(b.Thumbprint) {
+			out = append(out, b.Thumbprint)
+		}
+	}
+	return out
+}
+
+// isLegacyHexThumbprint reports whether s is a legacy PIV thumbprint: the hex
+// encoding of a SHA-256 digest (64 lowercase hex characters). A canonical SPKI
+// thumbprint is base64url of 32 bytes (43 characters) and never matches.
+func isLegacyHexThumbprint(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// cloneCertBindings returns a copy of in so the broker iam.User and the
+// BrokerProfile never share a backing slice. CertBinding is a value type, so a
+// shallow element copy is a deep copy. A nil/empty input yields nil to keep
+// empty round-trips nil-equal.
+func cloneCertBindings(in []qrdbsdk.CertBinding) []qrdbsdk.CertBinding {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]qrdbsdk.CertBinding, len(in))
 	copy(out, in)
 	return out
 }

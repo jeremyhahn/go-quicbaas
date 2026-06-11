@@ -33,7 +33,16 @@ package quic
 // object storage (objstore), orchestrator, scheduler, parameters,
 // dynamic_secrets, ollama. The scheduler and orchestrator opcodes are single
 // dispatch opcodes (sub-op in payload[0]), so they authorize at the surface
-// level — the same pattern OpBarrier/OpCeremony already follow.
+// level.
+//
+// OpBarrier (0xC0) is a sub-op dispatch opcode: the first byte of the payload
+// selects one of the 13 SubOpBarrier* operations, each of which requires its
+// own distinct qrdb-canonical permission (see barrierSubOpPermissions below).
+// getQRDBPermission resolves the payload sub-op rather than admitting the entire
+// barrier surface under a single read-only permission. Unlike OpCeremony and
+// OpOrchestrator — which authorize at the surface level — OpBarrier is
+// sub-op-aware; the comment "(sub-ops enforced by the BarrierServicer facade)"
+// was incorrect and has been removed.
 //
 // Surfaces still without a qrdb resource family — embedding, cache — remain
 // intentionally absent and denied under RequireAuthz.
@@ -117,10 +126,7 @@ var quicOpcodePermissions = map[byte]qrdbPermission{
 	OpReplaceNode:          {"admin", "add_member"},
 	OpUpgradeNode:          {"admin", "drain"},
 
-	// Barrier dispatch (top-level; sub-ops enforced by the BarrierServicer facade)
-	OpBarrier: {"tenant_barrier", "status"},
-
-	// Ceremony dispatch
+	// Ceremony dispatch (sub-op in payload; authorized at the surface level)
 	OpCeremony: {"ceremony", "status"},
 
 	// KMS -> keys
@@ -276,11 +282,51 @@ var quicOpcodePermissions = map[byte]qrdbPermission{
 	OpOrchestrator: {"orchestrator", "status"},
 }
 
-// getQRDBPermission returns the qrdb-canonical (resource, action) for the opcode
-// and whether a mapping exists. An unmapped opcode has ok=false: the default-deny
-// authz gate denies it under RequireAuthz. IAM opcodes are resolved via the
-// build-tag-conditional getIAMQRDBPermission.
-func getQRDBPermission(opcode byte) (resource, action string, ok bool) {
+// barrierSubOpPermissions maps each SubOpBarrier* constant to the
+// qrdb-canonical permission it requires. The values MUST match
+// go-qrdb/pkg/permission/constants.go and the gRPC authz mapping
+// (pkg/api/grpc/authz_mapping.go lines 259-275) byte-for-byte.
+//
+// This table is the authoritative permission spec for the OpBarrier surface
+// on the QUIC transport. A sub-op absent from this map results in ok=false
+// (default-deny). Every key here must have a corresponding entry in
+// barrierSubOpHandlers (handler_barrier.go) and vice versa.
+var barrierSubOpPermissions = map[byte]qrdbPermission{
+	SubOpBarrierStatus:             {"tenant_barrier", "status"},
+	SubOpBarrierInitialize:         {"tenant_barrier", "init"},
+	SubOpBarrierUnseal:             {"tenant_barrier", "unseal"},
+	SubOpBarrierSeal:               {"tenant_barrier", "seal"},
+	SubOpBarrierShamirInitialize:   {"seal", "initialize_shamir"},
+	SubOpBarrierShamirUnsealShare:  {"barrier", "unseal-share"},
+	SubOpBarrierShamirUnsealShares: {"barrier", "unseal-share"},
+	SubOpBarrierRekey:              {"seal", "rekey"},
+	SubOpBarrierRecoveryGenerate:   {"seal", "generate_recovery"},
+	SubOpBarrierRecoveryRecover:    {"seal", "recover_with_keys"},
+	SubOpBarrierRecoveryDelete:     {"seal", "generate_recovery"},
+	SubOpBarrierRecoveryStatus:     {"seal", "status"},
+	SubOpBarrierRootToken:          {"seal", "bootstrap"},
+}
+
+// getQRDBPermission returns the qrdb-canonical (resource, action) for the
+// opcode and whether a mapping exists. An unmapped opcode has ok=false: the
+// default-deny authz gate denies it under RequireAuthz. IAM opcodes are
+// resolved via the build-tag-conditional getIAMQRDBPermission.
+//
+// For OpBarrier the resolution is sub-op-aware: payload[0] selects the
+// sub-operation, which is looked up in barrierSubOpPermissions. An empty
+// payload or an unknown sub-op results in ok=false (default-deny). All other
+// dispatch opcodes (OpCeremony, OpScheduler, OpOrchestrator) authorize at
+// the surface level and the payload parameter is ignored for them.
+func getQRDBPermission(opcode byte, payload []byte) (resource, action string, ok bool) {
+	if opcode == OpBarrier {
+		if len(payload) < 1 {
+			return "", "", false
+		}
+		if perm, found := barrierSubOpPermissions[payload[0]]; found {
+			return perm.resource, perm.action, true
+		}
+		return "", "", false
+	}
 	if perm, found := quicOpcodePermissions[opcode]; found {
 		return perm.resource, perm.action, true
 	}

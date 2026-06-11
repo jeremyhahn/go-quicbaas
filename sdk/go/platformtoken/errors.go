@@ -110,6 +110,23 @@ func (e *NotSenderConstrainedError) Error() string {
 	return "platformtoken: token is not sender-constrained (missing cnf.jkt) but a DPoP proof was required"
 }
 
+// InvalidTokenTypeError indicates the access token's JOSE "typ" header is not the
+// RFC 9068 access-token media type ("at+jwt" / "application/at+jwt"). It guards
+// against token-type confusion (e.g. an OIDC ID token, which carries typ "JWT",
+// being replayed as a bearer access token). Callers map it to the same rejection
+// class as InvalidTokenError (401 / Unauthenticated).
+type InvalidTokenTypeError struct {
+	// Got is the typ header value found on the token (empty when absent).
+	Got string
+}
+
+func (e *InvalidTokenTypeError) Error() string {
+	if e.Got == "" {
+		return "platformtoken: invalid token type: missing \"typ\" header (require \"at+jwt\" per RFC 9068)"
+	}
+	return fmt.Sprintf("platformtoken: invalid token type %q: require \"at+jwt\" per RFC 9068", e.Got)
+}
+
 // ScopeDeniedError indicates the token's scp set lacks a required scope.
 type ScopeDeniedError struct {
 	// Required is the scope that was demanded.

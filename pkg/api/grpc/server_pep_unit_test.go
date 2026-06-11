@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build grpc && iam
+//go:build !integration
 
 package grpc
 
@@ -32,40 +32,12 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
-// mockPEPService implements PEPService for testing
-type mockPEPService struct {
-	checkFunc      func(ctx context.Context, req *iam.CheckRequest) (*iam.CheckResponse, error)
-	checkBatchFunc func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error)
-	subscribeFunc  func(ctx context.Context, serviceID string, resourcePatterns []string, updates chan<- *PolicyUpdate) error
-}
+// NOTE: the PEPService test double for this file is mockPEPServiceCoverage,
+// defined below. The previous local mockPEPService type was removed because it
+// duplicated (and collided with) the canonical mockPEPService in
+// server_iam_rag_test.go once the phantom grpc build tag was dropped.
 
-func (m *mockPEPService) Check(ctx context.Context, req *iam.CheckRequest) (*iam.CheckResponse, error) {
-	if m.checkFunc != nil {
-		return m.checkFunc(ctx, req)
-	}
-	return &iam.CheckResponse{Allowed: true, EvaluationTimeNs: 1000}, nil
-}
-
-func (m *mockPEPService) CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
-	if m.checkBatchFunc != nil {
-		return m.checkBatchFunc(ctx, subject, action, resources, context)
-	}
-	results := make([]bool, len(resources))
-	for i := range results {
-		results[i] = true
-	}
-	return results, 1000, nil
-}
-
-func (m *mockPEPService) Subscribe(ctx context.Context, serviceID string, resourcePatterns []string, updates chan<- *PolicyUpdate) error {
-	if m.subscribeFunc != nil {
-		return m.subscribeFunc(ctx, serviceID, resourcePatterns, updates)
-	}
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func createTestPEPServer(t *testing.T) (*PEPServer, *mockPEPService) {
+func createTestPEPServer(t *testing.T) (*PEPServer, *mockPEPServiceCoverage) {
 	t.Helper()
 
 	logConfig := logger.LogConfig{
@@ -77,7 +49,7 @@ func createTestPEPServer(t *testing.T) (*PEPServer, *mockPEPService) {
 	log, err := logger.New(logConfig)
 	require.NoError(t, err)
 
-	mockSvc := &mockPEPService{}
+	mockSvc := &mockPEPServiceCoverage{}
 	srv := NewPEPServer(mockSvc, log)
 	return srv, mockSvc
 }
@@ -92,7 +64,7 @@ func TestNewPEPServer(t *testing.T) {
 	log, err := logger.New(logConfig)
 	require.NoError(t, err)
 
-	mockSvc := &mockPEPService{}
+	mockSvc := &mockPEPServiceCoverage{}
 	srv := NewPEPServer(mockSvc, log)
 
 	assert.NotNil(t, srv)

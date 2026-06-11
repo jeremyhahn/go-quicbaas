@@ -587,10 +587,12 @@ func (s *Server) qrdbBarrierShamirInitialize(ctx context.Context, payload []byte
 	if err != nil {
 		return nil, err
 	}
-	resp, marshalErr := proto.Marshal(&pb.BarrierShamirInitializeResponse{
-		Shares:      info.Shares,
+	// Share-free contract: share bytes are never returned over the wire;
+	// officers claim their shares individually via the share-claim flow.
+	resp, marshalErr := proto.Marshal(&pb.BarrierShamirOperationResponse{
 		Threshold:   int32(info.Threshold),   //nolint:gosec // threshold is a small count
 		TotalShares: int32(info.TotalShares), //nolint:gosec // share count is small
+		ShareCount:  int32(info.ShareCount),  //nolint:gosec // share count is small
 	})
 	if marshalErr != nil {
 		return nil, &QRDBMarshalError{Err: marshalErr}
@@ -650,10 +652,11 @@ func (s *Server) qrdbBarrierRekey(ctx context.Context, payload []byte) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	resp, marshalErr := proto.Marshal(&pb.BarrierShamirInitializeResponse{
-		Shares:      info.Shares,
+	// Share-free contract: new shares are sealed to officer enclaves, never returned.
+	resp, marshalErr := proto.Marshal(&pb.BarrierShamirOperationResponse{
 		Threshold:   int32(info.Threshold),   //nolint:gosec // small count
 		TotalShares: int32(info.TotalShares), //nolint:gosec // small count
+		ShareCount:  int32(info.ShareCount),  //nolint:gosec // small count
 	})
 	if marshalErr != nil {
 		return nil, &QRDBMarshalError{Err: marshalErr}
@@ -674,10 +677,12 @@ func (s *Server) qrdbBarrierRecoveryGenerate(ctx context.Context, payload []byte
 	if err != nil {
 		return nil, err
 	}
+	// Share-free contract: recovery keys are sealed to recovery-officer enclaves,
+	// never returned; officers claim them via the recovery share-claim flow.
 	resp, marshalErr := proto.Marshal(&pb.BarrierRecoveryKeysResponse{
-		Keys:      info.Keys,
-		Threshold: int32(info.Threshold), //nolint:gosec // small count
-		Total:     int32(info.Total),     //nolint:gosec // small count
+		Threshold:  int32(info.Threshold),  //nolint:gosec // small count
+		Total:      int32(info.Total),      //nolint:gosec // small count
+		ShareCount: int32(info.ShareCount), //nolint:gosec // small count
 	})
 	if marshalErr != nil {
 		return nil, &QRDBMarshalError{Err: marshalErr}

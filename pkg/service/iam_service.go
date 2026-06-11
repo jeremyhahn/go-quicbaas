@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam
-
 // Package service provides the IAM service interface for QuicBaaS.
 package service
 

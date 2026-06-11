@@ -1,5 +1,3 @@
-//go:build iam
-
 package iam
 
 import (
@@ -101,12 +99,24 @@ func (m *mockUserStorage) DeleteUser(ctx context.Context, tenantID, userID strin
 	return nil
 }
 
+func (m *mockUserStorage) GetUserByUsername(ctx context.Context, tenantID, username string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, user := range m.users {
+		if user.TenantID == tenantID && user.Name == username {
+			return user, nil
+		}
+	}
+	return nil, ErrUserNotFound
+}
+
 func (m *mockUserStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint string) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	for _, user := range m.users {
-		if user.PIVCertThumbprint == thumbprint {
+		if user.HasPIVThumbprint(thumbprint) {
 			u := *user
 			return &u, nil
 		}

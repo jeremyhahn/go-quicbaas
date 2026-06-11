@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -399,8 +397,8 @@ func (m *MemoryStorage) CreateUser(ctx context.Context, user *User) error {
 	u := *user
 	m.users[key] = &u
 	m.usersByEmail[user.Email] = &u
-	if u.PIVCertThumbprint != "" {
-		m.usersByPIVThumbprint[u.PIVCertThumbprint] = &u
+	for _, tp := range u.PIVThumbprints() {
+		m.usersByPIVThumbprint[tp] = &u
 	}
 
 	return nil
@@ -449,6 +447,23 @@ func (m *MemoryStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint s
 	return &u, nil
 }
 
+// GetUserByUsername retrieves a user by tenant-scoped username (the login Name).
+// The in-memory store scans its user map; the volume is small (tests and
+// embedded callers without a KVStore), so a scan is preferable to maintaining a
+// separate index that could drift on update/delete.
+func (m *MemoryStorage) GetUserByUsername(ctx context.Context, tenantID, username string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, user := range m.users {
+		if user.TenantID == tenantID && user.Name == username {
+			u := *user
+			return &u, nil
+		}
+	}
+	return nil, ErrUserNotFound
+}
+
 func (m *MemoryStorage) UpdateUser(ctx context.Context, user *User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -473,17 +488,14 @@ func (m *MemoryStorage) UpdateUser(ctx context.Context, user *User) error {
 	m.users[key] = &u
 	m.usersByEmail[user.Email] = &u
 
-	// Maintain PIV thumbprint index when the cert binding changes.
-	if oldUser.PIVCertThumbprint != u.PIVCertThumbprint {
-		if oldUser.PIVCertThumbprint != "" {
-			delete(m.usersByPIVThumbprint, oldUser.PIVCertThumbprint)
-		}
-		if u.PIVCertThumbprint != "" {
-			m.usersByPIVThumbprint[u.PIVCertThumbprint] = &u
-		}
-	} else if u.PIVCertThumbprint != "" {
-		// Refresh the pointer so the index returns the latest user state.
-		m.usersByPIVThumbprint[u.PIVCertThumbprint] = &u
+	// Maintain the PIV thumbprint index. Drop every old binding key then
+	// (re)write every current one so additions, removals, and pointer refreshes
+	// are all handled uniformly when a user holds multiple PIV bindings.
+	for _, tp := range oldUser.PIVThumbprints() {
+		delete(m.usersByPIVThumbprint, tp)
+	}
+	for _, tp := range u.PIVThumbprints() {
+		m.usersByPIVThumbprint[tp] = &u
 	}
 
 	return nil
@@ -501,8 +513,8 @@ func (m *MemoryStorage) DeleteUser(ctx context.Context, tenantID, userID string)
 
 	delete(m.users, key)
 	delete(m.usersByEmail, user.Email)
-	if user.PIVCertThumbprint != "" {
-		delete(m.usersByPIVThumbprint, user.PIVCertThumbprint)
+	for _, tp := range user.PIVThumbprints() {
+		delete(m.usersByPIVThumbprint, tp)
 	}
 
 	return nil

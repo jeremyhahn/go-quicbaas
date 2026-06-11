@@ -109,11 +109,11 @@ func TestQRDBBarrierDispatch_HappyPaths(t *testing.T) {
 		Secret: "pw", Threshold: 2, TotalShares: 3,
 	}))
 	require.NoError(t, err)
-	var shamirResp pb.BarrierShamirInitializeResponse
+	var shamirResp pb.BarrierShamirOperationResponse
 	require.NoError(t, proto.Unmarshal(shamirOut, &shamirResp))
 	assert.Equal(t, int32(2), shamirResp.GetThreshold())
 	assert.Equal(t, int32(3), shamirResp.GetTotalShares())
-	assert.Len(t, shamirResp.GetShares(), 3)
+	assert.Equal(t, int32(3), shamirResp.GetShareCount())
 
 	shareOut, err := server.qrdbBarrierShamirUnsealShare(ctx, mustMarshal(t, &pb.BarrierShamirUnsealShareRequest{Share: "s1"}))
 	require.NoError(t, err)
@@ -128,15 +128,19 @@ func TestQRDBBarrierDispatch_HappyPaths(t *testing.T) {
 
 	rekeyOut, err := server.qrdbBarrierRekey(ctx, mustMarshal(t, &pb.BarrierRekeyRequest{Threshold: 2, Total: 2}))
 	require.NoError(t, err)
-	var rekeyResp pb.BarrierShamirInitializeResponse
+	var rekeyResp pb.BarrierShamirOperationResponse
 	require.NoError(t, proto.Unmarshal(rekeyOut, &rekeyResp))
-	assert.Len(t, rekeyResp.GetShares(), 2)
+	assert.Equal(t, int32(2), rekeyResp.GetThreshold())
+	assert.Equal(t, int32(2), rekeyResp.GetTotalShares())
+	assert.Equal(t, int32(2), rekeyResp.GetShareCount())
 
 	recGenOut, err := server.qrdbBarrierRecoveryGenerate(ctx, mustMarshal(t, &pb.BarrierRecoveryGenerateRequest{Threshold: 2, Total: 2}))
 	require.NoError(t, err)
 	var recGenResp pb.BarrierRecoveryKeysResponse
 	require.NoError(t, proto.Unmarshal(recGenOut, &recGenResp))
-	assert.Len(t, recGenResp.GetKeys(), 2)
+	assert.Equal(t, int32(2), recGenResp.GetThreshold())
+	assert.Equal(t, int32(2), recGenResp.GetTotal())
+	assert.Equal(t, int32(2), recGenResp.GetShareCount())
 
 	_, err = server.qrdbBarrierRecoveryRecover(ctx, mustMarshal(t, &pb.BarrierRecoveryRecoverRequest{Keys: []string{"r1", "r2"}}))
 	require.NoError(t, err)

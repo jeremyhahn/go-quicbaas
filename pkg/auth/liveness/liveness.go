@@ -16,8 +16,7 @@
 // so the same authority backs both RFC 7662 broker introspection and the
 // transports' request-time authorization. It depends only on the SDK
 // platformtoken contract: the local Source interface decouples it from pkg/iam,
-// which keeps this package buildable without the iam build tag and avoids an
-// import cycle (platformtoken imports only pkg/iam/dpop).
+// which avoids an import cycle (platformtoken imports only pkg/iam/dpop).
 package liveness
 
 import (

@@ -93,7 +93,7 @@ func (s *backupSealServer) SealInit(_ context.Context, req *proto.SealInitReques
 	if s.fail {
 		return nil, status.Error(codes.Internal, "boom")
 	}
-	return &proto.SealInitResponse{Shares: [][]byte{[]byte("s1"), []byte("s2"), []byte("s3")}, RootToken: "root", Version: 1}, nil
+	return &proto.SealInitResponse{RootToken: "root", Version: 1}, nil
 }
 
 func (s *backupSealServer) Unseal(_ context.Context, req *proto.UnsealRequest) (*proto.UnsealResponse, error) {
@@ -114,7 +114,7 @@ func (s *backupSealServer) SealRekey(_ context.Context, req *proto.SealRekeyRequ
 	if s.fail {
 		return nil, status.Error(codes.Internal, "boom")
 	}
-	return &proto.SealRekeyResponse{Shares: [][]byte{[]byte("n1"), []byte("n2")}, Version: 2}, nil
+	return &proto.SealRekeyResponse{Version: 2}, nil
 }
 
 // setupConnectedBackupSealClient registers a backupSealServer and returns a
@@ -169,8 +169,8 @@ func TestSealClient_Connected_HappyPaths(t *testing.T) {
 
 	initResp, err := client.SealInit(ctx, &service.SealInitRequest{Threshold: 2, TotalShares: 3})
 	require.NoError(t, err)
-	assert.Len(t, initResp.Shares, 3)
 	assert.Equal(t, "root", initResp.RootToken)
+	assert.Equal(t, uint64(1), initResp.Version)
 
 	unsealResp, err := client.Unseal(ctx, &service.UnsealRequest{Share: []byte("s1")})
 	require.NoError(t, err)
@@ -180,7 +180,6 @@ func TestSealClient_Connected_HappyPaths(t *testing.T) {
 
 	rekeyResp, err := client.Rekey(ctx, &service.RekeyRequest{NewThreshold: 2, NewTotalShares: 2})
 	require.NoError(t, err)
-	assert.Len(t, rekeyResp.Shares, 2)
 	assert.Equal(t, uint64(2), rekeyResp.Version)
 }
 

@@ -1,4 +1,4 @@
-//go:build timeseries && !integration && !raft && !grpc
+//go:build timeseries && !integration
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

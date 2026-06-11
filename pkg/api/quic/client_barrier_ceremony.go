@@ -103,11 +103,13 @@ type BarrierStatusResponse struct {
 }
 
 // ShamirInitResponse is the response from Client.BarrierShamirInitialize
-// and Client.BarrierRekey.
+// and Client.BarrierRekey. Share material is never returned (qrdb
+// share-free contract): officers claim their shares through the
+// identity-gated claim endpoints.
 type ShamirInitResponse struct {
-	Shares      []string `json:"shares"`
-	Threshold   int      `json:"threshold"`
-	TotalShares int      `json:"total_shares"`
+	Threshold   int `json:"threshold"`
+	TotalShares int `json:"total_shares"`
+	ShareCount  int `json:"share_count"`
 }
 
 // UnsealShareProgressResponse is the response from
@@ -119,11 +121,12 @@ type UnsealShareProgressResponse struct {
 }
 
 // RecoveryKeysResponse is the response from
-// Client.BarrierGenerateRecoveryKeys.
+// Client.BarrierGenerateRecoveryKeys. Recovery key material is never
+// returned (qrdb share-free contract).
 type RecoveryKeysResponse struct {
-	Keys      []string `json:"keys"`
-	Threshold int      `json:"threshold"`
-	Total     int      `json:"total"`
+	Threshold  int `json:"threshold"`
+	Total      int `json:"total"`
+	ShareCount int `json:"share_count"`
 }
 
 // RecoveryStatusResponse is the response from

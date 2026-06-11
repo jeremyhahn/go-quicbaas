@@ -1,4 +1,4 @@
-//go:build iam && !integration
+//go:build !integration
 
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
@@ -15,13 +15,14 @@
 
 // server_coverage_iam3_test.go targets the high-leverage iam_init.go
 // initializeIAMComponents function with a real in-memory qrdb client so
-// the bulk of the IAM bootstrap can be exercised by unit tests. The other
-// boost tests in this directory are gated behind raft+local+iam tags and
-// therefore never run under the canonical `go test -tags iam` invocation.
+// the bulk of the IAM bootstrap can be exercised by unit tests. Other boost
+// tests in this directory are gated behind raft+local tags and therefore do
+// not run under a minimal build.
 
 package server
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -72,4 +73,31 @@ func TestServer_InitializeIAMComponents_WithEmbeddedQRDB(t *testing.T) {
 	assert.NotNil(t, got.GetSessionStorage())
 	assert.NotNil(t, got.GetAuditLogger())
 	assert.NotNil(t, got.GetGDPRManager())
+}
+
+// TestServer_InitializeIAMComponents_ClientWithoutNodeFailsClosed exercises the
+// fail-closed invariant added in phase C1-F: user persistence is owned by the
+// embedded qrdb node, so a qrdb client wired WITHOUT a node (an inconsistent
+// state with nowhere to store users) must abort IAM init with a typed
+// QRDBUserStorageRequiredError rather than silently routing user storage to a
+// local (empty) store. The KVStore is still resolvable via the node-backed
+// client (so the pre-check IAM wiring builds), but s.qrdbNode is nil at the
+// point of the user-storage decision.
+func TestServer_InitializeIAMComponents_ClientWithoutNodeFailsClosed(t *testing.T) {
+	srv := withTempServer(t)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
+
+	// Wire the node-backed ShardedClient so the IAM KVStore resolves, then drop
+	// the node reference to simulate the client-without-node inconsistency.
+	srv.qrdbClient = newNodeBackedShardedClient(srv.qrdbNode)
+	srv.qrdbNode = nil
+
+	got, err := srv.initializeIAMComponents()
+	assert.Nil(t, got, "no components must be returned when failing closed")
+	require.Error(t, err, "client-without-node must fail closed")
+
+	var typed *QRDBUserStorageRequiredError
+	require.True(t, errors.As(err, &typed), "expected QRDBUserStorageRequiredError, got %v", err)
+	assert.True(t, errors.Is(err, ErrQRDBUserStorageRequired), "must unwrap to the sentinel")
 }

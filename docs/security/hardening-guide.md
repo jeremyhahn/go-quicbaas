@@ -325,8 +325,7 @@ if token.ExpiresAt.Before(time.Now()) {
 QuicBaaS supports WebAuthn/FIDO2 for passwordless authentication via the IAM module:
 
 ```yaml
-# Enable IAM with WebAuthn support
-# Build with: go build -tags iam ./cmd/quicbaasd
+# Enable IAM with WebAuthn support (IAM is always compiled)
 
 security:
   iam:
@@ -496,7 +495,7 @@ roles := map[string]*auth.Role{
 For complex authorization requirements, use Attribute-Based Access Control:
 
 ```yaml
-# Build with: go build -tags iam ./cmd/quicbaasd
+# IAM/ABAC is always compiled; no build tag is required.
 
 security:
   authorization:
@@ -621,13 +620,11 @@ spec:
 
 ### Data at Rest Encryption (KMS)
 
-Enable encryption at rest using the Key Management Service:
+At-rest encryption is provided by the embedded qrdb seal/barrier subsystem;
+there is no standalone key-file toggle. Configure the Key Management Service
+for application-level key operations:
 
 ```yaml
-security:
-  encryption_enabled: true
-  encryption_algorithm: "aes256"
-
 kms:
   enabled: true
   backend: software                  # Or: awskms, gcpkms, azurekv, vault

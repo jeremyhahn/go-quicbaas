@@ -178,7 +178,7 @@ func (r *ToolRegistry) registerTools() {
 	// Register object transfer tools
 	r.registerObjectTransferTools()
 
-	// Register IAM tools (no-op when iam build tag not set)
+	// Register IAM tools
 	r.registerIAMTools()
 
 	// Register Ollama tools

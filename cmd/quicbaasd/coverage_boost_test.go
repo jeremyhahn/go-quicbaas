@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// coverage_boost_test.go raises unit coverage of the daemon entrypoint
-// without the iam build tag. Every test runs in t.TempDir() and never
-// modifies host state, binds a port, or starts a long-running daemon.
+// coverage_boost_test.go raises unit coverage of the daemon entrypoint.
+// Every test runs in t.TempDir() and never modifies host state, binds a
+// port, or starts a long-running daemon.
 // The init-flow tests construct an embedded Server (no listeners) and
 // shut it down synchronously, so they remain fast and side-effect free.
 
@@ -40,14 +40,13 @@ import (
 )
 
 // =============================================================================
-// runInlineInit happy paths (none / software / shamir) — non-iam variants
+// runInlineInit happy paths (none / software / shamir)
 // =============================================================================
 //
 // These exercise the production runInlineInit flow end-to-end against a
 // fresh data dir. They deliberately do NOT assert the IAM persistence
-// contract (that lives in init_runtime_test.go behind the iam tag); they
-// assert only the on-disk markers that runInlineInit owns regardless of
-// build tag.
+// contract (that lives in init_runtime_test.go); they assert only the
+// on-disk markers that runInlineInit owns.
 
 // TestRunInlineInit_NoneStrategy_DropsMarker drives the "none" strategy:
 // no PINs, embedded server brought up and shut down, init-done marker
@@ -700,13 +699,42 @@ func TestRunDaemon_NewServerFails(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeStandalone
 	cfg.Storage.Backend = config.StorageBackendPebble
 	cfg.Storage.DataDir = tempDir
+	// Keep the WAL dir writable so the boot-time config.Validate gate passes
+	// and the failure occurs inside NewServer as this test intends.
+	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
 	cfg.Server.Unix.Enabled = false
-	// Force NewServer's internal logger.New to fail.
+	// Force NewServer's internal logger.New to fail. The config validator only
+	// checks that a file path is set for file output; opening it happens in
+	// NewServer's logger construction.
 	cfg.Logging.Output = "file"
 	cfg.Logging.File = "/proc/nonexistent/dir/daemon.log"
 
 	err := runDaemon("local")
 	require.Error(t, err)
+}
+
+// TestRunDaemon_RefusesInvalidConfig covers the boot-time compliance gate:
+// runDaemon must refuse to start when config.Validate rejects the effective
+// configuration (here: a fail-open authz posture on a network transport with
+// no insecure_dev_mode acknowledgment).
+func TestRunDaemon_RefusesInvalidConfig(t *testing.T) {
+	log = createTestLogger(t)
+	tempDir := t.TempDir()
+
+	cfg = config.Default()
+	cfg.Server.Mode = config.ServerModeStandalone
+	cfg.Storage.Backend = config.StorageBackendPebble
+	cfg.Storage.DataDir = tempDir
+	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
+	cfg.Server.Unix.Enabled = false
+	// Fail-open posture: authz disabled, REST enabled, no dev-mode ack.
+	cfg.Security.RequireAuthz = false
+	cfg.Security.InsecureDevMode = false
+	cfg.Server.REST.Enabled = true
+
+	err := runDaemon("refuse-invalid")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "security.require_authz")
 }
 
 // =============================================================================

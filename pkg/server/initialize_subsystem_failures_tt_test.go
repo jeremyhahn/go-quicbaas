@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag && iam
+//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag
 
 // initialize_subsystem_failures_tt_test.go covers the per-subsystem error
 // returns inside Server.initialize that the happy-path lifecycle tests do not

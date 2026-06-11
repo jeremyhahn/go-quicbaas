@@ -14,10 +14,10 @@ backs the rest of QuicBaaS.
 
 ## Build Tags
 
-The Signal integration requires the `signal` and `iam` build tags:
+The Signal integration requires the `signal` build tag (IAM is always compiled):
 
 ```bash
-go build -tags "signal,iam" ./...
+go build -tags "signal" ./...
 ```
 
 All files in `pkg/signal/` carry the `//go:build signal` directive. Without
@@ -37,7 +37,7 @@ signal:
 ```bash
 make build-signal
 # or
-go build -tags "signal,iam" ./cmd/...
+go build -tags "signal" ./cmd/...
 ```
 
 ### 3. Start the service

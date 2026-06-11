@@ -160,6 +160,9 @@ func (l *Loader) applyEnvironmentOverrides(cfg *Config) {
 	if val := os.Getenv("QUICBAAS_SECURITY_REQUIRE_AUTHZ"); val != "" {
 		cfg.Security.RequireAuthz = parseBool(val)
 	}
+	if val := os.Getenv("QUICBAAS_SECURITY_INSECURE_DEV_MODE"); val != "" {
+		cfg.Security.InsecureDevMode = parseBool(val)
+	}
 	if val := os.Getenv("QUICBAAS_SECURITY_AUTHZ_MODE"); val != "" {
 		cfg.Security.AuthzMode = val
 	}

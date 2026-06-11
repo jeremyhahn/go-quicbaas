@@ -15,7 +15,6 @@ package server
 
 import (
 	"errors"
-	"strconv"
 )
 
 // Server package errors.
@@ -46,12 +45,6 @@ var (
 	// ErrRAGCloseFailed indicates the RAG system failed to close gracefully.
 	ErrRAGCloseFailed = errors.New("failed to close RAG system")
 
-	// ErrInsecureBootstrapPassword indicates the bootstrap admin password does not
-	// meet production security requirements. The password must be at least 12
-	// characters and must not be set to default values like "admin".
-	// Set auth.insecure_dev_mode=true to bypass this check for development/testing.
-	ErrInsecureBootstrapPassword = errors.New("insecure bootstrap admin password")
-
 	// ErrShardedClientClosed indicates ForShard was called after Close.
 	ErrShardedClientClosed = errors.New("sharded client is closed")
 
@@ -78,6 +71,12 @@ var (
 
 	// ErrIAMComponentInit indicates an IAM component failed to initialize.
 	ErrIAMComponentInit = errors.New("IAM component initialization failed")
+
+	// ErrQRDBUserStorageRequired indicates IAM initialization was attempted with
+	// a qrdb client present but no embedded qrdb node. User persistence is owned
+	// by the embedded node, so IAM cannot fail open to a local store — this is a
+	// fail-closed startup invariant.
+	ErrQRDBUserStorageRequired = errors.New("qrdb node required for IAM user storage")
 
 	// ErrUpdateCANotReady is returned by UpdateCA when the server has not yet
 	// started or when TLS is disabled (no CA adapter was wired at startup).
@@ -108,22 +107,6 @@ type ServerMessageError struct {
 // Error implements the error interface.
 func (e *ServerMessageError) Error() string {
 	return e.Message
-}
-
-// InsecureBootstrapPasswordError indicates the bootstrap admin password is
-// not strong enough for production use.
-type InsecureBootstrapPasswordError struct {
-	Reason string
-}
-
-// Error implements the error interface.
-func (e *InsecureBootstrapPasswordError) Error() string {
-	return "insecure bootstrap admin password: " + e.Reason
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *InsecureBootstrapPasswordError) Unwrap() error {
-	return ErrInsecureBootstrapPassword
 }
 
 // NilLoginIdentityError is returned by the OIDC session issuer when the login
@@ -353,63 +336,20 @@ func (e *IAMComponentInitError) Unwrap() error {
 	return ErrIAMComponentInit
 }
 
-// BootstrapPasswordRequiredError indicates the bootstrap admin password is
-// required in production mode but was not provided.
-type BootstrapPasswordRequiredError struct{}
+// QRDBUserStorageRequiredError is returned when IAM initialization runs with a
+// qrdb client configured but no embedded qrdb node available. The embedded node
+// is the single source of truth for user records, so IAM fails closed rather
+// than silently falling back to a local (empty) store.
+type QRDBUserStorageRequiredError struct{}
 
 // Error implements the error interface.
-func (e *BootstrapPasswordRequiredError) Error() string {
-	return "bootstrap_admin_password is required in production mode"
+func (e *QRDBUserStorageRequiredError) Error() string {
+	return "IAM user storage requires an embedded qrdb node, but none is available"
 }
 
 // Unwrap returns the sentinel error for errors.Is support.
-func (e *BootstrapPasswordRequiredError) Unwrap() error {
-	return ErrInsecureBootstrapPassword
-}
-
-// BootstrapPasswordNotAllowedError indicates the bootstrap admin password
-// is a known insecure value that is not permitted in production mode.
-// The actual password value is never included in error messages for security.
-type BootstrapPasswordNotAllowedError struct{}
-
-// Error implements the error interface.
-func (e *BootstrapPasswordNotAllowedError) Error() string {
-	return "bootstrap admin password is not allowed"
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *BootstrapPasswordNotAllowedError) Unwrap() error {
-	return ErrInsecureBootstrapPassword
-}
-
-// BootstrapPasswordMatchesUsernameError indicates the bootstrap admin password
-// matches the username, which is not permitted.
-type BootstrapPasswordMatchesUsernameError struct{}
-
-// Error implements the error interface.
-func (e *BootstrapPasswordMatchesUsernameError) Error() string {
-	return "bootstrap admin password must not match username"
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *BootstrapPasswordMatchesUsernameError) Unwrap() error {
-	return ErrInsecureBootstrapPassword
-}
-
-// BootstrapPasswordTooShortError indicates the bootstrap admin password
-// does not meet the minimum length requirement.
-type BootstrapPasswordTooShortError struct {
-	MinLength int
-}
-
-// Error implements the error interface.
-func (e *BootstrapPasswordTooShortError) Error() string {
-	return "bootstrap admin password must be at least " + strconv.Itoa(e.MinLength) + " characters"
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *BootstrapPasswordTooShortError) Unwrap() error {
-	return ErrInsecureBootstrapPassword
+func (e *QRDBUserStorageRequiredError) Unwrap() error {
+	return ErrQRDBUserStorageRequired
 }
 
 // ErrFirstBootBootstrap is returned when the first-boot admin bootstrap fails.

@@ -1,4 +1,4 @@
-//go:build quic && iam
+//go:build quic
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -31,7 +31,7 @@ type IAMSubRequest struct {
 }
 
 // HandleRequestIAM extends HandleRequest with IAM-specific opcodes.
-// This function is called from HandleRequest when iam build tag is set.
+// This function is called from HandleRequest.
 // Supports both legacy sub-operation pattern (0xF0-0xFF) and new direct opcodes (0x95-0xCE).
 func (h *Handler) HandleRequestIAM(ctx context.Context, req *Request) *Response {
 	switch req.Opcode {

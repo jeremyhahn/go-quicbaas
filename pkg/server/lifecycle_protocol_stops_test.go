@@ -1,4 +1,4 @@
-//go:build !integration && rest && quic && mcp && !raft && !grpc
+//go:build !integration && rest && quic && mcp
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

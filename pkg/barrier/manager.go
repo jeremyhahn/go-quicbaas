@@ -182,8 +182,11 @@ func (m *Manager) IsInitialized() bool {
 }
 
 // Initialize sets up the barrier using Shamir secret sharing and returns a
-// *service.SealInitResponse containing the generated shares. If shares or
-// threshold are zero, the values from the manager's Config are used.
+// *service.SealInitResponse. Share material is never returned (qrdb
+// share-free contract): shares are sealed to enrolled Security Officers via
+// the CeremonyDistributor and claimed individually through the share-claim
+// flow. If shares or threshold are zero, the values from the manager's
+// Config are used.
 func (m *Manager) Initialize(ctx context.Context, shares, threshold int) (interface{}, error) {
 	if threshold <= 0 {
 		threshold = m.config.Threshold
@@ -197,14 +200,8 @@ func (m *Manager) Initialize(ctx context.Context, shares, threshold int) (interf
 		TotalShares: shares,
 	})
 
-	result, err := m.barrier.InitializeShamir(ctx, qrdbsdk.Credentials{})
-	if err != nil {
+	if _, err := m.barrier.InitializeShamir(ctx, qrdbsdk.Credentials{}); err != nil {
 		return nil, err
-	}
-
-	shareBytes := make([][]byte, len(result.Shares))
-	for i, s := range result.Shares {
-		shareBytes[i] = []byte(s)
 	}
 
 	m.config.Threshold = threshold
@@ -218,7 +215,6 @@ func (m *Manager) Initialize(ctx context.Context, shares, threshold int) (interf
 	m.logger.Infof("Barrier initialized with threshold=%d, total=%d", threshold, shares)
 
 	return &service.SealInitResponse{
-		Shares:    shareBytes,
 		RootToken: "",
 		Version:   1,
 		Timestamp: time.Now(),
@@ -248,8 +244,10 @@ func (m *Manager) Seal(_ context.Context) error {
 }
 
 // Rekey generates new Shamir shares with potentially different parameters
-// and returns a *service.RekeyResponse. If shares or threshold are zero,
-// the values from the manager's Config are used.
+// and returns a *service.RekeyResponse. New share material is never
+// returned (qrdb share-free contract): shares are sealed to enrolled
+// Security Officers and claimed via the share-claim flow. If shares or
+// threshold are zero, the values from the manager's Config are used.
 func (m *Manager) Rekey(ctx context.Context, shares, threshold int) (interface{}, error) {
 	if threshold <= 0 {
 		threshold = m.config.Threshold
@@ -258,14 +256,8 @@ func (m *Manager) Rekey(ctx context.Context, shares, threshold int) (interface{}
 		shares = m.config.TotalShares
 	}
 
-	result, err := m.barrier.Rekey(ctx, threshold, shares)
-	if err != nil {
+	if _, err := m.barrier.Rekey(ctx, threshold, shares); err != nil {
 		return nil, err
-	}
-
-	shareBytes := make([][]byte, len(result.Shares))
-	for i, s := range result.Shares {
-		shareBytes[i] = []byte(s)
 	}
 
 	m.config.Threshold = threshold
@@ -275,27 +267,22 @@ func (m *Manager) Rekey(ctx context.Context, shares, threshold int) (interface{}
 	m.logger.Infof("Rekeyed barrier with threshold=%d, total=%d", threshold, shares)
 
 	return &service.RekeyResponse{
-		Shares:    shareBytes,
 		Version:   newVersion,
 		Timestamp: time.Now(),
 	}, nil
 }
 
 // GenerateRecoveryKeys generates Shamir recovery shares via the underlying
-// barrier and returns the recovery key shares as [][]byte.
+// barrier. Recovery share material is never returned (qrdb share-free
+// contract): shares are sealed to enrolled recovery officers and claimed
+// via the recovery share-claim flow, so the returned slice is always empty.
 func (m *Manager) GenerateRecoveryKeys(ctx context.Context, threshold, totalKeys int) ([][]byte, error) {
-	result, err := m.barrier.GenerateRecoveryKeys(ctx, threshold, totalKeys)
-	if err != nil {
+	if _, err := m.barrier.GenerateRecoveryKeys(ctx, threshold, totalKeys); err != nil {
 		return nil, err
 	}
 
-	keys := make([][]byte, len(result.Shares))
-	for i, k := range result.Shares {
-		keys[i] = []byte(k)
-	}
-
 	m.logger.Infof("Generated %d recovery keys with threshold %d", totalKeys, threshold)
-	return keys, nil
+	return [][]byte{}, nil
 }
 
 // DeleteRecoveryKeys removes recovery key metadata from the underlying

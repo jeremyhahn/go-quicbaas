@@ -790,8 +790,8 @@ func TestRESTClientMock_SealStatus_Success(t *testing.T) {
 
 func TestRESTClientMock_SealInit_Success(t *testing.T) {
 	expectedResp := &service.SealInitResponse{
-		Shares:    [][]byte{[]byte("key1"), []byte("key2"), []byte("key3")},
 		RootToken: "root-token",
+		Version:   1,
 	}
 
 	mock := newMockRoundTripper(http.StatusOK, expectedResp)
@@ -803,7 +803,8 @@ func TestRESTClientMock_SealInit_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Len(t, resp.Shares, 3)
+	assert.Equal(t, "root-token", resp.RootToken)
+	assert.Equal(t, uint64(1), resp.Version)
 }
 
 func TestRESTClientMock_SealInit_NilRequest(t *testing.T) {
@@ -854,7 +855,7 @@ func TestRESTClientMock_Seal_Success(t *testing.T) {
 
 func TestRESTClientMock_Rekey_Success(t *testing.T) {
 	expectedResp := &service.RekeyResponse{
-		Shares: [][]byte{[]byte("new-key1"), []byte("new-key2")},
+		Version: 2,
 	}
 
 	mock := newMockRoundTripper(http.StatusOK, expectedResp)
@@ -866,7 +867,7 @@ func TestRESTClientMock_Rekey_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Len(t, resp.Shares, 2)
+	assert.Equal(t, uint64(2), resp.Version)
 }
 
 func TestRESTClientMock_Rekey_NilRequest(t *testing.T) {

@@ -1,4 +1,4 @@
-//go:build raft && rest && quic && mcp && iam && vector && !integration
+//go:build raft && rest && quic && mcp && vector && !integration
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -1388,36 +1388,6 @@ func TestFT2_AuthManager_NoJWTSecret(t *testing.T) {
 	authMgr, authErr := auth.NewInMemoryAuthManager(authCfg, srv.logger)
 	assert.Error(t, authErr)
 	assert.Nil(t, authMgr)
-}
-
-func TestFT2_ResolveBootstrapCredentials_Defaults(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	cfg := createFTConfig(t)
-	cfg.Auth.AllowPasswordAuth = true
-	cfg.Auth.BootstrapAdminUsername = ""
-	cfg.Auth.BootstrapAdminPassword = ""
-	cfg.Auth.InsecureDevMode = true
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	username, password := srv.resolveBootstrapCredentials()
-	assert.Equal(t, "admin", username)
-	assert.Equal(t, "quicbaas-dev-admin", password)
-}
-
-func TestFT2_ValidateBootstrapCredentials_InsecurePassword(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	// In production mode, common insecure passwords should be rejected.
-	err := validateBootstrapCredentials("admin", "password", false)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrInsecureBootstrapPassword)
-
-	// In insecure dev mode, all checks are skipped.
-	err = validateBootstrapCredentials("admin", "password", true)
-	assert.NoError(t, err)
 }
 
 // =============================================================================

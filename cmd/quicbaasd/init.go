@@ -703,7 +703,6 @@ func buildInitConfig(dataDir string, f *inlineInitFlags, barrierEnabled bool) *c
 	// TLS off — init does not need a CA chain. The first regular "start"
 	// will bring up the CA against the same data dir.
 	cfg.Security.TLSEnabled = false
-	cfg.Security.EncryptionEnabled = false
 
 	// Seal: propagate the barrier strategy so that when quicbaasd start
 	// reads this config (or when the embedded server's lifecycle reads

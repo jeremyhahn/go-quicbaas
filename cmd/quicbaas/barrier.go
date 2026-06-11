@@ -664,21 +664,21 @@ func runBarrierSealCommand(cmd *cobra.Command, _ []string) error {
 func newBarrierRekeyCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rekey",
-		Short: "Rotate the barrier master key",
-		Long: `Rotate the cryptographic barrier's master key.
+		Short: "Rotate the barrier Shamir unseal key and share set",
+		Long: `Rotate the barrier's Shamir unseal key and share set.
 
---passphrase supplies the NEW passphrase; the server replaces the previously
-sealed material. --so-pin is required when a PINBackend is configured.
---threshold and --total are paired and instruct the server to regenerate
-Shamir share material with the new M/N.
+The server generates a fresh unseal key, re-wraps the root key under it,
+and seals new shares to the enrolled Security Officers; all previously
+distributed shares are cryptographically revoked. No secret material
+travels on the request. --so-pin is required when a PINBackend is
+configured. --threshold and --total are paired and instruct the server
+to regenerate the share set with a new M/N.
 
 Examples:
-  quicbaas barrier rekey --passphrase '<new-pp>' --so-pin SO123
-  quicbaas barrier rekey --passphrase '<new-pp>' --threshold 3 --total 5`,
+  quicbaas barrier rekey --so-pin SO123
+  quicbaas barrier rekey --threshold 3 --total 5`,
 		RunE: runBarrierRekeyCommand,
 	}
-	cmd.Flags().StringVar(&barrierSecret, "passphrase", "",
-		"New master passphrase (required)")
 	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
 		"Security Officer PIN (required when a PINBackend is configured)")
 	cmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
@@ -690,9 +690,6 @@ Examples:
 
 // runBarrierRekeyCommand executes 'barrier rekey'.
 func runBarrierRekeyCommand(cmd *cobra.Command, _ []string) error {
-	if barrierSecret == "" {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.rekey", "--passphrase is required")
-	}
 	// Shamir flags are paired: supplying one requires the other.
 	if (barrierThreshold > 0) != (barrierTotalShares > 0) {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.rekey",
@@ -716,7 +713,6 @@ func runBarrierRekeyCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	resp, err := client.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{
-		NewSecret: barrierSecret,
 		SOPin:     barrierSOPin,
 		Threshold: barrierThreshold,
 		Total:     barrierTotalShares,
@@ -884,7 +880,10 @@ func formatBarrierStatusResponse(resp *qrdbtransport.BarrierStatusResponse, form
 	}
 }
 
-// formatBarrierShamirResult renders a Shamir init response.
+// formatBarrierShamirResult renders a Shamir init response. Share material is
+// never returned over the wire (qrdb share-free contract): shares are sealed
+// to enrolled Security Officers, who claim them individually via the
+// share-claim flow.
 func formatBarrierShamirResult(resp *qrdbtransport.BarrierInitializeShamirResponse, format string, w io.Writer) error {
 	outputFormat, err := cli.ParseOutputFormat(format)
 	if err != nil {
@@ -896,30 +895,29 @@ func formatBarrierShamirResult(resp *qrdbtransport.BarrierInitializeShamirRespon
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(map[string]interface{}{
-			"shares":       resp.Shares,
 			"threshold":    resp.Threshold,
 			"total_shares": resp.TotalShares,
+			"share_count":  resp.ShareCount,
 		})
 	case cli.OutputFormatTable:
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(tw, "\nSHAMIR SECRET SHARING INITIALIZED\n")
 		fmt.Fprintf(tw, "%s\n", strings.Repeat("=", 80))
 		fmt.Fprintf(tw, "Threshold:\t%d of %d shares required\n", resp.Threshold, resp.TotalShares)
-		fmt.Fprintf(tw, "\n!!! STORE THESE SHARES SECURELY - THEY WILL NOT BE DISPLAYED AGAIN !!!\n\n")
-		for i, share := range resp.Shares {
-			fmt.Fprintf(tw, "  Share %d:\t%s\n", i+1, share)
-		}
+		fmt.Fprintf(tw, "Shares Sealed:\t%d\n", resp.ShareCount)
+		fmt.Fprintf(tw, "\nShares were sealed to the enrolled Security Officers. Each officer\nclaims their share individually via the share-claim flow.\n")
 		return tw.Flush()
 	default:
 		fmt.Fprintf(w, "Threshold: %d of %d\n", resp.Threshold, resp.TotalShares)
-		for i, share := range resp.Shares {
-			fmt.Fprintf(w, "Share %d: %s\n", i+1, share)
-		}
+		fmt.Fprintf(w, "Shares sealed to officers: %d\n", resp.ShareCount)
 		return nil
 	}
 }
 
-// formatBarrierRekeyResult renders a Rekey response.
+// formatBarrierRekeyResult renders a Rekey response. New share material is
+// never returned over the wire (qrdb share-free contract): shares are sealed
+// to enrolled Security Officers, who claim them individually via the
+// share-claim flow.
 func formatBarrierRekeyResult(resp *qrdbtransport.BarrierRekeyResponse, format string, w io.Writer) error {
 	outputFormat, err := cli.ParseOutputFormat(format)
 	if err != nil {
@@ -931,30 +929,29 @@ func formatBarrierRekeyResult(resp *qrdbtransport.BarrierRekeyResponse, format s
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(map[string]interface{}{
-			"shares":       resp.Shares,
 			"threshold":    resp.Threshold,
 			"total_shares": resp.TotalShares,
+			"share_count":  resp.ShareCount,
 		})
 	case cli.OutputFormatTable:
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(tw, "\nBARRIER REKEY COMPLETE\n")
 		fmt.Fprintf(tw, "%s\n", strings.Repeat("=", 80))
 		fmt.Fprintf(tw, "New Threshold:\t%d of %d\n", resp.Threshold, resp.TotalShares)
-		fmt.Fprintf(tw, "\n!!! STORE THESE NEW SHARES SECURELY !!!\n\n")
-		for i, share := range resp.Shares {
-			fmt.Fprintf(tw, "  Share %d:\t%s\n", i+1, share)
-		}
+		fmt.Fprintf(tw, "Shares Sealed:\t%d\n", resp.ShareCount)
+		fmt.Fprintf(tw, "\nNew shares were sealed to the enrolled Security Officers. Each officer\nclaims their share individually via the share-claim flow.\n")
 		return tw.Flush()
 	default:
 		fmt.Fprintf(w, "New Threshold: %d of %d\n", resp.Threshold, resp.TotalShares)
-		for i, share := range resp.Shares {
-			fmt.Fprintf(w, "Share %d: %s\n", i+1, share)
-		}
+		fmt.Fprintf(w, "Shares sealed to officers: %d\n", resp.ShareCount)
 		return nil
 	}
 }
 
 // formatBarrierRecoveryKeys renders a recovery-key generation response.
+// Recovery key material is never returned over the wire (qrdb share-free
+// contract): recovery shares are sealed to enrolled recovery officers, who
+// claim them individually via the recovery share-claim flow.
 func formatBarrierRecoveryKeys(resp *qrdbtransport.BarrierRecoveryKeysResponse, format string, w io.Writer) error {
 	outputFormat, err := cli.ParseOutputFormat(format)
 	if err != nil {
@@ -966,25 +963,21 @@ func formatBarrierRecoveryKeys(resp *qrdbtransport.BarrierRecoveryKeysResponse, 
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(map[string]interface{}{
-			"keys":      resp.Keys,
-			"threshold": resp.Threshold,
-			"total":     resp.Total,
+			"threshold":   resp.Threshold,
+			"total":       resp.Total,
+			"share_count": resp.ShareCount,
 		})
 	case cli.OutputFormatTable:
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(tw, "\nRECOVERY KEYS GENERATED\n")
 		fmt.Fprintf(tw, "%s\n", strings.Repeat("=", 80))
 		fmt.Fprintf(tw, "Threshold:\t%d of %d keys required\n", resp.Threshold, resp.Total)
-		fmt.Fprintf(tw, "\n!!! STORE THESE RECOVERY KEYS SECURELY - THEY WILL NOT BE DISPLAYED AGAIN !!!\n\n")
-		for i, key := range resp.Keys {
-			fmt.Fprintf(tw, "  Key %d:\t%s\n", i+1, key)
-		}
+		fmt.Fprintf(tw, "Keys Sealed:\t%d\n", resp.ShareCount)
+		fmt.Fprintf(tw, "\nRecovery keys were sealed to the enrolled recovery officers. Each officer\nclaims their key individually via the recovery share-claim flow.\n")
 		return tw.Flush()
 	default:
 		fmt.Fprintf(w, "Threshold: %d of %d\n", resp.Threshold, resp.Total)
-		for i, key := range resp.Keys {
-			fmt.Fprintf(w, "Key %d: %s\n", i+1, key)
-		}
+		fmt.Fprintf(w, "Keys sealed to officers: %d\n", resp.ShareCount)
 		return nil
 	}
 }

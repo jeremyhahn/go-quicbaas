@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam && rest
+//go:build rest
 
 // start_rest_operator_ca_tt_test.go covers the operator-CA error branch of
 // startRESTServer: when iam.mtls's CA pool wiring fails (malformed / missing

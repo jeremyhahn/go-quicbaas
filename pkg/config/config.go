@@ -6,6 +6,8 @@ package config
 import (
 	"strconv"
 	"time"
+
+	xkmsresolver "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/resolver"
 )
 
 // Server mode types determine how the server operates.
@@ -419,6 +421,12 @@ type Config struct {
 	QRDB          QRDBConfig          `mapstructure:"qrdb"`
 	Databases     DatabasesConfig     `mapstructure:"databases"`
 	XKMS          XKMSConfig          `mapstructure:"xkms"`
+	// Trust configures quicbaasd's outbound trust resolver used when dialing
+	// upstream TLS endpoints during bootstrap and inter-node communication.
+	// When non-nil, the config is validated at startup via Trust.Validate().
+	// If nil, no trust resolver is configured and outbound connections use the
+	// default OS trust store.
+	Trust *xkmsresolver.Config `mapstructure:"trust" json:"trust,omitempty" yaml:"trust,omitempty"`
 }
 
 // QRDBConfig configures the qrdb SDK client transport.
@@ -539,8 +547,9 @@ type AuthConfig struct {
 	// BootstrapAdminPIVCertPath is the path to a PEM-encoded X.509 client
 	// certificate that, when present at startup, is bound to the bootstrap
 	// admin user as its PIV factor. The SHA-256 thumbprint of the cert's
-	// DER bytes is computed and stored on user.PIVCertThumbprint, and the
-	// user is transitioned to active. After binding, a TLS client presenting
+	// DER bytes is computed and stored as a qrdb-canonical PIV-attested cert
+	// binding on the user (user.CertBindings), and the user is transitioned to
+	// active. After binding, a TLS client presenting
 	// the matching key can authenticate via POST /api/v1/auth/login/piv.
 	//
 	// Primary use case: integration test clusters that need a deterministic
@@ -1152,22 +1161,12 @@ type SecurityConfig struct {
 	RequireMTLS bool `mapstructure:"require_mtls"`
 
 	FIPSMode            bool   `mapstructure:"fips_mode"`
-	EncryptionEnabled   bool   `mapstructure:"encryption_enabled"`
 	EncryptionAlgorithm string `mapstructure:"encryption_algorithm"`
 
 	// SealEnabled enables seal/unseal functionality for protecting
 	// encryption keys at rest. When enabled, the server starts in a
 	// sealed state and requires manual unsealing before operations.
 	SealEnabled bool `mapstructure:"seal_enabled"`
-
-	// KeyStorageBackend references a named backend from ObjectStorage.Backends
-	// for storing encryption keys. If empty, defaults to in-memory storage.
-	KeyStorageBackend string `mapstructure:"key_storage_backend"`
-
-	// EncryptionKeyFile is DEPRECATED but maintained for backward compatibility.
-	// If KeyStorageBackend is empty and EncryptionKeyFile is set,
-	// a local file backend will be created automatically.
-	EncryptionKeyFile string `mapstructure:"encryption_key_file"`
 
 	// RequireAuthz enables the default-deny scope -> RBAC authorization gate on
 	// the network transports (REST, gRPC, QUIC, MCP, Unix). When true,
@@ -1179,6 +1178,17 @@ type SecurityConfig struct {
 	// must leave this true (the default); only InsecureDevMode configs set it
 	// false.
 	RequireAuthz bool `mapstructure:"require_authz"`
+
+	// InsecureDevMode explicitly acknowledges running with authorization
+	// disabled on network transports. It is the operator's signed consent to a
+	// fail-open posture: when RequireAuthz is false AND at least one network
+	// transport (REST, gRPC, QUIC, MCP) is enabled, configuration validation
+	// REFUSES to start the server unless this flag is true. This guards against
+	// a production config silently reaching fail-open, a violation of
+	// FedRAMP/HIPAA/PCI/IL4-5 controls. Intended ONLY for local development;
+	// it must NEVER be set in production. The Unix domain socket is not a
+	// network transport and does not trigger the gate.
+	InsecureDevMode bool `mapstructure:"insecure_dev_mode"`
 
 	// EmbeddedSystemPrincipal is the named system identity used for in-process
 	// calls when the server runs in embedded mode. It must be non-empty when
@@ -1229,7 +1239,7 @@ type AuthorizationConfig struct {
 	// Provider specifies the authorization provider to use.
 	// Options: "rbac" (default), "abac", "hybrid"
 	// - rbac: Role-based access control (qrdb-owned role model)
-	// - abac: Attribute-based access control using PolicyEngine (requires iam build tag)
+	// - abac: Attribute-based access control using PolicyEngine
 	// - hybrid: ABAC-first with RBAC fallback for gradual migration
 	Provider string `mapstructure:"provider"`
 
@@ -1237,7 +1247,7 @@ type AuthorizationConfig struct {
 	RBAC RBACAuthzConfig `mapstructure:"rbac"`
 
 	// ABAC contains attribute-based access control configuration.
-	// Only used when Provider is "abac" or "hybrid" and iam build tag is set.
+	// Only used when Provider is "abac" or "hybrid".
 	ABAC ABACAuthzConfig `mapstructure:"abac"`
 
 	// Audit contains authorization audit logging configuration.
@@ -1263,7 +1273,6 @@ type RBACAuthzConfig struct {
 // ABACAuthzConfig contains ABAC-specific authorization settings.
 type ABACAuthzConfig struct {
 	// Enabled enables ABAC authorization.
-	// Requires iam build tag.
 	// Default: false
 	Enabled bool `mapstructure:"enabled"`
 

@@ -162,7 +162,7 @@ func (s *XKMSServer) GenerateKey(ctx context.Context, req *xkmssdk.ProtoGenerate
 		}
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &xkmssdk.RSAAttributes{KeySize: keySize}
-		privKey, err = ks.GenerateRSA(attrs)
+		privKey, err = ks.GenerateRSA(ctx, attrs)
 
 	case xkmssdk.AlgorithmECDSA.Equals(algorithm):
 		curve := req.Curve
@@ -175,11 +175,11 @@ func (s *XKMSServer) GenerateKey(ctx context.Context, req *xkmssdk.ProtoGenerate
 			return nil, status.Error(codes.InvalidArgument, "invalid curve")
 		}
 		attrs.ECCAttributes = &xkmssdk.ECCAttributes{Curve: parsedCurve}
-		privKey, err = ks.GenerateECDSA(attrs)
+		privKey, err = ks.GenerateECDSA(ctx, attrs)
 
 	case xkmssdk.AlgorithmEd25519.Equals(algorithm):
 		attrs.KeyAlgorithm = x509.Ed25519
-		privKey, err = ks.GenerateEd25519(attrs)
+		privKey, err = ks.GenerateEd25519(ctx, attrs)
 
 	case xkmssdk.AlgorithmSymmetric.Equals(algorithm):
 		symBackend, ok := ks.KeyProvider().(xkmssdk.SymmetricKeyProvider)
@@ -202,7 +202,7 @@ func (s *XKMSServer) GenerateKey(ctx context.Context, req *xkmssdk.ProtoGenerate
 		}
 		attrs.SymmetricAlgorithm = xkmssdk.SymmetricAlgorithm(symAlgorithm)
 		attrs.KeyType = xkmssdk.KeyTypeSecret
-		_, err = symBackend.GenerateSymmetricKey(attrs)
+		_, err = symBackend.GenerateSymmetricKey(ctx, attrs)
 		if err != nil {
 			return nil, status.Error(codes.Internal, "failed to generate symmetric key")
 		}
@@ -243,7 +243,7 @@ func (s *XKMSServer) ListKeys(ctx context.Context, req *xkmssdk.ProtoListKeysReq
 		return nil, status.Error(codes.NotFound, "backend not found")
 	}
 
-	allAttrs, err := ks.ListKeys()
+	allAttrs, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to list keys")
 	}
@@ -323,7 +323,7 @@ func (s *XKMSServer) GetKey(ctx context.Context, req *xkmssdk.ProtoGetKeyRequest
 
 	var publicKeyPem string
 	if attrs.KeyType == xkmssdk.KeyTypeSigning {
-		signer, sigErr := ks.Signer(attrs)
+		signer, sigErr := ks.Signer(ctx, attrs)
 		if sigErr == nil {
 			publicKeyPem = xkmsExtractPublicKeyPEM(signer)
 		}
@@ -354,7 +354,7 @@ func (s *XKMSServer) DeleteKey(ctx context.Context, req *xkmssdk.ProtoDeleteKeyR
 		return nil, status.Error(codes.NotFound, "key not found")
 	}
 
-	if err := ks.DeleteKey(attrs); err != nil {
+	if err := ks.DeleteKey(ctx, attrs); err != nil {
 		return nil, status.Error(codes.Internal, "failed to delete key")
 	}
 
@@ -383,7 +383,7 @@ func (s *XKMSServer) RotateKey(ctx context.Context, req *xkmssdk.ProtoRotateKeyR
 		return nil, status.Error(codes.NotFound, "key not found")
 	}
 
-	newKey, rotErr := ks.RotateKey(attrs)
+	newKey, rotErr := ks.RotateKey(ctx, attrs)
 	if rotErr != nil {
 		return nil, status.Error(codes.Internal, "failed to rotate key")
 	}
@@ -416,7 +416,7 @@ func (s *XKMSServer) Sign(ctx context.Context, req *xkmssdk.ProtoSignRequest) (*
 		return nil, status.Error(codes.NotFound, "key not found")
 	}
 
-	signer, sigErr := ks.Signer(attrs)
+	signer, sigErr := ks.Signer(ctx, attrs)
 	if sigErr != nil {
 		return nil, status.Error(codes.Internal, "failed to get signer")
 	}
@@ -468,7 +468,7 @@ func (s *XKMSServer) Verify(ctx context.Context, req *xkmssdk.ProtoVerifyRequest
 		return nil, status.Error(codes.NotFound, "key not found")
 	}
 
-	privKey, getErr := ks.GetKey(attrs)
+	privKey, getErr := ks.GetKey(ctx, attrs)
 	if getErr != nil {
 		return nil, status.Error(codes.Internal, "failed to get key")
 	}
@@ -548,7 +548,7 @@ func (s *XKMSServer) Encrypt(ctx context.Context, req *xkmssdk.ProtoEncryptReque
 		return nil, status.Error(codes.NotFound, "key not found")
 	}
 
-	encrypter, encErr := symBackend.SymmetricEncrypter(attrs)
+	encrypter, encErr := symBackend.SymmetricEncrypter(ctx, attrs)
 	if encErr != nil {
 		return nil, status.Error(codes.Internal, "failed to get symmetric encrypter")
 	}
@@ -599,7 +599,7 @@ func (s *XKMSServer) Decrypt(ctx context.Context, req *xkmssdk.ProtoDecryptReque
 			return nil, status.Error(codes.Unimplemented, "backend does not support symmetric decryption")
 		}
 
-		encrypter, encErr := symBackend.SymmetricEncrypter(attrs)
+		encrypter, encErr := symBackend.SymmetricEncrypter(ctx, attrs)
 		if encErr != nil {
 			return nil, status.Error(codes.Internal, "failed to get symmetric encrypter")
 		}
@@ -619,7 +619,7 @@ func (s *XKMSServer) Decrypt(ctx context.Context, req *xkmssdk.ProtoDecryptReque
 			return nil, status.Error(codes.Internal, "failed to decrypt")
 		}
 	} else {
-		decrypter, decErr := ks.Decrypter(attrs)
+		decrypter, decErr := ks.Decrypter(ctx, attrs)
 		if decErr != nil {
 			return nil, status.Error(codes.Internal, "failed to get decrypter")
 		}
@@ -662,7 +662,7 @@ func (s *XKMSServer) SaveCert(ctx context.Context, req *xkmssdk.ProtoSaveCertReq
 		return nil, status.Error(codes.InvalidArgument, "failed to parse certificate")
 	}
 
-	if err := ks.SaveCert(req.KeyId, cert); err != nil {
+	if err := ks.SaveCert(ctx, req.KeyId, cert); err != nil {
 		return nil, status.Error(codes.Internal, "failed to save certificate")
 	}
 
@@ -688,7 +688,7 @@ func (s *XKMSServer) GetCert(ctx context.Context, req *xkmssdk.ProtoGetCertReque
 		return nil, status.Error(codes.Internal, "failed to get backend")
 	}
 
-	cert, getErr := ks.GetCert(req.KeyId)
+	cert, getErr := ks.GetCert(ctx, req.KeyId)
 	if getErr != nil {
 		return nil, status.Error(codes.NotFound, "certificate not found")
 	}
@@ -717,7 +717,7 @@ func (s *XKMSServer) DeleteCert(ctx context.Context, req *xkmssdk.ProtoDeleteCer
 		return nil, status.Error(codes.Internal, "failed to get backend")
 	}
 
-	if err := ks.DeleteCert(req.KeyId); err != nil {
+	if err := ks.DeleteCert(ctx, req.KeyId); err != nil {
 		return nil, status.Error(codes.Internal, "failed to delete certificate")
 	}
 
@@ -739,7 +739,7 @@ func (s *XKMSServer) ListCerts(ctx context.Context, req *xkmssdk.ProtoListCertsR
 		return nil, status.Error(codes.Internal, "failed to get backend")
 	}
 
-	keyIDs, listErr := ks.ListCerts()
+	keyIDs, listErr := ks.ListCerts(ctx)
 	if listErr != nil {
 		return nil, status.Error(codes.Internal, "failed to list certificates")
 	}
@@ -942,7 +942,7 @@ func xkmsExtractPublicKeyPEM(key interface{}) string {
 
 // xkmsFindKeyAttributes searches a backend for a key by its CN (key ID).
 func xkmsFindKeyAttributes(ks xkmssdk.ServiceBackend, keyID string) (*xkmssdk.KeyAttributes, error) {
-	attrs, err := ks.ListKeys()
+	attrs, err := ks.ListKeys(context.Background())
 	if err != nil {
 		return nil, err
 	}

@@ -42,6 +42,8 @@ const (
 	ModeNoise  = xkmsbootstrap.ModeNoise
 	ModeSPKI   = xkmsbootstrap.ModeSPKI
 	ModeDirect = xkmsbootstrap.ModeDirect
+	// ModeTOFU selects trust-on-first-use bootstrap. Requires TOFUConfig.PinStore.
+	ModeTOFU = xkmsbootstrap.ModeTOFU
 )
 
 // DefaultNoisePort is the canonical Noise bootstrap port.
@@ -58,6 +60,21 @@ type (
 	SPKIConfig   = xkmsbootstrap.SPKIConfig
 	DirectConfig = xkmsbootstrap.DirectConfig
 	CABundle     = xkmsbootstrap.CABundle
+
+	// TOFUConfig configures the trust-on-first-use bootstrap mode.
+	// PinStore is required; use NewStoragePinStore to wrap any storage.Backend.
+	TOFUConfig = xkmsbootstrap.TOFUConfig
+
+	// StoragePinStore implements PinStore over a storage.Backend.
+	// Use NewStoragePinStore to construct one.
+	StoragePinStore = xkmsbootstrap.StoragePinStore
+
+	// Pin is the TOFU pin record type re-exported from go-truststrap.
+	Pin = xkmsbootstrap.Pin
+
+	// PinStore is the TOFU pin persistence interface re-exported from go-truststrap.
+	// Implement it or use NewStoragePinStore to get a storage-backed implementation.
+	PinStore = xkmsbootstrap.PinStore
 )
 
 // =============================================================================
@@ -69,6 +86,7 @@ var (
 	ErrModeNotConfigured = xkmsbootstrap.ErrModeNotConfigured
 	ErrServerURLRequired = xkmsbootstrap.ErrServerURLRequired
 	ErrFetch             = xkmsbootstrap.ErrFetch
+	ErrHostnameRequired  = xkmsbootstrap.ErrHostnameRequired
 )
 
 // FetchError is re-exported from xkms.
@@ -81,6 +99,20 @@ type FetchError = xkmsbootstrap.FetchError
 var (
 	Fetch           = xkmsbootstrap.Fetch
 	DeriveNoiseAddr = xkmsbootstrap.DeriveNoiseAddr
+
+	// NewDANETLSConfig builds a client *tls.Config whose sole certificate
+	// verification is DANE/TLSA validation per RFC 7671 (custom-verifier
+	// pattern).
+	NewDANETLSConfig = xkmsbootstrap.NewDANETLSConfig
+
+	// NewSPKIPinTLSConfig builds a client *tls.Config whose sole
+	// certificate verification is a SHA-256 SubjectPublicKeyInfo pin match
+	// (custom-verifier pattern).
+	NewSPKIPinTLSConfig = xkmsbootstrap.NewSPKIPinTLSConfig
+
+	// NewStoragePinStore creates a StoragePinStore backed by the given
+	// storage.Backend. Returns an error when backend is nil.
+	NewStoragePinStore = xkmsbootstrap.NewStoragePinStore
 )
 
 // =============================================================================

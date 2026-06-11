@@ -1,4 +1,4 @@
-//go:build iam && !integration
+//go:build !integration
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

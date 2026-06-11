@@ -36,6 +36,13 @@ import "strings"
 // Surfaces the qrdb permission registry still does NOT define a resource family
 // for — KMS, crypto, agent, embedding, RAG — remain intentionally absent and
 // denied under RequireAuthz.
+//
+// Barrier tools (qrdb_barrier_*) are mapped EXACTLY, one entry per tool,
+// mirroring the per-operation granularity of the gRPC mapping in
+// pkg/api/grpc/authz_mapping.go (lines 259–276). The former "qrdb_barrier"
+// prefix catch-all has been removed: any future qrdb_barrier_* tool that lacks
+// an explicit entry is default-denied, not silently admitted at a read
+// permission.
 
 // qrdbToolResource is a qrdb-canonical (resource, action) tuple.
 type qrdbToolResource struct {
@@ -102,6 +109,24 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"qrdb_role_delete":     {"roles", "delete"},
 	"qrdb_role_list":       {"roles", "list"},
 	"qrdb_role_assign":     {"roles", "assign"},
+
+	// Barrier (qrdb mirror) — exact per-operation mapping, mirroring gRPC
+	// authz_mapping.go lines 259-276. Each tool gets its own minimum-privilege
+	// permission; the former "qrdb_barrier" prefix catch-all is gone so an
+	// unmapped future barrier tool is default-denied.
+	"qrdb_barrier_status":               {"tenant_barrier", "status"},
+	"qrdb_barrier_initialize":           {"tenant_barrier", "init"},
+	"qrdb_barrier_unseal":               {"tenant_barrier", "unseal"},
+	"qrdb_barrier_seal":                 {"tenant_barrier", "seal"},
+	"qrdb_barrier_shamir_initialize":    {"seal", "initialize_shamir"},
+	"qrdb_barrier_shamir_unseal_share":  {"barrier", "unseal-share"},
+	"qrdb_barrier_shamir_unseal_shares": {"barrier", "unseal-share"},
+	"qrdb_barrier_rekey":                {"seal", "rekey"},
+	"qrdb_barrier_recovery_generate":    {"seal", "generate_recovery"},
+	"qrdb_barrier_recovery_recover":     {"seal", "recover_with_keys"},
+	"qrdb_barrier_recovery_delete":      {"seal", "generate_recovery"},
+	"qrdb_barrier_recovery_status":      {"seal", "status"},
+	"qrdb_barrier_root_token":           {"seal", "bootstrap"},
 
 	// Cache (admin capabilities)
 	"quicbaas_cache_stats": {"admin", "status"},
@@ -271,12 +296,6 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"qrdb_credential_strategy": {"credentials", "strategy"},
 	"qrdb_credential_delete":   {"credentials", "delete"},
 	"qrdb_credential":          {"credentials", "store"},
-
-	// Barrier (qrdb mirror) -> tenant_barrier
-	"qrdb_barrier_status":          {"tenant_barrier", "status"},
-	"qrdb_barrier_recovery_status": {"seal", "status"},
-	"qrdb_barrier_root_token":      {"seal", "bootstrap"},
-	"qrdb_barrier":                 {"tenant_barrier", "status"},
 
 	// Per-tenant barrier -> tenant_barrier
 	"qrdb_tenant_barrier_init":         {"tenant_barrier", "init"},

@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag && iam
+//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag
 
 // lifecycle_seam_errors_tt_test.go ports the lifecycle error-propagation tests
 // from lifecycle_seam_errors_local_test.go to the full ("iam") tag set. The

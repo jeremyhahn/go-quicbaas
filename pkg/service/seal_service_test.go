@@ -96,14 +96,13 @@ func (m *mockSealManager) Initialize(ctx context.Context, shares, threshold int)
 	if m.initializeFn != nil {
 		return m.initializeFn(ctx, shares, threshold)
 	}
-	// Default behavior
+	// Default behavior. Share material is never returned (qrdb
+	// share-free contract).
 	m.isInitialized = true
 	return &SealInitResponse{
-		Shares:       generateMockShares(shares),
-		RecoveryKeys: [][]byte{},
-		RootToken:    "root-token-12345",
-		Version:      1,
-		Timestamp:    time.Now(),
+		RootToken: "root-token-12345",
+		Version:   1,
+		Timestamp: time.Now(),
 	}, nil
 }
 
@@ -133,9 +132,9 @@ func (m *mockSealManager) Rekey(ctx context.Context, shares, threshold int) (int
 	if m.rekeyFn != nil {
 		return m.rekeyFn(ctx, shares, threshold)
 	}
-	// Default behavior
+	// Default behavior. New share material is never returned (qrdb
+	// share-free contract).
 	return &RekeyResponse{
-		Shares:    generateMockShares(shares),
 		Version:   2,
 		Timestamp: time.Now(),
 	}, nil
@@ -269,7 +268,6 @@ func TestSealService_Initialize_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-	assert.Len(t, resp.Shares, 5)
 	assert.NotEmpty(t, resp.RootToken)
 	assert.Equal(t, uint64(1), resp.Version)
 }
@@ -277,12 +275,11 @@ func TestSealService_Initialize_Success(t *testing.T) {
 func TestSealService_Initialize_WithRecoveryKeys(t *testing.T) {
 	mockManager := newMockSealManager()
 	mockManager.initializeFn = func(ctx context.Context, shares, threshold int) (interface{}, error) {
+		// Share material is never returned (qrdb share-free contract).
 		return &SealInitResponse{
-			Shares:       make([][]byte, shares),
-			RecoveryKeys: make([][]byte, 3),
-			RootToken:    "root-token-12345",
-			Version:      1,
-			Timestamp:    time.Now(),
+			RootToken: "root-token-12345",
+			Version:   1,
+			Timestamp: time.Now(),
 		}, nil
 	}
 	logger := newMockLogger()
@@ -300,8 +297,8 @@ func TestSealService_Initialize_WithRecoveryKeys(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-	assert.Len(t, resp.Shares, 5)
-	assert.Len(t, resp.RecoveryKeys, 3)
+	assert.NotEmpty(t, resp.RootToken)
+	assert.Equal(t, uint64(1), resp.Version)
 }
 
 func TestSealService_Initialize_NilRequest(t *testing.T) {
@@ -685,7 +682,6 @@ func TestSealService_Rekey_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-	assert.Len(t, resp.Shares, 4)
 	assert.Equal(t, uint64(2), resp.Version)
 }
 
@@ -838,7 +834,7 @@ func TestSealService_GenerateRecoveryKey_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-	assert.Len(t, resp.RecoveryKeys, 3)
+	assert.False(t, resp.Timestamp.IsZero())
 }
 
 func TestSealService_GenerateRecoveryKey_NilRequest(t *testing.T) {
@@ -1309,13 +1305,14 @@ func TestSealService_FullLifecycle(t *testing.T) {
 	}
 	initResp, err := svc.Initialize(context.Background(), initReq)
 	require.NoError(t, err)
-	assert.Len(t, initResp.Shares, 5)
 	assert.NotEmpty(t, initResp.RootToken)
 
-	// 3. Provide unseal shares
+	// 3. Provide unseal shares. Init never returns share material (qrdb
+	// share-free contract); officers hold their claimed shares out-of-band.
+	claimedShares := generateMockShares(5)
 	for i := 0; i < 3; i++ {
 		unsealReq := &UnsealRequest{
-			Share: initResp.Shares[i],
+			Share: claimedShares[i],
 		}
 		unsealResp, err := svc.Unseal(context.Background(), unsealReq)
 		require.NoError(t, err)
@@ -1349,6 +1346,5 @@ func TestSealService_RekeyScenario(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, rekeyResp)
-	assert.Len(t, rekeyResp.Shares, 4)
 	assert.Equal(t, uint64(2), rekeyResp.Version)
 }

@@ -7,7 +7,6 @@ QuicBaaS uses Go build tags for modular compilation. This allows you to customiz
 | Tag | Default | Description |
 |-----|---------|-------------|
 | `raft` | ON | Distributed consensus and clustering |
-| `iam` | ON | Identity and Access Management (ABAC/multi-tenant) |
 | `timeseries` | ON | Time series metrics storage |
 | `vector` | ON | Vector database (HNSW indexing) |
 | `rag` | ON | Retrieval Augmented Generation (requires vector) |
@@ -59,26 +58,16 @@ QuicBaaS uses Go build tags for modular compilation. This allows you to customiz
 | `integration` | Integration tests (run in Docker) |
 | `benchmark` | Performance benchmark tests |
 
+## IAM Is Always Compiled
+
+QuicBaaS is the central identity broker for the stack. The IAM subsystem
+(ABAC, multi-tenant identity, OIDC/OAuth2, federation, GDPR, audit) is always
+compiled into every binary; there is no `iam` build tag and a no-IAM artifact
+is not supported. The IAM CLI surface (`quicbaas iam tenant|user|group|role|
+app|policy|mfa|session|pep|audit|admin|gdpr|provider|identity`) is always
+available.
+
 ## Excluded Commands by Tag
-
-### Without `iam` tag (~96 commands excluded)
-
-The IAM subsystem provides 96 CLI commands across 12 subcommand groups:
-
-- `quicbaas iam tenant` - Tenant management
-- `quicbaas iam user` - User management
-- `quicbaas iam group` - Group management
-- `quicbaas iam role` - Role management
-- `quicbaas iam app` - OAuth application management
-- `quicbaas iam policy` - ABAC policy management
-- `quicbaas iam mfa` - Multi-factor authentication
-- `quicbaas iam session` - Session management
-- `quicbaas iam pep` - Policy Enforcement Point
-- `quicbaas iam audit` - Audit logging
-- `quicbaas iam admin` - Delegated administration
-- `quicbaas iam gdpr` - GDPR compliance
-- `quicbaas iam provider` - Federation providers
-- `quicbaas iam identity` - Federated identities
 
 ### Without `timeseries` tag (~7 commands excluded)
 
@@ -99,7 +88,6 @@ The IAM subsystem provides 96 CLI commands across 12 subcommand groups:
 make build
 
 # Build without specific features
-make build WITH_IAM=0              # Exclude IAM
 make build WITH_TIMESERIES=0       # Exclude time series
 make build WITH_VECTOR=0 WITH_RAG=0  # Exclude vector/RAG
 
@@ -118,37 +106,34 @@ make build-fips
 ### Using go build directly
 
 ```bash
-# Full-featured build
-go build -tags "raft iam timeseries vector rag rest quic mcp codec_json" ./cmd/quicbaas
-
-# Minimal core (KV + gRPC only)
-go build ./cmd/quicbaas
-
-# Without IAM
+# Full-featured build (IAM is always compiled)
 go build -tags "raft timeseries vector rag rest quic mcp codec_json" ./cmd/quicbaas
 
+# Minimal core (KV + gRPC only; IAM still compiled)
+go build ./cmd/quicbaas
+
 # Without time series
-go build -tags "raft iam vector rag rest quic mcp codec_json" ./cmd/quicbaas
+go build -tags "raft vector rag rest quic mcp codec_json" ./cmd/quicbaas
 
 # With cloud KMS backends
-go build -tags "raft iam vector rag rest quic mcp awskms gcpkms azurekv" ./cmd/quicbaas
+go build -tags "raft vector rag rest quic mcp awskms gcpkms azurekv" ./cmd/quicbaas
 
 # With FIPS mode
-GOFIPS140=latest go build -tags "fips raft iam rest quic mcp codec_json" ./cmd/quicbaas
+GOFIPS140=latest go build -tags "fips raft rest quic mcp codec_json" ./cmd/quicbaas
 ```
 
 ## Build Profiles Matrix
 
-| Profile | raft | iam | ts | vector | rag | rest | quic | mcp | Cloud KMS |
-|---------|------|-----|----|--------|-----|------|------|-----|-----------|
-| `minimal` | - | - | - | - | - | - | - | - | - |
-| `embedded` | - | Y | - | - | - | - | - | - | - |
-| `standard` | Y | Y | Y | - | - | Y | Y | - | - |
-| `cluster` | Y | Y | Y | Y | Y | Y | Y | Y | - |
-| `enterprise` | Y | Y | Y | Y | Y | Y | Y | Y | Y |
-| `full` | Y | Y | Y | Y | Y | Y | Y | Y | Y + HSM |
+| Profile | raft | ts | vector | rag | rest | quic | mcp | Cloud KMS |
+|---------|------|----|--------|-----|------|------|-----|-----------|
+| `minimal` | - | - | - | - | - | - | - | - |
+| `embedded` | - | - | - | - | - | - | - | - |
+| `standard` | Y | Y | - | - | Y | Y | - | - |
+| `cluster` | Y | Y | Y | Y | Y | Y | Y | - |
+| `enterprise` | Y | Y | Y | Y | Y | Y | Y | Y |
+| `full` | Y | Y | Y | Y | Y | Y | Y | Y + HSM |
 
-Legend: Y = included, - = excluded, ts = timeseries
+Legend: Y = included, - = excluded, ts = timeseries. IAM is always compiled.
 
 ## Makefile Variables
 
@@ -157,7 +142,6 @@ Control features via environment or make arguments:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WITH_RAFT` | 1 | Include Raft clustering |
-| `WITH_IAM` | 1 | Include IAM/ABAC |
 | `WITH_TIMESERIES` | 1 | Include time series |
 | `WITH_VECTOR` | 1 | Include vector database |
 | `WITH_RAG` | 1 | Include RAG (requires VECTOR) |
@@ -191,31 +175,15 @@ Build tags use conditional compilation with stub files:
 
 ```
 cmd/quicbaas/
-  iam.go                  # //go:build iam
-  iam_stub.go             # //go:build !iam
   timeseries.go           # //go:build timeseries
   timeseries_stub.go      # //go:build !timeseries
   tracing.go              # //go:build otel
   tracing_no_otel.go      # //go:build !otel
 ```
 
-Stub files provide placeholder commands that inform users the feature is disabled:
-
-```go
-//go:build !iam
-
-func newIAMCommand() *cobra.Command {
-    return &cobra.Command{
-        Use:   "iam",
-        Short: "Identity and Access Management (IAM) commands",
-        RunE: func(cmd *cobra.Command, args []string) error {
-            cmd.Println("IAM feature is not enabled in this build.")
-            cmd.Println("Build with: go build -tags=iam ./cmd/quicbaas/...")
-            return nil
-        },
-    }
-}
-```
+Stub files provide placeholder commands that inform users an optional feature
+is disabled. IAM has no stub: it is always compiled, so `quicbaas iam ...` is
+always present.
 
 ## Dependencies
 
@@ -255,7 +223,7 @@ Approximate binary size by profile (Linux amd64):
 Use `-ldflags="-s -w"` for additional ~20% reduction by stripping debug info:
 
 ```bash
-go build -ldflags="-s -w" -tags "raft iam rest" ./cmd/quicbaas
+go build -ldflags="-s -w" -tags "raft rest" ./cmd/quicbaas
 ```
 
 ## Testing with Build Tags
@@ -263,8 +231,8 @@ go build -ldflags="-s -w" -tags "raft iam rest" ./cmd/quicbaas
 Run tests for specific features:
 
 ```bash
-# Run IAM tests only
-go test -tags=iam ./cmd/quicbaas/... -run IAM
+# Run IAM tests only (no special tag needed; IAM is always compiled)
+go test ./pkg/iam/... ./cmd/quicbaas/... -run IAM
 
 # Run timeseries tests
 go test -tags=timeseries ./cmd/quicbaas/... -run TimeSeries

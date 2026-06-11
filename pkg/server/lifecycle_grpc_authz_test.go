@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -40,8 +38,8 @@ import (
 var errGRPCAuthzProviderBoom = errors.New("grpc provider boom")
 
 // newGRPCAuthzTestLogger builds a quiet logger for the gRPC authz wiring tests.
-// It is self-contained under the iam build tag (the rest-tagged buildTestLogger
-// is not visible in a grpc-only build).
+// It is self-contained (the rest-tagged buildTestLogger is not visible in a
+// grpc-only build).
 func newGRPCAuthzTestLogger(t *testing.T) *logger.Logger {
 	t.Helper()
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
@@ -113,6 +111,22 @@ func TestGRPCAuthorizationInterceptors_NilProviderSkips(t *testing.T) {
 	unary, stream := s.grpcAuthorizationInterceptors()
 	assert.Nil(t, unary)
 	assert.Nil(t, stream)
+}
+
+// TestGRPCAuthorizationInterceptors_Installed asserts that with RequireAuthz=true
+// and a live OIDC provider the builder constructs the platform-token validator
+// and returns NON-nil unary + stream interceptors (the enforcement gate the gRPC
+// and Unix transports share).
+func TestGRPCAuthorizationInterceptors_Installed(t *testing.T) {
+	provider := newTestOIDCProvider(t)
+	s := &Server{
+		logger:          newGRPCAuthzTestLogger(t),
+		config:          &config.Config{Security: config.SecurityConfig{RequireAuthz: true}},
+		quicBaaSService: &grpcOIDCGetterService{provider: provider},
+	}
+	unary, stream := s.grpcAuthorizationInterceptors()
+	assert.NotNil(t, unary, "unary interceptor installed with a live provider")
+	assert.NotNil(t, stream, "stream interceptor installed with a live provider")
 }
 
 // TestBuildPlatformValidator_NotAGetter asserts buildPlatformValidator fails

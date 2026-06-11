@@ -46,13 +46,13 @@ import (
 
 // PublicKey returns the public key for the given key ID.
 // The key ID can be in format "backend:keyname" or just "keyname".
-func PublicKey(kid string) (crypto.PublicKey, error) {
+func PublicKey(ctx context.Context, kid string) (crypto.PublicKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
 	// Get the signer, which has access to the public key
-	signer, err := SignerByID(kid)
+	signer, err := SignerByID(ctx, kid)
 	if err != nil {
 		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
@@ -248,12 +248,12 @@ func ParseCertificateID(kid string) (*xkmssdk.KeyAttributes, error) {
 // Uses BackendFor(attrs) to resolve the correct backend based on StoreType.
 //
 // This is the preferred method for key generation in Go code.
-func GenerateKey(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func GenerateKey(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	key, err := xkmssdk.ServiceGenerateKey(attrs)
+	key, err := xkmssdk.ServiceGenerateKey(ctx, attrs)
 	if err != nil {
 		return nil, &api.XKMSKeyGenerationError{Cause: err}
 	}
@@ -262,12 +262,12 @@ func GenerateKey(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 }
 
 // GenerateKeyWithBackend generates a new key on a specific backend.
-func GenerateKeyWithBackend(backendName string, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func GenerateKeyWithBackend(ctx context.Context, backendName string, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	key, err := xkmssdk.ServiceGenerateKeyWithBackend(backendName, attrs)
+	key, err := xkmssdk.ServiceGenerateKeyWithBackend(ctx, backendName, attrs)
 	if err != nil {
 		return nil, &api.XKMSKeyGenerationError{Cause: err}
 	}
@@ -283,12 +283,12 @@ func GenerateKeyWithBackend(backendName string, attrs *xkmssdk.KeyAttributes) (c
 // Uses BackendFor(attrs) to resolve the correct backend based on StoreType.
 //
 // This is the preferred method for key retrieval in Go code.
-func Key(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func Key(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	key, err := xkmssdk.ServiceKey(attrs)
+	key, err := xkmssdk.ServiceKey(ctx, attrs)
 	if err != nil {
 		return nil, &api.XKMSKeyNotFoundError{Cause: err}
 	}
@@ -300,12 +300,12 @@ func Key(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname".
 //
 // Use this for config-driven key lookups.
-func KeyByID(kid string) (crypto.PrivateKey, error) {
+func KeyByID(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	key, err := xkmssdk.ServiceKeyByID(kid)
+	key, err := xkmssdk.ServiceKeyByID(ctx, kid)
 	if err != nil {
 		return nil, &api.XKMSKeyNotFoundError{Cause: err}
 	}
@@ -314,39 +314,39 @@ func KeyByID(kid string) (crypto.PrivateKey, error) {
 }
 
 // DeleteKey deletes a key by its attributes.
-func DeleteKey(attrs *xkmssdk.KeyAttributes) error {
+func DeleteKey(ctx context.Context, attrs *xkmssdk.KeyAttributes) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	return xkmssdk.ServiceDeleteKey(attrs)
+	return xkmssdk.ServiceDeleteKey(ctx, attrs)
 }
 
 // DeleteKeyByID deletes a key by its key ID (kid).
-func DeleteKeyByID(kid string) error {
+func DeleteKeyByID(ctx context.Context, kid string) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	return xkmssdk.ServiceDeleteKeyByID(kid)
+	return xkmssdk.ServiceDeleteKeyByID(ctx, kid)
 }
 
 // RotateKey rotates (replaces) an existing key with a new one.
-func RotateKey(kid string) (crypto.PrivateKey, error) {
+func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	return xkmssdk.ServiceRotateKey(kid)
+	return xkmssdk.ServiceRotateKey(ctx, kid)
 }
 
 // ListKeys lists all keys across all backends or from a specific backend.
-func ListKeys(backendName ...string) ([]*xkmssdk.KeyAttributes, error) {
+func ListKeys(ctx context.Context, backendName ...string) ([]*xkmssdk.KeyAttributes, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	return xkmssdk.ServiceListKeys(backendName...)
+	return xkmssdk.ServiceListKeys(ctx, backendName...)
 }
 
 // -----------------------------------------------------------------------------
@@ -355,41 +355,41 @@ func ListKeys(backendName ...string) ([]*xkmssdk.KeyAttributes, error) {
 
 // Signer returns a crypto.Signer for the specified key attributes.
 // This is the primary method - use SignerByID for string-based lookups.
-func Signer(attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
+func Signer(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	return xkmssdk.ServiceSigner(attrs)
+	return xkmssdk.ServiceSigner(ctx, attrs)
 }
 
 // SignerByID returns a crypto.Signer for the specified key ID (kid).
 // Format: "backend:type:algo:keyname" with optional segments, or just "keyname".
-func SignerByID(kid string) (crypto.Signer, error) {
+func SignerByID(ctx context.Context, kid string) (crypto.Signer, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	return xkmssdk.ServiceSignerByID(kid)
+	return xkmssdk.ServiceSignerByID(ctx, kid)
 }
 
 // Decrypter returns a crypto.Decrypter for the specified key attributes.
 // This is the primary method - use DecrypterByID for string-based lookups.
-func Decrypter(attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
+func Decrypter(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	return xkmssdk.ServiceDecrypter(attrs)
+	return xkmssdk.ServiceDecrypter(ctx, attrs)
 }
 
 // DecrypterByID returns a crypto.Decrypter for the specified key ID (kid).
-func DecrypterByID(kid string) (crypto.Decrypter, error) {
+func DecrypterByID(ctx context.Context, kid string) (crypto.Decrypter, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	return xkmssdk.ServiceDecrypterByID(kid)
+	return xkmssdk.ServiceDecrypterByID(ctx, kid)
 }
 
 // -----------------------------------------------------------------------------
@@ -401,12 +401,12 @@ type SignOptions = xkmssdk.SignOptions
 
 // Sign signs data using the specified key (by kid).
 // The kid format is "backend:type:algo:keyname" with optional segments.
-func Sign(kid string, data []byte, opts *SignOptions) ([]byte, error) {
+func Sign(ctx context.Context, kid string, data []byte, opts *SignOptions) ([]byte, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	sig, err := xkmssdk.ServiceSign(kid, data, opts)
+	sig, err := xkmssdk.ServiceSign(ctx, kid, data, opts)
 	if err != nil {
 		return nil, &api.SigningError{Cause: err}
 	}
@@ -415,12 +415,12 @@ func Sign(kid string, data []byte, opts *SignOptions) ([]byte, error) {
 }
 
 // Verify verifies a signature against data using the specified key (by kid).
-func Verify(kid string, data, signature []byte, opts *xkmssdk.VerifyOpts) error {
+func Verify(ctx context.Context, kid string, data, signature []byte, opts *xkmssdk.VerifyOpts) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	err := xkmssdk.ServiceVerify(kid, data, signature, opts)
+	err := xkmssdk.ServiceVerify(ctx, kid, data, signature, opts)
 	if err != nil {
 		return &api.VerificationError{Cause: err}
 	}
@@ -434,12 +434,12 @@ func Verify(kid string, data, signature []byte, opts *xkmssdk.VerifyOpts) error 
 
 // Encrypt encrypts data using a symmetric key by kid.
 // The kid supports format: "backend:key-id" or just "key-id" (uses default backend).
-func Encrypt(kid string, data []byte, opts *xkmssdk.EncryptOptions) (*xkmssdk.EncryptedData, error) {
+func Encrypt(ctx context.Context, kid string, data []byte, opts *xkmssdk.EncryptOptions) (*xkmssdk.EncryptedData, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	encrypted, err := xkmssdk.ServiceEncrypt(kid, data, opts)
+	encrypted, err := xkmssdk.ServiceEncrypt(ctx, kid, data, opts)
 	if err != nil {
 		return nil, &api.XKMSEncryptionError{Cause: err}
 	}
@@ -448,7 +448,7 @@ func Encrypt(kid string, data []byte, opts *xkmssdk.EncryptOptions) (*xkmssdk.En
 }
 
 // Decrypt decrypts data using a symmetric key by kid.
-func Decrypt(kid string, data *xkmssdk.EncryptedData, opts *xkmssdk.DecryptOptions) ([]byte, error) {
+func Decrypt(ctx context.Context, kid string, data *xkmssdk.EncryptedData, opts *xkmssdk.DecryptOptions) ([]byte, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
@@ -457,7 +457,7 @@ func Decrypt(kid string, data *xkmssdk.EncryptedData, opts *xkmssdk.DecryptOptio
 		return nil, &api.XKMSDecryptionError{Detail: "encrypted data cannot be nil"}
 	}
 
-	plaintext, err := xkmssdk.ServiceDecrypt(kid, data, opts)
+	plaintext, err := xkmssdk.ServiceDecrypt(ctx, kid, data, opts)
 	if err != nil {
 		return nil, &api.XKMSDecryptionError{Cause: err}
 	}
@@ -470,12 +470,12 @@ func Decrypt(kid string, data *xkmssdk.EncryptedData, opts *xkmssdk.DecryptOptio
 // -----------------------------------------------------------------------------
 
 // GenerateSymmetricKey generates a new symmetric key.
-func GenerateSymmetricKey(backendName string, attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricKey, error) {
+func GenerateSymmetricKey(ctx context.Context, backendName string, attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	key, err := xkmssdk.ServiceGenerateSymmetricKey(backendName, attrs)
+	key, err := xkmssdk.ServiceGenerateSymmetricKey(ctx, backendName, attrs)
 	if err != nil {
 		return nil, &api.XKMSKeyGenerationError{Cause: err}
 	}
@@ -485,12 +485,12 @@ func GenerateSymmetricKey(backendName string, attrs *xkmssdk.KeyAttributes) (xkm
 
 // GetSymmetricKey retrieves an existing symmetric key.
 // The keyRef supports format: "backend:key-id" or just "key-id" (uses default backend).
-func GetSymmetricKey(keyRef string) (xkmssdk.SymmetricKey, error) {
+func GetSymmetricKey(ctx context.Context, keyRef string) (xkmssdk.SymmetricKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	key, err := xkmssdk.ServiceGetSymmetricKey(keyRef)
+	key, err := xkmssdk.ServiceGetSymmetricKey(ctx, keyRef)
 	if err != nil {
 		return nil, &api.XKMSKeyNotFoundError{Cause: err}
 	}
@@ -501,7 +501,7 @@ func GetSymmetricKey(keyRef string) (xkmssdk.SymmetricKey, error) {
 // ImportSymmetricKey imports raw symmetric key material into a backend.
 // This function uses the proper import token flow to securely import the key.
 // For production use with HSM backends, use the full ImportKey flow with wrapped material.
-func ImportSymmetricKey(backendName string, attrs *xkmssdk.KeyAttributes, material []byte) error {
+func ImportSymmetricKey(ctx context.Context, backendName string, attrs *xkmssdk.KeyAttributes, material []byte) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
@@ -545,19 +545,19 @@ func ImportSymmetricKey(backendName string, attrs *xkmssdk.KeyAttributes, materi
 
 	// Step 1: Get import parameters (generates RSA wrapping key pair)
 	// Use RSA-OAEP-SHA256 as the default wrapping algorithm
-	importParams, err := importBackend.GetImportParameters(attrs, xkmssdk.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	importParams, err := importBackend.GetImportParameters(ctx, attrs, xkmssdk.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		return &api.KeyImportError{Detail: "failed to get import parameters", Cause: err}
 	}
 
 	// Step 2: Wrap the raw key material using the import parameters
-	wrappedMaterial, err := importBackend.WrapKey(material, importParams)
+	wrappedMaterial, err := importBackend.WrapKey(ctx, material, importParams)
 	if err != nil {
 		return &api.KeyImportError{Detail: "failed to wrap key material", Cause: err}
 	}
 
 	// Step 3: Import the wrapped key (the backend will unwrap it internally)
-	if err := importBackend.ImportKey(attrs, wrappedMaterial); err != nil {
+	if err := importBackend.ImportKey(ctx, attrs, wrappedMaterial); err != nil {
 		return &api.KeyImportError{Cause: err}
 	}
 
@@ -655,12 +655,12 @@ func CanSeal(backendName ...string) bool {
 
 // Certificate retrieves a certificate by key attributes.
 // This is the preferred method for certificate retrieval in Go code.
-func Certificate(attrs *xkmssdk.KeyAttributes) (*x509.Certificate, error) {
+func Certificate(ctx context.Context, attrs *xkmssdk.KeyAttributes) (*x509.Certificate, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	cert, err := xkmssdk.ServiceCertificate(attrs)
+	cert, err := xkmssdk.ServiceCertificate(ctx, attrs)
 	if err != nil {
 		return nil, &api.CertificateOperationError{Cause: err}
 	}
@@ -670,12 +670,12 @@ func Certificate(attrs *xkmssdk.KeyAttributes) (*x509.Certificate, error) {
 
 // CertificateByID retrieves a certificate by key ID (kid).
 // Use this for config-driven certificate lookups.
-func CertificateByID(kid string) (*x509.Certificate, error) {
+func CertificateByID(ctx context.Context, kid string) (*x509.Certificate, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	cert, err := xkmssdk.ServiceCertificateByID(kid)
+	cert, err := xkmssdk.ServiceCertificateByID(ctx, kid)
 	if err != nil {
 		return nil, &api.CertificateOperationError{Cause: err}
 	}
@@ -684,66 +684,66 @@ func CertificateByID(kid string) (*x509.Certificate, error) {
 }
 
 // SaveCertificate saves a certificate using key attributes.
-func SaveCertificate(attrs *xkmssdk.KeyAttributes, cert *x509.Certificate) error {
+func SaveCertificate(ctx context.Context, attrs *xkmssdk.KeyAttributes, cert *x509.Certificate) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	return xkmssdk.ServiceSaveCertificate(attrs, cert)
+	return xkmssdk.ServiceSaveCertificate(ctx, attrs, cert)
 }
 
 // SaveCertificateByID saves a certificate by key ID.
-func SaveCertificateByID(kid string, cert *x509.Certificate) error {
+func SaveCertificateByID(ctx context.Context, kid string, cert *x509.Certificate) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	return xkmssdk.ServiceSaveCertificateByID(kid, cert)
+	return xkmssdk.ServiceSaveCertificateByID(ctx, kid, cert)
 }
 
 // DeleteCertificate deletes a certificate by key attributes.
-func DeleteCertificate(attrs *xkmssdk.KeyAttributes) error {
+func DeleteCertificate(ctx context.Context, attrs *xkmssdk.KeyAttributes) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	return xkmssdk.ServiceDeleteCertificate(attrs)
+	return xkmssdk.ServiceDeleteCertificate(ctx, attrs)
 }
 
 // DeleteCertificateByID deletes a certificate by key ID.
-func DeleteCertificateByID(kid string) error {
+func DeleteCertificateByID(ctx context.Context, kid string) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	return xkmssdk.ServiceDeleteCertificateByID(kid)
+	return xkmssdk.ServiceDeleteCertificateByID(ctx, kid)
 }
 
 // CertificateExists checks if a certificate exists for the given key attributes.
-func CertificateExists(attrs *xkmssdk.KeyAttributes) (bool, error) {
+func CertificateExists(ctx context.Context, attrs *xkmssdk.KeyAttributes) (bool, error) {
 	if err := checkInitialized(); err != nil {
 		return false, err
 	}
 
-	return xkmssdk.ServiceCertificateExists(attrs)
+	return xkmssdk.ServiceCertificateExists(ctx, attrs)
 }
 
 // CertificateExistsByID checks if a certificate exists for the given key ID.
-func CertificateExistsByID(kid string) (bool, error) {
+func CertificateExistsByID(ctx context.Context, kid string) (bool, error) {
 	if err := checkInitialized(); err != nil {
 		return false, err
 	}
 
-	return xkmssdk.ServiceCertificateExistsByID(kid)
+	return xkmssdk.ServiceCertificateExistsByID(ctx, kid)
 }
 
 // ListCertificates lists all certificate IDs across all backends or from a specific backend.
-func ListCertificates(backendName ...string) ([]string, error) {
+func ListCertificates(ctx context.Context, backendName ...string) ([]string, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	return xkmssdk.ServiceListCertificates(backendName...)
+	return xkmssdk.ServiceListCertificates(ctx, backendName...)
 }
 
 // -----------------------------------------------------------------------------
@@ -751,12 +751,12 @@ func ListCertificates(backendName ...string) ([]string, error) {
 // -----------------------------------------------------------------------------
 
 // CertificateChain retrieves a certificate chain by key attributes.
-func CertificateChain(attrs *xkmssdk.KeyAttributes) ([]*x509.Certificate, error) {
+func CertificateChain(ctx context.Context, attrs *xkmssdk.KeyAttributes) ([]*x509.Certificate, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	chain, err := xkmssdk.ServiceCertificateChain(attrs)
+	chain, err := xkmssdk.ServiceCertificateChain(ctx, attrs)
 	if err != nil {
 		return nil, &api.CertificateOperationError{Cause: err}
 	}
@@ -765,12 +765,12 @@ func CertificateChain(attrs *xkmssdk.KeyAttributes) ([]*x509.Certificate, error)
 }
 
 // CertificateChainByID retrieves a certificate chain by key ID.
-func CertificateChainByID(kid string) ([]*x509.Certificate, error) {
+func CertificateChainByID(ctx context.Context, kid string) ([]*x509.Certificate, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	chain, err := xkmssdk.ServiceCertificateChainByID(kid)
+	chain, err := xkmssdk.ServiceCertificateChainByID(ctx, kid)
 	if err != nil {
 		return nil, &api.CertificateOperationError{Cause: err}
 	}
@@ -779,21 +779,21 @@ func CertificateChainByID(kid string) ([]*x509.Certificate, error) {
 }
 
 // SaveCertificateChain saves a certificate chain using key attributes.
-func SaveCertificateChain(attrs *xkmssdk.KeyAttributes, chain []*x509.Certificate) error {
+func SaveCertificateChain(ctx context.Context, attrs *xkmssdk.KeyAttributes, chain []*x509.Certificate) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	return xkmssdk.ServiceSaveCertificateChain(attrs, chain)
+	return xkmssdk.ServiceSaveCertificateChain(ctx, attrs, chain)
 }
 
 // SaveCertificateChainByID saves a certificate chain by key ID.
-func SaveCertificateChainByID(kid string, chain []*x509.Certificate) error {
+func SaveCertificateChainByID(ctx context.Context, kid string, chain []*x509.Certificate) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	return xkmssdk.ServiceSaveCertificateChainByID(kid, chain)
+	return xkmssdk.ServiceSaveCertificateChainByID(ctx, kid, chain)
 }
 
 // -----------------------------------------------------------------------------
@@ -801,21 +801,21 @@ func SaveCertificateChainByID(kid string, chain []*x509.Certificate) error {
 // -----------------------------------------------------------------------------
 
 // TLSCertificate returns a complete tls.Certificate for the given key attributes.
-func TLSCertificate(attrs *xkmssdk.KeyAttributes) (tls.Certificate, error) {
+func TLSCertificate(ctx context.Context, attrs *xkmssdk.KeyAttributes) (tls.Certificate, error) {
 	if err := checkInitialized(); err != nil {
 		return tls.Certificate{}, err
 	}
 
-	return xkmssdk.ServiceTLSCertificate(attrs)
+	return xkmssdk.ServiceTLSCertificate(ctx, attrs)
 }
 
 // TLSCertificateByID returns a complete tls.Certificate by key ID.
-func TLSCertificateByID(kid string) (tls.Certificate, error) {
+func TLSCertificateByID(ctx context.Context, kid string) (tls.Certificate, error) {
 	if err := checkInitialized(); err != nil {
 		return tls.Certificate{}, err
 	}
 
-	return xkmssdk.ServiceTLSCertificateByID(kid)
+	return xkmssdk.ServiceTLSCertificateByID(ctx, kid)
 }
 
 // -----------------------------------------------------------------------------
@@ -917,21 +917,21 @@ func GetBackendCapabilities(name string) (xkmssdk.Capabilities, error) {
 // -----------------------------------------------------------------------------
 
 // GetImportParameters retrieves parameters needed to import a key into a backend.
-func GetImportParameters(backendName string, attrs *xkmssdk.KeyAttributes, algorithm xkmssdk.WrappingAlgorithm) (*xkmssdk.ImportParameters, error) {
+func GetImportParameters(ctx context.Context, backendName string, attrs *xkmssdk.KeyAttributes, algorithm xkmssdk.WrappingAlgorithm) (*xkmssdk.ImportParameters, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	return xkmssdk.ServiceGetImportParameters(backendName, attrs, algorithm)
+	return xkmssdk.ServiceGetImportParameters(ctx, backendName, attrs, algorithm)
 }
 
 // WrapKey wraps key material for import into a backend.
-func WrapKey(backendName string, keyMaterial []byte, params *xkmssdk.ImportParameters) (*xkmssdk.WrappedKeyMaterial, error) {
+func WrapKey(ctx context.Context, backendName string, keyMaterial []byte, params *xkmssdk.ImportParameters) (*xkmssdk.WrappedKeyMaterial, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	return xkmssdk.ServiceWrapKey(backendName, keyMaterial, params)
+	return xkmssdk.ServiceWrapKey(ctx, backendName, keyMaterial, params)
 }
 
 // ECDHESWrappedData represents the result of ECDH-ES key wrapping.
@@ -958,13 +958,13 @@ type ECDHESWrappedData struct {
 // Returns:
 //   - ECDHESWrappedData containing the JWE-encoded wrapped key
 //   - error if wrapping fails
-func WrapKeyWithECDHES(wrappingKeyID string, keyMaterial []byte, algorithm string) (*ECDHESWrappedData, error) {
+func WrapKeyWithECDHES(ctx context.Context, wrappingKeyID string, keyMaterial []byte, algorithm string) (*ECDHESWrappedData, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
 	// Get the wrapping key's public key
-	publicKey, err := PublicKey(wrappingKeyID)
+	publicKey, err := PublicKey(ctx, wrappingKeyID)
 	if err != nil {
 		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInternal,
@@ -1033,17 +1033,17 @@ func WrapKeyWithECDHES(wrappingKeyID string, keyMaterial []byte, algorithm strin
 // Returns:
 //   - The unwrapped key material
 //   - error if unwrapping fails
-func UnwrapKeyWithECDHES(privateKeyID string, jweData string) ([]byte, error) {
+func UnwrapKeyWithECDHES(ctx context.Context, privateKeyID string, jweData string) ([]byte, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
 	// Try to get a decrypter first (for hardware-backed keys)
-	decrypter, err := DecrypterByID(privateKeyID)
+	decrypter, err := DecrypterByID(ctx, privateKeyID)
 	if err == nil {
 		// Use xkms decrypter via callback
 		xkmsDec := xkmssdk.NewJWEXKMSDecrypter(func(kid string) (crypto.Decrypter, error) {
-			return DecrypterByID(privateKeyID)
+			return DecrypterByID(ctx, privateKeyID)
 		})
 
 		plaintext, err := xkmsDec.DecryptWithKeyID(jweData, privateKeyID)
@@ -1059,7 +1059,7 @@ func UnwrapKeyWithECDHES(privateKeyID string, jweData string) ([]byte, error) {
 	}
 
 	// Fall back to getting the private key directly (for software keys)
-	privateKey, err := KeyByID(privateKeyID)
+	privateKey, err := KeyByID(ctx, privateKeyID)
 	if err != nil {
 		return nil, &dberrors.QBError{
 			Code: dberrors.ErrNotFound,
@@ -1100,12 +1100,12 @@ func IsECDHESAlgorithm(algorithm string) bool {
 }
 
 // ImportKey imports externally generated key material into a backend.
-func ImportKey(backendName string, attrs *xkmssdk.KeyAttributes, wrapped *xkmssdk.WrappedKeyMaterial) error {
+func ImportKey(ctx context.Context, backendName string, attrs *xkmssdk.KeyAttributes, wrapped *xkmssdk.WrappedKeyMaterial) error {
 	if err := checkInitialized(); err != nil {
 		return err
 	}
 
-	return xkmssdk.ServiceImportKey(backendName, attrs, wrapped)
+	return xkmssdk.ServiceImportKey(ctx, backendName, attrs, wrapped)
 }
 
 // -----------------------------------------------------------------------------
@@ -1188,10 +1188,10 @@ var ErrJWTParsingFailed = &api.JWTParsingError{}
 func NewJWTSigner() *JWTSigner {
 	return xkmssdk.NewJWTXKMSSigner(
 		func(keyID string) (crypto.PrivateKey, error) {
-			return KeyByID(keyID)
+			return KeyByID(context.Background(), keyID)
 		},
 		func(keyID string) (crypto.Signer, error) {
-			return SignerByID(keyID)
+			return SignerByID(context.Background(), keyID)
 		},
 	)
 }
@@ -1200,7 +1200,7 @@ func NewJWTSigner() *JWTSigner {
 // This verifier uses keys from the xkms package for signature verification.
 func NewJWTVerifier() *JWTVerifier {
 	return xkmssdk.NewJWTXKMSVerifier(func(keyID string) (crypto.PrivateKey, error) {
-		return KeyByID(keyID)
+		return KeyByID(context.Background(), keyID)
 	})
 }
 
@@ -1292,6 +1292,37 @@ func JWTSignWithSignerKID(signer crypto.Signer, claims JWTClaims, algorithm, kid
 	token := jwt.NewWithClaims(method, claims)
 	if kid != "" {
 		token.Header["kid"] = kid
+	}
+	tokenString, err := token.SignedString(signer)
+	if err != nil {
+		return "", &api.JWTSigningError{Cause: err}
+	}
+
+	return tokenString, nil
+}
+
+// JWTSignWithSignerKIDTyp signs a JWT exactly as JWTSignWithSignerKID but also
+// stamps the JOSE "typ" header. This is used to mint RFC 9068 OAuth2 JWT access
+// tokens, which MUST carry the explicit media type "at+jwt" so a resource server
+// can distinguish an access token from an OIDC ID token (or any other JWT) and
+// refuse cross-type confusion. An empty typ behaves identically to
+// JWTSignWithSignerKID (no typ header).
+//
+// Example:
+//
+//	token, err := xkms.JWTSignWithSignerKIDTyp(signer, claims, "ES256", kid, "at+jwt")
+func JWTSignWithSignerKIDTyp(signer crypto.Signer, claims JWTClaims, algorithm, kid, typ string) (string, error) {
+	method := jwt.GetSigningMethod(algorithm)
+	if method == nil {
+		return "", &api.JWTSigningError{Detail: "unsupported algorithm: " + algorithm}
+	}
+
+	token := jwt.NewWithClaims(method, claims)
+	if kid != "" {
+		token.Header["kid"] = kid
+	}
+	if typ != "" {
+		token.Header["typ"] = typ
 	}
 	tokenString, err := token.SignedString(signer)
 	if err != nil {

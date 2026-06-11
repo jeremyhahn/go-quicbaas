@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -20,6 +18,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -110,9 +110,11 @@ type BrokerProfile struct {
 	// LastAuth is the last successful authentication timestamp.
 	LastAuth *time.Time `json:"last_auth,omitempty"`
 
-	// PIVCertThumbprint is the SHA-256 hex thumbprint registered during PIV
-	// activation. Empty unless the user activated via the PIV flow.
-	PIVCertThumbprint string `json:"piv_cert_thumbprint,omitempty"`
+	// CertBindings holds the qrdb-canonical mTLS certificate bindings carried
+	// for round-trip fidelity with iam.User. PIV activation appends a binding of
+	// kind qrdbsdk.CertBindingPIVAttested. Empty unless the user has bound at
+	// least one certificate.
+	CertBindings []qrdbsdk.CertBinding `json:"cert_bindings,omitempty"`
 
 	// InviteToken holds the plaintext invite token shown once at creation time;
 	// cleared after activation.

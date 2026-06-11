@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -105,5 +103,11 @@ func TestTokenService_IssueServiceAccountTokens(t *testing.T) {
 	}
 	if claims["attest_method"] != "tpm" {
 		t.Fatalf("attest_method = %v, want tpm", claims["attest_method"])
+	}
+
+	// RFC 9068: service-account (client_credentials / mTLS) access tokens MUST
+	// also carry typ "at+jwt".
+	if typ := jwtHeaderTyp(t, set.AccessToken); typ != AccessTokenJWTType {
+		t.Fatalf("service-account access token typ = %q, want %q", typ, AccessTokenJWTType)
 	}
 }

@@ -3249,8 +3249,9 @@ func TestGRPCRemaining91_Client_KMSBackend_Closed(t *testing.T) {
 	})
 }
 
-// PEP tests (convertPEPError, convertPolicyUpdateType) are in server_pep_unit_test.go
-// which has the correct //go:build grpc && iam tag matching server_pep.go
+// PEP tests (convertPEPError, convertPolicyUpdateType) are in server_pep_unit_test.go.
+// server_pep.go is untagged, so its tests must be too (the file previously carried a
+// phantom //go:build grpc tag that no Makefile target ever set).
 
 // =============================================================================
 // API Error Types

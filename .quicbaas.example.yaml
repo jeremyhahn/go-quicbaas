@@ -157,8 +157,6 @@ security:
   tls_client_auth: false
   api_key_enabled: false
   api_keys: []
-  encryption_enabled: false
-  encryption_key_file: ""
   fips_mode: false
   audit_log_enabled: false
   audit_log_file: "./audit.log"
@@ -259,3 +257,52 @@ cache:
     #   max_size: 1000
 
     # Entities not listed here will use the global default settings
+
+# Trust resolver configuration
+#
+# The trust: section configures quicbaasd's outbound TLS trust resolver used
+# when dialing upstream endpoints (e.g. remote KMS, attestation services, peer
+# nodes). Each scope defines an ordered strategy chain; the resolver tries each
+# strategy in turn and returns on the first success.
+#
+# Strategy reference:
+#   dane        — DNSSEC-validated TLSA records (RFC 7671). Best when DANE is published.
+#   noise       — Noise_NK channel authenticated by the server's static public key.
+#   spki        — Pinned SHA-256 SubjectPublicKeyInfo digest.
+#   embedded    — OS trust store (no network fetch).
+#   ca-file     — Local CA bundle PEM file.
+#   provider-ca — CA bundle from the platform's own CA (server-side only).
+#   tofu        — Trust-on-first-use: captures and pins the server's SPKI on first
+#                 connection, verifies against the stored pin on subsequent connections.
+#                 Remove tofu from the chain once DANE records are published for this
+#                 deployment; it must never act as a silent implicit fallback.
+#
+# QuicBaaS and go-xkms do not publish DANE records natively (DNS is owned by the
+# embedding application), so the recommended default chain is:
+#   [dane, noise, spki, tofu]
+# tofu is the explicit terminal strategy for deployments that have not yet
+# arranged DANE publication.
+trust:
+  scopes:
+    default:
+      # Ordered strategy chain. The resolver returns on the first success.
+      # Remove tofu once DANE is published for this deployment.
+      strategies: [dane, noise, spki, tofu]
+      # CA bundle server URL (used by dane/noise/spki/tofu fetch strategies).
+      server-url: ""
+      # Optional: DNS hostname for TLSA record lookup when server-url uses an IP.
+      hostname: ""
+      # Per-strategy timeout cap.
+      per-method-timeout: 5s
+      # DANE options (optional; empty DNS server selects /etc/resolv.conf).
+      # dane:
+      #   dns-server: ""
+      #   dns-over-tls: false
+      # Noise options (required when noise is in the strategy chain).
+      # noise:
+      #   server-addr: "kms.example.com:5450"
+      #   server-static-key: "<hex-encoded Curve25519 static public key>"
+      # SPKI options (optional; a pin store may supply per-endpoint pins at runtime).
+      # spki:
+      #   pin: "<64-character hex SHA-256 SPKI digest>"
+      #   pin-file: "/etc/quicbaas/spki.pin"

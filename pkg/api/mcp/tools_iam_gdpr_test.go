@@ -1,4 +1,4 @@
-//go:build mcp && iam
+//go:build mcp
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -60,6 +60,11 @@ func (m *mockUserStorage) GetUser(_ context.Context, tenantID, userID string) (*
 }
 
 func (m *mockUserStorage) GetUserByEmail(_ context.Context, _ string) (*iam.User, error) {
+	return nil, iam.ErrUserNotFound
+}
+
+// GetUserByUsername is unused by the GDPR tests; it satisfies iam.UserStorage.
+func (m *mockUserStorage) GetUserByUsername(_ context.Context, _, _ string) (*iam.User, error) {
 	return nil, iam.ErrUserNotFound
 }
 

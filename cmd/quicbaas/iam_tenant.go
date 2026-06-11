@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam
-
 // Package main provides IAM tenant management CLI commands for QuicBaaS.
 package main
 

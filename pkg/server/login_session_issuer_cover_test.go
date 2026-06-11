@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -71,8 +69,12 @@ func newTestOIDCProvider(t *testing.T) *iam.OIDCProvider {
 
 	kv := NewMemoryKVStore()
 	backend := iam.NewBackendStorage(kv)
+	// User persistence moved to qrdb (C1-F); BackendStorage no longer satisfies
+	// UserStorage. This test's subject is OIDC token issue/resolve, not user
+	// persistence, so the user store is an in-memory double. Apps/tokens stay on
+	// the BackendStorage KVStore.
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  backend,
+		UserStorage:  iam.NewMemoryStorage(),
 		GroupStorage: backend,
 		RoleStorage:  backend,
 	})

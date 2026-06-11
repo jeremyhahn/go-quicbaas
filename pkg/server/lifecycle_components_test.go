@@ -1,4 +1,4 @@
-//go:build raft && rest && grpc && quic && mcp && kms && objectstorage
+//go:build !integration && raft && rest && quic && mcp
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -163,15 +163,19 @@ func TestStopWorkerManagerLifecycle_WithManager(t *testing.T) {
 }
 
 func TestStartMessagingLifecycle_WithService(t *testing.T) {
-	t.Parallel()
+	saveAndRestoreLifecycleSeams(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
 	cfg.Server.Mode = config.ServerModeStandalone
 	cfg.Storage.Backend = config.StorageBackendMemory
 
+	stubIAMSeam()
+
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	// Need a service first
 	require.NoError(t, srv.startService())
@@ -183,7 +187,7 @@ func TestStartMessagingLifecycle_WithService(t *testing.T) {
 }
 
 func TestStartMessagingLifecycle_WithBufferConfig(t *testing.T) {
-	t.Parallel()
+	saveAndRestoreLifecycleSeams(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
@@ -193,8 +197,12 @@ func TestStartMessagingLifecycle_WithBufferConfig(t *testing.T) {
 	cfg.Messaging.DedupEnabled = true
 	cfg.Messaging.DedupWindow = 60
 
+	stubIAMSeam()
+
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	require.NoError(t, srv.startService())
 
@@ -204,19 +212,24 @@ func TestStartMessagingLifecycle_WithBufferConfig(t *testing.T) {
 }
 
 func TestStartMessagingLifecycle_WithStorage(t *testing.T) {
-	t.Parallel()
+	saveAndRestoreLifecycleSeams(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
 	cfg.Server.Mode = config.ServerModeStandalone
 	cfg.Storage.Backend = config.StorageBackendMemory
 
+	stubIAMSeam()
+
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	// Start with pebble storage available
+	// startStorage no longer owns a storage handle — the embedded qrdb node
+	// owns the backend, barrier, and at-rest encryptor. Build the node and the
+	// service before starting messaging.
 	require.NoError(t, srv.startStorage())
-	t.Cleanup(func() { srv.storage.Close() })
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 	require.NoError(t, srv.startService())
 
 	err = srv.startMessaging()
@@ -232,19 +245,23 @@ func TestStartWatchBridgeLifecycle_NilService(t *testing.T) {
 
 	err := srv.startWatchBridge()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not initialized")
+	assert.Contains(t, err.Error(), "not available")
 }
 
 func TestStartWatchBridgeLifecycle_WithService(t *testing.T) {
-	t.Parallel()
+	saveAndRestoreLifecycleSeams(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
 	cfg.Server.Mode = config.ServerModeStandalone
 	cfg.Storage.Backend = config.StorageBackendMemory
 
+	stubIAMSeam()
+
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	require.NoError(t, srv.startService())
 

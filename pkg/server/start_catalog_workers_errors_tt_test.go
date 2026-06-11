@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag && iam
+//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag
 
 // start_catalog_workers_errors_tt_test.go covers the worker-registration
 // warning branches of startCatalogManager: each background worker

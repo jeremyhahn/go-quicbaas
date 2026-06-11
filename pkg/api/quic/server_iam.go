@@ -1,4 +1,4 @@
-//go:build quic && iam
+//go:build quic
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

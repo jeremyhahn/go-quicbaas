@@ -6,7 +6,7 @@ ARG GO_VERSION=1.26
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
-ARG BUILD_TAGS=iam
+ARG BUILD_TAGS=
 
 # Stage 1: Build stage
 FROM golang:${GO_VERSION}-alpine AS builder

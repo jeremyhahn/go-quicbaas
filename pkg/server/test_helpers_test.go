@@ -69,7 +69,6 @@ func createTestConfig(t *testing.T) *config.Config {
 
 	// Disable security features for unit tests
 	cfg.Security.TLSEnabled = false
-	cfg.Security.EncryptionEnabled = false
 	cfg.Raft.MutualTLS = false
 	// Unit tests exercise handlers via the in-process/anonymous path. The
 	// default-deny scope -> RBAC gate (now the secure default in config.Default)
@@ -235,4 +234,16 @@ func mustCreateLogger() *logger.Logger {
 func createFTConfig(t *testing.T) *config.Config {
 	t.Helper()
 	return createTestConfig(t)
+}
+
+// buildTestLogger builds a logger suitable for tests (discards output).
+// It lives in this untagged file because it is shared by both default-tag
+// and rest+iam test files.
+func buildTestLogger(t *testing.T) *logger.Logger {
+	t.Helper()
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	if err != nil {
+		t.Fatalf("failed to create test logger: %v", err)
+	}
+	return log
 }

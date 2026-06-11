@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam
-
 package service
 
 import (
@@ -292,6 +290,179 @@ func TestRoleStore_DeleteRole_ListError(t *testing.T) {
 	resp, err := svc.DeleteAuthRole(ctx, &AuthDeleteRoleRequest{RoleName: "x"})
 	assert.Nil(t, resp)
 	assertInternalError(t, err)
+}
+
+// TestRoleStore_AssignRevokeRole_RoundTrip binds a role to a user by username
+// through the qrdb-backed IdentityStore, then unbinds it — exercising the C1-E
+// AssignRole/RevokeRole redirect end to end.
+func TestRoleStore_AssignRevokeRole_RoundTrip(t *testing.T) {
+	storage := iam.NewMemoryStorage()
+	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  storage,
+		GroupStorage: storage,
+		RoleStorage:  storage,
+	})
+	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-bind", is)
+
+	// Seed a user (Name is the login username) and a role.
+	user := &iam.User{ID: "u-1", TenantID: "tenant-bind", Name: "alice", Email: "alice@bind.test"}
+	require.NoError(t, storage.CreateUser(ctx, user))
+	role := &iam.Role{ID: "r-1", TenantID: "tenant-bind", Name: "editor"}
+	require.NoError(t, storage.CreateRole(ctx, role))
+
+	assignResp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "alice", RoleName: "editor"})
+	require.NoError(t, err)
+	require.NotNil(t, assignResp)
+	assert.True(t, assignResp.Success)
+
+	got, err := storage.GetUser(ctx, "tenant-bind", "u-1")
+	require.NoError(t, err)
+	assert.Contains(t, got.Roles, "r-1")
+
+	revokeResp, err := svc.RevokeRole(ctx, &AuthRevokeRoleRequest{Username: "alice", RoleName: "editor"})
+	require.NoError(t, err)
+	require.NotNil(t, revokeResp)
+	assert.True(t, revokeResp.Success)
+
+	got, err = storage.GetUser(ctx, "tenant-bind", "u-1")
+	require.NoError(t, err)
+	assert.NotContains(t, got.Roles, "r-1")
+}
+
+// TestRoleStore_AssignRole_UnknownUser fails closed with a typed NotFoundError
+// when the username does not resolve.
+func TestRoleStore_AssignRole_UnknownUser(t *testing.T) {
+	storage := iam.NewMemoryStorage()
+	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  storage,
+		GroupStorage: storage,
+		RoleStorage:  storage,
+	})
+	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-bind", is)
+	require.NoError(t, storage.CreateRole(ctx, &iam.Role{ID: "r-1", TenantID: "tenant-bind", Name: "editor"}))
+
+	resp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "ghost", RoleName: "editor"})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+
+	var nf *api.NotFoundError
+	require.True(t, stderrors.As(err, &nf))
+	assert.Equal(t, "user", nf.Resource)
+}
+
+// TestRoleStore_AssignRole_UnknownRole fails closed when the role name does not
+// resolve.
+func TestRoleStore_AssignRole_UnknownRole(t *testing.T) {
+	storage := iam.NewMemoryStorage()
+	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  storage,
+		GroupStorage: storage,
+		RoleStorage:  storage,
+	})
+	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-bind", is)
+	require.NoError(t, storage.CreateUser(ctx, &iam.User{ID: "u-1", TenantID: "tenant-bind", Name: "alice", Email: "alice@bind.test"}))
+
+	resp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "alice", RoleName: "ghost"})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+
+	var nf *api.NotFoundError
+	require.True(t, stderrors.As(err, &nf))
+	assert.Equal(t, "role", nf.Resource)
+}
+
+// TestRoleStore_AssignRevokeRole_InvalidInput rejects an empty username or role
+// name before touching the store.
+func TestRoleStore_AssignRevokeRole_InvalidInput(t *testing.T) {
+	svc, ctx := newRoleStoreTestService(t, "tenant-bind")
+
+	t.Run("AssignEmptyUsername", func(t *testing.T) {
+		resp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "", RoleName: "editor"})
+		assert.Nil(t, resp)
+		require.Error(t, err)
+		var qErr *dberrors.QBError
+		require.True(t, dberrors.As(err, &qErr))
+		assert.Equal(t, dberrors.ErrInvalidInput, qErr.Code)
+	})
+
+	t.Run("RevokeEmptyRoleName", func(t *testing.T) {
+		resp, err := svc.RevokeRole(ctx, &AuthRevokeRoleRequest{Username: "alice", RoleName: ""})
+		assert.Nil(t, resp)
+		require.Error(t, err)
+		var qErr *dberrors.QBError
+		require.True(t, dberrors.As(err, &qErr))
+		assert.Equal(t, dberrors.ErrInvalidInput, qErr.Code)
+	})
+}
+
+// TestRoleStore_AssignRole_MissingTenantContext fails closed when no tenant
+// is present in the context, verifying the op name appears in the error.
+func TestRoleStore_AssignRole_MissingTenantContext(t *testing.T) {
+	svc, _ := newRoleStoreTestService(t, "tenant-ctx")
+	ctx := context.Background() // no tenant
+
+	resp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "alice", RoleName: "editor"})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "missing_tenant_context")
+	assert.Contains(t, err.Error(), "service.AssignRole")
+}
+
+// TestRoleStore_RevokeRole_MissingTenantContext fails closed when no tenant
+// is present in the context, verifying the op name appears in the error.
+func TestRoleStore_RevokeRole_MissingTenantContext(t *testing.T) {
+	svc, _ := newRoleStoreTestService(t, "tenant-ctx")
+	ctx := context.Background() // no tenant
+
+	resp, err := svc.RevokeRole(ctx, &AuthRevokeRoleRequest{Username: "alice", RoleName: "editor"})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "missing_tenant_context")
+	assert.Contains(t, err.Error(), "service.RevokeRole")
+}
+
+// TestRoleStore_AssignRole_UserNotFound fails closed with a typed NotFoundError
+// when the requested username does not exist in the tenant.
+func TestRoleStore_AssignRole_UserNotFound(t *testing.T) {
+	storage := iam.NewMemoryStorage()
+	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  storage,
+		GroupStorage: storage,
+		RoleStorage:  storage,
+	})
+	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-nf-user", is)
+	require.NoError(t, storage.CreateRole(ctx, &iam.Role{ID: "r-1", TenantID: "tenant-nf-user", Name: "editor"}))
+
+	resp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "ghost", RoleName: "editor"})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+
+	var nf *api.NotFoundError
+	require.True(t, stderrors.As(err, &nf))
+	assert.Equal(t, "user", nf.Resource)
+}
+
+// TestRoleStore_AssignRole_RoleNotFound fails closed with a typed NotFoundError
+// when the requested role name does not exist in the tenant.
+func TestRoleStore_AssignRole_RoleNotFound(t *testing.T) {
+	storage := iam.NewMemoryStorage()
+	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  storage,
+		GroupStorage: storage,
+		RoleStorage:  storage,
+	})
+	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-nf-role", is)
+	require.NoError(t, storage.CreateUser(ctx, &iam.User{ID: "u-1", TenantID: "tenant-nf-role", Name: "alice", Email: "alice@nf.test"}))
+
+	resp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "alice", RoleName: "ghost"})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+
+	var nf *api.NotFoundError
+	require.True(t, stderrors.As(err, &nf))
+	assert.Equal(t, "role", nf.Resource)
 }
 
 // failingRoleStorage is a RoleStorage whose list/create/delete operations can

@@ -29,12 +29,13 @@ var ErrNilFactor = errors.New("quicbaas/server: nil auth factor plugin in XKMSCr
 
 // XKMSCryptoConfig describes the hardware backends and Factor
 // implementations that quicbaas injects into the embedded qrdb server at
-// startup. Every field is optional: when nil, qrdb falls back to its
-// software-only defaults (SoftwareStrategy / SoftwareBackend / mTLS-only
-// factor registry). Hardware-capable deployments populate the fields with
-// go-xkms-backed implementations to enable TPM2 / PKCS#11 / cloud KMS
-// strategies, hardware PIN backends, and FIDO2 / PIV / PKCS#11 factor
-// adapters.
+// startup. Every field is optional: when nil or zero, qrdb uses software-only
+// defaults (SoftwareStrategy / SoftwareBackend / empty factor registry).
+// qrdb's default factor registry is empty — mTLS is not an AuthFactorPlugin
+// (mTLS login is handled natively by qrdb's LoginResolver). Hardware-capable
+// deployments populate the fields with go-xkms-backed implementations to
+// enable TPM2 / PKCS#11 / cloud KMS strategies, hardware PIN backends, and
+// FIDO2 / PIV / PKCS#11 factor adapters.
 type XKMSCryptoConfig struct {
 	// Logger is used to log fallback decisions and by the SoftwareBackend
 	// constructor. Nil defaults to slog.Default().

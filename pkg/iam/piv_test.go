@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -27,6 +25,8 @@ import (
 	"math/big"
 	"testing"
 	"time"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // pivTestCA creates a self-signed CA certificate with CertSign usage.
@@ -194,8 +194,8 @@ func TestPIVActivator_Valid(t *testing.T) {
 	if updated.State != UserStateActive {
 		t.Errorf("expected state=active, got %q", updated.State)
 	}
-	if updated.PIVCertThumbprint == "" {
-		t.Error("expected PIVCertThumbprint to be set")
+	if len(updated.PIVThumbprints()) == 0 {
+		t.Error("expected a PIV-attested cert binding to be set")
 	}
 }
 
@@ -398,6 +398,136 @@ func TestPIVActivate_EmptyTrustedIssuers(t *testing.T) {
 
 	if err := act.Activate(ctx, token, certPEM); err != nil {
 		t.Fatalf("expected success but got: %v", err)
+	}
+}
+
+// markUsedFailInviteStore wraps an InviteStore and fails MarkUsed so the
+// post-activation audit "warning" branch is exercised (the user is already
+// active, so the caller must not see an error).
+type markUsedFailInviteStore struct {
+	InviteStore
+}
+
+func (s markUsedFailInviteStore) MarkUsed(ctx context.Context, token string) error {
+	return &dberrors.MessageError{Message: "simulated MarkUsed failure"}
+}
+
+// TestNewPIVActivator_MissingDependencies covers each fail-closed configuration
+// guard in the constructor: a nil root pool, nil user storage, and nil invite
+// store must all return a typed PIVActivatorConfigError.
+func TestNewPIVActivator_MissingDependencies(t *testing.T) {
+	roots := x509.NewCertPool()
+	us := newMockUserStorage()
+	is := NewMemoryInviteStore()
+
+	cases := []struct {
+		name string
+		deps PIVActivatorDependencies
+	}{
+		{"nil roots", PIVActivatorDependencies{UserStorage: us, InviteStore: is}},
+		{"nil user storage", PIVActivatorDependencies{Roots: roots, InviteStore: is}},
+		{"nil invite store", PIVActivatorDependencies{Roots: roots, UserStorage: us}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			act, err := NewPIVActivator(tc.deps)
+			if act != nil {
+				t.Fatalf("%s: expected nil activator", tc.name)
+			}
+			var cfgErr *PIVActivatorConfigError
+			if !errors.As(err, &cfgErr) {
+				t.Fatalf("%s: expected PIVActivatorConfigError, got %T: %v", tc.name, err, err)
+			}
+		})
+	}
+}
+
+// TestPIVActivator_AuditOnSuccess verifies a successful activation emits a
+// success-outcome audit event through the configured logger.
+func TestPIVActivator_AuditOnSuccess(t *testing.T) {
+	ctx := context.Background()
+
+	userStorage := newMockUserStorage()
+	inviteStore := NewMemoryInviteStore()
+	audit := &mockAuditLogger{}
+
+	_ = userStorage.CreateUser(ctx, &User{ID: "ua", TenantID: "t1", Email: "a@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()})
+	token, _ := GenerateInviteToken()
+	_ = inviteStore.Create(ctx, &InviteRecord{TokenHash: tokenHash(token), UserID: "ua", TenantID: "t1", ExpiresAt: time.Now().Add(time.Hour)})
+
+	ca, caKey := pivTestCA(t)
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	_, certPEM := pivTestLeaf(t, ca, caKey, true)
+
+	act, err := NewPIVActivator(PIVActivatorDependencies{
+		Roots:       roots,
+		UserStorage: userStorage,
+		InviteStore: inviteStore,
+		AuditLogger: audit,
+	})
+	if err != nil {
+		t.Fatalf("NewPIVActivator: %v", err)
+	}
+
+	if err := act.Activate(ctx, token, certPEM); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if len(audit.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(audit.events))
+	}
+	if audit.events[0].Outcome != AuditOutcomeSuccess {
+		t.Fatalf("expected success outcome, got %v", audit.events[0].Outcome)
+	}
+}
+
+// TestPIVActivator_AuditOnMarkUsedFailure verifies that when MarkUsed fails after
+// the user is already activated, the caller still succeeds and a failure-outcome
+// audit event is emitted (the non-success branch of logAudit).
+func TestPIVActivator_AuditOnMarkUsedFailure(t *testing.T) {
+	ctx := context.Background()
+
+	userStorage := newMockUserStorage()
+	inviteStore := NewMemoryInviteStore()
+	audit := &mockAuditLogger{}
+
+	_ = userStorage.CreateUser(ctx, &User{ID: "ub", TenantID: "t1", Email: "b@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()})
+	token, _ := GenerateInviteToken()
+	_ = inviteStore.Create(ctx, &InviteRecord{TokenHash: tokenHash(token), UserID: "ub", TenantID: "t1", ExpiresAt: time.Now().Add(time.Hour)})
+
+	ca, caKey := pivTestCA(t)
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	_, certPEM := pivTestLeaf(t, ca, caKey, true)
+
+	act, err := NewPIVActivator(PIVActivatorDependencies{
+		Roots:       roots,
+		UserStorage: userStorage,
+		InviteStore: markUsedFailInviteStore{InviteStore: inviteStore},
+		AuditLogger: audit,
+	})
+	if err != nil {
+		t.Fatalf("NewPIVActivator: %v", err)
+	}
+
+	// Activation must still succeed for the caller despite the MarkUsed failure.
+	if err := act.Activate(ctx, token, certPEM); err != nil {
+		t.Fatalf("Activate should not fail when MarkUsed fails post-activation: %v", err)
+	}
+	if len(audit.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(audit.events))
+	}
+	if audit.events[0].Outcome != AuditOutcomeFailure {
+		t.Fatalf("expected failure outcome for warning branch, got %v", audit.events[0].Outcome)
+	}
+
+	// The user must be active even though the invite was not marked used.
+	updated, err := userStorage.GetUser(ctx, "t1", "ub")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if updated.State != UserStateActive {
+		t.Fatalf("expected user active, got %q", updated.State)
 	}
 }
 

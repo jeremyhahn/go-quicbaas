@@ -136,7 +136,7 @@ func (s *Server) startQUICServer() error {
 	// Wire the best-effort tenant-derivation hook. It derives the caller's
 	// tenant from the verified mTLS peer certificate (pinned SPIFFE trust
 	// domain, then home-realm discovery) and stamps it onto the request context
-	// so tenant-scoped operations observe it. It is nil in non-iam builds, in
+	// so tenant-scoped operations observe it. It is nil until wired, in
 	// which case the QUIC handler simply proceeds without a tenant. It never
 	// rejects a request for lack of a tenant.
 	if resolve := s.tenantContextFunc(); resolve != nil {
@@ -145,7 +145,7 @@ func (s *Server) startQUICServer() error {
 	}
 
 	// Install the qrdb-backed authorization decision point + OIDC token validator
-	// when RequireAuthz=true. It is a no-op otherwise (and in non-iam builds), so
+	// when RequireAuthz=true. It is a no-op otherwise, so
 	// QUIC keeps its legacy allow-all / token-only behaviour unless the operator
 	// opts into enforcement. Every transport routes authorization to the same
 	// qrdb PDP.

@@ -3,8 +3,6 @@
 //
 // This file is part of go-quicbaas.
 
-//go:build iam
-
 package main
 
 import (

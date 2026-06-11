@@ -1425,7 +1425,7 @@ func TestRBACServiceImpl_AssignRole_NilManager(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
+	assert.Contains(t, err.Error(), "service.AssignRole")
 }
 
 func TestRBACServiceImpl_RevokeRole_NilManager(t *testing.T) {
@@ -1438,7 +1438,7 @@ func TestRBACServiceImpl_RevokeRole_NilManager(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
+	assert.Contains(t, err.Error(), "service.RevokeRole")
 }
 
 func TestClusterServiceImpl_CreateShard_ValidationError(t *testing.T) {
@@ -1959,24 +1959,8 @@ func TestClusterServiceImpl_ClusterStatus_MultipleShards(t *testing.T) {
 }
 
 // RBAC Service Tests - Error paths (53.8% -> 70%).
-func TestRBACServiceImpl_AssignRole_NoAuthManager(t *testing.T) {
-	svc := &quicBaaS{
-		authManager: nil,
-		logger:      testLoggerCoverage(t),
-	}
-
-	rbacSvc := &rbacService{svc: svc}
-
-	req := &AssignRoleRequest{
-		Username: "testuser",
-		RoleName: "admin",
-	}
-
-	_, err := rbacSvc.AssignRole(context.Background(), req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication manager service not configured")
-}
-
+// (AssignRole with no IAM provider is covered by
+// TestRBACServiceImpl_AssignRole_NotConfigured.)
 func TestRBACServiceImpl_AssignRole_InvalidInput(t *testing.T) {
 	mockAuth := &mockAuthManager{}
 
@@ -2009,14 +1993,13 @@ func TestRBACServiceImpl_AssignRole_InvalidInput(t *testing.T) {
 	}
 }
 
-func TestRBACServiceImpl_AssignRole_NoUserStore(t *testing.T) {
-	mockAuth := &mockAuthManager{
-		userStoreReturn: nil,
-	}
-
+func TestRBACServiceImpl_AssignRole_NotConfigured(t *testing.T) {
+	// AssignRole routes through the qrdb-backed IdentityStore (authz-unification
+	// C1-E). With no IAM provider wired, the iam build fails closed on the
+	// missing tenant context / unconfigured identity store and the !iam stub
+	// returns a typed not-configured error — both carry the service.AssignRole op.
 	svc := &quicBaaS{
-		authManager: mockAuth,
-		logger:      testLoggerCoverage(t),
+		logger: testLoggerCoverage(t),
 	}
 
 	rbacSvc := &rbacService{svc: svc}
@@ -2028,7 +2011,7 @@ func TestRBACServiceImpl_AssignRole_NoUserStore(t *testing.T) {
 
 	_, err := rbacSvc.AssignRole(context.Background(), req)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "user store service not configured")
+	assert.Contains(t, err.Error(), "service.AssignRole")
 }
 
 func TestRBACServiceImpl_RevokeRole_NoAuthManager(t *testing.T) {

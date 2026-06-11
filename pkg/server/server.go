@@ -455,6 +455,25 @@ func (s *Server) getEffectiveMode() string {
 	return s.config.Server.Mode
 }
 
+// validateServerMode fails closed when the configured server mode is a
+// non-empty value outside the recognized set {standalone, cluster,
+// devcluster}. An empty mode is permitted and resolves to standalone via
+// getEffectiveMode, so it is not rejected here. Unknown non-empty modes
+// previously fell through to the standalone branch of the initialization
+// switch, masking operator misconfiguration; this guard restores the
+// fail-closed contract.
+func (s *Server) validateServerMode() error {
+	switch s.config.Server.Mode {
+	case "",
+		config.ServerModeStandalone,
+		config.ServerModeCluster,
+		config.ServerModeDevCluster:
+		return nil
+	default:
+		return api.NewUnknownServerModeError("server.initialize", s.config.Server.Mode)
+	}
+}
+
 // initialize performs the actual server initialization.
 // This is the single source of truth for component startup order.
 // All components are started synchronously in the following order:
@@ -471,6 +490,14 @@ func (s *Server) initialize() error {
 	}
 	s.started = true
 	s.mu.Unlock()
+
+	// Fail closed on an unrecognized server mode. An empty mode intentionally
+	// defaults to standalone (see getEffectiveMode); any non-empty mode outside
+	// the valid set {standalone, cluster, devcluster} is a configuration error
+	// and must abort startup rather than being silently treated as standalone.
+	if err := s.validateServerMode(); err != nil {
+		return err
+	}
 
 	s.logger.Info("Starting server components...")
 	s.logger.Infof("Server mode: %s", s.getEffectiveMode())

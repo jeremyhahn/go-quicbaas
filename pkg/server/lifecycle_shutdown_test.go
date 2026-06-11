@@ -1,4 +1,4 @@
-//go:build raft && rest && grpc && quic && mcp
+//go:build !integration && raft && rest && quic && mcp
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -246,37 +246,52 @@ func TestEnsureTLSCertificatesLifecycle_EnabledGeneratesCerts(t *testing.T) {
 }
 
 func TestStartServiceLifecycle_MemoryBackend(t *testing.T) {
-	t.Parallel()
+	saveAndRestoreLifecycleSeams(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
 	cfg.Server.Mode = config.ServerModeStandalone
 	cfg.Storage.Backend = config.StorageBackendMemory
 
+	stubIAMSeam()
+
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	require.NoError(t, srv.startService())
 	assert.NotNil(t, srv.quicBaaSService)
 }
 
+// TestStartServiceLifecycle_InvalidMode verifies that startService itself does
+// NOT reject an unrecognized mode: the fail-closed mode gate lives in
+// initialize() (see TestInitializeLifecycle_InvalidServerMode), not in the
+// service builder. The service builder treats any mode string as standalone
+// for node construction, so startService succeeds even with a bogus mode once
+// a qrdb node has been built.
 func TestStartServiceLifecycle_InvalidMode(t *testing.T) {
-	t.Parallel()
+	saveAndRestoreLifecycleSeams(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
 	cfg.Server.Mode = "invalid-mode"
+	cfg.Storage.Backend = config.StorageBackendMemory
+
+	stubIAMSeam()
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	err = srv.startService()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown server mode")
+	assert.NoError(t, err, "startService accepts any mode; mode validation is in initialize()")
+	assert.NotNil(t, srv.quicBaaSService)
 }
 
 func TestStartServiceLifecycle_WithCacheEnabled(t *testing.T) {
-	t.Parallel()
+	saveAndRestoreLifecycleSeams(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
@@ -287,15 +302,19 @@ func TestStartServiceLifecycle_WithCacheEnabled(t *testing.T) {
 	cfg.Cache.DefaultTTL = 10 * time.Second
 	cfg.Cache.CleanupInterval = 5 * time.Second
 
+	stubIAMSeam()
+
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	require.NoError(t, srv.startService())
 	assert.NotNil(t, srv.cacheManager)
 }
 
 func TestStartServiceLifecycle_WithSchedulerConfig(t *testing.T) {
-	t.Parallel()
+	saveAndRestoreLifecycleSeams(t)
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
@@ -305,8 +324,12 @@ func TestStartServiceLifecycle_WithSchedulerConfig(t *testing.T) {
 	cfg.Scheduler.TickInterval = 1 * time.Second
 	cfg.Scheduler.MaxConcurrentJobs = 5
 
+	stubIAMSeam()
+
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 
 	require.NoError(t, srv.startService())
 	assert.NotNil(t, srv.quicBaaSService)

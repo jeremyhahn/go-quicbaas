@@ -66,27 +66,27 @@ func newMockKeyProvider() *mockKeyProvider {
 func (m *mockKeyProvider) Type() xkmssdk.BackendType          { return m.backendType }
 func (m *mockKeyProvider) Capabilities() xkmssdk.Capabilities { return m.capabilities }
 
-func (m *mockKeyProvider) GenerateKey(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyProvider) GenerateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, &XKMSKeyNotFoundError{KeyID: "not-implemented"}
 }
 
-func (m *mockKeyProvider) GetKey(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyProvider) GetKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if key, ok := m.keys[attrs.CN]; ok {
 		return key, nil
 	}
 	return nil, &XKMSKeyNotFoundError{KeyID: attrs.CN}
 }
 
-func (m *mockKeyProvider) DeleteKey(attrs *xkmssdk.KeyAttributes) error {
+func (m *mockKeyProvider) DeleteKey(_ context.Context, attrs *xkmssdk.KeyAttributes) error {
 	return nil
 }
 
-func (m *mockKeyProvider) ListKeys() ([]*xkmssdk.KeyAttributes, error) {
+func (m *mockKeyProvider) ListKeys(_ context.Context) ([]*xkmssdk.KeyAttributes, error) {
 	return m.keyAttrs, nil
 }
 
-func (m *mockKeyProvider) Signer(attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
-	key, err := m.GetKey(attrs)
+func (m *mockKeyProvider) Signer(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
+	key, err := m.GetKey(context.Background(), attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -96,11 +96,11 @@ func (m *mockKeyProvider) Signer(attrs *xkmssdk.KeyAttributes) (crypto.Signer, e
 	return nil, &XKMSKeyNotFoundError{KeyID: attrs.CN}
 }
 
-func (m *mockKeyProvider) Decrypter(attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockKeyProvider) Decrypter(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, &XKMSKeyNotFoundError{KeyID: "not-implemented"}
 }
 
-func (m *mockKeyProvider) RotateKey(attrs *xkmssdk.KeyAttributes) error {
+func (m *mockKeyProvider) RotateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) error {
 	return nil
 }
 
@@ -180,76 +180,76 @@ func newMockXKMSBackend() *mockXKMSBackend {
 	}
 }
 
-func (m *mockXKMSBackend) GenerateRSA(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) GenerateRSA(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if m.generateRSAFunc != nil {
 		return m.generateRSAFunc(attrs)
 	}
 	return nil, nil
 }
-func (m *mockXKMSBackend) GenerateECDSA(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) GenerateECDSA(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if m.generateECDSAFunc != nil {
 		return m.generateECDSAFunc(attrs)
 	}
 	return nil, nil
 }
-func (m *mockXKMSBackend) GenerateEd25519(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) GenerateEd25519(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if m.generateEd25519Func != nil {
 		return m.generateEd25519Func(attrs)
 	}
 	return nil, nil
 }
-func (m *mockXKMSBackend) GetKey(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
-	return m.keyProvider.GetKey(attrs)
+func (m *mockXKMSBackend) GetKey(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+	return m.keyProvider.GetKey(ctx, attrs)
 }
-func (m *mockXKMSBackend) DeleteKey(attrs *xkmssdk.KeyAttributes) error {
+func (m *mockXKMSBackend) DeleteKey(ctx context.Context, attrs *xkmssdk.KeyAttributes) error {
 	return nil
 }
-func (m *mockXKMSBackend) ListKeys() ([]*xkmssdk.KeyAttributes, error) {
-	return m.keyProvider.ListKeys()
+func (m *mockXKMSBackend) ListKeys(ctx context.Context) ([]*xkmssdk.KeyAttributes, error) {
+	return m.keyProvider.ListKeys(ctx)
 }
-func (m *mockXKMSBackend) RotateKey(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) RotateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if m.rotateKeyFunc != nil {
 		return m.rotateKeyFunc(attrs)
 	}
 	return nil, nil
 }
-func (m *mockXKMSBackend) Signer(attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
-	return m.keyProvider.Signer(attrs)
+func (m *mockXKMSBackend) Signer(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
+	return m.keyProvider.Signer(ctx, attrs)
 }
-func (m *mockXKMSBackend) Decrypter(attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockXKMSBackend) Decrypter(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, nil
 }
-func (m *mockXKMSBackend) SaveCert(keyID string, cert *x509.Certificate) error {
-	return m.certStore.SaveCert(context.Background(), keyID, cert)
+func (m *mockXKMSBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
+	return m.certStore.SaveCert(ctx, keyID, cert)
 }
-func (m *mockXKMSBackend) GetCert(keyID string) (*x509.Certificate, error) {
-	return m.certStore.GetCert(context.Background(), keyID)
+func (m *mockXKMSBackend) GetCert(ctx context.Context, keyID string) (*x509.Certificate, error) {
+	return m.certStore.GetCert(ctx, keyID)
 }
-func (m *mockXKMSBackend) DeleteCert(keyID string) error {
-	return m.certStore.DeleteCert(context.Background(), keyID)
+func (m *mockXKMSBackend) DeleteCert(ctx context.Context, keyID string) error {
+	return m.certStore.DeleteCert(ctx, keyID)
 }
-func (m *mockXKMSBackend) SaveCertChain(keyID string, chain []*x509.Certificate) error {
+func (m *mockXKMSBackend) SaveCertChain(_ context.Context, keyID string, chain []*x509.Certificate) error {
 	return nil
 }
-func (m *mockXKMSBackend) GetCertChain(keyID string) ([]*x509.Certificate, error) {
+func (m *mockXKMSBackend) GetCertChain(_ context.Context, keyID string) ([]*x509.Certificate, error) {
 	return nil, nil
 }
-func (m *mockXKMSBackend) ListCerts() ([]string, error) {
-	return m.certStore.ListCerts(context.Background())
+func (m *mockXKMSBackend) ListCerts(ctx context.Context) ([]string, error) {
+	return m.certStore.ListCerts(ctx)
 }
-func (m *mockXKMSBackend) CertExists(keyID string) (bool, error) {
-	return m.certStore.CertExists(context.Background(), keyID)
+func (m *mockXKMSBackend) CertExists(ctx context.Context, keyID string) (bool, error) {
+	return m.certStore.CertExists(ctx, keyID)
 }
-func (m *mockXKMSBackend) GetTLSCertificate(keyID string, attrs *xkmssdk.KeyAttributes) (tls.Certificate, error) {
+func (m *mockXKMSBackend) GetTLSCertificate(_ context.Context, keyID string, attrs *xkmssdk.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, nil
 }
-func (m *mockXKMSBackend) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
+func (m *mockXKMSBackend) GetKeyByID(_ context.Context, keyID string) (crypto.PrivateKey, error) {
 	return nil, nil
 }
-func (m *mockXKMSBackend) GetSignerByID(keyID string) (crypto.Signer, error) {
+func (m *mockXKMSBackend) GetSignerByID(_ context.Context, keyID string) (crypto.Signer, error) {
 	return nil, nil
 }
-func (m *mockXKMSBackend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
+func (m *mockXKMSBackend) GetDecrypterByID(_ context.Context, keyID string) (crypto.Decrypter, error) {
 	return nil, nil
 }
 func (m *mockXKMSBackend) Seal(ctx context.Context, data []byte, opts *xkmssdk.SealOptions) (*xkmssdk.SealedData, error) {

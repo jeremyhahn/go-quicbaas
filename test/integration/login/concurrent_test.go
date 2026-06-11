@@ -11,7 +11,7 @@
 //  2. Commercial License
 //     Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build integration && rest && iam
+//go:build integration && rest
 
 package login
 

@@ -1,4 +1,4 @@
-//go:build iam && rest
+//go:build rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -28,7 +28,7 @@ import (
 // resolve a login's tenant before that tenant's barrier unseals — there is no
 // chicken-and-egg dependency on the very barrier the login is trying to reach.
 //
-// When the iam build tag is set this attaches a real resolver; the non-iam
+// When the rest build tag is set this attaches a real resolver; the no-rest
 // build provides a no-op variant.
 func (s *Server) attachHomeRealmResolver(cfg *restapi.Config) {
 	if dir := s.buildHomeRealmDirectory(); dir != nil {

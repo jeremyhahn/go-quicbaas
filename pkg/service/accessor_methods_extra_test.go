@@ -16,7 +16,6 @@
 package service
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -104,6 +103,7 @@ func TestQuicBaaS_SetLoginService_SetsServiceForCeremony(t *testing.T) {
 
 // =============================================================================
 // IAM provider accessors — return nil / no error when no IAM provider is wired.
+// Additional IAM provider accessors are covered in accessor_methods_iam_test.go.
 // =============================================================================
 
 func TestQuicBaaS_GetInternalAuthManager_NilWhenNotConfigured(t *testing.T) {
@@ -113,28 +113,4 @@ func TestQuicBaaS_GetInternalAuthManager_NilWhenNotConfigured(t *testing.T) {
 	impl, ok := svc.(*quicBaaS)
 	require.True(t, ok)
 	assert.Nil(t, impl.GetInternalAuthManager())
-}
-
-func TestQuicBaaS_GetAppStorage_NilWhenNoProvider(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	impl, ok := svc.(*quicBaaS)
-	require.True(t, ok)
-
-	store, err := impl.GetAppStorage(context.Background())
-	require.NoError(t, err)
-	assert.Nil(t, store)
-}
-
-func TestQuicBaaS_GetFederationManager_NilWhenNoProvider(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	impl, ok := svc.(*quicBaaS)
-	require.True(t, ok)
-
-	fm, err := impl.GetFederationManager(context.Background())
-	require.NoError(t, err)
-	assert.Nil(t, fm)
 }

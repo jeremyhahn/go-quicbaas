@@ -18,10 +18,10 @@ import (
 	"errors"
 	"testing"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	pkgerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
 // mockTenantClient implements qrdbtransport.TenantClient, capturing the
@@ -65,6 +65,26 @@ func (m *mockTenantClient) TenantBarrierSeal(_ context.Context, req *qrdbtranspo
 func (m *mockTenantClient) TenantBarrierStatus(_ context.Context, req *qrdbtransport.TenantBarrierStatusRequest) (*qrdbtransport.TenantBarrierStatusResponse, error) {
 	m.statusReq = req
 	return m.statusResp, m.statusErr
+}
+
+// Tenant officer/share-claim methods are unused by the facade.
+func (m *mockTenantClient) TenantBarrierOfficerRegister(context.Context, *qrdbtransport.TenantOfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
+	return nil, nil
+}
+func (m *mockTenantClient) TenantBarrierOfficerList(context.Context, string) ([]*qrdbtransport.OfficerStatus, error) {
+	return nil, nil
+}
+func (m *mockTenantClient) TenantBarrierOfficerClaimStatus(context.Context, string) ([]*qrdbtransport.OfficerStatus, error) {
+	return nil, nil
+}
+func (m *mockTenantClient) TenantBarrierShareClaimBegin(context.Context, *qrdbtransport.TenantShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error) {
+	return nil, nil
+}
+func (m *mockTenantClient) TenantBarrierShareClaimComplete(context.Context, *qrdbtransport.TenantShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error) {
+	return nil, nil
+}
+func (m *mockTenantClient) TenantBarrierShamirSealVote(context.Context, *qrdbtransport.TenantShamirSealVoteRequest) (*qrdbtransport.ShamirSealVoteResponse, error) {
+	return nil, nil
 }
 
 // Non-barrier TenantClient methods are unused by the facade.
@@ -119,7 +139,7 @@ func TestTenantBarrierService_Init_DelegatesAndReturnsShares(t *testing.T) {
 	mock := &mockTenantClient{
 		initResp: &qrdbtransport.TenantBarrierInitResponse{
 			TenantID: "acme", Strategy: "shamir",
-			Shares: []string{"s1", "s2", "s3"}, Threshold: 2, TotalShares: 3,
+			Threshold: 2, TotalShares: 3, ShareCount: 3,
 		},
 	}
 	svc := NewTenantBarrierService(mock)

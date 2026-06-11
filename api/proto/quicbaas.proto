@@ -1944,13 +1944,14 @@ message SealInitRequest {
   int32 recovery_total_keys = 5;
 }
 
-// SealInitResponse returns the generated key shares.
+// SealInitResponse returns the initialization result. Share material is
+// never returned (qrdb share-free contract): officers claim their shares
+// through the identity-gated claim endpoints.
 message SealInitResponse {
-  // shares are the Shamir secret shares for unsealing.
-  repeated bytes shares = 1;
-
-  // recovery_keys are the recovery keys (if enabled).
-  repeated bytes recovery_keys = 2;
+  // Fields 1-2 carried shares / recovery_keys before the share-free
+  // contract; reserved so they can never be reintroduced.
+  reserved 1, 2;
+  reserved "shares", "recovery_keys";
 
   // root_token is the root authentication token.
   string root_token = 3;
@@ -2013,10 +2014,14 @@ message SealRekeyRequest {
   int32 new_total = 2;
 }
 
-// SealRekeyResponse returns the new key shares.
+// SealRekeyResponse confirms a share rotation. New share material is never
+// returned (qrdb share-free contract): officers re-claim their shares
+// through the identity-gated claim endpoints after a rekey.
 message SealRekeyResponse {
-  // shares are the new Shamir secret shares.
-  repeated bytes shares = 1;
+  // Field 1 carried the new shares before the share-free contract;
+  // reserved so it can never be reintroduced.
+  reserved 1;
+  reserved "shares";
 
   // version is the new seal configuration version.
   uint64 version = 2;

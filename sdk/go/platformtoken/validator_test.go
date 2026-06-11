@@ -71,6 +71,10 @@ type tokenClaims struct {
 	exp time.Time
 	iat time.Time
 	jkt string
+	// typ overrides the JOSE "typ" header. Empty defaults to the RFC 9068
+	// access-token media type "at+jwt"; the sentinel "-" omits the header
+	// entirely (to exercise the missing-typ rejection).
+	typ string
 }
 
 func (k *issuerKey) sign(t *testing.T, tc tokenClaims) string {
@@ -94,6 +98,14 @@ func (k *issuerKey) sign(t *testing.T, tc tokenClaims) string {
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodES256, m)
 	tok.Header["kid"] = k.kid
+	switch tc.typ {
+	case "":
+		tok.Header["typ"] = "at+jwt"
+	case "-":
+		delete(tok.Header, "typ")
+	default:
+		tok.Header["typ"] = tc.typ
+	}
 	s, err := tok.SignedString(k.priv)
 	if err != nil {
 		t.Fatalf("sign token: %v", err)
@@ -138,6 +150,66 @@ func TestValidatePlatformToken_Valid(t *testing.T) {
 	az := Authorize(claims)
 	if !az.HasScope("app.read") {
 		t.Fatal("expected app.read scope")
+	}
+}
+
+// TestValidatePlatformToken_AcceptsLongFormType verifies the RFC 9068 long-form
+// media type "application/at+jwt" is accepted, case-insensitively.
+func TestValidatePlatformToken_AcceptsLongFormType(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	v := newTestValidator(t, key, now)
+
+	for _, typ := range []string{"at+jwt", "AT+JWT", "application/at+jwt", "Application/AT+JWT"} {
+		tok := key.sign(t, tokenClaims{
+			iss: testIssuer, aud: []string{testAudience}, sub: "u",
+			exp: now.Add(10 * time.Minute), iat: now, typ: typ,
+		})
+		if _, err := v.ValidatePlatformToken(context.Background(), tok); err != nil {
+			t.Fatalf("typ %q: expected accept, got %v", typ, err)
+		}
+	}
+}
+
+// TestValidatePlatformToken_RejectsMissingType verifies a JWT lacking the typ
+// header is rejected with InvalidTokenTypeError.
+func TestValidatePlatformToken_RejectsMissingType(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	v := newTestValidator(t, key, now)
+
+	tok := key.sign(t, tokenClaims{
+		iss: testIssuer, aud: []string{testAudience}, sub: "u",
+		exp: now.Add(10 * time.Minute), iat: now, typ: "-",
+	})
+	_, err := v.ValidatePlatformToken(context.Background(), tok)
+	var tt *InvalidTokenTypeError
+	if !errors.As(err, &tt) {
+		t.Fatalf("expected InvalidTokenTypeError, got %v", err)
+	}
+	if tt.Got != "" {
+		t.Fatalf("expected empty Got for missing typ, got %q", tt.Got)
+	}
+}
+
+// TestValidatePlatformToken_RejectsIDTokenType verifies an OIDC ID token (typ
+// "JWT") cannot be replayed as an access token: token-type confusion is blocked.
+func TestValidatePlatformToken_RejectsIDTokenType(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := newIssuerKey(t, testKID)
+	v := newTestValidator(t, key, now)
+
+	tok := key.sign(t, tokenClaims{
+		iss: testIssuer, aud: []string{testAudience}, sub: "u",
+		exp: now.Add(10 * time.Minute), iat: now, typ: "JWT",
+	})
+	_, err := v.ValidatePlatformToken(context.Background(), tok)
+	var tt *InvalidTokenTypeError
+	if !errors.As(err, &tt) {
+		t.Fatalf("expected InvalidTokenTypeError, got %v", err)
+	}
+	if tt.Got != "JWT" {
+		t.Fatalf("expected Got=JWT, got %q", tt.Got)
 	}
 }
 

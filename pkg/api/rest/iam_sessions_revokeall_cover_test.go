@@ -1,4 +1,4 @@
-//go:build rest && iam
+//go:build rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

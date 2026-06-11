@@ -1,4 +1,4 @@
-//go:build quicbaas_signal && iam
+//go:build quicbaas_signal
 
 package signal
 

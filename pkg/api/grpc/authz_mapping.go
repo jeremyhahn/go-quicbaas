@@ -188,7 +188,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.kms.v1.KeyManagement/ListKeyVersions":        {"keys", "list"},
 	"/quicbaas.kms.v1.KeyManagement/RotateKey":              {"keys", "rotate"},
 	"/quicbaas.kms.v1.KeyManagement/DeleteKey":              {"keys", "delete"},
-	"/quicbaas.kms.v1.KeyManagement/DeleteKeyPolicy":       {"keys", "delete"},
+	"/quicbaas.kms.v1.KeyManagement/DeleteKeyPolicy":        {"keys", "delete"},
 	"/quicbaas.kms.v1.KeyManagement/RevokeKey":              {"keys", "delete"},
 	"/quicbaas.kms.v1.KeyManagement/SetKeyPolicy":           {"keys", "rotate"},
 	"/quicbaas.kms.v1.KeyManagement/SetKeySafety":           {"keys", "rotate"},

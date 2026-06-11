@@ -682,12 +682,12 @@ func TestNewNodeBackedShardedClient_FromClusteredNode(t *testing.T) {
 // buildXKMSFactors
 // ---------------------------------------------------------------------------
 
-func TestBuildXKMSFactors_ProducesFIDO2PIVAndPKCS11(t *testing.T) {
+func TestBuildXKMSFactors_ProducesFIDO2PIVPkcs11AndMTLS(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.IAM.WebAuthn.RPID = "example.com"
 
 	factors := buildXKMSFactors(cfg)
-	require.Len(t, factors, 3, "expected fido2 + piv + pkcs11 factors")
+	require.Len(t, factors, 4, "expected fido2 + piv + pkcs11 + mtls factors")
 
 	names := map[string]bool{}
 	for _, f := range factors {
@@ -697,6 +697,7 @@ func TestBuildXKMSFactors_ProducesFIDO2PIVAndPKCS11(t *testing.T) {
 	assert.True(t, names["fido2"], "fido2 factor must be registered for WebAuthn login")
 	assert.True(t, names["piv"], "piv factor must be registered for PIV login")
 	assert.True(t, names["pkcs11"], "pkcs11 factor must be registered for HSM login")
+	assert.True(t, names["mtls"], "mtls factor must be registered for certificate-possession enrollment")
 
 	// The produced factors must register cleanly into the composed qrdb
 	// FactorRegistry (no nil, no duplicate-name collisions).
@@ -711,7 +712,7 @@ func TestBuildXKMSFactors_ProducesFIDO2PIVAndPKCS11(t *testing.T) {
 // is lazy and never touches an HSM at construction.
 func TestBuildXKMSFactors_NilConfigStillProducesFactors(t *testing.T) {
 	factors := buildXKMSFactors(nil)
-	require.Len(t, factors, 3, "nil config must still yield the default factor set")
+	require.Len(t, factors, 4, "nil config must still yield the default factor set")
 
 	names := map[string]bool{}
 	for _, f := range factors {

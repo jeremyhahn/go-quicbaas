@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,6 +69,62 @@ func (l *testLogger) WithError(_ error) interfaces.Logger {
 	return l
 }
 
+// Compile-time check that captureDistributor satisfies the qrdb share-free
+// distribution contract.
+var _ qrdbsdk.CeremonyDistributor = (*captureDistributor)(nil)
+
+// captureDistributor implements the qrdb CeremonyDistributor contract for
+// unit tests. It splits the secret with the real Shamir splitter, records
+// the share strings so tests can drive Unseal/GenerateRootToken, and
+// returns the share count — mirroring what the production ceremony
+// subsystem does (seal one share per enrolled Security Officer) without
+// requiring officer enrollment.
+type captureDistributor struct {
+	mu       sync.Mutex
+	splitter qrdbsdk.ShareSplitter
+	shares   []string
+}
+
+// newCaptureDistributor returns a captureDistributor backed by the real
+// Shamir share splitter.
+func newCaptureDistributor() *captureDistributor {
+	return &captureDistributor{splitter: qrdbsdk.NewShamirShareSplitter()}
+}
+
+// SealAndDistribute splits secret into total shares with the given
+// threshold, records them, and returns the share count.
+func (c *captureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
+	shares, err := c.splitter.Split(secret, threshold, total)
+	if err != nil {
+		return 0, err
+	}
+	c.mu.Lock()
+	c.shares = shares
+	c.mu.Unlock()
+	return len(shares), nil
+}
+
+// RekeyAndDistribute destroys the prior round's shares and records fresh
+// shares split from newSecret.
+func (c *captureDistributor) RekeyAndDistribute(ctx context.Context, newSecret []byte, newThreshold, newTotal int) (int, error) {
+	c.mu.Lock()
+	c.shares = nil
+	c.mu.Unlock()
+	return c.SealAndDistribute(ctx, newSecret, newThreshold, newTotal)
+}
+
+// ShareBytes returns the captured shares from the last distribution round
+// as byte slices, ready for Manager.Unseal / GenerateRootToken.
+func (c *captureDistributor) ShareBytes() [][]byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([][]byte, len(c.shares))
+	for i, s := range c.shares {
+		out[i] = []byte(s)
+	}
+	return out
+}
+
 // newSoftwareBarrier constructs a real qrdb StorageBarrier wrapping an
 // in-memory backend with a pre-bound software passphrase. The passphrase
 // "test-passphrase" is used to drive the deferred-software code path
@@ -84,23 +141,15 @@ func newSoftwareBarrier(t *testing.T) *qrdbsdk.StorageBarrier {
 }
 
 // newShamirBarrier constructs a barrier suitable for shamir
-// initialize/unseal flows. The barrier is left sealed; callers drive
-// initialization themselves.
-func newShamirBarrier(t *testing.T) *qrdbsdk.StorageBarrier {
+// initialize/unseal flows, with capture distributors wired for both the
+// ceremony (init/rekey) and recovery share-distribution paths so the
+// share-free contract can be exercised end to end. The barrier is left
+// sealed; callers drive initialization themselves. It returns the barrier
+// plus the ceremony and recovery distributors so tests can pull the
+// sealed shares.
+func newShamirBarrier(t *testing.T) (*qrdbsdk.StorageBarrier, *captureDistributor, *captureDistributor) {
 	t.Helper()
-	backend := qrdbsdk.NewMemoryBackend()
-	soft, err := qrdbsdk.NewSoftwareStrategy([]byte("test-passphrase"))
-	require.NoError(t, err)
-	shamirStrat, err := qrdbsdk.NewShamirStrategy(2, 3)
-	require.NoError(t, err)
-	cfg := qrdbsdk.BarrierConfig{
-		RootKeyPath:     "test/root-key",
-		Shamir:          &qrdbsdk.ShamirConfig{Threshold: 2, TotalShares: 3},
-		PreferenceOrder: []qrdbsdk.StrategyID{qrdbsdk.StrategyShamir},
-	}
-	b, err := qrdbsdk.NewStorageBarrier(slog.Default(), backend, cfg, shamirStrat, soft)
-	require.NoError(t, err)
-	return b
+	return newShamirBarrierWithBackend(t, qrdbsdk.NewMemoryBackend())
 }
 
 // =============================================================================
@@ -186,16 +235,17 @@ func TestManager_IsInitialized_Initial(t *testing.T) {
 // =============================================================================
 
 func TestManager_Initialize_Shamir_Success(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, dist, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, DefaultConfig(), &testLogger{})
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	resp, err := mgr.Initialize(ctx, 3, 2)
 	require.NoError(t, err)
+	// Share-free contract: SealInitResponse has no share fields by type.
 	initResp, ok := resp.(*service.SealInitResponse)
 	require.True(t, ok)
-	assert.Len(t, initResp.Shares, 3)
+	assert.Len(t, dist.ShareBytes(), 3, "shares must be sealed to the ceremony distributor")
 	assert.Equal(t, uint64(1), initResp.Version)
 
 	// After init the barrier is left sealed.
@@ -203,27 +253,28 @@ func TestManager_Initialize_Shamir_Success(t *testing.T) {
 }
 
 func TestManager_Initialize_DefaultsFromConfig(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, dist, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, &Config{Threshold: 2, TotalShares: 3}, &testLogger{})
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	resp, err := mgr.Initialize(ctx, 0, 0)
 	require.NoError(t, err)
-	initResp, ok := resp.(*service.SealInitResponse)
+	// Share-free contract: SealInitResponse has no share fields by type.
+	_, ok := resp.(*service.SealInitResponse)
 	require.True(t, ok)
-	assert.Len(t, initResp.Shares, 3)
+	assert.Len(t, dist.ShareBytes(), 3, "config defaults must drive the distributed share count")
 }
 
 func TestManager_Unseal_PartialAndComplete(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, dist, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, DefaultConfig(), &testLogger{})
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	initResp, err := mgr.Initialize(ctx, 3, 2)
+	_, err = mgr.Initialize(ctx, 3, 2)
 	require.NoError(t, err)
-	shares := initResp.(*service.SealInitResponse).Shares
+	shares := dist.ShareBytes()
 	require.Len(t, shares, 3)
 
 	// First share: progress, still sealed.
@@ -243,7 +294,7 @@ func TestManager_Unseal_PartialAndComplete(t *testing.T) {
 }
 
 func TestManager_Seal_Idempotent(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, _, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, DefaultConfig(), &testLogger{})
 	require.NoError(t, err)
 
@@ -253,14 +304,15 @@ func TestManager_Seal_Idempotent(t *testing.T) {
 }
 
 func TestManager_Rekey_AfterUnseal(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, dist, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, DefaultConfig(), &testLogger{})
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	initResp, err := mgr.Initialize(ctx, 3, 2)
+	_, err = mgr.Initialize(ctx, 3, 2)
 	require.NoError(t, err)
-	shares := initResp.(*service.SealInitResponse).Shares
+	shares := dist.ShareBytes()
+	require.Len(t, shares, 3)
 
 	// Unseal so rekey can run.
 	_, err = mgr.Unseal(ctx, shares[0])
@@ -270,13 +322,14 @@ func TestManager_Rekey_AfterUnseal(t *testing.T) {
 
 	rekeyResp, err := mgr.Rekey(ctx, 5, 3)
 	require.NoError(t, err)
+	// Share-free contract: RekeyResponse has no share fields by type.
 	r := rekeyResp.(*service.RekeyResponse)
-	assert.Len(t, r.Shares, 5)
+	assert.Len(t, dist.ShareBytes(), 5, "new shares must be sealed to the ceremony distributor")
 	assert.Equal(t, uint64(2), r.Version)
 }
 
 func TestManager_Rekey_WhileSealed_ReturnsError(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, _, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, DefaultConfig(), &testLogger{})
 	require.NoError(t, err)
 
@@ -294,7 +347,7 @@ func TestManager_Rekey_WhileSealed_ReturnsError(t *testing.T) {
 // =============================================================================
 
 func TestManager_GenerateRecoveryKeys_RequiresUnseal(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, _, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, DefaultConfig(), &testLogger{})
 	require.NoError(t, err)
 
@@ -304,7 +357,7 @@ func TestManager_GenerateRecoveryKeys_RequiresUnseal(t *testing.T) {
 }
 
 func TestManager_DeleteRecoveryKeys_NoOpOK(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, _, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, DefaultConfig(), &testLogger{})
 	require.NoError(t, err)
 
@@ -319,7 +372,7 @@ func TestManager_DeleteRecoveryKeys_NoOpOK(t *testing.T) {
 // =============================================================================
 
 func TestManager_GenerateRootToken_InvalidStrategy(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, _, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, DefaultConfig(), &testLogger{})
 	require.NoError(t, err)
 
@@ -330,7 +383,7 @@ func TestManager_GenerateRootToken_InvalidStrategy(t *testing.T) {
 }
 
 func TestManager_GenerateRootToken_ValidStrategyForwarded(t *testing.T) {
-	b := newShamirBarrier(t)
+	b, _, _ := newShamirBarrier(t)
 	mgr, err := NewManager(b, DefaultConfig(), &testLogger{})
 	require.NoError(t, err)
 

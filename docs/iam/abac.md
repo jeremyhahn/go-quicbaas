@@ -26,13 +26,9 @@ QuicBaaS implements ABAC through the `pkg/iam` module with the following compone
 
 ### Build Tag Requirement
 
-ABAC functionality requires the `iam` build tag:
+ABAC functionality is always compiled into every build; no build tag is required:
 
 ```bash
-# Build with ABAC/IAM support
-go build -tags iam ./cmd/quicbaasd
-
-# Build without ABAC (RBAC only)
 go build ./cmd/quicbaasd
 ```
 
@@ -73,11 +69,11 @@ When built without `iam`, ABAC features are not available and the system falls b
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    ABAC Provider                             │
-│              (pkg/auth/providers/abac.go)                   │
+│                  (pkg/iam/evaluator.go)                     │
 │                                                             │
 │  - Wraps PolicyEvaluator                                    │
 │  - Converts interfaces.AuthorizationRequest to iam.Check   │
-│  - Requires iam build tag                           │
+│  - Always compiled (no build tag since C1-G)                │
 │  - Thread-safe via atomic operations                        │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -459,7 +455,6 @@ security:
     # ABAC configuration
     abac:
       # Enable ABAC authorization
-      # Requires iam build tag
       # Default: false
       enabled: true
 
@@ -503,30 +498,25 @@ QUICBAAS_SECURITY_AUTHORIZATION_ABAC_POLICY_DIR=/etc/quicbaas/policies
 ### Build Commands
 
 ```bash
-# Build server with ABAC/IAM support
-go build -tags iam ./cmd/quicbaasd
+# Build server (ABAC/IAM always compiled)
+go build ./cmd/quicbaasd
 
-# Build CLI with ABAC support
-go build -tags iam ./cmd/quicbaas
+# Build CLI
+go build ./cmd/quicbaas
 
-# Build with FIPS and IAM
-go build -tags "fips iam" ./cmd/quicbaasd
+# Build with FIPS
+GOFIPS140=latest go build -tags fips ./cmd/quicbaasd
 
-# Run tests with ABAC
-go test -tags iam ./pkg/auth/providers/...
-go test -tags iam ./pkg/iam/...
+# Run tests
+go test ./pkg/iam/...
 ```
 
 ### Verify ABAC Availability
 
 ```bash
-# Check build tags in binary
-./quicbaasd version
-# Output should include: Features: iam
-
 # Check provider availability at runtime
 ./quicbaas config validate --config quicbaas.yaml
-# Will error if ABAC is configured but iam not present
+# Will error if ABAC is configured but the policy engine cannot be built
 ```
 
 ## API Reference
@@ -554,7 +544,7 @@ type AuthorizationProvider interface {
 
 ### ABACProvider
 
-Defined in `pkg/auth/providers/abac.go` (requires `iam` build tag):
+Defined in `pkg/iam/evaluator.go` (always compiled since C1-G):
 
 ```go
 // ABACProvider implements AuthorizationProvider using the IAM PolicyEvaluator
@@ -810,16 +800,6 @@ quicbaas_policy_evaluation_rules_total
 ## Troubleshooting
 
 ### Common Issues
-
-#### "ABAC provider not available"
-
-**Cause**: Binary built without `iam` tag
-
-**Solution**:
-```bash
-# Rebuild with ABAC support
-go build -tags iam ./cmd/quicbaasd
-```
 
 #### Policy Not Matching
 

@@ -297,7 +297,7 @@ func TestHandleBarrierSeal_ServiceError(t *testing.T) {
 func TestHandleBarrierShamirInitialize_OK(t *testing.T) {
 	svc := &fakeBarrierService{
 		initShamirFn: func(ctx context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
-			return &service.ShamirInitInfo{Shares: []string{"a", "b", "c"}, Threshold: threshold, TotalShares: total}, nil
+			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/initialize",
@@ -309,8 +309,12 @@ func TestHandleBarrierShamirInitialize_OK(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["threshold"].(float64) != 2 || resp["total_shares"].(float64) != 3 {
+	if resp["threshold"].(float64) != 2 || resp["total_shares"].(float64) != 3 || resp["share_count"].(float64) != 3 {
 		t.Fatalf("unexpected shamir init body: %v", resp)
+	}
+	// Share-free contract: raw shares must never appear in the response body.
+	if _, leaked := resp["shares"]; leaked {
+		t.Fatalf("shares leaked in shamir init body: %v", resp)
 	}
 }
 
@@ -399,6 +403,14 @@ func TestHandleBarrierShamirUnsealShares_Empty(t *testing.T) {
 	}
 }
 
+func TestHandleBarrierShamirUnsealShares_ServiceError(t *testing.T) {
+	svc := &fakeBarrierService{unsealWithSharesFn: func(ctx context.Context, shares []string) error { return errBarrierBoom }}
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/unseal-shares", `{"shares":["a","b"]}`)
+	if w.Code < 500 {
+		t.Fatalf("expected 5xx, got %d", w.Code)
+	}
+}
+
 // =============================================================================
 // Rekey
 // =============================================================================
@@ -406,7 +418,7 @@ func TestHandleBarrierShamirUnsealShares_Empty(t *testing.T) {
 func TestHandleBarrierRekey_OK(t *testing.T) {
 	svc := &fakeBarrierService{
 		rekeyFn: func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-			return &service.ShamirInitInfo{Shares: []string{"x"}, Threshold: threshold, TotalShares: total}, nil
+			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/rekey", `{"threshold":2,"total":3}`)
@@ -429,6 +441,18 @@ func TestHandleBarrierRekey_Validation(t *testing.T) {
 	}
 }
 
+func TestHandleBarrierRekey_ServiceError(t *testing.T) {
+	svc := &fakeBarrierService{
+		rekeyFn: func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
+			return nil, errBarrierBoom
+		},
+	}
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/rekey", `{"threshold":2,"total":3}`)
+	if w.Code < 500 {
+		t.Fatalf("expected 5xx, got %d", w.Code)
+	}
+}
+
 // =============================================================================
 // Recovery generate / recover / delete / status
 // =============================================================================
@@ -436,7 +460,7 @@ func TestHandleBarrierRekey_Validation(t *testing.T) {
 func TestHandleBarrierRecoveryGenerate_OK(t *testing.T) {
 	svc := &fakeBarrierService{
 		genRecoveryFn: func(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
-			return &service.RecoveryKeysInfo{Keys: []string{"k1", "k2"}, Threshold: threshold, Total: total}, nil
+			return &service.RecoveryKeysInfo{Threshold: threshold, Total: total, ShareCount: total}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/generate", `{"threshold":2,"total":3}`)
@@ -447,8 +471,12 @@ func TestHandleBarrierRecoveryGenerate_OK(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if keys, ok := resp["keys"].([]interface{}); !ok || len(keys) != 2 {
-		t.Fatalf("unexpected recovery keys body: %v", resp)
+	if resp["threshold"].(float64) != 2 || resp["total"].(float64) != 3 || resp["share_count"].(float64) != 3 {
+		t.Fatalf("unexpected recovery body: %v", resp)
+	}
+	// Share-free contract: raw recovery keys must never appear in the response body.
+	if _, leaked := resp["keys"]; leaked {
+		t.Fatalf("recovery keys leaked in body: %v", resp)
 	}
 }
 
@@ -463,6 +491,18 @@ func TestHandleBarrierRecoveryGenerate_Validation(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("body %s: expected 400, got %d", body, w.Code)
 		}
+	}
+}
+
+func TestHandleBarrierRecoveryGenerate_ServiceError(t *testing.T) {
+	svc := &fakeBarrierService{
+		genRecoveryFn: func(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
+			return nil, errBarrierBoom
+		},
+	}
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/generate", `{"threshold":2,"total":3}`)
+	if w.Code < 500 {
+		t.Fatalf("expected 5xx, got %d", w.Code)
 	}
 }
 
@@ -481,11 +521,27 @@ func TestHandleBarrierRecoveryRecover_Empty(t *testing.T) {
 	}
 }
 
+func TestHandleBarrierRecoveryRecover_ServiceError(t *testing.T) {
+	svc := &fakeBarrierService{recoverWithKeysFn: func(ctx context.Context, keys []string) error { return errBarrierBoom }}
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/recover", `{"keys":["a","b"]}`)
+	if w.Code < 500 {
+		t.Fatalf("expected 5xx, got %d", w.Code)
+	}
+}
+
 func TestHandleBarrierRecoveryDelete_OK(t *testing.T) {
 	svc := &fakeBarrierService{deleteRecoveryFn: func(ctx context.Context) error { return nil }}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodDelete, "/api/v1/barrier/recovery", "")
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
+	}
+}
+
+func TestHandleBarrierRecoveryDelete_ServiceError(t *testing.T) {
+	svc := &fakeBarrierService{deleteRecoveryFn: func(ctx context.Context) error { return errBarrierBoom }}
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodDelete, "/api/v1/barrier/recovery", "")
+	if w.Code < 500 {
+		t.Fatalf("expected 5xx, got %d", w.Code)
 	}
 }
 
@@ -543,6 +599,18 @@ func TestHandleBarrierRootToken_Empty(t *testing.T) {
 	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/root-token", `{"shares":[]}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleBarrierRootToken_ServiceError(t *testing.T) {
+	svc := &fakeBarrierService{
+		genRootTokenFn: func(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
+			return nil, errBarrierBoom
+		},
+	}
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/root-token", `{"shares":["a"]}`)
+	if w.Code < 500 {
+		t.Fatalf("expected 5xx, got %d", w.Code)
 	}
 }
 

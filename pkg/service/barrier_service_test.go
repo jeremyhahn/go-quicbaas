@@ -114,6 +114,45 @@ func (m *mockBarrierClient) BarrierGenerateRootToken(_ context.Context, _ *trans
 	return m.rootTokenResp, m.rootTokenErr
 }
 
+// Officer enrollment and share-claim methods are unused by the facade; they
+// satisfy the share-free transport.BarrierClient contract.
+
+func (m *mockBarrierClient) OfficerRegister(_ context.Context, _ *transport.OfficerRegisterRequest) (*transport.OfficerRegisterResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBarrierClient) OfficerList(_ context.Context) ([]*transport.OfficerStatus, error) {
+	return nil, nil
+}
+
+func (m *mockBarrierClient) OfficerClaimStatus(_ context.Context) ([]*transport.OfficerStatus, error) {
+	return nil, nil
+}
+
+func (m *mockBarrierClient) ShareClaimBegin(_ context.Context, _ *transport.ShareClaimBeginRequest) (*transport.ShareClaimBeginResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBarrierClient) ShareClaimComplete(_ context.Context, _ *transport.ShareClaimCompleteRequest) (*transport.ShareClaimCompleteResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBarrierClient) ShamirSealVote(_ context.Context, _ *transport.ShamirSealVoteRequest) (*transport.ShamirSealVoteResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBarrierClient) RecoveryOfficerRegister(_ context.Context, _ *transport.OfficerRegisterRequest) (*transport.OfficerRegisterResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBarrierClient) RecoveryShareClaimBegin(_ context.Context, _ *transport.ShareClaimBeginRequest) (*transport.ShareClaimBeginResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBarrierClient) RecoveryShareClaimComplete(_ context.Context, _ *transport.ShareClaimCompleteRequest) (*transport.ShareClaimCompleteResponse, error) {
+	return nil, nil
+}
+
 // Compile-time check that the mock satisfies the qrdb BarrierClient contract.
 var _ transport.BarrierClient = (*mockBarrierClient)(nil)
 
@@ -259,9 +298,9 @@ func TestBarrierService_BarrierSeal(t *testing.T) {
 func TestBarrierService_BarrierInitializeShamir_Success(t *testing.T) {
 	mc := &mockBarrierClient{
 		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Shares:      []string{"s1", "s2", "s3"},
 			Threshold:   2,
 			TotalShares: 3,
+			ShareCount:  3,
 		},
 	}
 	svc := service.NewBarrierService(mc)
@@ -269,9 +308,9 @@ func TestBarrierService_BarrierInitializeShamir_Success(t *testing.T) {
 	info, err := svc.BarrierInitializeShamir(context.Background(), "secret", 2, 3)
 	require.NoError(t, err)
 	require.NotNil(t, info)
-	assert.Equal(t, []string{"s1", "s2", "s3"}, info.Shares)
 	assert.Equal(t, 2, info.Threshold)
 	assert.Equal(t, 3, info.TotalShares)
+	assert.Equal(t, 3, info.ShareCount)
 }
 
 func TestBarrierService_BarrierInitializeShamir_Error(t *testing.T) {
@@ -332,9 +371,9 @@ func TestBarrierService_BarrierUnsealWithShares(t *testing.T) {
 func TestBarrierService_BarrierRekey_Success(t *testing.T) {
 	mc := &mockBarrierClient{
 		rekeyResp: &transport.BarrierRekeyResponse{
-			Shares:      []string{"n1", "n2"},
 			Threshold:   2,
 			TotalShares: 2,
+			ShareCount:  2,
 		},
 	}
 	svc := service.NewBarrierService(mc)
@@ -342,9 +381,9 @@ func TestBarrierService_BarrierRekey_Success(t *testing.T) {
 	info, err := svc.BarrierRekey(context.Background(), 2, 2)
 	require.NoError(t, err)
 	require.NotNil(t, info)
-	assert.Equal(t, []string{"n1", "n2"}, info.Shares)
 	assert.Equal(t, 2, info.Threshold)
 	assert.Equal(t, 2, info.TotalShares)
+	assert.Equal(t, 2, info.ShareCount)
 }
 
 func TestBarrierService_BarrierRekey_Error(t *testing.T) {
@@ -364,9 +403,9 @@ func TestBarrierService_BarrierRekey_Error(t *testing.T) {
 func TestBarrierService_BarrierGenerateRecoveryKeys_Success(t *testing.T) {
 	mc := &mockBarrierClient{
 		recoveryResp: &transport.BarrierRecoveryKeysResponse{
-			Keys:      []string{"r1", "r2", "r3"},
-			Threshold: 2,
-			Total:     3,
+			Threshold:  2,
+			Total:      3,
+			ShareCount: 3,
 		},
 	}
 	svc := service.NewBarrierService(mc)
@@ -374,9 +413,9 @@ func TestBarrierService_BarrierGenerateRecoveryKeys_Success(t *testing.T) {
 	info, err := svc.BarrierGenerateRecoveryKeys(context.Background(), 2, 3)
 	require.NoError(t, err)
 	require.NotNil(t, info)
-	assert.Equal(t, []string{"r1", "r2", "r3"}, info.Keys)
 	assert.Equal(t, 2, info.Threshold)
 	assert.Equal(t, 3, info.Total)
+	assert.Equal(t, 3, info.ShareCount)
 }
 
 func TestBarrierService_BarrierGenerateRecoveryKeys_Error(t *testing.T) {

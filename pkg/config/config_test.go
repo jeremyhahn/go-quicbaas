@@ -264,7 +264,6 @@ func TestProductionConfig(t *testing.T) {
 
 	// Production config should have security enabled
 	assert.True(t, cfg.Security.TLSEnabled)
-	assert.True(t, cfg.Security.EncryptionEnabled)
 
 	// Production should use file logging
 	assert.Equal(t, "file", cfg.Logging.Output)
@@ -970,9 +969,8 @@ func TestValidateStorage_ErrorPaths(t *testing.T) {
 	})
 	t.Run("directory creation fails for nested path", func(t *testing.T) {
 		cfg := Default()
-		// Disable TLS/encryption for this storage-focused test
+		// Disable TLS for this storage-focused test
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 		// Use a path that requires directory creation
 		tmpDir := t.TempDir()
 		nestedPath := filepath.Join(tmpDir, "level1", "level2", "level3")
@@ -1112,7 +1110,6 @@ func TestValidateSecurity_ErrorPaths(t *testing.T) {
 		cfg.Security.TLSCertFile = certFile
 		cfg.Security.TLSKeyFile = keyFile
 		cfg.Security.TLSCAFile = "/nonexistent/ca.pem"
-		cfg.Security.EncryptionEnabled = false
 		err := Validate(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "security.tls_ca_file")
@@ -1132,24 +1129,10 @@ func TestValidateSecurity_ErrorPaths(t *testing.T) {
 		cfg.Security.TLSKeyFile = keyFile
 		cfg.Security.TLSClientAuth = true
 		cfg.Security.TLSCAFile = ""
-		cfg.Security.EncryptionEnabled = false
 		err := Validate(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "security.tls_ca_file")
 		assert.Contains(t, err.Error(), "required when client auth is enabled")
-	})
-	t.Run("encryption key file doesn't exist", func(t *testing.T) {
-		cfg := Default()
-		tmpDir := t.TempDir()
-		cfg.Storage.DataDir = tmpDir
-		cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
-		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = true
-		cfg.Security.EncryptionKeyFile = "/nonexistent/key.file"
-		err := Validate(cfg)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "security.encryption_key_file")
-		assert.Contains(t, err.Error(), "does not exist")
 	})
 	t.Run("FIPS mode enabled but not available", func(t *testing.T) {
 		cfg := Default()
@@ -1157,7 +1140,6 @@ func TestValidateSecurity_ErrorPaths(t *testing.T) {
 		cfg.Storage.DataDir = tmpDir
 		cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 		cfg.Security.TLSEnabled = false
-		cfg.Security.EncryptionEnabled = false
 		cfg.Security.FIPSMode = true
 		err := Validate(cfg)
 		// This will fail on non-FIPS systems
@@ -1374,9 +1356,8 @@ func TestValidator_ConsecutiveValidations(t *testing.T) {
 		tmpDir1 := t.TempDir()
 		cfg1.Storage.DataDir = tmpDir1
 		cfg1.Storage.WALDir = filepath.Join(tmpDir1, "wal")
-		// Disable TLS/encryption for this test
+		// Disable TLS for this test
 		cfg1.Security.TLSEnabled = false
-		cfg1.Security.EncryptionEnabled = false
 		err1 := Validate(cfg1)
 		assert.NoError(t, err1)
 		cfg2 := Default()
@@ -2134,49 +2115,6 @@ func TestCreateStorageBackendByType_EdgeCases(t *testing.T) {
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errContain)
-			} else {
-				require.NoError(t, err)
-				assert.NotNil(t, storage)
-				if storage != nil {
-					// Memory storage implements Close
-					if ms, ok := storage.(*MemoryStorage); ok {
-						ms.Close()
-					}
-				}
-			}
-		})
-	}
-}
-
-// TestResolveKeyStorageBackend_BackwardCompatibility tests key storage backend resolution
-func TestResolveKeyStorageBackend_BackwardCompatibility(t *testing.T) {
-	tests := []struct {
-		name    string
-		setup   func() *Config
-		wantErr bool
-		verify  func(*testing.T, error)
-	}{
-		{
-			name: "default to memory storage when nothing set",
-			setup: func() *Config {
-				cfg := Default()
-				cfg.Security.EncryptionKeyFile = ""
-				cfg.Security.KeyStorageBackend = ""
-				return cfg
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := tt.setup()
-			storage, err := ResolveKeyStorageBackend(cfg)
-			if tt.wantErr {
-				require.Error(t, err)
-				if tt.verify != nil {
-					tt.verify(t, err)
-				}
 			} else {
 				require.NoError(t, err)
 				assert.NotNil(t, storage)

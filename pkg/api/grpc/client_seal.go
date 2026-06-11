@@ -68,7 +68,8 @@ func (c *Client) SealStatus(ctx context.Context) (*service.SealStatusResponse, e
 	}, nil
 }
 
-// SealInit initializes the seal manager and returns generated shares.
+// SealInit initializes the seal manager. Share material is never returned
+// (qrdb share-free contract).
 func (c *Client) SealInit(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
@@ -96,7 +97,6 @@ func (c *Client) SealInit(ctx context.Context, req *service.SealInitRequest) (*s
 		return nil, convertGRPCError(err, "SealInit")
 	}
 	return &service.SealInitResponse{
-		Shares:    resp.GetShares(),
 		RootToken: resp.GetRootToken(),
 		Version:   resp.GetVersion(),
 	}, nil
@@ -158,7 +158,8 @@ func (c *Client) Seal(ctx context.Context) error {
 	return nil
 }
 
-// Rekey generates new key shares with a new threshold configuration.
+// Rekey rotates the Shamir share set with a new threshold configuration.
+// New share material is never returned (qrdb share-free contract).
 func (c *Client) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
@@ -186,7 +187,6 @@ func (c *Client) Rekey(ctx context.Context, req *service.RekeyRequest) (*service
 		return nil, convertGRPCError(err, "Rekey")
 	}
 	return &service.RekeyResponse{
-		Shares:  resp.GetShares(),
 		Version: resp.GetVersion(),
 	}, nil
 }

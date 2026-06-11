@@ -23,7 +23,7 @@ import (
 // TenantContextFunc derives the caller's tenant from a VERIFIED peer
 // certificate and returns a context carrying it. It is supplied by the server
 // layer (which owns the SPIFFE trust domain + home-realm directory) so this
-// transport package needs no dependency on the iam build tag.
+// transport package needs no dependency on pkg/iam.
 //
 // The contract is BEST-EFFORT and PERMISSIVE: an implementation MUST return a
 // usable context in every case. When the cert resolves to a tenant it returns a

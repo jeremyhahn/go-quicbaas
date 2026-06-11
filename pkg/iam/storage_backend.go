@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -46,8 +44,8 @@ const (
 	KeyPrefixTenantSettings = ":settings"
 	KeyPrefixTenantQuota    = ":quota"
 
-	// Identity keys (scoped by tenant)
-	KeyPrefixUser   = ":user:"
+	// Identity keys (scoped by tenant). User keys are absent: the user record
+	// lives in qrdb (qrdbadapter.QRDBUserStorage), not the BaaS KVStore.
 	KeyPrefixGroup  = ":group:"
 	KeyPrefixRole   = ":role:"
 	KeyPrefixPolicy = ":policy:"
@@ -60,16 +58,23 @@ const (
 	// Session keys (scoped by tenant)
 	KeyPrefixSession = ":session:"
 
-	// Global indexes
-	KeyPrefixEmailIndex    = "__iam:idx:email:"
-	KeyPrefixUsernameIndex = "__iam:idx:username:"
-	KeyPrefixAppIndex      = "__iam:idx:app:"
-	KeyPrefixPIVIndex      = "__iam:idx:piv:"
+	// Global indexes. The username, email, and PIV-thumbprint lookup indexes
+	// moved to qrdb with the user record (phase C1-F); only the app index
+	// remains BaaS-owned.
+	KeyPrefixAppIndex = "__iam:idx:app:"
 )
 
-// BackendStorage implements all IAM storage interfaces using interfaces.KVStore.
-// It works with any backend (memory, pebble, raft) via the clean KVStore interface.
-// This provides a clean abstraction layer that hides backend implementation details.
+// BackendStorage implements the BaaS-owned IAM storage interfaces using
+// interfaces.KVStore: TenantStorage, GroupStorage, RoleStorage, PolicyStorage,
+// AppStorage, and TokenStorage. It works with any backend (memory, pebble,
+// raft) via the clean KVStore interface, providing an abstraction layer that
+// hides backend implementation details.
+//
+// User persistence is NOT a BackendStorage responsibility: it is owned by the
+// embedded qrdb node (qrdbadapter.QRDBUserStorage) so the broker and the qrdb
+// policy decision point share one user record. BackendStorage therefore does
+// NOT satisfy UserStorage and holds no user keys; tenant deletion deprovisions
+// users through the routed UserStorage (DefaultTenantManager.DeleteTenant).
 type BackendStorage struct {
 	kv interfaces.KVStore
 }
@@ -82,10 +87,10 @@ func NewBackendStorage(kv interfaces.KVStore) *BackendStorage {
 	}
 }
 
-// Compile-time interface checks
+// Compile-time interface checks. UserStorage is intentionally absent:
+// BackendStorage no longer persists users (qrdb owns the user record).
 var (
 	_ TenantStorage = (*BackendStorage)(nil)
-	_ UserStorage   = (*BackendStorage)(nil)
 	_ GroupStorage  = (*BackendStorage)(nil)
 	_ RoleStorage   = (*BackendStorage)(nil)
 	_ AppStorage    = (*BackendStorage)(nil)
@@ -110,11 +115,6 @@ func tenantSettingsKey(tenantID string) string {
 // tenantQuotaKey returns the key for tenant quota.
 func tenantQuotaKey(tenantID string) string {
 	return KeyPrefixTenant + tenantID + KeyPrefixTenantQuota
-}
-
-// userKey returns the key for a user record.
-func userKey(tenantID, userID string) string {
-	return KeyPrefixTenant + tenantID + KeyPrefixUser + userID
 }
 
 // groupKey returns the key for a group record.
@@ -189,31 +189,6 @@ func authCodeKey(code string) string {
 	return KeyPrefixIAM + "authcode:" + code
 }
 
-// emailIndexKey returns the tenant-scoped key for email->user lookup. Scoping
-// by tenant prevents the same email address registered in two tenants from
-// sharing one global index slot (cross-tenant identity collision).
-func emailIndexKey(tenantID, email string) string {
-	return KeyPrefixEmailIndex + tenantID + ":" + strings.ToLower(email)
-}
-
-// legacyEmailIndexKey returns the pre-tenant-scoping global email index key,
-// consulted only on the read path as a dual-read fallback for deployments
-// predating tenant scoping.
-func legacyEmailIndexKey(email string) string {
-	return KeyPrefixEmailIndex + strings.ToLower(email)
-}
-
-// pivIndexKey returns the tenant-scoped key for PIV thumbprint->user lookup.
-func pivIndexKey(tenantID, thumbprint string) string {
-	return KeyPrefixPIVIndex + tenantID + ":" + strings.ToLower(thumbprint)
-}
-
-// legacyPIVIndexKey returns the pre-tenant-scoping global PIV index key,
-// consulted only on the read path as a dual-read fallback.
-func legacyPIVIndexKey(thumbprint string) string {
-	return KeyPrefixPIVIndex + strings.ToLower(thumbprint)
-}
-
 // sessionKey returns the key for a session record.
 func sessionKey(tenantID, sessionID string) string {
 	return KeyPrefixTenant + tenantID + KeyPrefixSession + sessionID
@@ -266,34 +241,6 @@ func (s *BackendStorage) deleteByPrefix(ctx context.Context, prefix string) erro
 		}
 	}
 	return nil
-}
-
-// deleteUsersWithIndexes deletes users and their associated email indexes.
-func (s *BackendStorage) deleteUsersWithIndexes(ctx context.Context, userPrefix string) error {
-	// Get all user values to extract email addresses for index cleanup
-	var users []User
-	err := s.kv.Scan(ctx, userPrefix, func(key string, value []byte) error {
-		var user User
-		if err := json.Unmarshal(value, &user); err != nil {
-			return nil // Skip invalid entries
-		}
-		users = append(users, user)
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	// Delete email indexes for each user
-	for _, user := range users {
-		if user.Email != "" {
-			_ = s.delete(ctx, emailIndexKey(user.TenantID, user.Email))
-			_ = s.delete(ctx, legacyEmailIndexKey(user.Email))
-		}
-	}
-
-	// Delete all user records
-	return s.deleteByPrefix(ctx, userPrefix)
 }
 
 // deleteAppsWithIndexes deletes apps and their global indexes.
@@ -385,8 +332,11 @@ func (s *BackendStorage) UpdateTenant(ctx context.Context, tenant *Tenant) error
 	return s.put(ctx, key, data)
 }
 
-// DeleteTenant removes a tenant and all associated data (cascade delete).
-// This includes users, groups, roles, policies, apps, sessions, settings, and quotas.
+// DeleteTenant removes a tenant and all associated BaaS-owned data (cascade
+// delete): groups, roles, policies, apps, sessions, settings, and quotas.
+// User records live in qrdb and are deprovisioned by
+// DefaultTenantManager.DeleteTenant through the routed UserStorage before this
+// storage-level cascade runs.
 func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 	key := tenantKey(id)
 
@@ -399,17 +349,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 	// Cascade delete all tenant data
 	tenantPrefix := KeyPrefixTenant + id
 
-	// 1. Delete users and their email indexes
-	userPrefix := tenantPrefix + KeyPrefixUser
-	if err := s.deleteUsersWithIndexes(ctx, userPrefix); err != nil {
-		return &dberrors.QBError{
-			Code: dberrors.ErrInternal,
-			Op:   "iam.tenant.delete.users",
-			Err:  err,
-		}
-	}
-
-	// 2. Delete groups
+	// 1. Delete groups
 	groupPrefix := tenantPrefix + KeyPrefixGroup
 	if err := s.deleteByPrefix(ctx, groupPrefix); err != nil {
 		return &dberrors.QBError{
@@ -419,7 +359,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 3. Delete roles
+	// 2. Delete roles
 	rolePrefix := tenantPrefix + KeyPrefixRole
 	if err := s.deleteByPrefix(ctx, rolePrefix); err != nil {
 		return &dberrors.QBError{
@@ -429,7 +369,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 4. Delete policies
+	// 3. Delete policies
 	policyPrefix := tenantPrefix + KeyPrefixPolicy
 	if err := s.deleteByPrefix(ctx, policyPrefix); err != nil {
 		return &dberrors.QBError{
@@ -439,7 +379,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 5. Delete apps and their global indexes
+	// 4. Delete apps and their global indexes
 	appPrefix := tenantPrefix + KeyPrefixApp
 	if err := s.deleteAppsWithIndexes(ctx, appPrefix); err != nil {
 		return &dberrors.QBError{
@@ -449,7 +389,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 6. Delete sessions
+	// 5. Delete sessions
 	sessionPrefix := tenantPrefix + KeyPrefixSession
 	if err := s.deleteByPrefix(ctx, sessionPrefix); err != nil {
 		return &dberrors.QBError{
@@ -459,13 +399,13 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 7. Delete tenant settings (ignore not found)
+	// 6. Delete tenant settings (ignore not found)
 	_ = s.delete(ctx, tenantSettingsKey(id))
 
-	// 8. Delete tenant quota (ignore not found)
+	// 7. Delete tenant quota (ignore not found)
 	_ = s.delete(ctx, tenantQuotaKey(id))
 
-	// 9. Finally delete the tenant record
+	// 8. Finally delete the tenant record
 	return s.delete(ctx, key)
 }
 
@@ -652,215 +592,15 @@ func (s *BackendStorage) DecrementQuotaUsage(ctx context.Context, tenantID, reso
 }
 
 // -----------------------------------------------------------------------------
-// UserStorage implementation
+// User persistence is owned by qrdb (qrdbadapter.QRDBUserStorage), not by
+// BackendStorage. The user-CRUD methods that once lived here (CreateUser,
+// GetUser, GetUserByUsername, GetUserByEmail, GetUserByPIVThumbprint,
+// UpdateUser, DeleteUser, ListUsers) plus their lookup-index helpers were
+// removed in the user-model unification (phase C1-F): every production
+// transport routes user storage to the embedded qrdb node, which is the single
+// source of truth for the user record. Tenant teardown deprovisions users
+// through the routed UserStorage (DefaultTenantManager.DeleteTenant).
 // -----------------------------------------------------------------------------
-
-// CreateUser stores a new user.
-func (s *BackendStorage) CreateUser(ctx context.Context, user *User) error {
-	key := userKey(user.TenantID, user.ID)
-
-	// Check if user already exists
-	_, err := s.get(ctx, key)
-	if err == nil {
-		return ErrAlreadyExists
-	}
-
-	data, err := json.Marshal(user)
-	if err != nil {
-		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.create", Err: err}
-	}
-
-	if err := s.put(ctx, key, data); err != nil {
-		return err
-	}
-
-	// Create email index
-	if user.Email != "" {
-		indexData := []byte(user.TenantID + ":" + user.ID)
-		if err := s.put(ctx, emailIndexKey(user.TenantID, user.Email), indexData); err != nil {
-			return &dberrors.QBError{Code: dberrors.ErrStorage, Op: "iam.user.create", Err: err}
-		}
-		// Dual-write the legacy un-scoped key during the migration window so
-		// callers that look up without a tenant in context keep resolving.
-		_ = s.put(ctx, legacyEmailIndexKey(user.Email), indexData)
-	}
-
-	// Create PIV thumbprint index (only when a thumbprint is registered)
-	if user.PIVCertThumbprint != "" {
-		indexData := []byte(user.TenantID + ":" + user.ID)
-		if err := s.put(ctx, pivIndexKey(user.TenantID, user.PIVCertThumbprint), indexData); err != nil {
-			return &dberrors.QBError{Code: dberrors.ErrStorage, Op: "iam.user.create", Err: err}
-		}
-		_ = s.put(ctx, legacyPIVIndexKey(user.PIVCertThumbprint), indexData)
-	}
-
-	return nil
-}
-
-// GetUser retrieves a user by ID.
-func (s *BackendStorage) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
-	data, err := s.get(ctx, userKey(tenantID, userID))
-	if err != nil {
-		return nil, err
-	}
-
-	var user User
-	if err := json.Unmarshal(data, &user); err != nil {
-		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.get", Err: err}
-	}
-
-	return &user, nil
-}
-
-// GetUserByEmail retrieves a user by email.
-func (s *BackendStorage) GetUserByEmail(ctx context.Context, email string) (*User, error) {
-	// Look up in the tenant-scoped email index, falling back to the legacy
-	// global key (dual-read shim) for deployments predating tenant scoping.
-	tenantID := TenantFromContext(ctx)
-	indexData, err := s.get(ctx, emailIndexKey(tenantID, email))
-	if err != nil {
-		indexData, err = s.get(ctx, legacyEmailIndexKey(email))
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Parse tenant:user from index
-	parts := strings.SplitN(string(indexData), ":", 2)
-	if len(parts) != 2 {
-		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.getbyemail", Err: &InvalidIndexEntryError{}}
-	}
-
-	return s.GetUser(ctx, parts[0], parts[1])
-}
-
-// GetUserByPIVThumbprint retrieves a user by PIV certificate SHA-256 thumbprint.
-func (s *BackendStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint string) (*User, error) {
-	tenantID := TenantFromContext(ctx)
-	indexData, err := s.get(ctx, pivIndexKey(tenantID, thumbprint))
-	if err != nil {
-		indexData, err = s.get(ctx, legacyPIVIndexKey(thumbprint))
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	parts := strings.SplitN(string(indexData), ":", 2)
-	if len(parts) != 2 {
-		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.getbypivthumbprint", Err: &InvalidIndexEntryError{}}
-	}
-
-	return s.GetUser(ctx, parts[0], parts[1])
-}
-
-// UpdateUser updates an existing user.
-func (s *BackendStorage) UpdateUser(ctx context.Context, user *User) error {
-	key := userKey(user.TenantID, user.ID)
-
-	// Get existing user for email index update
-	existing, err := s.GetUser(ctx, user.TenantID, user.ID)
-	if err != nil {
-		return err
-	}
-
-	data, err := json.Marshal(user)
-	if err != nil {
-		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.user.update", Err: err}
-	}
-
-	if err := s.put(ctx, key, data); err != nil {
-		return err
-	}
-
-	// Update email index if changed
-	if existing.Email != user.Email {
-		if existing.Email != "" {
-			_ = s.delete(ctx, emailIndexKey(user.TenantID, existing.Email))
-			_ = s.delete(ctx, legacyEmailIndexKey(existing.Email))
-		}
-		if user.Email != "" {
-			indexData := []byte(user.TenantID + ":" + user.ID)
-			_ = s.put(ctx, emailIndexKey(user.TenantID, user.Email), indexData)
-			_ = s.put(ctx, legacyEmailIndexKey(user.Email), indexData)
-		}
-	}
-
-	// Update PIV thumbprint index if the cert binding changed. The bootstrap
-	// admin flow rebinds via UpdateUser; without this the lookup index never
-	// gets written and login fails with "no user found".
-	if existing.PIVCertThumbprint != user.PIVCertThumbprint {
-		if existing.PIVCertThumbprint != "" {
-			_ = s.delete(ctx, pivIndexKey(user.TenantID, existing.PIVCertThumbprint))
-			_ = s.delete(ctx, legacyPIVIndexKey(existing.PIVCertThumbprint))
-		}
-		if user.PIVCertThumbprint != "" {
-			indexData := []byte(user.TenantID + ":" + user.ID)
-			if err := s.put(ctx, pivIndexKey(user.TenantID, user.PIVCertThumbprint), indexData); err != nil {
-				return &dberrors.QBError{Code: dberrors.ErrStorage, Op: "iam.user.update", Err: err}
-			}
-			_ = s.put(ctx, legacyPIVIndexKey(user.PIVCertThumbprint), indexData)
-		}
-	}
-
-	return nil
-}
-
-// DeleteUser removes a user.
-func (s *BackendStorage) DeleteUser(ctx context.Context, tenantID, userID string) error {
-	// Get user for email index cleanup
-	user, err := s.GetUser(ctx, tenantID, userID)
-	if err != nil {
-		return err
-	}
-
-	if err := s.delete(ctx, userKey(tenantID, userID)); err != nil {
-		return err
-	}
-
-	// Clean up email index (tenant-scoped + legacy).
-	if user.Email != "" {
-		_ = s.delete(ctx, emailIndexKey(tenantID, user.Email))
-		_ = s.delete(ctx, legacyEmailIndexKey(user.Email))
-	}
-	// Clean up PIV thumbprint index (tenant-scoped + legacy).
-	if user.PIVCertThumbprint != "" {
-		_ = s.delete(ctx, pivIndexKey(tenantID, user.PIVCertThumbprint))
-		_ = s.delete(ctx, legacyPIVIndexKey(user.PIVCertThumbprint))
-	}
-
-	return nil
-}
-
-// ListUsers retrieves users for a tenant.
-func (s *BackendStorage) ListUsers(ctx context.Context, tenantID string, opts ListOptions) ([]*User, error) {
-	prefix := KeyPrefixTenant + tenantID + KeyPrefixUser
-	values, err := s.list(ctx, prefix)
-	if err != nil {
-		return nil, err
-	}
-
-	users := make([]*User, 0, len(values))
-	for _, data := range values {
-		var user User
-		if err := json.Unmarshal(data, &user); err != nil {
-			continue
-		}
-		users = append(users, &user)
-	}
-
-	// Apply pagination
-	if opts.Offset > 0 && opts.Offset < len(users) {
-		users = users[opts.Offset:]
-	} else if opts.Offset >= len(users) {
-		return []*User{}, nil
-	}
-
-	if opts.Limit > 0 && opts.Limit < len(users) {
-		users = users[:opts.Limit]
-	}
-
-	return users, nil
-}
 
 // -----------------------------------------------------------------------------
 // GroupStorage implementation

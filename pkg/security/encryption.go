@@ -14,6 +14,7 @@
 package security
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -232,7 +233,7 @@ func (em *EncryptionManager) Decrypt(ciphertext []byte) ([]byte, error) {
 }
 
 // RotateKeys initiates key rotation.
-func (em *EncryptionManager) RotateKeys() error {
+func (em *EncryptionManager) RotateKeys(ctx context.Context) error {
 	if !em.config.Enabled {
 		return nil
 	}
@@ -243,7 +244,7 @@ func (em *EncryptionManager) RotateKeys() error {
 	em.logger.Info("Starting encryption key rotation")
 
 	oldKey := em.keyring.GetCurrentKey()
-	newKey, err := em.keyring.RotateKey()
+	newKey, err := em.keyring.RotateKey(ctx)
 	if err != nil {
 		return api.NewCryptoError("EncryptionManager.RotateKeys", "key rotation", dberrors.ErrEncryption, err)
 	}
@@ -297,7 +298,7 @@ func NewKeyring(cfg *EncryptionConfig, log *logger.Logger) (*Keyring, error) {
 	}
 
 	// Load or generate initial key
-	key, err := kr.loadOrGenerateKey()
+	key, err := kr.loadOrGenerateKey(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +417,7 @@ func InitializeWithAWSKMS(cfg *EncryptionConfig, log *logger.Logger) error {
 }
 
 // loadOrGenerateKey loads an existing key or generates a new one using go-xkms.
-func (kr *Keyring) loadOrGenerateKey() (*EncryptionKey, error) {
+func (kr *Keyring) loadOrGenerateKey(ctx context.Context) (*EncryptionKey, error) {
 	if kr.backend == nil {
 		return nil, api.NewNotInitializedError("Keyring.loadOrGenerateKey", "backend")
 	}
@@ -430,10 +431,10 @@ func (kr *Keyring) loadOrGenerateKey() (*EncryptionKey, error) {
 	}
 
 	// Try to get existing key
-	symKey, err := kr.backend.GetSymmetricKey(kr.keyAttrs)
+	symKey, err := kr.backend.GetSymmetricKey(ctx, kr.keyAttrs)
 	if err == nil && symKey != nil {
 		// Key exists, get encrypter
-		encrypter, err := kr.backend.SymmetricEncrypter(kr.keyAttrs)
+		encrypter, err := kr.backend.SymmetricEncrypter(ctx, kr.keyAttrs)
 		if err != nil {
 			return nil, api.NewCryptoError("Keyring.loadOrGenerateKey", "get encrypter for existing key", dberrors.ErrEncryption, err)
 		}
@@ -449,13 +450,13 @@ func (kr *Keyring) loadOrGenerateKey() (*EncryptionKey, error) {
 	}
 
 	// Generate new key - we don't need the returned symKey
-	_, err = kr.backend.GenerateSymmetricKey(kr.keyAttrs)
+	_, err = kr.backend.GenerateSymmetricKey(ctx, kr.keyAttrs)
 	if err != nil {
 		return nil, api.NewCryptoError("Keyring.loadOrGenerateKey", "generate symmetric key", dberrors.ErrEncryption, err)
 	}
 
 	// Get encrypter for the new key
-	encrypter, err := kr.backend.SymmetricEncrypter(kr.keyAttrs)
+	encrypter, err := kr.backend.SymmetricEncrypter(ctx, kr.keyAttrs)
 	if err != nil {
 		return nil, api.NewCryptoError("Keyring.loadOrGenerateKey", "get encrypter for new key", dberrors.ErrEncryption, err)
 	}
@@ -552,7 +553,7 @@ func (kr *Keyring) GetKey(version byte) *EncryptionKey {
 }
 
 // RotateKey generates a new encryption key and marks the old one inactive.
-func (kr *Keyring) RotateKey() (*EncryptionKey, error) {
+func (kr *Keyring) RotateKey(ctx context.Context) (*EncryptionKey, error) {
 	kr.mu.Lock()
 	defer kr.mu.Unlock()
 
@@ -582,13 +583,13 @@ func (kr *Keyring) RotateKey() (*EncryptionKey, error) {
 		SymmetricAlgorithm: kr.algorithmToSymmetric(),
 	}
 
-	_, err := kr.backend.GenerateSymmetricKey(newAttrs)
+	_, err := kr.backend.GenerateSymmetricKey(ctx, newAttrs)
 	if err != nil {
 		return nil, api.NewCryptoError("Keyring.RotateKey", "generate new key", dberrors.ErrEncryption, err)
 	}
 
 	// Get encrypter for new key
-	encrypter, err := kr.backend.SymmetricEncrypter(newAttrs)
+	encrypter, err := kr.backend.SymmetricEncrypter(ctx, newAttrs)
 	if err != nil {
 		return nil, api.NewCryptoError("Keyring.RotateKey", "get encrypter for new key", dberrors.ErrEncryption, err)
 	}
@@ -615,7 +616,7 @@ func (kr *Keyring) RotateKey() (*EncryptionKey, error) {
 func (kr *Keyring) autoRotate() error {
 	kr.logger.Info("Automatic key rotation triggered")
 
-	if _, err := kr.RotateKey(); err != nil {
+	if _, err := kr.RotateKey(context.Background()); err != nil {
 		return err
 	}
 

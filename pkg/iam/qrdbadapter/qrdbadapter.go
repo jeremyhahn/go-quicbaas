@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -80,7 +78,7 @@ func WrapTenant(m iam.TenantManager) *TenantAdapter { return &TenantAdapter{mana
 // idempotent re-run path triggers.
 func (a *TenantAdapter) CreateTenant(ctx context.Context, id, displayName string, isolation qrdbsdk.TenantIsolationType) (*qrdbsdk.ServiceTenantInfo, error) {
 	if a == nil || a.manager == nil {
-		return nil, errors.New("qrdbadapter: nil TenantManager")
+		return nil, &NilDependencyError{Name: "TenantManager"}
 	}
 	// The system tenant must use prefix isolation; never request barrier
 	// for it regardless of what the caller passed.
@@ -126,10 +124,10 @@ func WrapRole(store *iam.IdentityStore) *RoleAdapter { return &RoleAdapter{store
 // duplicate so qrdbfirstboot's idempotent re-run path triggers.
 func (a *RoleAdapter) CreateRole(ctx context.Context, req *qrdbsdk.CreateRoleRequest) (*qrdbsdk.Role, error) {
 	if a == nil || a.store == nil {
-		return nil, errors.New("qrdbadapter: nil IdentityStore")
+		return nil, &NilDependencyError{Name: "IdentityStore"}
 	}
 	if req == nil {
-		return nil, errors.New("qrdbadapter: nil CreateRoleRequest")
+		return nil, &NilDependencyError{Name: "CreateRoleRequest"}
 	}
 	opts := iam.CreateRoleOptions{
 		ID:          req.ID,
@@ -187,10 +185,10 @@ func WrapUser(store *iam.IdentityStore) *UserAdapter { return &UserAdapter{store
 // verbatim on both sides.
 func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserRequest) (*qrdbsdk.User, error) {
 	if a == nil || a.store == nil {
-		return nil, errors.New("qrdbadapter: nil IdentityStore")
+		return nil, &NilDependencyError{Name: "IdentityStore"}
 	}
 	if req == nil {
-		return nil, errors.New("qrdbadapter: nil CreateUserRequest")
+		return nil, &NilDependencyError{Name: "CreateUserRequest"}
 	}
 	tenantID := req.TenantID
 	if tenantID == "" {
@@ -220,6 +218,18 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 // =============================================================================
 // Helpers
 // =============================================================================
+
+// NilDependencyError reports that a required adapter dependency (the wrapped
+// manager/store, or a request argument) was nil. Name identifies the missing
+// dependency.
+type NilDependencyError struct {
+	Name string
+}
+
+// Error implements the error interface.
+func (e *NilDependencyError) Error() string {
+	return "qrdbadapter: nil " + e.Name
+}
 
 // isAlreadyExists reports whether err is (or wraps) a quicbaas
 // ErrAlreadyExists code. Used to translate quicbaas duplicate errors

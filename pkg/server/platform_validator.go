@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -37,7 +35,7 @@ const defaultLivenessCacheTTL = config.DefaultLivenessCacheTTL
 // fetch) and the liveness backend (TokenLiveness -> revocation + subject
 // disablement).
 //
-// The builder carries only the iam build tag (no rest/grpc): the same Validator
+// The builder is transport-agnostic (no rest/grpc tag): the same Validator
 // backs every authenticated transport, so each transport's enforcement gate
 // constructs it from this one place rather than re-deriving the wiring.
 //

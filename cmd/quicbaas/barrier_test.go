@@ -76,9 +76,9 @@ func (f *fakeBarrierClient) BarrierInitializeShamir(ctx context.Context, req *qr
 		return f.initShamirFunc(ctx, req)
 	}
 	return &qrdbtransport.BarrierInitializeShamirResponse{
-		Shares:      []string{"s1", "s2", "s3"},
 		Threshold:   req.Threshold,
 		TotalShares: req.TotalShares,
+		ShareCount:  req.TotalShares,
 	}, nil
 }
 
@@ -111,9 +111,9 @@ func (f *fakeBarrierClient) BarrierRekey(ctx context.Context, req *qrdbtransport
 		return f.rekeyFunc(ctx, req)
 	}
 	return &qrdbtransport.BarrierRekeyResponse{
-		Shares:      []string{"n1", "n2"},
 		Threshold:   req.Threshold,
 		TotalShares: req.Total,
+		ShareCount:  req.Total,
 	}, nil
 }
 
@@ -123,9 +123,9 @@ func (f *fakeBarrierClient) BarrierGenerateRecoveryKeys(ctx context.Context, req
 		return f.genRecoveryFunc(ctx, req)
 	}
 	return &qrdbtransport.BarrierRecoveryKeysResponse{
-		Keys:      []string{"k1", "k2", "k3"},
-		Threshold: req.Threshold,
-		Total:     req.Total,
+		Threshold:  req.Threshold,
+		Total:      req.Total,
+		ShareCount: req.Total,
 	}, nil
 }
 
@@ -657,28 +657,28 @@ func TestBarrierRekey_FlagValidation(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "missing-secret",
-			args:    []string{"--threshold", "3", "--total", "5"},
-			wantErr: "--passphrase is required",
+			name:    "passphrase-flag-removed",
+			args:    []string{"--passphrase", "x", "--threshold", "3", "--total", "5"},
+			wantErr: "unknown flag: --passphrase",
 		},
 		{
 			name:    "unpaired-threshold",
-			args:    []string{"--passphrase", "x", "--threshold", "3"},
+			args:    []string{"--threshold", "3"},
 			wantErr: "must be supplied together",
 		},
 		{
 			name:    "unpaired-total",
-			args:    []string{"--passphrase", "x", "--total", "5"},
+			args:    []string{"--total", "5"},
 			wantErr: "must be supplied together",
 		},
 		{
 			name:    "threshold-too-low",
-			args:    []string{"--passphrase", "x", "--threshold", "1", "--total", "3"},
+			args:    []string{"--threshold", "1", "--total", "3"},
 			wantErr: "--threshold must be >= 2",
 		},
 		{
 			name:    "total-below-threshold",
-			args:    []string{"--passphrase", "x", "--threshold", "5", "--total", "3"},
+			args:    []string{"--threshold", "5", "--total", "3"},
 			wantErr: "--total must be >= --threshold",
 		},
 	}
@@ -705,7 +705,6 @@ func TestBarrierRekey_SuccessWithShamir(t *testing.T) {
 
 	cmd := newBarrierRekeyCommand()
 	cmd.SetArgs([]string{
-		"--passphrase", "new-pp",
 		"--so-pin", "SO",
 		"--threshold", "3",
 		"--total", "5",
@@ -716,7 +715,6 @@ func TestBarrierRekey_SuccessWithShamir(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastRekeyReq)
-	assert.Equal(t, "new-pp", fc.lastRekeyReq.NewSecret)
 	assert.Equal(t, "SO", fc.lastRekeyReq.SOPin)
 	assert.Equal(t, 3, fc.lastRekeyReq.Threshold)
 	assert.Equal(t, 5, fc.lastRekeyReq.Total)
@@ -730,14 +728,13 @@ func TestBarrierRekey_SuccessWithoutShamir(t *testing.T) {
 	defer withFakeBarrier(fc)()
 
 	cmd := newBarrierRekeyCommand()
-	cmd.SetArgs([]string{"--passphrase", "new-pp"})
+	cmd.SetArgs([]string{})
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastRekeyReq)
-	assert.Equal(t, "new-pp", fc.lastRekeyReq.NewSecret)
 	assert.Equal(t, 0, fc.lastRekeyReq.Threshold)
 	assert.Equal(t, 0, fc.lastRekeyReq.Total)
 }

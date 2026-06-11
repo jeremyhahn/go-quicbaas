@@ -3010,123 +3010,14 @@ func (r *rbacService) ListUsers(ctx context.Context, req *AuthListUsersRequest) 
 }
 
 // CreateRole, DeleteRole and ListRoles operate on the qrdb-backed
-// IdentityStore and live in build-tagged files: rbac_role_store.go
-// (//go:build iam) holds the IdentityStore-backed implementations, while
-// rbac_role_store_stub.go (//go:build !iam) returns a typed not-configured
-// error. See authz-unification Stage 1.2.
+// IdentityStore and live in rbac_role_store.go. See authz-unification
+// Stage 1.2.
 
-// AssignRole assigns a named role to a user.
-//
-// User->role binding still uses the in-memory user store; deferred to the
-// user-model unification (iam.User lacks the Username lookup qrdb's sdk.User
-// provides). It is intentionally NOT redirected to the IdentityStore here.
-func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest) (*AuthAssignRoleResponse, error) {
-	// Check if authManager is available
-	if r.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.AssignRole",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
-		}
-	}
-
-	// Validate request
-	if req.Username == "" || req.RoleName == "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "service.AssignRole",
-			Err:  &api.InvalidInputError{Message: "username and role name are required"},
-		}
-	}
-
-	// Get user store
-	userStore := r.svc.authManager.GetUserStore()
-	if userStore == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.AssignRole",
-			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
-		}
-	}
-
-	// Find user by username
-	user := userStore.GetByUsername(req.Username)
-	if user == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
-			Op:   "service.AssignRole",
-			Err:  &api.NotFoundError{Resource: "user", ID: req.Username},
-		}
-	}
-
-	// Assign role
-	if err := userStore.AssignRole(user.GetID(), req.RoleName); err != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.AssignRole",
-			Err:  err,
-		}
-	}
-
-	return &AuthAssignRoleResponse{
-		Success: true,
-		Message: fmt.Sprintf("Role %s assigned to user %s", req.RoleName, req.Username),
-	}, nil
-}
-
-func (r *rbacService) RevokeRole(ctx context.Context, req *AuthRevokeRoleRequest) (*AuthRevokeRoleResponse, error) {
-	// Check if authManager is available
-	if r.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.RevokeRole",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
-		}
-	}
-
-	// Validate request
-	if req.Username == "" || req.RoleName == "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "service.RevokeRole",
-			Err:  &api.InvalidInputError{Message: "username and role name are required"},
-		}
-	}
-
-	// Get user store
-	userStore := r.svc.authManager.GetUserStore()
-	if userStore == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.RevokeRole",
-			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
-		}
-	}
-
-	// Find user by username
-	user := userStore.GetByUsername(req.Username)
-	if user == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
-			Op:   "service.RevokeRole",
-			Err:  &api.NotFoundError{Resource: "user", ID: req.Username},
-		}
-	}
-
-	// Revoke role
-	if err := userStore.RevokeRole(user.GetID(), req.RoleName); err != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.RevokeRole",
-			Err:  err,
-		}
-	}
-
-	return &AuthRevokeRoleResponse{
-		Success: true,
-		Message: fmt.Sprintf("Role %s revoked from user %s", req.RoleName, req.Username),
-	}, nil
-}
+// AssignRole and RevokeRole bind/unbind a named role to a user by username,
+// routed through the qrdb-backed IdentityStore so the user->role binding lands
+// in the SAME qrdb user record the policy decision point reads. They live in
+// rbac_role_store.go alongside CreateRole/DeleteRole/ListRoles. See
+// authz-unification C1-E.
 
 type cacheService struct{ svc *quicBaaS }
 

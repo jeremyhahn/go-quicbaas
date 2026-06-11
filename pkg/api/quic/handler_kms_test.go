@@ -2546,7 +2546,7 @@ func (s *successBarrierService) BarrierInitialize(ctx context.Context, secret st
 func (s *successBarrierService) BarrierUnseal(ctx context.Context, secret string) error { return nil }
 func (s *successBarrierService) BarrierSeal(ctx context.Context) error                  { return nil }
 func (s *successBarrierService) BarrierInitializeShamir(ctx context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
-	return &service.ShamirInitInfo{Shares: []string{"a"}, Threshold: threshold, TotalShares: total}, nil
+	return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 }
 func (s *successBarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*service.UnsealShareProgress, error) {
 	return &service.UnsealShareProgress{}, nil
@@ -2555,10 +2555,10 @@ func (s *successBarrierService) BarrierUnsealWithShares(ctx context.Context, sha
 	return nil
 }
 func (s *successBarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-	return &service.ShamirInitInfo{Shares: []string{"a"}, Threshold: threshold, TotalShares: total}, nil
+	return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 }
 func (s *successBarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
-	return &service.RecoveryKeysInfo{Keys: []string{"k"}, Threshold: threshold, Total: total}, nil
+	return &service.RecoveryKeysInfo{Threshold: threshold, Total: total, ShareCount: total}, nil
 }
 func (s *successBarrierService) BarrierRecoverWithKeys(ctx context.Context, keys []string) error {
 	return nil

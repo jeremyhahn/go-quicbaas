@@ -1,4 +1,4 @@
-//go:build iam && !integration
+//go:build !integration
 
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
@@ -199,7 +199,7 @@ func TestBindAdminPIVCert_HappyPathUpdatesUser(t *testing.T) {
 
 	user, err := c.identityStore.GetUser(context.Background(), "default", "admin-bs")
 	require.NoError(t, err)
-	assert.NotEmpty(t, user.PIVCertThumbprint, "PIVCertThumbprint must be set")
+	assert.NotEmpty(t, user.PIVThumbprint(), "PIV-attested binding must be set")
 	assert.Equal(t, iam.UserStateActive, user.State)
 }
 
@@ -410,7 +410,7 @@ func TestFirstBootBootstrap_PIVBootstrapPath_SkipsBanner(t *testing.T) {
 	user, err := c.identityStore.GetUser(context.Background(), "system", srv.bootstrapAdminUserID)
 	require.NoError(t, err)
 	assert.Equal(t, iam.UserStateActive, user.State)
-	assert.NotEmpty(t, user.PIVCertThumbprint)
+	assert.NotEmpty(t, user.PIVThumbprint())
 }
 
 func TestFirstBootBootstrap_PIVBootstrapPath_InvalidCertReturnsTypedError(t *testing.T) {

@@ -291,12 +291,15 @@ func buildXKMSCryptoOptions(cfg *config.Config, logger *slog.Logger) ([]qrdbsdk.
 	return XKMSCryptoOptions(cryptoCfg)
 }
 
-// buildXKMSFactors constructs the go-xkms auth-factor plugins registered into
-// qrdb's FactorRegistry via WithFactorRegistry. They give the qrdb-backed
-// factor-login path (Security().Auth().Factors().Login) the ability to verify
-// WebAuthn/FIDO2, PIV, and PKCS#11/HSM credentials in addition to qrdb-native
-// mTLS — the composition seam that lets WebAuthn/PIV/HSM login work end-to-end
-// through qrdb.
+// buildXKMSFactors returns the go-xkms auth-factor plugins that are registered
+// into qrdb's FactorRegistry via WithFactorRegistry. These plugins power the
+// CUSTODIAN enrollment/challenge/verify surface (qrdb's unified
+// AuthFactorService, used for Shamir unseal ceremonies and custodian factor
+// enrollment) reached via server.WithFactorRegistry. They are NOT the factor
+// verifiers used for the interactive login path: login verification goes
+// through qrdb's embedded FactorVerifier instances wired in
+// login_factor_verifiers.go (lateBoundPIVVerifier, tenantWebAuthnVerifier) and
+// the auth.LoginResolver.
 //
 // All three plugins are self-contained, lazy, and HSM-free at construction:
 // the PIV plugin falls back to a software PIV key generator, the FIDO2 plugin
@@ -316,11 +319,9 @@ func buildXKMSFactors(cfg *config.Config) []qrdbsdk.AuthFactorPlugin {
 	if cfg != nil {
 		rpID = cfg.IAM.WebAuthn.RPID
 	}
-	return []qrdbsdk.AuthFactorPlugin{
-		xkmssdk.NewFIDO2Factor(xkmssdk.FIDO2FactorConfig{RPID: rpID}),
-		xkmssdk.NewPIVFactor(xkmssdk.PIVFactorConfig{}),
-		xkmssdk.NewPKCS11Factor(xkmssdk.PKCS11FactorConfig{}),
-	}
+	return xkmssdk.DefaultAuthFactors(xkmssdk.FactorConfig{
+		FIDO2RPID: rpID,
+	})
 }
 
 // initStandaloneQRDBNode constructs the real qrdb standalone node for

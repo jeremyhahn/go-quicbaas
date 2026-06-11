@@ -168,7 +168,7 @@ func (r *ToolRegistry) registerBarrierTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_barrier_shamir_initialize",
-		Description: "Initialise the barrier with Shamir secret sharing, returning the generated key shares.",
+		Description: "Initialise the barrier with Shamir secret sharing. Share material is never returned (qrdb share-free contract); officers claim their shares through the identity-gated claim endpoints.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -602,12 +602,13 @@ func barrierStatusToMap(info *service.BarrierStatusInfo) map[string]interface{} 
 }
 
 // shamirInitToMap renders a ShamirInitInfo as the JSON wire shape shared with
-// handlers_barrier.go.
+// handlers_barrier.go. Share material is never present; officers claim shares
+// via the qrdb share-claim flow.
 func shamirInitToMap(info *service.ShamirInitInfo) map[string]interface{} {
 	return map[string]interface{}{
-		"shares":       info.Shares,
 		"threshold":    info.Threshold,
 		"total_shares": info.TotalShares,
+		"share_count":  info.ShareCount,
 	}
 }
 
@@ -622,12 +623,13 @@ func unsealShareProgressToMap(p *service.UnsealShareProgress) map[string]interfa
 }
 
 // recoveryKeysToMap renders a RecoveryKeysInfo as the JSON wire shape shared
-// with handlers_barrier.go.
+// with handlers_barrier.go. Recovery share material is never present;
+// officers claim shares via the qrdb recovery share-claim flow.
 func recoveryKeysToMap(info *service.RecoveryKeysInfo) map[string]interface{} {
 	return map[string]interface{}{
-		"keys":      info.Keys,
-		"threshold": info.Threshold,
-		"total":     info.Total,
+		"threshold":   info.Threshold,
+		"total":       info.Total,
+		"share_count": info.ShareCount,
 	}
 }
 

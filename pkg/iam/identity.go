@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -219,6 +217,19 @@ func (s *IdentityStore) GetUserByPIVThumbprint(ctx context.Context, thumbprint s
 	return s.userStorage.GetUserByPIVThumbprint(ctx, thumbprint)
 }
 
+// GetUserByUsername retrieves a user by tenant-scoped username. It is the seam
+// the RBAC role-binding service uses to resolve a username to a user record
+// (the broker has no username->id index of its own; qrdb owns it).
+func (s *IdentityStore) GetUserByUsername(ctx context.Context, tenantID, username string) (*User, error) {
+	if err := validateTenantID(tenantID); err != nil {
+		return nil, err
+	}
+	if username == "" {
+		return nil, NewIAMError(ErrUserInvalid, "iam.identity.get_user_by_username", "username is required", nil)
+	}
+	return s.userStorage.GetUserByUsername(ctx, tenantID, username)
+}
+
 // UpdateUser updates an existing user.
 func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string, opts UpdateUserOptions) (*User, error) {
 	if err := validateTenantID(tenantID); err != nil {
@@ -293,7 +304,7 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 	}
 
 	if opts.PIVCertThumbprint != nil {
-		user.PIVCertThumbprint = *opts.PIVCertThumbprint
+		user.SetPIVThumbprint(*opts.PIVCertThumbprint)
 	}
 
 	if opts.InviteToken != nil {

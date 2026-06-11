@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -83,6 +81,13 @@ type DefaultTenantManager struct {
 	provisioner     database.TenantProvisioner
 	dekProvisioner  TenantDEKProvisioner
 	qrdbProvisioner QRDBTenantProvisioner
+
+	// userStorage, when wired, is the routed (qrdb-backed) user store used by
+	// DeleteTenant to deprovision the tenant's users — purging the broker
+	// profile, IDMap, and email/legacy-PIV index records that the legacy
+	// BackendStorage cascade no longer reaches. Wired at server init via
+	// SetUserStorage. Nil leaves DeleteTenant's user-deprovision step a no-op.
+	userStorage UserStorage
 
 	// settingsObservers are notified after UpdateTenant persists a change so
 	// per-tenant caches can invalidate. The slice is append-only at wiring
@@ -294,6 +299,37 @@ func (m *DefaultTenantManager) DeleteTenant(ctx context.Context, id string) erro
 	_, err := m.GetTenant(ctx, id)
 	if err != nil {
 		return err
+	}
+
+	// Deprovision the tenant's users through the routed (qrdb-backed) user
+	// store so each user's broker profile, IDMap, and email/legacy-PIV index
+	// records are purged — state the legacy BackendStorage cascade no longer
+	// reaches post-C1. Page until the listing is drained (a partial page or an
+	// empty page signals the end) rather than assuming a single page. Fail the
+	// tenant delete on any per-user deprovision error (fail-closed, consistent
+	// with the DEK / database / engine steps below).
+	if m.userStorage != nil {
+		const userPage = 256
+		for {
+			users, listErr := m.userStorage.ListUsers(ctx, id, ListOptions{Limit: userPage})
+			if listErr != nil {
+				return dberrors.Wrapf(listErr, dberrors.ErrStorage, "iam.DeleteTenant", "failed to list tenant users for deprovision")
+			}
+			if len(users) == 0 {
+				break
+			}
+			for _, u := range users {
+				if delErr := m.userStorage.DeleteUser(ctx, id, u.ID); delErr != nil {
+					return dberrors.Wrapf(delErr, dberrors.ErrStorage, "iam.DeleteTenant", "failed to deprovision tenant user")
+				}
+			}
+			// DeleteUser removes the listed records, so the next page reads
+			// the new head of the list (Offset stays 0). A page shorter than
+			// the limit means no more users remain.
+			if len(users) < userPage {
+				break
+			}
+		}
 	}
 
 	// Deprovision tenant DEK if a DEK provisioner is configured.

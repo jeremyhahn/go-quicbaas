@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+	xkmsresolver "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/resolver"
 )
 
 // validStorageBackends contains the set of valid storage backend types.
@@ -100,10 +101,12 @@ func (v *Validator) Validate(cfg *Config) error {
 	v.validateStorage(&cfg.Storage)
 	v.validateRaft(&cfg.Raft, &cfg.Server)
 	v.validateSecurity(&cfg.Security)
+	v.validateAuthzPosture(&cfg.Security, &cfg.Server)
 	v.validateAuth(&cfg.Auth)
 	v.validateLogging(&cfg.Logging)
 	v.validateKMS(&cfg.KMS)
 	v.validateOrchestration(&cfg.Orchestration)
+	v.validateTrust(cfg.Trust)
 
 	// Return errors if any
 	if len(v.errors) > 0 {
@@ -374,17 +377,21 @@ func (v *Validator) validateStorage(cfg *StorageConfig) {
 
 // validateSecurity validates security configuration.
 func (v *Validator) validateSecurity(cfg *SecurityConfig) {
-	// TLS validation
+	// TLS validation. Empty cert/key paths are valid: the server lifecycle
+	// auto-provisions a per-node xkms CA and issues the server certificate at
+	// boot when no operator-provided material is configured (see
+	// pkg/server/lifecycle.go). Operator-provided paths must exist and must be
+	// supplied as a complete cert+key pair.
 	if cfg.TLSEnabled {
-		if cfg.TLSCertFile == "" {
-			v.addError("security.tls_cert_file", "TLS cert file is required when TLS is enabled")
-		} else if !v.fileExists(cfg.TLSCertFile) {
+		if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
+			v.addError("security.tls_cert_file", "TLS cert file and key file must be configured together (leave both empty to auto-provision via the built-in CA)")
+		}
+
+		if cfg.TLSCertFile != "" && !v.fileExists(cfg.TLSCertFile) {
 			v.addError("security.tls_cert_file", fmt.Sprintf("TLS cert file does not exist: %s", cfg.TLSCertFile))
 		}
 
-		if cfg.TLSKeyFile == "" {
-			v.addError("security.tls_key_file", "TLS key file is required when TLS is enabled")
-		} else if !v.fileExists(cfg.TLSKeyFile) {
+		if cfg.TLSKeyFile != "" && !v.fileExists(cfg.TLSKeyFile) {
 			v.addError("security.tls_key_file", fmt.Sprintf("TLS key file does not exist: %s", cfg.TLSKeyFile))
 		}
 
@@ -397,15 +404,6 @@ func (v *Validator) validateSecurity(cfg *SecurityConfig) {
 		}
 	}
 
-	// Encryption validation
-	if cfg.EncryptionEnabled {
-		if cfg.EncryptionKeyFile == "" {
-			v.addError("security.encryption_key_file", "encryption key file is required when encryption is enabled")
-		} else if !v.fileExists(cfg.EncryptionKeyFile) {
-			v.addError("security.encryption_key_file", fmt.Sprintf("encryption key file does not exist: %s", cfg.EncryptionKeyFile))
-		}
-	}
-
 	// FIPS mode validation
 	if cfg.FIPSMode {
 		// Check if FIPS mode is available (this is a runtime check)
@@ -413,6 +411,45 @@ func (v *Validator) validateSecurity(cfg *SecurityConfig) {
 			v.addError("security.fips_mode", "FIPS mode is not available on this system")
 		}
 	}
+}
+
+// validateAuthzPosture enforces a fail-closed authorization posture for
+// compliance regimes (FedRAMP/HIPAA/PCI/IL4-5): a server must never silently
+// reach a fail-open state on a network-reachable surface. When the default-deny
+// authorization gate is disabled (RequireAuthz == false) AND at least one
+// network transport (REST, gRPC, QUIC, MCP) is enabled, startup is REFUSED
+// unless the operator has explicitly acknowledged insecure development mode via
+// Security.InsecureDevMode. The Unix domain socket is an in-host transport and
+// is intentionally excluded — it does not expose a network-reachable surface.
+func (v *Validator) validateAuthzPosture(sec *SecurityConfig, server *ServerConfig) {
+	if sec.RequireAuthz || sec.InsecureDevMode {
+		return
+	}
+
+	enabled := make([]string, 0, 4)
+	if server.REST.Enabled {
+		enabled = append(enabled, "server.rest")
+	}
+	if server.GRPC.Enabled {
+		enabled = append(enabled, "server.grpc")
+	}
+	if server.QUIC.Enabled {
+		enabled = append(enabled, "server.quic")
+	}
+	if server.MCP.Enabled {
+		enabled = append(enabled, "server.mcp")
+	}
+
+	if len(enabled) == 0 {
+		return
+	}
+
+	v.addError("security.require_authz", fmt.Sprintf(
+		"authorization is disabled (require_authz=false) while network transport(s) [%s] are enabled, "+
+			"which would expose a fail-open surface on a network-reachable listener; "+
+			"set security.require_authz=true for production, "+
+			"or set security.insecure_dev_mode=true to explicitly acknowledge running without authorization for local development only",
+		strings.Join(enabled, ", ")))
 }
 
 // validateLogging validates logging configuration.
@@ -428,11 +465,12 @@ func (v *Validator) validateLogging(cfg *LoggingConfig) {
 	}
 
 	validFormats := map[string]bool{
-		"json": true,
-		"text": true,
+		"json":    true,
+		"text":    true,
+		"console": true,
 	}
 	if !validFormats[cfg.Format] {
-		v.addError("logging.format", fmt.Sprintf("invalid log format: %s (valid: json, text)", cfg.Format))
+		v.addError("logging.format", fmt.Sprintf("invalid log format: %s (valid: json, text, console)", cfg.Format))
 	}
 
 	validOutputs := map[string]bool{
@@ -464,6 +502,19 @@ func (v *Validator) validateKMS(cfg *KMSConfig) {
 		} else {
 			v.addError("kms", err.Error())
 		}
+	}
+}
+
+// validateTrust validates the optional trust resolver configuration. The section
+// is not required; when nil the outbound connections use the OS trust store.
+// The parameter is the concrete pointer (not an interface) so a nil *Config is
+// caught by the guard instead of being boxed into a non-nil interface value.
+func (v *Validator) validateTrust(cfg *xkmsresolver.Config) {
+	if cfg == nil {
+		return
+	}
+	if err := cfg.Validate(); err != nil {
+		v.addError("trust", err.Error())
 	}
 }
 

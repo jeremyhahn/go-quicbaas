@@ -80,21 +80,21 @@ func newMockSymmetricKeyProvider() *mockSymmetricKeyProvider {
 	}
 }
 
-func (m *mockSymmetricKeyProvider) GenerateSymmetricKey(attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricKey, error) {
+func (m *mockSymmetricKeyProvider) GenerateSymmetricKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricKey, error) {
 	if m.generateSymmetricKeyFunc != nil {
 		return m.generateSymmetricKeyFunc(attrs)
 	}
 	return nil, nil
 }
 
-func (m *mockSymmetricKeyProvider) GetSymmetricKey(attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricKey, error) {
+func (m *mockSymmetricKeyProvider) GetSymmetricKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricKey, error) {
 	if m.getSymmetricKeyFunc != nil {
 		return m.getSymmetricKeyFunc(attrs)
 	}
 	return nil, nil
 }
 
-func (m *mockSymmetricKeyProvider) SymmetricEncrypter(attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricEncrypter, error) {
+func (m *mockSymmetricKeyProvider) SymmetricEncrypter(_ context.Context, attrs *xkmssdk.KeyAttributes) (xkmssdk.SymmetricEncrypter, error) {
 	if m.symmetricEncrypterFunc != nil {
 		return m.symmetricEncrypterFunc(attrs)
 	}
@@ -132,7 +132,7 @@ type mockDecrypterBackend struct {
 	decrypterFunc func(attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error)
 }
 
-func (m *mockDecrypterBackend) Decrypter(attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockDecrypterBackend) Decrypter(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
 	if m.decrypterFunc != nil {
 		return m.decrypterFunc(attrs)
 	}

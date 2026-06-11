@@ -155,6 +155,33 @@ func (s *stubBarrierService) BarrierHasRecoveryKeys(context.Context) (bool, erro
 func (s *stubBarrierService) BarrierGenerateRootToken(context.Context, []string) (*qrdbsdk.RootTokenInfo, error) {
 	return nil, stubErr
 }
+func (s *stubBarrierService) BarrierOfficerRegister(context.Context, *qrdbsdk.BarrierOfficerRegisterRequest) (*qrdbsdk.BarrierOfficerRegisterResult, error) {
+	return nil, stubErr
+}
+func (s *stubBarrierService) BarrierOfficerList(context.Context) ([]*qrdbsdk.BarrierOfficerStatus, error) {
+	return nil, stubErr
+}
+func (s *stubBarrierService) BarrierOfficerClaimStatus(context.Context) ([]*qrdbsdk.BarrierOfficerStatus, error) {
+	return nil, stubErr
+}
+func (s *stubBarrierService) BarrierShareClaimBegin(context.Context, string, string) (*qrdbsdk.BarrierShareClaimChallenge, error) {
+	return nil, stubErr
+}
+func (s *stubBarrierService) BarrierShareClaimComplete(context.Context, string, string, []byte, string) (*qrdbsdk.BarrierShareClaimResult, error) {
+	return nil, stubErr
+}
+func (s *stubBarrierService) BarrierShamirSealVote(context.Context, string) (*qrdbsdk.UnsealShareProgress, error) {
+	return nil, stubErr
+}
+func (s *stubBarrierService) BarrierRecoveryOfficerRegister(context.Context, *qrdbsdk.BarrierOfficerRegisterRequest) (*qrdbsdk.BarrierOfficerRegisterResult, error) {
+	return nil, stubErr
+}
+func (s *stubBarrierService) BarrierRecoveryShareClaimBegin(context.Context, string, string) (*qrdbsdk.BarrierShareClaimChallenge, error) {
+	return nil, stubErr
+}
+func (s *stubBarrierService) BarrierRecoveryShareClaimComplete(context.Context, string, string, []byte, string) (*qrdbsdk.BarrierShareClaimResult, error) {
+	return nil, stubErr
+}
 
 // stubCeremonyService implements service.CeremonyServicer with a single
 // deterministic CeremonyStatus and stub errors for every other method.

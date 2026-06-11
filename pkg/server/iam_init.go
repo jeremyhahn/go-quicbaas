@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -37,7 +35,6 @@ import (
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -270,9 +267,41 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// RoleStorage.
 	roleStorage := iam.NewQRDBRoleStorage(newPlatformRoleClientResolver(s.qrdbClient))
 
+	// Route user persistence to qrdb's canonical UserServicer (via the embedded
+	// node) so the broker and the qrdb policy decision point share ONE user
+	// record: the user the broker creates is the same object login and the PDP
+	// resolve against. qrdb owns the user CORE (Username, RoleIDs, Attributes,
+	// CertBindings) while a broker side-record holds the broker-only fields
+	// (Email/State/MFA/Invite) keyed by the qrdb uint64 id; the string-UUID <->
+	// uint64 correlation is the IDMap. This mirrors the role-storage swap: the
+	// IdentityStore needs no interface change, it just sees a different
+	// UserStorage.
+	//
+	// There is NO local-store fallback. BackendStorage no longer persists users
+	// (phase C1-F), and both standalone and clustered modes always set
+	// s.qrdbNode. A nil node here means a qrdb client was wired without a node —
+	// an inconsistent state in which there is no place to store users — so IAM
+	// fails closed rather than silently routing to an empty store. (The
+	// client-less path returned (nil, nil) earlier, before this point.)
+	if s.qrdbNode == nil {
+		return nil, &QRDBUserStorageRequiredError{}
+	}
+	var userStorage iam.UserStorage = qrdbadapter.NewQRDBUserStorage(
+		newPlatformUserServicerResolver(s),
+		iam.NewBackendBrokerProfileStore(iamKV),
+		qrdbadapter.NewBackendIDMap(iamKV),
+		iamKV,
+	)
+
+	// Wire the routed user store into the tenant manager (built above, before
+	// userStorage existed) so DeleteTenant deprovisions the tenant's users
+	// through the qrdb-backed store — purging broker profile + IDMap +
+	// email/legacy-PIV index records the legacy BackendStorage cascade misses.
+	tenantManager.SetUserStorage(userStorage)
+
 	// Create identity store with storage backends
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  backendStorage,
+		UserStorage:  userStorage,
 		GroupStorage: backendStorage,
 		RoleStorage:  roleStorage,
 		Tenants:      tenantManager,
@@ -380,7 +409,10 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// Create MFA manager with in-memory storage
 	mfaManager, err := iam.NewMFAManager(
 		iam.WithMFAStorage(iam.NewBackendMFAStorage(iamKV, tenantManager)),
-		iam.WithUserStorage(backendStorage),
+		// Route to the qrdb-backed user store (not backendStorage): users live in
+		// qrdb, so MFA enrollment must consult the same store login resolves
+		// against. Wiring backendStorage here would consult an empty store.
+		iam.WithUserStorage(userStorage),
 	)
 	if err != nil {
 		return nil, &IAMComponentInitError{Component: "MFA manager", Cause: err}
@@ -442,10 +474,14 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		ConsentStorage:    iam.NewBackendConsentStorage(iamKV, tenantManager),
 		DataExportStorage: iam.NewBackendDataExportStorage(iamKV, tenantManager),
 		DeletionStorage:   iam.NewBackendDeletionStorage(iamKV, tenantManager),
-		UserStorage:       backendStorage,
-		SessionStorage:    sessionStorage,
-		GroupStorage:      backendStorage,
-		RoleStorage:       backendStorage,
+		// Route user/role storage to the qrdb-backed stores so a GDPR export or
+		// erasure operates on the same user record and roles the rest of the
+		// stack uses; backendStorage would expose an empty user/role view.
+		// Groups stay on backendStorage (qrdb has no Group type).
+		UserStorage:    userStorage,
+		SessionStorage: sessionStorage,
+		GroupStorage:   backendStorage,
+		RoleStorage:    roleStorage,
 	})
 	if err != nil {
 		return nil, &IAMComponentInitError{Component: "GDPR manager", Cause: err}
@@ -762,7 +798,7 @@ func (e *SOCertLoginThumbprintError) Error() string {
 // PEM-encoded certificate: hex(SHA-256(cert.Raw)). This is the SINGLE digest
 // every login path computes (pkg/service/login_service.go mtlsLookupKey,
 // pkg/api/rest/iam_login_piv.go PIVLogin, pkg/iam/oauth2_mtls.go) and the value
-// stored in the PIVCertThumbprint index read by GetUserByPIVThumbprint. It is
+// stored as a PIV-attested cert binding (indexed for GetUserByPIVThumbprint). It is
 // deliberately NOT the SPKI thumbprint (SOCertSPKIThumbprint): there is no
 // SPKI-keyed user index, so an SPKI digest in that column is unreachable by any
 // login lookup. Keeping one digest function here keeps bindAdminPIVCert and
@@ -783,8 +819,8 @@ func soCertLoginThumbprint(certPEM []byte) (string, error) {
 }
 
 // certRawSHA256Hex returns hex(SHA-256(cert.Raw)) — the canonical mTLS/PIV
-// login lookup key every login path computes and the value stored in the
-// PIVCertThumbprint index. It is the single digest shared by bindAdminPIVCert
+// login lookup key every login path computes and the lookup thumbprint of the
+// PIV-attested cert binding. It is the single digest shared by bindAdminPIVCert
 // and soCertLoginThumbprint so the two binding paths cannot drift apart.
 func certRawSHA256Hex(cert *x509.Certificate) string {
 	digest := sha256.Sum256(cert.Raw)
@@ -980,54 +1016,6 @@ func printFirstBootBanner(w interface{ WriteString(string) (int, error) }, activ
 	for _, line := range lines {
 		_, _ = w.WriteString(line + "\n")
 	}
-}
-
-// resolveBootstrapCredentials resolves the bootstrap admin credentials
-// from configuration, applying defaults when values are not set.
-func (s *Server) resolveBootstrapCredentials() (string, string) {
-	username := s.config.Auth.BootstrapAdminUsername
-	if username == "" {
-		username = "admin"
-	}
-
-	password := s.config.Auth.BootstrapAdminPassword
-	if password == "" && s.config.Auth.InsecureDevMode {
-		password = "quicbaas-dev-admin"
-	}
-
-	return username, password
-}
-
-// validateBootstrapCredentials validates the bootstrap admin credentials
-// for security. In insecure dev mode, all checks are skipped.
-func validateBootstrapCredentials(username, password string, insecureDevMode bool) error {
-	if insecureDevMode {
-		return nil
-	}
-
-	if password == "" {
-		return &BootstrapPasswordRequiredError{}
-	}
-
-	// Check for common insecure passwords
-	insecurePasswords := []string{"admin", "password", "changeme"}
-	for _, insecure := range insecurePasswords {
-		if strings.EqualFold(password, insecure) {
-			return &BootstrapPasswordNotAllowedError{}
-		}
-	}
-
-	// Password must not match username
-	if strings.EqualFold(password, username) {
-		return &BootstrapPasswordMatchesUsernameError{}
-	}
-
-	// Minimum length requirement
-	if len(password) < config.MinBootstrapPasswordLength {
-		return &BootstrapPasswordTooShortError{MinLength: config.MinBootstrapPasswordLength}
-	}
-
-	return nil
 }
 
 // getIssuerURL constructs the OIDC issuer URL from server configuration.

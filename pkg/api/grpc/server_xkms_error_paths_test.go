@@ -56,73 +56,87 @@ func newErrorXKMSBackend() *errorXKMSBackend {
 	}
 }
 
-func (m *errorXKMSBackend) GenerateRSA(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *errorXKMSBackend) GenerateRSA(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, nil
 }
-func (m *errorXKMSBackend) GenerateECDSA(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *errorXKMSBackend) GenerateECDSA(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, nil
 }
-func (m *errorXKMSBackend) GenerateEd25519(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *errorXKMSBackend) GenerateEd25519(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, nil
 }
-func (m *errorXKMSBackend) GetKey(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *errorXKMSBackend) GetKey(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if m.getKeyErr != nil {
 		return nil, m.getKeyErr
 	}
-	return m.keyProvider.GetKey(attrs)
+	return m.keyProvider.GetKey(ctx, attrs)
 }
-func (m *errorXKMSBackend) DeleteKey(attrs *xkmssdk.KeyAttributes) error { return m.deleteKeyErr }
-func (m *errorXKMSBackend) ListKeys() ([]*xkmssdk.KeyAttributes, error) {
+func (m *errorXKMSBackend) DeleteKey(_ context.Context, attrs *xkmssdk.KeyAttributes) error {
+	return m.deleteKeyErr
+}
+func (m *errorXKMSBackend) ListKeys(ctx context.Context) ([]*xkmssdk.KeyAttributes, error) {
 	if m.listKeysErr != nil {
 		return nil, m.listKeysErr
 	}
-	return m.keyProvider.ListKeys()
+	return m.keyProvider.ListKeys(ctx)
 }
-func (m *errorXKMSBackend) RotateKey(attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *errorXKMSBackend) RotateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.PrivateKey, error) {
 	if m.rotateKeyErr != nil {
 		return nil, m.rotateKeyErr
 	}
 	return nil, nil
 }
-func (m *errorXKMSBackend) Signer(attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
+func (m *errorXKMSBackend) Signer(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
 	if m.signerErr != nil {
 		return nil, m.signerErr
 	}
-	return m.keyProvider.Signer(attrs)
+	return m.keyProvider.Signer(ctx, attrs)
 }
-func (m *errorXKMSBackend) Decrypter(attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
+func (m *errorXKMSBackend) Decrypter(_ context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, nil
 }
-func (m *errorXKMSBackend) SaveCert(keyID string, cert *x509.Certificate) error {
+func (m *errorXKMSBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
 	if m.saveCertErr != nil {
 		return m.saveCertErr
 	}
-	return m.certStore.SaveCert(context.Background(), keyID, cert)
+	return m.certStore.SaveCert(ctx, keyID, cert)
 }
-func (m *errorXKMSBackend) GetCert(keyID string) (*x509.Certificate, error) {
-	return m.certStore.GetCert(context.Background(), keyID)
+func (m *errorXKMSBackend) GetCert(ctx context.Context, keyID string) (*x509.Certificate, error) {
+	return m.certStore.GetCert(ctx, keyID)
 }
-func (m *errorXKMSBackend) DeleteCert(keyID string) error {
+func (m *errorXKMSBackend) DeleteCert(ctx context.Context, keyID string) error {
 	if m.deleteCertErr != nil {
 		return m.deleteCertErr
 	}
-	return m.certStore.DeleteCert(context.Background(), keyID)
+	return m.certStore.DeleteCert(ctx, keyID)
 }
-func (m *errorXKMSBackend) SaveCertChain(keyID string, chain []*x509.Certificate) error { return nil }
-func (m *errorXKMSBackend) GetCertChain(keyID string) ([]*x509.Certificate, error)      { return nil, nil }
-func (m *errorXKMSBackend) ListCerts() ([]string, error) {
+func (m *errorXKMSBackend) SaveCertChain(_ context.Context, keyID string, chain []*x509.Certificate) error {
+	return nil
+}
+func (m *errorXKMSBackend) GetCertChain(_ context.Context, keyID string) ([]*x509.Certificate, error) {
+	return nil, nil
+}
+func (m *errorXKMSBackend) ListCerts(ctx context.Context) ([]string, error) {
 	if m.listCertsErr != nil {
 		return nil, m.listCertsErr
 	}
-	return m.certStore.ListCerts(context.Background())
+	return m.certStore.ListCerts(ctx)
 }
-func (m *errorXKMSBackend) CertExists(keyID string) (bool, error) { return false, nil }
-func (m *errorXKMSBackend) GetTLSCertificate(keyID string, attrs *xkmssdk.KeyAttributes) (tls.Certificate, error) {
+func (m *errorXKMSBackend) CertExists(_ context.Context, keyID string) (bool, error) {
+	return false, nil
+}
+func (m *errorXKMSBackend) GetTLSCertificate(_ context.Context, keyID string, attrs *xkmssdk.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, nil
 }
-func (m *errorXKMSBackend) GetKeyByID(keyID string) (crypto.PrivateKey, error)      { return nil, nil }
-func (m *errorXKMSBackend) GetSignerByID(keyID string) (crypto.Signer, error)       { return nil, nil }
-func (m *errorXKMSBackend) GetDecrypterByID(keyID string) (crypto.Decrypter, error) { return nil, nil }
+func (m *errorXKMSBackend) GetKeyByID(_ context.Context, keyID string) (crypto.PrivateKey, error) {
+	return nil, nil
+}
+func (m *errorXKMSBackend) GetSignerByID(_ context.Context, keyID string) (crypto.Signer, error) {
+	return nil, nil
+}
+func (m *errorXKMSBackend) GetDecrypterByID(_ context.Context, keyID string) (crypto.Decrypter, error) {
+	return nil, nil
+}
 func (m *errorXKMSBackend) Seal(ctx context.Context, data []byte, opts *xkmssdk.SealOptions) (*xkmssdk.SealedData, error) {
 	if m.sealErr != nil {
 		return nil, m.sealErr

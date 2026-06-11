@@ -1,4 +1,4 @@
-//go:build raft && rest && quic && mcp && iam && vector && !integration
+//go:build raft && rest && quic && mcp && vector && !integration
 
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC

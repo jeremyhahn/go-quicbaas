@@ -1,4 +1,4 @@
-//go:build rest && iam
+//go:build rest
 
 package rest
 

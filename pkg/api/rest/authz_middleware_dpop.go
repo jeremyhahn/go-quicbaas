@@ -55,8 +55,8 @@ type PlatformTokenResult struct {
 //
 // The middleware type-asserts its configured TokenValidator to this interface:
 // when satisfied (the IAM OIDC adapter), inbound DPoP enforcement and scp/tenant
-// authorization are active; when not (e.g. a non-iam build), the middleware
-// falls back to plain bearer validation, preserving prior behavior.
+// authorization are active; when not (a validator without DPoP support), the
+// middleware falls back to plain bearer validation, preserving prior behavior.
 type DPoPTokenValidator interface {
 	// ValidateTokenWithDPoP validates the access token and, when it carries a
 	// cnf.jkt binding, enforces the presented DPoP proof against it. htm is the
@@ -73,8 +73,9 @@ const authorizedContextKey contextKey = "platform_authorized_context"
 
 // AuthorizedContextFromRequest returns the verified platform AuthorizedContext
 // the authz middleware attached to the request, or nil when the request was not
-// authorized through the DPoP-aware path (e.g. a non-iam build or a public
-// endpoint). Protected handlers call this and then RequireScope / HasRole.
+// authorized through the DPoP-aware path (e.g. a public endpoint or a
+// validator without DPoP support). Protected handlers call this and then
+// RequireScope / HasRole.
 func AuthorizedContextFromRequest(ctx context.Context) *platformtoken.AuthorizedContext {
 	if ac, ok := ctx.Value(authorizedContextKey).(*platformtoken.AuthorizedContext); ok {
 		return ac

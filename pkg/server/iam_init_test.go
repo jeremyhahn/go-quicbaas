@@ -1,4 +1,4 @@
-//go:build iam && !integration
+//go:build !integration
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -31,120 +31,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
-
-// ---------------------------------------------------------------------------
-// validateBootstrapCredentials tests
-// ---------------------------------------------------------------------------
-
-func TestValidateBootstrapCredentials(t *testing.T) {
-	t.Run("insecure dev mode skips all checks", func(t *testing.T) {
-		err := validateBootstrapCredentials("admin", "admin", true)
-		assert.NoError(t, err)
-	})
-
-	t.Run("empty password in production rejected", func(t *testing.T) {
-		err := validateBootstrapCredentials("admin", "", false)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInsecureBootstrapPassword))
-		assert.Contains(t, err.Error(), "bootstrap_admin_password is required")
-	})
-
-	t.Run("default password admin rejected", func(t *testing.T) {
-		err := validateBootstrapCredentials("admin", "admin", false)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInsecureBootstrapPassword))
-	})
-
-	t.Run("password 'password' rejected", func(t *testing.T) {
-		err := validateBootstrapCredentials("user", "password", false)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInsecureBootstrapPassword))
-	})
-
-	t.Run("password 'changeme' rejected", func(t *testing.T) {
-		err := validateBootstrapCredentials("user", "changeme", false)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInsecureBootstrapPassword))
-	})
-
-	t.Run("password same as username rejected", func(t *testing.T) {
-		err := validateBootstrapCredentials("myuser", "myuser", false)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInsecureBootstrapPassword))
-	})
-
-	t.Run("short password rejected", func(t *testing.T) {
-		err := validateBootstrapCredentials("admin", "short", false)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInsecureBootstrapPassword))
-		assert.Contains(t, err.Error(), "at least")
-	})
-
-	t.Run("password at minimum length accepted", func(t *testing.T) {
-		longPassword := "abcdefghijkl" // 12 chars = config.MinBootstrapPasswordLength
-		require.GreaterOrEqual(t, len(longPassword), config.MinBootstrapPasswordLength)
-		err := validateBootstrapCredentials("admin", longPassword, false)
-		assert.NoError(t, err)
-	})
-
-	t.Run("strong password accepted", func(t *testing.T) {
-		err := validateBootstrapCredentials("admin", "super-secure-password-2025!", false)
-		assert.NoError(t, err)
-	})
-}
-
-// ---------------------------------------------------------------------------
-// resolveBootstrapCredentials tests
-// ---------------------------------------------------------------------------
-
-func TestServer_ResolveBootstrapCredentials(t *testing.T) {
-	t.Run("uses configured credentials", func(t *testing.T) {
-		srv := withTempServer(t)
-		srv.config.Auth.BootstrapAdminUsername = "myadmin"
-		srv.config.Auth.BootstrapAdminPassword = "mysecret"
-		srv.config.Auth.InsecureDevMode = false
-
-		username, password := srv.resolveBootstrapCredentials()
-		assert.Equal(t, "myadmin", username)
-		assert.Equal(t, "mysecret", password)
-	})
-
-	t.Run("defaults username to admin when empty", func(t *testing.T) {
-		srv := withTempServer(t)
-		srv.config.Auth.BootstrapAdminUsername = ""
-		srv.config.Auth.BootstrapAdminPassword = "pass"
-		srv.config.Auth.InsecureDevMode = false
-
-		username, password := srv.resolveBootstrapCredentials()
-		assert.Equal(t, "admin", username)
-		assert.Equal(t, "pass", password)
-	})
-
-	t.Run("uses dev default password in insecure mode", func(t *testing.T) {
-		srv := withTempServer(t)
-		srv.config.Auth.BootstrapAdminUsername = ""
-		srv.config.Auth.BootstrapAdminPassword = ""
-		srv.config.Auth.InsecureDevMode = true
-
-		username, password := srv.resolveBootstrapCredentials()
-		assert.Equal(t, "admin", username)
-		assert.Equal(t, "quicbaas-dev-admin", password)
-	})
-
-	t.Run("leaves password empty in production mode", func(t *testing.T) {
-		srv := withTempServer(t)
-		srv.config.Auth.BootstrapAdminUsername = ""
-		srv.config.Auth.BootstrapAdminPassword = ""
-		srv.config.Auth.InsecureDevMode = false
-
-		username, password := srv.resolveBootstrapCredentials()
-		assert.Equal(t, "admin", username)
-		assert.Equal(t, "", password)
-	})
-}
 
 // ---------------------------------------------------------------------------
 // iamComponents getter tests
@@ -213,8 +101,8 @@ func TestBindAdminToSOCert_PinsThumbprintAndActivatesAdmin(t *testing.T) {
 	user, err := c.identityStore.GetUser(context.Background(), srv.bootstrapAdminTenantID, srv.bootstrapAdminUserID)
 	require.NoError(t, err)
 	require.NotNil(t, user)
-	assert.Equal(t, loginThumbWant, user.PIVCertThumbprint,
-		"BindAdminToSOCert must persist hex(SHA-256(cert.Raw)) — the canonical login lookup key — to PIVCertThumbprint")
+	assert.Equal(t, loginThumbWant, user.PIVThumbprint(),
+		"BindAdminToSOCert must persist hex(SHA-256(cert.Raw)) — the canonical login lookup key — as a PIV-attested binding")
 	assert.Equal(t, iam.UserStateActive, user.State,
 		"binding the SO cert must transition the admin from pending to active")
 
@@ -229,7 +117,7 @@ func TestBindAdminToSOCert_PinsThumbprintAndActivatesAdmin(t *testing.T) {
 		"GetUserByPIVThumbprint must resolve the SO-bound admin")
 
 	// Regression: the PIV (cert.Raw) and SPKI digests no longer collide on the
-	// PIVCertThumbprint column — they are distinct values, and only the login
+	// PIV binding — they are distinct values, and only the login
 	// (cert.Raw) digest indexes the user. Looking up by the SPKI digest must NOT
 	// find the admin.
 	spkiDigest, err := SOCertSPKIThumbprint(soCertPEM)
@@ -265,12 +153,12 @@ func TestBindAdminToSOCert_RebindingSameCertIsIdempotent(t *testing.T) {
 	require.NoError(t, srv.BindAdminToSOCert(context.Background(), cert))
 	user1, err := c.identityStore.GetUser(context.Background(), "system", srv.bootstrapAdminUserID)
 	require.NoError(t, err)
-	first := user1.PIVCertThumbprint
+	first := user1.PIVThumbprint()
 
 	require.NoError(t, srv.BindAdminToSOCert(context.Background(), cert))
 	user2, err := c.identityStore.GetUser(context.Background(), "system", srv.bootstrapAdminUserID)
 	require.NoError(t, err)
-	assert.Equal(t, first, user2.PIVCertThumbprint,
+	assert.Equal(t, first, user2.PIVThumbprint(),
 		"re-binding the same SO certificate must yield the same login thumbprint")
 
 	want, err := soCertLoginThumbprint(cert)
@@ -333,7 +221,7 @@ func TestBindAdminToSOCert_RejectsMalformedPEM(t *testing.T) {
 // newTestSOCertWithSPKI generates a self-signed SO certificate and returns its
 // PEM bytes alongside the expected canonical login thumbprint —
 // hex(SHA-256(cert.Raw)) — which is exactly what BindAdminToSOCert pins to the
-// PIVCertThumbprint index and what every login path computes. The thumbprint is
+// PIV binding index and what every login path computes. The thumbprint is
 // produced via the same soCertLoginThumbprint helper the production binding
 // uses, so the tests assert the real code path. (Despite the historical name,
 // the returned digest is the cert-DER login thumbprint, NOT the SPKI digest —

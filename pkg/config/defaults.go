@@ -93,9 +93,8 @@ func DefaultConfig() *Config {
 			CompressionType:       "snappy",
 		},
 		Security: SecurityConfig{
-			TLSEnabled:        true,
-			EncryptionEnabled: true,
-			SealEnabled:       false,
+			TLSEnabled:  true,
+			SealEnabled: false,
 			// Secure default: the REST surface enforces the default-deny scope ->
 			// RBAC gate. Non-public, non-cluster-mTLS requests must present a valid
 			// platform token carrying the required "<svc>.<verb>" scope; token-less
@@ -352,8 +351,6 @@ func DefaultSecurityConfig() SecurityConfig {
 		TLSCAFile:           "",
 		TLSClientAuth:       false,
 		FIPSMode:            false,
-		EncryptionEnabled:   true,
-		EncryptionKeyFile:   "",
 		EncryptionAlgorithm: "aes-256-gcm",
 		SealEnabled:         false,
 		// Secure default: enforce the default-deny scope -> RBAC gate. See the
@@ -473,7 +470,6 @@ func ProductionConfig() *Config {
 	cfg.Security.TLSKeyFile = "/etc/quicbaas/tls/server.key"
 	cfg.Security.TLSCAFile = "/etc/quicbaas/tls/ca.crt"
 	cfg.Security.TLSClientAuth = true
-	cfg.Security.EncryptionKeyFile = "/etc/quicbaas/keys/encryption.key"
 	cfg.Security.Authorization.ABAC.PolicyDir = "/etc/quicbaas/policies"
 
 	cfg.Logging.Output = "file"
@@ -517,12 +513,16 @@ func DevelopmentConfig() *Config {
 	cfg.Storage.TargetFileSize = 32 * 1024 * 1024
 
 	cfg.Security.TLSEnabled = false
-	cfg.Security.EncryptionEnabled = false
 	cfg.Security.Authorization.RBAC.AllowAnonymous = true
 	cfg.Security.Authorization.ABAC.Enabled = false
 	// Development runs anonymous (AllowAnonymous=true); the default-deny gate is
 	// off so local data-plane calls do not require a platform token.
 	cfg.Security.RequireAuthz = false
+	// Development enables network transports with authorization disabled, so it
+	// must explicitly acknowledge the insecure fail-open posture; otherwise the
+	// authz-posture validation rule would refuse to start. This is a local-dev
+	// profile only and must NEVER be used in production.
+	cfg.Security.InsecureDevMode = true
 
 	cfg.Logging.Level = "debug"
 	cfg.Logging.Format = "console"
@@ -607,14 +607,17 @@ func TestConfig() *Config {
 			CompressionType:       "none",
 		},
 		Security: SecurityConfig{
-			TLSEnabled:          false,
-			TLSCertFile:         "",
-			TLSKeyFile:          "",
-			TLSCAFile:           "",
-			TLSClientAuth:       false,
+			TLSEnabled:    false,
+			TLSCertFile:   "",
+			TLSKeyFile:    "",
+			TLSCAFile:     "",
+			TLSClientAuth: false,
+			// TestConfig leaves RequireAuthz at its zero value (false) while
+			// enabling the gRPC and REST transports above. Acknowledge the
+			// insecure posture so the authz-posture validation rule does not
+			// refuse configs built from this test profile.
+			InsecureDevMode:     true,
 			FIPSMode:            false,
-			EncryptionEnabled:   false,
-			EncryptionKeyFile:   "",
 			EncryptionAlgorithm: "aes-256-gcm",
 			SealEnabled:         false,
 			Authorization: AuthorizationConfig{
@@ -741,7 +744,6 @@ func EmbeddedConfig() *Config {
 	// embedded callers must carry auth.NewSystemContext or an injected Subject.
 	// TLS is unnecessary for in-process calls.
 	cfg.Security.TLSEnabled = false
-	cfg.Security.EncryptionEnabled = false
 	cfg.Security.RequireAuthz = true
 	cfg.Security.Authorization.RBAC.AllowAnonymous = false
 	// Bind the in-process system identity so service-layer guards that inspect

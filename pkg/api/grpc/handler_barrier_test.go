@@ -357,9 +357,9 @@ func TestBarrierShamirInitialize_Success(t *testing.T) {
 	mock := &mockBarrierService{
 		initShamirFn: func(_ context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
 			return &service.ShamirInitInfo{
-				Shares:      []string{"a", "b", "c"},
 				Threshold:   threshold,
 				TotalShares: total,
+				ShareCount:  total,
 			}, nil
 		},
 	}
@@ -372,8 +372,12 @@ func TestBarrierShamirInitialize_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.GetShares()) != 3 || resp.GetThreshold() != 2 || resp.GetTotalShares() != 3 {
+	if resp.GetThreshold() != 2 || resp.GetTotalShares() != 3 {
 		t.Fatalf("unexpected response: %#v", resp)
+	}
+	// Share-free contract: share material must never appear on the wire.
+	if len(resp.GetShares()) != 0 {
+		t.Fatalf("shares leaked on the wire: %#v", resp)
 	}
 }
 
@@ -474,7 +478,7 @@ func TestBarrierShamirUnsealShares_NilRequest(t *testing.T) {
 func TestBarrierRekey_Success(t *testing.T) {
 	mock := &mockBarrierService{
 		rekeyFn: func(_ context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-			return &service.ShamirInitInfo{Shares: []string{"x", "y"}, Threshold: threshold, TotalShares: total}, nil
+			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 		},
 	}
 	srv := newTestBarrierServer(mock)
@@ -482,8 +486,12 @@ func TestBarrierRekey_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.GetThreshold() != 2 || resp.GetTotalShares() != 3 || len(resp.GetShares()) != 2 {
+	if resp.GetThreshold() != 2 || resp.GetTotalShares() != 3 {
 		t.Fatalf("unexpected response: %#v", resp)
+	}
+	// Share-free contract: share material must never appear on the wire.
+	if len(resp.GetShares()) != 0 {
+		t.Fatalf("shares leaked on the wire: %#v", resp)
 	}
 }
 
@@ -509,7 +517,7 @@ func TestBarrierRekey_ValidationErrors(t *testing.T) {
 func TestBarrierRecoveryGenerate_Success(t *testing.T) {
 	mock := &mockBarrierService{
 		generateRecoveryFn: func(_ context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
-			return &service.RecoveryKeysInfo{Keys: []string{"k1", "k2"}, Threshold: threshold, Total: total}, nil
+			return &service.RecoveryKeysInfo{Threshold: threshold, Total: total, ShareCount: total}, nil
 		},
 	}
 	srv := newTestBarrierServer(mock)
@@ -517,8 +525,12 @@ func TestBarrierRecoveryGenerate_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.GetKeys()) != 2 {
-		t.Fatalf("expected 2 keys, got %d", len(resp.GetKeys()))
+	if resp.GetThreshold() != 2 || resp.GetTotal() != 3 {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	// Share-free contract: recovery key material must never appear on the wire.
+	if len(resp.GetKeys()) != 0 {
+		t.Fatalf("recovery keys leaked on the wire: %#v", resp)
 	}
 }
 

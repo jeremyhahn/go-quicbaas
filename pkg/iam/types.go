@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -20,6 +18,8 @@ package iam
 
 import (
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // UserState represents the lifecycle state of a user account.
@@ -98,7 +98,7 @@ type TenantSettings struct {
 	RefreshTokenTTL time.Duration `json:"refresh_token_ttl,omitempty" yaml:"refresh_token_ttl,omitempty"`
 
 	// AuditPolicy defines audit logging configuration for this tenant
-	// AuditPolicy (disabled - requires iam build tag) *AuditPolicy `json:"audit_policy,omitempty" yaml:"audit_policy,omitempty"`
+	// AuditPolicy (disabled) *AuditPolicy `json:"audit_policy,omitempty" yaml:"audit_policy,omitempty"`
 
 	// SandboxPolicy overrides the orchestrator's server-level SandboxPolicy
 	// for this tenant. Allowed values: "required" (containers only; raw
@@ -242,9 +242,13 @@ type User struct {
 	// AuthMethods lists the allowed authentication methods for this user (e.g. "webauthn", "piv").
 	AuthMethods []string `json:"auth_methods,omitempty" yaml:"auth_methods,omitempty"`
 
-	// PIVCertThumbprint is the SHA-256 hex thumbprint of the PIV client certificate
-	// registered during activation. Empty unless the user activated via the PIV flow.
-	PIVCertThumbprint string `json:"piv_cert_thumbprint,omitempty" yaml:"piv_cert_thumbprint,omitempty"`
+	// CertBindings holds the qrdb-canonical mTLS certificate bindings for this
+	// user. PIV activation appends a binding of kind
+	// qrdbsdk.CertBindingPIVAttested whose Thumbprint is the login lookup key
+	// (hex SHA-256 of the certificate DER). A user may hold more than one binding
+	// (e.g. a renewed or additional PIV card). Empty unless the user has bound at
+	// least one certificate.
+	CertBindings []qrdbsdk.CertBinding `json:"cert_bindings,omitempty" yaml:"cert_bindings,omitempty"`
 
 	// InviteToken holds the plaintext invite token shown once at creation time.
 	// It is cleared (set to empty string) after the user activates.
@@ -778,6 +782,139 @@ func (u *User) Validate() error {
 		return NewIAMError(ErrUserInvalid, "iam.user.validate", "user tenant ID is required", nil)
 	}
 	return nil
+}
+
+// PIVThumbprints returns the lookup thumbprints of every PIV-attested cert
+// binding. The order mirrors CertBindings so callers can index the storage
+// thumbprint->user index by each value. It never returns nil entries.
+func (u *User) PIVThumbprints() []string {
+	out := make([]string, 0, len(u.CertBindings))
+	for i := range u.CertBindings {
+		if u.CertBindings[i].Kind == qrdbsdk.CertBindingPIVAttested && u.CertBindings[i].Thumbprint != "" {
+			out = append(out, u.CertBindings[i].Thumbprint)
+		}
+	}
+	return out
+}
+
+// LegacyPIVThumbprints returns the legacy (hex SHA-256 of the certificate DER)
+// PIV-attested binding thumbprints — the subset of PIVThumbprints that are NOT
+// canonical SPKI thumbprints. The qrdb cert-thumbprint index resolves SPKI
+// thumbprints natively; the legacy hex digest is not an SPKI thumbprint, so a
+// broker-side index resolves it for the migration window and no-qrdb-index
+// deployments.
+func (u *User) LegacyPIVThumbprints() []string {
+	out := make([]string, 0, len(u.CertBindings))
+	for i := range u.CertBindings {
+		b := u.CertBindings[i]
+		if b.Kind == qrdbsdk.CertBindingPIVAttested && b.Thumbprint != "" && isLegacyHexThumbprint(b.Thumbprint) {
+			out = append(out, b.Thumbprint)
+		}
+	}
+	return out
+}
+
+// isLegacyHexThumbprint reports whether s is a legacy PIV thumbprint: the hex
+// encoding of a SHA-256 digest (64 lowercase hex characters). A canonical SPKI
+// thumbprint is base64url of 32 bytes (43 characters) and never matches.
+func isLegacyHexThumbprint(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// PIVThumbprint returns the lookup thumbprint of the user's first PIV-attested
+// cert binding, or the empty string when the user has none. It is a convenience
+// for the bootstrap/SO-bind paths that establish exactly one PIV binding.
+func (u *User) PIVThumbprint() string {
+	for i := range u.CertBindings {
+		if u.CertBindings[i].Kind == qrdbsdk.CertBindingPIVAttested && u.CertBindings[i].Thumbprint != "" {
+			return u.CertBindings[i].Thumbprint
+		}
+	}
+	return ""
+}
+
+// HasPIVThumbprint reports whether the user holds a non-expired PIV-attested
+// binding for the given lookup thumbprint. Expiry is enforced on every
+// resolution so a decommissioned credential cannot be replayed after NotAfter.
+func (u *User) HasPIVThumbprint(thumbprint string) bool {
+	if thumbprint == "" {
+		return false
+	}
+	now := time.Now().UTC()
+	for i := range u.CertBindings {
+		b := u.CertBindings[i]
+		if b.Kind == qrdbsdk.CertBindingPIVAttested && b.Thumbprint == thumbprint && !b.IsExpired(now) {
+			return true
+		}
+	}
+	return false
+}
+
+// SetPIVThumbprints replaces the user's PIV-attested bindings with one binding
+// per supplied non-empty thumbprint, de-duplicating. Blank entries are skipped;
+// when every entry is blank all PIV-attested bindings are cleared. Non-PIV
+// bindings are preserved untouched. PIV activation supplies both the canonical
+// SPKI thumbprint (qrdb-native lookup) and the legacy hex digest (broker-side
+// fallback index) so both resolve the user.
+func (u *User) SetPIVThumbprints(thumbprints ...string) {
+	kept := u.CertBindings[:0:0]
+	for i := range u.CertBindings {
+		if u.CertBindings[i].Kind != qrdbsdk.CertBindingPIVAttested {
+			kept = append(kept, u.CertBindings[i])
+		}
+	}
+	seen := make(map[string]struct{}, len(thumbprints))
+	for _, tp := range thumbprints {
+		if tp == "" {
+			continue
+		}
+		if _, dup := seen[tp]; dup {
+			continue
+		}
+		seen[tp] = struct{}{}
+		kept = append(kept, qrdbsdk.CertBinding{
+			Thumbprint: tp,
+			Kind:       qrdbsdk.CertBindingPIVAttested,
+		})
+	}
+	if len(kept) == 0 {
+		u.CertBindings = nil
+		return
+	}
+	u.CertBindings = kept
+}
+
+// SetPIVThumbprint replaces the user's PIV-attested bindings with a single
+// binding for thumbprint. A blank thumbprint clears all PIV-attested bindings.
+// Non-PIV bindings are preserved untouched. This mirrors the historical
+// single-thumbprint setter so bootstrap/activation call sites stay one-liners.
+func (u *User) SetPIVThumbprint(thumbprint string) {
+	kept := u.CertBindings[:0:0]
+	for i := range u.CertBindings {
+		if u.CertBindings[i].Kind != qrdbsdk.CertBindingPIVAttested {
+			kept = append(kept, u.CertBindings[i])
+		}
+	}
+	if thumbprint != "" {
+		kept = append(kept, qrdbsdk.CertBinding{
+			Thumbprint: thumbprint,
+			Kind:       qrdbsdk.CertBindingPIVAttested,
+		})
+	}
+	if len(kept) == 0 {
+		u.CertBindings = nil
+		return
+	}
+	u.CertBindings = kept
 }
 
 // Validate validates a Group for correctness.

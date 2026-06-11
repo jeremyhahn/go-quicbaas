@@ -84,10 +84,7 @@ security:
       policy_dir: "/etc/quicbaas/policies"
 ```
 
-> **Note**: ABAC requires building with the `iam` tag:
-> ```bash
-> go build -tags iam ./cmd/quicbaasd
-> ```
+> **Note**: ABAC is always compiled into every build; no build tag is required.
 
 ### Hybrid Mode (Migration)
 
@@ -298,7 +295,6 @@ All authorization decisions are logged:
 |-------|-------|----------|
 | 401 Unauthorized | Missing/invalid token | Check JWT token validity |
 | 403 Forbidden | Insufficient permissions | Verify role has required permission |
-| ABAC not available | Missing build tag | Build with `-tags iam` |
 
 ### Debug Mode
 

@@ -135,10 +135,12 @@ func (s *TenantBarrierGRPCServer) Init(ctx context.Context, req *pb.TenantBarrie
 	if result == nil {
 		return &pb.TenantBarrierInitResponse{TenantId: req.GetTenantId()}, nil
 	}
+	// Share material is never returned (qrdb share-free contract);
+	// Security Officers claim their shares via the tenant barrier
+	// share-claim flow.
 	return &pb.TenantBarrierInitResponse{
 		TenantId:    result.TenantID,
 		Strategy:    result.Strategy,
-		Shares:      result.Shares,
 		Threshold:   int32(result.Threshold),   //nolint:gosec // small count
 		TotalShares: int32(result.TotalShares), //nolint:gosec // small count
 	}, nil

@@ -299,7 +299,6 @@ func TestSealToolsSuccess(t *testing.T) {
 				m.On("Initialize", mock.Anything, mock.MatchedBy(func(req *service.SealInitRequest) bool {
 					return req.Threshold == 3 && req.TotalShares == 5
 				})).Return(&service.SealInitResponse{
-					Shares:    [][]byte{[]byte("s1"), []byte("s2"), []byte("s3"), []byte("s4"), []byte("s5")},
 					RootToken: "root-token",
 					Version:   1,
 					Timestamp: time.Now(),
@@ -357,7 +356,6 @@ func TestSealToolsSuccess(t *testing.T) {
 				m.On("Rekey", mock.Anything, mock.MatchedBy(func(req *service.RekeyRequest) bool {
 					return req.NewThreshold == 4 && req.NewTotalShares == 7
 				})).Return(&service.RekeyResponse{
-					Shares:    [][]byte{[]byte("n1"), []byte("n2"), []byte("n3"), []byte("n4"), []byte("n5"), []byte("n6"), []byte("n7")},
 					Version:   2,
 					Timestamp: time.Now(),
 				}, nil)
@@ -378,8 +376,7 @@ func TestSealToolsSuccess(t *testing.T) {
 				m.On("GenerateRecoveryKey", mock.Anything, mock.MatchedBy(func(req *service.GenerateRecoveryKeyRequest) bool {
 					return req.RecoveryThreshold == 2 && req.RecoveryTotalKeys == 3
 				})).Return(&service.GenerateRecoveryKeyResponse{
-					RecoveryKeys: [][]byte{[]byte("rec1"), []byte("rec2"), []byte("rec3")},
-					Timestamp:    time.Now(),
+					Timestamp: time.Now(),
 				}, nil)
 			},
 			validateFn: func(t *testing.T, result interface{}, err error) {

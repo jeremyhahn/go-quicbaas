@@ -14,12 +14,12 @@ object_storage:
         region: us-east-1
         access_key: ${AWS_ACCESS_KEY_ID}
         secret_key: ${AWS_SECRET_ACCESS_KEY}
-
-security:
-  encryption_enabled: true
-  encryption_algorithm: aes-256-gcm
-  key_storage_backend: key-store  # References named backend
 ```
+
+The named backend is wired to go-xkms programmatically via the
+`ObjStoreAdapter` (see below). At-rest encryption of the embedded KV store
+itself is provided by the qrdb seal/barrier subsystem, not a key-file
+toggle.
 
 ## Benefits
 
@@ -120,9 +120,6 @@ object_storage:
       type: local
       config:
         path: /tmp/quicbaas-keys
-
-security:
-  key_storage_backend: dev-keys
 ```
 
 Or in-memory for tests:
@@ -132,7 +129,4 @@ object_storage:
   backends:
     test-keys:
       type: memory
-
-security:
-  key_storage_backend: test-keys
 ```

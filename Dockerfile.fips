@@ -7,7 +7,7 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
 ARG GOFIPS140=v1.0.0
-ARG BUILD_TAGS=iam
+ARG BUILD_TAGS=
 
 # Stage 1: Build stage with FIPS support
 FROM golang:${GO_VERSION}-bookworm AS builder

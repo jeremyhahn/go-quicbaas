@@ -1,4 +1,4 @@
-//go:build !integration && raft && local && iam && vector
+//go:build !integration && raft && local && vector
 
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC

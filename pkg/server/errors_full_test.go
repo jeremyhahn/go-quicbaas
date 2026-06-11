@@ -11,24 +11,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// InsecureBootstrapPasswordError - errors.As extraction
-// ---------------------------------------------------------------------------
-
-func TestInsecureBootstrapPasswordError_ErrorsAs(t *testing.T) {
-	t.Run("extracts typed error with errors.As", func(t *testing.T) {
-		var target *InsecureBootstrapPasswordError
-		err := &InsecureBootstrapPasswordError{Reason: "uses default value"}
-		require.True(t, errors.As(err, &target))
-		assert.Equal(t, "uses default value", target.Reason)
-	})
-
-	t.Run("empty reason formats correctly", func(t *testing.T) {
-		err := &InsecureBootstrapPasswordError{Reason: ""}
-		assert.Equal(t, "insecure bootstrap admin password: ", err.Error())
-	})
-}
-
-// ---------------------------------------------------------------------------
 // ShardedClientClosedError - errors.As extraction
 // ---------------------------------------------------------------------------
 
@@ -128,10 +110,6 @@ func TestDatabaseStartError_ErrorsAs(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSentinelErrors_Remaining(t *testing.T) {
-	t.Run("ErrInsecureBootstrapPassword", func(t *testing.T) {
-		assert.Equal(t, "insecure bootstrap admin password", ErrInsecureBootstrapPassword.Error())
-	})
-
 	t.Run("ErrShardedClientClosed", func(t *testing.T) {
 		assert.Equal(t, "sharded client is closed", ErrShardedClientClosed.Error())
 	})
@@ -152,7 +130,6 @@ func TestSentinelErrors_Remaining(t *testing.T) {
 			ErrInvalidServerMode,
 			ErrMCPShutdownFailed,
 			ErrRAGCloseFailed,
-			ErrInsecureBootstrapPassword,
 			ErrShardedClientClosed,
 			ErrUnsupportedTransport,
 			ErrTransportCreationFailed,

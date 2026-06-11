@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam
-
 // Package main provides IAM PEP (Policy Enforcement Point) CLI commands for QuicBaaS.
 package main
 

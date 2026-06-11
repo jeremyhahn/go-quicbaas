@@ -113,7 +113,8 @@ func (s *qrdbBarrierClientServicer) BarrierStatus(ctx context.Context) (*qrdbsdk
 }
 
 // BarrierInitializeShamir initializes the data-plane barrier with Shamir
-// secret sharing and returns the generated shares.
+// secret sharing. Share material is never returned; Security Officers claim
+// their shares via the qrdb share-claim flow.
 func (s *qrdbBarrierClientServicer) BarrierInitializeShamir(ctx context.Context, secret string, threshold, totalShares int) (*qrdbsdk.ShamirInitInfo, error) {
 	resp, err := s.client.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
 		Secret:      secret,
@@ -124,9 +125,9 @@ func (s *qrdbBarrierClientServicer) BarrierInitializeShamir(ctx context.Context,
 		return nil, err
 	}
 	return &qrdbsdk.ShamirInitInfo{
-		Shares:      resp.Shares,
 		Threshold:   resp.Threshold,
 		TotalShares: resp.TotalShares,
+		ShareCount:  resp.ShareCount,
 	}, nil
 }
 
@@ -159,9 +160,9 @@ func (s *qrdbBarrierClientServicer) BarrierRekey(ctx context.Context, threshold,
 		return nil, err
 	}
 	return &qrdbsdk.ShamirInitInfo{
-		Shares:      resp.Shares,
 		Threshold:   resp.Threshold,
 		TotalShares: resp.TotalShares,
+		ShareCount:  resp.ShareCount,
 	}, nil
 }
 
@@ -175,9 +176,9 @@ func (s *qrdbBarrierClientServicer) BarrierGenerateRecoveryKeys(ctx context.Cont
 		return nil, err
 	}
 	return &qrdbsdk.RecoveryKeysInfo{
-		Keys:      resp.Keys,
-		Threshold: resp.Threshold,
-		Total:     resp.Total,
+		Threshold:  resp.Threshold,
+		Total:      resp.Total,
+		ShareCount: resp.ShareCount,
 	}, nil
 }
 
@@ -198,6 +199,166 @@ func (s *qrdbBarrierClientServicer) BarrierHasRecoveryKeys(ctx context.Context) 
 		return false, err
 	}
 	return resp.HasKeys, nil
+}
+
+// BarrierOfficerRegister registers a Security Officer for the system barrier
+// on the data-plane node. The signed certificate in the result must be
+// delivered to the officer out of band.
+func (s *qrdbBarrierClientServicer) BarrierOfficerRegister(ctx context.Context, req *qrdbsdk.BarrierOfficerRegisterRequest) (*qrdbsdk.BarrierOfficerRegisterResult, error) {
+	resp, err := s.client.OfficerRegister(ctx, &transport.OfficerRegisterRequest{
+		Username:          req.Username,
+		CSRPEM:            req.CSRPEM,
+		AuthenticatorType: req.AuthenticatorType,
+		AuthenticatorRef:  req.AuthenticatorRef,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbsdk.BarrierOfficerRegisterResult{
+		CertPEM:    resp.CertPEM,
+		ShareIndex: resp.ShareIndex,
+	}, nil
+}
+
+// BarrierOfficerList returns all enrolled Security Officers for the
+// data-plane system barrier. Only non-secret metadata is carried.
+func (s *qrdbBarrierClientServicer) BarrierOfficerList(ctx context.Context) ([]*qrdbsdk.BarrierOfficerStatus, error) {
+	officers, err := s.client.OfficerList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return officerStatusesToService(officers), nil
+}
+
+// BarrierOfficerClaimStatus returns a per-officer claim status snapshot for
+// the data-plane system barrier. No share material is present.
+func (s *qrdbBarrierClientServicer) BarrierOfficerClaimStatus(ctx context.Context) ([]*qrdbsdk.BarrierOfficerStatus, error) {
+	officers, err := s.client.OfficerClaimStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return officerStatusesToService(officers), nil
+}
+
+// BarrierShareClaimBegin issues a challenge nonce to the named Security
+// Officer on the data-plane node. The callerCertThumbprint argument is not
+// forwarded on the wire: the qrdb node re-derives the caller identity from
+// the data-plane connection's client certificate and fails the claim closed
+// on any mismatch (defense in depth — quicbaas never vouches for SO identity).
+func (s *qrdbBarrierClientServicer) BarrierShareClaimBegin(ctx context.Context, username, _ string) (*qrdbsdk.BarrierShareClaimChallenge, error) {
+	resp, err := s.client.ShareClaimBegin(ctx, &transport.ShareClaimBeginRequest{Username: username})
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbsdk.BarrierShareClaimChallenge{
+		NonceHex:  resp.NonceHex,
+		ExpiresAt: resp.ExpiresAt,
+	}, nil
+}
+
+// BarrierShareClaimComplete verifies the officer's nonce signature on the
+// data-plane node and returns the share bytes exactly once. As with
+// BarrierShareClaimBegin, the caller thumbprint is re-derived remotely from
+// the data-plane connection's client certificate, never trusted from here.
+func (s *qrdbBarrierClientServicer) BarrierShareClaimComplete(ctx context.Context, username, nonceHex string, signature []byte, _ string) (*qrdbsdk.BarrierShareClaimResult, error) {
+	resp, err := s.client.ShareClaimComplete(ctx, &transport.ShareClaimCompleteRequest{
+		Username:  username,
+		NonceHex:  nonceHex,
+		Signature: signature,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbsdk.BarrierShareClaimResult{
+		ShareIndex: resp.ShareIndex,
+		ShareBytes: resp.ShareBytes,
+	}, nil
+}
+
+// BarrierShamirSealVote submits a Shamir share as a seal vote toward the
+// data-plane barrier's seal quorum.
+func (s *qrdbBarrierClientServicer) BarrierShamirSealVote(ctx context.Context, share string) (*qrdbsdk.UnsealShareProgress, error) {
+	resp, err := s.client.ShamirSealVote(ctx, &transport.ShamirSealVoteRequest{Share: share})
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbsdk.UnsealShareProgress{
+		Required:  resp.Required,
+		Submitted: resp.Submitted,
+		Complete:  resp.Complete,
+	}, nil
+}
+
+// BarrierRecoveryOfficerRegister registers a Security Officer for recovery
+// key distribution on the data-plane node.
+func (s *qrdbBarrierClientServicer) BarrierRecoveryOfficerRegister(ctx context.Context, req *qrdbsdk.BarrierOfficerRegisterRequest) (*qrdbsdk.BarrierOfficerRegisterResult, error) {
+	resp, err := s.client.RecoveryOfficerRegister(ctx, &transport.OfficerRegisterRequest{
+		Username:          req.Username,
+		CSRPEM:            req.CSRPEM,
+		AuthenticatorType: req.AuthenticatorType,
+		AuthenticatorRef:  req.AuthenticatorRef,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbsdk.BarrierOfficerRegisterResult{
+		CertPEM:    resp.CertPEM,
+		ShareIndex: resp.ShareIndex,
+	}, nil
+}
+
+// BarrierRecoveryShareClaimBegin issues a challenge nonce for a recovery
+// officer on the data-plane node. Caller identity is re-derived remotely from
+// the data-plane connection's client certificate (see BarrierShareClaimBegin).
+func (s *qrdbBarrierClientServicer) BarrierRecoveryShareClaimBegin(ctx context.Context, username, _ string) (*qrdbsdk.BarrierShareClaimChallenge, error) {
+	resp, err := s.client.RecoveryShareClaimBegin(ctx, &transport.ShareClaimBeginRequest{Username: username})
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbsdk.BarrierShareClaimChallenge{
+		NonceHex:  resp.NonceHex,
+		ExpiresAt: resp.ExpiresAt,
+	}, nil
+}
+
+// BarrierRecoveryShareClaimComplete verifies the recovery officer's nonce
+// signature on the data-plane node and returns the recovery share bytes
+// exactly once. Caller identity is re-derived remotely (see
+// BarrierShareClaimComplete).
+func (s *qrdbBarrierClientServicer) BarrierRecoveryShareClaimComplete(ctx context.Context, username, nonceHex string, signature []byte, _ string) (*qrdbsdk.BarrierShareClaimResult, error) {
+	resp, err := s.client.RecoveryShareClaimComplete(ctx, &transport.ShareClaimCompleteRequest{
+		Username:  username,
+		NonceHex:  nonceHex,
+		Signature: signature,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbsdk.BarrierShareClaimResult{
+		ShareIndex: resp.ShareIndex,
+		ShareBytes: resp.ShareBytes,
+	}, nil
+}
+
+// officerStatusesToService converts wire OfficerStatus entries to the
+// service-layer BarrierOfficerStatus the qrdb gRPC handlers expect.
+func officerStatusesToService(in []*transport.OfficerStatus) []*qrdbsdk.BarrierOfficerStatus {
+	out := make([]*qrdbsdk.BarrierOfficerStatus, 0, len(in))
+	for _, o := range in {
+		if o == nil {
+			continue
+		}
+		out = append(out, &qrdbsdk.BarrierOfficerStatus{
+			Username:       o.Username,
+			CertThumbprint: o.CertThumbprint,
+			ShareIndex:     o.ShareIndex,
+			AuthFactor:     o.AuthFactor,
+			EnrolledAt:     o.EnrolledAt,
+			ClaimedAt:      o.ClaimedAt,
+			SharePending:   o.SharePending,
+		})
+	}
+	return out
 }
 
 // BarrierGenerateRootToken creates a new root token from Shamir shares,

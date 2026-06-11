@@ -63,7 +63,7 @@ func (m *mockBarrierServicer) BarrierInitializeShamir(context.Context, string, i
 	if m.shamirInfo != nil {
 		return m.shamirInfo, nil
 	}
-	return &service.ShamirInitInfo{Shares: []string{"s1", "s2", "s3"}, Threshold: 2, TotalShares: 3}, nil
+	return &service.ShamirInitInfo{Threshold: 2, TotalShares: 3, ShareCount: 3}, nil
 }
 
 func (m *mockBarrierServicer) BarrierUnsealWithShare(context.Context, string) (*service.UnsealShareProgress, error) {
@@ -82,7 +82,7 @@ func (m *mockBarrierServicer) BarrierRekey(context.Context, int, int) (*service.
 	if m.err != nil {
 		return nil, m.err
 	}
-	return &service.ShamirInitInfo{Shares: []string{"n1", "n2"}, Threshold: 2, TotalShares: 2}, nil
+	return &service.ShamirInitInfo{Threshold: 2, TotalShares: 2, ShareCount: 2}, nil
 }
 
 func (m *mockBarrierServicer) BarrierGenerateRecoveryKeys(context.Context, int, int) (*service.RecoveryKeysInfo, error) {
@@ -92,7 +92,7 @@ func (m *mockBarrierServicer) BarrierGenerateRecoveryKeys(context.Context, int, 
 	if m.recoveryInfo != nil {
 		return m.recoveryInfo, nil
 	}
-	return &service.RecoveryKeysInfo{Keys: []string{"r1", "r2"}, Threshold: 2, Total: 2}, nil
+	return &service.RecoveryKeysInfo{Threshold: 2, Total: 2, ShareCount: 2}, nil
 }
 
 func (m *mockBarrierServicer) BarrierRecoverWithKeys(context.Context, []string) error { return m.err }

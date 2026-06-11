@@ -106,15 +106,15 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 		case "qrdb_barrier_status":
 			return map[string]interface{}{"sealed": false, "strategy": "shamir", "hardware_backed": true}
 		case "qrdb_barrier_shamir_initialize":
-			return map[string]interface{}{"shares": []string{"s1", "s2", "s3"}, "threshold": 2, "total_shares": 3}
+			return map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3}
 		case "qrdb_barrier_shamir_unseal_share":
 			return map[string]interface{}{"required": 2, "submitted": 1, "complete": false}
 		case "qrdb_barrier_shamir_list_shares":
 			return map[string]interface{}{"count": 3, "threshold": 2, "total": 3}
 		case "qrdb_barrier_rekey":
-			return map[string]interface{}{"shares": []string{"n1", "n2"}, "threshold": 2, "total_shares": 2}
+			return map[string]interface{}{"threshold": 2, "total_shares": 2, "share_count": 2}
 		case "qrdb_barrier_recovery_generate":
-			return map[string]interface{}{"keys": []string{"r1", "r2"}, "threshold": 2, "total": 2}
+			return map[string]interface{}{"threshold": 2, "total": 2, "share_count": 2}
 		case "qrdb_barrier_recovery_status":
 			return map[string]interface{}{"has_recovery_keys": true}
 		case "qrdb_barrier_root_token":
@@ -148,7 +148,7 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BarrierInitializeShamir: %v", err)
 	}
-	if len(shamir.Shares) != 3 || shamir.Threshold != 2 {
+	if shamir.ShareCount != 3 || shamir.Threshold != 2 || shamir.TotalShares != 3 {
 		t.Errorf("shamir mismatch: %+v", shamir)
 	}
 
@@ -168,16 +168,16 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BarrierRekey: %v", err)
 	}
-	if len(rekey.Shares) != 2 {
-		t.Errorf("rekey shares = %v", rekey.Shares)
+	if rekey.ShareCount != 2 || rekey.Threshold != 2 || rekey.TotalShares != 2 {
+		t.Errorf("rekey mismatch: %+v", rekey)
 	}
 
 	recovery, err := tr.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{Threshold: 2, Total: 2})
 	if err != nil {
 		t.Fatalf("BarrierGenerateRecoveryKeys: %v", err)
 	}
-	if len(recovery.Keys) != 2 {
-		t.Errorf("recovery keys = %v", recovery.Keys)
+	if recovery.ShareCount != 2 || recovery.Threshold != 2 || recovery.Total != 2 {
+		t.Errorf("recovery mismatch: %+v", recovery)
 	}
 
 	if err := tr.BarrierRecoverWithKeys(ctx, &qrdbtransport.BarrierRecoverWithKeysRequest{Keys: []string{"r1", "r2"}}); err != nil {

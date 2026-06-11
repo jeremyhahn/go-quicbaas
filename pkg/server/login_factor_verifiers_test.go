@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -31,7 +29,7 @@ import (
 	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/auth_factors"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -169,7 +167,7 @@ func TestLateBoundPIVVerifier_DelegatesToXKMSVerifier(t *testing.T) {
 	pool := x509.NewCertPool()
 	pool.AddCert(root)
 
-	inner, err := auth_factors.NewPIVHardwareFactorVerifier(pool, nil)
+	inner, err := xkmssdk.NewPIVHardwareFactorVerifier(pool, nil)
 	require.NoError(t, err)
 
 	v := newLateBoundPIVVerifier()
@@ -197,7 +195,7 @@ func TestLateBoundPIVVerifier_DelegatesMissingFieldRejection(t *testing.T) {
 	pool := x509.NewCertPool()
 	pool.AddCert(root)
 
-	inner, err := auth_factors.NewPIVHardwareFactorVerifier(pool, nil)
+	inner, err := xkmssdk.NewPIVHardwareFactorVerifier(pool, nil)
 	require.NoError(t, err)
 
 	v := newLateBoundPIVVerifier()
@@ -218,19 +216,22 @@ func TestLateBoundPIVVerifier_DelegatesMissingFieldRejection(t *testing.T) {
 func TestBuildLoginFactorVerifiers_PopulatesBothShells(t *testing.T) {
 	s := &Server{}
 	s.buildLoginFactorVerifiers()
-	require.Len(t, s.loginFactorVerifiers, 2)
+	require.Len(t, s.loginFactorVerifiers, 3)
 
-	var sawPIV, sawWebAuthn bool
+	var sawPIV, sawWebAuthn, sawPKCS11 bool
 	for _, v := range s.loginFactorVerifiers {
 		switch v.(type) {
 		case *lateBoundPIVVerifier:
 			sawPIV = true
 		case *tenantWebAuthnVerifier:
 			sawWebAuthn = true
+		case *xkmssdk.PKCS11FactorVerifier:
+			sawPKCS11 = true
 		}
 	}
 	assert.True(t, sawPIV, "PIV verifier shell must be present")
 	assert.True(t, sawWebAuthn, "WebAuthn verifier shell must be present")
+	assert.True(t, sawPKCS11, "PKCS11 verifier must be present")
 }
 
 func TestBuildLoginFactorVerifiers_Idempotent(t *testing.T) {
@@ -240,7 +241,7 @@ func TestBuildLoginFactorVerifiers_Idempotent(t *testing.T) {
 	s.buildLoginFactorVerifiers()
 	assert.Equal(t, len(first), len(s.loginFactorVerifiers))
 	// Same backing slice — second call is a no-op.
-	require.Len(t, s.loginFactorVerifiers, 2)
+	require.Len(t, s.loginFactorVerifiers, 3)
 	assert.Same(t, &first[0], &s.loginFactorVerifiers[0])
 }
 

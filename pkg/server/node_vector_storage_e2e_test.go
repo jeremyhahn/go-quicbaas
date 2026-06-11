@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag && iam
+//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag
 
 package server
 
@@ -272,4 +272,17 @@ func TestNodeVectorStorage_ScanByMultipleFilters_ClientClosed(t *testing.T) {
 	got, err := vs.ScanByMultipleFilters(context.Background(), "ns", nil, nil)
 	assert.Error(t, err)
 	assert.Nil(t, got)
+}
+
+// TestNodeVectorStorage_Compact_ClientClosed covers the Compact request-side
+// path through the adapter: the request conversion and transport dispatch run
+// against a closed transport so the underlying CompactNamespace enqueue call
+// surfaces the error synchronously without spawning background compaction work
+// against a torn-down engine.
+func TestNodeVectorStorage_Compact_ClientClosed(t *testing.T) {
+	client := newEmbeddedVectorClient(t)
+	vs := newNodeVectorStorage(client)
+	require.NoError(t, client.Close())
+
+	assert.Error(t, vs.Compact(context.Background(), "ns"))
 }

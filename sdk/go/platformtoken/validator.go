@@ -234,6 +234,14 @@ func (v *Validator) ValidatePlatformToken(ctx context.Context, tokenString strin
 		return nil, &InvalidTokenError{Detail: "token failed validation"}
 	}
 
+	// RFC 9068 §4: an OAuth2 JWT access token MUST carry the explicit media type
+	// "at+jwt" (or its long form "application/at+jwt") in the JOSE "typ" header.
+	// The check is case-insensitive per the RFC. Rejecting any other typ (notably
+	// "JWT", which OIDC ID tokens use) prevents token-type confusion attacks.
+	if terr := requireAccessTokenType(token.Header["typ"]); terr != nil {
+		return nil, terr
+	}
+
 	if claims.Issuer != v.issuer {
 		return nil, &InvalidIssuerError{Expected: v.issuer, Actual: claims.Issuer}
 	}
@@ -273,6 +281,21 @@ func (v *Validator) ValidateWithDPoP(ctx context.Context, tokenString, dpopProof
 		return nil, err
 	}
 	return claims, nil
+}
+
+// requireAccessTokenType enforces the RFC 9068 §4 access-token media type on the
+// JOSE "typ" header. The comparison is case-insensitive and accepts both the
+// short form "at+jwt" and the long form "application/at+jwt". Any other value
+// (or a missing header) yields an InvalidTokenTypeError carrying the offending
+// value so the caller can map it to a 401 / Unauthenticated rejection.
+func requireAccessTokenType(raw interface{}) error {
+	typ, _ := raw.(string)
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case "at+jwt", "application/at+jwt":
+		return nil
+	default:
+		return &InvalidTokenTypeError{Got: typ}
+	}
 }
 
 // clockAdapter adapts a now func to the dpop.Clock interface.

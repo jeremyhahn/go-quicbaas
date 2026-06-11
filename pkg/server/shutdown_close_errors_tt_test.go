@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag && iam
+//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag
 
 // shutdown_close_errors_tt_test.go drives the Close()/Stop() error-collection
 // branches of Server.Shutdown that are otherwise unreachable on the clean

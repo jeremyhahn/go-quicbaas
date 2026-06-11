@@ -9,7 +9,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 `quicbaas barrier` exposes the **canonical 9-verb barrier tree** shared
 byte-for-byte by `qrdb barrier`, `xkmsctl barrier`, and
 `platformctl barrier`. The canonical narrative — flag semantics,
-validation matrix, PIN flow, the `--secret` vs. PIN distinction — lives
+validation matrix, PIN flow, the `--passphrase` vs. PIN distinction — lives
 in the qrdb doc ([`go-qrdb/docs/cli/barrier.md`](../../../go-qrdb/docs/cli/barrier.md)).
 This page documents the **quicbaas-specific specifics**.
 
@@ -22,23 +22,23 @@ SDK accessor: [`Client.Security().Barrier()`](../sdk/security.md).
 
 ```
 quicbaas barrier status
-quicbaas barrier init           --barrier-strategy <none|software|shamir>
-                                [--secret <pp>]               (required for software/shamir; rejected for none)
+quicbaas barrier init           --barrier-strategy <none|passphrase|shamir>
+                                [--passphrase <pp>]               (required for passphrase/shamir; rejected for none)
                                 [--so-pin <pin>]              (optional; rejected when --barrier-strategy=none)
                                 [--user-pin <pin>]            (optional; requires --so-pin)
-quicbaas barrier init-shamir    --secret <pp>
+quicbaas barrier init-shamir    --passphrase <pp>
                                 --threshold N
                                 --total M
                                 [--so-pin <pin>]
                                 [--user-pin <pin>]            (requires --so-pin)
-quicbaas barrier unseal         --secret <pp>                 (software / single-secret only)
+quicbaas barrier unseal         --passphrase <pp>                 (passphrase / single-secret only)
 quicbaas barrier unseal-shares  --share <s1> [--share <s2> ...]
                                 | --shares-file <path>        ('-' = stdin)
 quicbaas barrier seal           [--so-pin <pin>]
                                 [-y | --assume-yes]
-quicbaas barrier rekey          --secret <new-pp>
-                                [--so-pin <pin>]              (NO --user-pin on rekey)
-                                [--threshold N --total M]     (paired; Shamir share regeneration)
+quicbaas barrier rekey          [--so-pin <pin>]              (NO --user-pin on rekey)
+                                [--threshold N --total M]     (paired; Shamir share regeneration;
+                                                               no secret on the wire)
 quicbaas barrier recovery generate
                                 --threshold N --total M
                                 [--so-pin <pin>]
@@ -58,6 +58,16 @@ rootCmd.PersistentFlags().StringVar(&transport, "transport", "unix",
 ```
 
 — [`cmd/quicbaas/main.go:164`](../../cmd/quicbaas/main.go).
+
+### Security-officer ceremony verbs (canonical; quicbaas mirror pending)
+
+The officer ceremony verb tree (`barrier officer *`,
+`barrier shamir-seal-vote`, `barrier recovery officer *`) is part of
+the canonical surface — under the share-free INV-1 contract the claim
+ceremony is the only way an officer ever holds a share. qrdb is the
+reference implementation; the quicbaas mirror is pending. See
+[`08-bootstrap-auth-architecture.md §6`](https://github.com/automatethethings/software/blob/main/docs/08-bootstrap-auth-architecture.md#6-cli-surface-convergence)
+and [go-qrdb `docs/cli/barrier.md` §3.10](../../../go-qrdb/docs/cli/barrier.md).
 
 ---
 
@@ -103,15 +113,15 @@ flowchart LR
 
 ---
 
-## 3. `--secret` is the strategy wrapping passphrase, not a PIN
+## 3. `--passphrase` is the strategy wrapping passphrase, not a PIN
 
 This used to be a source of confusion. It is not anymore. See
-[the qrdb canonical doc §2](../../../go-qrdb/docs/cli/barrier.md#2-architectural-concept---secret-is-not-a-pin)
+[the qrdb canonical doc §2](../../../go-qrdb/docs/cli/barrier.md#2-architectural-concept---passphrase-is-not-a-pin)
 for the full architectural rationale. In quicbaas concretely:
 
 | Flag | Concern | Server-side path |
 |------|---------|-----------------|
-| `--secret` | Strategy wrapping passphrase. `software` Argon2id-derives the wrapping key, `shamir` uses it as the strategy seal, `none` ignores it. | qrdb `pkg/seal` strategy registry |
+| `--passphrase` | Strategy wrapping passphrase. `passphrase` Argon2id-derives the wrapping key, `shamir` uses it as the strategy seal, `none` ignores it. | qrdb `pkg/seal` strategy registry |
 | `--so-pin`, `--user-pin` | Two-PIN compliance-gating material (FIPS 140-3 / PCI-DSS v4). Gates rekey / seal / recovery-generate. | qrdb `pkg/pin.PINBackend` (composed in via `WithPINBackend`) |
 
 CLI-side validation lives in `runBarrierInitCmd` / `runBarrierInitShamirCmd`
@@ -119,9 +129,9 @@ CLI-side validation lives in `runBarrierInitCmd` / `runBarrierInitShamirCmd`
 
 | Rule | Verb(s) | Error |
 |------|---------|-------|
-| `--barrier-strategy` not in `{none, software, shamir}` | `init` | `errors.ErrInvalidInput` |
-| `--secret` empty for `software` / `shamir` | `init`, `init-shamir`, `unseal`, `rekey` | `errors.ErrInvalidInput` |
-| `--secret` supplied with `--barrier-strategy=none` | `init` | `errors.ErrInvalidInput` |
+| `--barrier-strategy` not in `{none, passphrase, shamir}` | `init` | `errors.ErrInvalidInput` |
+| `--passphrase` empty for `passphrase` / `shamir` | `init`, `init-shamir`, `unseal` | `errors.ErrInvalidInput` |
+| `--passphrase` supplied with `--barrier-strategy=none` | `init` | `errors.ErrInvalidInput` |
 | `--so-pin`/`--user-pin` with `--barrier-strategy=none` | `init` | `PINsNotAllowedError` |
 | `--user-pin` without `--so-pin` (or vice versa) | `init`, `init-shamir` | `errors.ErrInvalidInput` |
 | `--threshold` / `--total` not paired | `init-shamir`, `rekey`, `recovery generate` | `errors.ErrInvalidInput` |
@@ -135,29 +145,31 @@ CLI-side validation lives in `runBarrierInitCmd` / `runBarrierInitShamirCmd`
 
 ## 4. Examples
 
-### Software strategy with PIN-gated administration
+### Passphrase strategy with PIN-gated administration
 
 ```bash
 quicbaas barrier init \
-  --barrier-strategy software \
-  --secret '<wrapping-passphrase>' \
+  --barrier-strategy passphrase \
+  --passphrase '<wrapping-passphrase>' \
   --so-pin SO12345 \
   --user-pin USR12345
 
 quicbaas barrier status --output json
 quicbaas barrier seal --so-pin SO12345 -y
-quicbaas barrier unseal --secret '<wrapping-passphrase>'
+quicbaas barrier unseal --passphrase '<wrapping-passphrase>'
 ```
 
 ### Shamir M-of-N strategy
 
 ```bash
 quicbaas barrier init-shamir \
-  --secret '<seed>' \
+  --passphrase '<seed>' \
   --threshold 3 \
   --total 5
 
-# Distribute shares out-of-band, then later:
+# Share-free: shares are sealed to enrolled Security Officers; each
+# officer claims their share via the share-claim flow. No share
+# material is printed or crosses the wire. Later:
 
 quicbaas barrier unseal-shares --share aaa --share bbb --share ccc
 # or
@@ -173,16 +185,20 @@ quicbaas barrier init --barrier-strategy none
 # Data is stored in cleartext. Do NOT use this in production.
 ```
 
-### Rekey (passphrase rotation, share layout preserved)
+### Rekey (share layout preserved)
+
+The server generates a fresh unseal key and share set itself — no
+secret material travels on the request. All previously distributed
+shares are cryptographically revoked.
 
 ```bash
-quicbaas barrier rekey --secret '<new-pp>' --so-pin SO12345
+quicbaas barrier rekey --so-pin SO12345
 ```
 
-### Rekey + Shamir share regeneration
+### Rekey + new Shamir share layout
 
 ```bash
-quicbaas barrier rekey --secret '<new-pp>' --threshold 3 --total 5
+quicbaas barrier rekey --threshold 3 --total 5
 ```
 
 ### Disaster-recovery key set

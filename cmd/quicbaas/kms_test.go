@@ -3183,13 +3183,11 @@ func TestMockSealClientExtended(t *testing.T) {
 				}, nil
 			},
 			SealInitFunc: func(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-				shares := make([][]byte, req.TotalShares)
-				for i := range shares {
-					shares[i] = []byte("share")
-				}
+				// Share material is never returned (qrdb share-free
+				// contract): officers claim shares out-of-band.
 				return &service.SealInitResponse{
-					Shares:    shares,
 					RootToken: "root-token",
+					Version:   1,
 				}, nil
 			},
 			UnsealFunc: func(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
@@ -3203,7 +3201,7 @@ func TestMockSealClientExtended(t *testing.T) {
 			},
 			RekeyFunc: func(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
 				return &service.RekeyResponse{
-					Shares:    [][]byte{[]byte("new-share")},
+					Version:   2,
 					Timestamp: time.Now(),
 				}, nil
 			},
@@ -3218,11 +3216,11 @@ func TestMockSealClientExtended(t *testing.T) {
 		assert.False(t, statusResp.Sealed)
 		assert.True(t, statusResp.Initialized)
 
-		// Test init
+		// Test init (share-free: response carries no share material)
 		initResp, err := client.SealInit(ctx, &service.SealInitRequest{TotalShares: 5, Threshold: 3})
 		require.NoError(t, err)
-		assert.Len(t, initResp.Shares, 5)
 		assert.Equal(t, "root-token", initResp.RootToken)
+		assert.Equal(t, uint64(1), initResp.Version)
 
 		// Test unseal
 		unsealResp, err := client.Unseal(ctx, &service.UnsealRequest{Share: []byte("share")})
@@ -3233,10 +3231,10 @@ func TestMockSealClientExtended(t *testing.T) {
 		err = client.Seal(ctx)
 		assert.NoError(t, err)
 
-		// Test rekey
+		// Test rekey (share-free: response carries no share material)
 		rekeyResp, err := client.Rekey(ctx, &service.RekeyRequest{})
 		require.NoError(t, err)
-		assert.NotEmpty(t, rekeyResp.Shares)
+		assert.Equal(t, uint64(2), rekeyResp.Version)
 
 		// Test close
 		err = client.Close()

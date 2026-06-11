@@ -85,7 +85,7 @@ func (e *TenantBarrierShareRequiredError) Error() string {
 func (r *ToolRegistry) registerTenantBarrierTools() {
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_tenant_barrier_init",
-		Description: "Initialize the per-tenant barrier with the selected sealing strategy (none, passphrase, or shamir). For the shamir strategy the response carries the generated shares exactly once.",
+		Description: "Initialize the per-tenant barrier with the selected sealing strategy (none, passphrase, or shamir). Share material is never returned (qrdb share-free contract); the response reports only threshold/total metadata.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -257,13 +257,15 @@ func executeTenantBarrierInit(ctx context.Context, svc service.TenantBarrierServ
 		return nil, err
 	}
 
-	if result != nil && len(result.Shares) > 0 {
+	// Share-free contract: share bytes are never returned over the wire;
+	// officers claim their shares individually via the share-claim flow.
+	if result != nil && result.TotalShares > 0 {
 		return map[string]interface{}{
 			"tenant_id":    result.TenantID,
 			"strategy":     result.Strategy,
-			"shares":       result.Shares,
 			"threshold":    result.Threshold,
 			"total_shares": result.TotalShares,
+			"share_count":  result.ShareCount,
 		}, nil
 	}
 	return map[string]interface{}{

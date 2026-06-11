@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam
-
 // Package main provides IAM client factory functions for the QuicBaaS CLI.
 package main
 

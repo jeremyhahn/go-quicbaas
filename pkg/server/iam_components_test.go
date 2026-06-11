@@ -1,4 +1,4 @@
-//go:build raft && iam
+//go:build raft
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

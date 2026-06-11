@@ -44,25 +44,52 @@ type ReplayCache interface {
 	SeenBefore(jti string, expiresAt time.Time) bool
 }
 
-// MemoryReplayCache is an in-memory, TTL-bounded ReplayCache. Entries are
-// pruned lazily on access and on a bounded sweep so the map cannot grow
-// without limit under sustained load.
+// DefaultReplayCacheMaxEntries bounds the replay window when no explicit cap is
+// supplied. Expired jti entries are already swept on every access, but within a
+// single proof-lifetime an attacker could flood distinct jtis; the cap keeps the
+// map bounded even then.
+const DefaultReplayCacheMaxEntries = 100000
+
+// MemoryReplayCache is an in-memory, TTL- and size-bounded ReplayCache. Every
+// access sweeps all expired entries, and inserts that would exceed the size cap
+// trigger an opportunistic eviction, so the map cannot grow without limit under
+// sustained load.
 type MemoryReplayCache struct {
-	clock Clock
-	mu    sync.Mutex
-	seen  map[string]time.Time
+	clock      Clock
+	maxEntries int
+	mu         sync.Mutex
+	seen       map[string]time.Time
+}
+
+// MemoryReplayCacheOption customizes a MemoryReplayCache at construction.
+type MemoryReplayCacheOption func(*MemoryReplayCache)
+
+// WithReplayCacheMaxEntries caps the number of recorded jti entries. A value
+// <= 0 is ignored and the default cap applies.
+func WithReplayCacheMaxEntries(max int) MemoryReplayCacheOption {
+	return func(c *MemoryReplayCache) {
+		if max > 0 {
+			c.maxEntries = max
+		}
+	}
 }
 
 // NewMemoryReplayCache constructs an in-memory replay cache using the supplied
-// clock. A nil clock defaults to SystemClock.
-func NewMemoryReplayCache(clock Clock) *MemoryReplayCache {
+// clock. A nil clock defaults to SystemClock. The cache is bounded to
+// DefaultReplayCacheMaxEntries unless overridden via WithReplayCacheMaxEntries.
+func NewMemoryReplayCache(clock Clock, opts ...MemoryReplayCacheOption) *MemoryReplayCache {
 	if clock == nil {
 		clock = SystemClock{}
 	}
-	return &MemoryReplayCache{
-		clock: clock,
-		seen:  make(map[string]time.Time),
+	c := &MemoryReplayCache{
+		clock:      clock,
+		maxEntries: DefaultReplayCacheMaxEntries,
+		seen:       make(map[string]time.Time),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // SeenBefore records jti and reports whether it was already present and still
@@ -78,8 +105,36 @@ func (c *MemoryReplayCache) SeenBefore(jti string, expiresAt time.Time) bool {
 	if exp, ok := c.seen[jti]; ok && now.Before(exp) {
 		return true
 	}
+	c.evictForInsertLocked(jti)
 	c.seen[jti] = expiresAt
 	return false
+}
+
+// evictForInsertLocked makes room for a new jti when the cache is at capacity.
+// pruneLocked has already removed every expired entry by the time this runs, so
+// if the cache is still full it evicts the entries expiring soonest until one
+// slot is free. Recording an existing (live) jti needs no eviction. The caller
+// must hold c.mu and must have called pruneLocked first.
+func (c *MemoryReplayCache) evictForInsertLocked(jti string) {
+	if _, exists := c.seen[jti]; exists {
+		return
+	}
+	for len(c.seen) >= c.maxEntries {
+		var oldestJTI string
+		var oldestExpiry time.Time
+		first := true
+		for k, expiry := range c.seen {
+			if first || expiry.Before(oldestExpiry) {
+				oldestJTI = k
+				oldestExpiry = expiry
+				first = false
+			}
+		}
+		if first {
+			break
+		}
+		delete(c.seen, oldestJTI)
+	}
 }
 
 // pruneLocked removes expired entries. The caller must hold c.mu.

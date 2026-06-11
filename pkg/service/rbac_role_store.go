@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build iam
-
 package service
 
 import (
@@ -84,6 +82,86 @@ func findRoleIDByName(ctx context.Context, is *iam.IdentityStore, tenantID, name
 		Op:   op,
 		Err:  &api.NotFoundError{Resource: "role", ID: name},
 	}
+}
+
+// resolveUserAndRole resolves the request user (by username) and role (by name)
+// within the request tenant, returning the user ID and role ID. It fails closed
+// with typed errors when either the username or the role name does not resolve.
+// This is the shared body of AssignRole/RevokeRole.
+func (r *rbacService) resolveUserAndRole(ctx context.Context, username, roleName, op string) (is *iam.IdentityStore, tenantID, userID, roleID string, err error) {
+	if username == "" || roleName == "" {
+		return nil, "", "", "", &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   op,
+			Err:  &api.InvalidInputError{Message: "username and role name are required"},
+		}
+	}
+	is, tenantID, err = r.roleStore(ctx, op)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	user, err := is.GetUserByUsername(ctx, tenantID, username)
+	if err != nil {
+		return nil, "", "", "", &errors.QBError{
+			Code: errors.ErrNotFound,
+			Op:   op,
+			Err:  &api.NotFoundError{Resource: "user", ID: username},
+		}
+	}
+	roleID, err = findRoleIDByName(ctx, is, tenantID, roleName, op)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	return is, tenantID, user.ID, roleID, nil
+}
+
+// AssignRole binds a named role to a user (by username) through the qrdb-backed
+// IdentityStore, so the binding lands in the SAME qrdb user record the policy
+// decision point reads.
+func (r *rbacService) AssignRole(ctx context.Context, req *AuthAssignRoleRequest) (*AuthAssignRoleResponse, error) {
+	const op = "service.AssignRole"
+
+	is, tenantID, userID, roleID, err := r.resolveUserAndRole(ctx, req.Username, req.RoleName, op)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := is.AssignRole(ctx, tenantID, userID, roleID); err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   op,
+			Err:  err,
+		}
+	}
+
+	return &AuthAssignRoleResponse{
+		Success: true,
+		Message: "Role " + req.RoleName + " assigned to user " + req.Username,
+	}, nil
+}
+
+// RevokeRole unbinds a named role from a user (by username) through the
+// qrdb-backed IdentityStore.
+func (r *rbacService) RevokeRole(ctx context.Context, req *AuthRevokeRoleRequest) (*AuthRevokeRoleResponse, error) {
+	const op = "service.RevokeRole"
+
+	is, tenantID, userID, roleID, err := r.resolveUserAndRole(ctx, req.Username, req.RoleName, op)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := is.RevokeRole(ctx, tenantID, userID, roleID); err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   op,
+			Err:  err,
+		}
+	}
+
+	return &AuthRevokeRoleResponse{
+		Success: true,
+		Message: "Role " + req.RoleName + " revoked from user " + req.Username,
+	}, nil
 }
 
 // CreateRole creates a tenant-scoped role in the IdentityStore. Permissions are

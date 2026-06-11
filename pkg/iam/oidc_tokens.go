@@ -1,5 +1,3 @@
-//go:build iam
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -29,6 +27,13 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
+
+// AccessTokenJWTType is the RFC 9068 §2.1 media type stamped into the JOSE "typ"
+// header of every OAuth2 JWT access token. A resource server uses it to reject a
+// JWT that is not an access token (e.g. an OIDC ID token replayed as a bearer),
+// preventing token-type confusion. It is set ONLY on access tokens; ID tokens
+// and refresh tokens are unaffected.
+const AccessTokenJWTType = "at+jwt"
 
 // PermissionResolver returns the qrdb RBAC client the token service consults to
 // resolve a subject's effective permissions at access-token issuance. The
@@ -181,7 +186,7 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 	if err != nil {
 		return "", dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.GenerateAccessToken", "failed to resolve signing key")
 	}
-	tokenString, err := xkms.JWTSignWithSignerKID(signer, jwtClaims, alg, kid)
+	tokenString, err := xkms.JWTSignWithSignerKIDTyp(signer, jwtClaims, alg, kid, AccessTokenJWTType)
 	if err != nil {
 		return "", dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.GenerateAccessToken", "failed to sign token")
 	}
@@ -634,7 +639,7 @@ func (s *TokenService) IssueServiceAccountTokens(ctx context.Context, opts Servi
 	if err != nil {
 		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.IssueServiceAccountTokens", "failed to resolve signing key")
 	}
-	tokenString, err := xkms.JWTSignWithSignerKID(signer, jwtClaims, alg, kid)
+	tokenString, err := xkms.JWTSignWithSignerKIDTyp(signer, jwtClaims, alg, kid, AccessTokenJWTType)
 	if err != nil {
 		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.IssueServiceAccountTokens", "failed to sign service account token")
 	}

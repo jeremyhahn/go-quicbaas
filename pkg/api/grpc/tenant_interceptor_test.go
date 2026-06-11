@@ -25,7 +25,7 @@ type tenantTestKey struct{}
 
 // tenantStamp is a TenantContextFunc that records the cert it saw and stamps a
 // sentinel tenant onto the context, mirroring what the iam-backed resolver does
-// without pulling the iam build tag into this transport package's tests.
+// without pulling pkg/iam into this transport package's tests.
 func tenantStamp(tenant string, sawCert *bool) TenantContextFunc {
 	return func(ctx context.Context, cert *x509.Certificate) context.Context {
 		if sawCert != nil {
