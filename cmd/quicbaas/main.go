@@ -24,6 +24,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -167,7 +169,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&tlsCA, "tls-ca", "", "TLS CA certificate file (auto-detected from data-dir if not set)")
 	rootCmd.PersistentFlags().StringVar(&tlsCert, "tls-cert", "", "TLS client certificate file (for mTLS)")
 	rootCmd.PersistentFlags().StringVar(&tlsKey, "tls-key", "", "TLS client key file (for mTLS)")
-	rootCmd.PersistentFlags().StringVar(&globalTenantID, "tenant", "default", "Tenant ID for multi-tenant operations")
+	rootCmd.PersistentFlags().StringVar(&globalTenantID, "tenant", qrdbsdk.SystemTenantID, "Tenant ID for multi-tenant operations")
 
 	// Bind flags to viper
 	viper.BindPFlag("logging.level", rootCmd.PersistentFlags().Lookup("log-level"))

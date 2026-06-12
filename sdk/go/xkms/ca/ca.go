@@ -34,10 +34,25 @@ type (
 	CACertificateRequest      = xkmssdk.TrustedCACertificateRequest
 	CASubject                 = xkmssdk.TrustedCASubject
 	CASubjectAlternativeNames = xkmssdk.TrustedCASubjectAlternativeNames
+
+	// TCGNetworkZone represents the platform network zone assigned to a
+	// certificate subject (extension 1.3.6.1.4.1.29377.101.21), evaluated by
+	// the SDN policy engine at enforcement time.
+	TCGNetworkZone = xkmssdk.TCGNetworkZone
 )
 
 // Re-exported function values and helpers
 var (
 	NewCA                        = xkmssdk.NewCA
 	DefaultMultiIdentityCAConfig = xkmssdk.DefaultMultiIdentityCAConfig
+
+	// OIDTPNetworkZone identifies the network zone extension
+	// (1.3.6.1.4.1.29377.101.21).
+	OIDTPNetworkZone = xkmssdk.OIDTPNetworkZone
+
+	// CreateNetworkZoneExtension creates a network zone X.509 extension.
+	CreateNetworkZoneExtension = xkmssdk.CreateNetworkZoneExtension
+
+	// ParseNetworkZoneExtension parses a network zone X.509 extension.
+	ParseNetworkZoneExtension = xkmssdk.ParseNetworkZoneExtension
 )

@@ -75,6 +75,11 @@ type (
 	// PinStore is the TOFU pin persistence interface re-exported from go-truststrap.
 	// Implement it or use NewStoragePinStore to get a storage-backed implementation.
 	PinStore = xkmsbootstrap.PinStore
+
+	// MemoryPinStore is the run-scoped in-memory PinStore re-exported from
+	// go-truststrap for callers that need TOFU pins with no on-disk
+	// persistence (e.g. greenfield bootstrap before storage exists).
+	MemoryPinStore = xkmsbootstrap.MemoryPinStore
 )
 
 // =============================================================================
@@ -113,6 +118,9 @@ var (
 	// NewStoragePinStore creates a StoragePinStore backed by the given
 	// storage.Backend. Returns an error when backend is nil.
 	NewStoragePinStore = xkmsbootstrap.NewStoragePinStore
+
+	// NewMemoryPinStore creates an empty run-scoped in-memory MemoryPinStore.
+	NewMemoryPinStore = xkmsbootstrap.NewMemoryPinStore
 )
 
 // =============================================================================

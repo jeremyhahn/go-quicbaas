@@ -47,6 +47,12 @@ async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+// SYSTEM_TENANT_ID is the control-plane "system" tenant that qrdb always
+// provisions. The legacy "default" tenant was permanently retired by qrdb's
+// tenant-isolation refactor, so all fixtures seed/tear down state under the
+// system tenant.
+export const SYSTEM_TENANT_ID = 'system';
+
 // SpawnedSession holds the session_id created by spawnTestSession.
 export interface SpawnedSession {
   session_id: string;
@@ -56,7 +62,7 @@ export interface SpawnedSession {
 // spawnTestSession creates a new session against the embedded ollama backend
 // and returns the session_id.  Throws (and therefore fails the test) if the
 // daemon is unreachable or the backend cannot start a session.
-export async function spawnTestSession(tenantID = 'default'): Promise<SpawnedSession> {
+export async function spawnTestSession(tenantID = SYSTEM_TENANT_ID): Promise<SpawnedSession> {
   return apiFetch<SpawnedSession>(
     apiURL(`/sessions?tenant_id=${encodeURIComponent(tenantID)}`),
     {
@@ -68,7 +74,7 @@ export async function spawnTestSession(tenantID = 'default'): Promise<SpawnedSes
 
 // closeTestSession terminates a session created by spawnTestSession.
 // Errors are swallowed so afterAll cleanup never masks a real test failure.
-export async function closeTestSession(sessionID: string, tenantID = 'default'): Promise<void> {
+export async function closeTestSession(sessionID: string, tenantID = SYSTEM_TENANT_ID): Promise<void> {
   try {
     await apiFetch<unknown>(
       apiURL(`/sessions/${encodeURIComponent(sessionID)}?tenant_id=${encodeURIComponent(tenantID)}`),
@@ -87,7 +93,7 @@ interface AgentList {
 
 // listTestAgents returns all agents registered for the given tenant.
 // Throws if the daemon is unreachable, so beforeAll will fail fast.
-export async function listTestAgents(tenantID = 'default'): Promise<AgentList> {
+export async function listTestAgents(tenantID = SYSTEM_TENANT_ID): Promise<AgentList> {
   return apiFetch<AgentList>(
     apiURL(`/agents?tenant_id=${encodeURIComponent(tenantID)}`),
   );
@@ -244,7 +250,7 @@ export interface CreateUserResponse {
 
 // deleteTestUser removes a user from the given tenant by user ID.
 // Errors are swallowed so afterAll cleanup never masks a real test failure.
-export async function deleteTestUser(tenantID = 'default', userID: string): Promise<void> {
+export async function deleteTestUser(tenantID = SYSTEM_TENANT_ID, userID: string): Promise<void> {
   try {
     const url = `${serverBase()}/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`;
     const resp = await fetch(url, { method: 'DELETE' });
@@ -261,7 +267,7 @@ export async function deleteTestUser(tenantID = 'default', userID: string): Prom
 // invite token. Uses POST /api/v1/tenants/{tenant_id}/users which issues a
 // one-time invite token stored in the daemon's in-memory invite store.
 export async function createTestInvite(
-  tenantID = 'default',
+  tenantID = SYSTEM_TENANT_ID,
   email = 'e2e-test@quicbaas.test',
   name = 'E2E Test User',
 ): Promise<CreateUserResponse> {

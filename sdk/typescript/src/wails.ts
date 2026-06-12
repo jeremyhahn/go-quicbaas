@@ -610,7 +610,7 @@ class WailsAuthClient implements AuthClient {
   async authLogin(_credentials: { username: string; password: string }): Promise<void> {
     // Wails desktop mode runs embedded — no login required.
   }
-  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').PublicKeyCredentialRequestOptionsJSON> {
+  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').CredentialAssertionJSON> {
     // Wails desktop mode delegates to the embedded REST transport for WebAuthn.
     // Use the REST transport client when WebAuthn is needed in desktop mode.
     throw new Error('webAuthnBeginLogin: use REST transport for WebAuthn in desktop mode');

@@ -22,11 +22,14 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // =============================================================================
@@ -73,6 +76,35 @@ func TestServer_InitializeIAMComponents_WithEmbeddedQRDB(t *testing.T) {
 	assert.NotNil(t, got.GetSessionStorage())
 	assert.NotNil(t, got.GetAuditLogger())
 	assert.NotNil(t, got.GetGDPRManager())
+}
+
+// TestServer_InitializeIAMComponents_DoesNotCreateRetiredDefaultTenant is the
+// regression guard for the tenant-fallback migration. qrdb permanently retired
+// the "default" tenant id, and qrdb's first-boot auto-provisions the "system"
+// tenant. The quicbaas IAM init path must therefore:
+//   - NEVER create (or even probe-then-create) the retired "default" tenant.
+//   - Provision the orchestrator daemon client under qrdbsdk.SystemTenantID.
+func TestServer_InitializeIAMComponents_DoesNotCreateRetiredDefaultTenant(t *testing.T) {
+	srv := withTempServer(t)
+	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
+	t.Cleanup(func() { _ = srv.stopQRDBNode() })
+	srv.qrdbClient = newNodeBackedShardedClient(srv.qrdbNode)
+
+	got, err := srv.initializeIAMComponents()
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	// The retired "default" tenant must NOT exist — IAM init no longer attempts
+	// to create it. (qrdb would reject a public create anyway; the point is that
+	// quicbaas does not try.)
+	_, defErr := got.GetTenantManager().GetTenant(context.Background(), "default")
+	require.Error(t, defErr, "the retired \"default\" tenant must not be created during IAM init")
+
+	// The orchestrator daemon client must be bootstrapped under the system
+	// tenant.
+	require.NotNil(t, srv.orchestratorDaemonClient, "orchestrator daemon client must be bootstrapped")
+	assert.Equal(t, qrdbsdk.SystemTenantID, srv.orchestratorDaemonClient.TenantID,
+		"orchestrator daemon client must live under the system tenant")
 }
 
 // TestServer_InitializeIAMComponents_ClientWithoutNodeFailsClosed exercises the

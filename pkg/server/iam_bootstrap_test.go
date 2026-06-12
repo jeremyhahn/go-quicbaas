@@ -35,10 +35,10 @@ import (
 
 func TestPrintFirstBootBanner_ContainsURL(t *testing.T) {
 	var buf bytes.Buffer
-	printFirstBootBanner(&buf, "https://localhost:8443/ui/#/activate?token=abc123")
+	printFirstBootBanner(&buf, "https://localhost:8443/ui/#/invite/abc123")
 
 	output := buf.String()
-	assert.Contains(t, output, "https://localhost:8443/ui/#/activate?token=abc123",
+	assert.Contains(t, output, "https://localhost:8443/ui/#/invite/abc123",
 		"banner must include the full activation URL")
 	assert.Contains(t, output, "FIRST-BOOT BOOTSTRAP",
 		"banner must include the bootstrap heading")
@@ -53,6 +53,50 @@ func TestPrintFirstBootBanner_EmptyURLSafe(t *testing.T) {
 	var buf bytes.Buffer
 	printFirstBootBanner(&buf, "")
 	assert.NotEmpty(t, buf.String())
+}
+
+// TestFirstBootBootstrap_ActivationURLUsesCanonicalInviteRoute is the
+// authoritative regression test for the dead-activation-URL bug: the banner
+// printed the query-string form (#/activate?token=<hex>) which the SPA router
+// does not map, bouncing the operator silently to #/login. The router maps the
+// activation view ONLY at the path-parameter route #/invite/:token. This test
+// asserts the generated activation URL embeds the real invite token under the
+// canonical /ui/#/invite/ route and never the dead query-string form.
+func TestFirstBootBootstrap_ActivationURLUsesCanonicalInviteRoute(t *testing.T) {
+	srv := withTempServer(t)
+	srv.config.Auth.AllowPasswordAuth = false
+	srv.config.Auth.InsecureDevMode = false
+
+	c := buildTestIAMComponents(t)
+
+	var capturedURL string
+	origPrint := printFirstBootBannerFn
+	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, url string) {
+		capturedURL = url
+	}
+	defer func() { printFirstBootBannerFn = origPrint }()
+
+	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
+	require.NotEmpty(t, capturedURL, "activation URL must have been captured")
+
+	// Canonical route + real token after the prefix.
+	const inviteRoutePrefix = "/ui/#/invite/"
+	assert.Contains(t, capturedURL, inviteRoutePrefix,
+		"activation URL must use the canonical SPA route the router maps")
+	parts := strings.SplitN(capturedURL, inviteRoutePrefix, 2)
+	require.Len(t, parts, 2)
+	assert.NotEmpty(t, parts[1], "the invite token must follow /ui/#/invite/")
+
+	// The dead query-string form the SPA router never matched must be gone.
+	assert.NotContains(t, capturedURL, "#/activate?token=",
+		"activation URL must NOT use the dead #/activate?token= route")
+	assert.NotContains(t, capturedURL, "/activate",
+		"activation URL must not reference the dead /activate path at all")
+
+	// The token in the URL must resolve to the stored invite record.
+	record, err := c.inviteStore.GetByToken(context.Background(), parts[1])
+	require.NoError(t, err, "token from the URL must resolve to a stored invite")
+	assert.False(t, record.Used, "invite must not be pre-consumed")
 }
 
 // ---------------------------------------------------------------------------
@@ -79,10 +123,13 @@ func TestFirstBootBootstrap_FreshStorage_CreatesAdminAndPrintsInvite(t *testing.
 	err := srv.firstBootBootstrap(context.Background(), c)
 	require.NoError(t, err)
 
-	// The activation URL must appear in the captured output.
+	// The activation URL must appear in the captured output and must use the
+	// canonical SPA route (#/invite/<token>), not the dead query-string form.
 	output := stderrCapture.String()
-	assert.Contains(t, output, "/ui/#/activate?token=",
-		"activation URL must be printed to stderr on first boot")
+	assert.Contains(t, output, "/ui/#/invite/",
+		"activation URL must be printed to stderr on first boot using the canonical #/invite/ route")
+	assert.NotContains(t, output, "#/activate?token=",
+		"banner must NOT use the dead #/activate?token= route the SPA router does not map")
 
 	// An active admin assignment must exist.
 	assignments, listErr := c.adminManager.ListAssignments(context.Background(), iam.ListAdminAssignmentsOptions{
@@ -207,9 +254,10 @@ func TestFirstBootBootstrap_InviteTokenStoredWithExpiry(t *testing.T) {
 	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
 	require.NotEmpty(t, capturedURL, "activation URL must have been captured")
 
-	// Extract token from URL: …?token=<TOKEN>
-	parts := strings.SplitN(capturedURL, "token=", 2)
-	require.Len(t, parts, 2, "activation URL must contain 'token=' parameter")
+	// Extract token from the canonical route: …/ui/#/invite/<TOKEN>
+	const inviteRoutePrefix = "/ui/#/invite/"
+	parts := strings.SplitN(capturedURL, inviteRoutePrefix, 2)
+	require.Len(t, parts, 2, "activation URL must contain the canonical "+inviteRoutePrefix+" route")
 	token := parts[1]
 
 	// The invite record must be retrievable and not yet used.

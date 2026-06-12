@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -327,7 +329,8 @@ func TestHandleOrchestratorInference_Stream_EmptyChannel(t *testing.T) {
 }
 
 // TestHandleOrchestratorInference_TenantDefaulting verifies that when no
-// tenant_id query param is present, the handler defaults to "default".
+// tenant_id query param is present, the handler defaults to the system tenant
+// (qrdbsdk.SystemTenantID); the legacy "default" tenant was retired by qrdb.
 func TestHandleOrchestratorInference_TenantDefaulting(t *testing.T) {
 	t.Parallel()
 
@@ -356,8 +359,8 @@ func TestHandleOrchestratorInference_TenantDefaulting(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if capturedTenant != "default" {
-		t.Errorf("expected tenant 'default', got %q", capturedTenant)
+	if capturedTenant != qrdbsdk.SystemTenantID {
+		t.Errorf("expected tenant %q, got %q", qrdbsdk.SystemTenantID, capturedTenant)
 	}
 }
 

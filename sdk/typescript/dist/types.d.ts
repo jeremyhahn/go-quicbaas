@@ -1296,6 +1296,10 @@ export interface InferenceChunk {
     stop_reason?: string;
     final?: boolean;
 }
+export interface CredentialAssertionJSON {
+    publicKey: PublicKeyCredentialRequestOptionsJSON;
+    mediation?: string;
+}
 export interface PublicKeyCredentialRequestOptionsJSON {
     challenge: string;
     timeout?: number;
@@ -1311,16 +1315,17 @@ export interface PublicKeyCredentialDescriptorJSON {
 }
 export interface PublicKeyCredentialJSON {
     id: string;
-    rawId: number[];
+    rawId: string;
     type: string;
+    authenticatorAttachment?: string;
     response: AuthenticatorAssertionResponseJSON;
-    clientExtensionResults?: Record<string, unknown>;
+    clientExtensionResults?: AuthenticationExtensionsClientOutputs;
 }
 export interface AuthenticatorAssertionResponseJSON {
-    authenticatorData: number[];
-    clientDataJSON: number[];
-    signature: number[];
-    userHandle: number[] | null;
+    authenticatorData: string;
+    clientDataJSON: string;
+    signature: string;
+    userHandle?: string;
 }
 export type UserVerificationRequirement = 'required' | 'preferred' | 'discouraged';
 export type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';

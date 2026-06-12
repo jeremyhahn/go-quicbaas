@@ -77,6 +77,23 @@ func TestMapRuntimeError_UnknownBackendMapsToNotFound(t *testing.T) {
 	}
 }
 
+func TestMapRuntimeError_SessionNotFoundMapsToNotFound(t *testing.T) {
+	t.Parallel()
+	// A prompt/status/close against a session the backend doesn't hold is a
+	// not-found condition, not an internal error. This guards the regression
+	// where it previously fell through to codes.Internal and surfaced as a
+	// generic 500 after a just-successful spawn.
+	err := &orchestration.SessionNotFoundError{SessionID: "ses-abc"}
+	got := mapRuntimeError(err)
+	st, ok := status.FromError(got)
+	if !ok {
+		t.Fatalf("expected gRPC status, got %T", got)
+	}
+	if st.Code() != codes.NotFound {
+		t.Fatalf("expected NotFound, got %v", st.Code())
+	}
+}
+
 func TestMapRuntimeError_NoImageMapsToFailedPrecondition(t *testing.T) {
 	t.Parallel()
 	wrapped := errors.Join(ErrRuntimeNoImage, errors.New("backend acp has no image mapping"))

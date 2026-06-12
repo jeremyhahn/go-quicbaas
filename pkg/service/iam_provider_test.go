@@ -30,6 +30,7 @@ type mockIAMComponents struct {
 	auditLogger         iam.AuditLogger
 	sessionStorage      iam.SessionStorage
 	sessionManager      iam.SessionManager
+	inviteStore         iam.InviteStore
 	adminManager        *iam.AdminManager
 	gdprManager         *iam.GDPRManager
 	authManager         AuthManagerInterface
@@ -289,6 +290,7 @@ type mockIAMServiceProvider struct {
 	auditLogger    iam.AuditLogger
 	sessionStorage iam.SessionStorage
 	sessionMgr     SessionManager
+	inviteStore    iam.InviteStore
 	adminMgr       *iam.AdminManager
 	gdprMgr        *iam.GDPRManager
 	authMgr        AuthManagerInterface
@@ -305,6 +307,7 @@ type mockIAMServiceProvider struct {
 	auditLoggerErr    error
 	sessionStorageErr error
 	sessionMgrErr     error
+	inviteStoreErr    error
 	adminMgrErr       error
 	gdprMgrErr        error
 	authMgrErr        error

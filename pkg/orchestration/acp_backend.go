@@ -29,6 +29,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // streamJSONScannerBufferSize is the maximum buffer size for the bufio.Scanner
@@ -73,12 +75,65 @@ type ACPBackend struct {
 	sessions         sync.Map // map[string]*acpSession
 	transportFactory TransportFactory
 	processFactory   ProcessFactory
-	containerRuntime ContainerRuntime // optional: for sandboxed agent execution
+	containerRuntime ContainerRuntime  // optional: for sandboxed agent execution
+	logger           interfaces.Logger // optional: session-registry diagnostics
 }
 
 // SetContainerRuntime configures the container runtime for sandboxed sessions.
 func (b *ACPBackend) SetContainerRuntime(rt ContainerRuntime) {
 	b.containerRuntime = rt
+}
+
+// SetLogger installs an optional logger used to emit session-registry
+// diagnostics: the key a session is stored under at Spawn time and the key a
+// follow-up Prompt / Status / Close looks up. These logs are the canonical
+// evidence for diagnosing "acp: session not found" — they make the
+// create-key vs lookup-key comparison observable without a debugger. Passing
+// nil disables the diagnostics. Safe to call once during wiring.
+func (b *ACPBackend) SetLogger(l interfaces.Logger) {
+	b.logger = l
+}
+
+// storeSession records a session under its id and emits a create-key
+// diagnostic so operators can correlate it with later lookups. Centralising
+// the b.sessions.Store call guarantees every spawn path logs the same way.
+func (b *ACPBackend) storeSession(sess *acpSession) {
+	b.sessions.Store(sess.id, sess)
+	if b.logger != nil {
+		b.logger.Debugf("acp_backend: session stored: create_key=%s mode=%s",
+			sess.id, b.sessionMode(sess))
+	}
+}
+
+// sessionMode returns a short label describing how a session was spawned, used
+// only in diagnostic logs.
+func (b *ACPBackend) sessionMode(sess *acpSession) string {
+	switch {
+	case sess.cmd != nil:
+		return "cli-persistent"
+	case sess.transport != nil:
+		return "jsonrpc"
+	default:
+		return "cli-oneshot"
+	}
+}
+
+// logLookupMiss emits a lookup-key diagnostic listing the keys actually present
+// in the registry, so a "session not found" can be diagnosed as a key mismatch
+// (lookup_key absent but other keys present) vs an empty registry.
+func (b *ACPBackend) logLookupMiss(op, lookupKey string) {
+	if b.logger == nil {
+		return
+	}
+	present := make([]string, 0)
+	b.sessions.Range(func(key, _ any) bool {
+		if k, ok := key.(string); ok {
+			present = append(present, k)
+		}
+		return true
+	})
+	b.logger.Warnf("acp_backend: %s session miss: lookup_key=%s present_keys=%v",
+		op, lookupKey, present)
 }
 
 // acpSession tracks an active ACP session and its configuration.
@@ -366,7 +421,7 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 		createdAt:    now,
 	}
 	sess.lastActivity.Store(now)
-	b.sessions.Store(sessionID, sess)
+	b.storeSession(sess)
 
 	return &Session{
 		ID:        sessionID,
@@ -402,7 +457,7 @@ func (b *ACPBackend) spawnOneShotCLI(req *SpawnRequest) (*Session, error) {
 		createdAt:    now.UnixNano(),
 	}
 	sess.lastActivity.Store(now.UnixNano())
-	b.sessions.Store(sessionID, sess)
+	b.storeSession(sess)
 
 	return &Session{
 		ID:        sessionID,
@@ -588,7 +643,7 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 	}
 	sess.lastActivity.Store(now)
 
-	b.sessions.Store(sessionID, sess)
+	b.storeSession(sess)
 
 	pid := 0
 	if cmd.Process != nil {
@@ -708,7 +763,7 @@ func (b *ACPBackend) spawnJSONRPC(ctx context.Context, req *SpawnRequest) (*Sess
 	}
 	sess.lastActivity.Store(now)
 
-	b.sessions.Store(sessionResult.SessionID, sess)
+	b.storeSession(sess)
 
 	return &Session{
 		ID:        sessionResult.SessionID,
@@ -739,6 +794,7 @@ func (b *ACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*PromptRes
 
 	val, ok := b.sessions.Load(req.SessionID)
 	if !ok {
+		b.logLookupMiss("prompt", req.SessionID)
 		return nil, &SessionNotFoundError{SessionID: req.SessionID}
 	}
 
@@ -1104,6 +1160,7 @@ func (b *ACPBackend) parsePromptResult(resp *JSONRPCMessage, sessionID string) (
 func (b *ACPBackend) Status(ctx context.Context, sessionID string) (*SessionStatus, error) {
 	val, ok := b.sessions.Load(sessionID)
 	if !ok {
+		b.logLookupMiss("status", sessionID)
 		return nil, &SessionNotFoundError{SessionID: sessionID}
 	}
 
@@ -1142,6 +1199,7 @@ func (b *ACPBackend) Status(ctx context.Context, sessionID string) (*SessionStat
 func (b *ACPBackend) Close(ctx context.Context, sessionID string) error {
 	val, ok := b.sessions.LoadAndDelete(sessionID)
 	if !ok {
+		b.logLookupMiss("close", sessionID)
 		return &SessionNotFoundError{SessionID: sessionID}
 	}
 

@@ -670,6 +670,14 @@ func mapRuntimeError(err error) error {
 	if errors.As(err, &input) {
 		return status.Errorf(codes.InvalidArgument, "invalid input: %s", input.Error())
 	}
+	// A prompt / status / close against a session the backend doesn't hold is
+	// a not-found condition, not an internal error. Mapping it to codes.NotFound
+	// lets the central orchestrator and REST layer surface a clean 404 instead
+	// of a generic 500 for a session that was just spawned on a different
+	// instance.
+	if errors.Is(err, orchestration.ErrSessionNotFound) {
+		return status.Error(codes.NotFound, err.Error())
+	}
 	if errors.Is(err, ErrRuntimeUnknownBackend) {
 		return status.Error(codes.NotFound, err.Error())
 	}

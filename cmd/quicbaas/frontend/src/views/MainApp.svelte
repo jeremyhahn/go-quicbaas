@@ -95,6 +95,13 @@
     routeAgentDetail,
   } from '../stores/router.svelte.ts';
   import { sessionStore, refreshSessions } from '../stores/sessionStore.svelte.ts';
+  import {
+    authStore,
+    validateSession,
+    setUnauthenticated,
+    setAuthStatus,
+    readAuthToken,
+  } from '../stores/auth.svelte.ts';
   import { agentStore, refreshAgents } from '../stores/agentStore.svelte.ts';
   import { isWailsRuntime } from '@quicbaas/sdk';
   import { getSDKClient } from '../stores/sdkClient.ts';
@@ -305,8 +312,11 @@
   // shows Sign out; 'unauthenticated' shows Sign in; 'pending' shows neither.
   // Cross-tab logout flips this via the localStorage 'storage' event.
   // ---------------------------------------------------------------------------
-  type AuthStatus = 'pending' | 'authenticated' | 'unauthenticated';
-  let authStatus = $state<AuthStatus>('pending');
+  // authStatus is owned by the shared auth store (stores/auth.svelte.ts) so
+  // the login-completion paths (passkey, PIV, self-register) can flip it
+  // in-tab the instant the server returns tokens. Reading it through the store
+  // getter keeps this template reactive to those transitions.
+  const authStatus = $derived(authStore.status);
 
   // Routes that do NOT require authentication.
   const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
@@ -315,40 +325,18 @@
     'invite-activate',
   ]);
 
-  function readAuthToken(): string {
-    if (typeof window === 'undefined') return '';
-    return window.localStorage.getItem('quicbaas_token') ?? '';
-  }
-
-  async function validateAndSetStatus(): Promise<void> {
-    const token = readAuthToken();
-    if (!token) {
-      authStatus = 'unauthenticated';
-      return;
-    }
-    try {
-      const client = await getSDKClient();
-      const ok = await client.auth.authValidate(token);
-      authStatus = ok ? 'authenticated' : 'unauthenticated';
-    } catch {
-      // Server unreachable — treat as unauthenticated. Better to redirect to
-      // /login than to leave the user staring at protected UI that won't work.
-      authStatus = 'unauthenticated';
-    }
-  }
-
   $effect(() => {
     if (isWailsRuntime()) {
       // Wails desktop mode runs embedded — auth is OS-level, always trusted.
-      authStatus = 'authenticated';
+      setAuthStatus('authenticated');
       return;
     }
-    void validateAndSetStatus();
+    void validateSession();
     if (typeof window === 'undefined') return;
     // Cross-tab sync: a logout in another tab clears the token; we re-check
     // on every storage event so this tab also flips to unauthenticated.
     const onStorage = (e: StorageEvent): void => {
-      if (e.key === 'quicbaas_token') void validateAndSetStatus();
+      if (e.key === 'quicbaas_token') void validateSession();
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
@@ -374,9 +362,7 @@
       // Server-side revoke errors shouldn't block the UI from clearing local
       // state — see SDK doc-comment on AuthClient.logout for rationale.
     }
-    window.localStorage.removeItem('quicbaas_token');
-    window.localStorage.removeItem('quicbaas_refresh_token');
-    authStatus = 'unauthenticated';
+    setUnauthenticated();
     showToast('success', 'Signed out');
     routeLogin();
   }

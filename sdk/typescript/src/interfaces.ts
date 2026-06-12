@@ -25,7 +25,7 @@ import type {
   InferenceRequest,
   InferenceResponse,
   InferenceChunk,
-  PublicKeyCredentialRequestOptionsJSON,
+  CredentialAssertionJSON,
   PublicKeyCredentialJSON,
   PublicTenant,
   SSHKey,
@@ -382,8 +382,11 @@ export interface AuthClient {
   authLogin(credentials: { username: string; password: string }): Promise<void>;
 
   // webAuthnBeginLogin fetches a WebAuthn challenge from the server for the
-  // given tenant and email. Maps to POST /api/v1/tenants/{tenantID}/webauthn/login/begin.
-  webAuthnBeginLogin(tenantID: string, email: string): Promise<PublicKeyCredentialRequestOptionsJSON>;
+  // given tenant and email. Returns the go-webauthn `{ publicKey: { ... } }`
+  // envelope verbatim; callers unwrap + base64url-decode it (see the frontend
+  // webauthn helper) before navigator.credentials.get().
+  // Maps to POST /api/v1/tenants/{tenantID}/webauthn/login/begin.
+  webAuthnBeginLogin(tenantID: string, email: string): Promise<CredentialAssertionJSON>;
 
   // webAuthnFinishLogin submits the signed WebAuthn assertion to the server and
   // returns a token bundle on success.

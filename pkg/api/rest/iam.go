@@ -29,8 +29,7 @@ import (
 // IAMHandler handles all IAM-related REST API endpoints including
 // OIDC, tenant management, user/group/role management, policies, and WebAuthn.
 type IAMHandler struct {
-	server      *Server
-	inviteStore iam.InviteStore
+	server *Server
 
 	// selfSignedAuth authenticates mTLS clients via pinned SHA-256 cert thumbprint
 	// (self_signed_tls_client_auth per RFC 8705 §2.2). Wired at startup.
@@ -52,10 +51,15 @@ type IAMHandlerDependencies struct {
 }
 
 // NewIAMHandler creates a new IAM handler with the specified dependencies.
+//
+// The invite store is NOT constructed here. The one-time activation invite
+// first-boot prints is written to the canonical PERSISTENT InviteStore owned by
+// the IAM components (pkg/server/iam_init.go), and the invite endpoints resolve
+// that same store lazily via getInviteStore — a previous fork that built a
+// disjoint in-memory store here made the banner token permanently unredeemable.
 func NewIAMHandler(deps IAMHandlerDependencies) *IAMHandler {
 	return &IAMHandler{
-		server:      deps.Server,
-		inviteStore: iam.NewMemoryInviteStore(),
+		server: deps.Server,
 	}
 }
 

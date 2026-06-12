@@ -2079,9 +2079,19 @@ export interface InferenceChunk {
 // and emit. Field names match the W3C WebAuthn Level 3 specification.
 // =============================================================================
 
-// PublicKeyCredentialRequestOptionsJSON is the JSON representation of the
-// challenge options returned by the server's webauthn/login/begin endpoint.
-// These are passed verbatim to navigator.credentials.get({ publicKey: ... }).
+// CredentialAssertionJSON is the go-webauthn login challenge envelope returned
+// by the server's webauthn/login/begin endpoint. The challenge options are
+// nested under `publicKey` (W3C CredentialRequestOptions shape); binary members
+// (challenge, allowCredentials[].id) are base64url strings. Callers MUST unwrap
+// the envelope and base64url-decode the binary members before passing them to
+// navigator.credentials.get() — the frontend webauthn helper does this.
+export interface CredentialAssertionJSON {
+  publicKey: PublicKeyCredentialRequestOptionsJSON;
+  mediation?: string;
+}
+
+// PublicKeyCredentialRequestOptionsJSON is the inner (unwrapped) login challenge
+// options. Binary members are base64url strings, not BufferSource.
 export interface PublicKeyCredentialRequestOptionsJSON {
   challenge: string;
   timeout?: number;
@@ -2100,22 +2110,26 @@ export interface PublicKeyCredentialDescriptorJSON {
 }
 
 // PublicKeyCredentialJSON is the JSON-serialized assertion produced by
-// navigator.credentials.get() after the user approves the challenge.
+// navigator.credentials.get() after the user approves the challenge. The shape
+// matches go-webauthn's CredentialAssertionResponse: binary members are
+// base64url strings (NOT number[] arrays) under camelCase keys, which is what
+// the server's ParseCredentialRequestResponseBytes parser requires.
 export interface PublicKeyCredentialJSON {
   id: string;
-  rawId: number[];
+  rawId: string;
   type: string;
+  authenticatorAttachment?: string;
   response: AuthenticatorAssertionResponseJSON;
-  clientExtensionResults?: Record<string, unknown>;
+  clientExtensionResults?: AuthenticationExtensionsClientOutputs;
 }
 
-// AuthenticatorAssertionResponseJSON holds the base64url-decoded byte arrays
-// from an AuthenticatorAssertionResponse.
+// AuthenticatorAssertionResponseJSON holds the base64url-encoded byte members
+// of an AuthenticatorAssertionResponse, matching go-webauthn's wire types.
 export interface AuthenticatorAssertionResponseJSON {
-  authenticatorData: number[];
-  clientDataJSON: number[];
-  signature: number[];
-  userHandle: number[] | null;
+  authenticatorData: string;
+  clientDataJSON: string;
+  signature: string;
+  userHandle?: string;
 }
 
 // UserVerificationRequirement mirrors the W3C enum for the userVerification

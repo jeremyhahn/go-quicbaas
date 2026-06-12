@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -1582,7 +1584,7 @@ func (r *ToolRegistry) executeOrchestratorInference(ctx context.Context, args ma
 	// scope its fleet lookup correctly.
 	tenantID := getString(args, "tenant_id")
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = qrdbsdk.SystemTenantID
 	}
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 

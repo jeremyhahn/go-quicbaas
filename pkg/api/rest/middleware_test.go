@@ -17,6 +17,7 @@ package rest
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,8 +43,11 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 
 	wrappedHandler.ServeHTTP(w, req)
 
-	// Verify all security headers are set correctly
-	assert.Equal(t, "max-age=31536000; includeSubDomains", w.Header().Get(HeaderStrictTransportSecurity))
+	// Plain-HTTP request (r.TLS == nil): per RFC 6797 §7.2 the HSTS header
+	// MUST NOT be emitted over non-secure transport.
+	assert.Empty(t, w.Header().Get(HeaderStrictTransportSecurity))
+
+	// All other security headers are set unconditionally.
 	assert.Equal(t, "DENY", w.Header().Get(HeaderXFrameOptions))
 	assert.Equal(t, "nosniff", w.Header().Get(HeaderXContentTypeOptions))
 	assert.Equal(t, "1; mode=block", w.Header().Get(HeaderXXSSProtection))
@@ -51,6 +55,56 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	assert.Equal(t, "default-src 'self'", w.Header().Get(HeaderContentSecurityPolicy))
 	assert.Equal(t, "geolocation=(), microphone=(), camera=()", w.Header().Get(HeaderPermissionsPolicy))
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestSecurityHeadersMiddlewareHSTSOmittedOverPlainHTTP verifies that a
+// request arriving over plain HTTP (r.TLS == nil) does not receive the
+// Strict-Transport-Security header, per RFC 6797 §7.2.
+func TestSecurityHeadersMiddlewareHSTSOmittedOverPlainHTTP(t *testing.T) {
+	middleware := SecurityHeadersMiddleware()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	wrappedHandler := middleware(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.TLS = nil // explicit: non-secure transport
+	w := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(w, req)
+
+	assert.Empty(t, w.Header().Get(HeaderStrictTransportSecurity),
+		"HSTS header must not be emitted over plain HTTP")
+	// Other security headers remain present.
+	assert.Equal(t, "DENY", w.Header().Get(HeaderXFrameOptions))
+}
+
+// TestSecurityHeadersMiddlewareHSTSPresentOverTLS verifies that a request
+// arriving over TLS (r.TLS != nil) receives the Strict-Transport-Security
+// header with its canonical value.
+func TestSecurityHeadersMiddlewareHSTSPresentOverTLS(t *testing.T) {
+	middleware := SecurityHeadersMiddleware()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	wrappedHandler := middleware(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	// Simulate a request received over a completed TLS handshake.
+	req.TLS = &tls.ConnectionState{HandshakeComplete: true}
+	w := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(w, req)
+
+	assert.Equal(t, "max-age=31536000; includeSubDomains",
+		w.Header().Get(HeaderStrictTransportSecurity),
+		"HSTS header must be emitted over TLS with its canonical value")
+	// Other security headers remain present.
+	assert.Equal(t, "DENY", w.Header().Get(HeaderXFrameOptions))
 }
 
 func TestSecurityHeadersMiddlewareWithDifferentMethods(t *testing.T) {
@@ -95,8 +149,10 @@ func TestSecurityHeadersMiddlewareWithDifferentMethods(t *testing.T) {
 
 			wrappedHandler.ServeHTTP(w, req)
 
-			// All methods should have security headers
-			assert.NotEmpty(t, w.Header().Get(HeaderStrictTransportSecurity))
+			// All methods should have security headers. HSTS is omitted on
+			// plain HTTP (r.TLS == nil) per RFC 6797 §7.2; the remaining
+			// headers are set unconditionally.
+			assert.Empty(t, w.Header().Get(HeaderStrictTransportSecurity))
 			assert.NotEmpty(t, w.Header().Get(HeaderXFrameOptions))
 			assert.NotEmpty(t, w.Header().Get(HeaderXContentTypeOptions))
 			assert.NotEmpty(t, w.Header().Get(HeaderXXSSProtection))

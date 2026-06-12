@@ -17,6 +17,8 @@ import (
 	"context"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 )
@@ -34,10 +36,11 @@ func NewVectorMetricsRecorder() *VectorMetricsRecorder {
 	}
 }
 
-// defaultTenantID returns a default tenant ID for non-multi-tenant deployments.
-const defaultTenantID = "default"
+// defaultTenantID is the fallback tenant ID for non-multi-tenant
+// deployments: the control-plane system tenant that qrdb always provisions.
+const defaultTenantID = qrdbsdk.SystemTenantID
 
-// getTenantID extracts the tenant ID from context or returns a default.
+// getTenantID extracts the tenant ID from context or returns the fallback.
 func getTenantID(ctx context.Context) string {
 	tenantID := iam.TenantFromContext(ctx)
 	if tenantID == "" {

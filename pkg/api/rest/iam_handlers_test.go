@@ -117,11 +117,16 @@ func newMockQuicBaaSWithIAM() (*mockQuicBaaSWithIAM, *iam.MemoryStorage) {
 		Tenants:      tenantMgr,
 	})
 
-	return &mockQuicBaaSWithIAM{
+	mock := &mockQuicBaaSWithIAM{
 		MockQuicBaaS:  testutil.NewMockQuicBaaS(),
 		tenantManager: tenantMgr,
 		identityStore: identityStore,
-	}, memStorage
+	}
+	// Wire the canonical persistent invite store so the CreateUser invite path
+	// (and the activation endpoints) resolve ONE store via getInviteStore —
+	// the same unification the production server uses.
+	mock.InviteStoreOverride = iam.NewMemoryInviteStore()
+	return mock, memStorage
 }
 
 func (m *mockQuicBaaSWithIAM) GetOIDCProvider(_ context.Context) (*iam.OIDCProvider, error) {

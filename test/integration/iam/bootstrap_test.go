@@ -85,8 +85,10 @@ func TestBootstrap_FirstBoot_PrintsActivationURL(t *testing.T) {
 
 	assert.Contains(t, stderrOutput, "FIRST-BOOT BOOTSTRAP",
 		"activation banner must appear on stderr on first boot")
-	assert.Contains(t, stderrOutput, "/ui/#/activate?token=",
-		"activation URL with invite token must be in the banner")
+	assert.Contains(t, stderrOutput, "/ui/#/invite/",
+		"activation URL with invite token must be in the banner using the canonical #/invite/ route")
+	assert.NotContains(t, stderrOutput, "#/activate?token=",
+		"banner must NOT use the dead #/activate?token= route the SPA router does not map")
 	assert.Contains(t, stderrOutput, "Shown ONCE",
 		"banner must warn the invite is shown once")
 }

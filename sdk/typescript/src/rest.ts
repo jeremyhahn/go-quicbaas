@@ -111,7 +111,7 @@ import type {
   InferenceChunk,
   AgentRegistration,
   ClientConfig,
-  PublicKeyCredentialRequestOptionsJSON,
+  CredentialAssertionJSON,
   PublicKeyCredentialJSON,
   PublicTenant,
   CloseSessionRequest,
@@ -1288,7 +1288,7 @@ class RestAuthClient implements AuthClient {
 
   // webAuthnBeginLogin fetches the WebAuthn challenge from the server.
   // Maps to POST /api/v1/tenants/{tenantID}/webauthn/login/begin.
-  async webAuthnBeginLogin(tenantID: string, email: string): Promise<PublicKeyCredentialRequestOptionsJSON> {
+  async webAuthnBeginLogin(tenantID: string, email: string): Promise<CredentialAssertionJSON> {
     const resp = await fetch(
       `${this.baseUrl}/api/v1/tenants/${encodeURIComponent(tenantID)}/webauthn/login/begin`,
       {
@@ -1307,7 +1307,7 @@ class RestAuthClient implements AuthClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<PublicKeyCredentialRequestOptionsJSON>;
+    return resp.json() as Promise<CredentialAssertionJSON>;
   }
 
   // webAuthnFinishLogin submits the WebAuthn assertion and returns tokens.

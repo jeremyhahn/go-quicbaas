@@ -148,6 +148,38 @@ type sessionRecord struct {
 	TenantID    string
 	ContainerID string
 	CreatedAt   int64
+
+	// HostAffinity records the daemon host the session was actually spawned
+	// on. Spawn resolves a backend via the RemoteBackendResolver (which applies
+	// host-affinity, tenant, and GPU filtering) and the live session lives
+	// in-memory on that one instance. Prompt / Status / Close MUST re-resolve
+	// to the same instance; otherwise an empty or different host-affinity hint
+	// on the follow-up call can route to a different daemon (or the local
+	// fallback backend) where the session does not exist, surfacing as
+	// "acp: session not found". Replaying this stored host on the follow-up
+	// context makes re-resolution deterministic. Empty when the session ran on
+	// a local (non-remote) backend, in which case no replay is needed.
+	HostAffinity string
+}
+
+// resolvedHostBackend is implemented by backends that route to a specific
+// daemon host (e.g. RemoteACPBackend). Spawn uses it to capture the host the
+// session landed on so Prompt / Status / Close can pin re-resolution to the
+// same instance. Local in-process backends do not implement it.
+type resolvedHostBackend interface {
+	ResolvedHost() string
+}
+
+// sessionHostAffinity returns the host a resolved backend is bound to, or the
+// caller-supplied request affinity as a fallback. Returns "" for local
+// backends with no request affinity, signalling that no replay is needed.
+func sessionHostAffinity(backend AgentBackend, requestAffinity string) string {
+	if hb, ok := backend.(resolvedHostBackend); ok {
+		if host := hb.ResolvedHost(); host != "" {
+			return host
+		}
+	}
+	return requestAffinity
 }
 
 // NewAgentService creates a new AgentService with the given store, backends, and logger.
@@ -786,6 +818,11 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		return nil, err
 	}
 
+	// Capture the host the resolver bound this session to so Prompt / Status /
+	// Close can pin re-resolution to the same daemon instance. See
+	// sessionRecord.HostAffinity for why this is required.
+	sessionHost := sessionHostAffinity(backend, req.HostAffinity)
+
 	// Resolve model: request > project default > empty (let backend decide)
 	model := req.Model
 	if model == "" && req.ProjectID != "" {
@@ -839,12 +876,13 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		}
 
 		s.sessions.Store(sessionID, &sessionRecord{
-			Backend:     req.Backend,
-			ProjectID:   req.ProjectID,
-			Model:       model,
-			TenantID:    tenantID,
-			ContainerID: containerID,
-			CreatedAt:   now,
+			Backend:      req.Backend,
+			ProjectID:    req.ProjectID,
+			Model:        model,
+			TenantID:     tenantID,
+			ContainerID:  containerID,
+			CreatedAt:    now,
+			HostAffinity: sessionHost,
 		})
 
 		record := &SessionRecord{
@@ -907,11 +945,12 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 
 	// Track the session in memory for fast lookup
 	s.sessions.Store(session.ID, &sessionRecord{
-		Backend:   req.Backend,
-		ProjectID: req.ProjectID,
-		Model:     model,
-		TenantID:  tenantID,
-		CreatedAt: session.CreatedAt,
+		Backend:      req.Backend,
+		ProjectID:    req.ProjectID,
+		Model:        model,
+		TenantID:     tenantID,
+		CreatedAt:    session.CreatedAt,
+		HostAffinity: sessionHost,
 	})
 
 	// Persist session metadata to the store
@@ -1051,6 +1090,12 @@ func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSession
 			Sentinel: ErrBackendRequired,
 			Message:  "either backend or session_id must be provided",
 		}
+	}
+
+	// Pin re-resolution to the daemon that holds the live session so the
+	// follow-up prompt reaches the same instance Spawn used.
+	if req.SessionID != "" {
+		ctx = s.pinSessionHostAffinity(ctx, req.SessionID)
 	}
 
 	backend, err := s.lookupBackendCtx(ctx, backendName, req.ProjectID)
@@ -1253,6 +1298,9 @@ func (s *agentServiceImpl) SessionStatus(ctx context.Context, req *SessionStatus
 		}, nil
 	}
 
+	// Pin re-resolution to the daemon that holds the live session.
+	ctx = s.pinSessionHostAffinity(ctx, req.SessionID)
+
 	backend, err := s.lookupBackendCtx(ctx, backendName, "")
 	if err != nil {
 		return nil, err
@@ -1286,6 +1334,9 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 	if err != nil {
 		return nil, err
 	}
+
+	// Pin re-resolution to the daemon that holds the live session.
+	ctx = s.pinSessionHostAffinity(ctx, req.SessionID)
 
 	backend, err := s.lookupBackendCtx(ctx, backendName, "")
 	if err != nil {
@@ -2465,6 +2516,30 @@ func (s *agentServiceImpl) findSessionBackend(sessionID string) (string, error) 
 		return "", &SessionNotFoundError{SessionID: sessionID}
 	}
 	return rec.Backend, nil
+}
+
+// pinSessionHostAffinity replays the host affinity captured at Spawn onto the
+// context so lookupBackendCtx re-resolves to the same daemon instance that
+// holds the live session. Without this, a follow-up Prompt / Status / Close
+// that omits the host hint (the common SPA case) can re-resolve to a different
+// daemon or the local fallback backend, where the in-memory session does not
+// exist — surfacing as "acp: session not found". Returns the context unchanged
+// when the session is unknown or ran on a local backend (empty stored host).
+func (s *agentServiceImpl) pinSessionHostAffinity(ctx context.Context, sessionID string) context.Context {
+	val, ok := s.sessions.Load(sessionID)
+	if !ok {
+		return ctx
+	}
+	rec, ok := val.(*sessionRecord)
+	if !ok || rec.HostAffinity == "" {
+		return ctx
+	}
+	// Do not override an explicit per-request affinity — an operator may be
+	// deliberately re-routing. Only fill in when the caller left it empty.
+	if HostAffinityFromContext(ctx) != "" {
+		return ctx
+	}
+	return WithHostAffinity(ctx, rec.HostAffinity)
 }
 
 // generateID produces a random hex-encoded ID.

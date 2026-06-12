@@ -53,6 +53,9 @@ func (p *mockIAMServiceProvider) GetSessionStorage(_ context.Context) (iam.Sessi
 func (p *mockIAMServiceProvider) GetSessionManager(_ context.Context) (SessionManager, error) {
 	return p.sessionMgr, p.sessionMgrErr
 }
+func (p *mockIAMServiceProvider) GetInviteStore(_ context.Context) (iam.InviteStore, error) {
+	return p.inviteStore, p.inviteStoreErr
+}
 func (p *mockIAMServiceProvider) GetAdminManager(_ context.Context) (*iam.AdminManager, error) {
 	return p.adminMgr, p.adminMgrErr
 }

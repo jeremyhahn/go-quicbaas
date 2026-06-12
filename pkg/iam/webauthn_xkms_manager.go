@@ -46,11 +46,20 @@ import (
 //     authenticator signs over; the browser echoes it verbatim in the
 //     assertion's collected client data at FinishLogin time. Keying by
 //     challenge resolves the EXACT begin→finish session even when many
-//     users in the same tenant authenticate concurrently, and it works
-//     for the discoverable-credential flow where the browser never echoes
-//     an email back. The previous tenant-prefix first-match scan was a
-//     concurrency and security bug: two concurrent same-tenant logins
-//     could be cross-wired onto the wrong session/credential.
+//     users in the same tenant authenticate concurrently. The previous
+//     tenant-prefix first-match scan was a concurrency and security bug:
+//     two concurrent same-tenant logins could be cross-wired onto the
+//     wrong session/credential.
+//   - The login ceremony is USER-IDENTIFIED, not discoverable. The web
+//     login is email-first: the caller supplies an email, the manager
+//     resolves the user, and BeginLogin emits an assertion whose
+//     allowCredentials lists exactly that user's registered credential
+//     descriptors. This drives a deterministic, scriptable get() in the
+//     browser instead of the native passkey account-picker that a
+//     discoverable ceremony would trigger. FinishLogin re-resolves the
+//     same user (its WebAuthn handle is stashed alongside the session at
+//     begin time) and verifies the assertion against that user, so the
+//     begin→finish session type is consistent end to end.
 //
 // The manager keeps a small in-memory map of (tenantID, challenge) to
 // xkms session id. The map is concurrency-safe via sync.Map and lives
@@ -59,21 +68,45 @@ import (
 type XKMSWebAuthnManager struct {
 	factory *WebAuthnServiceFactory
 
+	// userResolver resolves the canonical broker iam.User (carrying the
+	// external string ID and the qrdb-resolved role set) by email after a
+	// successful assertion. xkms's WebAuthnUser models ONLY the webauthn
+	// handle/name/display name — it has no roles and its WebAuthnID() is the
+	// raw 8-byte big-endian uint64 user handle, which is NOT a usable JWT
+	// subject. FinishLogin therefore re-resolves the authenticated user
+	// through this canonical store so the issued token carries the correct
+	// string subject and role claims. Stored behind a small accessor so the
+	// production wiring can late-bind it (the user store is constructed in the
+	// same server-lifecycle phase as the manager).
+	userResolver WebAuthnUserResolver
+
 	// regSessions maps tenantID:userID -> xkms session id for the
 	// registration ceremony.
 	regSessions sync.Map // map[string]string
 
-	// loginSessions maps tenantID:challenge -> xkms session id for the
-	// login ceremony. The challenge is the per-ceremony WebAuthn nonce, so
-	// the key uniquely identifies a single begin→finish handoff even under
-	// concurrent same-tenant logins.
-	loginSessions sync.Map // map[string]string
+	// loginSessions maps tenantID:challenge -> loginHandoff for the login
+	// ceremony. The challenge is the per-ceremony WebAuthn nonce, so the
+	// key uniquely identifies a single begin→finish handoff even under
+	// concurrent same-tenant logins. The handoff carries both the xkms
+	// session id and the resolved user's WebAuthn handle so FinishLogin
+	// can verify the assertion against the SAME user the ceremony began
+	// for (the user-identified flow), not a discoverable nil user.
+	loginSessions sync.Map // map[string]loginHandoff
 
 	// aaguidAllowlist is the optional FIDO2 AAGUID enforcement gate.
 	// Stored as an atomic-loaded value so SetAAGUIDAllowlist races
 	// safely with concurrent ceremonies. Nil disables enforcement
 	// entirely (xkms accepts any authenticator).
 	aaguidAllowlist atomicAllowlist
+}
+
+// loginHandoff is the per-ceremony record stashed at BeginLogin time and
+// recovered at FinishLogin time. It binds the xkms ceremony session id to
+// the WebAuthn handle of the user the email-first ceremony resolved, so
+// the finish step verifies the assertion against that exact user.
+type loginHandoff struct {
+	sessionID  string
+	userHandle []byte
 }
 
 // atomicAllowlist holds an *AAGUIDAllowlist behind a sync.RWMutex.
@@ -98,6 +131,25 @@ func (m *XKMSWebAuthnManager) allowlist() *AAGUIDAllowlist {
 	m.aaguidAllowlist.mu.RLock()
 	defer m.aaguidAllowlist.mu.RUnlock()
 	return m.aaguidAllowlist.allowlist
+}
+
+// WebAuthnUserResolver is the narrow seam FinishLogin uses to resolve the
+// canonical broker iam.User after a successful assertion. It is satisfied by
+// iam.UserStorage (GetUserByEmail), so the production wiring hands the same
+// qrdb-backed user store the rest of the IAM stack resolves against. Keeping
+// the interface to a single method avoids the manager taking a dependency on
+// the full UserStorage surface.
+type WebAuthnUserResolver interface {
+	// GetUserByEmail returns the canonical user for the given email, carrying
+	// the external string ID and the qrdb-resolved role set.
+	GetUserByEmail(ctx context.Context, email string) (*User, error)
+}
+
+// SetUserResolver wires the canonical user resolver used by FinishLogin to map
+// the asserted webauthn identity back to a full iam.User. It mirrors
+// SetAAGUIDAllowlist's late-binding setter shape.
+func (m *XKMSWebAuthnManager) SetUserResolver(resolver WebAuthnUserResolver) {
+	m.userResolver = resolver
 }
 
 // NewXKMSWebAuthnManager constructs the manager. The factory must be
@@ -175,10 +227,20 @@ func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, 
 }
 
 // BeginLogin starts a WebAuthn assertion ceremony for the user
-// identified by email within the tenant. The xkms ceremony session id is
-// stashed keyed by (tenantID, challenge); FinishLogin recovers the exact
-// session by matching the challenge the authenticator signs over, so the
-// begin→finish handoff is correct under concurrent same-tenant logins.
+// identified by email within the tenant. The xkms ceremony session id and
+// the resolved user's WebAuthn handle are stashed keyed by
+// (tenantID, challenge); FinishLogin recovers the exact session by matching
+// the challenge the authenticator signs over, so the begin→finish handoff
+// is correct under concurrent same-tenant logins.
+//
+// The ceremony is USER-IDENTIFIED: the manager resolves the user by email
+// and forwards the user's WebAuthn handle to xkms, which emits an assertion
+// whose allowCredentials enumerates exactly that user's registered
+// credentials. The browser then performs a deterministic get() against those
+// descriptors instead of the native passkey account-picker a discoverable
+// ceremony would surface. xkms fails the begin closed with
+// ErrWebAuthnNoCredentials when the user has no registered passkey, and the
+// GetUserByEmail lookup fails closed for an unknown user.
 func (m *XKMSWebAuthnManager) BeginLogin(ctx context.Context, tenantID, email string) (map[string]interface{}, error) {
 	svc, err := m.factory.ServiceFor(ctx, tenantID)
 	if err != nil {
@@ -188,7 +250,11 @@ func (m *XKMSWebAuthnManager) BeginLogin(ctx context.Context, tenantID, email st
 	if err != nil {
 		return nil, err
 	}
-	options, sessionID, err := svc.BeginLogin(ctx, user.WebAuthnID())
+	userHandle := user.WebAuthnID()
+	// User-identified ceremony: xkms populates allowCredentials from the
+	// user's registered credentials and fails closed with
+	// ErrWebAuthnNoCredentials when the user has none.
+	options, sessionID, err := svc.BeginLogin(ctx, userHandle)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +262,10 @@ func (m *XKMSWebAuthnManager) BeginLogin(ctx context.Context, tenantID, email st
 	if challenge == "" {
 		return nil, &WebAuthnLoginSessionError{Reason: "xkms returned a login ceremony with an empty challenge"}
 	}
-	m.loginSessions.Store(m.loginKey(tenantID, challenge), sessionID)
+	m.loginSessions.Store(m.loginKey(tenantID, challenge), loginHandoff{
+		sessionID:  sessionID,
+		userHandle: userHandle,
+	})
 	return marshalToMap(options)
 }
 
@@ -206,11 +275,14 @@ func (m *XKMSWebAuthnManager) BeginLogin(ctx context.Context, tenantID, email st
 // The exact begin→finish session is resolved by the WebAuthn challenge
 // echoed in the assertion's collected client data — the same value the
 // authenticator signed over. This is collision-free across concurrent
-// same-tenant ceremonies and works for the discoverable-credential flow
-// where the browser never sends an email back. A missing or unknown
-// challenge fails closed before any xkms dispatch, so a forged or
-// expired/temp session handle cannot be coerced onto another user's
-// in-flight ceremony.
+// same-tenant ceremonies. A missing or unknown challenge fails closed
+// before any xkms dispatch, so a forged or expired/temp session handle
+// cannot be coerced onto another user's in-flight ceremony.
+//
+// The ceremony is user-identified: the WebAuthn handle stashed at begin
+// time is forwarded to xkms so the assertion is verified against the SAME
+// user the ceremony began for, consistent with the allowCredentials list
+// emitted by BeginLogin.
 func (m *XKMSWebAuthnManager) FinishLogin(ctx context.Context, tenantID string, credential map[string]interface{}) (*User, error) {
 	svc, err := m.factory.ServiceFor(ctx, tenantID)
 	if err != nil {
@@ -221,47 +293,72 @@ func (m *XKMSWebAuthnManager) FinishLogin(ctx context.Context, tenantID string, 
 		return nil, err
 	}
 
-	sessionID, key, err := m.resolveLoginSession(tenantID, parsed)
+	handoff, key, err := m.resolveLoginSession(tenantID, parsed)
 	if err != nil {
 		return nil, err
 	}
 
-	_, xkmsUser, err := svc.FinishLogin(ctx, sessionID, nil, parsed)
+	_, xkmsUser, err := svc.FinishLogin(ctx, handoff.sessionID, handoff.userHandle, parsed)
 	if err != nil {
 		return nil, err
 	}
 	// Cleanup of the exact session consumed by this ceremony.
 	m.loginSessions.Delete(key)
 
-	// Map xkms's User abstraction back to iam.User. xkms's email is the
-	// qrdb username; everything else is per-tenant context.
-	return &User{
-		ID:       string(xkmsUser.WebAuthnID()),
-		Email:    xkmsUser.WebAuthnName(),
-		Name:     xkmsUser.WebAuthnDisplayName(),
-		TenantID: tenantID,
-	}, nil
+	// The asserted email (xkms's webauthn name == the qrdb username) is the
+	// lookup key into the canonical broker store.
+	return m.resolveAuthenticatedUser(ctx, tenantID, xkmsUser.WebAuthnName())
 }
 
-// resolveLoginSession maps a parsed assertion back to the exact xkms
-// session id stored at BeginLogin time, keyed by (tenantID, challenge).
-// It returns the session id and the composite cache key (so the caller can
-// delete the precise entry after a successful finish), or a typed
-// WebAuthnLoginSessionError when the challenge is absent or unknown.
-func (m *XKMSWebAuthnManager) resolveLoginSession(tenantID string, parsed *protocol.ParsedCredentialAssertionData) (string, string, error) {
+// resolveAuthenticatedUser re-resolves the authenticated user through the
+// canonical broker store so the returned iam.User carries the external string
+// ID and the qrdb-resolved role set that token issuance keys on. xkms's
+// WebAuthnUser abstraction exposes ONLY the webauthn handle/name/display name:
+// its WebAuthnID() is the raw 8-byte big-endian uint64 user handle (mojibake as
+// a JWT subject) and it has no roles. Mapping it straight to iam.User produced a
+// token with an unusable subject and zero permissions.
+//
+// The resolver is the same qrdb-backed UserStorage the rest of the IAM stack
+// uses, so the user the broker created is the same record login and the PDP
+// resolve against. It fails closed when no resolver is wired or the user cannot
+// be resolved, rather than surfacing a half-populated user.
+func (m *XKMSWebAuthnManager) resolveAuthenticatedUser(ctx context.Context, tenantID, email string) (*User, error) {
+	if m.userResolver == nil {
+		return nil, &WebAuthnUserResolverError{Reason: "canonical user resolver is not configured"}
+	}
+	user, err := m.userResolver.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, &WebAuthnUserResolverError{Reason: "canonical user resolver returned nil user"}
+	}
+	// The login is tenant-scoped; the assertion was verified within tenantID,
+	// so stamp it onto the resolved user (the email index is global).
+	user.TenantID = tenantID
+	return user, nil
+}
+
+// resolveLoginSession maps a parsed assertion back to the exact login
+// handoff stored at BeginLogin time, keyed by (tenantID, challenge). It
+// returns the handoff (xkms session id + user WebAuthn handle) and the
+// composite cache key (so the caller can delete the precise entry after a
+// successful finish), or a typed WebAuthnLoginSessionError when the
+// challenge is absent or unknown.
+func (m *XKMSWebAuthnManager) resolveLoginSession(tenantID string, parsed *protocol.ParsedCredentialAssertionData) (loginHandoff, string, error) {
 	if parsed == nil {
-		return "", "", &WebAuthnLoginSessionError{Reason: "nil assertion"}
+		return loginHandoff{}, "", &WebAuthnLoginSessionError{Reason: "nil assertion"}
 	}
 	challenge := parsed.Response.CollectedClientData.Challenge
 	if challenge == "" {
-		return "", "", &WebAuthnLoginSessionError{Reason: "assertion has no challenge"}
+		return loginHandoff{}, "", &WebAuthnLoginSessionError{Reason: "assertion has no challenge"}
 	}
 	key := m.loginKey(tenantID, challenge)
 	v, ok := m.loginSessions.Load(key)
 	if !ok {
-		return "", "", &WebAuthnLoginSessionError{Reason: "no login session matches the assertion challenge"}
+		return loginHandoff{}, "", &WebAuthnLoginSessionError{Reason: "no login session matches the assertion challenge"}
 	}
-	return v.(string), key, nil
+	return v.(loginHandoff), key, nil
 }
 
 // marshalToMap converts a typed protocol structure to a JSON-decoded
@@ -305,3 +402,8 @@ func parseCredentialAssertionMap(m map[string]interface{}) (*protocol.ParsedCred
 
 // Compile-time interface guard: xkms.User implements WebAuthnUser.
 var _ xkmssdk.WebAuthnUser = (*xkmssdk.WebAuthnDefaultUser)(nil)
+
+// Compile-time interface guard: the canonical UserStorage satisfies the narrow
+// WebAuthnUserResolver seam FinishLogin uses, so the production wiring can hand
+// the qrdb-backed user store straight to SetUserResolver.
+var _ WebAuthnUserResolver = (UserStorage)(nil)

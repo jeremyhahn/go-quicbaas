@@ -23,6 +23,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -163,10 +165,11 @@ func (h *IAMHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Determine tenant ID (use default for DCR or extract from initial access token)
+	// Determine tenant ID: extract from the initial access token, falling back
+	// to the control-plane system tenant for unauthenticated DCR.
 	tenantID := extractTenantFromRequest(r)
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = qrdbsdk.SystemTenantID
 	}
 
 	// Build RegisterAppOptions from DCR request

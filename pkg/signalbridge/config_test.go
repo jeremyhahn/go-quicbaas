@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // TestLoadBotConfig_Happy parses a valid YAML file and returns a
@@ -41,7 +43,7 @@ serviceAccount: bot-svc
 	if cfg.BotIdentity != "+15551234567" {
 		t.Fatalf("identity: %q", cfg.BotIdentity)
 	}
-	if cfg.TenantID != "default" {
+	if cfg.TenantID != qrdbsdk.SystemTenantID {
 		t.Fatalf("default tenant: %q", cfg.TenantID)
 	}
 	if cfg.DeviceName != "orchestrator-bot" {

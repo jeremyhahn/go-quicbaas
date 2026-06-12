@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
@@ -23,6 +24,10 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	grpccodes "google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -124,6 +129,41 @@ func (s *Server) getAgentService(w http.ResponseWriter, r *http.Request) orchest
 	return agentSvc
 }
 
+// resolveOrchestratorTenant derives the tenant an orchestrator request operates
+// within and stamps it onto the returned context via
+// orchestration.ContextWithTenant. It is the single tenant-derivation point for
+// every orchestrator REST handler so the orchestrator's tenant guard
+// (orchestration.agentServiceImpl.validateTenant) observes a non-empty tenant on
+// every code path — the in-process service call and, transitively, the
+// embedded-agent gRPC backend call.
+//
+// Precedence:
+//  1. explicit ?tenant_id= query parameter (operator override / cross-tenant
+//     control-plane calls),
+//  2. the authenticated token's tenant_id claim (the verified
+//     platformtoken.AuthorizedContext attached by the authz middleware),
+//  3. qrdbsdk.SystemTenantID as the canonical fallback when the request carries
+//     neither — preserving the historical single-tenant default.
+//
+// It returns the derived tenant alongside the enriched context so callers that
+// also pass the tenant as an explicit argument (task / job / agent methods)
+// stay consistent with the context tenant.
+func resolveOrchestratorTenant(r *http.Request) (context.Context, string) {
+	ctx := r.Context()
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID == "" {
+		if ac := AuthorizedContextFromRequest(ctx); ac != nil && ac.TenantID != "" {
+			tenantID = ac.TenantID
+		}
+	}
+	if tenantID == "" {
+		tenantID = qrdbsdk.SystemTenantID
+	}
+
+	return orchestration.ContextWithTenant(ctx, tenantID), tenantID
+}
+
 // =============================================================================
 // Session Management Handlers
 // =============================================================================
@@ -155,14 +195,12 @@ func (s *Server) HandleOrchestratorSpawn(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Thread tenant into the orchestrator context the same way the task /
-	// job / agent handlers do — the tenant guard reads it from ctx and
-	// rejects the request otherwise.
-	tenantID := r.URL.Query().Get("tenant_id")
-	if tenantID == "" {
-		tenantID = "default"
-	}
-	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	// Thread tenant into the orchestrator context the same way every other
+	// orchestrator handler does — the tenant guard reads it from ctx and
+	// rejects the request otherwise. Derivation precedence (query param ->
+	// authenticated token tenant -> SystemTenantID) is centralized in
+	// resolveOrchestratorTenant so the whole orchestrator surface is consistent.
+	ctx, _ = resolveOrchestratorTenant(r)
 
 	// Per-request strict bit overrides the operator-level
 	// orchestration.host_affinity.mode default: when set to true, an offline
@@ -192,7 +230,7 @@ func (s *Server) HandleOrchestratorSpawn(w http.ResponseWriter, r *http.Request)
 
 // HandleOrchestratorPrompt handles POST /api/v1/orchestrator/sessions/{sessionID}/prompt - Prompt a session.
 func (s *Server) HandleOrchestratorPrompt(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -236,7 +274,7 @@ func (s *Server) HandleOrchestratorPrompt(w http.ResponseWriter, r *http.Request
 
 // HandleOrchestratorSessionStatus handles GET /api/v1/orchestrator/sessions/{sessionID} - Get session status.
 func (s *Server) HandleOrchestratorSessionStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -262,7 +300,7 @@ func (s *Server) HandleOrchestratorSessionStatus(w http.ResponseWriter, r *http.
 
 // HandleOrchestratorCloseSession handles DELETE /api/v1/orchestrator/sessions/{sessionID} - Close a session.
 func (s *Server) HandleOrchestratorCloseSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -288,7 +326,7 @@ func (s *Server) HandleOrchestratorCloseSession(w http.ResponseWriter, r *http.R
 
 // HandleOrchestratorListSessions handles GET /api/v1/orchestrator/sessions - List active sessions.
 func (s *Server) HandleOrchestratorListSessions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -517,7 +555,7 @@ func (s *Server) HandleOrchestratorCompleteTask(w http.ResponseWriter, r *http.R
 
 // HandleOrchestratorDecomposeTask handles POST /api/v1/orchestrator/tasks/decompose - Decompose a task into work items.
 func (s *Server) HandleOrchestratorDecomposeTask(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -794,7 +832,7 @@ func (s *Server) HandleOrchestratorListBackendModels(w http.ResponseWriter, r *h
 	// lookup which doesn't have the agent's backends.
 	tenantID := r.URL.Query().Get("tenant_id")
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = qrdbsdk.SystemTenantID
 	}
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
@@ -821,7 +859,7 @@ func (s *Server) HandleOrchestratorListBackendModels(w http.ResponseWriter, r *h
 
 // HandleOrchestratorDiscover handles POST /api/v1/orchestrator/discover - Discover projects.
 func (s *Server) HandleOrchestratorDiscover(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -1325,6 +1363,7 @@ func isOrchNotFoundError(err error) bool {
 	var workflowNotFound *orchestration.WorkflowNotFoundError
 	var artifactNotFound *orchestration.ArtifactNotFoundError
 	var parentJobNotFound *orchestration.ParentJobNotFoundError
+	var sessionNotFound *orchestration.SessionNotFoundError
 	return stderrors.Is(err, orchestration.ErrTaskNotFound) ||
 		stderrors.Is(err, orchestration.ErrProjectNotFound) ||
 		stderrors.Is(err, orchestration.ErrAgentStoreNotFound) ||
@@ -1334,6 +1373,7 @@ func isOrchNotFoundError(err error) bool {
 		stderrors.Is(err, orchestration.ErrWorkflowNotFound) ||
 		stderrors.Is(err, orchestration.ErrArtifactNotFound) ||
 		stderrors.Is(err, orchestration.ErrParentJobNotFound) ||
+		stderrors.Is(err, orchestration.ErrSessionNotFound) ||
 		stderrors.As(err, &taskNotFound) ||
 		stderrors.As(err, &projectNotFound) ||
 		stderrors.As(err, &agentNotFound) ||
@@ -1341,7 +1381,24 @@ func isOrchNotFoundError(err error) bool {
 		stderrors.As(err, &backendNotFound) ||
 		stderrors.As(err, &workflowNotFound) ||
 		stderrors.As(err, &artifactNotFound) ||
-		stderrors.As(err, &parentJobNotFound)
+		stderrors.As(err, &parentJobNotFound) ||
+		stderrors.As(err, &sessionNotFound) ||
+		isGRPCNotFound(err)
+}
+
+// isGRPCNotFound reports whether err carries a gRPC codes.NotFound status. The
+// remote agent daemon returns NotFound for an unknown session (see
+// pkg/agent/spawn_server.go mapRuntimeError); RemoteACPBackend wraps it in a
+// RemoteBackendRPCError that unwraps to the grpc status error, so
+// status.FromError on the chain recovers the code.
+func isGRPCNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if st, ok := grpcstatus.FromError(err); ok {
+		return st.Code() == grpccodes.NotFound
+	}
+	return false
 }
 
 // isOrchInvalidInputError checks if the error is an invalid input type.

@@ -28,7 +28,7 @@ The banner looks like:
   FIRST-BOOT BOOTSTRAP: open the URL below to register your
   admin credential. This invite is shown ONCE.
 
-    https://<server>/ui/#/activate?token=<TOKEN>
+    https://<server>/ui/#/invite/<TOKEN>
 
   After activation, this message will not appear again.
 ============================================================

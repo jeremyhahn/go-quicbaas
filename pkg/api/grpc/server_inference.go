@@ -21,6 +21,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -39,7 +41,7 @@ func (s *OrchestratorServer) Inference(ctx context.Context, req *pb.InferenceReq
 
 	tenantID := req.GetTenantId()
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = qrdbsdk.SystemTenantID
 	}
 	tenantCtx := orchestration.ContextWithTenant(ctx, tenantID)
 	if req.GetHostAffinity() != "" {
@@ -96,7 +98,7 @@ func (s *OrchestratorServer) InferenceStream(req *pb.InferenceRequest, stream gr
 
 	tenantID := req.GetTenantId()
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = qrdbsdk.SystemTenantID
 	}
 	ctx := stream.Context()
 	tenantCtx := orchestration.ContextWithTenant(ctx, tenantID)

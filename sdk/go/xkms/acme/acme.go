@@ -49,6 +49,10 @@ type (
 	ACMERestServicer              = xkmsacme.ACMERestServicer
 	ACMEStorageFactory            = xkmsacme.ACMEStorageFactory
 	ACMETCGEnrollmentData         = xkmsacme.ACMETCGEnrollmentData
+	ACMEOrderPreSignHook          = xkmsacme.ACMEOrderPreSignHook
+	ACMEOrderPreSignHookContext   = xkmsacme.ACMEOrderPreSignHookContext
+	ACMEOrderPreSignHookRegistry  = xkmsacme.ACMEOrderPreSignHookRegistry
+	ACMEErrPreSignHookFailed      = xkmsacme.ACMEErrPreSignHookFailed
 	ACMETenant                    = xkmsacme.ACMETenant
 	ACMETenantAwareFactory        = xkmsacme.ACMETenantAwareFactory
 	AdminClient                   = xkmsacme.AdminClient
@@ -113,6 +117,7 @@ var (
 	IsDAONotFound                    = xkmsacme.IsDAONotFound
 	NewACMEClient                    = xkmsacme.NewACMEClient
 	NewACMEOrderFinalizeHookRegistry = xkmsacme.NewACMEOrderFinalizeHookRegistry
+	NewACMEOrderPreSignHookRegistry  = xkmsacme.NewACMEOrderPreSignHookRegistry
 	NewACMERateLimiter               = xkmsacme.NewACMERateLimiter
 	NewACMERestService               = xkmsacme.NewACMERestService
 	NewACMEXKMSTPMAdapter            = xkmsacme.NewACMEXKMSTPMAdapter

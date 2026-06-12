@@ -16,6 +16,8 @@ package signalbridge
 import (
 	"context"
 	"sync"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // AuthBridge resolves a Signal sender identity to a QuicBaaS operator
@@ -83,7 +85,7 @@ func NewAuthBridge(cfg AuthBridgeConfig) (AuthBridge, error) {
 		return nil, newError(op, ErrKindInvalidInput, "unknown AuthMode: "+string(cfg.Mode))
 	}
 	if cfg.TenantID == "" {
-		cfg.TenantID = "default"
+		cfg.TenantID = qrdbsdk.SystemTenantID
 	}
 	return &defaultAuthBridge{cfg: cfg}, nil
 }

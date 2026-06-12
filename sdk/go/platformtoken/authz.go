@@ -13,6 +13,10 @@
 
 package platformtoken
 
+import (
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
+
 // AuthorizedContext is the verified identity a downstream service acts on after
 // a platform token (and, where applicable, its DPoP proof) has been validated.
 // It is the bridge between the token contract and the service's own
@@ -54,11 +58,34 @@ func Authorize(claims *Claims) *AuthorizedContext {
 	}
 }
 
-// HasScope reports whether the authorized context was granted scope.
+// HasScope reports whether the authorized context was granted scope, honoring
+// the same whole-segment "*" wildcard semantics as qrdb's RBAC permission
+// authorizer (pkg/auth/rbac.permissionGranted). The scp claim carries the
+// subject's qrdb-RESOLVED effective permissions verbatim — including wildcard
+// grants such as "orchestrator:*" or "*:*" — so a required concrete scope must
+// be satisfied by a covering wildcard grant exactly as the live qrdb PDP would.
+//
+// A granted scope covers the required "resource:action" when it is the exact
+// "resource:action", a resource wildcard "resource:*", an action wildcard
+// "*:action", or the full wildcard "*:*". Only whole-segment "*" wildcards are
+// recognized (not glob prefixes), so the check is a bounded set membership test
+// rather than a per-grant iteration. Resource/action splitting reuses qrdb's
+// own re-exported PermissionResource/PermissionAction helpers, keeping the
+// colon separator and segment rules a single source of truth with the PDP.
 func (a *AuthorizedContext) HasScope(scope string) bool {
+	resource := qrdbsdk.PermissionResource(qrdbsdk.Permission(scope))
+	action := qrdbsdk.PermissionAction(qrdbsdk.Permission(scope))
+	candidates := [...]string{
+		scope,
+		resource + ":*",
+		"*:" + action,
+		"*:*",
+	}
 	for _, s := range a.Scopes {
-		if s == scope {
-			return true
+		for _, c := range candidates {
+			if s == c {
+				return true
+			}
 		}
 	}
 	return false

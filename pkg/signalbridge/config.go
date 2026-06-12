@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // BotConfig is the top-level configuration loaded from disk.
@@ -113,7 +115,7 @@ func (c *BotConfig) applyDefaults() {
 		c.DeviceName = "orchestrator-bot"
 	}
 	if c.TenantID == "" {
-		c.TenantID = "default"
+		c.TenantID = qrdbsdk.SystemTenantID
 	}
 	if c.QuicBaaSTransport == "" {
 		c.QuicBaaSTransport = "grpc"

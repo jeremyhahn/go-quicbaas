@@ -194,7 +194,10 @@ func TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution(t *testing.T) {
 		{challenge: "challenge-bob", sessionID: "xkms-session-bob"},
 	}
 	for _, c := range ceremonies {
-		m.loginSessions.Store(m.loginKey(tenant, c.challenge), c.sessionID)
+		m.loginSessions.Store(m.loginKey(tenant, c.challenge), loginHandoff{
+			sessionID:  c.sessionID,
+			userHandle: []byte(c.challenge), // distinct handle per ceremony
+		})
 	}
 
 	// Each ceremony's assertion must resolve to its own session, never the
@@ -208,13 +211,17 @@ func TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				sessionID, key, err := m.resolveLoginSession(tenant, assertionWithChallenge(c.challenge))
+				handoff, key, err := m.resolveLoginSession(tenant, assertionWithChallenge(c.challenge))
 				if err != nil {
 					errCh <- fmt.Errorf("challenge %q: unexpected error: %w", c.challenge, err)
 					return
 				}
-				if sessionID != c.sessionID {
-					errCh <- fmt.Errorf("challenge %q resolved to session %q, want %q (cross-wired)", c.challenge, sessionID, c.sessionID)
+				if handoff.sessionID != c.sessionID {
+					errCh <- fmt.Errorf("challenge %q resolved to session %q, want %q (cross-wired)", c.challenge, handoff.sessionID, c.sessionID)
+					return
+				}
+				if string(handoff.userHandle) != c.challenge {
+					errCh <- fmt.Errorf("challenge %q resolved to user handle %q, want %q (cross-wired)", c.challenge, handoff.userHandle, c.challenge)
 					return
 				}
 				if key != m.loginKey(tenant, c.challenge) {
@@ -252,6 +259,139 @@ func TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution(t *testing.T) {
 	if _, _, err := m.resolveLoginSession(tenant, nil); err == nil {
 		t.Fatal("expected WebAuthnLoginSessionError for nil assertion, got nil")
 	}
+}
+
+// TestXKMSWebAuthnManager_LoginHandoff_CarriesUserHandle is the manager-level
+// guard for the picker bug. The email-first login is user-identified: BeginLogin
+// stashes the resolved user's WebAuthn handle alongside the xkms session, and
+// FinishLogin recovers and forwards that SAME non-nil handle to xkms (rather than
+// the discoverable nil-user path that emitted an empty allowCredentials list and
+// triggered the browser's native passkey picker). This asserts the handoff
+// round-trips the exact handle bytes that resolveLoginSession returns.
+func TestXKMSWebAuthnManager_LoginHandoff_CarriesUserHandle(t *testing.T) {
+	m := &XKMSWebAuthnManager{}
+	const tenant = "tenant-1"
+	const challenge = "challenge-xyz"
+	wantHandle := []byte{0x01, 0x02, 0x03, 0x04}
+
+	// Mirror exactly what BeginLogin stores for a user-identified ceremony.
+	m.loginSessions.Store(m.loginKey(tenant, challenge), loginHandoff{
+		sessionID:  "xkms-session-1",
+		userHandle: wantHandle,
+	})
+
+	handoff, key, err := m.resolveLoginSession(tenant, assertionWithChallenge(challenge))
+	if err != nil {
+		t.Fatalf("unexpected error resolving handoff: %v", err)
+	}
+	if key != m.loginKey(tenant, challenge) {
+		t.Fatalf("resolved key %q, want %q", key, m.loginKey(tenant, challenge))
+	}
+	if handoff.sessionID != "xkms-session-1" {
+		t.Fatalf("resolved session %q, want %q", handoff.sessionID, "xkms-session-1")
+	}
+	// The handle FinishLogin forwards to xkms must be the exact, non-nil handle
+	// BeginLogin stashed — never nil (which is the discoverable path).
+	if handoff.userHandle == nil {
+		t.Fatal("user handle is nil: FinishLogin would fall into the discoverable path and re-introduce the picker bug")
+	}
+	if string(handoff.userHandle) != string(wantHandle) {
+		t.Fatalf("resolved user handle %x, want %x", handoff.userHandle, wantHandle)
+	}
+}
+
+// stubUserResolver is a deterministic WebAuthnUserResolver for the FinishLogin
+// canonical-resolution tests: it returns a fixed user (or error) keyed by email.
+type stubUserResolver struct {
+	byEmail map[string]*User
+	err     error
+	lastReq string
+}
+
+func (r *stubUserResolver) GetUserByEmail(_ context.Context, email string) (*User, error) {
+	r.lastReq = email
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.byEmail[email], nil
+}
+
+// TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity proves the
+// token-issuance fix: after a successful assertion, FinishLogin re-resolves the
+// authenticated user through the canonical broker store so the surfaced iam.User
+// carries the external STRING id and the qrdb-resolved ROLE set — not xkms's
+// raw-bytes webauthn handle with no roles. It also asserts the verified tenant
+// is stamped onto the resolved user.
+func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity(t *testing.T) {
+	const tenant = "system"
+	const email = "admin@example.com"
+	canonical := &User{
+		ID:       "1234567890123456789", // canonical decimal-string subject
+		Email:    email,
+		Name:     "Admin",
+		TenantID: "ignored-will-be-overwritten",
+		Roles:    []string{"admin"},
+	}
+	resolver := &stubUserResolver{byEmail: map[string]*User{email: canonical}}
+	m := &XKMSWebAuthnManager{}
+	m.SetUserResolver(resolver)
+
+	user, err := m.resolveAuthenticatedUser(context.Background(), tenant, email)
+	if err != nil {
+		t.Fatalf("resolveAuthenticatedUser: %v", err)
+	}
+	if resolver.lastReq != email {
+		t.Errorf("resolver queried with %q, want %q", resolver.lastReq, email)
+	}
+	if user.ID != "1234567890123456789" {
+		t.Errorf("subject id = %q, want canonical decimal string", user.ID)
+	}
+	// The subject must be a clean printable string, never raw bytes.
+	for _, c := range user.ID {
+		if c < '0' || c > '9' {
+			t.Fatalf("subject id %q contains a non-decimal rune; raw-bytes regression", user.ID)
+		}
+	}
+	if len(user.Roles) != 1 || user.Roles[0] != "admin" {
+		t.Errorf("roles = %v, want [admin]", user.Roles)
+	}
+	if user.TenantID != tenant {
+		t.Errorf("tenant = %q, want %q (verified tenant must be stamped)", user.TenantID, tenant)
+	}
+}
+
+// TestXKMSWebAuthnManager_ResolveAuthenticatedUser_FailClosed verifies the
+// resolution fails closed (never surfaces a half-populated user) when no
+// resolver is wired, the resolver errors, or it returns no user.
+func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_FailClosed(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("no resolver", func(t *testing.T) {
+		m := &XKMSWebAuthnManager{}
+		_, err := m.resolveAuthenticatedUser(ctx, "system", "a@x.com")
+		var re *WebAuthnUserResolverError
+		if !errors.As(err, &re) {
+			t.Fatalf("want WebAuthnUserResolverError, got %T: %v", err, err)
+		}
+	})
+
+	t.Run("resolver error", func(t *testing.T) {
+		m := &XKMSWebAuthnManager{}
+		m.SetUserResolver(&stubUserResolver{err: errors.New("store down")})
+		if _, err := m.resolveAuthenticatedUser(ctx, "system", "a@x.com"); err == nil {
+			t.Fatal("expected error from resolver failure")
+		}
+	})
+
+	t.Run("nil user", func(t *testing.T) {
+		m := &XKMSWebAuthnManager{}
+		m.SetUserResolver(&stubUserResolver{byEmail: map[string]*User{}})
+		_, err := m.resolveAuthenticatedUser(ctx, "system", "missing@x.com")
+		var re *WebAuthnUserResolverError
+		if !errors.As(err, &re) {
+			t.Fatalf("want WebAuthnUserResolverError for nil user, got %T: %v", err, err)
+		}
+	})
 }
 
 // TestXKMSWebAuthnManager_LoginKey verifies the login session key derivation

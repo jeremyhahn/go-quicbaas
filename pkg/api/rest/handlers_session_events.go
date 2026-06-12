@@ -24,6 +24,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -60,7 +62,7 @@ func (s *Server) HandleOrchestratorSessionEvents(w http.ResponseWriter, r *http.
 	}
 	tenantID := r.URL.Query().Get("tenant_id")
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = qrdbsdk.SystemTenantID
 	}
 	fromSeq := uint64(0)
 	if raw := r.URL.Query().Get("from"); raw != "" {

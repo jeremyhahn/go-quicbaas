@@ -40,6 +40,8 @@ func (m *mockIAMComponents) GetSessionStorage() iam.SessionStorage { return m.se
 
 func (m *mockIAMComponents) GetSessionManager() iam.SessionManager { return m.sessionManager }
 
+func (m *mockIAMComponents) GetInviteStore() iam.InviteStore { return m.inviteStore }
+
 func (m *mockIAMComponents) GetAdminManager() *iam.AdminManager { return m.adminManager }
 
 func (m *mockIAMComponents) GetGDPRManager() *iam.GDPRManager { return m.gdprManager }

@@ -29,16 +29,25 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
-// setupIAMHandlerWithInvite creates an IAMHandler with a pre-seeded inviteStore and user.
-func setupIAMHandlerWithInvite(t *testing.T) (*IAMHandler, string, string, string, func()) {
+// setupIAMHandlerWithInvite creates an IAMHandler whose service exposes the
+// canonical persistent InviteStore (via the mock's InviteStoreOverride) and
+// pre-seeds it with one valid invite. The store is the SAME instance the
+// handler resolves through getInviteStore — exercising the unified wiring the
+// production server uses, not a disjoint per-handler memory store.
+func setupIAMHandlerWithInvite(t *testing.T) (*IAMHandler, string, string, string, iam.InviteStore, func()) {
 	t.Helper()
 
-	_, server, cleanup := setupIAMHandler(t)
+	handler, server, cleanup := setupIAMHandler(t)
 
-	// Create the handler via NewIAMHandler so inviteStore is initialized.
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
+	// Wire the persistent invite store onto the mock service so the handler
+	// resolves it via getInviteStore — the production injection seam.
+	store := iam.NewMemoryInviteStore()
+	mockSvc, ok := server.service.(*testutil.MockQuicBaaS)
+	require.True(t, ok, "mock service must be *testutil.MockQuicBaaS")
+	mockSvc.InviteStoreOverride = store
 
 	// Seed a pending user directly in the invite store.
 	token, err := iam.GenerateInviteToken()
@@ -54,16 +63,14 @@ func setupIAMHandlerWithInvite(t *testing.T) (*IAMHandler, string, string, strin
 		TenantID:  tenantID,
 		ExpiresAt: expiresAt,
 	}
-	require.NoError(t, handler.inviteStore.Create(context.Background(), record))
+	require.NoError(t, store.Create(context.Background(), record))
 
-	_ = server // unused but kept for cleanup
-
-	return handler, token, tenantID, userID, cleanup
+	return handler, token, tenantID, userID, store, cleanup
 }
 
 // TestGetInvite_Valid verifies that a valid invite token returns 200 with metadata.
 func TestGetInvite_Valid(t *testing.T) {
-	handler, token, _, userID, cleanup := setupIAMHandlerWithInvite(t)
+	handler, token, _, userID, _, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
@@ -85,7 +92,7 @@ func TestGetInvite_Valid(t *testing.T) {
 
 // TestGetInvite_NotFound verifies that an unknown token returns 404.
 func TestGetInvite_NotFound(t *testing.T) {
-	handler, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
+	handler, _, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
 	bogusToken := "0000000000000000000000000000000000000000000000000000000000000000"
@@ -103,7 +110,7 @@ func TestGetInvite_NotFound(t *testing.T) {
 
 // TestGetInvite_Expired verifies that an expired invite returns 410 Gone.
 func TestGetInvite_Expired(t *testing.T) {
-	handler, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
+	handler, _, _, _, store, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
 	expToken, err := iam.GenerateInviteToken()
@@ -114,7 +121,7 @@ func TestGetInvite_Expired(t *testing.T) {
 		TenantID:  "t1",
 		ExpiresAt: time.Now().Add(-time.Minute),
 	}
-	require.NoError(t, handler.inviteStore.Create(context.Background(), expRecord))
+	require.NoError(t, store.Create(context.Background(), expRecord))
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("token", expToken)
@@ -130,7 +137,7 @@ func TestGetInvite_Expired(t *testing.T) {
 
 // TestActivateFIDO2Begin_InviteNotFound verifies 404 for unknown invite token.
 func TestActivateFIDO2Begin_InviteNotFound(t *testing.T) {
-	handler, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
+	handler, _, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
 	bogus := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -149,7 +156,7 @@ func TestActivateFIDO2Begin_InviteNotFound(t *testing.T) {
 // TestActivateFIDO2Begin_ValidInvite_WebAuthnNotConfigured verifies that a valid invite
 // but missing WebAuthn manager returns 500 (manager not available).
 func TestActivateFIDO2Begin_ValidInvite_WebAuthnNotConfigured(t *testing.T) {
-	handler, token, _, _, cleanup := setupIAMHandlerWithInvite(t)
+	handler, token, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
@@ -168,7 +175,7 @@ func TestActivateFIDO2Begin_ValidInvite_WebAuthnNotConfigured(t *testing.T) {
 
 // TestActivateFIDO2Finish_InvalidBody verifies 400 when credential is missing.
 func TestActivateFIDO2Finish_InvalidBody(t *testing.T) {
-	handler, token, _, _, cleanup := setupIAMHandlerWithInvite(t)
+	handler, token, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
@@ -188,7 +195,7 @@ func TestActivateFIDO2Finish_InvalidBody(t *testing.T) {
 
 // TestActivatePIV_MissingCert verifies 400 when cert_pem is absent.
 func TestActivatePIV_MissingCert(t *testing.T) {
-	handler, token, _, _, cleanup := setupIAMHandlerWithInvite(t)
+	handler, token, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
@@ -208,7 +215,7 @@ func TestActivatePIV_MissingCert(t *testing.T) {
 
 // TestActivatePIV_PIVNotConfigured verifies 501 when no PIVActivator is configured.
 func TestActivatePIV_PIVNotConfigured(t *testing.T) {
-	handler, token, _, _, cleanup := setupIAMHandlerWithInvite(t)
+	handler, token, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
@@ -230,7 +237,7 @@ func TestActivatePIV_PIVNotConfigured(t *testing.T) {
 
 // TestGetInvite_MissingToken verifies 400 when token URL param is missing.
 func TestGetInvite_MissingToken(t *testing.T) {
-	handler, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
+	handler, _, _, _, _, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()

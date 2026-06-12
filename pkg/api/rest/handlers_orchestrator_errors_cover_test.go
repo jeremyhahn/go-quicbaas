@@ -22,6 +22,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	grpccodes "google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -35,6 +37,11 @@ func TestHandleOrchestratorError_Dispatch(t *testing.T) {
 		want int
 	}{
 		{"not_found", orchestration.ErrJobNotFound, http.StatusNotFound},
+		{"session_not_found_typed", &orchestration.SessionNotFoundError{SessionID: "ses-x"}, http.StatusNotFound},
+		// A "session not found" returned from the remote agent daemon arrives
+		// as a gRPC codes.NotFound status. It must surface as 404, not the
+		// generic 500 that masked the lifecycle bug after a just-successful spawn.
+		{"session_not_found_grpc", grpcstatus.Error(grpccodes.NotFound, "acp: session not found: ses-x"), http.StatusNotFound},
 		{"invalid_input", orchestration.ErrBackendRequired, http.StatusBadRequest},
 		{"conflict", orchestration.ErrTaskAlreadyClaimed, http.StatusConflict},
 		{"forbidden", orchestration.ErrNotLeadOfParent, http.StatusForbidden},

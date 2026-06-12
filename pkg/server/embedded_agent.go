@@ -41,6 +41,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/agent"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -55,9 +57,10 @@ const (
 	embeddedAgentBufConnSize = 1 << 20 // 1 MiB
 
 	// embeddedAgentTenantID is the default tenant the embedded agent is
-	// registered under. Operators running multi-tenant quicbaasd should
-	// ensure agents land in the right tenant namespace.
-	embeddedAgentTenantID = "default"
+	// registered under: the control-plane system tenant that qrdb always
+	// provisions. Operators running multi-tenant quicbaasd should ensure
+	// agents land in the right tenant namespace.
+	embeddedAgentTenantID = qrdbsdk.SystemTenantID
 
 	// embeddedAgentStopTimeout is the graceful shutdown grace period for the
 	// embedded agent's gRPC server.
@@ -379,6 +382,7 @@ func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, log interfaces
 				DefaultModel: "",
 				CLIMode:      true,
 			})
+			b.SetLogger(log)
 			return map[string]orchestration.AgentBackend{"claude": b}, nil
 		},
 		"codex": func() (map[string]orchestration.AgentBackend, error) {
@@ -396,6 +400,7 @@ func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, log interfaces
 				Args:         []string{"acp"},
 				DefaultModel: "",
 			})
+			b.SetLogger(log)
 			return map[string]orchestration.AgentBackend{"opencode": b}, nil
 		},
 	}

@@ -32,6 +32,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -72,7 +74,7 @@ func newSSETestServer(t *testing.T) *sseTestServer {
 		}
 		tenantID := r.URL.Query().Get("tenant_id")
 		if tenantID == "" {
-			tenantID = "default"
+			tenantID = qrdbsdk.SystemTenantID
 		}
 		fromSeq := uint64(0)
 		if raw := r.URL.Query().Get("from"); raw != "" {

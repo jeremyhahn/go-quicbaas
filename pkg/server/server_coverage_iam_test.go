@@ -45,6 +45,8 @@ import (
 	"github.com/stretchr/testify/require"
 	ggrpc "google.golang.org/grpc"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -602,10 +604,12 @@ func TestServer_EnsureOrchestratorDaemonClient_WriteCacheError(t *testing.T) {
 	srv.config.Storage.DataDir = dataFile
 
 	// Build a real AppManager so RegisterApp succeeds before the cache write.
+	// The orchestrator daemon client registers under the system tenant
+	// (qrdbsdk.SystemTenantID), so that tenant row must exist.
 	memStorage := iam.NewMemoryStorage()
 	tenantManager := iam.NewDefaultTenantManager(memStorage)
 	_, err := tenantManager.CreateTenant(context.Background(), iam.CreateTenantOptions{
-		ID: "default", Name: "Default",
+		ID: qrdbsdk.SystemTenantID, Name: "System",
 	})
 	require.NoError(t, err)
 	appManager := iam.NewAppManager(memStorage, tenantManager)
@@ -613,4 +617,70 @@ func TestServer_EnsureOrchestratorDaemonClient_WriteCacheError(t *testing.T) {
 	_, err = srv.ensureOrchestratorDaemonClient(context.Background(), appManager)
 	require.Error(t, err, "an unwritable cache directory must fail ensureOrchestratorDaemonClient")
 	require.Contains(t, err.Error(), "persist cache")
+}
+
+// =============================================================================
+// iam_init.go — ensureOrchestratorDaemonClient registers under the system
+// tenant (qrdbsdk.SystemTenantID), NOT the retired "default" tenant.
+//
+// Regression for the tenant-fallback migration: the orchestrator daemon
+// client must be provisioned under the control-plane system tenant that
+// qrdb always provisions. The persisted client and the registered app must
+// both carry SystemTenantID.
+// =============================================================================
+
+func TestServer_EnsureOrchestratorDaemonClient_RegistersUnderSystemTenant(t *testing.T) {
+	srv := withTempServer(t)
+	require.NoError(t, os.MkdirAll(srv.config.Storage.DataDir, 0o700))
+
+	// Build a real AppManager with ONLY the system tenant present. If the code
+	// still targeted "default", RegisterApp would fail (no such tenant).
+	memStorage := iam.NewMemoryStorage()
+	tenantManager := iam.NewDefaultTenantManager(memStorage)
+	_, err := tenantManager.CreateTenant(context.Background(), iam.CreateTenantOptions{
+		ID: qrdbsdk.SystemTenantID, Name: "System",
+	})
+	require.NoError(t, err)
+	appManager := iam.NewAppManager(memStorage, tenantManager)
+
+	client, err := srv.ensureOrchestratorDaemonClient(context.Background(), appManager)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	assert.Equal(t, qrdbsdk.SystemTenantID, client.TenantID,
+		"orchestrator daemon client must be provisioned under the system tenant")
+	assert.NotEmpty(t, client.ClientID)
+	assert.NotEmpty(t, client.ClientSecret)
+
+	// The app must actually live under the system tenant.
+	apps, err := appManager.ListApps(context.Background(), qrdbsdk.SystemTenantID, iam.ListOptions{Limit: 10})
+	require.NoError(t, err)
+	var found bool
+	for _, a := range apps {
+		if a.Name == OrchestratorDaemonClientAppName {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "orchestrator app must be registered under the system tenant")
+}
+
+// TestServer_EnsureOrchestratorDaemonClient_RegisterFailureSurfacesError
+// covers the real error path: when the system tenant row is absent, RegisterApp
+// fails (tenant-not-found via the quota check) and ensureOrchestratorDaemonClient
+// returns that error rather than silently continuing. This preserves the
+// existing error-handling semantics after the tenant retarget to SystemTenantID.
+func TestServer_EnsureOrchestratorDaemonClient_RegisterFailureSurfacesError(t *testing.T) {
+	srv := withTempServer(t)
+	require.NoError(t, os.MkdirAll(srv.config.Storage.DataDir, 0o700))
+
+	// AppManager with NO tenants at all: RegisterApp under the system tenant
+	// fails because the tenant (and its quota row) does not exist.
+	memStorage := iam.NewMemoryStorage()
+	tenantManager := iam.NewDefaultTenantManager(memStorage)
+	appManager := iam.NewAppManager(memStorage, tenantManager)
+
+	client, err := srv.ensureOrchestratorDaemonClient(context.Background(), appManager)
+	require.Error(t, err, "a missing system tenant must surface a register-app error")
+	require.Nil(t, client)
+	assert.Contains(t, err.Error(), "register app")
 }

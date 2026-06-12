@@ -18,15 +18,21 @@
 
   Token storage:
     On success the server returns { access_token, refresh_token, id_token }.
-    access_token is persisted to localStorage under "quicbaas_token" so that
-    subsequent API calls can attach "Authorization: Bearer <token>".
+    The tokens are handed to the shared auth store (setAuthenticated), which
+    persists access_token to localStorage under "quicbaas_token" AND flips the
+    in-tab auth status to 'authenticated'. The status flip is essential: the
+    MainApp route guard bounces protected routes to /login whenever the status
+    is 'unauthenticated', so persisting the token alone is not enough — the
+    status must change in this tab before routeDashboard() runs.
 -->
 <script lang="ts">
   import { KeyRound, CreditCard } from 'lucide-svelte';
   import { routeDashboard } from '../../stores/router.svelte.ts';
   import { setConnected } from '../../stores/connection.svelte.ts';
+  import { setAuthenticated } from '../../stores/auth.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
-  import type { PublicTenant, PublicKeyCredentialJSON, AuthTokenResponse } from '@quicbaas/sdk';
+  import { parseRequestOptions, encodeAssertionResponse } from '../../lib/webauthn.ts';
+  import type { PublicTenant, AuthTokenResponse } from '@quicbaas/sdk';
 
   // ---------------------------------------------------------------------------
   // State
@@ -64,8 +70,9 @@
         tenants = list;
 
         // If the stored selection is no longer valid, fall back to the first tenant.
-        if (list.length > 0 && !list.some((t) => t.id === selectedTenantID)) {
-          selectedTenantID = list[0].id;
+        const first = list[0];
+        if (first !== undefined && !list.some((t) => t.id === selectedTenantID)) {
+          selectedTenantID = first.id;
         }
       } catch {
         // Non-fatal: fall back to 'default' tenant if the public list fails.
@@ -117,15 +124,21 @@
   // Token persistence helpers
   // ---------------------------------------------------------------------------
 
-  function persistTokens(tokens: AuthTokenResponse): void {
-    window.localStorage.setItem('quicbaas_token', tokens.access_token);
-    if (tokens.refresh_token) {
-      window.localStorage.setItem('quicbaas_refresh_token', tokens.refresh_token);
-    }
-  }
-
   function handleAuthSuccess(tokens: AuthTokenResponse): void {
-    persistTokens(tokens);
+    if (!tokens || !tokens.access_token) {
+      // A 200 with no usable token is a server contract violation, not a
+      // success — surface it instead of silently routing to a dead session.
+      errorMessage = 'Sign-in did not return a session token. Please try again.';
+      return;
+    }
+    // setAuthenticated persists the tokens AND flips the shared auth status to
+    // 'authenticated' in THIS tab. That second step is the bug fix: without it
+    // MainApp's route guard still saw 'unauthenticated' and bounced the
+    // freshly-signed-in user straight back to the login chooser.
+    setAuthenticated({
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+    });
     setConnected(window.location.origin, 'rest');
     routeDashboard();
   }
@@ -175,10 +188,12 @@
         return;
       }
 
-      // Step 2: Present the challenge to the browser / authenticator.
-      const assertion = await navigator.credentials.get({
-        publicKey: challengeOptions as unknown as PublicKeyCredentialRequestOptions,
-      });
+      // Step 2: Present the challenge to the browser / authenticator. The
+      // server emits the go-webauthn `{ publicKey: { challenge, ... } }`
+      // envelope with base64url binary members; the helper unwraps it and
+      // decodes challenge / allowCredentials into ArrayBuffers.
+      const publicKey = parseRequestOptions(challengeOptions);
+      const assertion = await navigator.credentials.get({ publicKey });
 
       if (assertion === null) {
         errorMessage = 'Authentication declined or canceled. Try again with your hardware key.';
@@ -186,22 +201,8 @@
         return;
       }
 
-      // Step 3: Serialize assertion bytes into JSON-safe arrays.
-      const pkc = assertion as PublicKeyCredential;
-      const assertionResponse = pkc.response as AuthenticatorAssertionResponse;
-      const credential: PublicKeyCredentialJSON = {
-        id: pkc.id,
-        rawId: Array.from(new Uint8Array(pkc.rawId)),
-        type: pkc.type,
-        response: {
-          authenticatorData: Array.from(new Uint8Array(assertionResponse.authenticatorData)),
-          clientDataJSON: Array.from(new Uint8Array(assertionResponse.clientDataJSON)),
-          signature: Array.from(new Uint8Array(assertionResponse.signature)),
-          userHandle: assertionResponse.userHandle
-            ? Array.from(new Uint8Array(assertionResponse.userHandle))
-            : null,
-        },
-      };
+      // Step 3: Serialize the assertion into the base64url JSON go-webauthn parses.
+      const credential = encodeAssertionResponse(assertion as PublicKeyCredential);
 
       // Step 4: Finish login via SDK — server verifies and returns tokens.
       const tokens = await client.auth.webAuthnFinishLogin(tenantID, trimmedEmail, credential);

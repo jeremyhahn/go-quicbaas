@@ -218,13 +218,20 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().UTC().Add(inviteExpiry)
 
 	// Store the invite record so that the activation handlers can look it up.
+	// This MUST be the same canonical persistent store the activation endpoints
+	// (and first-boot) use; resolve it lazily from the service.
+	inviteStore, err := h.getInviteStore(ctx)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 	inviteRecord := &iam.InviteRecord{
 		TokenHash: iam.TokenHashExported(inviteToken),
 		UserID:    user.ID,
 		TenantID:  tenantID,
 		ExpiresAt: expiresAt,
 	}
-	if err := h.inviteStore.Create(ctx, inviteRecord); err != nil {
+	if err := inviteStore.Create(ctx, inviteRecord); err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}

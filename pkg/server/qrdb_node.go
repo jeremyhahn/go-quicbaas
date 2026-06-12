@@ -318,6 +318,17 @@ func buildXKMSFactors(cfg *config.Config) []qrdbsdk.AuthFactorPlugin {
 	var rpID string
 	if cfg != nil {
 		rpID = cfg.IAM.WebAuthn.RPID
+		// When the operator does not configure an explicit RP ID, derive it
+		// from the canonical issuer URL so the FIDO2 factor verifier agrees
+		// with the WebAuthn relying party, the OIDC issuer, and the activation
+		// banner. An IP-literal issuer yields no valid RP ID; in that case the
+		// factor falls back to the xkms default ("localhost") and the
+		// authoritative fail-closed validation happens during IAM init.
+		if rpID == "" {
+			if derived, _, err := webauthnDefaultsFromIssuer(issuerURLFromConfig(cfg)); err == nil {
+				rpID = derived
+			}
+		}
 	}
 	return xkmssdk.DefaultAuthFactors(xkmssdk.FactorConfig{
 		FIDO2RPID: rpID,

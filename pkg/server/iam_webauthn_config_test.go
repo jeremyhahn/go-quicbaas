@@ -14,27 +14,30 @@
 package server
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
-// TestWebauthnFactoryConfigFromOperator_AppliesDefaults verifies that the
-// translator falls back to the historical dev defaults (localhost /
-// QuicBaaS / https://localhost) when the operator omits required
-// fields. This preserves backward compatibility with operator configs
-// that pre-date Phase 5.
-func TestWebauthnFactoryConfigFromOperator_AppliesDefaults(t *testing.T) {
-	got := webauthnFactoryConfigFromOperator(config.IAMWebAuthnConfig{})
+// TestWebauthnFactoryConfigFromOperator_DerivesFromIssuer verifies that the
+// translator derives RPID and RPOrigins from the issuer-supplied defaults
+// (including the port) when the operator omits them. This is the fix for the
+// "invalid domain" / "error validating origin" bug: the WebAuthn relying
+// party must agree with the issuer/banner host and port.
+func TestWebauthnFactoryConfigFromOperator_DerivesFromIssuer(t *testing.T) {
+	got := webauthnFactoryConfigFromOperator(
+		config.IAMWebAuthnConfig{}, "localhost", "https://localhost:18080")
 	if got.RPID != "localhost" {
-		t.Fatalf("expected default RPID=localhost, got %q", got.RPID)
+		t.Fatalf("expected derived RPID=localhost, got %q", got.RPID)
 	}
 	if got.RPDisplayName != "QuicBaaS" {
 		t.Fatalf("expected default RPDisplayName=QuicBaaS, got %q", got.RPDisplayName)
 	}
-	if len(got.RPOrigins) != 1 || got.RPOrigins[0] != "https://localhost" {
-		t.Fatalf("expected default RPOrigins=[https://localhost], got %v", got.RPOrigins)
+	if len(got.RPOrigins) != 1 || got.RPOrigins[0] != "https://localhost:18080" {
+		t.Fatalf("expected derived RPOrigins=[https://localhost:18080], got %v", got.RPOrigins)
 	}
 	if got.Timeout != 0 {
 		t.Fatalf("expected zero Timeout when operator field empty, got %v", got.Timeout)
@@ -55,7 +58,7 @@ func TestWebauthnFactoryConfigFromOperator_PreservesOperatorValues(t *testing.T)
 		AuthenticatorAttachment: "platform",
 		Debug:                   true,
 	}
-	got := webauthnFactoryConfigFromOperator(op)
+	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
 	if got.RPID != "example.com" {
 		t.Fatalf("RPID not preserved: %q", got.RPID)
 	}
@@ -86,7 +89,7 @@ func TestWebauthnFactoryConfigFromOperator_InvalidTimeoutIgnored(t *testing.T) {
 		RPOrigins:     []string{"https://example.com"},
 		Timeout:       "not-a-duration",
 	}
-	got := webauthnFactoryConfigFromOperator(op)
+	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
 	if got.Timeout != 0 {
 		t.Fatalf("expected zero Timeout on parse failure, got %v", got.Timeout)
 	}
@@ -103,12 +106,184 @@ func TestWebauthnFactoryConfigFromOperator_OriginSliceIsCopied(t *testing.T) {
 		RPDisplayName: "Example",
 		RPOrigins:     origins,
 	}
-	got := webauthnFactoryConfigFromOperator(op)
+	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
 
 	// Mutate the operator slice; the factory copy must not change.
 	origins[0] = "https://attacker.example.com"
 	if got.RPOrigins[0] != "https://example.com" {
 		t.Fatalf("origin slice was not copied: factory got %q after mutation",
 			got.RPOrigins[0])
+	}
+}
+
+// TestWebauthnDefaultsFromIssuer_WithPort verifies the dev-default case: an
+// https issuer on a non-default port derives RPID=hostname and an RP origin
+// that INCLUDES the port exactly as a browser sends it. This is the regression
+// guard for the live "error validating origin" failure (portless default).
+func TestWebauthnDefaultsFromIssuer_WithPort(t *testing.T) {
+	rpID, rpOrigin, err := webauthnDefaultsFromIssuer("https://localhost:18080")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rpID != "localhost" {
+		t.Fatalf("expected RPID=localhost, got %q", rpID)
+	}
+	if rpOrigin != "https://localhost:18080" {
+		t.Fatalf("expected RPOrigin=https://localhost:18080, got %q", rpOrigin)
+	}
+}
+
+// TestWebauthnDefaultsFromIssuer_DefaultHTTPSPortOmitted verifies that the
+// default scheme port (443 for https) is omitted from the derived origin, so
+// it matches the browser-sent Origin header for a standard-port deployment.
+func TestWebauthnDefaultsFromIssuer_DefaultHTTPSPortOmitted(t *testing.T) {
+	rpID, rpOrigin, err := webauthnDefaultsFromIssuer("https://app.example.com:443")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rpID != "app.example.com" {
+		t.Fatalf("expected RPID=app.example.com, got %q", rpID)
+	}
+	if rpOrigin != "https://app.example.com" {
+		t.Fatalf("expected RPOrigin without port, got %q", rpOrigin)
+	}
+}
+
+// TestWebauthnDefaultsFromIssuer_DefaultHTTPPortOmitted verifies that the
+// default http port (80) is omitted from the derived origin.
+func TestWebauthnDefaultsFromIssuer_DefaultHTTPPortOmitted(t *testing.T) {
+	_, rpOrigin, err := webauthnDefaultsFromIssuer("http://app.example.com:80")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rpOrigin != "http://app.example.com" {
+		t.Fatalf("expected RPOrigin without port, got %q", rpOrigin)
+	}
+}
+
+// TestWebauthnDefaultsFromIssuer_IPLiteralFailsClosed verifies the owner-flagged
+// fail-closed behaviour: an IP-literal issuer host cannot serve as a WebAuthn
+// RP ID and must surface a typed WebAuthnRPIDFromIPError at config time.
+func TestWebauthnDefaultsFromIssuer_IPLiteralFailsClosed(t *testing.T) {
+	_, _, err := webauthnDefaultsFromIssuer("https://127.0.0.1:18080")
+	if err == nil {
+		t.Fatal("expected error for IP-literal issuer host, got nil")
+	}
+	var ipErr *WebAuthnRPIDFromIPError
+	if !errors.As(err, &ipErr) {
+		t.Fatalf("expected *WebAuthnRPIDFromIPError, got %T: %v", err, err)
+	}
+	if ipErr.Host != "127.0.0.1" {
+		t.Fatalf("expected Host=127.0.0.1, got %q", ipErr.Host)
+	}
+	if !strings.Contains(ipErr.Error(), "rp_id") {
+		t.Fatalf("error message should mention rp_id remediation, got %q", ipErr.Error())
+	}
+}
+
+// TestWebauthnDefaultsFromIssuer_IPv6LiteralFailsClosed verifies the IPv6
+// loopback literal is also rejected (it is a valid IP, not a domain).
+func TestWebauthnDefaultsFromIssuer_IPv6LiteralFailsClosed(t *testing.T) {
+	_, _, err := webauthnDefaultsFromIssuer("https://[::1]:18080")
+	var ipErr *WebAuthnRPIDFromIPError
+	if !errors.As(err, &ipErr) {
+		t.Fatalf("expected *WebAuthnRPIDFromIPError, got %T: %v", err, err)
+	}
+	if ipErr.Host != "::1" {
+		t.Fatalf("expected Host=::1, got %q", ipErr.Host)
+	}
+}
+
+// TestWebauthnDefaultsFromIssuer_UnparseableFallsBack verifies that an
+// unparseable issuer falls back to the domain dev default (localhost) rather
+// than producing an empty/invalid RP ID.
+func TestWebauthnDefaultsFromIssuer_UnparseableFallsBack(t *testing.T) {
+	rpID, rpOrigin, err := webauthnDefaultsFromIssuer("://not a url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rpID != "localhost" || rpOrigin != "https://localhost" {
+		t.Fatalf("expected localhost fallback, got rpID=%q rpOrigin=%q", rpID, rpOrigin)
+	}
+}
+
+// TestIssuerURLFromConfig_CanonicalisesLoopback verifies the owner-flagged
+// default change: a default Server.Host of 127.0.0.1 (and the IPv4/IPv6
+// loopback / wildcard variants) is canonicalised to "localhost" in the
+// advertised issuer URL, while the configured REST port is preserved.
+func TestIssuerURLFromConfig_CanonicalisesLoopback(t *testing.T) {
+	cases := map[string]string{
+		"127.0.0.1": "https://localhost:28084",
+		"0.0.0.0":   "https://localhost:28084",
+		"::1":       "https://localhost:28084",
+		"::":        "https://localhost:28084",
+		"localhost": "https://localhost:28084",
+		"":          "https://localhost:28084",
+	}
+	for host, want := range cases {
+		cfg := &config.Config{}
+		cfg.Security.TLSEnabled = true
+		cfg.Server.Host = host
+		cfg.Server.REST.Port = 28084
+		if got := issuerURLFromConfig(cfg); got != want {
+			t.Fatalf("host %q: expected issuer %q, got %q", host, want, got)
+		}
+	}
+}
+
+// TestIssuerURLFromConfig_PreservesExplicitHost verifies that an explicitly
+// configured hostname is advertised unchanged (only loopback is normalised).
+func TestIssuerURLFromConfig_PreservesExplicitHost(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Security.TLSEnabled = true
+	cfg.Server.Host = "auth.example.com"
+	cfg.Server.REST.Port = 443
+	if got := issuerURLFromConfig(cfg); got != "https://auth.example.com:443" {
+		t.Fatalf("explicit host not preserved: %q", got)
+	}
+}
+
+// TestWebauthnConfig_ThreeValuesAgree is the regression test for the exact live
+// failure: from ONE server config the begin-options RP ID, the activation
+// banner URL host, and the configured RP origins must all be consistent —
+// RP ID == banner host, and the RP origins must contain the banner URL's
+// origin. With stock defaults this previously had NO satisfiable origin.
+func TestWebauthnConfig_ThreeValuesAgree(t *testing.T) {
+	// Stock dev config: default Server.Host (127.0.0.1) + a chosen REST port.
+	cfg := config.DefaultConfig()
+	cfg.Server.REST.Port = 28084
+
+	issuer := issuerURLFromConfig(cfg)
+
+	// (1) The activation banner URL is built as issuer + "/ui/#/invite/<token>".
+	bannerURL := issuer + "/ui/#/invite/sometoken"
+
+	// (2) The WebAuthn relying party derives from the same issuer.
+	rpID, rpOrigin, err := webauthnDefaultsFromIssuer(issuer)
+	if err != nil {
+		t.Fatalf("derivation failed for stock issuer %q: %v", issuer, err)
+	}
+	wa := webauthnFactoryConfigFromOperator(cfg.IAM.WebAuthn, rpID, rpOrigin)
+
+	// Banner host must equal RP ID (begin-options rp.id).
+	wantHost := "localhost"
+	if !strings.HasPrefix(bannerURL, "https://"+wantHost+":28084/") {
+		t.Fatalf("banner host mismatch: %q", bannerURL)
+	}
+	if wa.RPID != wantHost {
+		t.Fatalf("RP ID (%q) does not match banner host (%q)", wa.RPID, wantHost)
+	}
+
+	// RP origins must contain the banner URL's origin (scheme+host+port).
+	wantOrigin := "https://localhost:28084"
+	found := false
+	for _, o := range wa.RPOrigins {
+		if o == wantOrigin {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("RP origins %v do not contain banner origin %q", wa.RPOrigins, wantOrigin)
 	}
 }

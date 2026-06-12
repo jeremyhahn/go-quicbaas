@@ -21,6 +21,8 @@ import (
 	"io"
 	"net/http"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -139,7 +141,7 @@ func (s *Server) HandleOrchestratorInference(w http.ResponseWriter, r *http.Requ
 
 	tenantID := r.URL.Query().Get("tenant_id")
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = qrdbsdk.SystemTenantID
 	}
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 

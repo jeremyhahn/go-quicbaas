@@ -59,6 +59,17 @@ type mockAgentBackend struct {
 	closeFn     func(ctx context.Context, sessionID string) error
 	caps        BackendCapabilities
 	backendType string
+
+	// resolvedHost, when non-empty, makes this mock satisfy the
+	// resolvedHostBackend interface so SpawnSession captures it as the
+	// session's pinned host. Used to exercise the Prompt/Status/Close
+	// re-resolution-pinning regression path.
+	resolvedHost string
+}
+
+// ResolvedHost implements resolvedHostBackend when resolvedHost is set.
+func (m *mockAgentBackend) ResolvedHost() string {
+	return m.resolvedHost
 }
 
 func (m *mockAgentBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Session, error) {

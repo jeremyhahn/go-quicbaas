@@ -4,7 +4,16 @@
 # Server configuration
 # The server section defines network interfaces and protocol-specific settings
 server:
-  # Bind address for all server interfaces
+  # Bind address for all server interfaces.
+  #
+  # NOTE: this is only the LISTEN address. The externally advertised URL —
+  # used for the OIDC issuer claim, the first-boot activation banner, and the
+  # WebAuthn relying-party defaults (RP ID + origin) — is derived from this
+  # value, and loopback bind addresses ("", 0.0.0.0, ::, 127.0.0.1, ::1) are
+  # canonicalised to "localhost" because the WebAuthn RP ID must be a domain
+  # (browsers reject IP literals). If you set host to a routable IP literal,
+  # configure iam.webauthn.rp_id / rp_origins explicitly or WebAuthn init
+  # fails closed.
   host: "127.0.0.1"
 
   # HTTP timeout settings (applies to REST and other HTTP-based protocols)

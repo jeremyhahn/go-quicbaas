@@ -23,6 +23,7 @@
 <script lang="ts">
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { navigateTo } from '../../stores/router.svelte.ts';
+  import { parseCreationOptions, encodeAttestationResponse } from '../../lib/webauthn.ts';
   import type { InviteMetadata, ActivationResponse } from '@quicbaas/sdk';
 
   // ---------------------------------------------------------------------------
@@ -99,32 +100,27 @@
     try {
       const client = await getSDKClient();
 
-      // Begin: fetch credential creation options from server.
-      const options = await client.iam.activateFIDO2Begin(token);
+      // Begin: fetch credential creation options from the server. The server
+      // emits the go-webauthn `{ publicKey: { challenge, ... } }` envelope with
+      // base64url-encoded binary members; the helper unwraps it and decodes the
+      // challenge / user.id / excludeCredentials into ArrayBuffers.
+      const beginOptions = await client.iam.activateFIDO2Begin(token);
+      const publicKey = parseCreationOptions(beginOptions);
 
       // Ask the browser to create a new credential.
-      // navigator.credentials.create() is standard Web Authentication API.
-      const rawCredential = await navigator.credentials.create({
-        publicKey: options as unknown as PublicKeyCredentialCreationOptions,
-      });
+      // navigator.credentials.create() is the standard Web Authentication API.
+      const rawCredential = await navigator.credentials.create({ publicKey });
       if (rawCredential === null) {
         throw new Error('Credential creation cancelled');
       }
 
-      // Serialize the PublicKeyCredential for transport.
-      const pkc = rawCredential as PublicKeyCredential;
-      const response = pkc.response as AuthenticatorAttestationResponse;
-      const credential: Record<string, unknown> = {
-        id: pkc.id,
-        rawId: Array.from(new Uint8Array(pkc.rawId)),
-        type: pkc.type,
-        response: {
-          clientDataJSON: Array.from(new Uint8Array(response.clientDataJSON)),
-          attestationObject: Array.from(new Uint8Array(response.attestationObject)),
-        },
-      };
+      // Serialize the attestation into the base64url JSON go-webauthn parses.
+      const credential = encodeAttestationResponse(rawCredential as PublicKeyCredential);
 
-      const result: ActivationResponse = await client.iam.activateFIDO2Finish(token, credential);
+      const result: ActivationResponse = await client.iam.activateFIDO2Finish(
+        token,
+        credential as unknown as Record<string, unknown>,
+      );
       successMessage = result.message || 'Account activated successfully';
       phase = 'done';
     } catch (e) {

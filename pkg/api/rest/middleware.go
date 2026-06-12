@@ -114,8 +114,14 @@ func initMiddlewareMetrics() {
 func SecurityHeadersMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// HSTS - Force HTTPS for 1 year, including subdomains
-			w.Header().Set(HeaderStrictTransportSecurity, "max-age=31536000; includeSubDomains")
+			// HSTS - Force HTTPS for 1 year, including subdomains.
+			// Per RFC 6797 §7.2, an HSTS host MUST NOT include the STS
+			// header field in responses conveyed over non-secure transport.
+			// r.TLS is non-nil only when the request arrived over TLS, so
+			// the header is emitted exclusively for secure connections.
+			if r.TLS != nil {
+				w.Header().Set(HeaderStrictTransportSecurity, "max-age=31536000; includeSubDomains")
+			}
 
 			// Prevent clickjacking by denying frame embedding
 			w.Header().Set(HeaderXFrameOptions, "DENY")

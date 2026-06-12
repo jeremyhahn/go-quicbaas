@@ -125,6 +125,14 @@ func (p *iamServiceAdapter) GetSessionManager(_ context.Context) (SessionManager
 	return p.components.GetSessionManager(), nil
 }
 
+// GetInviteStore returns the persistent invite token store from IAM components.
+func (p *iamServiceAdapter) GetInviteStore(_ context.Context) (iam.InviteStore, error) {
+	if p.components == nil {
+		return nil, nil
+	}
+	return p.components.GetInviteStore(), nil
+}
+
 // GetAdminManager returns the admin manager from IAM components.
 func (p *iamServiceAdapter) GetAdminManager(_ context.Context) (*iam.AdminManager, error) {
 	if p.components == nil {

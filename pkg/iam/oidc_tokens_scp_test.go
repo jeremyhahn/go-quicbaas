@@ -283,3 +283,133 @@ func TestGenerateAccessToken_SCPResolverError(t *testing.T) {
 		t.Fatal("expected issuance to fail when RBAC resolution errors")
 	}
 }
+
+// subFromToken parses the signed token and returns its sub claim as a string.
+func subFromToken(t *testing.T, token string, key *rsa.PrivateKey) string {
+	t.Helper()
+	claims, err := xkms.JWTVerifyWithKeyAndClaims(token, &key.PublicKey, "RS256")
+	if err != nil {
+		t.Fatalf("parse token: %v", err)
+	}
+	sub, ok := claims["sub"].(string)
+	if !ok {
+		t.Fatalf("sub claim is %T, want string", claims["sub"])
+	}
+	return sub
+}
+
+// rolesFromToken parses the signed token and returns its roles claim.
+func rolesFromToken(t *testing.T, token string, key *rsa.PrivateKey) []string {
+	t.Helper()
+	claims, err := xkms.JWTVerifyWithKeyAndClaims(token, &key.PublicKey, "RS256")
+	if err != nil {
+		t.Fatalf("parse token: %v", err)
+	}
+	raw, ok := claims["roles"]
+	if !ok || raw == nil {
+		return nil
+	}
+	arr, ok := raw.([]interface{})
+	if !ok {
+		t.Fatalf("roles claim is %T, want array", raw)
+	}
+	out := make([]string, 0, len(arr))
+	for _, v := range arr {
+		out = append(out, v.(string))
+	}
+	return out
+}
+
+// TestIssueHardwareTokens_AdminCarriesRolesAndCanonicalSubject is the end-to-end
+// regression for the passkey-login token-issuance bug (tests a + b + c): an admin
+// user with a canonical decimal-string id and an "admin" role binding issues an
+// access token whose
+//   - sub is the canonical STRING subject (not raw uint64 bytes),
+//   - roles claim is non-empty (carries the subject's role bindings),
+//   - scp carries the admin role's qrdb-resolved wildcard permissions (NOT the
+//     OIDC scope fallback),
+//
+// and the SAME canonical subject is threaded to the qrdb PDP for resolution.
+func TestIssueHardwareTokens_AdminCarriesRolesAndCanonicalSubject(t *testing.T) {
+	const adminSubject = "1234567890123456789" // canonical decimal-string user id
+	rbac := &fakeRBACClient{permsByRole: map[string][]string{
+		"admin": {"orchestrator:*", "keys:*", "scheduler:*"},
+	}}
+	svc, key := newSCPTestService(t, &fakePermissionResolver{client: rbac})
+
+	set, err := svc.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
+		User: &User{
+			ID:       adminSubject,
+			TenantID: "system",
+			Email:    "admin@example.com",
+			Name:     "Admin",
+			Roles:    []string{"admin"},
+		},
+		AMR: []string{"webauthn", "hwk"},
+		ACR: ACRHardwareAttested,
+	})
+	if err != nil {
+		t.Fatalf("IssueHardwareTokens: %v", err)
+	}
+
+	// (c) Subject is the canonical decimal STRING, never raw bytes.
+	if sub := subFromToken(t, set.AccessToken, key); sub != adminSubject {
+		t.Errorf("access token sub = %q, want canonical %q", sub, adminSubject)
+	}
+
+	// (a) roles claim is non-empty and carries the subject's role bindings.
+	if roles := rolesFromToken(t, set.AccessToken, key); len(roles) != 1 || roles[0] != "admin" {
+		t.Errorf("access token roles = %v, want [admin]", roles)
+	}
+
+	// (b) scp carries the admin wildcards from qrdb resolution, NOT OIDC scope.
+	scp := scpFromToken(t, set.AccessToken, key)
+	for _, want := range []string{"orchestrator:*", "keys:*", "scheduler:*"} {
+		if !hasScope(scp, want) {
+			t.Errorf("admin scp missing %q; got %v", want, scp)
+		}
+	}
+	if hasScope(scp, "openid") || hasScope(scp, "profile") {
+		t.Errorf("scp must be qrdb-resolved perms, not OIDC scope fallback; got %v", scp)
+	}
+
+	// The canonical subject is the SAME identity threaded to the PDP.
+	if rbac.lastIdentity == nil || rbac.lastIdentity.Subject != adminSubject {
+		t.Errorf("PDP identity subject = %+v, want %q", rbac.lastIdentity, adminSubject)
+	}
+}
+
+// TestIssueHardwareTokens_NoRolesFallsBackToScope is the over-grant regression
+// (test d): a user with NO roles still issues a valid token, but its scp is the
+// OIDC fallback (no resolved perms), so a protected scope is NOT over-granted.
+func TestIssueHardwareTokens_NoRolesFallsBackToScope(t *testing.T) {
+	rbac := &fakeRBACClient{permsByRole: map[string][]string{
+		"admin": {"orchestrator:*"},
+	}}
+	svc, key := newSCPTestService(t, &fakePermissionResolver{client: rbac})
+
+	set, err := svc.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
+		User: &User{
+			ID:       "987654321",
+			TenantID: "system",
+			Email:    "nobody@example.com",
+			Name:     "Nobody",
+			// no roles
+		},
+	})
+	if err != nil {
+		t.Fatalf("IssueHardwareTokens: %v", err)
+	}
+	// Valid token with a canonical subject.
+	if sub := subFromToken(t, set.AccessToken, key); sub != "987654321" {
+		t.Errorf("sub = %q, want canonical 987654321", sub)
+	}
+	// scp falls back to OIDC scope (no resolved perms) and never grants admin.
+	scp := scpFromToken(t, set.AccessToken, key)
+	if !hasScope(scp, "openid") {
+		t.Errorf("no-role user scp should fall back to OIDC scope; got %v", scp)
+	}
+	if hasScope(scp, "orchestrator:*") {
+		t.Errorf("no-role user must not be over-granted admin perms; got %v", scp)
+	}
+}

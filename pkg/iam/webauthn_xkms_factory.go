@@ -139,6 +139,23 @@ func (e *WebAuthnLoginSessionError) Error() string {
 	return "iam.webauthn.login: " + e.Reason
 }
 
+// WebAuthnUserResolverError reports that FinishLogin could not map the asserted
+// webauthn identity back to a canonical broker iam.User. It is an auth
+// fail-closed signal: the manager refuses to surface a half-populated user
+// (which would yield a token with an unusable subject and no roles) when the
+// canonical user store is missing or returns no user.
+type WebAuthnUserResolverError struct {
+	Reason string
+}
+
+// Error implements error.
+func (e *WebAuthnUserResolverError) Error() string {
+	if e == nil || e.Reason == "" {
+		return "iam.webauthn.login: canonical user resolution failed"
+	}
+	return "iam.webauthn.login: " + e.Reason
+}
+
 // WebAuthnServiceFactory builds and caches per-tenant xkms WebAuthn
 // services. Each tenant gets its own *xkmswebauthn.Service backed by
 // the xkms qrdb adapter pair scoped to that tenant id (Option A from

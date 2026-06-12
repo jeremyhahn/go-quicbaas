@@ -162,6 +162,18 @@ func (s *quicBaaS) GetSessionManager(ctx context.Context) (SessionManager, error
 	return provider.GetSessionManager(ctx)
 }
 
+// GetInviteStore returns the persistent invite token store from IAM components.
+// This is the SAME store first-boot writes the one-time activation invite into,
+// so the REST invite endpoints redeem the banner token rather than reading a
+// disjoint in-memory store.
+func (s *quicBaaS) GetInviteStore(ctx context.Context) (iam.InviteStore, error) {
+	provider := s.getIAMProvider()
+	if provider == nil {
+		return nil, nil
+	}
+	return provider.GetInviteStore(ctx)
+}
+
 // GetAdminManager returns the admin manager from IAM components.
 // This method satisfies the interface expected by REST handlers for delegated administration.
 func (s *quicBaaS) GetAdminManager(ctx context.Context) (*iam.AdminManager, error) {

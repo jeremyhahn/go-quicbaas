@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
@@ -100,7 +102,7 @@ func TestHandleOrchestratorSessionEvents_JSONHistory(t *testing.T) {
 	// Seed a couple of events.
 	for i := uint64(1); i <= 2; i++ {
 		require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
-			Sequence: i, TenantID: "default", SessionID: "s1",
+			Sequence: i, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 			Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 			Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
 		}))
@@ -121,7 +123,7 @@ func TestHandleOrchestratorSessionEvents_LastEventIDResume(t *testing.T) {
 	defer cleanup()
 
 	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
-		Sequence: 1, TenantID: "default", SessionID: "s1",
+		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
 	}))
@@ -134,6 +136,40 @@ func TestHandleOrchestratorSessionEvents_LastEventIDResume(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestHandleOrchestratorSessionEvents_NoTenantDefaultsToSystem is the
+// regression guard for the tenant-fallback migration: a request with no
+// tenant_id query parameter must resolve to qrdbsdk.SystemTenantID (NOT the
+// retired "default" tenant). Events seeded under the system tenant are
+// returned for an unscoped request; events seeded under "default" are not.
+func TestHandleOrchestratorSessionEvents_NoTenantDefaultsToSystem(t *testing.T) {
+	server, log, cleanup := setupSessionEventsServer(t, true)
+	defer cleanup()
+
+	// Seed one event under the system tenant and one under the retired
+	// "default" tenant, both for the same session.
+	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
+		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
+		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "system-event"},
+	}))
+	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+		Sequence: 1, TenantID: "default", SessionID: "s1",
+		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
+		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "legacy-event"},
+	}))
+
+	// No tenant_id query param → fallback resolves to the system tenant.
+	req := sessionEventsReq(http.MethodGet, "/x", "s1")
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorSessionEvents(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	body := w.Body.String()
+	assert.Contains(t, body, "system-event", "unscoped request must read the system tenant")
+	assert.NotContains(t, body, "legacy-event", "unscoped request must NOT read the retired default tenant")
+}
+
 // SSE replay path: with a seeded history and follow=false the handler streams
 // the events as SSE frames then closes.
 func TestHandleOrchestratorSessionEvents_SSEReplay(t *testing.T) {
@@ -141,7 +177,7 @@ func TestHandleOrchestratorSessionEvents_SSEReplay(t *testing.T) {
 	defer cleanup()
 
 	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
-		Sequence: 1, TenantID: "default", SessionID: "s1",
+		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
 	}))
@@ -163,7 +199,7 @@ func TestHandleOrchestratorSessionEvents_SSEFollow(t *testing.T) {
 	defer cleanup()
 
 	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
-		Sequence: 1, TenantID: "default", SessionID: "s1",
+		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
 	}))

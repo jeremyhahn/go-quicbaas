@@ -445,6 +445,20 @@ fmt-check: ## Check code formatting (fails if not formatted, excludes vendor)
 	fi
 	@echo "$(GREEN)All code is properly formatted$(NC)"
 
+.PHONY: check-insecure-tls
+check-insecure-tls: ## Enforce InsecureSkipVerify allowlist - empty allowlist means any assignment fails
+	@echo "$(BLUE)Checking InsecureSkipVerify allowlist...$(NC)"
+	@violations=$$(grep -rPn 'InsecureSkipVerify[[:space:]]*:[[:space:]]*true' --include="*.go" --exclude-dir='.deps' --exclude-dir='vendor' . \
+		| grep -Pv '^[^:]+:[0-9]+:[[:space:]]*//' \
+		|| true); \
+	if [ -n "$$violations" ]; then \
+		echo "$(RED)FORBIDDEN InsecureSkipVerify in go-quicbaas (no allowlist entries):$(NC)"; \
+		printf '%s\n' "$$violations"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)InsecureSkipVerify allowlist check passed$(NC)"
+
+
 .PHONY: vet
 vet: ## Run go vet
 	@echo "$(BLUE)Running go vet...$(NC)"
@@ -758,7 +772,7 @@ TEST_TAGS := !integration $(strip $(BUILD_TAGS))
 IAM_TEST_TAGS := $(TEST_TAGS)
 
 .PHONY: test
-test: ## Run unit tests (excludes integration tests)
+test: check-insecure-tls ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"

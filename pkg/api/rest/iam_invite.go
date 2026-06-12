@@ -55,7 +55,13 @@ func (h *IAMHandler) GetInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record, err := h.inviteStore.GetByToken(ctx, token)
+	inviteStore, err := h.getInviteStore(ctx)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	record, err := inviteStore.GetByToken(ctx, token)
 	if err != nil {
 		if errors.Is(err, iam.ErrInviteNotFound) {
 			RespondIAMError(w, r, http.StatusNotFound,
@@ -111,7 +117,13 @@ func (h *IAMHandler) ActivateFIDO2Begin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	record, err := h.inviteStore.GetByToken(ctx, token)
+	inviteStore, err := h.getInviteStore(ctx)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	record, err := inviteStore.GetByToken(ctx, token)
 	if err != nil {
 		if errors.Is(err, iam.ErrInviteNotFound) {
 			RespondIAMError(w, r, http.StatusNotFound,
@@ -181,7 +193,13 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	record, err := h.inviteStore.GetByToken(ctx, token)
+	inviteStore, err := h.getInviteStore(ctx)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	record, err := inviteStore.GetByToken(ctx, token)
 	if err != nil {
 		if errors.Is(err, iam.ErrInviteNotFound) {
 			RespondIAMError(w, r, http.StatusNotFound,
@@ -265,8 +283,20 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	// Consume the invite.
-	_ = h.inviteStore.MarkUsed(ctx, token)
+	// Consume the invite. MarkUsed failure on a one-time token is
+	// security-relevant: if we cannot record the token as spent it remains
+	// redeemable, so we must NOT report success. The credential is already
+	// registered and the user is active, so the operator's authenticator works;
+	// we surface a 500 so the failure is visible and the unconsumed invite is
+	// not silently left live.
+	if err := inviteStore.MarkUsed(ctx, token); err != nil {
+		h.logAuditEvent(ctx, record.TenantID, iam.AuditEventUserManagement,
+			iam.AuditCategorySecurity, "invite.mark_used", iam.AuditOutcomeFailure,
+			&iam.AuditResource{Type: "invite", ID: record.UserID},
+			map[string]interface{}{"error": err.Error()})
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 
 	RespondJSON(w, r, http.StatusOK, &ActivationResponse{
 		UserID:  record.UserID,
@@ -348,10 +378,16 @@ func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up user ID from the invite for the response.
-	record, _ := h.inviteStore.GetByToken(ctx, token)
+	// Look up the user ID from the (now-consumed) invite for the response.
+	// Activation already succeeded inside activator.Activate, so a lookup
+	// failure here is cosmetic: log it and return success with an empty UserID
+	// rather than failing a request whose side effect already committed.
 	userID := ""
-	if record != nil {
+	if inviteStore, storeErr := h.getInviteStore(ctx); storeErr != nil {
+		h.server.logger.WithError(storeErr).Warn("piv activation: invite store unavailable for response user id lookup")
+	} else if record, lookupErr := inviteStore.GetByToken(ctx, token); lookupErr != nil {
+		h.server.logger.WithError(lookupErr).Warn("piv activation: failed to resolve invite for response user id")
+	} else if record != nil {
 		userID = record.UserID
 	}
 
@@ -359,6 +395,33 @@ func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 		UserID:  userID,
 		Message: "PIV activation successful",
 	})
+}
+
+// ErrInviteStoreUnavailable indicates the canonical persistent InviteStore is
+// not wired into the service. There is intentionally NO in-memory fallback: the
+// activation invite first-boot prints lives in the persistent store, so a
+// missing store is a wiring fault that must surface, never be papered over.
+var ErrInviteStoreUnavailable = errors.New("iam: invite store not available")
+
+// getInviteStore resolves the canonical persistent InviteStore from the service.
+// It mirrors getIdentityStore: the store is owned by the IAM components and wired
+// after handler construction (SetIAMProvider), so it is resolved lazily per
+// request rather than captured on the handler. A nil store fails closed.
+func (h *IAMHandler) getInviteStore(ctx context.Context) (iam.InviteStore, error) {
+	svc, ok := h.server.service.(interface {
+		GetInviteStore(ctx context.Context) (iam.InviteStore, error)
+	})
+	if !ok {
+		return nil, ErrInviteStoreUnavailable
+	}
+	store, err := svc.GetInviteStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, ErrInviteStoreUnavailable
+	}
+	return store, nil
 }
 
 // getIdentityStore is a helper that retrieves the IdentityStore from the service.

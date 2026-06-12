@@ -33,7 +33,9 @@
   import { KeyRound } from 'lucide-svelte';
   import { routeLogin, routeDashboard } from '../../stores/router.svelte.ts';
   import { setConnected } from '../../stores/connection.svelte.ts';
+  import { setAuthenticated } from '../../stores/auth.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { parseCreationOptions, encodeAttestationResponse } from '../../lib/webauthn.ts';
   import type { SelfRegisterFinishResponse } from '@quicbaas/sdk';
 
   // ---------------------------------------------------------------------------
@@ -55,21 +57,18 @@
   // Helpers
   // ---------------------------------------------------------------------------
 
+  // persistTokens hands the issued tokens to the shared auth store, which both
+  // persists them to localStorage AND flips the in-tab auth status to
+  // 'authenticated'. The status flip is what lets the post-registration
+  // routeDashboard() land — without it MainApp's route guard would bounce the
+  // newly-registered user straight back to /login (same bug class as the
+  // passkey login path).
   function persistTokens(resp: SelfRegisterFinishResponse): void {
-    if (resp.access_token) {
-      window.localStorage.setItem('quicbaas_token', resp.access_token);
-    }
-    if (resp.refresh_token) {
-      window.localStorage.setItem('quicbaas_refresh_token', resp.refresh_token);
-    }
-  }
-
-  // base64url-encode a Uint8Array (for WebAuthn serialisation).
-  function b64url(buf: ArrayBuffer): string {
-    return btoa(String.fromCharCode(...new Uint8Array(buf)))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
+    if (!resp.access_token) return;
+    setAuthenticated({
+      access_token: resp.access_token,
+      refresh_token: resp.refresh_token,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -111,29 +110,15 @@
         isolation_mode: isolationMode,
       });
 
-      // Step 2: present the WebAuthn creation challenge to the browser.
+      // Step 2: present the WebAuthn creation challenge to the browser. The
+      // server emits the go-webauthn `{ publicKey: { challenge, ... } }`
+      // envelope with base64url binary members; the helper unwraps it and
+      // decodes challenge / user.id / excludeCredentials into ArrayBuffers.
       const creationOptions = beginResp.public_key_credential_creation_options;
       let credential: PublicKeyCredential;
       try {
-        // The server returns challenge/user.id as base64url strings; the
-        // WebAuthn API expects ArrayBuffer. Decode them here.
-        const opts = JSON.parse(JSON.stringify(creationOptions)) as PublicKeyCredentialCreationOptions;
-
-        // Decode challenge bytes.
-        if (typeof (opts.challenge as unknown) === 'string') {
-          const ch = opts.challenge as unknown as string;
-          const bin = atob(ch.replace(/-/g, '+').replace(/_/g, '/'));
-          (opts as unknown as Record<string, unknown>).challenge = Uint8Array.from(bin, (c) => c.charCodeAt(0)).buffer;
-        }
-
-        // Decode user.id bytes.
-        if (opts.user && typeof (opts.user.id as unknown) === 'string') {
-          const uid = opts.user.id as unknown as string;
-          const bin = atob(uid.replace(/-/g, '+').replace(/_/g, '/'));
-          opts.user.id = Uint8Array.from(bin, (c) => c.charCodeAt(0)).buffer as unknown as BufferSource;
-        }
-
-        const cred = await navigator.credentials.create({ publicKey: opts });
+        const publicKey = parseCreationOptions(creationOptions);
+        const cred = await navigator.credentials.create({ publicKey });
         if (cred === null) {
           errorMessage = 'Credential creation was declined or cancelled. Try again with your hardware key.';
           stage = 'error';
@@ -154,22 +139,14 @@
         return;
       }
 
-      // Step 3: serialise the attestation response.
-      const attestation = credential.response as AuthenticatorAttestationResponse;
-      const credentialJSON: Record<string, unknown> = {
-        id: credential.id,
-        raw_id: b64url(credential.rawId),
-        type: credential.type,
-        response: {
-          attestation_object: b64url(attestation.attestationObject),
-          client_data_json: b64url(attestation.clientDataJSON),
-        },
-      };
+      // Step 3: serialise the attestation into the base64url JSON go-webauthn
+      // parses (camelCase keys: rawId / attestationObject / clientDataJSON).
+      const credentialJSON = encodeAttestationResponse(credential);
 
       // Step 4: finish — server verifies attestation, creates tenant+user.
       const finishResp = await client.auth.registerFinish({
         session_id: beginResp.session_id,
-        credential: credentialJSON,
+        credential: credentialJSON as unknown as Record<string, unknown>,
       });
 
       doneResponse = finishResp;

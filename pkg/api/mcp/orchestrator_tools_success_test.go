@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -740,6 +742,42 @@ func TestExecuteOrchestratorInference_Success(t *testing.T) {
 	assert.Contains(t, raw, "end_turn")
 	assert.Contains(t, raw, "llama3")
 	assert.Contains(t, raw, "4.")
+}
+
+// TestExecuteOrchestratorInference_NoTenantDefaultsToSystem verifies the
+// tenant-fallback migration for the MCP inference tool: when the caller omits
+// tenant_id, the tool resolves it to qrdbsdk.SystemTenantID (NOT the retired
+// "default" tenant) in both the InferRequest and the request context.
+func TestExecuteOrchestratorInference_NoTenantDefaultsToSystem(t *testing.T) {
+	t.Parallel()
+
+	var gotReqTenant, gotCtxTenant string
+	agentSvc := &mockAgentService{
+		inferFn: func(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+			gotReqTenant = req.TenantID
+			gotCtxTenant = orchestration.TenantFromContext(ctx)
+			ch := make(chan *orchestration.InferChunk, 1)
+			ch <- &orchestration.InferChunk{
+				Delta:      []orchestration.ContentBlock{{Type: "text", Text: "ok"}},
+				StopReason: "end_turn",
+				Final:      true,
+			}
+			close(ch)
+			return ch, nil
+		},
+	}
+	reg := newAgentRegistry(t, agentSvc)
+
+	// No tenant_id arg → fallback path.
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
+		"backend": "ollama",
+		"prompt":  "say hello",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, qrdbsdk.SystemTenantID, gotReqTenant,
+		"omitted tenant_id must resolve to the system tenant in the request")
+	assert.Equal(t, qrdbsdk.SystemTenantID, gotCtxTenant,
+		"omitted tenant_id must resolve to the system tenant in the context")
 }
 
 func TestExecuteOrchestratorInference_MissingBackend(t *testing.T) {

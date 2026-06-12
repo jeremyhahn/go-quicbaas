@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -656,6 +657,16 @@ func applyServerFlags(cmd *cobra.Command) {
 	}
 	if cmd.Flags().Changed("data-dir") {
 		cfg.Storage.DataDir = dataDir
+		// Relocate the WAL directory under the new data dir unless the operator
+		// explicitly pinned storage.wal_dir via env var or config file. viper.IsSet
+		// is true when the QUICBAAS_STORAGE_WAL_DIR env var is bound (see BindEnv in
+		// initConfig) or when the key is present in a loaded config file, so an
+		// explicit wal_dir always wins; --data-dir alone derives it. Without this,
+		// the absolute default (/var/lib/quicbaas/wal) survives a --data-dir
+		// override and fails the boot-time directory-writable validation.
+		if !viper.IsSet("storage.wal_dir") {
+			cfg.Storage.WALDir = filepath.Join(cfg.Storage.DataDir, "wal")
+		}
 	}
 
 	// Apply embedded agent flags.

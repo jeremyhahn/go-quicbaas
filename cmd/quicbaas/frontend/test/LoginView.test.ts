@@ -3,11 +3,19 @@
  *
  * Verifies that LoginView:
  *   - Renders FIDO2 + PIV options with no password input.
- *   - Passkey click shows email field; submitting calls begin/finish endpoints
- *     and then navigator.credentials.get with the challenge.
- *   - Smartcard click POSTs to /api/v1/auth/login/piv and follows the PIV path.
- *   - On successful login, tokens are persisted and the router redirects to /dashboard.
- *   - Error states produce the correct alert messages.
+ *   - Passkey click shows email field; submitting calls the SDK begin/finish
+ *     methods and then navigator.credentials.get with the decoded challenge.
+ *   - Smartcard click calls the SDK PIV login method.
+ *   - On a successful finish (200 with tokens), the tokens are persisted AND
+ *     the shared auth status flips to 'authenticated' (so MainApp's route guard
+ *     does NOT bounce the user back to /login), then the router redirects to
+ *     /dashboard.
+ *   - A finish failure surfaces a real error alert instead of a silent reset.
+ *
+ * The component talks to the server exclusively through the SDK client
+ * (client.auth.*), so these tests mock getSDKClient — not raw fetch. The
+ * shared auth store is mocked so the status-flip assertion is deterministic
+ * and isolated from localStorage timing.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -17,9 +25,22 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/sv
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockRouteDashboard, mockSetConnected } = vi.hoisted(() => ({
+const {
+  mockRouteDashboard,
+  mockSetConnected,
+  mockSetAuthenticated,
+  mockWebAuthnBeginLogin,
+  mockWebAuthnFinishLogin,
+  mockLoginPIV,
+  mockListPublicTenants,
+} = vi.hoisted(() => ({
   mockRouteDashboard: vi.fn(),
   mockSetConnected: vi.fn(),
+  mockSetAuthenticated: vi.fn(),
+  mockWebAuthnBeginLogin: vi.fn(),
+  mockWebAuthnFinishLogin: vi.fn(),
+  mockLoginPIV: vi.fn(),
+  mockListPublicTenants: vi.fn(),
 }));
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
@@ -32,6 +53,26 @@ vi.mock('../src/stores/connection.svelte.ts', () => ({
   setDisconnected: vi.fn(),
   setConnectionError: vi.fn(),
   connectionStore: { connected: false, address: '', transport: 'rest', error: '' },
+}));
+
+// The shared auth store is the unit under test for the bug fix: a successful
+// finish must call setAuthenticated, which flips the in-tab status so the
+// MainApp route guard leaves the user on the dashboard.
+vi.mock('../src/stores/auth.svelte.ts', () => ({
+  setAuthenticated: mockSetAuthenticated,
+}));
+
+// The SDK client is the sole transport. Begin/finish/PIV/listPublicTenants are
+// the methods LoginView calls through client.auth.*.
+vi.mock('../src/stores/sdkClient.ts', () => ({
+  getSDKClient: vi.fn(async () => ({
+    auth: {
+      webAuthnBeginLogin: mockWebAuthnBeginLogin,
+      webAuthnFinishLogin: mockWebAuthnFinishLogin,
+      loginPIV: mockLoginPIV,
+      listPublicTenants: mockListPublicTenants,
+    },
+  })),
 }));
 
 // ---------------------------------------------------------------------------
@@ -50,17 +91,6 @@ Object.defineProperty(window, 'navigator', {
       create: vi.fn(),
     },
   },
-});
-
-// ---------------------------------------------------------------------------
-// fetch mock
-// ---------------------------------------------------------------------------
-
-const mockFetch = vi.fn();
-Object.defineProperty(window, 'fetch', {
-  writable: true,
-  configurable: true,
-  value: mockFetch,
 });
 
 // ---------------------------------------------------------------------------
@@ -103,22 +133,32 @@ function makeCredentialStub(): PublicKeyCredential {
   } as unknown as PublicKeyCredential;
 }
 
-function makeJsonResponse(body: unknown, status = 200): Response {
+/**
+ * The EXACT flat shape the Go FinishLogin handler returns (see
+ * pkg/api/rest/iam_webauthn.go FinishLogin): access_token / id_token /
+ * refresh_token / token_type / expires_in. The SDK passes this through
+ * verbatim as AuthTokenResponse.
+ */
+function makeFinishTokens(): Record<string, unknown> {
   return {
-    ok: status >= 200 && status < 300,
-    status,
-    text: async () => JSON.stringify(body),
-    json: async () => body,
-  } as unknown as Response;
+    access_token: 'tok-access',
+    id_token: 'tok-id',
+    refresh_token: 'tok-refresh',
+    token_type: 'Bearer',
+    expires_in: 3600,
+  };
 }
 
-function makeErrorResponse(status: number, text = ''): Response {
-  return {
-    ok: false,
-    status,
-    text: async () => text,
-    json: async () => { throw new Error('not json'); },
-  } as unknown as Response;
+/** The go-webauthn assertion challenge envelope the begin endpoint returns. */
+function makeChallengeEnvelope(): unknown {
+  return { publicKey: { challenge: 'abc123', timeout: 60000 } };
+}
+
+/** Build an APIError-like rejection carrying an HTTP status. */
+function makeStatusError(status: number, message = 'error'): Error & { status: number } {
+  const err = new Error(message) as Error & { status: number };
+  err.status = status;
+  return err;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,11 +175,25 @@ describe('LoginView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStore = {};
+    // Default: public tenants list resolves so the chooser settles.
+    mockListPublicTenants.mockResolvedValue([
+      { id: 'system', name: 'system', display_name: 'System' },
+    ]);
   });
 
   afterEach(() => {
     cleanup();
   });
+
+  /** Drive the passkey flow up to (and including) clicking Authenticate. */
+  async function submitPasskey(email = 'alice@example.com'): Promise<void> {
+    await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
+    await waitFor(() => screen.getByLabelText(/email address/i));
+    await fireEvent.input(screen.getByLabelText(/email address/i), {
+      target: { value: email },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /authenticate with passkey/i }));
+  }
 
   // --------------------------------------------------------------------------
   // 1. No password input — FIDO2 + PIV buttons present
@@ -148,157 +202,172 @@ describe('LoginView', () => {
   it('renders FIDO2 + PIV options, no password input', () => {
     render(LoginView);
 
-    // No password fields at all.
     const passwordInputs = document.querySelectorAll('input[type="password"]');
     expect(passwordInputs.length).toBe(0);
 
-    // Both method buttons are present.
     expect(screen.getByRole('button', { name: /sign in with passkey/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign in with smartcard/i })).toBeInTheDocument();
 
-    // The brand heading is present.
     expect(screen.getByText('QuicBaaS')).toBeInTheDocument();
     expect(screen.getByText('Hardware-Backed Sign-In')).toBeInTheDocument();
   });
 
   // --------------------------------------------------------------------------
-  // 2. Passkey flow: click → email field → begin → credentials.get → finish
+  // 2. Passkey flow: click → email → begin → credentials.get → finish
   // --------------------------------------------------------------------------
 
-  it('passkey click shows email field; begin and finish called in order', async () => {
-    const challengeOptions = { challenge: 'abc123', timeout: 60000 };
-    const tokens = { access_token: 'tok-access', refresh_token: 'tok-refresh' };
-    const credStub = makeCredentialStub();
-
-    // begin → challenge; finish → tokens
-    mockFetch
-      .mockResolvedValueOnce(makeJsonResponse(challengeOptions))
-      .mockResolvedValueOnce(makeJsonResponse(tokens));
-
-    mockCredentialsGet.mockResolvedValueOnce(credStub);
+  it('passkey click shows email field; begin, credentials.get, and finish run in order', async () => {
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockResolvedValueOnce(makeCredentialStub());
+    mockWebAuthnFinishLogin.mockResolvedValueOnce(makeFinishTokens());
 
     render(LoginView);
-
-    // Click passkey button to reveal email input.
-    await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
+    await submitPasskey('alice@example.com');
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
-    });
+      // Begin login called first with tenant + email.
+      expect(mockWebAuthnBeginLogin).toHaveBeenCalledWith('system', 'alice@example.com');
 
-    // Enter email and submit.
-    await fireEvent.input(screen.getByLabelText(/email address/i), {
-      target: { value: 'alice@example.com' },
-    });
-    await fireEvent.click(screen.getByRole('button', { name: /authenticate with passkey/i }));
+      // credentials.get called with an unwrapped publicKey whose challenge has
+      // been base64url-decoded into an ArrayBuffer.
+      expect(mockCredentialsGet).toHaveBeenCalledTimes(1);
+      const getArg = mockCredentialsGet.mock.calls[0][0] as {
+        publicKey: PublicKeyCredentialRequestOptions;
+      };
+      expect(getArg.publicKey.challenge).toBeInstanceOf(ArrayBuffer);
 
-    await waitFor(() => {
-      // Begin login called first.
-      expect(mockFetch).toHaveBeenNthCalledWith(
-        1,
-        expect.stringContaining('/api/v1/auth/login/fido2/begin'),
-        expect.objectContaining({ method: 'POST' }),
-      );
-
-      // navigator.credentials.get called with the challenge.
-      expect(mockCredentialsGet).toHaveBeenCalledWith(
-        expect.objectContaining({ publicKey: challengeOptions }),
-      );
-
-      // Finish login called with assertion.
-      expect(mockFetch).toHaveBeenNthCalledWith(
-        2,
-        expect.stringContaining('/api/v1/auth/login/fido2/finish'),
-        expect.objectContaining({ method: 'POST' }),
-      );
+      // Finish login called with the serialized assertion.
+      expect(mockWebAuthnFinishLogin).toHaveBeenCalledTimes(1);
+      expect(mockWebAuthnFinishLogin.mock.calls[0][0]).toBe('system');
+      expect(mockWebAuthnFinishLogin.mock.calls[0][1]).toBe('alice@example.com');
     });
   });
 
   // --------------------------------------------------------------------------
-  // 3. Smartcard click navigates to PIV endpoint via fetch
+  // 3. Smartcard click calls the SDK PIV login method
   // --------------------------------------------------------------------------
 
-  it('smartcard click POSTs to /api/v1/auth/login/piv', async () => {
-    const tokens = { access_token: 'piv-tok', refresh_token: 'piv-ref' };
-    mockFetch.mockResolvedValueOnce(makeJsonResponse(tokens));
+  it('smartcard click calls client.auth.loginPIV', async () => {
+    mockLoginPIV.mockResolvedValueOnce(makeFinishTokens());
 
     render(LoginView);
-
     await fireEvent.click(screen.getByRole('button', { name: /sign in with smartcard/i }));
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/v1/auth/login/piv'),
-        expect.objectContaining({ method: 'GET', credentials: 'include' }),
-      );
+      expect(mockLoginPIV).toHaveBeenCalledTimes(1);
     });
   });
 
   // --------------------------------------------------------------------------
-  // 4. Redirect to /dashboard on successful login (FIDO2 path)
+  // 4. THE BUG FIX — successful passkey finish flips auth status AND redirects.
+  //
+  // This is the regression guard for the reported bug: a 200 finish with tokens
+  // must call setAuthenticated (so the in-tab auth status becomes
+  // 'authenticated' and MainApp's route guard leaves the user on the
+  // dashboard) AND route to /dashboard. Persisting tokens without flipping the
+  // status was exactly the silent-reset defect.
   // --------------------------------------------------------------------------
 
-  it('redirects to /dashboard on successful passkey login', async () => {
-    const tokens = { access_token: 'at', refresh_token: 'rt', id_token: 'it' };
-    const credStub = makeCredentialStub();
-
-    mockFetch
-      .mockResolvedValueOnce(makeJsonResponse({ challenge: 'ch' }))
-      .mockResolvedValueOnce(makeJsonResponse(tokens));
-
-    mockCredentialsGet.mockResolvedValueOnce(credStub);
+  it('on successful passkey finish: flips auth status, connects, and redirects to dashboard', async () => {
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockResolvedValueOnce(makeCredentialStub());
+    mockWebAuthnFinishLogin.mockResolvedValueOnce(makeFinishTokens());
 
     render(LoginView);
-
-    await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
-    await waitFor(() => screen.getByLabelText(/email address/i));
-
-    await fireEvent.input(screen.getByLabelText(/email address/i), {
-      target: { value: 'bob@example.com' },
-    });
-    await fireEvent.click(screen.getByRole('button', { name: /authenticate with passkey/i }));
+    await submitPasskey('bob@example.com');
 
     await waitFor(() => {
-      expect(window.localStorage.getItem('quicbaas_token')).toBe('at');
+      // setAuthenticated is the fix — it both persists tokens and flips status.
+      expect(mockSetAuthenticated).toHaveBeenCalledTimes(1);
+      expect(mockSetAuthenticated).toHaveBeenCalledWith({
+        access_token: 'tok-access',
+        refresh_token: 'tok-refresh',
+      });
       expect(mockSetConnected).toHaveBeenCalled();
-      expect(mockRouteDashboard).toHaveBeenCalled();
+      expect(mockRouteDashboard).toHaveBeenCalledTimes(1);
     });
+
+    // No error alert on success.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   // --------------------------------------------------------------------------
-  // 5. Redirect to /dashboard on successful PIV login
+  // 5. Successful PIV finish flips auth status + redirects.
   // --------------------------------------------------------------------------
 
-  it('redirects to /dashboard on successful PIV login', async () => {
-    const tokens = { access_token: 'piv-at', refresh_token: 'piv-rt' };
-    mockFetch.mockResolvedValueOnce(makeJsonResponse(tokens));
+  it('on successful PIV finish: flips auth status and redirects to dashboard', async () => {
+    mockLoginPIV.mockResolvedValueOnce({
+      access_token: 'piv-at',
+      refresh_token: 'piv-rt',
+      token_type: 'Bearer',
+      expires_in: 3600,
+    });
 
     render(LoginView);
-
     await fireEvent.click(screen.getByRole('button', { name: /sign in with smartcard/i }));
 
     await waitFor(() => {
-      expect(window.localStorage.getItem('quicbaas_token')).toBe('piv-at');
-      expect(mockRouteDashboard).toHaveBeenCalled();
+      expect(mockSetAuthenticated).toHaveBeenCalledWith({
+        access_token: 'piv-at',
+        refresh_token: 'piv-rt',
+      });
+      expect(mockRouteDashboard).toHaveBeenCalledTimes(1);
     });
   });
 
   // --------------------------------------------------------------------------
-  // 6. Email not found → specific error message
+  // 6. THE OTHER HALF OF THE FIX — finish failure shows an error, not a reset.
+  //
+  // When finish rejects, the view must surface a real error alert and must NOT
+  // flip auth status or navigate. (Before the fix, swallowed failures left the
+  // user staring at the chooser with no feedback.)
   // --------------------------------------------------------------------------
 
-  it('shows "email not found" error when server returns 404', async () => {
-    mockFetch.mockResolvedValueOnce(makeErrorResponse(404));
+  it('on finish failure: shows an error alert and does not authenticate or redirect', async () => {
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockResolvedValueOnce(makeCredentialStub());
+    mockWebAuthnFinishLogin.mockRejectedValueOnce(
+      makeStatusError(401, 'assertion verification failed'),
+    );
 
     render(LoginView);
+    await submitPasskey('carol@example.com');
 
-    await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
-    await waitFor(() => screen.getByLabelText(/email address/i));
-
-    await fireEvent.input(screen.getByLabelText(/email address/i), {
-      target: { value: 'ghost@example.com' },
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/assertion verification failed/i);
     });
-    await fireEvent.click(screen.getByRole('button', { name: /authenticate with passkey/i }));
+    expect(mockSetAuthenticated).not.toHaveBeenCalled();
+    expect(mockRouteDashboard).not.toHaveBeenCalled();
+  });
+
+  // --------------------------------------------------------------------------
+  // 7. A 200 finish that returns NO token is treated as a failure, not success.
+  // --------------------------------------------------------------------------
+
+  it('on finish 200 with empty token: shows an error and does not redirect', async () => {
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockResolvedValueOnce(makeCredentialStub());
+    mockWebAuthnFinishLogin.mockResolvedValueOnce({ access_token: '' });
+
+    render(LoginView);
+    await submitPasskey('dave@example.com');
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/did not return a session token/i);
+    });
+    expect(mockSetAuthenticated).not.toHaveBeenCalled();
+    expect(mockRouteDashboard).not.toHaveBeenCalled();
+  });
+
+  // --------------------------------------------------------------------------
+  // 8. Email not found → specific error message (begin returns 404)
+  // --------------------------------------------------------------------------
+
+  it('shows "email not found" error when begin returns 404', async () => {
+    mockWebAuthnBeginLogin.mockRejectedValueOnce(makeStatusError(404, 'not found'));
+
+    render(LoginView);
+    await submitPasskey('ghost@example.com');
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/couldn't find that email/i);
@@ -306,23 +375,17 @@ describe('LoginView', () => {
   });
 
   // --------------------------------------------------------------------------
-  // 7. WebAuthn assertion cancelled → declined/cancelled error
+  // 9. WebAuthn assertion cancelled → declined/cancelled error
   // --------------------------------------------------------------------------
 
   it('shows declined/cancelled error when navigator.credentials.get is cancelled', async () => {
-    mockFetch.mockResolvedValueOnce(makeJsonResponse({ challenge: 'ch' }));
-    const notAllowed = new DOMException('Operation not allowed', 'NotAllowedError');
-    mockCredentialsGet.mockRejectedValueOnce(notAllowed);
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockRejectedValueOnce(
+      new DOMException('Operation not allowed', 'NotAllowedError'),
+    );
 
     render(LoginView);
-
-    await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
-    await waitFor(() => screen.getByLabelText(/email address/i));
-
-    await fireEvent.input(screen.getByLabelText(/email address/i), {
-      target: { value: 'alice@example.com' },
-    });
-    await fireEvent.click(screen.getByRole('button', { name: /authenticate with passkey/i }));
+    await submitPasskey('alice@example.com');
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/declined or canceled/i);
@@ -330,14 +393,13 @@ describe('LoginView', () => {
   });
 
   // --------------------------------------------------------------------------
-  // 8. PIV cert not recognized → smartcard-specific error
+  // 10. PIV cert not recognized → smartcard-specific error
   // --------------------------------------------------------------------------
 
   it('shows PIV not recognized error on 401 response', async () => {
-    mockFetch.mockResolvedValueOnce(makeErrorResponse(401));
+    mockLoginPIV.mockRejectedValueOnce(makeStatusError(401, 'unrecognized'));
 
     render(LoginView);
-
     await fireEvent.click(screen.getByRole('button', { name: /sign in with smartcard/i }));
 
     await waitFor(() => {
@@ -346,24 +408,18 @@ describe('LoginView', () => {
   });
 
   // --------------------------------------------------------------------------
-  // 9. Server unreachable → generic error
+  // 11. Begin rejection surfaces an error alert (no silent reset).
   // --------------------------------------------------------------------------
 
-  it('shows generic server error when fetch throws TypeError', async () => {
-    mockFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  it('shows an error alert when begin login rejects', async () => {
+    mockWebAuthnBeginLogin.mockRejectedValueOnce(new Error('server boom'));
 
     render(LoginView);
-
-    await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
-    await waitFor(() => screen.getByLabelText(/email address/i));
-
-    await fireEvent.input(screen.getByLabelText(/email address/i), {
-      target: { value: 'alice@example.com' },
-    });
-    await fireEvent.click(screen.getByRole('button', { name: /authenticate with passkey/i }));
+    await submitPasskey('alice@example.com');
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(/can't reach the server/i);
+      expect(screen.getByRole('alert')).toHaveTextContent(/server boom/i);
     });
+    expect(mockSetAuthenticated).not.toHaveBeenCalled();
   });
 });

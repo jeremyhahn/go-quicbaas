@@ -27,6 +27,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -156,6 +158,36 @@ func TestOrchestratorGRPC_Inference_MultipleChunks(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Equal(t, "m", resp.Model)
 	assert.Equal(t, "end_turn", resp.StopReason)
+}
+
+// TestOrchestratorGRPC_Inference_NoTenantDefaultsToSystem verifies the
+// tenant-fallback migration: when the request omits tenant_id, the handler
+// resolves it to qrdbsdk.SystemTenantID (NOT the retired "default" tenant)
+// and threads it into both the InferRequest and the request context.
+func TestOrchestratorGRPC_Inference_NoTenantDefaultsToSystem(t *testing.T) {
+	var gotReqTenant, gotCtxTenant string
+	agentSvc := &grpcTestAgentService{
+		inferFunc: func(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
+			gotReqTenant = req.TenantID
+			gotCtxTenant = orchestration.TenantFromContext(ctx)
+			return inferChunkCh(&orchestration.InferChunk{
+				Delta: []orchestration.ContentBlock{{Type: "text", Text: "ok"}},
+				Final: true,
+			}), nil
+		},
+	}
+	srv := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+
+	// No TenantId set on the request → fallback path.
+	_, err := srv.Inference(context.Background(), &pb.InferenceRequest{
+		Backend: "ollama",
+		Prompt:  "say hello",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, qrdbsdk.SystemTenantID, gotReqTenant,
+		"omitted tenant_id must resolve to the system tenant in the request")
+	assert.Equal(t, qrdbsdk.SystemTenantID, gotCtxTenant,
+		"omitted tenant_id must resolve to the system tenant in the context")
 }
 
 // =============================================================================

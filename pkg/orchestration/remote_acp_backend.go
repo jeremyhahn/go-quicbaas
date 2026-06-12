@@ -174,6 +174,17 @@ func (b *RemoteACPBackend) Registration() *AgentRegistration {
 	return b.registration
 }
 
+// ResolvedHost returns the daemon host this backend is bound to. The
+// orchestrator captures it at Spawn time and replays it on Prompt / Status /
+// Close so every call for a session reaches the same daemon instance that
+// holds the live in-memory session. Implements resolvedHostBackend.
+func (b *RemoteACPBackend) ResolvedHost() string {
+	if b.registration == nil {
+		return ""
+	}
+	return b.registration.Host
+}
+
 // Close terminates a remote session by delegating to the daemon's
 // AgentRuntime.Close. Pool-level teardown is a separate operation — see
 // CloseAll.

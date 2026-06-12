@@ -22,6 +22,7 @@ import (
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -69,6 +70,13 @@ type MockQuicBaaS struct {
 	// SSHClient reports "not configured"; tests that exercise SSH routing
 	// set this to a real xkmsssh.Client.
 	SSHClientOverride xkmsssh.Client
+
+	// InviteStoreOverride is returned by GetInviteStore. The REST invite
+	// endpoints resolve the canonical persistent InviteStore via an inline
+	// interface assertion on the service (mirroring GetIdentityStore); tests
+	// set this to the same store instance they seed so the activation flow and
+	// the first-boot/REST creation paths exercise ONE store, not a fork.
+	InviteStoreOverride iam.InviteStore
 }
 
 // Ensure MockQuicBaaS implements service.QuicBaaS at compile time.
@@ -77,6 +85,14 @@ var _ service.QuicBaaS = (*MockQuicBaaS)(nil)
 // NewMockQuicBaaS creates a new MockQuicBaaS with testify mock infrastructure.
 func NewMockQuicBaaS() *MockQuicBaaS {
 	return &MockQuicBaaS{}
+}
+
+// GetInviteStore returns the configured invite store override. It satisfies the
+// inline interface assertion the REST invite endpoints use to resolve the
+// canonical persistent InviteStore from the service. Returns (nil, nil) when no
+// override is set so handlers exercise the store-unavailable (fail-closed) path.
+func (m *MockQuicBaaS) GetInviteStore(_ context.Context) (iam.InviteStore, error) {
+	return m.InviteStoreOverride, nil
 }
 
 // =============================================================================

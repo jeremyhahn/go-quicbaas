@@ -427,8 +427,17 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		if qrdbErr != nil {
 			s.logger.WithError(qrdbErr).Warn("iam.webauthn: qrdb client unavailable; WebAuthn surface disabled")
 		} else {
+			// Derive the WebAuthn relying-party defaults from the canonical
+			// issuer URL so the RP ID, RP origin (with port), OIDC issuer, and
+			// activation banner all agree. Fail closed at startup when the
+			// issuer host is an IP literal (no valid RP ID) and the operator
+			// has not supplied an explicit rp_id.
+			issuerRPID, issuerRPOrigin, derErr := webauthnDefaultsFromIssuer(s.getIssuerURL())
+			if derErr != nil && s.config.IAM.WebAuthn.RPID == "" && len(s.config.IAM.WebAuthn.RPOrigins) == 0 {
+				return nil, &IAMComponentInitError{Component: "WebAuthn relying-party defaults", Cause: derErr}
+			}
 			factoryParams := iam.WebAuthnFactoryParams{
-				Config:   webauthnFactoryConfigFromOperator(s.config.IAM.WebAuthn),
+				Config:   webauthnFactoryConfigFromOperator(s.config.IAM.WebAuthn, issuerRPID, issuerRPOrigin),
 				QRDB:     platformQRDB,
 				Settings: iam.NewTenantManagerWebAuthnSettings(tenantManager),
 			}
@@ -444,6 +453,11 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 					s.logger.WithError(mErr).Warn("iam.webauthn: manager construction failed; WebAuthn surface disabled")
 				} else {
 					webauthnMgr = mgr
+					// Wire the canonical user store so FinishLogin re-resolves the
+					// authenticated user (external string ID + qrdb-resolved roles)
+					// instead of mapping xkms's webauthn handle straight to a
+					// half-populated iam.User with a raw-bytes subject and no roles.
+					webauthnMgr.SetUserResolver(userStorage)
 					if aaguidAllowlist, aaguidErr := buildAAGUIDAllowlist(s.config.IAM.AAGUID); aaguidErr != nil {
 						s.logger.WithError(aaguidErr).Warn("iam.aaguid: failed to build AAGUID allowlist; enforcement disabled")
 					} else if aaguidAllowlist != nil {
@@ -515,21 +529,14 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		s.agentRegistry = orchestration.NewInMemoryAgentRegistry()
 	}
 
-	// Ensure the default tenant exists BEFORE any subsystem that registers
-	// apps/agents inside it (e.g. the orchestrator daemon client below).
-	// Ordering is load-bearing: the daemon-client bootstrap registers a
-	// per-tenant OAuth2 app and needs the tenant row in place first.
-	tenantCtx := context.Background()
-	if _, err := tenantManager.GetTenant(tenantCtx, "default"); err != nil {
-		if _, createErr := tenantManager.CreateTenant(tenantCtx, iam.CreateTenantOptions{
-			ID:   "default",
-			Name: "Default Tenant",
-		}); createErr != nil {
-			s.logger.WithError(createErr).Warn("Failed to create default tenant, some features may be unavailable")
-		} else {
-			s.logger.Info("Bootstrap default tenant created")
-		}
-	}
+	// The system tenant (qrdbsdk.SystemTenantID) is provisioned by qrdb's
+	// first-boot routine via WithInternalCall — it is the ONLY path allowed
+	// to create a reserved tenant, and it treats already-exists as idempotent
+	// success. By the time we reach this point it is guaranteed to exist, so
+	// quicbaas must NOT attempt to create it (and must never re-create the
+	// retired "default" tenant, which qrdb permanently reserves and rejects).
+	// The orchestrator daemon-client bootstrap below registers its OAuth2 app
+	// under qrdbsdk.SystemTenantID, which already has its tenant row in place.
 
 	// Bootstrap the orchestrator's own OAuth2 client for outbound daemon
 	// RPCs. The orchestrator presents a JWT minted from these credentials
@@ -711,7 +718,11 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	}
 
 	// Build the activation URL from the server's issuer URL for path (c).
-	activationURL := s.getIssuerURL() + "/ui/#/activate?token=" + token
+	// The SPA router (cmd/quicbaas/frontend MainApp.svelte, route
+	// 'invite-activate') maps the activation view at the path-parameter route
+	// #/invite/:token — there is exactly ONE canonical entry point (pre-v1
+	// stack, no compat aliases).
+	activationURL := s.getIssuerURL() + "/ui/#/invite/" + token
 
 	// Stash the bootstrap admin's UserID on the server so a later
 	// BindAdminToSOCert call (path a) can find them without re-querying
@@ -1018,24 +1029,18 @@ func printFirstBootBanner(w interface{ WriteString(string) (int, error) }, activ
 	}
 }
 
-// getIssuerURL constructs the OIDC issuer URL from server configuration.
+// getIssuerURL constructs the canonical external URL for this server — the
+// single source of truth shared by the OIDC issuer claim, the first-boot
+// activation banner, and the WebAuthn relying-party defaults.
+//
+// Loopback bind hosts (the empty / wildcard bind address and the IPv4/IPv6
+// loopback literals) are canonicalised to "localhost" rather than an IP
+// literal. This is mandated by the WebAuthn specification: the RP ID derived
+// from this URL must be a registrable domain, and browsers reject IP literals
+// as invalid domains. Binding still happens on the configured Server.Host;
+// only the externally advertised URL is normalised.
 func (s *Server) getIssuerURL() string {
-	scheme := "http"
-	if s.config.Security.TLSEnabled {
-		scheme = "https"
-	}
-
-	host := s.config.Server.Host
-	if host == "" || host == "0.0.0.0" {
-		host = "localhost"
-	}
-
-	port := s.config.Server.REST.Port
-	if port == 0 {
-		port = 8443
-	}
-
-	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+	return issuerURLFromConfig(s.config)
 }
 
 // iamComponentsGetter is an internal interface for accessing IAM components
@@ -1183,14 +1188,16 @@ func (s *Server) ensureOrchestratorDaemonClient(ctx context.Context, appManager 
 		return existing, nil
 	}
 
-	// The orchestrator client is provisioned under the bootstrap "default"
-	// tenant. Dispatching to daemons in other tenants requires a per-tenant
-	// client app; see ensureOrchestratorDaemonClientForTenant for that path.
-	// Today we rely on the default tenant so the first-start demo works
-	// without tenant management; other tenants are created on first dispatch.
-	defaultTenant := "default"
+	// The orchestrator client is provisioned under the control-plane system
+	// tenant (qrdbsdk.SystemTenantID), which qrdb's first-boot always
+	// provisions. Dispatching to daemons in other tenants requires a
+	// per-tenant client app; see ensureOrchestratorDaemonClientForTenant for
+	// that path. The system tenant hosts the orchestrator so the first-start
+	// flow works without explicit tenant management; other tenants are
+	// created on first dispatch.
+	systemTenant := qrdbsdk.SystemTenantID
 	scopes := iam.DefaultAgentRuntimeScopes()
-	app, err := appManager.RegisterApp(ctx, defaultTenant, iam.RegisterAppOptions{
+	app, err := appManager.RegisterApp(ctx, systemTenant, iam.RegisterAppOptions{
 		Name:           OrchestratorDaemonClientAppName,
 		GrantTypes:     []string{iam.GrantTypeClientCredentials},
 		ResponseTypes:  []string{},
@@ -1210,7 +1217,7 @@ func (s *Server) ensureOrchestratorDaemonClient(ctx context.Context, appManager 
 		ClientID:     app.ClientID,
 		ClientSecret: app.ClientSecret, // plaintext — only visible here
 		Scopes:       append([]string(nil), scopes...),
-		TenantID:     defaultTenant,
+		TenantID:     systemTenant,
 	}
 	if err := writeOrchestratorDaemonClient(path, client); err != nil {
 		return nil, fmt.Errorf("ensureOrchestratorDaemonClient: persist cache: %w", err)

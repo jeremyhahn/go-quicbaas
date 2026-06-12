@@ -19,10 +19,27 @@
  *
  * All components share this single instance so subscriptions and state
  * mutations don't conflict with each other.
+ *
+ * Authentication
+ * ──────────────
+ * The client is a singleton created once — typically BEFORE the user has
+ * logged in (the login views fetch it to run the passkey/PIV handshake). We
+ * therefore cannot bake a static bearer token into the config at construction
+ * time. Instead we pass a token *factory* (`() => readAuthToken()`), which the
+ * SDK invokes lazily on every request. After setAuthenticated() persists the
+ * access token to localStorage, every subsequent authenticated call — orchestrator,
+ * KMS, IAM, vectors, etc. — automatically attaches `Authorization: Bearer <token>`
+ * with the current token. Public endpoints (login/begin, invite GET, public
+ * health) simply run before a token exists; the factory returns '' and the SDK
+ * omits the header, which those endpoints tolerate.
+ *
+ * This is the single auth choke point for the SPA: no per-call header wiring
+ * lives in the orchestrator/KMS/IAM stores.
  */
 
 import { createClient, isWailsRuntime } from '@quicbaas/sdk';
 import type { Client } from '@quicbaas/sdk';
+import { readAuthToken } from './auth.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Module-level singleton
@@ -40,13 +57,19 @@ export async function getSDKClient(): Promise<Client> {
 
   if (_initPromise !== null) return _initPromise;
 
+  // token is a factory (not a static string) so the SDK re-reads the live
+  // access token from the shared auth store on every request. This is what
+  // makes authenticated calls work after an in-tab login without rebuilding
+  // the client.
+  const token = async (): Promise<string> => readAuthToken();
+
   _initPromise = (async (): Promise<Client> => {
     if (isWailsRuntime()) {
-      _client = await createClient({ transport: 'wails' });
+      _client = await createClient({ transport: 'wails', token });
     } else {
       const baseURL =
         typeof window !== 'undefined' ? window.location.origin : '';
-      _client = await createClient({ transport: 'rest', baseURL });
+      _client = await createClient({ transport: 'rest', baseURL, token });
     }
     return _client;
   })();

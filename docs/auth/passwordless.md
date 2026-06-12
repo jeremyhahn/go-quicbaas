@@ -252,6 +252,22 @@ iam:
       attestation: "none"
       user_verification: "preferred"
       timeout: 60s
+```
+
+> **Defaults / derivation.** When `rp_id` and `rp_origins` are omitted they are
+> derived from the canonical server issuer URL (the same value used for the
+> OIDC issuer claim and the first-boot activation banner): `rp_id` becomes the
+> issuer hostname and `rp_origins` becomes the issuer origin **including the
+> port** (default scheme ports 443/80 are omitted to match the browser-sent
+> `Origin` header). In the stock dev setup (`server.host: 127.0.0.1`, REST port
+> 18080) this yields `rp_id: localhost` and `rp_origins: [https://localhost:18080]`
+> — loopback IPs are canonicalised to `localhost` because a WebAuthn RP ID must
+> be a domain, not an IP literal. If `server.host` is an explicit routable IP
+> literal and no explicit `rp_id` is set, WebAuthn initialisation fails closed
+> with a clear validation error. Explicit `rp_id` / `rp_origins` always win.
+
+```yaml
+# (continued)
 
   # Optional: PIV smartcard
   piv:
