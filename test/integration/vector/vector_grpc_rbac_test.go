@@ -565,10 +565,21 @@ func TestVectorRBACInvalidToken(t *testing.T) {
 	})
 
 	t.Run("empty token is rejected as permission denied", func(t *testing.T) {
-		// An empty authorization header results in anonymous access, which is
-		// then denied by the authorization service (PermissionDenied). This is
-		// different from a missing authorization header (Unauthenticated).
-		testCtx := newTestVectorRBACContext(t, readerGrants...)
+		// An empty bearer token yields an anonymous (unauthenticated) subject
+		// at this legacy pkg/auth interceptor seam, and the decision is
+		// delegated to the authorization service. The self-contained authzfake
+		// allow-list double intentionally permits anonymous access to
+		// allow-listed resource:action pairs (that contract is pinned by
+		// test/integration/auth/authz_test.go), so this server is configured
+		// WITHOUT the vector:read grant: the anonymous GetVector must be
+		// denied by the PDP with PermissionDenied — never served. This differs
+		// from a missing authorization header (Unauthenticated).
+		//
+		// The production gRPC PEP (pkg/api/grpc/authz_interceptor.go) is
+		// stricter still: an empty bearer token is rejected pre-PDP with
+		// Unauthenticated (pinned by
+		// TestUnaryAuthorizationInterceptor_EmptyBearerToken).
+		testCtx := newTestVectorRBACContext(t, grantVectorWrite)
 		defer testCtx.close()
 		client := pb.NewVectorDBClient(testCtx.conn)
 

@@ -6252,8 +6252,8 @@ func TestBatchService_BatchPut_EmptyRequest(t *testing.T) {
 }
 
 func TestBatchService_BatchPut_RaftError(t *testing.T) {
-	putErr := stderrors.New("raft propose failed")
-	qrdbProvider := newSvcBoostMockQRDBProviderWithErrors(putErr, nil, nil)
+	batchErr := stderrors.New("raft propose failed")
+	qrdbProvider := newSvcBoostMockQRDBProviderWithErrors(nil, nil, batchErr)
 	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
 	defer svc.Close()
 
@@ -6306,8 +6306,8 @@ func TestBatchService_BatchDelete_EmptyRequest(t *testing.T) {
 }
 
 func TestBatchService_BatchDelete_RaftError(t *testing.T) {
-	deleteErr := stderrors.New("raft propose failed")
-	qrdbProvider := newSvcBoostMockQRDBProviderWithErrors(nil, deleteErr, nil)
+	batchErr := stderrors.New("raft propose failed")
+	qrdbProvider := newSvcBoostMockQRDBProviderWithErrors(nil, nil, batchErr)
 	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
 	defer svc.Close()
 
@@ -6582,4 +6582,217 @@ func TestTimeSeriesQuery_Coverage(t *testing.T) {
 	}, stream)
 
 	require.Error(t, err)
+}
+
+// =============================================================================
+// Batch Service - atomic ExecuteBatch commit path
+// =============================================================================
+
+// TestBatchService_BatchPut_SingleConsensusProposal verifies that a batch
+// commits through ONE qrdb ExecuteBatch call (one Raft proposal) instead of
+// one KV Put per operation, with keys and values preserved in input order.
+func TestBatchService_BatchPut_SingleConsensusProposal(t *testing.T) {
+	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+
+	req := &BatchPutRequest{
+		Requests: []*PutRequest{
+			{EntityType: "user", ID: 1, Data: []byte(`{"n":1}`)},
+			{EntityType: "user", ID: 2, Data: []byte(`{"n":2}`)},
+			{EntityType: "user", ID: 3, Data: []byte(`{"n":3}`)},
+		},
+	}
+
+	resp, err := svc.BatchPut(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Len(t, resp.Responses, 3)
+
+	calls := mockQRDB.capturedBatchCalls()
+	require.Len(t, calls, 1, "expected exactly one ExecuteBatch call")
+	require.Len(t, calls[0], 3)
+	for i, op := range calls[0] {
+		assert.Equal(t, qrdbtransport.OpPut, op.Type)
+		assert.Equal(t, req.Requests[i].Data, op.Value)
+		assert.Contains(t, string(op.Key), "user")
+	}
+}
+
+// TestBatchService_BatchPut_ChunksLargeBatchUnderEntryLimit reproduces the
+// TestStreamingBatchBackpressure commit shape (2000 ops x 4 KB = ~8.4 MB
+// estimated) and verifies the batch is split into a small, bounded number
+// of consensus proposals, each under batchProposalMaxBytes, preserving
+// operation order across chunks. Before the fix this shape produced 2000
+// serial Raft round-trips, which exceeded the test's 180s deadline under
+// harness load.
+func TestBatchService_BatchPut_ChunksLargeBatchUnderEntryLimit(t *testing.T) {
+	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+
+	const totalOps = 2000
+	largeData := make([]byte, 4096)
+	for i := range largeData {
+		largeData[i] = byte('A' + (i % 26))
+	}
+
+	reqs := make([]*PutRequest, totalOps)
+	for i := 0; i < totalOps; i++ {
+		reqs[i] = &PutRequest{
+			EntityType: "stream_backpressure",
+			ID:         uint64(i + 1),
+			Data:       largeData,
+		}
+	}
+
+	resp, err := svc.BatchPut(context.Background(), &BatchPutRequest{Requests: reqs})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Len(t, resp.Responses, totalOps)
+
+	calls := mockQRDB.capturedBatchCalls()
+	require.GreaterOrEqual(t, len(calls), 2, "an ~8 MB batch must be split below the raft entry limit")
+	require.LessOrEqual(t, len(calls), 4, "commit must use a bounded number of consensus proposals, not one per op")
+
+	seen := 0
+	for _, call := range calls {
+		size := 0
+		for _, op := range call {
+			assert.Equal(t, qrdbtransport.OpPut, op.Type)
+			size += batchOpSize(op)
+			seen++
+		}
+		assert.LessOrEqual(t, size, batchProposalMaxBytes, "each sub-batch must fit in one raft entry")
+	}
+	assert.Equal(t, totalOps, seen, "every operation must be committed exactly once")
+}
+
+// TestBatchService_BatchPut_OversizedSingleOpOwnChunk verifies that a single
+// operation whose estimated size exceeds batchProposalMaxBytes is still sent
+// as its own sub-batch (the size limit cannot split one op; qrdb enforces
+// the hard raft entry cap).
+func TestBatchService_BatchPut_OversizedSingleOpOwnChunk(t *testing.T) {
+	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+
+	req := &BatchPutRequest{
+		Requests: []*PutRequest{
+			{EntityType: "blob", ID: 1, Data: make([]byte, batchProposalMaxBytes+1)},
+			{EntityType: "blob", ID: 2, Data: []byte("small")},
+		},
+	}
+
+	resp, err := svc.BatchPut(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	calls := mockQRDB.capturedBatchCalls()
+	require.Len(t, calls, 2)
+	assert.Len(t, calls[0], 1)
+	assert.Len(t, calls[1], 1)
+}
+
+// TestBatchService_BatchPut_MultiShardGrouping verifies that operations are
+// grouped per shard in first-seen order while preserving in-shard ordering.
+func TestBatchService_BatchPut_MultiShardGrouping(t *testing.T) {
+	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+
+	req := &BatchPutRequest{
+		Requests: []*PutRequest{
+			{EntityType: "user", ID: 1, Data: []byte(`{"n":1}`), ShardID: 1},
+			{EntityType: "user", ID: 2, Data: []byte(`{"n":2}`), ShardID: 2},
+			{EntityType: "user", ID: 3, Data: []byte(`{"n":3}`), ShardID: 1},
+		},
+	}
+
+	resp, err := svc.BatchPut(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Len(t, resp.Responses, 3)
+
+	assert.Equal(t, []uint64{1, 2}, mockQRDB.capturedShardCalls())
+
+	calls := mockQRDB.capturedBatchCalls()
+	require.Len(t, calls, 2)
+	require.Len(t, calls[0], 2, "shard 1 group carries ops 1 and 3 in order")
+	assert.Equal(t, []byte(`{"n":1}`), calls[0][0].Value)
+	assert.Equal(t, []byte(`{"n":3}`), calls[0][1].Value)
+	require.Len(t, calls[1], 1, "shard 2 group carries op 2")
+	assert.Equal(t, []byte(`{"n":2}`), calls[1][0].Value)
+}
+
+// TestBatchService_BatchPut_ExecuteBatchErrorTyped verifies that an
+// ExecuteBatch failure surfaces as a typed QBError with ErrRaft.
+func TestBatchService_BatchPut_ExecuteBatchErrorTyped(t *testing.T) {
+	batchErr := stderrors.New("raft batch propose failed")
+	mockQRDB := newSvcBoostMockQRDBProviderWithErrors(nil, nil, batchErr)
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+
+	resp, err := svc.BatchPut(context.Background(), &BatchPutRequest{
+		Requests: []*PutRequest{
+			{EntityType: "user", ID: 1, Data: []byte(`{"n":1}`)},
+		},
+	})
+	require.Error(t, err)
+	require.Nil(t, resp)
+
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
+	assert.ErrorIs(t, err, batchErr)
+}
+
+// TestBatchService_BatchDelete_SingleConsensusProposal verifies that a
+// delete batch commits through one ExecuteBatch call with OpDelete ops.
+func TestBatchService_BatchDelete_SingleConsensusProposal(t *testing.T) {
+	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+
+	req := &BatchDeleteRequest{
+		Requests: []*DeleteRequest{
+			{EntityType: "user", ID: 1},
+			{EntityType: "user", ID: 2},
+		},
+	}
+
+	resp, err := svc.BatchDelete(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Len(t, resp.Responses, 2)
+
+	calls := mockQRDB.capturedBatchCalls()
+	require.Len(t, calls, 1, "expected exactly one ExecuteBatch call")
+	require.Len(t, calls[0], 2)
+	for _, op := range calls[0] {
+		assert.Equal(t, qrdbtransport.OpDelete, op.Type)
+		assert.Empty(t, op.Value)
+	}
+}
+
+// TestBatchService_BatchDelete_ExecuteBatchErrorTyped verifies that an
+// ExecuteBatch failure during BatchDelete surfaces as a typed QBError.
+func TestBatchService_BatchDelete_ExecuteBatchErrorTyped(t *testing.T) {
+	batchErr := stderrors.New("raft batch propose failed")
+	mockQRDB := newSvcBoostMockQRDBProviderWithErrors(nil, nil, batchErr)
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+
+	resp, err := svc.BatchDelete(context.Background(), &BatchDeleteRequest{
+		Requests: []*DeleteRequest{
+			{EntityType: "user", ID: 1},
+		},
+	})
+	require.Error(t, err)
+	require.Nil(t, resp)
+
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
+	assert.ErrorIs(t, err, batchErr)
 }

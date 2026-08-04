@@ -112,7 +112,9 @@ func ReadRequest(r io.Reader) (*Request, error) {
 	}
 	tokenLen := binary.BigEndian.Uint16(tokenLenBuf)
 
-	if tokenLen > MaxTokenSize {
+	// With MaxTokenSize at the ceiling of the 2-byte wire prefix this cannot
+	// trigger; it stays as defense in depth should the bound be lowered.
+	if int(tokenLen) > int(MaxTokenSize) {
 		return nil, api.NewSizeLimitError("unix.objectstorage.ReadRequest", "token",
 			uint32(tokenLen), uint32(MaxTokenSize))
 	}

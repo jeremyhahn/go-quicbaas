@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -219,17 +220,26 @@ func TestCompleteFlow(t *testing.T) {
 		t.Logf("Transaction completed: %d operations in %.3fs", len(keys), txDuration)
 	})
 
-	// Test 4: Authorization check
+	// Test 4: Authorization fail-closed contract
 	t.Run("AuthorizationEnforcement", func(t *testing.T) {
-		// Test with valid token
+		// The in-process auth manager carries no authorization authority of
+		// its own: the RBAC decision belongs to qrdb's PDP, reached through
+		// the SDK platform-token validator at the transport layer
+		// (pkg/api/grpc/authz_interceptor.go and its REST/QUIC/MCP siblings).
+		// Authorize therefore fails closed with AuthorizerNotConfiguredError
+		// for EVERY token — valid or invalid — instead of making a local
+		// decision. Both calls must be denied.
+		var notConfigured *api.AuthorizerNotConfiguredError
+
 		err := authManager.Authorize(ctx, token.AccessToken, "test", "write")
-		assert.NoError(t, err)
+		require.Error(t, err, "valid token must still be denied without a configured decision point")
+		assert.ErrorAs(t, err, &notConfigured)
 
-		// Test with invalid token
 		err = authManager.Authorize(ctx, "invalid-token", "test", "write")
-		assert.Error(t, err)
+		require.Error(t, err, "invalid token must be denied without a configured decision point")
+		assert.ErrorAs(t, err, &notConfigured)
 
-		t.Logf("Authorization enforcement working correctly")
+		t.Logf("Authorization fails closed without a configured decision point")
 	})
 
 	// Test 5: Trace propagation

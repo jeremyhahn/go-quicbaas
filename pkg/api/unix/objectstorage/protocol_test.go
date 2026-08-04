@@ -101,5 +101,5 @@ func TestStatusConstants(t *testing.T) {
 func TestProtocolConstants(t *testing.T) {
 	assert.Equal(t, byte(0x01), ProtocolVersion)
 	assert.Equal(t, uint32(64*1024*1024), MaxPayloadSize)
-	assert.Equal(t, uint16(8*1024), MaxTokenSize)
+	assert.Equal(t, uint16(64*1024-1), MaxTokenSize)
 }

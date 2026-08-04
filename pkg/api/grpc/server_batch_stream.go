@@ -475,7 +475,9 @@ func (s *Server) handleStreamBatchComplete(
 		}, nil
 	}
 
-	// BatchPut is atomic - if it succeeds, all operations succeeded
+	// BatchPut commits each shard group as size-bounded atomic Raft
+	// proposals; when it returns without error, every operation was
+	// committed.
 	committed := int64(len(batchResp.Responses))
 
 	shardStr := formatUint(session.header.ShardId)

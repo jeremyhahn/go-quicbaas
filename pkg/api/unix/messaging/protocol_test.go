@@ -186,16 +186,24 @@ func TestReadRequest_ReadErrors(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("token exceeds max size", func(t *testing.T) {
+	t.Run("token length at wire ceiling with truncated body", func(t *testing.T) {
 		var b bytes.Buffer
 		b.WriteByte(0x01)           // opcode
-		b.Write([]byte{0xFF, 0xFF}) // token length = 65535 > MaxTokenSize
+		b.Write([]byte{0xFF, 0xFF}) // token length = 65535 (= MaxTokenSize), no body
 		_, err := ReadRequest(bytes.NewReader(b.Bytes()))
 		require.Error(t, err)
+	})
 
-		var qbErr *dberrors.QBError
-		require.True(t, errors.As(err, &qbErr))
-		assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	t.Run("token above old 8KB limit round-trips", func(t *testing.T) {
+		req := &Request{
+			Opcode: 0x01,
+			Token:  strings.Repeat("t", 11060),
+		}
+		var b bytes.Buffer
+		require.NoError(t, WriteRequest(&b, req))
+		decoded, err := ReadRequest(bytes.NewReader(b.Bytes()))
+		require.NoError(t, err)
+		assert.Equal(t, req.Token, decoded.Token)
 	})
 
 	t.Run("short reader fails on payload length", func(t *testing.T) {

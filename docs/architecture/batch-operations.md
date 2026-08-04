@@ -41,6 +41,8 @@ client.BatchPut(ctx, &pb.BatchPutRequest{
 
 Atomicity guarantee: all operations wrapped into one Raft proposal, state machine applies all operations together, automatic rollback if any operation fails.
 
+Operations are grouped per shard; each shard group commits as its own atomic proposal. Batches whose encoded size exceeds the Raft entry limit (8 MB) are split into size-bounded sub-batches (~4 MB each); atomicity then holds per sub-batch, and operation order is preserved within each shard.
+
 ### Architecture
 
 ```

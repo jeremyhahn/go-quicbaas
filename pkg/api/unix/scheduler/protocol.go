@@ -36,8 +36,16 @@ const (
 	// MaxPayloadSize is the maximum payload size (16MB for job payloads).
 	MaxPayloadSize uint32 = 16 * 1024 * 1024
 
-	// MaxTokenSize is the maximum authentication token size (8KB).
-	MaxTokenSize uint16 = 8 * 1024
+	// MaxTokenSize is the maximum authentication token size (64KB - 1).
+	//
+	// Production tokens are RFC 9068 at+jwt access tokens whose scp and
+	// roles claims scale with the subject's qrdb RBAC grants; real tokens
+	// have been observed at 11,060 bytes (past the previous 8KB cap).
+	// 65535 is the ceiling of the 2-byte wire length prefix, so this is a
+	// pure constant change with no frame-layout change. Must stay
+	// identical to the QUIC codec bound in pkg/api/quic and
+	// sdk/go/transport/quic.
+	MaxTokenSize uint16 = 64*1024 - 1
 )
 
 // Operation codes for scheduler operations.
@@ -185,7 +193,9 @@ func ReadRequest(r io.Reader) (*Request, error) {
 	}
 	tokenLen := binary.BigEndian.Uint16(tokenLenBuf)
 
-	if tokenLen > MaxTokenSize {
+	// With MaxTokenSize at the ceiling of the 2-byte wire prefix this cannot
+	// trigger; it stays as defense in depth should the bound be lowered.
+	if int(tokenLen) > int(MaxTokenSize) {
 		return nil, api.NewSizeLimitError("unix.scheduler.ReadRequest", "token",
 			uint32(tokenLen), uint32(MaxTokenSize))
 	}

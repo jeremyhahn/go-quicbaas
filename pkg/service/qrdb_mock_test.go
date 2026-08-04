@@ -48,6 +48,8 @@ type svcBoostMockTransport struct {
 	lastGetKey    string
 	lastDeleteKey string
 	lastScanKey   string
+	// batchCalls records the ops passed to each ExecuteBatch invocation.
+	batchCalls [][]transport.Op
 }
 
 func (t *svcBoostMockTransport) Connect(_ context.Context) error { return nil }
@@ -144,6 +146,11 @@ func (t *svcBoostMockTransport) GetTopology(_ context.Context) (*transport.Topol
 // BatchClient methods.
 
 func (t *svcBoostMockTransport) ExecuteBatch(_ context.Context, ops []transport.Op, _ ...transport.WriteOption) (*transport.BatchResponse, error) {
+	t.mu.Lock()
+	captured := make([]transport.Op, len(ops))
+	copy(captured, ops)
+	t.batchCalls = append(t.batchCalls, captured)
+	t.mu.Unlock()
 	if t.batchErr != nil {
 		return nil, t.batchErr
 	}
@@ -169,6 +176,10 @@ type svcBoostMockQRDBProvider struct {
 	transport  *svcBoostMockTransport
 	// lastShardID records the most recent shard ID passed to ForShard.
 	lastShardID atomic.Uint64
+	// shardMu guards shardCalls.
+	shardMu sync.Mutex
+	// shardCalls records every shard ID passed to ForShard, in order.
+	shardCalls []uint64
 }
 
 // newSvcBoostMockQRDBProvider creates a QRDBClientProvider that returns
@@ -273,7 +284,28 @@ func newSvcBoostMockQRDBProviderFull(t *svcBoostMockTransport) *svcBoostMockQRDB
 
 func (p *svcBoostMockQRDBProvider) ForShard(shardID uint64) (*qrdbsdk.Client, error) {
 	p.lastShardID.Store(shardID)
+	p.shardMu.Lock()
+	p.shardCalls = append(p.shardCalls, shardID)
+	p.shardMu.Unlock()
 	return p.client, nil
+}
+
+// capturedBatchCalls returns the ops passed to each ExecuteBatch call.
+func (p *svcBoostMockQRDBProvider) capturedBatchCalls() [][]transport.Op {
+	p.transport.mu.Lock()
+	defer p.transport.mu.Unlock()
+	calls := make([][]transport.Op, len(p.transport.batchCalls))
+	copy(calls, p.transport.batchCalls)
+	return calls
+}
+
+// capturedShardCalls returns every shard ID passed to ForShard, in order.
+func (p *svcBoostMockQRDBProvider) capturedShardCalls() []uint64 {
+	p.shardMu.Lock()
+	defer p.shardMu.Unlock()
+	calls := make([]uint64, len(p.shardCalls))
+	copy(calls, p.shardCalls)
+	return calls
 }
 
 func (p *svcBoostMockQRDBProvider) Close() error {

@@ -96,10 +96,34 @@ func TestWriteRequest(t *testing.T) {
 			name: "token exceeds maximum size",
 			req: &Request{
 				Opcode: OpGet,
-				Token:  string(make([]byte, MaxTokenSize+1)),
+				Token:  string(make([]byte, int(MaxTokenSize)+1)),
 			},
 			wantErr: true,
 			errType: "ErrInvalidInput",
+		},
+		{
+			name: "token above old 8KB limit now accepted",
+			req: &Request{
+				Opcode: OpGet,
+				Token:  string(make([]byte, 8*1024+1)),
+			},
+			wantErr: false,
+		},
+		{
+			name: "production-shape 11060 byte token accepted",
+			req: &Request{
+				Opcode: OpGet,
+				Token:  string(make([]byte, 11060)),
+			},
+			wantErr: false,
+		},
+		{
+			name: "token at maximum size accepted",
+			req: &Request{
+				Opcode: OpGet,
+				Token:  string(make([]byte, int(MaxTokenSize))),
+			},
+			wantErr: false,
 		},
 	}
 
@@ -266,17 +290,17 @@ func TestReadRequest(t *testing.T) {
 			errType: "ErrInvalidInput",
 		},
 		{
-			name: "token size exceeds maximum",
+			name: "token length at wire ceiling with truncated body",
 			setup: func() io.Reader {
 				buf := &bytes.Buffer{}
 				buf.WriteByte(OpPut)
-				// Write token length exceeding max (>8KB)
+				// Token length prefix at the 2-byte wire ceiling (65535,
+				// which equals MaxTokenSize) but no token bytes follow.
 				buf.WriteByte(0xFF)
 				buf.WriteByte(0xFF)
 				return buf
 			},
 			wantErr: true,
-			errType: "ErrInvalidInput",
 		},
 		{
 			name: "EOF reading payload data",

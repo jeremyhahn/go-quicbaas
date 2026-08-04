@@ -1025,7 +1025,7 @@ func TestWriteErrors(t *testing.T) {
 	t.Run("WriteRequestTokenTooLarge", func(t *testing.T) {
 		req := &Request{
 			Opcode: OpGet,
-			Token:  string(make([]byte, MaxTokenSize+1)),
+			Token:  string(make([]byte, int(MaxTokenSize)+1)),
 		}
 		var buf bytes.Buffer
 		err := WriteRequest(&buf, req)
@@ -1034,6 +1034,29 @@ func TestWriteErrors(t *testing.T) {
 		}
 		if !errors.IsInvalidInput(err) {
 			t.Errorf("expected invalid input error, got: %v", err)
+		}
+	})
+
+	t.Run("WriteRequestTokenAboveOld8KBLimit", func(t *testing.T) {
+		// Regression: RFC 9068 at+jwt tokens carrying qrdb-resolved RBAC
+		// roles + scp claims legitimately exceed the old 8KB cap (observed
+		// production size: 11,060 bytes).
+		for _, size := range []int{8*1024 + 1, 11060, int(MaxTokenSize)} {
+			req := &Request{
+				Opcode: OpGet,
+				Token:  string(make([]byte, size)),
+			}
+			var buf bytes.Buffer
+			if err := WriteRequest(&buf, req); err != nil {
+				t.Fatalf("WriteRequest failed for %d byte token: %v", size, err)
+			}
+			decoded, err := ReadRequest(&buf)
+			if err != nil {
+				t.Fatalf("ReadRequest failed for %d byte token: %v", size, err)
+			}
+			if decoded.Token != req.Token {
+				t.Fatalf("token mismatch after round trip at size %d", size)
+			}
 		}
 	})
 
@@ -1147,17 +1170,17 @@ func TestWriteResponseErrors(t *testing.T) {
 
 // TestReadErrors tests read error paths.
 func TestReadErrors(t *testing.T) {
-	t.Run("ReadRequestInvalidTokenLen", func(t *testing.T) {
-		// Create a buffer with an oversized token length
+	t.Run("ReadRequestTruncatedToken", func(t *testing.T) {
+		// Token length prefix at the 2-byte wire ceiling (65535, which
+		// equals MaxTokenSize) with a truncated token body must fail.
 		var buf bytes.Buffer
-		buf.WriteByte(OpGet)                         // opcode
-		buf.Write([]byte{0xFF, 0xFF})                // token len (65535 > MaxTokenSize)
-		buf.Write(make([]byte, int(MaxTokenSize)+1)) // token (will fail before reading all)
-		buf.Write([]byte{0x00, 0x00, 0x00, 0x00})    // payload len
+		buf.WriteByte(OpGet)          // opcode
+		buf.Write([]byte{0xFF, 0xFF}) // token len (65535)
+		buf.Write(make([]byte, 10))   // truncated token body
 
 		_, err := ReadRequest(&buf)
 		if err == nil {
-			t.Fatal("expected error for oversized token")
+			t.Fatal("expected error for truncated token")
 		}
 	})
 

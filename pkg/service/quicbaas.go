@@ -1504,8 +1504,55 @@ func (k *kvService) ListEntityTypes(ctx context.Context, req *ListEntityTypesReq
 // Batch Service Implementation
 // =============================================================================
 
+// batchProposalMaxBytes bounds the estimated encoded size of a single
+// ExecuteBatch call. QuicRaft rejects Raft entries larger than 8 MB
+// (proto.MaxEntrySize); half of that leaves headroom for batch framing,
+// op envelopes, and tenant keyspace prefixes added below this layer.
+const batchProposalMaxBytes = 4 << 20
+
+// batchOpOverheadBytes approximates the per-operation encoding overhead
+// (length prefixes and op envelope fields) used when sizing sub-batches.
+const batchOpOverheadBytes = 64
+
 type batchService struct {
 	svc *quicBaaS
+}
+
+// batchOpSize estimates the encoded size of a single batch operation.
+func batchOpSize(op qrdbtransport.Op) int {
+	return len(op.Key) + len(op.Value) + batchOpOverheadBytes
+}
+
+// executeShardBatch applies ops for a single shard through the qrdb SDK
+// atomic batch API. Operations are split into size-bounded sub-batches so
+// that each Raft proposal stays under the QuicRaft entry limit; every
+// sub-batch is committed as one atomic consensus proposal, in input order.
+func (b *batchService) executeShardBatch(ctx context.Context, shardID uint64, ops []qrdbtransport.Op, op string) error {
+	client, err := b.svc.qrdbForShard(shardID)
+	if err != nil {
+		return &errors.QBError{
+			Code: errors.ErrRaft,
+			Op:   op,
+			Err:  err,
+		}
+	}
+	for start := 0; start < len(ops); {
+		size := batchOpSize(ops[start])
+		end := start + 1
+		for end < len(ops) && size+batchOpSize(ops[end]) <= batchProposalMaxBytes {
+			size += batchOpSize(ops[end])
+			end++
+		}
+		if _, err := client.Batch().ExecuteBatch(ctx, ops[start:end]); err != nil {
+			return &errors.QBError{
+				Code: errors.ErrRaft,
+				Op:   op,
+				Err:  err,
+			}
+		}
+		start = end
+	}
+	return nil
 }
 
 func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*BatchPutResponse, error) {
@@ -1551,10 +1598,13 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 		}
 	}
 
-	// Execute each put operation individually through the KV service,
-	// grouped by per-request ShardID for correct shard routing.
+	// Build per-shard atomic batch operations, grouped by per-request
+	// ShardID for correct shard routing. Input order is preserved within
+	// each shard group.
 	timestamp := time.Now().UnixNano()
 	responses := make([]*PutResponse, len(req.Requests))
+	shardOrder := make([]uint64, 0, 1)
+	shardOps := make(map[uint64][]qrdbtransport.Op)
 	for i, putReq := range req.Requests {
 		key, err := b.svc.keyspaceResolver.BuildKey(ctx, putReq.EntityType, putReq.ID)
 		if err != nil {
@@ -1571,33 +1621,31 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 		if shardID == 0 {
 			shardID = 1
 		}
-		client, err := b.svc.qrdbForShard(shardID)
-		if err != nil {
-			if b.svc.metrics != nil {
-				b.svc.metrics.requestsTotal.With("BatchPut", "error").Inc()
-				b.svc.metrics.errorsByType.With("raft_error").Inc()
-			}
-			return nil, &errors.QBError{
-				Code: errors.ErrRaft,
-				Op:   "service.BatchPut",
-				Err:  err,
-			}
+		if _, ok := shardOps[shardID]; !ok {
+			shardOrder = append(shardOrder, shardID)
 		}
-		if err := client.KV().Put(ctx, string(key), putReq.Data); err != nil {
-			if b.svc.metrics != nil {
-				b.svc.metrics.requestsTotal.With("BatchPut", "error").Inc()
-				b.svc.metrics.errorsByType.With("raft_error").Inc()
-			}
-			return nil, &errors.QBError{
-				Code: errors.ErrRaft,
-				Op:   "service.BatchPut",
-				Err:  err,
-			}
-		}
+		shardOps[shardID] = append(shardOps[shardID], qrdbtransport.Op{
+			Type:  qrdbtransport.OpPut,
+			Key:   key,
+			Value: putReq.Data,
+		})
 		responses[i] = &PutResponse{
 			ID:        putReq.ID,
 			Version:   1,
 			Timestamp: timestamp,
+		}
+	}
+
+	// Commit each shard group through the qrdb SDK atomic batch API.
+	// Each size-bounded sub-batch is a single Raft consensus proposal
+	// instead of one proposal per operation.
+	for _, shardID := range shardOrder {
+		if err := b.executeShardBatch(ctx, shardID, shardOps[shardID], "service.BatchPut"); err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchPut", "error").Inc()
+				b.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, err
 		}
 	}
 
@@ -1725,10 +1773,13 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 		}
 	}
 
-	// Execute each delete operation individually through the KV service,
-	// grouped by per-request ShardID for correct shard routing.
+	// Build per-shard atomic batch operations, grouped by per-request
+	// ShardID for correct shard routing. Input order is preserved within
+	// each shard group.
 	timestamp := time.Now().UnixNano()
 	responses := make([]*DeleteResponse, len(req.Requests))
+	shardOrder := make([]uint64, 0, 1)
+	shardOps := make(map[uint64][]qrdbtransport.Op)
 	for i, delReq := range req.Requests {
 		key, err := b.svc.keyspaceResolver.BuildKey(ctx, delReq.EntityType, delReq.ID)
 		if err != nil {
@@ -1745,32 +1796,29 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 		if shardID == 0 {
 			shardID = 1
 		}
-		client, err := b.svc.qrdbForShard(shardID)
-		if err != nil {
-			if b.svc.metrics != nil {
-				b.svc.metrics.requestsTotal.With("BatchDelete", "error").Inc()
-				b.svc.metrics.errorsByType.With("raft_error").Inc()
-			}
-			return nil, &errors.QBError{
-				Code: errors.ErrRaft,
-				Op:   "service.BatchDelete",
-				Err:  err,
-			}
+		if _, ok := shardOps[shardID]; !ok {
+			shardOrder = append(shardOrder, shardID)
 		}
-		if err := client.KV().Delete(ctx, string(key)); err != nil {
-			if b.svc.metrics != nil {
-				b.svc.metrics.requestsTotal.With("BatchDelete", "error").Inc()
-				b.svc.metrics.errorsByType.With("raft_error").Inc()
-			}
-			return nil, &errors.QBError{
-				Code: errors.ErrRaft,
-				Op:   "service.BatchDelete",
-				Err:  err,
-			}
-		}
+		shardOps[shardID] = append(shardOps[shardID], qrdbtransport.Op{
+			Type: qrdbtransport.OpDelete,
+			Key:  key,
+		})
 		responses[i] = &DeleteResponse{
 			Deleted:   true,
 			Timestamp: timestamp,
+		}
+	}
+
+	// Commit each shard group through the qrdb SDK atomic batch API.
+	// Each size-bounded sub-batch is a single Raft consensus proposal
+	// instead of one proposal per operation.
+	for _, shardID := range shardOrder {
+		if err := b.executeShardBatch(ctx, shardID, shardOps[shardID], "service.BatchDelete"); err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchDelete", "error").Inc()
+				b.svc.metrics.errorsByType.With("raft_error").Inc()
+			}
+			return nil, err
 		}
 	}
 

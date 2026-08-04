@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -53,8 +54,19 @@ const (
 	// Maximum payload size (16MB).
 	MaxPayloadSize uint32 = 16 * 1024 * 1024
 
-	// Maximum token size (8KB).
-	MaxTokenSize uint16 = 8 * 1024
+	// MaxTokenSize is the maximum auth token size (64KB - 1).
+	//
+	// Production tokens are RFC 9068 at+jwt access tokens whose scp claim
+	// carries the subject's qrdb-resolved effective RBAC permissions and
+	// whose roles claim carries the subject's role bindings; both scale
+	// with the number of grants, and real tokens have been observed at
+	// 11,060 bytes (well past the previous 8KB cap). The wire format
+	// encodes the token length as a 2-byte big-endian prefix, so 65535
+	// (64KB - 1) is the natural ceiling of the existing frame layout:
+	// raising the constant to the full range of that field gives ~6x
+	// headroom over the observed worst case with no frame-layout change,
+	// while still tightly bounding the per-frame read allocation.
+	MaxTokenSize uint16 = 64*1024 - 1
 )
 
 // Operation codes - mapping all QuicBaaS operations.
@@ -635,6 +647,15 @@ type Response struct {
 	Payload []byte
 }
 
+// clampUint32 converts a non-negative int length to uint32 for error
+// reporting, saturating at math.MaxUint32 instead of wrapping.
+func clampUint32(n int) uint32 {
+	if uint64(n) > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(n) //#nosec G115 -- bounds checked above
+}
+
 // WriteRequest writes a request to the stream.
 // Returns an error if the write fails or payload exceeds maximum size.
 func WriteRequest(w io.Writer, req *Request) error {
@@ -642,15 +663,19 @@ func WriteRequest(w io.Writer, req *Request) error {
 		return api.NewNilInputError("quic.WriteRequest", "request")
 	}
 
-	payloadLen := uint32(len(req.Payload)) //nolint:gosec // G115: payload length bounded by protocol
-	if payloadLen > MaxPayloadSize {
-		return api.NewSizeLimitError("quic.WriteRequest", "payload", payloadLen, MaxPayloadSize)
+	// Validate lengths before narrowing conversions so oversized inputs
+	// cannot wrap around the fixed-width wire length prefixes.
+	if len(req.Payload) > int(MaxPayloadSize) {
+		return api.NewSizeLimitError("quic.WriteRequest", "payload",
+			clampUint32(len(req.Payload)), MaxPayloadSize)
 	}
+	payloadLen := uint32(len(req.Payload)) //#nosec G115 -- bounds checked above
 
-	tokenLen := uint16(len(req.Token)) //nolint:gosec // G115: token length bounded by protocol
-	if tokenLen > MaxTokenSize {
-		return api.NewSizeLimitError("quic.WriteRequest", "token", uint32(tokenLen), uint32(MaxTokenSize))
+	if len(req.Token) > int(MaxTokenSize) {
+		return api.NewSizeLimitError("quic.WriteRequest", "token",
+			clampUint32(len(req.Token)), uint32(MaxTokenSize))
 	}
+	tokenLen := uint16(len(req.Token)) //#nosec G115 -- bounds checked above
 
 	// Write opcode
 	if _, err := w.Write([]byte{req.Opcode}); err != nil {
@@ -704,8 +729,10 @@ func ReadRequest(r io.Reader) (*Request, error) {
 	}
 	tokenLen := binary.BigEndian.Uint16(tokenLenBuf)
 
-	// Validate token length
-	if tokenLen > MaxTokenSize {
+	// Validate token length. With MaxTokenSize at the ceiling of the 2-byte
+	// wire prefix this cannot trigger; it stays as defense in depth should
+	// the bound ever be lowered below the prefix range.
+	if int(tokenLen) > int(MaxTokenSize) {
 		return nil, api.NewSizeLimitError("quic.ReadRequest", "token", uint32(tokenLen), uint32(MaxTokenSize))
 	}
 

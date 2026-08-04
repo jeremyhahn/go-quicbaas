@@ -88,7 +88,7 @@ func TestStatusConstants(t *testing.T) {
 func TestProtocolConstants(t *testing.T) {
 	assert.Equal(t, byte(0x01), ProtocolVersion)
 	assert.Equal(t, uint32(16*1024*1024), MaxPayloadSize)
-	assert.Equal(t, uint16(8*1024), MaxTokenSize)
+	assert.Equal(t, uint16(64*1024-1), MaxTokenSize)
 }
 
 func TestWriteReadRequest(t *testing.T) {
@@ -199,11 +199,12 @@ func TestReadRequestReadError(t *testing.T) {
 	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }
 
-func TestReadRequestTokenSizeExceeded(t *testing.T) {
+func TestReadRequestTokenAtWireCeilingTruncated(t *testing.T) {
 	buf := &bytes.Buffer{}
 	// Write opcode
 	buf.WriteByte(OpSchedulerGetJob)
-	// Write token length that exceeds max
+	// Token length prefix at the 2-byte wire ceiling (65535, which equals
+	// MaxTokenSize) with no token body must fail the read.
 	buf.WriteByte(0xFF)
 	buf.WriteByte(0xFF)
 
@@ -212,7 +213,22 @@ func TestReadRequestTokenSizeExceeded(t *testing.T) {
 
 	var qbErr *dberrors.QBError
 	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
+}
+
+func TestReadRequestTokenAboveOld8KBLimit(t *testing.T) {
+	// Regression: RFC 9068 at+jwt tokens carrying qrdb-resolved RBAC roles +
+	// scp claims legitimately exceed the old 8KB cap (observed: 11,060 bytes).
+	req := &Request{
+		Opcode: OpSchedulerGetJob,
+		Token:  strings.Repeat("t", 11060),
+	}
+	buf := &bytes.Buffer{}
+	require.NoError(t, WriteRequest(buf, req))
+
+	decoded, err := ReadRequest(buf)
+	require.NoError(t, err)
+	assert.Equal(t, req.Token, decoded.Token)
 }
 
 func TestReadRequestPayloadSizeExceeded(t *testing.T) {

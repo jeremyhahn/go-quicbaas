@@ -145,6 +145,10 @@ func TestBearerFromContext(t *testing.T) {
 	assert.Equal(t, "rawtoken", bearerFromContext(metadata.NewIncomingContext(context.Background(), md)))
 	// No metadata -> empty.
 	assert.Equal(t, "", bearerFromContext(context.Background()))
+	// An empty bearer value ("Bearer " with nothing after the scheme) must
+	// normalize to the empty token so the interceptor rejects it pre-PDP.
+	assert.Equal(t, "", bearerFromContext(ctxWithBearer("")))
+	assert.Equal(t, "", bearerFromContext(ctxWithBearer("   ")))
 }
 
 // TestUnaryAuthorizationInterceptor_Allow asserts the validator-backed gate
@@ -227,6 +231,25 @@ func TestUnaryAuthorizationInterceptor_MissingToken(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 	assert.Equal(t, "", authorizer.lastPerm, "validator must not be consulted without a token")
+}
+
+// TestUnaryAuthorizationInterceptor_EmptyBearerToken asserts that an
+// "authorization: Bearer " header carrying an EMPTY token is rejected
+// Unauthenticated before the validator is ever consulted — identical to a
+// missing header. An empty credential must never reach the decision point as
+// an anonymous principal (fail-closed, no anonymous data-plane path).
+func TestUnaryAuthorizationInterceptor_EmptyBearerToken(t *testing.T) {
+	authorizer := &fakeValidatorAuthorizer{token: "good", grantedPerm: "kv:put"}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
+
+	called := false
+	_, err := interceptor(ctxWithBearer(""), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"},
+		func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil })
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	assert.False(t, called, "handler must not run for an empty bearer token")
+	assert.Equal(t, "", authorizer.lastPerm, "validator must not be consulted for an empty bearer token")
 }
 
 // TestUnaryAuthorizationInterceptor_InvalidToken asserts a token-validation

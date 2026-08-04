@@ -19,6 +19,7 @@ package quic
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -45,8 +46,20 @@ const (
 	// MaxPayloadSize is the maximum payload size (16MB).
 	MaxPayloadSize uint32 = 16 * 1024 * 1024
 
-	// MaxTokenSize is the maximum token size (8KB).
-	MaxTokenSize uint16 = 8 * 1024
+	// MaxTokenSize is the maximum auth token size (64KB - 1).
+	//
+	// Production tokens are RFC 9068 at+jwt access tokens whose scp claim
+	// carries the subject's qrdb-resolved effective RBAC permissions and
+	// whose roles claim carries the subject's role bindings; both scale
+	// with the number of grants, and real tokens have been observed at
+	// 11,060 bytes (well past the previous 8KB cap). The wire format
+	// encodes the token length as a 2-byte big-endian prefix, so 65535
+	// (64KB - 1) is the natural ceiling of the existing frame layout:
+	// raising the constant to the full range of that field gives ~6x
+	// headroom over the observed worst case with no frame-layout change,
+	// while still tightly bounding the per-frame read allocation. Must
+	// stay identical to the server-side bound in pkg/api/quic.
+	MaxTokenSize uint16 = 64*1024 - 1
 )
 
 // Operation codes - mapping all QuicBaaS operations.
@@ -667,17 +680,19 @@ func WriteRequest(w io.Writer, req *Request) error {
 		return errors.NewInvalidInput("quic.WriteRequest", "request cannot be nil")
 	}
 
-	payloadLen := uint32(len(req.Payload))
-	if payloadLen > MaxPayloadSize {
+	// Validate lengths before narrowing conversions so oversized inputs
+	// cannot wrap around the fixed-width wire length prefixes.
+	if len(req.Payload) > int(MaxPayloadSize) {
 		return errors.NewInvalidInput("quic.WriteRequest",
-			"payload size exceeds maximum")
+			fmt.Sprintf("payload size %d exceeds maximum %d", len(req.Payload), MaxPayloadSize))
 	}
+	payloadLen := uint32(len(req.Payload)) //#nosec G115 -- bounds checked above
 
-	tokenLen := uint16(len(req.Token))
-	if tokenLen > MaxTokenSize {
+	if len(req.Token) > int(MaxTokenSize) {
 		return errors.NewInvalidInput("quic.WriteRequest",
-			"token size exceeds maximum")
+			fmt.Sprintf("token size %d exceeds maximum %d", len(req.Token), MaxTokenSize))
 	}
+	tokenLen := uint16(len(req.Token)) //#nosec G115 -- bounds checked above
 
 	// Write opcode
 	if _, err := w.Write([]byte{req.Opcode}); err != nil {
@@ -737,8 +752,10 @@ func ReadRequest(r io.Reader) (*Request, error) {
 	}
 	tokenLen := binary.BigEndian.Uint16(tokenLenBuf)
 
-	// Validate token length
-	if tokenLen > MaxTokenSize {
+	// Validate token length. With MaxTokenSize at the ceiling of the 2-byte
+	// wire prefix this cannot trigger; it stays as defense in depth should
+	// the bound ever be lowered below the prefix range.
+	if int(tokenLen) > int(MaxTokenSize) {
 		return nil, errors.NewInvalidInput("quic.ReadRequest",
 			"token size exceeds maximum")
 	}
