@@ -145,11 +145,44 @@ func TestProtoMCPServersToRuntime_TranslatesAllFields(t *testing.T) {
 	if out[0].Name != "server-alpha" {
 		t.Errorf("out[0].Name: got %q, want %q", out[0].Name, "server-alpha")
 	}
+	if out[0].URL != "http://alpha:8080/mcp" {
+		t.Errorf("out[0].URL: got %q, want %q", out[0].URL, "http://alpha:8080/mcp")
+	}
+	// Command mirrors URL for legacy readers.
 	if out[0].Command != "http://alpha:8080/mcp" {
 		t.Errorf("out[0].Command: got %q, want %q", out[0].Command, "http://alpha:8080/mcp")
 	}
 	if out[1].Name != "server-beta" {
 		t.Errorf("out[1].Name: got %q, want %q", out[1].Name, "server-beta")
+	}
+}
+
+// TestProtoMCPServersToRuntime_PreservesEnv guards the lossless plumbing for the
+// MCP-preconfig feature: the proto env map (which carries an agent's mTLS
+// cert/key paths for the QuicBaaS MCP endpoint) must survive the proto->runtime
+// hop. A regression that drops env would silently leave a spawned agent unable
+// to authenticate to the MCP server.
+func TestProtoMCPServersToRuntime_PreservesEnv(t *testing.T) {
+	t.Parallel()
+	in := []*proto.MCPServerConfig{
+		{
+			Name: "quicbaas",
+			Url:  "https://localhost:8444/mcp",
+			Env: map[string]string{
+				"QUICBAAS_MCP_CERT": "/data/agent.crt",
+				"QUICBAAS_MCP_KEY":  "/data/agent.key",
+			},
+		},
+	}
+	out := protoMCPServersToRuntime(in)
+	if len(out) != 1 {
+		t.Fatalf("len: got %d, want 1", len(out))
+	}
+	if got := out[0].Env["QUICBAAS_MCP_CERT"]; got != "/data/agent.crt" {
+		t.Errorf("env cert: got %q, want %q", got, "/data/agent.crt")
+	}
+	if got := out[0].Env["QUICBAAS_MCP_KEY"]; got != "/data/agent.key" {
+		t.Errorf("env key: got %q, want %q", got, "/data/agent.key")
 	}
 }
 

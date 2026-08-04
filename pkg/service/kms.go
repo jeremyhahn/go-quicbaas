@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -1199,6 +1200,13 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "delete_key").Inc()
+		}
+		// A missing key must surface as not-found (HTTP 404), mirroring the
+		// GetKey path. WrapError always stamps the supplied code, so without
+		// this branch the manager's ErrNotFound would be clobbered with
+		// ErrInternal and deleting an already-deleted key would return 500.
+		if stderrors.Is(err, kms.ErrKeyNotFound) {
+			return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKey", "key not found")
 		}
 		return nil, WrapError(err, errors.ErrInternal, "kms.DeleteKey", "failed to delete key")
 	}

@@ -192,6 +192,11 @@ type Server struct {
 	// shardRouter selects a raft shard for (entityType, id)
 	shardRouter interface{ Route(string, uint64) uint64 }
 
+	// clusterSecretHandler serves the cluster CA secret-delivery endpoint
+	// (tpm-kek). Nil unless a cluster CA key strategy delivers enrollment
+	// material; set via SetClusterSecretHandler before setupRouter.
+	clusterSecretHandler http.HandlerFunc
+
 	// listener is the TCP listener backing the HTTP server.
 	// It is created in Start and may be wrapped by a limitListener.
 	listener net.Listener
@@ -284,7 +289,7 @@ type Server struct {
 	// bootstrapSvc serves /api/v1/bootstrap endpoints. Wired by lifecycle
 	// via SetBootstrapService once the trust bootstrap subsystem is online.
 	// Nil before wiring; the handlers report 503 Service Unavailable.
-	bootstrapSvc BootstrapServicer
+	bootstrapSvc service.BootstrapServicer
 
 	// credentialSvc serves /v1/credentials/* endpoints. Wired by lifecycle
 	// via SetCredentialService once the qrdb credential management service
@@ -451,6 +456,10 @@ func (s *Server) setupRouter() {
 				r.Post("/keys/unwrap", s.HandleUnwrapKey)                                 // Unwrap/import wrapped key
 				r.Get("/keys", s.HandleListKeys)                                          // List keys
 				r.Get("/keys/{name}", s.HandleGetKey)                                     // Get key metadata
+				r.Get("/keys/{name}/metadata", s.HandleGetKeyMetadata)                    // Get key metadata only
+				r.Put("/keys/{name}/metadata", s.HandleUpdateKeyMetadata)                 // Update key metadata
+				r.Get("/keys/{name}/public", s.HandleGetPublicKey)                        // Get DER public key
+				r.Post("/keys/{name}/revoke", s.HandleRevokeKey)                          // Revoke key
 				r.Post("/keys/{name}/rotate", s.HandleRotateKey)                          // Rotate key
 				r.Post("/keys/{name}/export", s.HandleExportKey)                          // Export key wrapped
 				r.Put("/keys/{name}/status", s.HandleUpdateKeyStatus)                     // Update key status
@@ -466,6 +475,7 @@ func (s *Server) setupRouter() {
 				r.Delete("/keys/{name}/rotation-policy", s.HandleDeleteKeyRotationPolicy) // Remove auto-rotation policy
 				r.Post("/encrypt/{name}", s.HandleKMSEncrypt)                             // Encrypt data
 				r.Post("/decrypt/{name}", s.HandleKMSDecrypt)                             // Decrypt data
+				r.Get("/algorithms", s.HandleGetSupportedAlgorithms)                      // Supported algorithms
 				r.Get("/backend/status", s.HandleBackendStatus)                           // Backend status
 				r.Post("/backend/test", s.HandleBackendTest)                              // Test backend
 
@@ -600,6 +610,8 @@ func (s *Server) setupRouter() {
 				r.Get("/recovery/status", s.HandleBarrierRecoveryStatus)
 
 				r.Post("/root-token", s.HandleBarrierRootToken)
+
+				r.Post("/enable-encryption", s.HandleBarrierEnableEncryption)
 			})
 
 			// Ceremony routes — canonical /api/v1/init surface. The
@@ -737,6 +749,13 @@ func (s *Server) setupRouter() {
 			// convention.
 			registerACMERoutes(s, r)
 
+			// Cluster CA secret-delivery endpoint (tpm-kek): a joining node POSTs
+			// its node cert + TPM attestation here after enrollment to fetch its
+			// wrapped cluster seed. Inert (unset handler) for barrier/hsm.
+			if s.clusterSecretHandler != nil {
+				r.Post("/cluster/secret", s.clusterSecretHandler)
+			}
+
 			// Dynamic secrets service routes
 			registerDynamicSecretsRoutes(s, r)
 
@@ -758,10 +777,9 @@ func (s *Server) setupRouter() {
 			// Project routes (tenant → project → workflow hierarchy)
 			registerProjectRoutes(s, r)
 
-			// Agent admin routes (disable/enable agents)
-			registerAgentAdminRoutes(s, r)
-
-			// Orchestrator routes (agent sessions, tasks, backends)
+			// Orchestrator routes (agent sessions, tasks, backends).
+			// Agent admin routes (disable/enable) are registered inside the
+			// orchestrator subrouter for consistency with register/list/get/remove.
 			registerOrchestratorRoutes(s, r)
 
 		})
@@ -831,6 +849,8 @@ func (s *Server) setupRouter() {
 		r.Get("/recovery/status", s.HandleBarrierRecoveryStatus)
 
 		r.Post("/root-token", s.HandleBarrierRootToken)
+
+		r.Post("/enable-encryption", s.HandleBarrierEnableEncryption)
 	})
 
 	// Ceremony routes mirror the qrdb CeremonyClient wire contract so a qrdb
@@ -993,6 +1013,15 @@ func (s *Server) SetShardRouter(r interface{ Route(string, uint64) uint64 }) {
 	s.shardRouter = r
 }
 
+// SetClusterSecretHandler registers the cluster CA secret-delivery handler
+// (tpm-kek). It must be called before setupRouter mounts routes. Nil leaves the
+// endpoint unmounted (barrier/hsm).
+func (s *Server) SetClusterSecretHandler(h http.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clusterSecretHandler = h
+}
+
 // SetHookTaskStore sets the task store used by Claude Code hook handlers.
 func (s *Server) SetHookTaskStore(store orchestration.TaskStore) {
 	s.mu.Lock()
@@ -1048,7 +1077,7 @@ func (s *Server) SetCeremonyService(svc service.CeremonyServicer) {
 // /api/v1/bootstrap handlers. Lifecycle wiring calls this once the
 // truststrap subsystem is online. Passing nil disables the surface
 // (handlers report 503).
-func (s *Server) SetBootstrapService(svc BootstrapServicer) {
+func (s *Server) SetBootstrapService(svc service.BootstrapServicer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bootstrapSvc = svc

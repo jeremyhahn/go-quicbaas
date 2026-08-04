@@ -18,7 +18,7 @@ SDK accessor: [`Client.Security().Barrier()`](../sdk/security.md).
 
 ---
 
-## 1. The locked 9-verb tree
+## 1. The locked verb tree
 
 ```
 quicbaas barrier status
@@ -45,6 +45,16 @@ quicbaas barrier recovery generate
 quicbaas barrier recovery recover
                                 --share <s1> [--share <s2> ...]
 ```
+
+> **Enable-encryption is API-only (no CLI verb yet).** Migrating an
+> unencrypted barrier to a keyed strategy after the fact is exposed over the
+> REST/gRPC/QUIC/MCP transports (system route `POST /api/v1/barrier/enable-encryption`
+> and per-tenant route `POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption`),
+> driven server-side via the embedded qrdb node. It is **not** wired as a
+> `quicbaas barrier` CLI verb — the barrier CLI uses the qrdb `BarrierClient`
+> transport, whose enable-encryption method is intentionally stubbed (the
+> operation runs on the node, not through that transport). See the API/barrier
+> docs for the request shape.
 
 ### Root persistent flag
 
@@ -207,6 +217,29 @@ quicbaas barrier rekey --threshold 3 --total 5
 quicbaas barrier recovery generate --threshold 3 --total 5 --so-pin SO12345
 quicbaas barrier recovery recover --share key-a --share key-b --share key-c
 ```
+
+### Enable-encryption (API-only)
+
+Transitioning a cleartext (`none`) barrier to an encrypted one after the fact is
+exposed over the transports, not the CLI (see the note in §1). The request field
+is `target_strategy`; `mechanism` and `availability` default to `swap` / `online`.
+
+```bash
+# System barrier — passphrase
+curl -X POST https://host:port/api/v1/barrier/enable-encryption \
+  -d '{"target_strategy":"passphrase","passphrase":"my-wrapping-passphrase"}'
+
+# System barrier — Shamir
+curl -X POST https://host:port/api/v1/barrier/enable-encryption \
+  -d '{"target_strategy":"shamir","passphrase":"my-wrapping-passphrase","shamir_threshold":2,"shamir_total":3}'
+
+# Per-tenant barrier (tenant 'acme-corp')
+curl -X POST https://host:port/api/v1/tenants/acme-corp/barrier/enable-encryption \
+  -d '{"target_strategy":"passphrase","passphrase":"tenant-wrapping-passphrase"}'
+```
+
+A tenant on the shared system barrier (no dedicated barrier) is rejected with
+`403` (`ErrSharedBarrierImmutable`); an in-progress migration returns `409`.
 
 ---
 

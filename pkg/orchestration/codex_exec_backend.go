@@ -18,7 +18,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
@@ -112,7 +111,7 @@ func (b *CodexExecBackend) Spawn(_ context.Context, req *SpawnRequest) (*Session
 
 	id, err := newCodexExecSessionID()
 	if err != nil {
-		return nil, fmt.Errorf("codex exec backend: generate session id: %w", err)
+		return nil, &CodexExecError{Op: "generate session id", Cause: err}
 	}
 
 	model := req.Model
@@ -338,3 +337,21 @@ func extractCodexAssistantText(raw string) string {
 	}
 	return strings.TrimSpace(strings.Join(collected, "\n"))
 }
+
+// CodexExecError wraps a codex exec backend operation failure with a
+// contextual op string. It is the typed replacement for fmt.Errorf and unwraps
+// to the underlying cause for errors.Is/As traversal.
+type CodexExecError struct {
+	// Op names the failing operation, e.g. "generate session id".
+	Op string
+	// Cause is the wrapped underlying error.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *CodexExecError) Error() string {
+	return "codex exec backend: " + e.Op + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the wrapped cause for errors.Is/As support.
+func (e *CodexExecError) Unwrap() error { return e.Cause }

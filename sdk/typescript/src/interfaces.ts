@@ -146,6 +146,7 @@ import type {
   BootstrapMethod,
   BootstrapBundleRequest,
   BootstrapBundleResponse,
+  ClusterStatusResponse,
   SessionEventEnvelope,
   SessionInfo,
   SpawnSessionRequest,
@@ -998,6 +999,17 @@ export interface CeremonyClient {
 // BootstrapClient retrieves the CA certificate bundle through one of the
 // supported trust bootstrap methods (auto, dane, noise, spki). The methods
 // are intended for first-contact use before TLS is available; each one
+// ClusterClient exposes the Raft cluster control plane. Mirrors the Go SDK
+// cluster.Client (sdk/go/client/cluster). Only the read surface the dashboards
+// need is implemented today; membership/rebalance writes are added when a UI
+// or caller requires them. Path: /api/v1/cluster.
+export interface ClusterClient {
+  // status returns the current cluster status (node id, leadership, shards,
+  // health). In standalone (non-Raft) mode `shards` is empty and total_nodes
+  // is 1. Maps to GET /api/v1/cluster/status.
+  status(): Promise<ClusterStatusResponse>;
+}
+
 // advertises a different verification mechanism. Paths: /api/v1/bootstrap.
 export interface BootstrapClient {
   // auto attempts every configured bootstrap method in priority order and
@@ -1158,6 +1170,11 @@ export interface Client {
    * supported trust bootstrap methods (auto, dane, noise, spki).
    */
   readonly bootstrap: BootstrapClient;
+  /**
+   * cluster exposes the Raft cluster control plane (status today; membership
+   * and rebalance writes when a caller needs them). Path: /api/v1/cluster.
+   */
+  readonly cluster: ClusterClient;
   /**
    * @deprecated Use barrier. Kept for one release so existing callers
    * continue to compile. The seal accessor proxies to barrier.

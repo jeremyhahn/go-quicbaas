@@ -337,12 +337,14 @@ describe('KMSView', () => {
     await fireEvent.click(eyeButtons[0]);
 
     // Wait for the dialog to show the version row.
-    await waitFor(() => screen.getByText('ENABLED'));
+    const badge = await waitFor(() => screen.getByText('ENABLED'));
 
-    // The badge wrapping "ENABLED" must carry badge-success (green), not
-    // badge-warning (yellow).
-    const badge = container.querySelector('.badge.badge-success');
-    expect(badge).not.toBeNull();
-    expect(badge?.textContent).toBe('ENABLED');
+    // The badge wrapping "ENABLED" must itself carry badge-success (green), not
+    // badge-warning (yellow). Assert on that specific element rather than the
+    // first .badge.badge-success in the container (which is a key-status badge
+    // in the table behind the dialog).
+    expect(badge.className).toContain('badge');
+    expect(badge.className).toContain('badge-success');
+    expect(badge.textContent).toBe('ENABLED');
   });
 });

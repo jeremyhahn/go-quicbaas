@@ -62,6 +62,11 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/unix"
 )
 
+// DiscoveryRegistry is the service-discovery registry returned by
+// Client.Discovery. Re-exported (Layer-5 SDK-only boundary) so consumers can
+// reference the return type without importing go-quicbaas/pkg/registry directly.
+type DiscoveryRegistry = registry.Registry
+
 // Client is the unified QuicBaaS client interface providing access to all services.
 // It composes service sub-interfaces for organized access while maintaining
 // all direct service accessor methods for backward compatibility.
@@ -136,7 +141,9 @@ type Client interface {
 
 	// Discovery returns the service-discovery registry, built on the QRDB
 	// lease + watch + KV primitives (register/renew/deregister/resolve/watch).
-	Discovery() (*registry.Registry, error)
+	// The return type is aliased as DiscoveryRegistry so SDK consumers can
+	// reference it without importing go-quicbaas/pkg/registry directly.
+	Discovery() (*DiscoveryRegistry, error)
 
 	// DataStore returns a KVStore suitable for constructing DAOs.
 	// Uses the QRDB transport layer.

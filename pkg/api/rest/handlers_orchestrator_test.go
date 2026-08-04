@@ -394,6 +394,81 @@ func TestOrchestratorSpawn_Success(t *testing.T) {
 	assert.Equal(t, "claude", resp.Backend)
 }
 
+// TestOrchestratorSpawn_DefaultsPersistentTrue proves the /orchestrator/sessions
+// endpoint defaults Persistent=true when the caller omits the field. The Sessions
+// UI creates multi-turn conversational sessions, which require persistent mode so
+// CLI-mode backends register a durable session that the immediate prompt can
+// resolve. Without this default the spawn is one-shot and the prompt fails with
+// "session not found".
+func TestOrchestratorSpawn_DefaultsPersistentTrue(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	var captured *orchestration.SpawnSessionRequest
+	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+		captured = req
+		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+	}
+
+	// Raw body deliberately omits "persistent" entirely.
+	body := []byte(`{"backend":"claude"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorSpawn(rec, req)
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, captured)
+	assert.True(t, captured.Persistent, "sessions endpoint must default Persistent=true when omitted")
+}
+
+// TestOrchestratorSpawn_HonorsExplicitPersistentFalse proves an explicit
+// "persistent": false opt-out is honored and not overridden by the server
+// default — callers that want one-shot behavior on this endpoint can still get it.
+func TestOrchestratorSpawn_HonorsExplicitPersistentFalse(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	var captured *orchestration.SpawnSessionRequest
+	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+		captured = req
+		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+	}
+
+	body := []byte(`{"backend":"claude","persistent":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorSpawn(rec, req)
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, captured)
+	assert.False(t, captured.Persistent, "explicit persistent:false must be honored")
+}
+
+// TestOrchestratorSpawn_HonorsExplicitPersistentTrue proves an explicit
+// "persistent": true round-trips unchanged.
+func TestOrchestratorSpawn_HonorsExplicitPersistentTrue(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	var captured *orchestration.SpawnSessionRequest
+	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+		captured = req
+		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+	}
+
+	body := []byte(`{"backend":"claude","persistent":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorSpawn(rec, req)
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	require.NotNil(t, captured)
+	assert.True(t, captured.Persistent)
+}
+
 func TestOrchestratorSpawn_InvalidPayload(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()

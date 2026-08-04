@@ -41,6 +41,33 @@ kms:
     auto_rotate_percent: 95       # Auto-rotate at 95% of limit
 ```
 
+## Backend selection (the `crypto:` block)
+
+The **primary KMS crypto backend** — the go-xkms backend that holds the KMS key
+universe and is registered as the go-xkms default — is selected by the
+process-wide [`crypto:` block](../configuration/crypto.md), resolved through the
+central `BackendResolver` (`pkg/server/backend_resolver.go`). `startKMS`
+(`pkg/server/lifecycle.go`) builds the KMS backend spec with this precedence
+(highest first):
+
+1. `crypto.subsystems.kms.backend` — per-subsystem override
+2. `crypto.backend` — process-wide crypto default (applied when the KMS spec is unset/`auto`)
+3. `kms.backend` — the legacy singular default-backend field, honored only when **no** `crypto.*` backend is configured at all
+4. `auto` — hardware-prefer (TPM2 if present, else software)
+
+An unset chain leaves the spec at `auto`, which resolves to software on a host
+with no TPM — byte-for-byte the historical behavior. A configured-but-not-compiled
+backend (e.g. `awskms` without `-tags awskms`) is a **typed `BackendNotCompiledError`
+that fails daemon start** — it is never silently downgraded to software.
+
+The `kms.backends` / `BackendRouter` configuration documented below is a
+**separate, higher-level routing layer** (`kms.enabled_backends` + the registry)
+that distributes operations across multiple registered backends by algorithm,
+priority, and health. It sits on top of the primary backend chosen by the
+`crypto:` block. For the full backend matrix, build tags, per-subsystem overrides
+(CA / PIN / barrier AEAD), and the typed fail-closed errors, see
+[Crypto Backend Selection](../configuration/crypto.md).
+
 ## Multi-Backend Routing
 
 When multiple backends are configured, the `BackendRouter` intelligently routes operations to the appropriate backend based on routing rules, algorithm requirements, and backend health.

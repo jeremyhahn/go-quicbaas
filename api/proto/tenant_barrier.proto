@@ -53,6 +53,24 @@ service TenantBarrier {
   // Status reports the per-tenant barrier's sealed/initialized state and
   // active strategy metadata, including Shamir threshold/total.
   rpc Status(TenantBarrierStatusRequest) returns (TenantBarrierStatusResponse);
+
+  // EnableEncryption migrates a tenant's dedicated barrier from the none
+  // (unencrypted) strategy to a keyed strategy in place. Requires
+  // tenant_barrier:enable_encryption on the target tenant. The embedded
+  // qrdb node's EncryptionMigrator drives the migration; the transport
+  // BarrierClient stub returns UNIMPLEMENTED.
+  rpc EnableEncryption(TenantBarrierEnableEncryptionRequest) returns (google.protobuf.Empty);
+
+  // UpdateQuotas sets the engine-level numeric resource limits for the tenant
+  // (databases, keys, storage bytes, etc.). Requires tenants:set_quotas.
+  // Delegates to the embedded qrdb node's TenantServicer.UpdateQuotas.
+  rpc UpdateQuotas(UpdateTenantQuotasRequest) returns (google.protobuf.Empty);
+
+  // UpdateEntitlements sets the engine-level feature entitlements for the
+  // tenant (isolation tiers, dedicated-storage features, barrier modes).
+  // Requires tenants:set_entitlements. Delegates to the embedded qrdb node's
+  // TenantServicer.UpdateEntitlements.
+  rpc UpdateEntitlements(UpdateTenantEntitlementsRequest) returns (google.protobuf.Empty);
 }
 
 // =============================================================================
@@ -148,4 +166,97 @@ message TenantBarrierStatusResponse {
   int32 shamir_threshold = 6;
   // shamir_total is the total Shamir share count; zero for non-Shamir strategies.
   int32 shamir_total = 7;
+}
+
+// TenantBarrierEnableEncryptionRequest requests at-rest encryption migration
+// for a tenant's dedicated barrier.
+message TenantBarrierEnableEncryptionRequest {
+  // tenant_id identifies the target tenant. Required.
+  string tenant_id = 1;
+
+  // target_strategy is the keyed strategy to migrate to: "passphrase" or
+  // "shamir". Required; must not be "none".
+  string target_strategy = 2;
+
+  // mechanism selects the physical re-encryption approach: "swap" (default)
+  // or "inplace".
+  string mechanism = 3;
+
+  // availability controls write availability during migration: "online"
+  // (default) or "quiesced".
+  string availability = 4;
+
+  // passphrase is required for a passphrase-target migration.
+  string passphrase = 5;
+
+  // shamir_threshold is the M-of-N quorum threshold for a Shamir-target
+  // migration.
+  int32 shamir_threshold = 6;
+
+  // shamir_total is the total number of Shamir shares for a Shamir-target
+  // migration.
+  int32 shamir_total = 7;
+}
+
+// UpdateTenantQuotasRequest sets the engine-level numeric resource limits for
+// a tenant. A value of -1 means unlimited; 0 means use the system default.
+// Mirrors pkg/quota.Quotas (limit fields only; usage counters are read-only).
+message UpdateTenantQuotasRequest {
+  // tenant_id identifies the target tenant. Required.
+  string tenant_id = 1;
+  // max_databases caps the number of databases the tenant may create.
+  int64 max_databases = 2;
+  // max_raft_groups caps the number of dedicated Raft consensus groups.
+  int64 max_raft_groups = 3;
+  // max_replicas_per_group caps the replication factor of any single group.
+  int64 max_replicas_per_group = 4;
+  // max_total_replicas caps total replicas across all dedicated-raft groups.
+  int64 max_total_replicas = 5;
+  // max_collections caps the number of vector/time-series collections.
+  int64 max_collections = 6;
+  // max_keys caps the total number of keys across all databases.
+  int64 max_keys = 7;
+  // max_storage_bytes caps total on-disk storage consumption in bytes.
+  int64 max_storage_bytes = 8;
+  // max_database_size_bytes caps the on-disk size of any single database.
+  int64 max_database_size_bytes = 9;
+  // max_users caps the number of IAM users the tenant may create.
+  int64 max_users = 10;
+  // max_roles caps the number of IAM roles the tenant may create.
+  int64 max_roles = 11;
+  // max_certificates caps the number of TLS certificates the tenant may hold.
+  int64 max_certificates = 12;
+  // max_backups caps the number of database backups the tenant may retain.
+  int64 max_backups = 13;
+  // max_vector_dims caps the maximum vector dimensionality the tenant may use.
+  int64 max_vector_dims = 14;
+  // max_ts_metrics caps the number of time-series metrics the tenant may track.
+  int64 max_ts_metrics = 15;
+  // max_dedicated_wal_groups caps dedicated-raft groups with a per-tenant WAL.
+  int64 max_dedicated_wal_groups = 16;
+  // system_barrier_quota governs the tenant's use of the shared system barrier
+  // (bytes): 0 = unavailable, -1 = unlimited, >0 = capped at that many bytes.
+  int64 system_barrier_quota = 17;
+}
+
+// UpdateTenantEntitlementsRequest sets the engine-level feature entitlements
+// for a tenant. Mirrors pkg/quota.Entitlements.
+message UpdateTenantEntitlementsRequest {
+  // tenant_id identifies the target tenant. Required.
+  string tenant_id = 1;
+  // allowed_isolation_modes lists the isolation modes the tenant may use
+  // (e.g. "prefix", "barrier", "volume", "raft"). Empty = system defaults.
+  repeated string allowed_isolation_modes = 2;
+  // allow_dedicated_raft permits provisioning dedicated Raft-backed databases.
+  bool allow_dedicated_raft = 3;
+  // allow_volume_storage permits provisioning databases on a dedicated volume.
+  bool allow_volume_storage = 4;
+  // allow_system_managed_barrier permits opting into system-managed auto-unseal
+  // key management for the tenant's dedicated barrier.
+  bool allow_system_managed_barrier = 5;
+  // allow_dedicated_wal permits dedicated-raft databases with a per-tenant WAL.
+  bool allow_dedicated_wal = 6;
+  // allowed_barrier_modes lists the dedicated-barrier sealing strategies the
+  // tenant may select. Empty = software defaults (none/passphrase/shamir).
+  repeated string allowed_barrier_modes = 7;
 }

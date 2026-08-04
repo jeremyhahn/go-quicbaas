@@ -648,6 +648,19 @@ export const SandboxMode = {
 // SandboxModeValue is the union of valid SandboxMode values.
 export type SandboxModeValue = (typeof SandboxMode)[keyof typeof SandboxMode];
 
+// MCPServerConfig declares an MCP server made available to a spawned agent.
+// Mirrors orchestration.MCPServerConfig. An HTTP server (such as the QuicBaaS
+// MCP endpoint) is described by url + env; a stdio server by command + args.
+// env carries connection material — e.g. the agent's mTLS cert/key file paths
+// for the QuicBaaS endpoint — and round-trips losslessly to the spawned agent.
+export interface MCPServerConfig {
+  name: string;
+  url?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
 // SpawnSessionRequest creates a new agent session.
 // Mirrors orchestrator.SpawnSessionRequest.
 export interface SpawnSessionRequest {
@@ -671,6 +684,10 @@ export interface SpawnSessionRequest {
   // offline rather than falling back to any available daemon. Defers to the
   // operator-level orchestration.host_affinity.mode default when false.
   host_affinity_strict?: boolean;
+  // mcp_servers preconfigures MCP servers for the spawned agent. The QuicBaaS
+  // MCP endpoint preset gives the agent native, cert-authenticated access to
+  // platform tools; arbitrary stdio/HTTP servers may also be declared.
+  mcp_servers?: MCPServerConfig[];
 }
 
 // SpawnSessionResponse is the response from creating a new session.
@@ -1957,13 +1974,44 @@ export interface CeremonyEnrollExternalOfficerResponse {
 // BootstrapMethod enumerates the supported trust bootstrap mechanisms.
 export type BootstrapMethod = 'auto' | 'dane' | 'noise' | 'spki';
 
-// BootstrapBundleRequest filters the CA bundle returned by a bootstrap
-// endpoint. A request with all fields empty fetches every certificate.
+// BootstrapBundleRequest is the payload for each POST /api/v1/bootstrap/{method}
+// call. server_url is required by every mode (except Noise when noise_addr is
+// supplied explicitly). The per-mode material fields map directly onto the
+// service.BootstrapRequest JSON contract the daemon decodes.
 export interface BootstrapBundleRequest {
+  /** Canonical server URL to bootstrap trust against (e.g. "https://kms.example.com:8443"). */
+  server_url?: string;
   /** Filter by store type: "root", "intermediate", "leaf", "end-entity", or empty. */
   store_type?: string;
   /** Filter by key algorithm: "RSA", "ECDSA", "Ed25519", or empty. */
   algorithm?: string;
+  /**
+   * DANE: DNSSEC zone under which TLSA records are published
+   * (e.g. "_443._tcp.kms.example.com" or the bare hostname).
+   * Required for dane; optional knob for auto.
+   */
+  hostname?: string;
+  /**
+   * DANE: optional recursive resolver for the TLSA lookup
+   * (e.g. "8.8.8.8:53"). Defaults to the system resolver when omitted.
+   */
+  dns_server?: string;
+  /**
+   * Noise: explicit Noise bootstrap address ("host:port").
+   * When empty the address is derived from server_url.
+   */
+  noise_addr?: string;
+  /**
+   * Noise: hex-encoded 32-byte Curve25519 server static public key.
+   * Required for noise; optional knob for auto.
+   */
+  noise_static_key?: string;
+  /**
+   * SPKI: hex-encoded SHA-256 pin of the server certificate's
+   * SubjectPublicKeyInfo (64 hex characters).
+   * Required for spki; optional knob for auto.
+   */
+  spki_pin?: string;
 }
 
 // BootstrapBundleResponse contains the retrieved CA certificate bundle.
@@ -1979,6 +2027,31 @@ export interface BootstrapBundleResponse {
   content_type: string;
   /** Optional metadata describing how the bundle was verified. */
   metadata?: Record<string, string>;
+}
+
+// =============================================================================
+// Cluster
+// =============================================================================
+
+// ClusterShard describes one Raft shard's leadership and state. Mirrors the
+// shard entries in the daemon's GET /api/v1/cluster/status response.
+export interface ClusterShard {
+  shard_id: number;
+  leader_id: number;
+  state: string;
+}
+
+// ClusterStatusResponse is the wire shape returned by
+// GET /api/v1/cluster/status. In standalone (non-Raft) mode `shards` is empty
+// and `total_nodes` is 1. Mirrors the Go SDK cluster.ClusterStatus.
+export interface ClusterStatusResponse {
+  node_id: number;
+  raft_address?: string;
+  leader_id?: string;
+  total_nodes?: number;
+  shards?: ClusterShard[];
+  healthy: boolean;
+  timestamp: string;
 }
 
 // =============================================================================

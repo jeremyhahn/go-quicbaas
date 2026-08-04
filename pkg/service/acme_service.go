@@ -311,6 +311,17 @@ type ACMEServiceParams struct {
 	// When empty, http-01 is enabled by default.
 	Challenges []string
 
+	// OrderPreSignHooks registers pre-sign extension hooks. For cluster ACME
+	// enrollment it carries the SPIFFE node-identity URI-SAN hook so enrolling
+	// nodes' transport certificates are stamped with their SPIFFE identity. Nil
+	// leaves ordinary issuance untouched.
+	OrderPreSignHooks *xkmsacme.ACMEOrderPreSignHookRegistry
+
+	// ClusterCACN, when set, routes TCG-CSR-IDEVID (enroll-01) issuance through
+	// the named dedicated cluster intermediate instead of the CA's default
+	// issuing identity. Empty preserves default issuance.
+	ClusterCACN string
+
 	// Logger is the structured logger. When nil, a discard logger is used.
 	Logger *slog.Logger
 }
@@ -329,16 +340,27 @@ type acmeService struct {
 
 // canonicalChallengeVerifiers maps challenge names to their canonical xkms
 // verifier functions. Map-based dispatch keeps challenge registration O(1)
-// and avoids a growing switch as new challenge families are added.
-var canonicalChallengeVerifiers = map[string]xkmsacme.ACMEChallengeVerifierFunc{
-	xkmsacme.ACMEChallengeTypeHTTP01: func(resolver *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
-		authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-		return xkmsacme.ACMEVerifyHTTP01(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
-	},
-	xkmsacme.ACMEChallengeTypeDNS01: func(resolver *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
-		authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-		return xkmsacme.ACMEVerifyDNS01(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
-	},
+// and avoids a growing switch as new challenge families are added. The TPM
+// attestation challenges (enroll-01/endorse-01) come from the shared xkms SDK
+// helper so quicbaas enables attestation identically to xkmsd; which challenges
+// are actually offered is selected per-deployment via ACMEServiceParams.Challenges.
+var canonicalChallengeVerifiers = buildCanonicalChallengeVerifiers()
+
+func buildCanonicalChallengeVerifiers() map[string]xkmsacme.ACMEChallengeVerifierFunc {
+	m := map[string]xkmsacme.ACMEChallengeVerifierFunc{
+		xkmsacme.ACMEChallengeTypeHTTP01: func(resolver *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
+			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+			return xkmsacme.ACMEVerifyHTTP01(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
+		},
+		xkmsacme.ACMEChallengeTypeDNS01: func(resolver *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
+			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+			return xkmsacme.ACMEVerifyDNS01(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
+		},
+	}
+	for name, verifier := range xkmsacme.ACMEAttestationVerifiers(true, true) {
+		m[name] = verifier
+	}
+	return m
 }
 
 // NewACMEService composes the xkms ACME RFC 8555 server from params and
@@ -368,11 +390,13 @@ func NewACMEService(params *ACMEServiceParams) (ACMEServicer, error) {
 	}
 
 	rest, err := xkmsacme.NewACMERestService(&xkmsacme.ACMERestServiceParams{
-		BaseRESTURI:    params.BaseRESTURI,
-		CA:             params.CA,
-		ChallengeMap:   challengeMap,
-		Logger:         logger,
-		StorageFactory: params.StorageFactory,
+		BaseRESTURI:       params.BaseRESTURI,
+		CA:                params.CA,
+		ChallengeMap:      challengeMap,
+		ClusterCACN:       params.ClusterCACN,
+		Logger:            logger,
+		OrderPreSignHooks: params.OrderPreSignHooks,
+		StorageFactory:    params.StorageFactory,
 	})
 	if err != nil {
 		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "NewACMEService", Err: err}

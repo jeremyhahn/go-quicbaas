@@ -36,6 +36,14 @@ func (p *recordingQRDBProvisioner) CreateTenant(_ context.Context, _, _, isolati
 
 func (p *recordingQRDBProvisioner) DeleteTenant(_ context.Context, _ string) error { return nil }
 
+func (p *recordingQRDBProvisioner) UpdateQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+
+func (p *recordingQRDBProvisioner) UpdateEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
+	return nil
+}
+
 // TestCreateTenant_BarrierIsolationReachesEngine proves a barrier-isolation
 // request set on CreateTenantOptions.IsolationType reaches the qrdb engine
 // provisioner as "barrier", so qrdb creates a barrier-isolated tenant (own DEK

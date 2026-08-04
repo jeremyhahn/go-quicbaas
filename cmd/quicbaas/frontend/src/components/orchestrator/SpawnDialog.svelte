@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { SandboxMode } from '@quicbaas/sdk';
-  import type { AgentBackendInfo, SandboxModeValue } from '@quicbaas/sdk';
+  import type { AgentBackendInfo, SandboxModeValue, MCPServerConfig } from '@quicbaas/sdk';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { agentStore } from '../../stores/agentStore.svelte.ts';
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
@@ -31,22 +31,35 @@
   let backendsLoaded = $state(false);
   let selectedBackend = $state('');
   let model = $state('');
-  let tenant = $state('default');
   let hostAffinity = $state('');
   let sandboxMode: SandboxModeValue = $state(SandboxMode.Default);
   let initialPrompt = $state('');
   let submitting = $state(false);
   let submitError = $state('');
 
-  // Sessions go through ACP (Agent Communication Protocol). Only ACP-capable
-  // backends support the spawn operation. ollama supports inference and
-  // embeddings but not spawn — selecting it would yield a 400.
-  const ACP_BACKENDS = new Set(['claude', 'codex', 'opencode']);
+  // MCP preconfig: when enabled, the spawned agent is handed the QuicBaaS MCP
+  // endpoint so it has native, cert-authenticated access to platform tools. The
+  // agent authenticates with its own mTLS certificate (no token to expire), so
+  // we only need to point it at the endpoint — the daemon injects the agent's
+  // cert/key paths into the session environment at spawn time.
+  let attachQuicbaasMCP = $state(false);
 
-  // Load backends when dialog opens. The dropdown is filtered to ACP-capable
-  // backends; the first registered ACP backend becomes the default selection.
-  // Hardcoded defaults (e.g. "claude") are never used — the UI must reflect
-  // what is actually registered server-side.
+  // buildMCPServers returns the mcp_servers array for the spawn request, or
+  // undefined when none are configured (so the field is omitted entirely).
+  function buildMCPServers(): MCPServerConfig[] | undefined {
+    if (!attachQuicbaasMCP) return undefined;
+    // The endpoint URL is derived server-side from the daemon's MCP listener;
+    // an empty url signals "the QuicBaaS MCP endpoint" so the SPA never has to
+    // guess the operator's MCP host/port. The daemon resolves and injects it.
+    return [{ name: 'quicbaas', url: '' }];
+  }
+
+  // Load backends when dialog opens. The dropdown is populated from — and the
+  // default selection is the first of — the backends actually registered
+  // server-side (bug #59): no hardcoded allowlist or fallback. The server is the
+  // authority on whether a backend supports spawn and rejects unsupported ones,
+  // so the UI must not second-guess it with a client-side capability filter (the
+  // embedded ollama agent, for instance, does spawn sessions).
   $effect(() => {
     if (!open) return;
     backendsLoaded = false;
@@ -57,7 +70,6 @@
         const seen = new Set<string>();
         backends = raw.filter((b) => {
           if (seen.has(b.name)) return false;
-          if (!ACP_BACKENDS.has(b.name)) return false;
           seen.add(b.name);
           return true;
         });
@@ -92,6 +104,7 @@
         model: model || undefined,
         host_affinity: hostAffinity || undefined,
         sandbox_mode: sandboxMode,
+        mcp_servers: buildMCPServers(),
       });
 
       // If an initial prompt was provided, send it immediately.
@@ -218,6 +231,25 @@
           <option value={SandboxMode.Required}>Required (container)</option>
           <option value={SandboxMode.None}>None (raw process)</option>
         </select>
+      </label>
+
+      <!-- QuicBaaS MCP endpoint preconfig -->
+      <label class="form-control">
+        <div class="flex items-start gap-3 py-1">
+          <input
+            type="checkbox"
+            class="checkbox checkbox-sm mt-0.5"
+            bind:checked={attachQuicbaasMCP}
+            aria-label="Attach QuicBaaS MCP endpoint"
+          />
+          <div class="min-w-0">
+            <span class="label-text font-medium">Attach QuicBaaS MCP endpoint</span>
+            <p class="text-xs text-base-content/50 mt-0.5">
+              Give this agent native access to platform tools over MCP. It
+              authenticates with its own certificate — no token to manage.
+            </p>
+          </div>
+        </div>
       </label>
 
       <!-- Initial prompt -->

@@ -76,7 +76,10 @@ func WrapTenant(m iam.TenantManager) *TenantAdapter { return &TenantAdapter{mana
 // ErrSystemTenantMustBePrefix. Returns qrdb.tenant.ErrTenantAlreadyExists
 // when the underlying store reports a duplicate so qrdbfirstboot's
 // idempotent re-run path triggers.
-func (a *TenantAdapter) CreateTenant(ctx context.Context, id, displayName string, isolation qrdbsdk.TenantIsolationType) (*qrdbsdk.ServiceTenantInfo, error) {
+// The variadic opts match qrdb's firstboot.TenantCreator seam; this
+// adapter translates to quicbaas's own iam.CreateTenantOptions and does
+// not forward them (first-boot does not pass any).
+func (a *TenantAdapter) CreateTenant(ctx context.Context, id, displayName string, isolation qrdbsdk.TenantIsolationType, _ ...qrdbsdk.CreateTenantOption) (*qrdbsdk.ServiceTenantInfo, error) {
 	if a == nil || a.manager == nil {
 		return nil, &NilDependencyError{Name: "TenantManager"}
 	}

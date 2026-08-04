@@ -300,6 +300,12 @@ type QRDBBarrierGenerateRootTokenRequest = qrdbtransport.BarrierGenerateRootToke
 // QRDBBarrierRootTokenResponse is a re-export of the qrdb BarrierRootTokenResponse type.
 type QRDBBarrierRootTokenResponse = qrdbtransport.BarrierRootTokenResponse
 
+// QRDBBarrierEnableEncryptionRequest is a re-export of the qrdb BarrierEnableEncryptionRequest type.
+type QRDBBarrierEnableEncryptionRequest = qrdbtransport.BarrierEnableEncryptionRequest
+
+// QRDBBarrierEnableEncryptionResponse is a re-export of the qrdb BarrierEnableEncryptionResponse type.
+type QRDBBarrierEnableEncryptionResponse = qrdbtransport.BarrierEnableEncryptionResponse
+
 // =============================================================================
 // QRDB Security Officer / Share-Claim Request/Response Re-exports
 // =============================================================================

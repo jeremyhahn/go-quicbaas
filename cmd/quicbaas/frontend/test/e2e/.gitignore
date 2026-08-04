@@ -1,0 +1,7 @@
+# Persisted admin session minted by global-setup.ts — contains live bearer
+# tokens; never commit.
+.auth/
+
+# Playwright run artifacts.
+/test-results/
+/playwright-report/

@@ -53,7 +53,11 @@ func (s *Server) registerBarrierCeremonyServices(grpcServer *ggrpc.Server) {
 	// not yet available (typical pre-wire state) the facade is nil; every RPC
 	// then short-circuits with codes.Unavailable instead of Unimplemented.
 	tenantBarrierSvc := s.buildTenantBarrierService()
-	grpcapi.RegisterTenantBarrierGRPCServer(grpcServer, tenantBarrierSvc, s.logger)
+	tbServer := grpcapi.NewTenantBarrierGRPCServer(tenantBarrierSvc, s.logger)
+	// Wire the BarrierServicer so EnableEncryption can delegate to the node
+	// migrator for tenant-scoped at-rest encryption migration.
+	tbServer.SetBarrierService(barrierSvc)
+	grpcapi.RegisterTenantBarrierServerDirect(grpcServer, tbServer)
 	s.logger.Info("Registered TenantBarrier gRPC service")
 }
 
@@ -62,17 +66,33 @@ func (s *Server) registerBarrierCeremonyServices(grpcServer *ggrpc.Server) {
 // shard. When the qrdb client is unavailable (typical pre-wire state) the
 // facades are constructed with a nil transport which is handled gracefully
 // by the service layer.
+//
+// When the embedded qrdb node is available it is injected as the
+// EncryptionMigrator so EnableEncryption delegates to the real in-process
+// implementation. The BarrierClient transport stubs EnableEncryption with
+// NotImplementedError, so the node path is the only functional one.
 func (s *Server) buildBarrierCeremonyServices() (service.BarrierServicer, service.CeremonyServicer) {
-	if s.qrdbClient == nil {
-		return service.NewBarrierService(nil), service.NewCeremonyService(nil)
-	}
-	platformClient, err := s.qrdbClient.ForShard(qbshards.PlatformShardID)
-	if err != nil || platformClient == nil {
+	var (
+		barrierSvc  = service.NewBarrierService(nil)
+		ceremonySvc = service.NewCeremonyService(nil)
+	)
+
+	if s.qrdbClient != nil {
+		platformClient, err := s.qrdbClient.ForShard(qbshards.PlatformShardID)
 		if err != nil {
-			s.logger.Warnf("Barrier/Ceremony gRPC services bound to nil transport: %v", err)
+			s.logger.Warnf("Barrier/Ceremony services bound to nil transport: %v", err)
+		} else if platformClient != nil {
+			barrierSvc = service.NewBarrierService(platformClient.Barrier())
+			ceremonySvc = service.NewCeremonyService(platformClient.Ceremony())
 		}
-		return service.NewBarrierService(nil), service.NewCeremonyService(nil)
 	}
-	return service.NewBarrierService(platformClient.Barrier()),
-		service.NewCeremonyService(platformClient.Ceremony())
+
+	// Wire the embedded node as the EncryptionMigrator. The BarrierClient
+	// transport stubs BarrierEnableEncryption with NotImplementedError; only
+	// the in-process node carries the real migration implementation.
+	if s.qrdbNode != nil {
+		barrierSvc.SetMigrator(s.qrdbNode)
+	}
+
+	return barrierSvc, ceremonySvc
 }

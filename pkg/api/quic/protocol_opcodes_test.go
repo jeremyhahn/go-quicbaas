@@ -91,6 +91,35 @@ func TestVectorExtendedSubOpcodeToString_Unknown(t *testing.T) {
 }
 
 // =============================================================================
+// SecretsSubOpcodeToString Tests
+// =============================================================================
+
+func TestSecretsSubOpcodeToString(t *testing.T) {
+	tests := []struct {
+		opcode   byte
+		expected string
+	}{
+		{OpSecretsSubEnsure, "SecretsEnsure"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := SecretsSubOpcodeToString(tt.opcode)
+			if result != tt.expected {
+				t.Fatalf("Expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestSecretsSubOpcodeToString_Unknown(t *testing.T) {
+	result := SecretsSubOpcodeToString(0xFF)
+	if !strings.HasPrefix(result, "UnknownSecretsSubOp") {
+		t.Fatalf("Expected UnknownSecretsSubOp prefix, got %q", result)
+	}
+}
+
+// =============================================================================
 // OpcodeToString - Remaining Uncovered Opcodes
 // =============================================================================
 

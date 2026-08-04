@@ -1,3 +1,5 @@
+//go:build mcp
+
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -58,6 +60,9 @@ func TestGetToolQRDBPermission_Mapped(t *testing.T) {
 		{"qrdb_tenant_barrier_unseal_share", "tenant_barrier", "unseal"},
 		{"qrdb_tenant_barrier_seal", "tenant_barrier", "seal"},
 		{"qrdb_tenant_barrier_status", "tenant_barrier", "status"},
+		// Enable-encryption (exact map, not prefix).
+		{"qrdb_barrier_enable_encryption", "seal", "enable_encryption"},
+		{"qrdb_tenant_barrier_enable_encryption", "tenant_barrier", "enable_encryption"},
 	}
 	for _, c := range cases {
 		res, act, ok := getToolQRDBPermission(c.tool)
@@ -90,22 +95,26 @@ func TestGetToolQRDBPermission_Unmapped(t *testing.T) {
 // barrierToolNames but absent from qrdbToolExactMapping would otherwise be
 // default-denied at the gate, making it unreachable even to authorised callers.
 func TestBarrierToolsGranularAuthzMapping(t *testing.T) {
-	// wantBarrierPerms is the exact gRPC-canonical table for the 13 barrier
+	// wantBarrierPerms is the exact gRPC-canonical table for the 17 barrier
 	// tools. Values are copied from pkg/api/grpc/authz_mapping.go.
 	wantBarrierPerms := map[string]qrdbToolResource{
-		"qrdb_barrier_status":               {"tenant_barrier", "status"},
-		"qrdb_barrier_initialize":           {"tenant_barrier", "init"},
-		"qrdb_barrier_unseal":               {"tenant_barrier", "unseal"},
-		"qrdb_barrier_seal":                 {"tenant_barrier", "seal"},
-		"qrdb_barrier_shamir_initialize":    {"seal", "initialize_shamir"},
-		"qrdb_barrier_shamir_unseal_share":  {"barrier", "unseal-share"},
-		"qrdb_barrier_shamir_unseal_shares": {"barrier", "unseal-share"},
-		"qrdb_barrier_rekey":                {"seal", "rekey"},
-		"qrdb_barrier_recovery_generate":    {"seal", "generate_recovery"},
-		"qrdb_barrier_recovery_recover":     {"seal", "recover_with_keys"},
-		"qrdb_barrier_recovery_delete":      {"seal", "generate_recovery"},
-		"qrdb_barrier_recovery_status":      {"seal", "status"},
-		"qrdb_barrier_root_token":           {"seal", "bootstrap"},
+		"qrdb_barrier_status":                   {"tenant_barrier", "status"},
+		"qrdb_barrier_initialize":               {"tenant_barrier", "init"},
+		"qrdb_barrier_unseal":                   {"tenant_barrier", "unseal"},
+		"qrdb_barrier_seal":                     {"tenant_barrier", "seal"},
+		"qrdb_barrier_shamir_initialize":        {"seal", "initialize_shamir"},
+		"qrdb_barrier_shamir_unseal_share":      {"barrier", "unseal-share"},
+		"qrdb_barrier_shamir_unseal_shares":     {"barrier", "unseal-share"},
+		"qrdb_barrier_rekey":                    {"seal", "rekey"},
+		"qrdb_barrier_recovery_generate":        {"seal", "generate_recovery"},
+		"qrdb_barrier_recovery_recover":         {"seal", "recover_with_keys"},
+		"qrdb_barrier_recovery_delete":          {"seal", "generate_recovery"},
+		"qrdb_barrier_recovery_status":          {"seal", "status"},
+		"qrdb_barrier_root_token":               {"seal", "bootstrap"},
+		"qrdb_barrier_enable_encryption":        {"seal", "enable_encryption"},
+		"qrdb_tenant_barrier_enable_encryption": {"tenant_barrier", "enable_encryption"},
+		"qrdb_tenant_update_quotas":             {"tenants", "set_quotas"},
+		"qrdb_tenant_update_entitlements":       {"tenants", "set_entitlements"},
 	}
 
 	// Assert the expectation table covers every tool in the dispatch map so

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -49,6 +50,14 @@ import (
 // returns BarrierServiceUnavailableError so MCP clients see a typed
 // "service unavailable" condition rather than a nil-pointer panic.
 // =============================================================================
+
+// mcpTenantGovernancer applies engine-side quota and entitlement limits to
+// tenants via the iam.DefaultTenantManager delegate. Defined locally to avoid
+// an import cycle with pkg/iam from the mcp package.
+type mcpTenantGovernancer interface {
+	UpdateEngineQuotas(ctx context.Context, id string, quotas qrdbsdk.Quotas) error
+	UpdateEngineEntitlements(ctx context.Context, id string, entitlements qrdbsdk.Entitlements) error
+}
 
 // barrierServiceUnavailableQBError is the canonical QBError returned when the
 // barrier surface is not wired. Returning a QBError with the ErrUnavailable
@@ -113,6 +122,44 @@ type BarrierThresholdInvalidError struct {
 // Error implements the error interface.
 func (e *BarrierThresholdInvalidError) Error() string {
 	return "invalid threshold/total: " + e.Reason
+}
+
+// BarrierTargetStrategyRequiredError is returned when enable-encryption is
+// called without the required target_strategy argument.
+type BarrierTargetStrategyRequiredError struct{}
+
+// Error implements the error interface.
+func (e *BarrierTargetStrategyRequiredError) Error() string {
+	return "target_strategy is required"
+}
+
+// BarrierTenantIDRequiredError is returned when a barrier tool that targets
+// a specific tenant is called without the required tenant_id argument. It is
+// the barrier-surface analogue of TenantBarrierTenantIDRequiredError; both
+// convey the same constraint but from different tool families.
+type BarrierTenantIDRequiredError struct{}
+
+// Error implements the error interface.
+func (e *BarrierTenantIDRequiredError) Error() string {
+	return "tenant_id is required"
+}
+
+// GovernanceServiceUnavailableError is returned by the governance tools when the
+// mcpTenantGovernancer has not been wired into the ToolRegistry. This mirrors
+// the REST 503-on-nil-facade behaviour.
+type GovernanceServiceUnavailableError struct{}
+
+// Error implements the error interface.
+func (e *GovernanceServiceUnavailableError) Error() string {
+	return "governance service unavailable: not configured"
+}
+
+// governanceServiceUnavailableQBError is the canonical QBError returned when
+// the governance surface is not wired.
+var governanceServiceUnavailableQBError = &qberrors.QBError{
+	Code: qberrors.ErrUnavailable,
+	Op:   "mcp.governance",
+	Err:  &GovernanceServiceUnavailableError{},
 }
 
 // registerBarrierTools adds every quicbaas_barrier_* tool definition to the
@@ -313,6 +360,204 @@ func (r *ToolRegistry) registerBarrierTools() {
 			"required": []string{"shares"},
 		},
 	})
+
+	r.addTool(ToolDefinition{
+		Name:        "qrdb_barrier_enable_encryption",
+		Description: "Migrate the system barrier from the none strategy to a keyed at-rest encryption strategy. This is a one-way, in-place migration that requires the embedded qrdb node.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"target_strategy": map[string]interface{}{
+					"type":        "string",
+					"description": "Target sealing strategy: passphrase or shamir.",
+				},
+				"mechanism": map[string]interface{}{
+					"type":        "string",
+					"description": "Migration mechanism: swap (default) or copy.",
+				},
+				"availability": map[string]interface{}{
+					"type":        "string",
+					"description": "Migration availability: online (default) or offline.",
+				},
+				"passphrase": map[string]interface{}{
+					"type":        "string",
+					"description": "Passphrase for the passphrase strategy. Required when target_strategy is passphrase.",
+				},
+				"shamir_threshold": map[string]interface{}{
+					"type":        "integer",
+					"description": "Shamir threshold (minimum shares required). Required when target_strategy is shamir.",
+					"minimum":     1,
+				},
+				"shamir_total": map[string]interface{}{
+					"type":        "integer",
+					"description": "Total number of Shamir shares to generate. Required when target_strategy is shamir.",
+					"minimum":     1,
+				},
+			},
+			"required": []string{"target_strategy"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "qrdb_tenant_barrier_enable_encryption",
+		Description: "Migrate a tenant barrier from the none strategy to a keyed at-rest encryption strategy. This is a one-way, in-place migration that requires the embedded qrdb node.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The tenant whose barrier to migrate.",
+				},
+				"target_strategy": map[string]interface{}{
+					"type":        "string",
+					"description": "Target sealing strategy: passphrase or shamir.",
+				},
+				"mechanism": map[string]interface{}{
+					"type":        "string",
+					"description": "Migration mechanism: swap (default) or copy.",
+				},
+				"availability": map[string]interface{}{
+					"type":        "string",
+					"description": "Migration availability: online (default) or offline.",
+				},
+				"passphrase": map[string]interface{}{
+					"type":        "string",
+					"description": "Passphrase for the passphrase strategy. Required when target_strategy is passphrase.",
+				},
+				"shamir_threshold": map[string]interface{}{
+					"type":        "integer",
+					"description": "Shamir threshold (minimum shares required). Required when target_strategy is shamir.",
+					"minimum":     1,
+				},
+				"shamir_total": map[string]interface{}{
+					"type":        "integer",
+					"description": "Total number of Shamir shares to generate. Required when target_strategy is shamir.",
+					"minimum":     1,
+				},
+			},
+			"required": []string{"tenant_id", "target_strategy"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "qrdb_tenant_update_quotas",
+		Description: "Update the engine-level numeric resource limits for a tenant. A limit value of -1 means unlimited; 0 means use the system default.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The tenant whose quotas to update.",
+				},
+				"max_databases": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of databases. -1 = unlimited; 0 = system default.",
+				},
+				"max_raft_groups": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of dedicated Raft groups. -1 = unlimited; 0 = system default.",
+				},
+				"max_replicas_per_group": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum replication factor per Raft group. -1 = unlimited; 0 = system default.",
+				},
+				"max_total_replicas": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum aggregate replicas across all Raft groups. -1 = unlimited; 0 = system default.",
+				},
+				"max_collections": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of collections. -1 = unlimited; 0 = system default.",
+				},
+				"max_keys": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of keys. -1 = unlimited; 0 = system default.",
+				},
+				"max_storage_bytes": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum total storage in bytes. -1 = unlimited; 0 = system default.",
+				},
+				"max_database_size_bytes": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum size of any single database in bytes. -1 = unlimited; 0 = system default.",
+				},
+				"max_users": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of users. -1 = unlimited; 0 = system default.",
+				},
+				"max_roles": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of roles. -1 = unlimited; 0 = system default.",
+				},
+				"max_certificates": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of TLS certificates. -1 = unlimited; 0 = system default.",
+				},
+				"max_backups": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of backups. -1 = unlimited; 0 = system default.",
+				},
+				"max_vector_dims": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of vector dimensions. -1 = unlimited; 0 = system default.",
+				},
+				"max_ts_metrics": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of time-series metrics. -1 = unlimited; 0 = system default.",
+				},
+				"max_dedicated_wal_groups": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of dedicated WAL groups. -1 = unlimited; 0 = system default.",
+				},
+				"system_barrier_quota": map[string]interface{}{
+					"type":        "integer",
+					"description": "System-barrier usage quota in bytes. 0 = disabled; -1 = unlimited.",
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "qrdb_tenant_update_entitlements",
+		Description: "Update the engine-level feature entitlements for a tenant, controlling which isolation modes, barrier strategies, and optional features the tenant may use.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The tenant whose entitlements to update.",
+				},
+				"allowed_isolation_modes": map[string]interface{}{
+					"type":        "array",
+					"description": "Isolation modes the tenant may use (e.g. barrier, volume, raft). Empty means all modes are permitted.",
+					"items":       map[string]interface{}{"type": "string"},
+				},
+				"allow_dedicated_raft": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Whether the tenant may provision dedicated Raft-backed databases.",
+				},
+				"allow_volume_storage": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Whether the tenant may provision databases on a dedicated volume.",
+				},
+				"allow_system_managed_barrier": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Whether the tenant may opt into the system-managed barrier.",
+				},
+				"allow_dedicated_wal": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Whether the tenant may opt a dedicated-raft database into a per-tenant-key WAL.",
+				},
+				"allowed_barrier_modes": map[string]interface{}{
+					"type":        "array",
+					"description": "Barrier sealing strategies available to the tenant for its dedicated barrier. Empty means software strategies are permitted.",
+					"items":       map[string]interface{}{"type": "string"},
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
 }
 
 // barrierToolNames enumerates every tool name owned by the barrier surface.
@@ -320,19 +565,23 @@ func (r *ToolRegistry) registerBarrierTools() {
 // default branch into executeBarrierTool, avoiding a giant per-name switch in
 // the parent dispatcher.
 var barrierToolNames = map[string]struct{}{
-	"qrdb_barrier_status":               {},
-	"qrdb_barrier_initialize":           {},
-	"qrdb_barrier_unseal":               {},
-	"qrdb_barrier_seal":                 {},
-	"qrdb_barrier_shamir_initialize":    {},
-	"qrdb_barrier_shamir_unseal_share":  {},
-	"qrdb_barrier_shamir_unseal_shares": {},
-	"qrdb_barrier_rekey":                {},
-	"qrdb_barrier_recovery_generate":    {},
-	"qrdb_barrier_recovery_recover":     {},
-	"qrdb_barrier_recovery_delete":      {},
-	"qrdb_barrier_recovery_status":      {},
-	"qrdb_barrier_root_token":           {},
+	"qrdb_barrier_status":                    {},
+	"qrdb_barrier_initialize":                {},
+	"qrdb_barrier_unseal":                    {},
+	"qrdb_barrier_seal":                      {},
+	"qrdb_barrier_shamir_initialize":         {},
+	"qrdb_barrier_shamir_unseal_share":       {},
+	"qrdb_barrier_shamir_unseal_shares":      {},
+	"qrdb_barrier_rekey":                     {},
+	"qrdb_barrier_recovery_generate":         {},
+	"qrdb_barrier_recovery_recover":          {},
+	"qrdb_barrier_recovery_delete":           {},
+	"qrdb_barrier_recovery_status":           {},
+	"qrdb_barrier_root_token":                {},
+	"qrdb_barrier_enable_encryption":         {},
+	"qrdb_tenant_barrier_enable_encryption":  {},
+	"qrdb_tenant_update_quotas":              {},
+	"qrdb_tenant_update_entitlements":        {},
 }
 
 // isBarrierTool reports whether the given tool name belongs to the barrier
@@ -348,26 +597,48 @@ type barrierExecutor func(context.Context, service.BarrierServicer, map[string]i
 // barrierExecutors is the map-based dispatch table for barrier tools. Lookup
 // is O(1) and keeps executeBarrierTool free of a 17-arm switch.
 var barrierExecutors = map[string]barrierExecutor{
-	"qrdb_barrier_status":               executeBarrierStatus,
-	"qrdb_barrier_initialize":           executeBarrierInitialize,
-	"qrdb_barrier_unseal":               executeBarrierUnseal,
-	"qrdb_barrier_seal":                 executeBarrierSeal,
-	"qrdb_barrier_shamir_initialize":    executeBarrierShamirInitialize,
-	"qrdb_barrier_shamir_unseal_share":  executeBarrierShamirUnsealShare,
-	"qrdb_barrier_shamir_unseal_shares": executeBarrierShamirUnsealShares,
-	"qrdb_barrier_rekey":                executeBarrierRekey,
-	"qrdb_barrier_recovery_generate":    executeBarrierRecoveryGenerate,
-	"qrdb_barrier_recovery_recover":     executeBarrierRecoveryRecover,
-	"qrdb_barrier_recovery_delete":      executeBarrierRecoveryDelete,
-	"qrdb_barrier_recovery_status":      executeBarrierRecoveryStatus,
-	"qrdb_barrier_root_token":           executeBarrierRootToken,
+	"qrdb_barrier_status":                   executeBarrierStatus,
+	"qrdb_barrier_initialize":               executeBarrierInitialize,
+	"qrdb_barrier_unseal":                   executeBarrierUnseal,
+	"qrdb_barrier_seal":                     executeBarrierSeal,
+	"qrdb_barrier_shamir_initialize":        executeBarrierShamirInitialize,
+	"qrdb_barrier_shamir_unseal_share":      executeBarrierShamirUnsealShare,
+	"qrdb_barrier_shamir_unseal_shares":     executeBarrierShamirUnsealShares,
+	"qrdb_barrier_rekey":                    executeBarrierRekey,
+	"qrdb_barrier_recovery_generate":        executeBarrierRecoveryGenerate,
+	"qrdb_barrier_recovery_recover":         executeBarrierRecoveryRecover,
+	"qrdb_barrier_recovery_delete":          executeBarrierRecoveryDelete,
+	"qrdb_barrier_recovery_status":          executeBarrierRecoveryStatus,
+	"qrdb_barrier_root_token":               executeBarrierRootToken,
+	"qrdb_barrier_enable_encryption":        executeBarrierEnableEncryption,
+	"qrdb_tenant_barrier_enable_encryption": executeBarrierTenantEnableEncryption,
+}
+
+// governanceExecutor is the function signature for tools that require the
+// mcpTenantGovernancer rather than the BarrierServicer.
+type governanceExecutor func(context.Context, mcpTenantGovernancer, map[string]interface{}) (interface{}, error)
+
+// governanceExecutors is the dispatch table for the two tenant-governance tools.
+var governanceExecutors = map[string]governanceExecutor{
+	"qrdb_tenant_update_quotas":       executeUpdateTenantQuotas,
+	"qrdb_tenant_update_entitlements": executeUpdateTenantEntitlements,
 }
 
 // executeBarrierTool dispatches a barrier-surface call to the appropriate
-// executor. Returns barrierServiceUnavailableQBError when the registry has no
-// BarrierServicer wired, mirroring the REST 503-on-nil semantics and ensuring
-// the MCP error mapper classifies it as ServiceUnavailable.
+// executor. Governance tools (quota/entitlement updates) require the
+// mcpTenantGovernancer and are dispatched from the governanceExecutors table;
+// all other barrier tools require the BarrierServicer. Returns the relevant
+// unavailable error when the required service is not wired.
 func (r *ToolRegistry) executeBarrierTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
+	// Governance tools take a different service than the BarrierServicer.
+	if govExec, ok := governanceExecutors[name]; ok {
+		gov := r.tenantGovernance
+		if gov == nil {
+			return nil, governanceServiceUnavailableQBError
+		}
+		return govExec(ctx, gov, args)
+	}
+
 	svc := r.barrierSvc
 	if svc == nil {
 		return nil, barrierServiceUnavailableQBError
@@ -536,6 +807,120 @@ func executeBarrierRootToken(ctx context.Context, svc service.BarrierServicer, a
 		return nil, err
 	}
 	return rootTokenToMap(info), nil
+}
+
+// executeBarrierEnableEncryption implements qrdb_barrier_enable_encryption.
+// It migrates the SYSTEM barrier from none-strategy to a keyed at-rest
+// encryption strategy in place.
+func executeBarrierEnableEncryption(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
+	targetStrategy := getString(args, "target_strategy")
+	if targetStrategy == "" {
+		return nil, &BarrierTargetStrategyRequiredError{}
+	}
+	opts := buildMigrationOptions(targetStrategy, args)
+	// tenantID="" routes to the system barrier scope inside EnableEncryption.
+	if err := svc.EnableEncryption(ctx, "", opts); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"status": "encryption enabled"}, nil
+}
+
+// executeBarrierTenantEnableEncryption implements
+// qrdb_tenant_barrier_enable_encryption. It migrates a TENANT barrier from
+// none-strategy to a keyed at-rest encryption strategy in place.
+func executeBarrierTenantEnableEncryption(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
+	tenantID := getString(args, "tenant_id")
+	if tenantID == "" {
+		return nil, &BarrierTenantIDRequiredError{}
+	}
+	targetStrategy := getString(args, "target_strategy")
+	if targetStrategy == "" {
+		return nil, &BarrierTargetStrategyRequiredError{}
+	}
+	opts := buildMigrationOptions(targetStrategy, args)
+	if err := svc.EnableEncryption(ctx, tenantID, opts); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"status":    "encryption enabled",
+		"tenant_id": tenantID,
+	}, nil
+}
+
+// buildMigrationOptions constructs a qrdbsdk.MigrationOptions from the tool
+// args map, applying defaults for mechanism and availability when omitted.
+func buildMigrationOptions(targetStrategy string, args map[string]interface{}) qrdbsdk.MigrationOptions {
+	mech := getString(args, "mechanism")
+	if mech == "" {
+		mech = string(qrdbsdk.MechanismSwap)
+	}
+	avail := getString(args, "availability")
+	if avail == "" {
+		avail = string(qrdbsdk.AvailabilityOnline)
+	}
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  qrdbsdk.StrategyID(targetStrategy),
+		Mechanism:       qrdbsdk.MigrationMechanism(mech),
+		Availability:    qrdbsdk.MigrationAvailability(avail),
+		ShamirThreshold: getInt(args, "shamir_threshold"),
+		ShamirTotal:     getInt(args, "shamir_total"),
+	}
+	if p := getString(args, "passphrase"); p != "" {
+		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(p)}
+	}
+	return opts
+}
+
+// executeUpdateTenantQuotas implements qrdb_tenant_update_quotas. It maps the
+// args to qrdbsdk.Quotas and delegates to the governance manager.
+func executeUpdateTenantQuotas(ctx context.Context, gov mcpTenantGovernancer, args map[string]interface{}) (interface{}, error) {
+	tenantID := getString(args, "tenant_id")
+	if tenantID == "" {
+		return nil, &BarrierTenantIDRequiredError{}
+	}
+	quotas := qrdbsdk.Quotas{
+		MaxDatabases:          int64(getInt(args, "max_databases")),
+		MaxRaftGroups:         int64(getInt(args, "max_raft_groups")),
+		MaxReplicasPerGroup:   int64(getInt(args, "max_replicas_per_group")),
+		MaxTotalReplicas:      int64(getInt(args, "max_total_replicas")),
+		MaxCollections:        int64(getInt(args, "max_collections")),
+		MaxKeys:               int64(getInt(args, "max_keys")),
+		MaxStorageBytes:       int64(getInt(args, "max_storage_bytes")),
+		MaxDatabaseSizeBytes:  int64(getInt(args, "max_database_size_bytes")),
+		MaxUsers:              int64(getInt(args, "max_users")),
+		MaxRoles:              int64(getInt(args, "max_roles")),
+		MaxCertificates:       int64(getInt(args, "max_certificates")),
+		MaxBackups:            int64(getInt(args, "max_backups")),
+		MaxVectorDims:         int64(getInt(args, "max_vector_dims")),
+		MaxTSMetrics:          int64(getInt(args, "max_ts_metrics")),
+		MaxDedicatedWALGroups: int64(getInt(args, "max_dedicated_wal_groups")),
+		SystemBarrierQuota:    int64(getInt(args, "system_barrier_quota")),
+	}
+	if err := gov.UpdateEngineQuotas(ctx, tenantID, quotas); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"status": "ok"}, nil
+}
+
+// executeUpdateTenantEntitlements implements qrdb_tenant_update_entitlements.
+// It maps the args to qrdbsdk.Entitlements and delegates to the governance manager.
+func executeUpdateTenantEntitlements(ctx context.Context, gov mcpTenantGovernancer, args map[string]interface{}) (interface{}, error) {
+	tenantID := getString(args, "tenant_id")
+	if tenantID == "" {
+		return nil, &BarrierTenantIDRequiredError{}
+	}
+	entitlements := qrdbsdk.Entitlements{
+		AllowedIsolationModes:    getStringSlice(args, "allowed_isolation_modes"),
+		AllowDedicatedRaft:       getBool(args, "allow_dedicated_raft"),
+		AllowVolumeStorage:       getBool(args, "allow_volume_storage"),
+		AllowSystemManagedBarrier: getBool(args, "allow_system_managed_barrier"),
+		AllowDedicatedWAL:        getBool(args, "allow_dedicated_wal"),
+		AllowedBarrierModes:      getStringSlice(args, "allowed_barrier_modes"),
+	}
+	if err := gov.UpdateEngineEntitlements(ctx, tenantID, entitlements); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"status": "ok"}, nil
 }
 
 // ---------------------------------------------------------------------------

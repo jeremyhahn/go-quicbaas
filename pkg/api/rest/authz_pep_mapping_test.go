@@ -112,6 +112,57 @@ func TestMapRequestToPermission(t *testing.T) {
 		{"orch health", "/api/v1/orchestrator/health", http.MethodGet, "orchestrator", "health", true},
 		{"orch workflow write", "/api/v1/orchestrator/workflows/w1", http.MethodPut, "orchestrator", "workflow_write", true},
 
+		// Cluster + cache control plane — reads authorize as admin:status,
+		// membership writes as admin:add_member/remove_member, data-movement as
+		// admin:drain, rebalance as the rebalance resource. Mirrors the gRPC canon.
+		{"cluster status", "/api/v1/cluster/status", http.MethodGet, "admin", "status", true},
+		{"cluster collection", "/api/v1/cluster", http.MethodGet, "admin", "status", true},
+		{"cluster nodes list", "/api/v1/cluster/nodes", http.MethodGet, "admin", "status", true},
+		{"cluster add node", "/api/v1/cluster/nodes", http.MethodPost, "admin", "add_member", true},
+		{"cluster remove node", "/api/v1/cluster/nodes/n1", http.MethodDelete, "admin", "remove_member", true},
+		{"cluster replace node", "/api/v1/cluster/nodes/n1/replace", http.MethodPut, "admin", "add_member", true},
+		{"cluster rebalance", "/api/v1/cluster/rebalance", http.MethodPost, "rebalance", "execute", true},
+		{"cluster rebalance plan", "/api/v1/cluster/rebalance/plan", http.MethodGet, "rebalance", "plan", true},
+		{"cluster rebalance status", "/api/v1/cluster/rebalance/status", http.MethodGet, "rebalance", "report", true},
+		{"cluster migrate", "/api/v1/cluster/migrate", http.MethodPost, "admin", "drain", true},
+		{"cluster migrate cancel", "/api/v1/cluster/migrate", http.MethodDelete, "admin", "drain", true},
+		{"cluster upgrade", "/api/v1/cluster/upgrade", http.MethodPost, "admin", "drain", true},
+		{"cache stats", "/api/v1/cache/stats", http.MethodGet, "admin", "status", true},
+		{"cache clear", "/api/v1/cache/clear", http.MethodPost, "admin", "capabilities", true},
+
+		// Vector data plane — coarse CRUD + non-CRUD search/namespace/index verbs.
+		{"vector health", "/api/v1/vector/health", http.MethodGet, "vector", "namespace_list", true},
+		{"vector namespaces list", "/api/v1/vector/namespaces", http.MethodGet, "vector", "namespace_list", true},
+		{"vector namespace create", "/api/v1/vector/namespaces", http.MethodPost, "vector", "namespace_create", true},
+		{"vector namespace delete", "/api/v1/vector/namespaces/ns1", http.MethodDelete, "vector", "namespace_delete", true},
+		{"vector search similar", "/api/v1/vector/namespaces/ns1/search/similar", http.MethodPost, "vector", "search_similar", true},
+		{"vector search by id", "/api/v1/vector/namespaces/ns1/search/by-id/v1", http.MethodPost, "vector", "search_by_id", true},
+		{"vector hybrid search", "/api/v1/vector/hybrid-search", http.MethodPost, "vector", "hybrid_search", true},
+		{"vector search by metadata", "/api/v1/vector/search-by-metadata", http.MethodPost, "vector", "search_by_metadata", true},
+		{"vector upsert", "/api/v1/vector/namespaces/ns1/vectors", http.MethodPost, "vector", "upsert", true},
+		{"vector list", "/api/v1/vector/namespaces/ns1/vectors", http.MethodGet, "vector", "list", true},
+		{"vector batch upsert", "/api/v1/vector/namespaces/ns1/vectors/batch", http.MethodPost, "vector", "batch_upsert", true},
+
+		// Embedding (singular surface — UI EmbeddingsView).
+		{"embedding generate", "/api/v1/embedding/generate", http.MethodPost, "embedding", "embed", true},
+		{"embedding providers", "/api/v1/embedding/providers", http.MethodGet, "embedding", "list_models", true},
+		{"embedding set default", "/api/v1/embedding/providers/default", http.MethodPut, "embedding", "list_models", true},
+
+		// RAG (UI RAGView).
+		{"rag query", "/api/v1/rag/query", http.MethodPost, "rag", "query", true},
+		{"rag context", "/api/v1/rag/context", http.MethodPost, "rag", "query", true},
+		{"rag list documents", "/api/v1/rag/documents", http.MethodGet, "rag", "list_documents", true},
+		{"rag delete document", "/api/v1/rag/documents/doc1", http.MethodDelete, "rag", "delete_document", true},
+		{"rag reindex", "/api/v1/rag/documents/doc1/reindex", http.MethodPost, "rag", "ingest", true},
+
+		// Trust-anchor bootstrap (UI BootstrapView). All four modes are POSTs
+		// that establish a trust anchor -> trust:write.
+		{"bootstrap auto", "/api/v1/bootstrap/auto", http.MethodPost, "trust", "write", true},
+		{"bootstrap dane", "/api/v1/bootstrap/dane", http.MethodPost, "trust", "write", true},
+		{"bootstrap noise", "/api/v1/bootstrap/noise", http.MethodPost, "trust", "write", true},
+		{"bootstrap spki", "/api/v1/bootstrap/spki", http.MethodPost, "trust", "write", true},
+		{"bootstrap read", "/api/v1/bootstrap/auto", http.MethodGet, "trust", "read", true},
+
 		// Messaging.
 		{"msg channel create", "/api/v1/messaging/channels", http.MethodPost, "messaging", "channel_create", true},
 		{"msg channel list", "/api/v1/messaging/channels", http.MethodGet, "messaging", "channel_list", true},
@@ -168,6 +219,41 @@ func TestMapRequestToPermission(t *testing.T) {
 		{"ollama model info", "/api/v1/ollama/models/llama3", http.MethodGet, "ollama", "model_info", true},
 		{"ollama embed", "/api/v1/ollama/embed", http.MethodPost, "ollama", "embed", true},
 		{"ollama embed batch", "/api/v1/ollama/embed/batch", http.MethodPost, "ollama", "embed", true},
+
+		// ---- SSH key management (BUG 1 regression) ----
+		//
+		// SSH has no ssh:* permission family in the qrdb registry; operations
+		// map to the nearest registered keys permissions (keys:get, keys:list,
+		// keys:create, keys:delete, keys:import, keys:sign, keys:verify).
+		//
+		// Canonical /api/v1/ssh mount.
+		{"ssh keys list", "/api/v1/ssh/keys", http.MethodGet, "keys", "list", true},
+		{"ssh keys create", "/api/v1/ssh/keys", http.MethodPost, "keys", "create", true},
+		{"ssh keys import", "/api/v1/ssh/keys/import", http.MethodPost, "keys", "import", true},
+		{"ssh keys get", "/api/v1/ssh/keys/system/admin/my-key", http.MethodGet, "keys", "get", true},
+		{"ssh keys get public", "/api/v1/ssh/keys/system/admin/my-key/public", http.MethodGet, "keys", "get", true},
+		{"ssh keys delete", "/api/v1/ssh/keys/system/admin/my-key", http.MethodDelete, "keys", "delete", true},
+		{"ssh keys sign", "/api/v1/ssh/keys/system/admin/my-key/sign", http.MethodPost, "keys", "sign", true},
+		{"ssh known-hosts list", "/api/v1/ssh/known-hosts", http.MethodGet, "keys", "list", true},
+		{"ssh known-hosts add", "/api/v1/ssh/known-hosts", http.MethodPost, "keys", "create", true},
+		{"ssh known-hosts get", "/api/v1/ssh/known-hosts/example.com", http.MethodGet, "keys", "get", true},
+		{"ssh known-hosts remove", "/api/v1/ssh/known-hosts/example.com", http.MethodDelete, "keys", "delete", true},
+		{"ssh known-hosts verify", "/api/v1/ssh/known-hosts/example.com/verify", http.MethodPost, "keys", "verify", true},
+		{"ssh authorized emit", "/api/v1/ssh/authorized", http.MethodPost, "keys", "get", true},
+		{"ssh authorized verify", "/api/v1/ssh/authorized/verify", http.MethodPost, "keys", "verify", true},
+		// xkms-SDK alias — identical semantics, different mount prefix (lets CLIs
+		// point XKMSD_URL at quicbaasd and reuse the go-xkms REST client unchanged).
+		{"ssh xkms alias keys list", "/api/v1/xkms/v1/ssh/keys", http.MethodGet, "keys", "list", true},
+		{"ssh xkms alias keys create", "/api/v1/xkms/v1/ssh/keys", http.MethodPost, "keys", "create", true},
+		{"ssh xkms alias keys import", "/api/v1/xkms/v1/ssh/keys/import", http.MethodPost, "keys", "import", true},
+		{"ssh xkms alias keys get", "/api/v1/xkms/v1/ssh/keys/system/admin/k", http.MethodGet, "keys", "get", true},
+		{"ssh xkms alias keys delete", "/api/v1/xkms/v1/ssh/keys/system/admin/k", http.MethodDelete, "keys", "delete", true},
+		{"ssh xkms alias keys sign", "/api/v1/xkms/v1/ssh/keys/system/admin/k/sign", http.MethodPost, "keys", "sign", true},
+		{"ssh xkms alias known-hosts list", "/api/v1/xkms/v1/ssh/known-hosts", http.MethodGet, "keys", "list", true},
+		{"ssh xkms alias known-hosts add", "/api/v1/xkms/v1/ssh/known-hosts", http.MethodPost, "keys", "create", true},
+		{"ssh xkms alias known-hosts verify", "/api/v1/xkms/v1/ssh/known-hosts/h.example/verify", http.MethodPost, "keys", "verify", true},
+		{"ssh xkms alias authorized emit", "/api/v1/xkms/v1/ssh/authorized", http.MethodPost, "keys", "get", true},
+		{"ssh xkms alias authorized verify", "/api/v1/xkms/v1/ssh/authorized/verify", http.MethodPost, "keys", "verify", true},
 
 		// Unmapped surfaces.
 		{"unknown path", "/api/v1/totally-unknown", http.MethodGet, "", "", false},

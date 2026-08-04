@@ -19,6 +19,7 @@ import (
 	"os"
 	"time"
 
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -106,6 +107,14 @@ type clientOptions struct {
 	// scope -> RBAC gate. Empty means anonymous (the embedded transport ignores
 	// it; MCP continues to use mcpAuthToken / mcp credentials).
 	authToken string
+
+	// secretRegistry is the unified secret resolver registry injected by
+	// WithSecretRegistry. When set, Security().SecretResolver() returns it
+	// so go-trusted-platform (and other SDK consumers) have a single
+	// canonical resolution entry point that covers credential://, kms://,
+	// remote-kms://, and autogen references without importing the server
+	// package directly.
+	secretRegistry *qrdbsecret.ResolverRegistry
 }
 
 // Option is a functional option for configuring the client.
@@ -380,6 +389,20 @@ func WithMCPAuthToken(token string) Option {
 func WithAuthToken(token string) Option {
 	return func(o *clientOptions) error {
 		o.authToken = token
+		return nil
+	}
+}
+
+// WithSecretRegistry injects the unified secret resolver registry into the
+// client. Once set, Security().SecretResolver() returns the registry so
+// go-trusted-platform (and other SDK consumers) can resolve credential://,
+// kms://, remote-kms://, and autogen references without importing the server
+// package directly. The registry is typically obtained from
+// server.GetSecretRegistry() after Server.Start has returned.
+// A nil registry is silently accepted (SecretResolver will return nil).
+func WithSecretRegistry(reg *qrdbsecret.ResolverRegistry) Option {
+	return func(o *clientOptions) error {
+		o.secretRegistry = reg
 		return nil
 	}
 }

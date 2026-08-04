@@ -183,7 +183,7 @@ func TestLocalKMSResolver_ResolveExistingSecret(t *testing.T) {
 
 	// Verify the resolved data contains our secret
 	var resolvedData map[string]interface{}
-	err = json.Unmarshal([]byte(result.Value), &resolvedData)
+	err = json.Unmarshal([]byte(result.String()), &resolvedData)
 	require.NoError(t, err)
 	assert.Equal(t, "test-user", resolvedData["username"])
 	assert.Equal(t, "super-secret-password-12345", resolvedData["password"])
@@ -341,7 +341,7 @@ func TestLocalKMSResolver_NestedPath(t *testing.T) {
 
 	// Verify the resolved data
 	var resolvedData map[string]interface{}
-	err = json.Unmarshal([]byte(result.Value), &resolvedData)
+	err = json.Unmarshal([]byte(result.String()), &resolvedData)
 	require.NoError(t, err)
 	assert.Equal(t, "nested-db-password-xyz", resolvedData["password"])
 	assert.Equal(t, "postgresql://user:pass@localhost:5432/mydb", resolvedData["connection_url"])
@@ -403,7 +403,7 @@ func TestLocalKMSResolver_VersionedSecret(t *testing.T) {
 
 	// Verify we got the latest version (v3)
 	var resolvedData map[string]interface{}
-	err = json.Unmarshal([]byte(result.Value), &resolvedData)
+	err = json.Unmarshal([]byte(result.String()), &resolvedData)
 	require.NoError(t, err)
 	assert.Equal(t, "api-key-version-3-latest", resolvedData["api_key"])
 	assert.Equal(t, "3.0.0", resolvedData["version"])
@@ -530,7 +530,7 @@ func TestLocalKMSResolver_ResolverRegistry(t *testing.T) {
 
 	// Verify resolved data
 	var resolvedData map[string]interface{}
-	err = json.Unmarshal([]byte(result.Value), &resolvedData)
+	err = json.Unmarshal([]byte(result.String()), &resolvedData)
 	require.NoError(t, err)
 	assert.Equal(t, "registry-test-token-abc123", resolvedData["token"])
 
@@ -539,7 +539,7 @@ func TestLocalKMSResolver_ResolverRegistry(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, literalResult)
 	assert.Equal(t, secrets.StrategyLiteral, literalResult.Strategy)
-	assert.Equal(t, "literal-value", literalResult.Value)
+	assert.Equal(t, "literal-value", literalResult.String())
 
 	t.Logf("Successfully tested resolver with ResolverRegistry")
 }
@@ -579,7 +579,7 @@ func TestLocalKMSResolver_BinaryData(t *testing.T) {
 
 	// Verify the resolved data
 	var resolvedData map[string]interface{}
-	err = json.Unmarshal([]byte(result.Value), &resolvedData)
+	err = json.Unmarshal([]byte(result.String()), &resolvedData)
 	require.NoError(t, err)
 	assert.Equal(t, "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t...", resolvedData["certificate"])
 	assert.Equal(t, "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t...", resolvedData["private_key"])
@@ -662,7 +662,7 @@ func TestLocalKMSResolver_LargeSecret(t *testing.T) {
 	assert.Equal(t, secrets.StrategyLocalKMS, result.Strategy)
 
 	// Verify the data size
-	assert.Greater(t, len(result.Value), 8000)
+	assert.Greater(t, len(result.String()), 8000)
 
-	t.Logf("Successfully resolved large secret (%d bytes) at kms://%s", len(result.Value), path)
+	t.Logf("Successfully resolved large secret (%d bytes) at kms://%s", len(result.String()), path)
 }

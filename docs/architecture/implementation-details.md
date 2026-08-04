@@ -303,21 +303,22 @@ const (
     ErrConfiguration
 )
 
-type DragonError struct {
+// QRDBError is go-qrdb's canonical structured error, re-exported as QBError in pkg/errors.
+type QRDBError struct {
     Code    ErrorCode
     Op      string
     Err     error
     Context map[string]interface{}
 }
 
-func (e *DragonError) Error() string {
+func (e *QRDBError) Error() string {
     if e.Err != nil {
         return fmt.Sprintf("%s: %v", e.Op, e.Err)
     }
     return e.Op
 }
 
-func (e *DragonError) Unwrap() error {
+func (e *QRDBError) Unwrap() error {
     return e.Err
 }
 ```
@@ -326,7 +327,7 @@ func (e *DragonError) Unwrap() error {
 
 ```go
 func Wrapf(err error, code ErrorCode, op string, format string, args ...interface{}) error {
-    return &DragonError{
+    return &QRDBError{
         Code:    code,
         Op:      op,
         Err:     err,

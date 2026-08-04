@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"reflect"
 	"strings"
+	"time"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"google.golang.org/grpc"
@@ -76,27 +77,34 @@ func newKMSHandler(conn *grpc.ClientConn) (*kmsHandler, error) {
 // kmsHandlerFunc handles a single KMS/DEK method.
 type kmsHandlerFunc func(h *kmsHandler, ctx context.Context, req interface{}) (interface{}, error)
 
-// kmsHandlerMap maps method names to handler functions for O(1) dispatch. Only
-// methods exposed by the KeyManagement / Crypto / DEKManagement proto services
-// (and wrapped by the pkg/api/grpc Client) are wired here. KMS verbs without a
-// proto/Client analogue (GetPublicKey, GetKeyMetadata, UpdateKeyMetadata,
-// SetKeyPolicy, GetKeyPolicy, RevokeKey, the rotation-policy verbs) return a
-// clear unimplemented error rather than falling through to the untyped
-// conn.Invoke path, matching the certificate handler precedent.
+// kmsHandlerMap maps method names to handler functions for O(1) dispatch. Every
+// method exposed by the KeyManagement / Crypto / DEKManagement proto services
+// (and wrapped by the pkg/api/grpc Client) is wired here; a method missing from
+// the map returns a clear unimplemented error rather than falling through to
+// the untyped conn.Invoke path, matching the certificate handler precedent.
 var kmsHandlerMap = map[string]kmsHandlerFunc{
 	// KeyManagement service.
-	"GenerateKey":            (*kmsHandler).handleGenerateKey,
-	"ImportKey":              (*kmsHandler).handleImportKey,
-	"GetKey":                 (*kmsHandler).handleGetKey,
-	"ListKeys":               (*kmsHandler).handleListKeys,
-	"RotateKey":              (*kmsHandler).handleRotateKey,
-	"DeleteKey":              (*kmsHandler).handleDeleteKey,
-	"UpdateKeyStatus":        (*kmsHandler).handleUpdateKeyStatus,
-	"ListKeyVersions":        (*kmsHandler).handleListKeyVersions,
-	"ExportKey":              (*kmsHandler).handleExportKey,
-	"UnwrapKey":              (*kmsHandler).handleUnwrapKey,
-	"GetSupportedAlgorithms": (*kmsHandler).handleGetSupportedAlgorithms,
-	"BackendStatus":          (*kmsHandler).handleBackendStatus,
+	"GenerateKey":             (*kmsHandler).handleGenerateKey,
+	"ImportKey":               (*kmsHandler).handleImportKey,
+	"GetKey":                  (*kmsHandler).handleGetKey,
+	"GetPublicKey":            (*kmsHandler).handleGetPublicKey,
+	"ListKeys":                (*kmsHandler).handleListKeys,
+	"RotateKey":               (*kmsHandler).handleRotateKey,
+	"RevokeKey":               (*kmsHandler).handleRevokeKey,
+	"DeleteKey":               (*kmsHandler).handleDeleteKey,
+	"UpdateKeyStatus":         (*kmsHandler).handleUpdateKeyStatus,
+	"ListKeyVersions":         (*kmsHandler).handleListKeyVersions,
+	"GetKeyMetadata":          (*kmsHandler).handleGetKeyMetadata,
+	"UpdateKeyMetadata":       (*kmsHandler).handleUpdateKeyMetadata,
+	"SetKeyPolicy":            (*kmsHandler).handleSetKeyPolicy,
+	"GetKeyPolicy":            (*kmsHandler).handleGetKeyPolicy,
+	"SetKeyRotationPolicy":    (*kmsHandler).handleSetKeyRotationPolicy,
+	"GetKeyRotationPolicy":    (*kmsHandler).handleGetKeyRotationPolicy,
+	"DeleteKeyRotationPolicy": (*kmsHandler).handleDeleteKeyRotationPolicy,
+	"ExportKey":               (*kmsHandler).handleExportKey,
+	"UnwrapKey":               (*kmsHandler).handleUnwrapKey,
+	"GetSupportedAlgorithms":  (*kmsHandler).handleGetSupportedAlgorithms,
+	"BackendStatus":           (*kmsHandler).handleBackendStatus,
 
 	// DEKManagement service (reachable under both quicbaas.KMS and quicbaas.DEK).
 	"CreateDEK": (*kmsHandler).handleCreateDEK,
@@ -132,9 +140,11 @@ func (h *kmsHandler) handleGenerateKey(ctx context.Context, req interface{}) (in
 			"invalid request type, expected *kms.GenerateKeyRequest")
 	}
 	return h.client.KMSGenerateKey(ctx, &service.GenerateKeyRequest{
-		Name:          sdkReq.Name,
-		Usage:         sdkUsagesToService(sdkReq.Usage),
-		KeyAttributes: sdkAlgToKeyAttributes(sdkReq.Algorithm),
+		Name:               sdkReq.Name,
+		Usage:              sdkUsagesToService(sdkReq.Usage),
+		KeyAttributes:      sdkAlgToKeyAttributes(sdkReq.Algorithm),
+		Exportable:         sdkReq.Exportable,
+		DeletionProtection: sdkReq.DeletionProtection,
 	})
 }
 
@@ -228,6 +238,134 @@ func (h *kmsHandler) handleListKeyVersions(ctx context.Context, req interface{})
 			"invalid request type, expected struct with KeyID field")
 	}
 	return h.client.KMSListKeyVersions(ctx, &service.ListKeyVersionsRequest{KeyID: keyID})
+}
+
+func (h *kmsHandler) handleGetPublicKey(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.GetPublicKeyRequest); ok {
+		return h.client.KMSGetPublicKey(ctx, r)
+	}
+	keyID, ok := stringFieldByName(req, "KeyID")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleGetPublicKey",
+			"invalid request type, expected struct with KeyID field")
+	}
+	return h.client.KMSGetPublicKey(ctx, &service.GetPublicKeyRequest{KeyID: keyID})
+}
+
+func (h *kmsHandler) handleRevokeKey(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.RevokeKeyRequest); ok {
+		return h.client.KMSRevokeKey(ctx, r)
+	}
+	keyID, ok := stringFieldByName(req, "KeyID")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleRevokeKey",
+			"invalid request type, expected struct with KeyID field")
+	}
+	// Reason is optional on the SDK wire request; absent field maps to "".
+	reason, _ := stringFieldByName(req, "Reason")
+	return h.client.KMSRevokeKey(ctx, &service.RevokeKeyRequest{KeyID: keyID, Reason: reason})
+}
+
+func (h *kmsHandler) handleGetKeyMetadata(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.GetKeyMetadataRequest); ok {
+		return h.client.KMSGetKeyMetadata(ctx, r)
+	}
+	keyID, ok := stringFieldByName(req, "KeyID")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleGetKeyMetadata",
+			"invalid request type, expected struct with KeyID field")
+	}
+	return h.client.KMSGetKeyMetadata(ctx, &service.GetKeyMetadataRequest{KeyID: keyID})
+}
+
+func (h *kmsHandler) handleUpdateKeyMetadata(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.UpdateKeyMetadataRequest); ok {
+		return h.client.KMSUpdateKeyMetadata(ctx, r)
+	}
+	sdkReq, ok := req.(*kmsclient.UpdateKeyMetadataRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleUpdateKeyMetadata",
+			"invalid request type, expected *kms.UpdateKeyMetadataRequest")
+	}
+	return h.client.KMSUpdateKeyMetadata(ctx, sdkUpdateKeyMetadataToService(sdkReq))
+}
+
+func (h *kmsHandler) handleSetKeyPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.SetKeyPolicyRequest); ok {
+		return h.client.KMSSetKeyPolicy(ctx, r)
+	}
+	sdkReq, ok := req.(*kmsclient.SetKeyPolicyRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleSetKeyPolicy",
+			"invalid request type, expected *kms.SetKeyPolicyRequest")
+	}
+	return h.client.KMSSetKeyPolicy(ctx, &service.SetKeyPolicyRequest{
+		KeyID:  sdkReq.KeyID,
+		Policy: sdkKeyPolicyToService(sdkReq.Policy),
+	})
+}
+
+func (h *kmsHandler) handleGetKeyPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.GetKeyPolicyRequest); ok {
+		return h.client.KMSGetKeyPolicy(ctx, r)
+	}
+	keyID, ok := stringFieldByName(req, "KeyID")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleGetKeyPolicy",
+			"invalid request type, expected struct with KeyID field")
+	}
+	return h.client.KMSGetKeyPolicy(ctx, &service.GetKeyPolicyRequest{KeyID: keyID})
+}
+
+func (h *kmsHandler) handleSetKeyRotationPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.SetKeyRotationPolicyRequest); ok {
+		return h.client.KMSSetKeyRotationPolicy(ctx, r)
+	}
+	// The SDK client sends the unexported flat setKeyRotationPolicyRequest
+	// (KeyID, AutoRotate, IntervalSeconds, RetainVersions, Enabled); match it
+	// structurally, exactly like the other unexported request types.
+	keyID, ok := stringFieldByName(req, "KeyID")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleSetKeyRotationPolicy",
+			"invalid request type, expected struct with KeyID field")
+	}
+	autoRotate, _ := boolFieldByName(req, "AutoRotate")
+	enabled, _ := boolFieldByName(req, "Enabled")
+	intervalSeconds, _ := int64FieldByName(req, "IntervalSeconds")
+	retainVersions, _ := int64FieldByName(req, "RetainVersions")
+	return h.client.KMSSetKeyRotationPolicy(ctx, &service.SetKeyRotationPolicyRequest{
+		KeyID: keyID,
+		Policy: &service.RotationPolicy{
+			Enabled:        enabled,
+			AutoRotate:     autoRotate,
+			Interval:       time.Duration(intervalSeconds) * time.Second,
+			RetainVersions: int(retainVersions),
+		},
+	})
+}
+
+func (h *kmsHandler) handleGetKeyRotationPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.GetKeyRotationPolicyRequest); ok {
+		return h.client.KMSGetKeyRotationPolicy(ctx, r)
+	}
+	keyID, ok := stringFieldByName(req, "KeyID")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleGetKeyRotationPolicy",
+			"invalid request type, expected struct with KeyID field")
+	}
+	return h.client.KMSGetKeyRotationPolicy(ctx, &service.GetKeyRotationPolicyRequest{KeyID: keyID})
+}
+
+func (h *kmsHandler) handleDeleteKeyRotationPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.DeleteKeyRotationPolicyRequest); ok {
+		return h.client.KMSDeleteKeyRotationPolicy(ctx, r)
+	}
+	keyID, ok := stringFieldByName(req, "KeyID")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleDeleteKeyRotationPolicy",
+			"invalid request type, expected struct with KeyID field")
+	}
+	return h.client.KMSDeleteKeyRotationPolicy(ctx, &service.DeleteKeyRotationPolicyRequest{KeyID: keyID})
 }
 
 func (h *kmsHandler) handleExportKey(ctx context.Context, req interface{}) (interface{}, error) {
@@ -386,6 +524,95 @@ func stringFieldByName(req interface{}, name string) (string, bool) {
 		return "", false
 	}
 	return f.String(), true
+}
+
+// boolFieldByName extracts a bool field from any struct (or pointer to a
+// struct) via reflection, mirroring stringFieldByName for the unexported SDK
+// request types.
+func boolFieldByName(req interface{}, name string) (bool, bool) {
+	v := reflect.ValueOf(req)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return false, false
+	}
+	f := v.FieldByName(name)
+	if !f.IsValid() || f.Kind() != reflect.Bool {
+		return false, false
+	}
+	return f.Bool(), true
+}
+
+// int64FieldByName extracts a signed integer field from any struct (or pointer
+// to a struct) via reflection, mirroring stringFieldByName for the unexported
+// SDK request types.
+func int64FieldByName(req interface{}, name string) (int64, bool) {
+	v := reflect.ValueOf(req)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return 0, false
+	}
+	f := v.FieldByName(name)
+	if !f.IsValid() {
+		return 0, false
+	}
+	switch f.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return f.Int(), true
+	default:
+		return 0, false
+	}
+}
+
+// sdkUpdateKeyMetadataToService converts the exported SDK metadata-update
+// request into the canonical service request. Empty Name/Description mean
+// "no change" in the SDK shape and map to nil pointers.
+func sdkUpdateKeyMetadataToService(sdkReq *kmsclient.UpdateKeyMetadataRequest) *service.UpdateKeyMetadataRequest {
+	svcReq := &service.UpdateKeyMetadataRequest{
+		KeyID:      sdkReq.KeyID,
+		Tags:       sdkReq.Tags,
+		RemoveTags: sdkReq.RemoveTags,
+	}
+	if sdkReq.Name != "" {
+		name := sdkReq.Name
+		svcReq.Name = &name
+	}
+	if sdkReq.Description != "" {
+		description := sdkReq.Description
+		svcReq.Description = &description
+	}
+	return svcReq
+}
+
+// sdkKeyPolicyToService converts the exported SDK KeyPolicy into the canonical
+// service KeyPolicy. Zero ExpiresAt/MaxUsageCount map to nil (no expiry /
+// no usage limit).
+func sdkKeyPolicyToService(p *kmsclient.KeyPolicy) *service.KeyPolicy {
+	if p == nil {
+		return nil
+	}
+	svcPolicy := &service.KeyPolicy{
+		KeyID:             p.KeyID,
+		Version:           uint64(p.Version), //nolint:gosec // G115: policy version is non-negative
+		AllowedOperations: sdkUsagesToService(p.AllowedOperations),
+		AllowedPrincipals: p.AllowedPrincipals,
+		DeniedPrincipals:  p.DeniedPrincipals,
+		RotationRequired:  p.RotationRequired,
+		RequireMFA:        p.RequireMFA,
+		UpdatedAt:         p.UpdatedAt,
+	}
+	if !p.ExpiresAt.IsZero() {
+		expiresAt := p.ExpiresAt
+		svcPolicy.ExpiresAt = &expiresAt
+	}
+	if p.MaxUsageCount > 0 {
+		maxUsage := p.MaxUsageCount
+		svcPolicy.MaxUsageCount = &maxUsage
+	}
+	return svcPolicy
 }
 
 // sdkAlgToKeyAttributes converts an SDK KeyAlgorithm to xkmssdk.KeyAttributes

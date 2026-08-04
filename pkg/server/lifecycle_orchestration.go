@@ -147,6 +147,21 @@ func (s *Server) startOrchestration() error {
 		wirer.SetAgentRegistry(s.agentRegistry)
 		s.logger.Info("Agent fleet registry attached to orchestration service")
 
+		// Rebind the AgentAdminService onto the SAME shared fleet registry the
+		// orchestrator just received. The facade builds AgentAdmin with a private
+		// default registry at construction time; without this rebind, disable /
+		// enable resolve agents in an empty store and every fleet-registered agent
+		// surfaces as 404. AgentAdmin() returns the interface, so type-assert to
+		// the concrete setter (no-op for alternate implementations).
+		if s.quicBaaSService != nil {
+			if rebinder, rebindOK := s.quicBaaSService.AgentAdmin().(interface {
+				SetAgentRegistry(orchestration.AgentRegistry)
+			}); rebindOK {
+				rebinder.SetAgentRegistry(s.agentRegistry)
+				s.logger.Info("Agent admin service bound to shared fleet registry")
+			}
+		}
+
 		// Wire workflow loader backed by the QuicBaaS internal KV store. Workflow
 		// definitions are persisted under workflowKeyPrefix on shard 1 via the
 		// qrdb SDK, exactly like every other orchestration entity, so they

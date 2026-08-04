@@ -132,6 +132,7 @@ vi.mock('../src/views/SystemDashboard.svelte', () => ({
 
 // Import the component under test AFTER mocks are declared.
 import MainApp from '../src/views/MainApp.svelte';
+import { resetOrchestratorStore } from '../src/stores/orchestrator.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -141,6 +142,10 @@ describe('MainApp — no direct fetch() calls', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchSpy.mockReset();
+    // The orchestrator store's poller and stale-while-revalidate timestamps are
+    // module-level, so without a reset the second test's mount sees "fresh"
+    // data and skips the fetch. resetOrchestratorStore() clears both.
+    resetOrchestratorStore();
   });
 
   afterEach(() => {
@@ -155,8 +160,9 @@ describe('MainApp — no direct fetch() calls', () => {
       expect(mockListJobs).toHaveBeenCalled();
     }, { timeout: 2000 });
 
-    // The default activeTenantID in orchestratorStore is 'default'.
-    expect(mockListJobs).toHaveBeenCalledWith('default');
+    // The default activeTenantID in orchestratorStore is 'system' (qrdb's
+    // canonical control-plane tenant; the legacy 'default' tenant was retired).
+    expect(mockListJobs).toHaveBeenCalledWith('system');
   });
 
   it('calls listAgents via SDK with the active tenant ID on mount', async () => {
@@ -167,7 +173,7 @@ describe('MainApp — no direct fetch() calls', () => {
     }, { timeout: 2000 });
 
     expect(mockListAgents).toHaveBeenCalledWith(
-      expect.objectContaining({ tenant_id: 'default' }),
+      expect.objectContaining({ tenant_id: 'system' }),
     );
   });
 
@@ -178,9 +184,9 @@ describe('MainApp — no direct fetch() calls', () => {
       expect(mockListSessions).toHaveBeenCalled();
     }, { timeout: 2000 });
 
-    // The default activeTenantID in orchestratorStore is 'default'.
+    // The default activeTenantID in orchestratorStore is 'system'.
     expect(mockListSessions).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantID: 'default' }),
+      expect.objectContaining({ tenantID: 'system' }),
     );
 
     // Defense: must never be called with an empty object (no tenantID).
@@ -199,16 +205,13 @@ describe('MainApp — no direct fetch() calls', () => {
       expect(mockListTasks).toHaveBeenCalled();
     }, { timeout: 2000 });
 
-    expect(mockListTasks).toHaveBeenCalledWith('default');
+    expect(mockListTasks).toHaveBeenCalledWith('system');
   });
 
-  it('calls healthCheck via SDK on mount', async () => {
-    render(MainApp);
-
-    await vi.waitFor(() => {
-      expect(mockHealthCheck).toHaveBeenCalled();
-    }, { timeout: 2000 });
-  });
+  // NOTE: health is no longer fetched by MainApp — it only renders the health
+  // badge from orchestratorStore.health. The SDK health fetch moved to
+  // SystemDashboard (client.orchestrator.healthCheck()) and is covered by
+  // SystemDashboard.test.ts, which is why SystemDashboard is mocked out here.
 
   it('calls authValidate with stored token via SDK auth client on mount (non-Wails)', async () => {
     // The auth guard only calls authValidate when a token is stored in localStorage.
@@ -229,9 +232,10 @@ describe('MainApp — no direct fetch() calls', () => {
     localStorage.removeItem('quicbaas_token');
     render(MainApp);
 
-    // Wait for all $effects to settle (healthCheck fires shortly after mount).
+    // Wait for all $effects to settle (the orchestrator poller's loadJobs fires
+    // shortly after mount) before asserting authValidate was never called.
     await vi.waitFor(() => {
-      expect(mockHealthCheck).toHaveBeenCalled();
+      expect(mockListJobs).toHaveBeenCalled();
     }, { timeout: 2000 });
 
     expect(mockAuthValidate).not.toHaveBeenCalled();

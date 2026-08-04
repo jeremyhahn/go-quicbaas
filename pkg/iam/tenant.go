@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/database"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
@@ -51,6 +52,17 @@ type QRDBTenantProvisioner interface {
 	// DeleteTenant removes the tenant from the qrdb engine, destroying the
 	// per-tenant barrier and purging its DEK.
 	DeleteTenant(ctx context.Context, id string) error
+
+	// UpdateQuotas updates the engine-side resource quotas for the tenant
+	// identified by id. These are the low-level numeric limits (max
+	// databases, keys, storage bytes, etc.) that qrdb enforces
+	// independently of the BaaS-layer IAM TenantQuotas.
+	UpdateQuotas(ctx context.Context, id string, quotas qrdbsdk.Quotas) error
+
+	// UpdateEntitlements updates the engine-side feature entitlements for
+	// the tenant identified by id. Entitlements govern which isolation tiers
+	// and dedicated-storage features the tenant's plan permits.
+	UpdateEntitlements(ctx context.Context, id string, entitlements qrdbsdk.Entitlements) error
 }
 
 // Tenant ID validation constraints.
@@ -185,7 +197,25 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 	// BaaS-layer state is written. On failure the entire creation is aborted.
 	if m.qrdbProvisioner != nil {
 		if err := m.qrdbProvisioner.CreateTenant(ctx, tenantID, opts.Name, string(opts.IsolationType)); err != nil {
-			return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.CreateTenant", "qrdb engine tenant provisioning failed")
+			return nil, mapQRDBTenantError("iam.CreateTenant.provision", err)
+		}
+
+		// Apply engine-level quota overrides when provided by the caller (e.g.
+		// BaaS operator wiring plan-tier limits at tenant creation time).
+		if opts.EngineQuotas != nil {
+			if err := m.qrdbProvisioner.UpdateQuotas(ctx, tenantID, *opts.EngineQuotas); err != nil {
+				_ = m.qrdbProvisioner.DeleteTenant(ctx, tenantID)
+				return nil, mapQRDBTenantError("iam.CreateTenant.quotas", err)
+			}
+		}
+
+		// Apply engine-level entitlement overrides (isolation tiers, dedicated-raft,
+		// WAL features, barrier modes) when provided.
+		if opts.EngineEntitlements != nil {
+			if err := m.qrdbProvisioner.UpdateEntitlements(ctx, tenantID, *opts.EngineEntitlements); err != nil {
+				_ = m.qrdbProvisioner.DeleteTenant(ctx, tenantID)
+				return nil, mapQRDBTenantError("iam.CreateTenant.entitlements", err)
+			}
 		}
 	}
 
@@ -412,6 +442,26 @@ func (m *DefaultTenantManager) CheckQuota(ctx context.Context, tenantID string, 
 	}
 
 	return nil
+}
+
+// UpdateEngineQuotas updates the engine-side numeric resource limits for the
+// tenant by delegating to the QRDBTenantProvisioner. Returns nil when no
+// engine provisioner is wired (backwards-compatible no-op).
+func (m *DefaultTenantManager) UpdateEngineQuotas(ctx context.Context, id string, quotas qrdbsdk.Quotas) error {
+	if m.qrdbProvisioner == nil {
+		return nil
+	}
+	return mapQRDBTenantError("iam.UpdateEngineQuotas", m.qrdbProvisioner.UpdateQuotas(ctx, id, quotas))
+}
+
+// UpdateEngineEntitlements updates the engine-side feature entitlements for
+// the tenant by delegating to the QRDBTenantProvisioner. Returns nil when no
+// engine provisioner is wired (backwards-compatible no-op).
+func (m *DefaultTenantManager) UpdateEngineEntitlements(ctx context.Context, id string, entitlements qrdbsdk.Entitlements) error {
+	if m.qrdbProvisioner == nil {
+		return nil
+	}
+	return mapQRDBTenantError("iam.UpdateEngineEntitlements", m.qrdbProvisioner.UpdateEntitlements(ctx, id, entitlements))
 }
 
 // validateTenantIDPattern validates a tenant ID according to the rules:

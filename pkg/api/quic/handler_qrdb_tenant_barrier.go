@@ -17,11 +17,14 @@ package quic
 
 import (
 	"context"
+	"errors"
 
 	"google.golang.org/protobuf/proto"
 
 	pb "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -187,4 +190,134 @@ func (s *Server) qrdbTenantBarrierStatus(ctx context.Context, payload []byte) ([
 		return nil, &QRDBMarshalError{Err: marshalErr}
 	}
 	return resp, nil
+}
+
+// qrdbTenantGovernance returns the currently wired barrierTenantGovernancer, or
+// nil if SetTenantGovernance has not been called with a non-nil value.
+func (s *Server) qrdbTenantGovernance() barrierTenantGovernancer {
+	s.svcMu.RLock()
+	defer s.svcMu.RUnlock()
+	return s.tenantGovernance
+}
+
+// qrdbTenantBarrierEnableEncryption handles the
+// "tenant.BarrierEnableEncryption" qrdb-quic method. It migrates a tenant's
+// dedicated barrier from none to a keyed strategy by delegating to the system
+// BarrierServicer.EnableEncryption with the tenant_id scope. The QUIC handler
+// uses the same BarrierServicer that carries the EncryptionMigrator.
+func (s *Server) qrdbTenantBarrierEnableEncryption(ctx context.Context, payload []byte) ([]byte, error) {
+	// EnableEncryption lives on BarrierServicer (which has the node migrator),
+	// not TenantBarrierServicer. Reuse qrdbBarrierService() which accesses
+	// s.barrierService via the server's RLock.
+	svc := s.qrdbBarrierService()
+	if svc == nil {
+		return nil, &QRDBBarrierNotConfiguredError{}
+	}
+	var req pb.BarrierEnableEncryptionRequest
+	if err := proto.Unmarshal(payload, &req); err != nil {
+		return nil, &QRDBUnmarshalError{Err: err}
+	}
+	if req.GetTenantId() == "" {
+		return nil, errors.New("tenant_id is required for tenant barrier enable-encryption")
+	}
+
+	mech := req.GetMechanism()
+	if mech == "" {
+		mech = string(qrdbsdk.MechanismSwap)
+	}
+	avail := req.GetAvailability()
+	if avail == "" {
+		avail = string(qrdbsdk.AvailabilityOnline)
+	}
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  qrdbsdk.StrategyID(req.GetStrategy()),
+		Mechanism:       qrdbsdk.MigrationMechanism(mech),
+		Availability:    qrdbsdk.MigrationAvailability(avail),
+		ShamirThreshold: int(req.GetShamirThreshold()),
+		ShamirTotal:     int(req.GetShamirTotal()),
+	}
+	if p := req.GetPassphrase(); p != "" {
+		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(p)}
+	}
+	if err := svc.EnableEncryption(ctx, req.GetTenantId(), opts); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// qrdbTenantUpdateQuotas handles the "tenant.UpdateQuotas" qrdb-quic method.
+// It applies engine-level numeric resource limits to the identified tenant by
+// delegating to the barrierTenantGovernancer (iam.DefaultTenantManager). The
+// method maps every proto quota field to the canonical qrdbsdk.Quotas struct.
+func (s *Server) qrdbTenantUpdateQuotas(ctx context.Context, payload []byte) ([]byte, error) {
+	gov := s.qrdbTenantGovernance()
+	if gov == nil {
+		return nil, api.NewServiceUnavailableError("governance")
+	}
+	var req pb.TenantUpdateQuotasRequest
+	if err := proto.Unmarshal(payload, &req); err != nil {
+		return nil, &QRDBUnmarshalError{Err: err}
+	}
+	if req.GetId() == "" {
+		return nil, api.NewRequiredFieldError("tenant_id")
+	}
+	q := req.GetQuotas()
+	if q == nil {
+		return nil, api.NewRequiredFieldError("quotas")
+	}
+	quotas := qrdbsdk.Quotas{
+		MaxDatabases:          q.GetMaxDatabases(),
+		MaxRaftGroups:         q.GetMaxRaftGroups(),
+		MaxReplicasPerGroup:   q.GetMaxReplicasPerGroup(),
+		MaxTotalReplicas:      q.GetMaxTotalReplicas(),
+		MaxCollections:        q.GetMaxCollections(),
+		MaxKeys:               q.GetMaxKeys(),
+		MaxStorageBytes:       q.GetMaxStorageBytes(),
+		MaxDatabaseSizeBytes:  q.GetMaxDatabaseSizeBytes(),
+		MaxUsers:              q.GetMaxUsers(),
+		MaxRoles:              q.GetMaxRoles(),
+		MaxCertificates:       q.GetMaxCertificates(),
+		MaxBackups:            q.GetMaxBackups(),
+		MaxVectorDims:         q.GetMaxVectorDims(),
+		MaxTSMetrics:          q.GetMaxTsMetrics(),
+		SystemBarrierQuota:    q.GetSystemBarrierQuota(),
+		MaxDedicatedWALGroups: q.GetMaxDedicatedWalGroups(),
+	}
+	if err := gov.UpdateEngineQuotas(ctx, req.GetId(), quotas); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// qrdbTenantUpdateEntitlements handles the "tenant.UpdateEntitlements" qrdb-quic
+// method. It applies engine-level feature entitlements to the identified tenant
+// by delegating to the barrierTenantGovernancer (iam.DefaultTenantManager).
+func (s *Server) qrdbTenantUpdateEntitlements(ctx context.Context, payload []byte) ([]byte, error) {
+	gov := s.qrdbTenantGovernance()
+	if gov == nil {
+		return nil, api.NewServiceUnavailableError("governance")
+	}
+	var req pb.TenantUpdateEntitlementsRequest
+	if err := proto.Unmarshal(payload, &req); err != nil {
+		return nil, &QRDBUnmarshalError{Err: err}
+	}
+	if req.GetId() == "" {
+		return nil, api.NewRequiredFieldError("tenant_id")
+	}
+	e := req.GetEntitlements()
+	if e == nil {
+		return nil, api.NewRequiredFieldError("entitlements")
+	}
+	entitlements := qrdbsdk.Entitlements{
+		AllowedIsolationModes:     e.GetAllowedIsolationModes(),
+		AllowDedicatedRaft:        e.GetAllowDedicatedRaft(),
+		AllowVolumeStorage:        e.GetAllowVolumeStorage(),
+		AllowSystemManagedBarrier: e.GetAllowSystemManagedBarrier(),
+		AllowedBarrierModes:       e.GetAllowedBarrierModes(),
+		AllowDedicatedWAL:         e.GetAllowDedicatedWal(),
+	}
+	if err := gov.UpdateEngineEntitlements(ctx, req.GetId(), entitlements); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }

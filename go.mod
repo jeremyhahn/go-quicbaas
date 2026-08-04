@@ -16,7 +16,7 @@ require (
 	github.com/jeremyhahn/go-auth v0.0.0-20251115074454-fdb02f328d92
 	github.com/jeremyhahn/go-codec v1.3.0
 	github.com/jeremyhahn/go-libsignal v0.0.0
-	github.com/jeremyhahn/go-objstore v0.1.4-alpha
+	github.com/jeremyhahn/go-objstore v0.1.5-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0
 	github.com/jeremyhahn/go-xkms v0.2.2-alpha

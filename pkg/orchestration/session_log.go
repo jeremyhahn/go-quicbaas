@@ -15,7 +15,6 @@ package orchestration
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -123,10 +122,10 @@ func NewMemorySessionEventLog() *MemorySessionEventLog {
 // Append implements SessionEventLog.
 func (m *MemorySessionEventLog) Append(ctx context.Context, event *SessionEvent) error {
 	if event == nil {
-		return &SessionLogAppendError{Cause: fmt.Errorf("nil event")}
+		return &SessionLogAppendError{Cause: ErrSessionEventNil}
 	}
 	if event.SessionID == "" || event.TenantID == "" {
-		return &SessionLogAppendError{Cause: fmt.Errorf("session_id and tenant_id required")}
+		return &SessionLogAppendError{Cause: ErrSessionEventMissingIDs}
 	}
 	key := memKey(event.TenantID, event.SessionID)
 
@@ -206,7 +205,7 @@ func (m *MemorySessionEventLog) Subscribe(ctx context.Context, tenantID, session
 // PutMeta implements SessionEventLog.
 func (m *MemorySessionEventLog) PutMeta(ctx context.Context, meta *SessionMeta) error {
 	if meta == nil || meta.SessionID == "" || meta.TenantID == "" {
-		return fmt.Errorf("orchestration session log: put meta: session_id and tenant_id required")
+		return &SessionLogError{Op: "put meta: session_id and tenant_id required"}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

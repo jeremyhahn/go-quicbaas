@@ -40,7 +40,7 @@ func TestBoost5_BuildEmbeddedAgentBackends_ClaudeFactory(t *testing.T) {
 	t.Parallel()
 
 	log := makeNoopLogger()
-	backends, err := buildEmbeddedAgentBackends([]string{"claude"}, "", log)
+	backends, err := buildEmbeddedAgentBackends([]string{"claude"}, "", nil, log)
 	require.NoError(t, err)
 	_, ok := backends["claude"]
 	assert.True(t, ok, "claude factory must register a 'claude' backend")
@@ -50,7 +50,7 @@ func TestBoost5_BuildEmbeddedAgentBackends_CodexFactory(t *testing.T) {
 	t.Parallel()
 
 	log := makeNoopLogger()
-	backends, err := buildEmbeddedAgentBackends([]string{"codex"}, "", log)
+	backends, err := buildEmbeddedAgentBackends([]string{"codex"}, "", nil, log)
 	require.NoError(t, err)
 	_, ok := backends["codex"]
 	assert.True(t, ok, "codex factory must register a 'codex' backend")
@@ -60,7 +60,7 @@ func TestBoost5_BuildEmbeddedAgentBackends_OpenCodeFactory(t *testing.T) {
 	t.Parallel()
 
 	log := makeNoopLogger()
-	backends, err := buildEmbeddedAgentBackends([]string{"opencode"}, "", log)
+	backends, err := buildEmbeddedAgentBackends([]string{"opencode"}, "", nil, log)
 	require.NoError(t, err)
 	_, ok := backends["opencode"]
 	assert.True(t, ok, "opencode factory must register an 'opencode' backend")
@@ -73,6 +73,7 @@ func TestBoost5_BuildEmbeddedAgentBackends_AllSupportedKinds(t *testing.T) {
 	backends, err := buildEmbeddedAgentBackends(
 		[]string{"ollama", "claude", "codex", "opencode"},
 		"http://127.0.0.1:11434",
+		nil,
 		log,
 	)
 	require.NoError(t, err)
@@ -90,7 +91,7 @@ func TestBoost5_BuildEmbeddedAgentBackends_OllamaDefaultURL(t *testing.T) {
 	t.Parallel()
 
 	log := makeNoopLogger()
-	backends, err := buildEmbeddedAgentBackends([]string{"ollama"}, "", log)
+	backends, err := buildEmbeddedAgentBackends([]string{"ollama"}, "", nil, log)
 	require.NoError(t, err)
 	_, ok := backends["ollama"]
 	assert.True(t, ok, "ollama factory must default URL when blank")

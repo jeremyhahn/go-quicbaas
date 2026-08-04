@@ -22,7 +22,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
-	quicraftconfig "github.com/jeremyhahn/go-quicraft/pkg/config"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -32,6 +31,27 @@ import (
 // holds the single default volume pool. Its Pebble instances are assigned to
 // barrier-mode tenants by the barrier registry when RegisterTenant is called
 // without an explicit storage backend.
+// provisionClusterMTLS provides the mTLS certificate material for a multi-node
+// Raft cluster. Without -tags raft, only operator-supplied PEM files are
+// supported (buildRaftMTLSConfig). With -tags raft, qrdb_node_cluster.go
+// overrides this via init() to the full three-way precedence switch:
+//
+//  1. Operator-supplied explicit PEM files (TLSCertFile/TLSKeyFile/TLSCAFile)
+//  2. Hardware-resident node key (RaftEnrollment.KeyBackend set)
+//  3. Software node key auto-provisioned via cluster-TLS enrollment
+//
+// The returned Advertiser is non-nil only on the first (bootstrapping) node
+// in the software or hardware enrollment paths; callers must stop it on shutdown.
+var provisionClusterMTLS = defaultRaftMTLSProvision
+
+// defaultRaftMTLSProvision is the non-raft fallback: explicit PEM files only.
+// It is replaced by the full precedence switch in qrdb_node_cluster.go when
+// building with -tags raft.
+func defaultRaftMTLSProvision(s *Server, _ map[uint64]string) (*qrdbnode.RaftMTLSConfig, interface{ Stop() }, error) {
+	mtls, err := buildRaftMTLSConfig(s.config)
+	return mtls, nil, err
+}
+
 const defaultVolumePoolDirName = "tenant-pools/default"
 
 // QRDBNodeError describes a failure in the standalone qrdb node lifecycle
@@ -245,7 +265,13 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbsdk.DaemonConfig
 // selected (software/none/shamir), the returned slice still carries the
 // default StrategyRegistry + PINBackend + FactorRegistry so the qrdb server
 // always starts with a complete composition.
-func buildXKMSCryptoOptions(cfg *config.Config, logger *slog.Logger) ([]qrdbsdk.ServerOption, error) {
+//
+// sharedTPM is the open TPM2 seal backend (from buildSealStrategyOnce) when the
+// seal strategy is TPM-backed, or nil otherwise. It is threaded into the PIN
+// backend so a tpm2 PIN verifies over the SAME single TPM open as the seal
+// strategy — never a second open. Nil means no TPM2 seal is active; a tpm2 PIN
+// then fails closed (PINRequiresTPMSealError).
+func buildXKMSCryptoOptions(cfg *config.Config, logger *slog.Logger, sharedTPM *xkmssdk.TPM2Backend) ([]qrdbsdk.ServerOption, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -273,10 +299,9 @@ func buildXKMSCryptoOptions(cfg *config.Config, logger *slog.Logger) ([]qrdbsdk.
 	}
 
 	// Select the PIN backend via the shared go-xkms pinselect decision point.
-	// Today this yields a PERSISTENT software backend (previously the composer
-	// left PINBackend nil, which produced an in-memory-only backend whose SO/
-	// User PINs did not survive a daemon restart).
-	pinBackend, err := buildPINBackend(cfg, logger)
+	// software/auto yields a PERSISTENT software backend; an explicit tpm2 PIN
+	// verifies in-hardware over the seal strategy's shared TPM open (sharedTPM).
+	pinBackend, err := buildPINBackend(cfg, logger, newSealSharedTPMPINProvider(sharedTPM, cfg, logger))
 	if err != nil {
 		return nil, err
 	}
@@ -289,6 +314,34 @@ func buildXKMSCryptoOptions(cfg *config.Config, logger *slog.Logger) ([]qrdbsdk.
 	}
 
 	return XKMSCryptoOptions(cryptoCfg)
+}
+
+// buildSealStrategyOnce builds the configured hardware/cloud seal strategy a
+// single time and caches it (and, when TPM-backed, its open TPM2 backend) on the
+// Server. This is the P3/P4 single-TPM-open guarantee: the one open made here is
+// reused by BOTH the embedded qrdb node's barrier (injected via WithSealStrategy)
+// AND the PIN backend (which verifies over the same TPM session). It MUST run
+// before buildXKMSCryptoOptions so the shared backend is available to the PIN
+// path.
+//
+// It is a no-op (leaving s.sealStrategy and s.sealTPM2Backend nil) when seal is
+// disabled or the strategy is software/none/shamir — the embedded node then
+// builds its own software strategy, exactly as before. A configured-but-not-
+// compiled cloud/HSM strategy surfaces as a typed StrategyNotCompiledError.
+// Idempotent: a second call with an already-built strategy returns immediately.
+func (s *Server) buildSealStrategyOnce(sealEnabled bool) error {
+	if !sealEnabled || s.sealStrategy != nil {
+		return nil
+	}
+	strategies, tpmBackend, err := buildHardwareSealStrategiesShared(s.config, slog.Default())
+	if err != nil {
+		return &QRDBNodeError{Stage: "build hardware seal strategy", Cause: err}
+	}
+	if len(strategies) > 0 {
+		s.sealStrategy = strategies[0]
+		s.sealTPM2Backend = tpmBackend
+	}
+	return nil
 }
 
 // buildXKMSFactors returns the go-xkms auth-factor plugins that are registered
@@ -359,7 +412,22 @@ func (s *Server) initStandaloneQRDBNode() error {
 
 	qcfg := buildQRDBConfig(s.config, false)
 
-	serverOpts, err := buildXKMSCryptoOptions(s.config, slog.Default())
+	// Build the hardware seal strategy ONCE up front (single TPM open) so its
+	// open TPM2 backend can be shared with both the embedded node's barrier
+	// (WithSealStrategy below) and the PIN backend (inside buildXKMSCryptoOptions).
+	if err := s.buildSealStrategyOnce(qcfg.Seal.Enabled); err != nil {
+		return err
+	}
+
+	// First-boot TPM PIN enrollment: when the PIN backend is tpm2 and a TPM2
+	// seal is active, bind the operator passphrase as the PlatformSRK auth over
+	// the SAME shared TPM open so the TPM PIN path works end-to-end. No-op for
+	// software PIN, idempotent across boots, fail-closed on a genuine TPM error.
+	if err := enrollTPMPlatformSRKFirstBoot(s.config, s.sealTPM2Backend, s.opts.sealPassphrase, slog.Default()); err != nil {
+		return &QRDBNodeError{Stage: "enroll tpm platform SRK", Cause: err}
+	}
+
+	serverOpts, err := buildXKMSCryptoOptions(s.config, slog.Default(), s.sealTPM2Backend)
 	if err != nil {
 		return &QRDBNodeError{Stage: "build xkms crypto options", Cause: err}
 	}
@@ -369,6 +437,10 @@ func (s *Server) initStandaloneQRDBNode() error {
 	// the quicbaas logger so log lines route correctly.
 	nodeOpts := []qrdbnode.NodeOption{
 		qrdbnode.WithLogger(slog.Default()),
+		// Enable per-tenant volume/raft isolation so the node accepts tenant
+		// barriers under dedicated DataRoots. Required for EnableEncryption
+		// targeting tenant scopes and for IsolationVolume / IsolationRaft tenants.
+		qrdbnode.WithTenantIsolation(),
 	}
 
 	// Inject the late-bound OIDC session issuer so a successful unified login
@@ -405,16 +477,10 @@ func (s *Server) initStandaloneQRDBNode() error {
 	// WithSealStrategy so the barrier is sealed with the cloud strategy and can
 	// auto-unseal on startup. Without this the node falls back to the deferred-
 	// software (passphrase) strategy and auto-unseal fails with empty credentials.
-	if qcfg.Seal.Enabled {
-		strategies, stratErr := buildHardwareSealStrategies(s.config)
-		if stratErr != nil {
-			return &QRDBNodeError{Stage: "build hardware seal strategy", Cause: stratErr}
-		}
-		if len(strategies) > 0 {
-			nodeOpts = append(nodeOpts, qrdbnode.WithSealStrategy(strategies[0]))
-			s.logger.Info("Standalone node: injecting hardware/cloud seal strategy",
-				"strategy", strategies[0].ID())
-		}
+	if qcfg.Seal.Enabled && s.sealStrategy != nil {
+		nodeOpts = append(nodeOpts, qrdbnode.WithSealStrategy(s.sealStrategy))
+		s.logger.Info("Standalone node: injecting hardware/cloud seal strategy",
+			"strategy", s.sealStrategy.ID())
 	}
 
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, serverOpts, nodeOpts...)
@@ -480,13 +546,31 @@ func (s *Server) initClusteredQRDBNode() error {
 		return &QRDBNodeError{Stage: "build cluster members", Cause: err}
 	}
 
-	serverOpts, err := buildXKMSCryptoOptions(s.config, slog.Default())
+	// Build the hardware seal strategy ONCE up front (single TPM open) so its
+	// open TPM2 backend can be shared with both the clustered node's barrier
+	// (WithSealStrategy below) and the PIN backend (inside buildXKMSCryptoOptions).
+	if err := s.buildSealStrategyOnce(qcfg.Seal.Enabled); err != nil {
+		return err
+	}
+
+	// First-boot TPM PIN enrollment: when the PIN backend is tpm2 and a TPM2
+	// seal is active, bind the operator passphrase as the PlatformSRK auth over
+	// the SAME shared TPM open so the TPM PIN path works end-to-end. No-op for
+	// software PIN, idempotent across boots, fail-closed on a genuine TPM error.
+	if err := enrollTPMPlatformSRKFirstBoot(s.config, s.sealTPM2Backend, s.opts.sealPassphrase, slog.Default()); err != nil {
+		return &QRDBNodeError{Stage: "enroll tpm platform SRK", Cause: err}
+	}
+
+	serverOpts, err := buildXKMSCryptoOptions(s.config, slog.Default(), s.sealTPM2Backend)
 	if err != nil {
 		return &QRDBNodeError{Stage: "build xkms crypto options", Cause: err}
 	}
 
 	nodeOpts := []qrdbnode.NodeOption{
 		qrdbnode.WithLogger(slog.Default()),
+		// Enable per-tenant volume/raft isolation (see initStandaloneQRDBNode
+		// for rationale).
+		qrdbnode.WithTenantIsolation(),
 	}
 
 	// Inject the late-bound OIDC session issuer (see initStandaloneQRDBNode).
@@ -521,24 +605,26 @@ func (s *Server) initClusteredQRDBNode() error {
 	// When a hardware/cloud seal strategy is configured, build it and inject
 	// it into the node builder so the barrier is sealed with the cloud strategy
 	// and auto-unseals on cluster boot.
-	if qcfg.Seal.Enabled {
-		strategies, stratErr := buildHardwareSealStrategies(s.config)
-		if stratErr != nil {
-			return &QRDBNodeError{Stage: "build hardware seal strategy", Cause: stratErr}
-		}
-		if len(strategies) > 0 {
-			nodeOpts = append(nodeOpts, qrdbnode.WithSealStrategy(strategies[0]))
-			s.logger.Info("Clustered node: injecting hardware/cloud seal strategy",
-				"strategy", strategies[0].ID())
-		}
+	if qcfg.Seal.Enabled && s.sealStrategy != nil {
+		nodeOpts = append(nodeOpts, qrdbnode.WithSealStrategy(s.sealStrategy))
+		s.logger.Info("Clustered node: injecting hardware/cloud seal strategy",
+			"strategy", s.sealStrategy.ID())
 	}
 
 	// Inject mTLS only for multi-node clusters. Single-node uses
 	// WithoutTransport (no QUIC transport, no cert material needed).
+	// provisionClusterMTLS implements a three-way precedence (raft build):
+	//   1. Operator-supplied explicit PEM files
+	//   2. Hardware-resident node key (RaftEnrollment.KeyBackend set)
+	//   3. Software auto-enrollment via cluster-TLS enrollment
+	// Without -tags raft, only explicit PEM files are supported.
 	if len(members) > 1 {
-		mtls, mtlsErr := buildRaftMTLSConfig(s.config)
+		mtls, adv, mtlsErr := provisionClusterMTLS(s, members)
 		if mtlsErr != nil {
-			return &QRDBNodeError{Stage: "build raft mtls", Cause: mtlsErr}
+			return &QRDBNodeError{Stage: "provision raft mtls", Cause: mtlsErr}
+		}
+		if adv != nil {
+			s.raftClusterAdvertiser = adv
 		}
 		if mtls != nil {
 			nodeOpts = append(nodeOpts, qrdbnode.WithRaftMTLS(mtls))
@@ -600,7 +686,7 @@ func buildClusterMembers(cfg *config.Config) (map[uint64]string, error) {
 // nil without error when none of the Raft TLS paths are configured (the
 // caller treats nil as "no mTLS" and falls back to plaintext, which is
 // only acceptable for single-node development clusters).
-func buildRaftMTLSConfig(cfg *config.Config) (*quicraftconfig.MTLSConfig, error) {
+func buildRaftMTLSConfig(cfg *config.Config) (*qrdbnode.RaftMTLSConfig, error) {
 	certFile := cfg.Raft.TLSCertFile
 	keyFile := cfg.Raft.TLSKeyFile
 	caFile := cfg.Raft.TLSCAFile
@@ -609,7 +695,7 @@ func buildRaftMTLSConfig(cfg *config.Config) (*quicraftconfig.MTLSConfig, error)
 		return nil, nil
 	}
 
-	mtls := &quicraftconfig.MTLSConfig{}
+	mtls := &qrdbnode.RaftMTLSConfig{}
 
 	if caFile != "" {
 		caPEM, err := os.ReadFile(caFile)

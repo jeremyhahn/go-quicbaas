@@ -27,6 +27,10 @@ service KeyManagement {
   // GetKey retrieves key material or public key by key ID.
   rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
 
+  // GetPublicKey retrieves the DER-encoded public key component of an
+  // asymmetric key without exposing private key material.
+  rpc GetPublicKey(GetPublicKeyRequest) returns (GetPublicKeyResponse);
+
   // ListKeys returns all keys accessible to the requester with pagination.
   rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
 
@@ -60,6 +64,16 @@ service KeyManagement {
   // DeleteKeyPolicy removes the access control policy for a key, restoring
   // the default-allow-all behaviour for authenticated principals.
   rpc DeleteKeyPolicy(DeleteKeyPolicyRequest) returns (DeleteKeyPolicyResponse);
+
+  // SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
+  rpc SetKeyRotationPolicy(SetKeyRotationPolicyRequest) returns (SetKeyRotationPolicyResponse);
+
+  // GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
+  rpc GetKeyRotationPolicy(GetKeyRotationPolicyRequest) returns (GetKeyRotationPolicyResponse);
+
+  // DeleteKeyRotationPolicy removes the rotation policy for a key, disabling
+  // automatic rotation.
+  rpc DeleteKeyRotationPolicy(DeleteKeyRotationPolicyRequest) returns (DeleteKeyRotationPolicyResponse);
 
   // GetSupportedAlgorithms returns the list of cryptographic algorithms
   // supported by the current backend. Use this to check if specific algorithms
@@ -136,6 +150,12 @@ service SecretsManagement {
 
   // WatchSecretsByPrefix streams secret changes for a prefix.
   rpc WatchSecretsByPrefix(WatchSecretsRequest) returns (stream SecretChange);
+
+  // EnsureSecret implements the Vault-style generate-on-first-access primitive.
+  // If a secret at the given path already exists it is returned unchanged.
+  // If it does not exist a fresh random value is generated, stored, and returned.
+  // Exactly one concurrent caller across the cluster receives generated=true.
+  rpc EnsureSecret(EnsureSecretRequest) returns (EnsureSecretResponse);
 }
 
 // =============================================================================
@@ -442,6 +462,23 @@ message GetKeyResponse {
   int64 timestamp = 3;
 }
 
+// GetPublicKeyRequest retrieves the public key component of an asymmetric key.
+message GetPublicKeyRequest {
+  string key_id = 1;
+  // version optionally targets a specific key version (0 = current).
+  uint64 version = 2;
+}
+
+// GetPublicKeyResponse returns the DER-encoded public key.
+message GetPublicKeyResponse {
+  string key_id = 1;
+  // public_key is the DER-encoded (PKIX) public key.
+  bytes public_key = 2;
+  KeyAlgorithm algorithm = 3;
+  uint64 version = 4;
+  int64 timestamp = 5;
+}
+
 message ListKeysRequest {
   int32 limit = 1;
   string cursor = 2;
@@ -547,6 +584,45 @@ message DeleteKeyPolicyRequest {
 
 // DeleteKeyPolicyResponse confirms that the policy was removed.
 message DeleteKeyPolicyResponse {
+  string key_id = 1;
+  int64 timestamp = 2;
+}
+
+// SetKeyRotationPolicyRequest sets the automatic rotation policy for a key.
+message SetKeyRotationPolicyRequest {
+  string key_id = 1;
+  RotationPolicy policy = 2;
+}
+
+// SetKeyRotationPolicyResponse confirms the rotation policy was applied.
+message SetKeyRotationPolicyResponse {
+  string key_id = 1;
+  // policy is the stored rotation policy (with computed next_rotation).
+  RotationPolicy policy = 2;
+  int64 timestamp = 3;
+}
+
+// GetKeyRotationPolicyRequest retrieves the rotation policy for a key.
+message GetKeyRotationPolicyRequest {
+  string key_id = 1;
+}
+
+// GetKeyRotationPolicyResponse returns the current rotation policy.
+message GetKeyRotationPolicyResponse {
+  string key_id = 1;
+  // policy is the current rotation policy; absent when none is configured.
+  RotationPolicy policy = 2;
+  int64 timestamp = 3;
+}
+
+// DeleteKeyRotationPolicyRequest removes the rotation policy for a key,
+// disabling automatic rotation.
+message DeleteKeyRotationPolicyRequest {
+  string key_id = 1;
+}
+
+// DeleteKeyRotationPolicyResponse confirms the rotation policy was removed.
+message DeleteKeyRotationPolicyResponse {
   string key_id = 1;
   int64 timestamp = 2;
 }
@@ -1072,6 +1148,9 @@ message SignRequest {
   string key_id = 1;
   bytes message = 2;
   HashAlgorithm hash_algorithm = 3;
+  // pre_hashed indicates message is already a hash digest (e.g., produced by a
+  // crypto.Signer caller); the service signs it directly without hashing again.
+  bool pre_hashed = 4;
 }
 
 message SignResponse {
@@ -1317,4 +1396,41 @@ message GetReencryptionProgressResponse {
   ReencryptionProgress progress = 4;
   string error = 5;
   int64 timestamp = 6;
+}
+
+// EnsureSecretRequest is the request for SecretsManagement.EnsureSecret.
+// It mirrors service.EnsureSecretRequest in pkg/service/kms_types.go.
+message EnsureSecretRequest {
+  // secret_id is the stable path to the secret.
+  string secret_id = 1;
+
+  // length is the secret length in bytes (for base64/hex/raw encoding) or
+  // digits (for numeric). Must be positive.
+  int32 length = 2;
+
+  // encoding is the output encoding: "base64", "hex", "numeric", or "raw".
+  string encoding = 3;
+
+  // tenant_id optionally scopes the secret to a tenant for tenant-keyed DEK
+  // selection. Defaults to the context tenant when empty.
+  string tenant_id = 4;
+}
+
+// EnsureSecretResponse is the response from SecretsManagement.EnsureSecret.
+// It mirrors service.EnsureSecretResponse in pkg/service/kms_types.go.
+message EnsureSecretResponse {
+  // secret_id echoes the request path.
+  string secret_id = 1;
+
+  // data is the secret value as the caller should consume it.
+  bytes data = 2;
+
+  // generated is true when this call produced a fresh value (first access).
+  bool generated = 3;
+
+  // version is the current version of the underlying secret.
+  uint64 version = 4;
+
+  // timestamp is the Unix epoch second when the secret was created or last stored.
+  int64 timestamp = 5;
 }

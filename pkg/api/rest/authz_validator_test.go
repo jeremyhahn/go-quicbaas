@@ -267,7 +267,9 @@ func TestValidatorAuthorize_UnmappedPathDenied(t *testing.T) {
 	mw := newValidatorMiddleware(authorizer)
 
 	handler := &testHandler{}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/embedding/generate", nil)
+	// A path with no entry in the PEP mapping at all. (Avoid real surfaces such
+	// as /api/v1/embedding, which ARE mapped.)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/totally-unmapped-surface/do", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	rr := httptest.NewRecorder()
 

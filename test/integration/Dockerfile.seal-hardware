@@ -14,7 +14,7 @@
 #   * does NOT install swtpm — the tpm2 backend connects to the external
 #     swtpm1 container over TCP via the go-xkms TCP transport path.
 #
-# Both stages use golang:1.26-alpine (ships Go 1.26.4, matching go.work).
+# Both stages use golang:1.26-alpine (ships Go 1.26.5, matching go.work).
 # Alpine supports CGO via apk gcc + musl-dev.
 
 ARG BUILD_TAGS="local quic raft rest iam mcp hashicorpmetrics codec_json codec_yaml tpm2 pkcs11"
@@ -81,7 +81,7 @@ COPY --from=workspace go-frost      ./go-frost
 COPY . ./go-quicbaas
 
 RUN { \
-        echo 'go 1.26.4'; \
+        echo 'go 1.26.5'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \
@@ -188,7 +188,7 @@ COPY --from=workspace go-frost      ./go-frost
 COPY . ./go-quicbaas
 
 RUN { \
-        echo 'go 1.26.4'; \
+        echo 'go 1.26.5'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \

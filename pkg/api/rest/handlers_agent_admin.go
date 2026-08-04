@@ -26,18 +26,6 @@ import (
 )
 
 // =============================================================================
-// Route Registration
-// =============================================================================
-
-// registerAgentAdminRoutes mounts agent lifecycle management routes.
-func registerAgentAdminRoutes(s *Server, r chi.Router) {
-	r.Route("/agents", func(r chi.Router) {
-		r.Post("/{id}/disable", s.HandleDisableAgent)
-		r.Post("/{id}/enable", s.HandleEnableAgent)
-	})
-}
-
-// =============================================================================
 // REST Request/Response Types
 // =============================================================================
 
@@ -60,13 +48,13 @@ type EnableAgentRESTResponse struct {
 // Handlers
 // =============================================================================
 
-// HandleDisableAgent handles POST /api/v1/agents/{id}/disable.
+// HandleDisableAgent handles POST /api/v1/orchestrator/agents/{agentID}/disable.
 // Administratively disables the agent globally, preventing all work claims
 // and authentication until re-enabled.
 func (s *Server) HandleDisableAgent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	agentID := chi.URLParam(r, "id")
+	agentID := chi.URLParam(r, "agentID")
 	if agentID == "" {
 		RespondBadRequest(w, r, "agent id is required")
 		return
@@ -101,13 +89,13 @@ func (s *Server) HandleDisableAgent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleEnableAgent handles POST /api/v1/agents/{id}/enable.
+// HandleEnableAgent handles POST /api/v1/orchestrator/agents/{agentID}/enable.
 // Re-activates a previously disabled agent, allowing it to authenticate
 // and claim work again.
 func (s *Server) HandleEnableAgent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	agentID := chi.URLParam(r, "id")
+	agentID := chi.URLParam(r, "agentID")
 	if agentID == "" {
 		RespondBadRequest(w, r, "agent id is required")
 		return

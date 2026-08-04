@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -113,6 +114,10 @@ func (m *mockBarrierServicer) BarrierGenerateRootToken(context.Context, []string
 		return m.rootToken, nil
 	}
 	return &service.RootTokenInfo{Token: "deadbeef", CreatedAt: time.Now()}, nil
+}
+
+func (m *mockBarrierServicer) EnableEncryption(_ context.Context, _ string, _ qrdbsdk.MigrationOptions) error {
+	return m.err
 }
 
 func newBarrierHandler(t *testing.T, svc service.BarrierServicer) *Handler {

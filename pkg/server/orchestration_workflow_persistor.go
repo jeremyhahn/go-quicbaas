@@ -61,14 +61,14 @@ func (p *kvWorkflowPersistor) keyFor(name string) string {
 // orchestration layer already round-trips definitions as JSON over REST/gRPC.
 func (p *kvWorkflowPersistor) Save(ctx context.Context, def *orchestration.WorkflowDefinition) error {
 	if def == nil || def.Name == "" {
-		return fmt.Errorf("kvWorkflowPersistor: workflow name is required")
+		return &ServerMessageError{Message: "kvWorkflowPersistor: workflow name is required"}
 	}
 	data, err := json.Marshal(def)
 	if err != nil {
-		return fmt.Errorf("kvWorkflowPersistor: marshal %q: %w", def.Name, err)
+		return &ServerCauseError{Message: fmt.Sprintf("kvWorkflowPersistor: marshal %q", def.Name), Cause: err}
 	}
 	if err := p.client.KV().Put(ctx, p.keyFor(def.Name), data); err != nil {
-		return fmt.Errorf("kvWorkflowPersistor: put %q: %w", def.Name, err)
+		return &ServerCauseError{Message: fmt.Sprintf("kvWorkflowPersistor: put %q", def.Name), Cause: err}
 	}
 	return nil
 }
@@ -78,13 +78,13 @@ func (p *kvWorkflowPersistor) Save(ctx context.Context, def *orchestration.Workf
 // in-memory entry existed.
 func (p *kvWorkflowPersistor) Remove(ctx context.Context, name string) error {
 	if name == "" {
-		return fmt.Errorf("kvWorkflowPersistor: workflow name is required")
+		return &ServerMessageError{Message: "kvWorkflowPersistor: workflow name is required"}
 	}
 	if err := p.client.KV().Delete(ctx, p.keyFor(name)); err != nil {
 		// Treat any "not found" as success so the operation stays idempotent.
 		// The qrdb SDK does not currently expose a typed NotFound error here,
 		// so callers retrying a Remove after a partial failure see success.
-		return fmt.Errorf("kvWorkflowPersistor: delete %q: %w", name, err)
+		return &ServerCauseError{Message: fmt.Sprintf("kvWorkflowPersistor: delete %q", name), Cause: err}
 	}
 	return nil
 }
@@ -94,7 +94,7 @@ func (p *kvWorkflowPersistor) Remove(ctx context.Context, name string) error {
 func (p *kvWorkflowPersistor) LoadAll(ctx context.Context) ([]*orchestration.WorkflowDefinition, error) {
 	results, err := p.client.KV().Scan(ctx, workflowKeyPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("kvWorkflowPersistor: scan: %w", err)
+		return nil, &ServerCauseError{Message: "kvWorkflowPersistor: scan", Cause: err}
 	}
 	defs := make([]*orchestration.WorkflowDefinition, 0, len(results))
 	for k, v := range results {

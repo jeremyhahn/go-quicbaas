@@ -69,6 +69,50 @@ func TestKMSRESTHandler_GenerateKey_HappyPath(t *testing.T) {
 	}
 }
 
+// TestKMSRESTHandler_GenerateKey_ThreadsProtectionFlags proves Exportable and
+// DeletionProtection travel from the SDK request into the REST wire body —
+// the parity contract downstream consumers (go-trusted-platform REST) rely on.
+func TestKMSRESTHandler_GenerateKey_ThreadsProtectionFlags(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body kmsGenerateKeyRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body.KeyAttributes == nil || !body.KeyAttributes.Exportable || !body.KeyAttributes.DeletionProtection {
+			t.Errorf("protection flags not threaded: %+v", body.KeyAttributes)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(kmsGenerateKeyWire{
+			Key:       &kmsKeyHandleWire{KeyID: "key-p", Version: 1, Algorithm: "AES-256-GCM", Status: "enabled"},
+			Metadata:  &kmsKeyMetadataWire{KeyID: "key-p", Algorithm: "AES-256-GCM", Version: 1, Exportable: true, DeletionProtection: true},
+			Timestamp: 1700000000,
+		})
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	defer tr.Close()
+
+	result, err := tr.Request(context.Background(), "quicbaas.KMS", "GenerateKey", &kmsclient.GenerateKeyRequest{
+		Name:               "key-p",
+		Algorithm:          kmsclient.AlgorithmAES256GCM,
+		Usage:              []kmsclient.KeyUsage{kmsclient.KeyUsageEncrypt},
+		Exportable:         true,
+		DeletionProtection: true,
+	})
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	resp, ok := result.(*service.GenerateKeyResponse)
+	if !ok {
+		t.Fatalf("expected *service.GenerateKeyResponse, got %T", result)
+	}
+	if resp.Metadata == nil || !resp.Metadata.Exportable || !resp.Metadata.DeletionProtection {
+		t.Errorf("response metadata flags lost: %+v", resp.Metadata)
+	}
+}
+
 func TestKMSRESTHandler_GetKey_SubstitutesName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

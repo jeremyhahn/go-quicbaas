@@ -807,10 +807,10 @@ func TestTransportWithServer(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -947,10 +947,10 @@ func TestTransportStream(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1275,10 +1275,10 @@ func TestStreamSendRecv(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1421,10 +1421,10 @@ func TestTransportConnectionNil(t *testing.T) {
 
 	cert, _, _ := generateTestCertificate()
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg.Address = server.addr
@@ -1533,10 +1533,10 @@ func TestTransport_NewWithOptions(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1581,10 +1581,10 @@ func TestTransport_NewWithOptionsTLSConfig(t *testing.T) {
 	}
 
 	optTLSConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1627,10 +1627,10 @@ func TestTransport_RequestWithRetry_ContextCanceled(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1693,10 +1693,10 @@ func TestTransport_RequestWithRetry_Exhausted(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1743,10 +1743,10 @@ func TestTransport_DoRequest_StreamCloseError(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1793,10 +1793,10 @@ func TestTransport_DoRequest_NonOKStatusWithPayload(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1843,10 +1843,10 @@ func TestTransport_DoRequest_NonOKStatusNoPayload(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1890,10 +1890,10 @@ func TestStream_RecvNonOKStatus(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -1953,10 +1953,10 @@ func TestStream_RecvOKStatusWithPayload(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -2014,10 +2014,10 @@ func TestStream_RecvOKStatusEmptyPayload(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -2078,10 +2078,10 @@ func TestStream_RecvNonOKStatusNoPayload(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -2135,10 +2135,10 @@ func TestStream_DoubleClose(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -2187,10 +2187,10 @@ func TestTransport_CloseWithError(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -2302,10 +2302,10 @@ func TestTransport_SetAuthTokenAndRequest(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -2359,10 +2359,10 @@ func TestTransport_RequestWithEmptyAuthToken(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -2407,10 +2407,10 @@ func TestTransport_DoRequest_EmptyResponsePayload(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{
@@ -2506,10 +2506,10 @@ func TestRequestStream_WithInitialRequest(t *testing.T) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            server.caPool,
-		NextProtos:         []string{alpnProtocol},
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      server.caPool,
+		NextProtos:   []string{alpnProtocol},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	cfg := &transport.Config{

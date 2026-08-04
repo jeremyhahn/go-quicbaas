@@ -31,6 +31,15 @@ const (
 	// TenantIsolationBarrier uses go-qrdb's per-tenant cryptographic barrier to
 	// provide full encryption isolation between tenants. Opt-in only.
 	TenantIsolationBarrier = "barrier"
+
+	// TenantIsolationVolume gives each tenant a dedicated storage volume per
+	// database (Phase 2 dedicated-storage tier). Requires the volume_storage
+	// entitlement.
+	TenantIsolationVolume = "volume"
+
+	// TenantIsolationRaft gives each tenant a dedicated Raft group per database
+	// (Phase 4 dedicated-consensus tier). Requires the dedicated_raft entitlement.
+	TenantIsolationRaft = "raft"
 )
 
 // Storage backend types determine the storage engine used.
@@ -208,7 +217,10 @@ func (c *IAMSelfServiceRegistrationConfig) Validate() error {
 	}
 	modeSet := make(map[string]struct{}, len(modes))
 	for _, m := range modes {
-		if m != TenantIsolationKeyspace && m != TenantIsolationBarrier {
+		switch m {
+		case TenantIsolationKeyspace, TenantIsolationBarrier, TenantIsolationVolume, TenantIsolationRaft:
+			// valid
+		default:
 			return &ConfigValidationError{
 				Field:   "iam.self_service_registration.allowed_isolation_modes",
 				Message: "unsupported isolation mode: " + m,
@@ -226,13 +238,12 @@ func (c *IAMSelfServiceRegistrationConfig) Validate() error {
 			Message: "default_isolation_mode must be one of allowed_isolation_modes",
 		}
 	}
-	if _, ok := modeSet[TenantIsolationBarrier]; ok {
-		pool := c.TenantBarrierVolumePool
-		if pool == "" {
-			return &ConfigValidationError{
-				Field:   "iam.self_service_registration.tenant_barrier_volume_pool",
-				Message: "must be non-empty when barrier isolation mode is allowed",
-			}
+	_, barrierAllowed := modeSet[TenantIsolationBarrier]
+	_, volumeAllowed := modeSet[TenantIsolationVolume]
+	if (barrierAllowed || volumeAllowed) && c.TenantBarrierVolumePool == "" {
+		return &ConfigValidationError{
+			Field:   "iam.self_service_registration.tenant_barrier_volume_pool",
+			Message: "must be non-empty when barrier or volume isolation mode is allowed",
 		}
 	}
 	return nil
@@ -421,6 +432,7 @@ type Config struct {
 	QRDB          QRDBConfig          `mapstructure:"qrdb"`
 	Databases     DatabasesConfig     `mapstructure:"databases"`
 	XKMS          XKMSConfig          `mapstructure:"xkms"`
+	Crypto        CryptoConfig        `mapstructure:"crypto"`
 	// Trust configures quicbaasd's outbound trust resolver used when dialing
 	// upstream TLS endpoints during bootstrap and inter-node communication.
 	// When non-nil, the config is validated at startup via Trust.Validate().
@@ -721,6 +733,34 @@ type EmbeddedAgentConfig struct {
 	// DataDir is the working directory for the embedded agent's session
 	// scratch space. Defaults to <storage.data_dir>/embedded-agent.
 	DataDir string `mapstructure:"data_dir"`
+
+	// SandboxPolicy governs how the embedded agent resolves SandboxModeDefault
+	// and which explicit modes it accepts: "opt-in" (default, raw exec unless
+	// the client explicitly requests Required), "preferred", or "required".
+	// Sandboxed (container) sessions also require a container runtime
+	// (docker/podman) on PATH and a SandboxImage / ImageMap entry for the
+	// backend.
+	SandboxPolicy string `mapstructure:"sandbox_policy"`
+
+	// SandboxImage is a convenience setting that supplies the OCI image used
+	// for sandboxed sessions across every configured backend when ImageMap
+	// does not already name one. The image must have the backend agent binary
+	// (e.g. opencode) installed and reachable on PATH.
+	SandboxImage string `mapstructure:"sandbox_image"`
+
+	// ImageMap maps a backend name ("opencode", "claude", "codex") to the
+	// fully qualified OCI image the embedded agent spawns for sandboxed
+	// sessions with that backend. Takes precedence over SandboxImage.
+	ImageMap map[string]string `mapstructure:"image_map"`
+
+	// ImageRegistry is an optional registry prefix applied to ImageMap /
+	// SandboxImage values that lack one (e.g. "ghcr.io/jeremyhahn").
+	ImageRegistry string `mapstructure:"image_registry"`
+
+	// AutoPull instructs the embedded agent to `docker pull` each sandbox
+	// image at startup. Leave false for images that exist only in the local
+	// daemon image store (e.g. CI-built e2e images that were never pushed).
+	AutoPull bool `mapstructure:"auto_pull"`
 }
 
 // OrchestrationConfig configures the agent orchestration service.
@@ -1112,6 +1152,126 @@ type RaftConfig struct {
 	TLSCertFile string `mapstructure:"tls_cert_file"`
 	TLSKeyFile  string `mapstructure:"tls_key_file"`
 	TLSCAFile   string `mapstructure:"tls_ca_file"`
+
+	// RaftEnrollment configures automatic provisioning of the inter-node Raft
+	// mTLS material when the TLS file paths above are not supplied. A
+	// multi-node Raft transport always requires mTLS, so without either the
+	// TLS files or RaftEnrollment a multi-node cluster fails to start.
+	// Enrollment is delegated to go-qrdb's shared cluster-TLS toolkit: the
+	// first node generates a self-signed cluster CA and advertises it over a
+	// Noise NK channel; joining nodes fetch it.
+	RaftEnrollment RaftEnrollmentConfig `mapstructure:"raft_enrollment"`
+}
+
+// RaftEnrollmentConfig configures automatic provisioning of the inter-node
+// Raft mTLS material when operator-supplied TLS file paths are not set.
+// All fields are optional and receive working defaults at boot.
+type RaftEnrollmentConfig struct {
+	// TrustDomain is the SPIFFE trust domain stamped into node certificates.
+	// Defaults to "quicbaas.cluster".
+	TrustDomain string `mapstructure:"trust_domain"`
+
+	// KeyBackend selects the crypto backend that generates and holds the Raft
+	// TLS signing key. When set to a hardware backend ("tpm2" / "pkcs11"),
+	// the private key never leaves the device and the Raft transport uses a
+	// signer-backed certificate. Empty means software key management (default).
+	KeyBackend string `mapstructure:"key_backend"`
+
+	// AdvertiseNoisePort is the TCP port the first (bootstrapping) node serves
+	// the Noise NK bootstrap endpoint on for peer enrollment. Defaults to the
+	// qrdb clusterenroll default port (63006).
+	AdvertiseNoisePort int `mapstructure:"advertise_noise_port"`
+
+	// Bootstrap configures how a JOINING node fetches the cluster CA bundle
+	// from an existing node. Leave empty on the first (bootstrapping) node.
+	Bootstrap RaftBootstrapConfig `mapstructure:"bootstrap"`
+
+	// ACME switches node-certificate issuance to TPM-attested ACME enroll-01
+	// with the runtime TrustedCA as the single cluster trust anchor: the first
+	// node pre-stages the CA hierarchy and issues its own leaf; joining nodes
+	// prove their identity via TPM attestation to an existing node's ACME
+	// directory instead of receiving a shared CA key.
+	ACME RaftACMEEnrollmentConfig `mapstructure:"acme"`
+
+	// ClusterCACN names the dedicated cluster intermediate that issues Raft
+	// transport certificates in ACME-attested mode. It must match a
+	// Subject.CommonName in the CA hierarchy. When empty a default derived from
+	// the CA root name is used. Keeping transport issuance on a dedicated
+	// intermediate (root signs intermediates only) is the recommended
+	// FedRAMP/PCI posture.
+	ClusterCACN string `mapstructure:"cluster_ca_cn"`
+
+	// CAKeyProtection selects how the node-local cluster CA signing keystore is
+	// protected at rest, using the canonical seal vocabulary:
+	//   "" (auto) — TPM/HSM-sealed when available, else passphrase, else refuse
+	//   "tpm2" / "pkcs11" — random key sealed to the TPM/HSM (unattended)
+	//   "passphrase" — PBES2 with an operator passphrase
+	//   "none" — plaintext PKCS#8 (development/testing only)
+	// The cluster CA keys must exist before the replicated datastore, so they
+	// live node-local and are protected by the standard seal strategies.
+	CAKeyProtection string `mapstructure:"ca_key_protection"`
+
+	// CAKeyPassphrase supplies the operator passphrase for "passphrase"
+	// protection (and the passphrase fallback in auto mode). Supports
+	// credential:// references resolved at boot.
+	CAKeyPassphrase string `mapstructure:"ca_key_passphrase"`
+
+	// CAKeyStrategy selects how the cluster CA signing key is made available
+	// across the cluster so the appropriate node(s) can issue node certificates:
+	//   "" / "barrier" — key in the replicated barrier-encrypted datastore; any
+	//                    node loads it and can issue (default, software HA).
+	//   "hsm"          — key kept inside a shared PKCS#11 HSM; never leaves it.
+	//   "tpm-kek"      — replicated key wrapped under a KEK derived from a cluster
+	//                    seed sealed to each node's local TPM.
+	CAKeyStrategy string `mapstructure:"ca_key_strategy"`
+}
+
+// RaftACMEEnrollmentConfig configures TPM-attested ACME enroll-01 provisioning
+// of Raft node certificates with the runtime TrustedCA as the single cluster
+// trust anchor.
+type RaftACMEEnrollmentConfig struct {
+	// Enabled switches Raft node certificate provisioning to ACME-attested
+	// mode.
+	Enabled bool `mapstructure:"enabled"`
+
+	// DirectoryURL is the ACME directory endpoint of an existing cluster node
+	// (e.g. "https://node1:8443/acme/directory"). Required on JOINING nodes;
+	// ignored on the first node, which issues in-process from the local
+	// TrustedCA.
+	DirectoryURL string `mapstructure:"directory_url"`
+
+	// ChallengePort is the local HTTP port this node serves the enroll-01
+	// credential-activation exchange on while enrolling. Defaults to "8080".
+	ChallengePort string `mapstructure:"challenge_port"`
+}
+
+// RaftBootstrapConfig holds the join-side bootstrap source a node uses to
+// fetch the cluster CA bundle from an existing cluster member. Configure
+// whichever method the bootstrapping node advertises (Noise NK is the default).
+type RaftBootstrapConfig struct {
+	// NoiseKey is the hex Curve25519 public key of an existing node's Noise NK
+	// bootstrap server (the first node logs it at startup).
+	NoiseKey string `mapstructure:"noise_key"`
+
+	// NoiseAddr is the host:port of that Noise NK bootstrap server.
+	NoiseAddr string `mapstructure:"noise_addr"`
+
+	// SPKIPin is a hex SHA-256 SPKI pin used to fetch the bundle over HTTPS.
+	SPKIPin string `mapstructure:"spki_pin"`
+
+	// ServerAddr is the host:port of the bootstrap HTTPS server (SPKI / DANE).
+	ServerAddr string `mapstructure:"server_addr"`
+
+	// DANEDNS is the DNS server used for DANE TLSA validation of the bootstrap
+	// server certificate.
+	DANEDNS string `mapstructure:"dane_dns"`
+
+	// DANEDoT enables DNS-over-TLS for the DANE lookup.
+	DANEDoT bool `mapstructure:"dane_dot"`
+
+	// DirectURL fetches the bundle over plain HTTPS with the system trust
+	// store. Last-resort fallback for trusted networks.
+	DirectURL string `mapstructure:"direct_url"`
 }
 
 // StorageConfig contains storage engine configuration.
@@ -1523,6 +1683,21 @@ type CAConfig struct {
 	// KeysDir is the directory for CA private keys (filesystem-based).
 	// Default: "$DataDir/keys"
 	KeysDir string `mapstructure:"keys_dir"`
+
+	// KeystoreType selects the key store for the CA signing key only.
+	// Values: "" (inherit from crypto.subsystems.ca.backend), "software",
+	// "tpm2", "pkcs11". The TLS server key always uses software regardless
+	// of this setting. Default: "" (inherits; backward compatible = software).
+	KeystoreType string `mapstructure:"keystore_type"`
+
+	// RootKeyPassword is the password used to protect the CA signing key in
+	// PKCS#8 format. When empty the key is stored unencrypted (default for
+	// backward compatibility). The value is a secret reference URI
+	// (e.g. "credential://ca-key-password", "kms://keys/ca-password") or a
+	// literal string that is used verbatim. Resolution occurs via the unified
+	// secret registry after the credential store is online — so any reference
+	// scheme supported by the registry is valid here.
+	RootKeyPassword string `mapstructure:"root_key_password"`
 }
 
 // Clone creates a deep copy of the Config.
@@ -1544,6 +1719,7 @@ func (c *Config) Clone() *Config {
 		Messaging:  c.Messaging,
 		Seal:       c.Seal,
 		CA:         c.CA,
+		Crypto:     c.Crypto,
 		QRDB:       c.QRDB,
 		Databases:  c.Databases,
 	}

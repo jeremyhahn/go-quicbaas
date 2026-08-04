@@ -32,6 +32,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -247,7 +248,7 @@ func TestPromptSession_ExplicitHostAffinityNotOverridden(t *testing.T) {
 	rec.sessions.Store("ses-x", &sessionRecord{Backend: "claude", HostAffinity: "stored-host"})
 
 	ctx := WithHostAffinity(context.Background(), "explicit-host")
-	got := rec.pinSessionHostAffinity(ctx, "ses-x")
+	got := rec.pinSessionBackend(ctx, "ses-x")
 	if HostAffinityFromContext(got) != "explicit-host" {
 		t.Fatalf("explicit affinity must win, got %q", HostAffinityFromContext(got))
 	}
@@ -263,10 +264,10 @@ func TestPinSessionHostAffinity_UnknownAndLocalSessionsAreNoops(t *testing.T) {
 	rec.sessions.Store("ses-local", &sessionRecord{Backend: "claude"}) // no host
 
 	base := context.Background()
-	if got := rec.pinSessionHostAffinity(base, "ses-unknown"); HostAffinityFromContext(got) != "" {
+	if got := rec.pinSessionBackend(base, "ses-unknown"); HostAffinityFromContext(got) != "" {
 		t.Fatal("unknown session must not set host affinity")
 	}
-	if got := rec.pinSessionHostAffinity(base, "ses-local"); HostAffinityFromContext(got) != "" {
+	if got := rec.pinSessionBackend(base, "ses-local"); HostAffinityFromContext(got) != "" {
 		t.Fatal("local session (empty host) must not set host affinity")
 	}
 }
@@ -288,5 +289,195 @@ func TestSessionHostAffinity_BackendVsRequestFallback(t *testing.T) {
 	}
 	if got := sessionHostAffinity(localOnly, ""); got != "" {
 		t.Fatalf("no host anywhere must yield empty, got %q", got)
+	}
+}
+
+// lateRemoteResolver is a RemoteBackendResolver whose remote daemon becomes
+// available only AFTER it is armed. This reproduces the registration-timing
+// race: at Spawn the daemon is not yet registered (resolver declines, spawn
+// lands LOCAL); by Prompt the daemon has registered (resolver would now claim
+// "claude"). The fix must keep the locally-spawned session on the local
+// backend regardless.
+type lateRemoteResolver struct {
+	remote *instanceBackend
+	armed  atomic.Bool
+}
+
+func (r *lateRemoteResolver) arm() { r.armed.Store(true) }
+
+func (r *lateRemoteResolver) resolve(_ context.Context, name, _ string) (AgentBackend, bool) {
+	if name != "claude" {
+		return nil, false
+	}
+	if !r.armed.Load() {
+		return nil, false // daemon not registered yet → fall through to local
+	}
+	return r.remote, true
+}
+
+// newLocalSpawnSvc wires an AgentService with a local "claude" backend and a
+// resolver that is initially disarmed, so Spawn deterministically lands on the
+// local backend. The returned resolver can be armed mid-test to simulate a
+// remote daemon registering after Spawn.
+func newLocalSpawnSvc(t *testing.T, local, remote *instanceBackend) (*agentServiceImpl, *lateRemoteResolver) {
+	t.Helper()
+	svc, err := NewAgentService(NewInMemoryAgentStore(),
+		map[string]AgentBackend{"claude": local}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	impl := svc.(*agentServiceImpl)
+	res := &lateRemoteResolver{remote: remote}
+	impl.SetRemoteBackendResolver(res.resolve)
+	return impl, res
+}
+
+// TestPromptSession_LocalSpawnNotHijackedByLateRemote is the confirmed bug:
+// Spawn resolves to the LOCAL backend (the embedded daemon is not yet
+// registered), then a remote daemon becomes available, and the follow-up Prompt
+// must STILL reach the local backend where the live session lives — not the
+// freshly-registered (empty) remote instance.
+//
+// Before the fix the follow-up re-ran the resolver, which now claimed "claude"
+// for the remote daemon, and Prompt returned SessionNotFoundError. After the
+// fix the session is pinned local at Spawn and the resolver is bypassed.
+func TestPromptSession_LocalSpawnNotHijackedByLateRemote(t *testing.T) {
+	t.Parallel()
+
+	local := newInstanceBackend("LOCAL", "")
+	remote := newInstanceBackend("REMOTE", "embedded-vm-host-1")
+	impl, res := newLocalSpawnSvc(t, local, remote)
+
+	ctx := ContextWithTenant(context.Background(), "system")
+
+	// Spawn with no host affinity; resolver is disarmed → lands LOCAL.
+	spawnResp, err := impl.SpawnSession(ctx, &SpawnSessionRequest{Backend: "claude"})
+	if err != nil {
+		t.Fatalf("SpawnSession: %v", err)
+	}
+	if local.spawns != 1 || remote.spawns != 0 {
+		t.Fatalf("spawn must land LOCAL: local=%d remote=%d", local.spawns, remote.spawns)
+	}
+
+	// The embedded daemon registers AFTER spawn (registration-timing race).
+	res.arm()
+
+	// Follow-up prompt must STILL reach LOCAL — not the empty remote.
+	promptResp, err := impl.PromptSession(ctx, &PromptSessionRequest{
+		SessionID: spawnResp.SessionID,
+		Prompt:    "hello",
+	})
+	if err != nil {
+		t.Fatalf("PromptSession must find the local session, got: %v", err)
+	}
+	if errors.Is(err, ErrSessionNotFound) {
+		t.Fatal("must not be session-not-found")
+	}
+	if len(promptResp.Content) == 0 || promptResp.Content[0].Text != "LOCAL" {
+		t.Fatalf("prompt must reach the LOCAL instance, got %+v", promptResp.Content)
+	}
+	if remote.spawns != 0 {
+		t.Fatalf("remote must never have been touched, spawns=%d", remote.spawns)
+	}
+}
+
+// TestSessionStatusAndClose_LocalSpawnPinned proves Status and Close also stay
+// on the local backend after a remote daemon registers, mirroring the Prompt
+// path for the full session lifecycle.
+func TestSessionStatusAndClose_LocalSpawnPinned(t *testing.T) {
+	t.Parallel()
+
+	local := newInstanceBackend("LOCAL", "")
+	remote := newInstanceBackend("REMOTE", "embedded-vm-host-1")
+	impl, res := newLocalSpawnSvc(t, local, remote)
+
+	ctx := ContextWithTenant(context.Background(), "system")
+
+	spawnResp, err := impl.SpawnSession(ctx, &SpawnSessionRequest{Backend: "claude"})
+	if err != nil {
+		t.Fatalf("SpawnSession: %v", err)
+	}
+
+	res.arm() // remote daemon registers after spawn
+
+	st, err := impl.SessionStatus(ctx, &SessionStatusRequest{SessionID: spawnResp.SessionID})
+	if err != nil {
+		t.Fatalf("SessionStatus must find the local session, got: %v", err)
+	}
+	if st.State != SessionStateActive {
+		t.Fatalf("unexpected state %q", st.State)
+	}
+
+	if _, err := impl.CloseSession(ctx, &CloseSessionRequest{SessionID: spawnResp.SessionID}); err != nil {
+		t.Fatalf("CloseSession must find the local session, got: %v", err)
+	}
+	local.mu.Lock()
+	stillLocal := local.sessions["ses-LOCAL"]
+	local.mu.Unlock()
+	if stillLocal {
+		t.Fatal("Close must have removed the session from the LOCAL instance")
+	}
+	remote.mu.Lock()
+	remoteTouched := remote.spawns
+	remote.mu.Unlock()
+	if remoteTouched != 0 {
+		t.Fatalf("remote must never have been touched, spawns=%d", remoteTouched)
+	}
+}
+
+// TestPinSessionBackend_LocalPinOverridesExplicitAffinity verifies that a
+// local-spawned session is pinned local even when the caller supplies an
+// explicit per-request host affinity: the live session physically lives only on
+// the local instance, so the local pin must win to avoid a guaranteed miss.
+func TestPinSessionBackend_LocalPinOverridesExplicitAffinity(t *testing.T) {
+	t.Parallel()
+
+	rec := &agentServiceImpl{sessions: sync.Map{}}
+	rec.sessions.Store("ses-local", &sessionRecord{Backend: "claude", BackendLocal: true})
+
+	ctx := WithHostAffinity(context.Background(), "some-daemon")
+	got := rec.pinSessionBackend(ctx, "ses-local")
+	if !localBackendPinned(got) {
+		t.Fatal("local-spawned session must carry the local backend pin")
+	}
+}
+
+// TestLookupBackendCtx_LocalPinBypassesResolver proves the local pin makes
+// lookupBackendCtx skip the resolver and return the local backend even when the
+// resolver would otherwise claim the name.
+func TestLookupBackendCtx_LocalPinBypassesResolver(t *testing.T) {
+	t.Parallel()
+
+	local := newInstanceBackend("LOCAL", "")
+	remote := newInstanceBackend("REMOTE", "daemon-1")
+	svc, err := NewAgentService(NewInMemoryAgentStore(),
+		map[string]AgentBackend{"claude": local}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	impl := svc.(*agentServiceImpl)
+	impl.SetRemoteBackendResolver(func(_ context.Context, name, _ string) (AgentBackend, bool) {
+		if name == "claude" {
+			return remote, true
+		}
+		return nil, false
+	})
+
+	// Without the pin the resolver wins (returns remote).
+	got, err := impl.lookupBackendCtx(context.Background(), "claude", "")
+	if err != nil {
+		t.Fatalf("lookupBackendCtx: %v", err)
+	}
+	if got != AgentBackend(remote) {
+		t.Fatal("without pin the resolver must win")
+	}
+
+	// With the pin the local backend is returned.
+	got, err = impl.lookupBackendCtx(withLocalBackendPin(context.Background()), "claude", "")
+	if err != nil {
+		t.Fatalf("lookupBackendCtx pinned: %v", err)
+	}
+	if got != AgentBackend(local) {
+		t.Fatal("local pin must bypass the resolver and return the local backend")
 	}
 }

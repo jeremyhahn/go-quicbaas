@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -45,6 +46,12 @@ type fakeDaemonServer struct {
 	closeCalls      atomic.Int32
 	listModelsCalls atomic.Int32
 
+	// lastSpawnReq captures the most recent SpawnSessionRequest the daemon
+	// received so wire-level field-propagation assertions (e.g. Persistent)
+	// can inspect what crossed the gRPC boundary. Guarded by spawnReqMu.
+	spawnReqMu   sync.Mutex
+	lastSpawnReq *proto.SpawnSessionRequest
+
 	spawnResp      *proto.SpawnSessionResponse
 	spawnErr       error
 	promptResp     *proto.PromptSessionResponse
@@ -59,6 +66,9 @@ type fakeDaemonServer struct {
 
 func (f *fakeDaemonServer) Spawn(ctx context.Context, req *proto.SpawnSessionRequest) (*proto.SpawnSessionResponse, error) {
 	f.spawnCalls.Add(1)
+	f.spawnReqMu.Lock()
+	f.lastSpawnReq = req
+	f.spawnReqMu.Unlock()
 	if f.spawnErr != nil {
 		return nil, f.spawnErr
 	}
@@ -272,6 +282,80 @@ func TestRemoteACPBackend_SpawnRoundTrip(t *testing.T) {
 	}
 	if daemon.svc.spawnCalls.Load() != 1 {
 		t.Fatalf("expected 1 spawn call on daemon, got %d", daemon.svc.spawnCalls.Load())
+	}
+}
+
+// TestRemoteACPBackend_SpawnCarriesPersistentTrue proves the Persistent flag
+// survives the gRPC boundary: a SpawnRequest.Persistent=true must produce a
+// proto.SpawnSessionRequest with Persistent=true on the daemon side. This is
+// the wire half of the fix for "a spawned session is not found on the immediate
+// prompt" — without Persistent on the wire the daemon always took the one-shot
+// branch and registered no durable session.
+func TestRemoteACPBackend_SpawnCarriesPersistentTrue(t *testing.T) {
+	t.Parallel()
+	daemon := startBufconnDaemon(t, nil)
+	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
+		Registration: newDaemonRegistration(),
+		Logger:       &agentTestLogger{},
+		ConnDialer:   daemon.dialer(),
+	})
+	if err != nil {
+		t.Fatalf("NewRemoteACPBackend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.CloseAll() })
+
+	if _, err := backend.Spawn(context.Background(), &SpawnRequest{
+		ProjectID:  "proj-1",
+		WorkDir:    "/workspace",
+		Persistent: true,
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	daemon.svc.spawnReqMu.Lock()
+	got := daemon.svc.lastSpawnReq
+	daemon.svc.spawnReqMu.Unlock()
+	if got == nil {
+		t.Fatal("daemon did not capture a spawn request")
+	}
+	if !got.GetPersistent() {
+		t.Errorf("proto SpawnSessionRequest.Persistent = false, want true (flag dropped on the wire)")
+	}
+}
+
+// TestRemoteACPBackend_SpawnCarriesPersistentFalse is the negative control: a
+// SpawnRequest.Persistent=false must NOT set the wire flag, preserving the
+// one-shot path for callers (e.g. the autonomous control loop spawning a
+// non-persistent agent role) that deliberately opt out.
+func TestRemoteACPBackend_SpawnCarriesPersistentFalse(t *testing.T) {
+	t.Parallel()
+	daemon := startBufconnDaemon(t, nil)
+	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
+		Registration: newDaemonRegistration(),
+		Logger:       &agentTestLogger{},
+		ConnDialer:   daemon.dialer(),
+	})
+	if err != nil {
+		t.Fatalf("NewRemoteACPBackend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.CloseAll() })
+
+	if _, err := backend.Spawn(context.Background(), &SpawnRequest{
+		ProjectID:  "proj-1",
+		WorkDir:    "/workspace",
+		Persistent: false,
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	daemon.svc.spawnReqMu.Lock()
+	got := daemon.svc.lastSpawnReq
+	daemon.svc.spawnReqMu.Unlock()
+	if got == nil {
+		t.Fatal("daemon did not capture a spawn request")
+	}
+	if got.GetPersistent() {
+		t.Errorf("proto SpawnSessionRequest.Persistent = true, want false")
 	}
 }
 

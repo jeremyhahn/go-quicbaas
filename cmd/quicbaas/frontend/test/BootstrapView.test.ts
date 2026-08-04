@@ -2,8 +2,12 @@
  * BootstrapView.test.ts
  *
  * Verifies BootstrapView renders the auto-bootstrap wizard and that every
- * HTTP submit lands on /api/v1/bootstrap/{auto,dane,noise,spki}. The legacy
- * /api/v1/bootstrap (no method suffix) path must NOT be hit.
+ * HTTP submit:
+ *   - lands on /api/v1/bootstrap/{auto,dane,noise,spki} (not the legacy bare path)
+ *   - carries server_url and the correct per-mode material fields in the POST body
+ *
+ * The legacy /api/v1/bootstrap (no method suffix), /api/v1/seal/*, and
+ * /api/v1/ceremony/* paths must NOT be hit.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -128,7 +132,7 @@ describe('BootstrapView', () => {
     expect(screen.getByLabelText(/Server URL/i)).toBeInTheDocument();
   });
 
-  it('shows the material input for spki-pin / dane / noise but hides it for direct', async () => {
+  it('shows the SPKI Pin input for spki-pin and hides it for direct', async () => {
     render(BootstrapView);
     expect(screen.getByLabelText(/SPKI Pin value/i)).toBeInTheDocument();
 
@@ -144,12 +148,28 @@ describe('BootstrapView', () => {
 
     await fireEvent.click(screen.getByTestId('bootstrap-method-radio-dane'));
     await waitFor(() => {
-      expect(screen.getByLabelText(/DANE value/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/DANE Hostname/i)).toBeInTheDocument();
     });
 
     await fireEvent.click(screen.getByTestId('bootstrap-method-radio-noise'));
     await waitFor(() => {
-      expect(screen.getByLabelText(/Noise value/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Noise Static Key/i)).toBeInTheDocument();
+    });
+  });
+
+  it('DANE mode also exposes an optional DNS Server input', async () => {
+    render(BootstrapView);
+    await fireEvent.click(screen.getByTestId('bootstrap-method-radio-dane'));
+    await waitFor(() => {
+      expect(screen.getByLabelText(/DNS Server \(optional\)/i)).toBeInTheDocument();
+    });
+  });
+
+  it('Noise mode also exposes an optional Bootstrap Address input', async () => {
+    render(BootstrapView);
+    await fireEvent.click(screen.getByTestId('bootstrap-method-radio-noise'));
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Bootstrap Address \(optional\)/i)).toBeInTheDocument();
     });
   });
 
@@ -184,13 +204,52 @@ describe('BootstrapView', () => {
     });
   });
 
+  it('DANE requires a hostname before the button becomes active', async () => {
+    render(BootstrapView);
+    await fireEvent.click(screen.getByTestId('bootstrap-method-radio-dane'));
+    await fireEvent.input(screen.getByLabelText(/Server URL/i), {
+      target: { value: 'https://daemon.test:9443' },
+    });
+    const btn = screen.getByRole('button', { name: /^Bootstrap$/i });
+    expect(btn).toBeDisabled();
+
+    await fireEvent.input(screen.getByLabelText(/DANE Hostname/i), {
+      target: { value: 'kms.example.com' },
+    });
+    await waitFor(() => {
+      expect(btn).not.toBeDisabled();
+    });
+  });
+
+  it('Noise requires a static key before the button becomes active', async () => {
+    render(BootstrapView);
+    await fireEvent.click(screen.getByTestId('bootstrap-method-radio-noise'));
+    await fireEvent.input(screen.getByLabelText(/Server URL/i), {
+      target: { value: 'https://daemon.test:9443' },
+    });
+    const btn = screen.getByRole('button', { name: /^Bootstrap$/i });
+    expect(btn).toBeDisabled();
+
+    await fireEvent.input(screen.getByLabelText(/Noise Static Key/i), {
+      target: { value: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' },
+    });
+    await waitFor(() => {
+      expect(btn).not.toBeDisabled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Endpoint routing — each method must POST to its dedicated /api/v1/bootstrap
+  // sub-path. The SDK's auto() method handles the "direct" picker mode.
+  // ---------------------------------------------------------------------------
+
   it('SPKI submission posts to /api/v1/bootstrap/spki', async () => {
     render(BootstrapView);
     await fireEvent.input(screen.getByLabelText(/Server URL/i), {
       target: { value: 'https://daemon.test:9443' },
     });
     await fireEvent.input(screen.getByLabelText(/SPKI Pin value/i), {
-      target: { value: 'sha256/abcdef' },
+      target: { value: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' },
     });
     await fireEvent.click(screen.getByRole('button', { name: /^Bootstrap$/i }));
 
@@ -207,8 +266,8 @@ describe('BootstrapView', () => {
     await fireEvent.input(screen.getByLabelText(/Server URL/i), {
       target: { value: 'https://daemon.test:9443' },
     });
-    await fireEvent.input(screen.getByLabelText(/DANE value/i), {
-      target: { value: '3 1 1 abcdef' },
+    await fireEvent.input(screen.getByLabelText(/DANE Hostname/i), {
+      target: { value: 'kms.example.com' },
     });
     await fireEvent.click(screen.getByRole('button', { name: /^Bootstrap$/i }));
 
@@ -225,8 +284,8 @@ describe('BootstrapView', () => {
     await fireEvent.input(screen.getByLabelText(/Server URL/i), {
       target: { value: 'https://daemon.test:9443' },
     });
-    await fireEvent.input(screen.getByLabelText(/Noise value/i), {
-      target: { value: 'abcd1234' },
+    await fireEvent.input(screen.getByLabelText(/Noise Static Key/i), {
+      target: { value: 'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234' },
     });
     await fireEvent.click(screen.getByRole('button', { name: /^Bootstrap$/i }));
 
@@ -249,6 +308,132 @@ describe('BootstrapView', () => {
       const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/bootstrap/auto'));
       expect(hits.length).toBeGreaterThan(0);
       expect(hits[0].method).toBe('POST');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Body content — the POST body must carry server_url and the per-mode
+  // material so the backend servicer can perform its verification.
+  // ---------------------------------------------------------------------------
+
+  it('SPKI submission sends server_url and spki_pin in the POST body', async () => {
+    render(BootstrapView);
+    await fireEvent.input(screen.getByLabelText(/Server URL/i), {
+      target: { value: 'https://daemon.test:9443' },
+    });
+    await fireEvent.input(screen.getByLabelText(/SPKI Pin value/i), {
+      target: { value: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /^Bootstrap$/i }));
+
+    await waitFor(() => {
+      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/bootstrap/spki'));
+      expect(hits.length).toBeGreaterThan(0);
+      const body = hits[0].body as Record<string, string>;
+      expect(body.server_url).toBe('https://daemon.test:9443');
+      expect(body.spki_pin).toBe('abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789');
+    });
+  });
+
+  it('DANE submission sends server_url and hostname in the POST body', async () => {
+    render(BootstrapView);
+    await fireEvent.click(screen.getByTestId('bootstrap-method-radio-dane'));
+    await fireEvent.input(screen.getByLabelText(/Server URL/i), {
+      target: { value: 'https://daemon.test:9443' },
+    });
+    await fireEvent.input(screen.getByLabelText(/DANE Hostname/i), {
+      target: { value: 'kms.example.com' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /^Bootstrap$/i }));
+
+    await waitFor(() => {
+      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/bootstrap/dane'));
+      expect(hits.length).toBeGreaterThan(0);
+      const body = hits[0].body as Record<string, string>;
+      expect(body.server_url).toBe('https://daemon.test:9443');
+      expect(body.hostname).toBe('kms.example.com');
+    });
+  });
+
+  it('DANE submission includes dns_server in the body when the optional field is filled', async () => {
+    render(BootstrapView);
+    await fireEvent.click(screen.getByTestId('bootstrap-method-radio-dane'));
+    await fireEvent.input(screen.getByLabelText(/Server URL/i), {
+      target: { value: 'https://daemon.test:9443' },
+    });
+    await fireEvent.input(screen.getByLabelText(/DANE Hostname/i), {
+      target: { value: 'kms.example.com' },
+    });
+    await fireEvent.input(screen.getByLabelText(/DNS Server \(optional\)/i), {
+      target: { value: '8.8.8.8:53' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /^Bootstrap$/i }));
+
+    await waitFor(() => {
+      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/bootstrap/dane'));
+      expect(hits.length).toBeGreaterThan(0);
+      const body = hits[0].body as Record<string, string>;
+      expect(body.dns_server).toBe('8.8.8.8:53');
+    });
+  });
+
+  it('Noise submission sends server_url and noise_static_key in the POST body', async () => {
+    render(BootstrapView);
+    await fireEvent.click(screen.getByTestId('bootstrap-method-radio-noise'));
+    await fireEvent.input(screen.getByLabelText(/Server URL/i), {
+      target: { value: 'https://daemon.test:9443' },
+    });
+    await fireEvent.input(screen.getByLabelText(/Noise Static Key/i), {
+      target: { value: 'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /^Bootstrap$/i }));
+
+    await waitFor(() => {
+      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/bootstrap/noise'));
+      expect(hits.length).toBeGreaterThan(0);
+      const body = hits[0].body as Record<string, string>;
+      expect(body.server_url).toBe('https://daemon.test:9443');
+      expect(body.noise_static_key).toBe(
+        'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234',
+      );
+    });
+  });
+
+  it('Noise submission includes noise_addr in the body when the optional field is filled', async () => {
+    render(BootstrapView);
+    await fireEvent.click(screen.getByTestId('bootstrap-method-radio-noise'));
+    await fireEvent.input(screen.getByLabelText(/Server URL/i), {
+      target: { value: 'https://daemon.test:9443' },
+    });
+    await fireEvent.input(screen.getByLabelText(/Noise Static Key/i), {
+      target: { value: 'abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234' },
+    });
+    await fireEvent.input(screen.getByLabelText(/Bootstrap Address \(optional\)/i), {
+      target: { value: 'noise.daemon.test:9444' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /^Bootstrap$/i }));
+
+    await waitFor(() => {
+      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/bootstrap/noise'));
+      expect(hits.length).toBeGreaterThan(0);
+      const body = hits[0].body as Record<string, string>;
+      expect(body.noise_addr).toBe('noise.daemon.test:9444');
+    });
+  });
+
+  it('Direct submission sends server_url in the POST body', async () => {
+    render(BootstrapView);
+    await fireEvent.click(screen.getByTestId('bootstrap-method-radio-direct'));
+    await fireEvent.input(screen.getByLabelText(/Server URL/i), {
+      target: { value: 'https://daemon.test:9443' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /^Bootstrap$/i }));
+
+    await waitFor(() => {
+      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/bootstrap/auto'));
+      expect(hits.length).toBeGreaterThan(0);
+      const body = hits[0].body as Record<string, string>;
+      expect(body.server_url).toBe('https://daemon.test:9443');
     });
   });
 

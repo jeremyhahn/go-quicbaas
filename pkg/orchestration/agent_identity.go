@@ -67,6 +67,48 @@ func AgentRuntimeScopes() []string {
 	}
 }
 
+// AgentRuntimeRole is the role name carried by an agent runtime identity
+// (embedded or cert-authenticated). It exists for audit/display purposes;
+// authorization decisions are made from the scope set, not the role name.
+const AgentRuntimeRole = "agent-runtime"
+
+// Agent MCP scope constants define the least-privilege, qrdb-canonical
+// "resource:action" permissions a cert-authenticated agent may exercise over
+// the QuicBaaS MCP transport. The set is intentionally minimal: an agent can
+// run sessionless inference and read/write key-value workspace data inside its
+// OWN tenant (tenant isolation is enforced by the tenant injected from the
+// agent certificate's O= field, row-level security downstream). It explicitly
+// excludes secrets, KMS, IAM, barrier, cluster and orchestrator control-plane
+// verbs — an agent must not be able to administer the platform that runs it.
+const (
+	// AgentScopeMCPInference authorizes the sessionless inference tool
+	// (quicbaas_orchestrator_inference -> orchestrator:inference).
+	AgentScopeMCPInference = "orchestrator:inference"
+
+	// AgentScopeMCPKVGet authorizes single-key reads (qrdb_get -> kv:get).
+	AgentScopeMCPKVGet = "kv:get"
+
+	// AgentScopeMCPKVPut authorizes key writes (qrdb_put -> kv:put).
+	AgentScopeMCPKVPut = "kv:put"
+
+	// AgentScopeMCPKVList authorizes key listing (qrdb_list -> kv:list).
+	AgentScopeMCPKVList = "kv:list"
+)
+
+// AgentMCPScopes returns the bounded scope set granted to an agent that
+// authenticates to the MCP transport with its mTLS agent certificate
+// (OU=agents). Operators who need a broader or narrower agent surface manage
+// that through token-based identities; this set is the fixed floor for the
+// certificate path and must stay least-privilege.
+func AgentMCPScopes() []string {
+	return []string{
+		AgentScopeMCPInference,
+		AgentScopeMCPKVGet,
+		AgentScopeMCPKVPut,
+		AgentScopeMCPKVList,
+	}
+}
+
 // scopeFormatRegex validates that a scope follows the resource:action pattern.
 // Accepts formats like "kms:read", "secrets:write", "orchestrator:*", or "a:b:c".
 var scopeFormatRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*:[a-zA-Z*][a-zA-Z0-9_*-]*(?::[a-zA-Z*][a-zA-Z0-9_*-]*)?$`)

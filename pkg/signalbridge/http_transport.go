@@ -418,7 +418,7 @@ func (h *HTTPTransport) do(ctx context.Context, method, path string, headers map
 	}
 	if resp.StatusCode >= 400 {
 		respBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("http %s: %s", resp.Status, string(respBytes))
+		return &Error{Op: "signalbridge.HTTPTransport.do", Kind: ErrKindTransport, Msg: fmt.Sprintf("http %s: %s", resp.Status, string(respBytes))}
 	}
 	if out == nil {
 		return nil

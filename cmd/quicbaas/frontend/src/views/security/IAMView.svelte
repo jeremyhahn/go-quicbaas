@@ -81,7 +81,10 @@
   // Active tenant selector (used by users/roles/policies tabs)
   // ---------------------------------------------------------------------------
 
-  let selectedTenantID = $state('default');
+  // 'system' is qrdb's canonical control-plane tenant; the legacy 'default'
+  // tenant was retired by qrdb's tenant-isolation refactor, so defaulting to it
+  // made the Users/Roles/Policies tabs query a non-existent tenant (404).
+  let selectedTenantID = $state('system');
 
   // ---------------------------------------------------------------------------
   // Data
@@ -133,7 +136,9 @@
   // ---------------------------------------------------------------------------
 
   let userForRole: IAMUser | null = $state(null);
-  let assignRoleName = $state('');
+  // assignRoleID holds the role UUID selected from the dropdown.
+  // The store keys on role ID (UUID), not role name, so this must be an ID.
+  let assignRoleID = $state('');
   let assignRoleError: string | null = $state(null);
   let assigningRole = $state(false);
 
@@ -308,8 +313,12 @@
   }
 
   function loadTab(tab: Tab): void {
-    if (tab === 'users') void loadUsers();
-    else if (tab === 'tenants') void loadTenants();
+    if (tab === 'users') {
+      void loadUsers();
+      // Load roles in parallel so role UUIDs in user.roles can be resolved
+      // to human-readable names in the users table without a separate trip.
+      void loadRoles();
+    } else if (tab === 'tenants') void loadTenants();
     else if (tab === 'roles') void loadRoles();
     else if (tab === 'policies') void loadPolicies();
   }
@@ -408,22 +417,29 @@
 
   function openAssignRole(user: IAMUser): void {
     userForRole = user;
-    assignRoleName = '';
+    assignRoleID = '';
     assignRoleError = null;
+    // Populate the roles dropdown if it hasn't been loaded yet (the roles
+    // data is normally fetched only when the Roles tab is active).
+    if (roles.length === 0) {
+      void loadRoles();
+    }
   }
 
   async function submitAssignRole(): Promise<void> {
     if (!userForRole) return;
     assignRoleError = null;
-    if (!assignRoleName.trim()) {
-      assignRoleError = 'Role name is required';
+    if (!assignRoleID) {
+      assignRoleError = 'A role is required';
       return;
     }
     assigningRole = true;
     try {
       const client = await getSDKClient();
-      await client.iam.assignRoleToUser(selectedTenantID, userForRole.id, assignRoleName.trim());
-      showToast({ message: `Role "${assignRoleName}" assigned to "${userForRole.username}"`, type: 'success' });
+      // Pass the role UUID — the handler and store both key on role ID, not name.
+      await client.iam.assignRoleToUser(selectedTenantID, userForRole.id, assignRoleID);
+      const roleName = roles.find((r) => r.id === assignRoleID)?.name ?? assignRoleID;
+      showToast({ message: `Role "${roleName}" assigned to "${userForRole.username}"`, type: 'success' });
       userForRole = null;
       void loadUsers();
     } catch (e) {
@@ -750,7 +766,11 @@
         class="select select-bordered select-sm font-mono"
         bind:value={selectedTenantID}
       >
-        <option value="default">default</option>
+        <!-- 'system' is the qrdb canonical control-plane tenant; the retired
+             'default' tenant was removed by qrdb's tenant-isolation refactor. -->
+        {#if !tenants.some((t) => t.id === 'system')}
+          <option value="system">system</option>
+        {/if}
         {#each tenants as t (t.id)}
           <option value={t.id}>{t.name}</option>
         {/each}
@@ -823,7 +843,7 @@
                   <td>
                     <div class="flex flex-wrap gap-1">
                       {#each (user.roles ?? []) as role}
-                        <span class="badge badge-xs badge-ghost">{role}</span>
+                        <span class="badge badge-xs badge-ghost">{roles.find((r) => r.id === role)?.name ?? role}</span>
                       {/each}
                     </div>
                   </td>
@@ -1143,12 +1163,26 @@
         <div class="alert alert-error text-sm mb-3" role="alert">{assignRoleError}</div>
       {/if}
       <div class="form-control">
-        <label class="label label-text" for="assign-role-name">Role Name</label>
-        <input id="assign-role-name" class="input input-bordered input-sm font-mono" type="text" placeholder="admin" bind:value={assignRoleName} />
+        <label class="label label-text" for="assign-role-select">Role</label>
+        {#if loading || (roles.length === 0 && !error)}
+          <div class="flex items-center gap-2 py-2">
+            <span class="loading loading-spinner loading-xs"></span>
+            <span class="text-sm text-base-content/50">Loading roles…</span>
+          </div>
+        {:else if roles.length === 0}
+          <p class="text-sm text-base-content/50 py-2">No roles found in tenant <span class="font-mono">{selectedTenantID}</span>. Create a role first.</p>
+        {:else}
+          <select id="assign-role-select" class="select select-bordered select-sm" bind:value={assignRoleID}>
+            <option value="">— select a role —</option>
+            {#each roles as r (r.id)}
+              <option value={r.id}>{r.name}</option>
+            {/each}
+          </select>
+        {/if}
       </div>
       <div class="modal-action">
         <button class="btn btn-ghost btn-sm" onclick={() => { userForRole = null; assignRoleError = null; }}>Cancel</button>
-        <button class="btn btn-primary btn-sm" disabled={assigningRole} onclick={submitAssignRole}>{assigningRole ? 'Assigning…' : 'Assign'}</button>
+        <button class="btn btn-primary btn-sm" disabled={assigningRole || !assignRoleID} onclick={submitAssignRole}>{assigningRole ? 'Assigning…' : 'Assign'}</button>
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={() => { userForRole = null; }} onkeydown={() => { userForRole = null; }}></div>

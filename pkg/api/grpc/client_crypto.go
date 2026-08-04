@@ -42,6 +42,7 @@ func (c *Client) KMSSign(ctx context.Context, req *service.SignRequest) (*servic
 		KeyId:         req.KeyID,
 		Message:       req.Message,
 		HashAlgorithm: convertServiceHashAlgorithmToProto(req.HashAlgorithm),
+		PreHashed:     req.PreHashed,
 	}
 
 	pbResp, err := cryptoClient.Sign(ctx, pbReq)

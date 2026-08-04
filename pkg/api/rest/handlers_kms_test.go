@@ -320,6 +320,46 @@ func TestHandleGenerateKey(t *testing.T) {
 			expectedStatus: http.StatusCreated,
 		},
 		{
+			name: "generate key threads exportable and deletion_protection",
+			body: map[string]interface{}{
+				"name": "protected-key",
+				"key_attributes": map[string]interface{}{
+					"algorithm":           "AES-256-GCM",
+					"key_usage":           []string{"encrypt", "decrypt"},
+					"exportable":          true,
+					"deletion_protection": true,
+				},
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				now := time.Now()
+				m.On("GenerateKey", mock.Anything, mock.MatchedBy(func(req *service.GenerateKeyRequest) bool {
+					return req.Name == "protected-key" && req.Exportable && req.DeletionProtection
+				})).Return(&service.GenerateKeyResponse{
+					Key: &service.KeyHandle{
+						KeyID:     "protected-key",
+						Version:   1,
+						Algorithm: service.KeyAlgorithm("aes256-gcm"),
+						Status:    service.KeyStatusEnabled,
+						CreatedAt: now,
+					},
+					Metadata: &service.KeyMetadata{
+						KeyID:              "protected-key",
+						Name:               "protected-key",
+						Algorithm:          service.KeyAlgorithm("aes256-gcm"),
+						Status:             service.KeyStatusEnabled,
+						Usage:              []service.KeyUsage{"encrypt", "decrypt"},
+						Version:            1,
+						Exportable:         true,
+						DeletionProtection: true,
+						CreatedAt:          now,
+						UpdatedAt:          now,
+					},
+					Timestamp: now,
+				}, nil).Once()
+			},
+			expectedStatus: http.StatusCreated,
+		},
+		{
 			name: "generate key via KMS service layer",
 			body: map[string]interface{}{
 				"name":        "my-service-key",
@@ -963,6 +1003,42 @@ func TestHandleDeleteKey(t *testing.T) {
 				}).Once()
 			},
 			expectedStatus: http.StatusForbidden,
+		},
+		{
+			// Regression: deleting a key that does not exist (e.g. already
+			// deleted by a prior fixture cleanup) must map to 404, not 500.
+			// The service layer stamps ErrNotFound; the handler must preserve
+			// it through handleKMSError.
+			name:    "delete missing key via KMS service layer returns 404",
+			keyName: "already-deleted-key",
+			body:    map[string]interface{}{},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("DeleteKey", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
+					Code: errors.ErrNotFound,
+					Op:   "kms.DeleteKey",
+					Err:  kms.ErrKeyNotFound,
+				}).Once()
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			// Regression: the manager fallback path must also map a missing
+			// key to 404. The KMS manager reports not-found as a QBError with
+			// ErrNotFound wrapping the kms.ErrKeyNotFound sentinel.
+			name:    "delete missing key via KMS manager returns 404",
+			keyName: "already-deleted-key",
+			body:    map[string]interface{}{"force": true},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				mockKMSMgr := &MockKMSManager{}
+				mockKMSMgr.On("DeleteKey", mock.Anything, mock.Anything).Return(&errors.QBError{
+					Code: errors.ErrNotFound,
+					Op:   "KMSService.DeleteKey",
+					Err:  kms.ErrKeyNotFound,
+				}).Once()
+				m.DisableKMS = true
+				m.On("KMSManager").Return(mockKMSMgr)
+			},
+			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:           "missing key name",

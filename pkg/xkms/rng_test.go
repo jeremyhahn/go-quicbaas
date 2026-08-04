@@ -469,9 +469,11 @@ func setupFullTestXKMS(t *testing.T) {
 	certStorage, err := xkmssdk.NewMemoryBackend()
 	require.NoError(t, err)
 
-	// Create PKCS8 backend
+	// Create PKCS8 backend. AllowPlaintextKeys is required for password-less
+	// key persistence — intentional here: ephemeral in-memory test storage.
 	pkcs8Backend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
-		KeyStorage: keyStorage,
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: true,
 	})
 	require.NoError(t, err)
 
@@ -2807,7 +2809,8 @@ func TestInitialize_NoLogger(t *testing.T) {
 	keyStorage, _ := xkmssdk.NewMemoryBackend()
 	certStorage, _ := xkmssdk.NewMemoryBackend()
 	pkcs8Backend, _ := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
-		KeyStorage: keyStorage,
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: true,
 	})
 	ks, _ := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
 		Backend:     pkcs8Backend,

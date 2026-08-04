@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"errors"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -528,6 +530,14 @@ func (m *adapter91MockTenantManager) CheckQuota(ctx context.Context, tenantID, r
 	if m.checkQuotaFunc != nil {
 		return m.checkQuotaFunc(ctx, tenantID, resourceType)
 	}
+	return nil
+}
+
+func (m *adapter91MockTenantManager) UpdateEngineQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+
+func (m *adapter91MockTenantManager) UpdateEngineEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
 	return nil
 }
 

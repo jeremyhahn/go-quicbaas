@@ -368,6 +368,13 @@ export declare const SandboxMode: {
     readonly None: 2;
 };
 export type SandboxModeValue = (typeof SandboxMode)[keyof typeof SandboxMode];
+export interface MCPServerConfig {
+    name: string;
+    url?: string;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+}
 export interface SpawnSessionRequest {
     tenantID: string;
     backend: string;
@@ -379,6 +386,7 @@ export interface SpawnSessionRequest {
     sandboxed?: boolean;
     host_affinity?: string;
     host_affinity_strict?: boolean;
+    mcp_servers?: MCPServerConfig[];
 }
 export interface SpawnSessionResponse {
     session_id: string;
@@ -1230,10 +1238,39 @@ export interface CeremonyEnrollExternalOfficerResponse {
 }
 export type BootstrapMethod = 'auto' | 'dane' | 'noise' | 'spki';
 export interface BootstrapBundleRequest {
+    /** Canonical server URL to bootstrap trust against (e.g. "https://kms.example.com:8443"). */
+    server_url?: string;
     /** Filter by store type: "root", "intermediate", "leaf", "end-entity", or empty. */
     store_type?: string;
     /** Filter by key algorithm: "RSA", "ECDSA", "Ed25519", or empty. */
     algorithm?: string;
+    /**
+     * DANE: DNSSEC zone under which TLSA records are published
+     * (e.g. "_443._tcp.kms.example.com" or the bare hostname).
+     * Required for dane; optional knob for auto.
+     */
+    hostname?: string;
+    /**
+     * DANE: optional recursive resolver for the TLSA lookup
+     * (e.g. "8.8.8.8:53"). Defaults to the system resolver when omitted.
+     */
+    dns_server?: string;
+    /**
+     * Noise: explicit Noise bootstrap address ("host:port").
+     * When empty the address is derived from server_url.
+     */
+    noise_addr?: string;
+    /**
+     * Noise: hex-encoded 32-byte Curve25519 server static public key.
+     * Required for noise; optional knob for auto.
+     */
+    noise_static_key?: string;
+    /**
+     * SPKI: hex-encoded SHA-256 pin of the server certificate's
+     * SubjectPublicKeyInfo (64 hex characters).
+     * Required for spki; optional knob for auto.
+     */
+    spki_pin?: string;
 }
 export interface BootstrapBundleResponse {
     /** Trust bootstrap method used to retrieve this bundle. */
@@ -1246,6 +1283,20 @@ export interface BootstrapBundleResponse {
     content_type: string;
     /** Optional metadata describing how the bundle was verified. */
     metadata?: Record<string, string>;
+}
+export interface ClusterShard {
+    shard_id: number;
+    leader_id: number;
+    state: string;
+}
+export interface ClusterStatusResponse {
+    node_id: number;
+    raft_address?: string;
+    leader_id?: string;
+    total_nodes?: number;
+    shards?: ClusterShard[];
+    healthy: boolean;
+    timestamp: string;
 }
 /** @deprecated Use BarrierStatusResponse. */
 export type SealStatusResponse = BarrierStatusResponse;

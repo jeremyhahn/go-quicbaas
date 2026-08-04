@@ -62,6 +62,13 @@ export interface ParsedSessionEvent {
   kind: EventKind;
   /** Raw unparsed payload for unknown kinds. */
   raw: Record<string, unknown>;
+  /**
+   * True for a locally-rendered placeholder that has not yet been confirmed by
+   * the server. Currently set only for the operator's own optimistically
+   * rendered prompt (appendLocalPrompt); cleared when the SSE prompt_submitted
+   * echo reconciles it (appendEvent).
+   */
+  optimistic?: boolean;
 
   // kind-specific fields — only the relevant ones will be set.
   prompt?: string;
@@ -106,6 +113,11 @@ let historyExhausted = $state(false);
 let _historyFromSeq = $state(0);
 // Private: in-flight subscription AbortController.
 let _subscribeAC: AbortController | null = null;
+// Private: monotonically-decreasing sentinel sequence for optimistic prompt
+// placeholders. Real server sequences are positive (>= 1); negative values
+// keep the keyed event list collision-free even when several unconfirmed
+// prompts are in flight at once.
+let _optimisticSeq = -1;
 
 // ---------------------------------------------------------------------------
 // Public store object (read-only getters)
@@ -257,72 +269,169 @@ function startLiveSubscription(sessionID: string, fromSeq: number): void {
 }
 
 function appendEvent(ev: ParsedSessionEvent): void {
+  // Reconcile the operator's own optimistic prompt: when the server echoes its
+  // prompt_submitted event back over the SSE tail, replace the placeholder we
+  // already rendered (matched on prompt text) with the confirmed, sequenced
+  // event instead of rendering a duplicate chat bubble. We match the FIRST
+  // still-unconfirmed placeholder so repeated identical prompts reconcile in
+  // submit order.
+  if (ev.kind === 'prompt') {
+    const idx = events.findIndex(
+      (e) => e.optimistic === true && e.kind === 'prompt' && e.prompt === ev.prompt,
+    );
+    if (idx !== -1) {
+      const next = [...events];
+      next[idx] = ev; // confirmed event carries the real sequence, no optimistic flag
+      events = next;
+      return;
+    }
+  }
   events = [...events, ev].slice(-MAX_EVENTS);
+}
+
+/**
+ * Optimistically render the operator's own prompt as a chat bubble the instant
+ * they hit Send, without waiting for the server's prompt_submitted event to
+ * echo back over the SSE tail. The placeholder carries a unique negative
+ * sequence (so the keyed event list never collides with real, positive
+ * sequences) and an `optimistic` flag so the SSE echo can reconcile it in place
+ * (see appendEvent) rather than double-rendering. No-op when no session is
+ * active.
+ */
+export function appendLocalPrompt(prompt: string): void {
+  if (activeSession === null) return;
+  const ev: ParsedSessionEvent = {
+    sequence: _optimisticSeq--,
+    timestamp: new Date().toISOString(),
+    kind: 'prompt',
+    raw: {},
+    prompt,
+    optimistic: true,
+  };
+  events = [...events, ev].slice(-MAX_EVENTS);
+}
+
+/**
+ * Roll back an optimistic prompt placeholder. Called when promptSession fails.
+ * Removes only a still-unconfirmed (optimistic) placeholder for the given text;
+ * once the SSE echo has reconciled it into a confirmed event we leave it in
+ * place, because at that point the server did record the prompt (the daemon
+ * appends prompt_submitted before dispatching to the backend, so a backend
+ * failure does not unrecord it).
+ */
+export function removeLocalPrompt(prompt: string): void {
+  const idx = events.findIndex(
+    (e) => e.optimistic === true && e.kind === 'prompt' && e.prompt === prompt,
+  );
+  if (idx === -1) return;
+  events = [...events.slice(0, idx), ...events.slice(idx + 1)];
 }
 
 // ---------------------------------------------------------------------------
 // Envelope → ParsedSessionEvent
 // ---------------------------------------------------------------------------
 
+// Server SessionEvent kind constants (the canonical wire vocabulary defined in
+// pkg/orchestration/session_events.go). The store's internal EventKind uses
+// shorter names for the UI switch; serverKindToEventKind bridges the two.
+const SERVER_KIND_TO_EVENT_KIND: Record<string, EventKind> = {
+  prompt_submitted: 'prompt',
+  assistant_chunk: 'assistant_chunk',
+  tool_invocation: 'tool_invocation',
+  tool_result: 'tool_result',
+  file_op: 'file_op',
+  system_message: 'system',
+  operator_joined: 'operator_joined',
+  operator_left: 'operator_left',
+  session_closed: 'closed',
+  session_resumed: 'resumed',
+};
+
+/** Safely read a nested object field from an unknown payload value. */
+function objField(payload: Record<string, unknown>, key: string): Record<string, unknown> {
+  const v = payload[key];
+  return typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
+}
+
 function parseEnvelope(env: SessionEventEnvelope): ParsedSessionEvent {
-  const payload = env.payload_json as Record<string, unknown>;
-  const kind = (payload['kind'] as EventKind | undefined) ?? 'system';
+  // payload_json carries the full server-side SessionEvent verbatim: a
+  // top-level `kind` discriminator, a `source` string, and exactly one nested
+  // payload object keyed by the event family (prompt, assistant_chunk, …).
+  const payload = (env.payload_json ?? {}) as Record<string, unknown>;
+  const serverKind = String(payload['kind'] ?? '');
+  const kind = SERVER_KIND_TO_EVENT_KIND[serverKind] ?? 'system';
 
   const base: ParsedSessionEvent = {
     sequence: env.sequence,
     timestamp: env.timestamp,
     kind,
     raw: payload,
+    source: payload['source'] as string | undefined,
   };
 
   switch (kind) {
-    case 'prompt':
-      base.prompt = String(payload['prompt'] ?? '');
-      break;
-
-    case 'assistant_chunk':
-      base.assistantChunk = String(payload['assistant_chunk'] ?? '');
-      base.stopReason = payload['stop_reason'] as string | undefined;
-      base.source = payload['source'] as string | undefined;
-      break;
-
-    case 'tool_invocation': {
-      const args = payload['tool_args'];
-      base.toolName = String(payload['tool_name'] ?? '');
-      base.toolArgs = (typeof args === 'object' && args !== null)
-        ? (args as Record<string, unknown>)
-        : {};
-      base.invocationId = payload['invocation_id'] as string | undefined;
+    case 'prompt': {
+      const p = objField(payload, 'prompt');
+      base.prompt = String(p['prompt'] ?? '');
       break;
     }
 
-    case 'tool_result':
-      base.toolResult = String(payload['tool_result'] ?? '');
-      base.toolResultInvocationId = payload['invocation_id'] as string | undefined;
+    case 'assistant_chunk': {
+      const a = objField(payload, 'assistant_chunk');
+      base.assistantChunk = String(a['text'] ?? '');
+      base.stopReason = a['stop_reason'] as string | undefined;
       break;
+    }
 
-    case 'file_op':
-      base.fileOp = String(payload['op'] ?? '');
-      base.filePath = String(payload['path'] ?? '');
-      base.fileDiff = payload['diff'] as string | undefined;
+    case 'tool_invocation': {
+      const ti = objField(payload, 'tool_invocation');
+      const args = ti['args'];
+      base.toolName = String(ti['name'] ?? '');
+      base.toolArgs = (typeof args === 'object' && args !== null)
+        ? (args as Record<string, unknown>)
+        : {};
+      base.invocationId = ti['invocation_id'] as string | undefined;
       break;
+    }
+
+    case 'tool_result': {
+      const tr = objField(payload, 'tool_result');
+      base.toolResult = String(tr['content'] ?? '');
+      base.toolResultInvocationId = tr['invocation_id'] as string | undefined;
+      break;
+    }
+
+    case 'file_op': {
+      const f = objField(payload, 'file_op');
+      base.fileOp = String(f['op'] ?? '');
+      base.filePath = String(f['path'] ?? '');
+      base.fileDiff = f['diff'] as string | undefined;
+      break;
+    }
 
     case 'system': {
-      base.systemMessage = String(payload['system'] ?? '');
-      const lvl = payload['level'] as string | undefined;
+      const sys = objField(payload, 'system');
+      base.systemMessage = String(sys['message'] ?? '');
+      const lvl = sys['level'] as string | undefined;
       base.systemLevel =
         lvl === 'warn' ? 'warn' : lvl === 'error' ? 'error' : 'info';
       break;
     }
 
-    case 'operator_joined':
-    case 'operator_left':
-      base.operatorId = String(payload['operator_id'] ?? '');
+    case 'operator_joined': {
+      base.operatorId = String(objField(payload, 'operator_joined')['operator_id'] ?? '');
       break;
+    }
 
-    case 'closed':
-      base.closeReason = payload['reason'] as string | undefined;
+    case 'operator_left': {
+      base.operatorId = String(objField(payload, 'operator_left')['operator_id'] ?? '');
       break;
+    }
+
+    case 'closed': {
+      base.closeReason = objField(payload, 'closed')['reason'] as string | undefined;
+      break;
+    }
 
     case 'resumed':
       break;

@@ -262,17 +262,17 @@ func newDedupTestLogger(t *testing.T) *logger.Logger {
 	return log
 }
 
-func TestNewDedupStoreImpl(t *testing.T) {
+func TestNewDedupStore(t *testing.T) {
 	t.Parallel()
 
 	t.Run("creates store with default options", func(t *testing.T) {
 		t.Parallel()
 		log := newDedupTestLogger(t)
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 
 		if ds == nil {
-			t.Fatal("expected non-nil DedupStoreImpl")
+			t.Fatal("expected non-nil DedupStore")
 		}
 		if ds.GetPrefix() != DefaultDedupPrefix {
 			t.Errorf("expected prefix %q, got %q", DefaultDedupPrefix, ds.GetPrefix())
@@ -286,7 +286,7 @@ func TestNewDedupStoreImpl(t *testing.T) {
 		t.Parallel()
 		log := newDedupTestLogger(t)
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log, WithDedupStorePrefix("custom/prefix/"))
+		ds := NewDedupStore(ms, log, WithDedupStorePrefix("custom/prefix/"))
 
 		if ds.GetPrefix() != "custom/prefix/" {
 			t.Errorf("expected prefix %q, got %q", "custom/prefix/", ds.GetPrefix())
@@ -297,7 +297,7 @@ func TestNewDedupStoreImpl(t *testing.T) {
 		t.Parallel()
 		log := newDedupTestLogger(t)
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log, WithDedupStoreWindow(time.Hour))
+		ds := NewDedupStore(ms, log, WithDedupStoreWindow(time.Hour))
 
 		if ds.GetWindow() != time.Hour {
 			t.Errorf("expected window %v, got %v", time.Hour, ds.GetWindow())
@@ -305,11 +305,11 @@ func TestNewDedupStoreImpl(t *testing.T) {
 	})
 }
 
-func TestDedupStoreImpl_ComputeHash(t *testing.T) {
+func TestDedupStore_ComputeHash(t *testing.T) {
 	t.Parallel()
 	log := newDedupTestLogger(t)
 	ms := newMockStorage()
-	ds := NewDedupStoreImpl(ms, log)
+	ds := NewDedupStore(ms, log)
 
 	t.Run("computes hash for entire payload", func(t *testing.T) {
 		t.Parallel()
@@ -373,14 +373,14 @@ func TestDedupStoreImpl_ComputeHash(t *testing.T) {
 	})
 }
 
-func TestDedupStoreImpl_StoreEntry(t *testing.T) {
+func TestDedupStore_StoreEntry(t *testing.T) {
 	t.Parallel()
 	log := newDedupTestLogger(t)
 
 	t.Run("stores entry successfully", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		entry := &DedupEntry{
@@ -408,7 +408,7 @@ func TestDedupStoreImpl_StoreEntry(t *testing.T) {
 	t.Run("returns error for empty channel", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		entry := &DedupEntry{Count: 1}
@@ -421,7 +421,7 @@ func TestDedupStoreImpl_StoreEntry(t *testing.T) {
 	t.Run("returns error for empty key", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		entry := &DedupEntry{Count: 1}
@@ -438,7 +438,7 @@ func TestDedupStoreImpl_StoreEntry(t *testing.T) {
 	t.Run("returns error for nil entry", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		err := ds.StoreEntry(ctx, "channel", "key", nil)
@@ -452,14 +452,14 @@ func TestDedupStoreImpl_StoreEntry(t *testing.T) {
 	})
 }
 
-func TestDedupStoreImpl_GetEntry(t *testing.T) {
+func TestDedupStore_GetEntry(t *testing.T) {
 	t.Parallel()
 	log := newDedupTestLogger(t)
 
 	t.Run("retrieves stored entry", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		// Store an entry first
@@ -487,7 +487,7 @@ func TestDedupStoreImpl_GetEntry(t *testing.T) {
 	t.Run("returns error for non-existent entry", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		_, err := ds.GetEntry(ctx, "channel", "nonexistent")
@@ -499,7 +499,7 @@ func TestDedupStoreImpl_GetEntry(t *testing.T) {
 	t.Run("returns error for empty channel", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		_, err := ds.GetEntry(ctx, "", "key")
@@ -511,7 +511,7 @@ func TestDedupStoreImpl_GetEntry(t *testing.T) {
 	t.Run("returns error for empty key", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		_, err := ds.GetEntry(ctx, "channel", "")
@@ -521,14 +521,14 @@ func TestDedupStoreImpl_GetEntry(t *testing.T) {
 	})
 }
 
-func TestDedupStoreImpl_DeleteEntry(t *testing.T) {
+func TestDedupStore_DeleteEntry(t *testing.T) {
 	t.Parallel()
 	log := newDedupTestLogger(t)
 
 	t.Run("deletes entry successfully", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		// Store an entry first
@@ -551,7 +551,7 @@ func TestDedupStoreImpl_DeleteEntry(t *testing.T) {
 	t.Run("returns error for empty channel", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		err := ds.DeleteEntry(ctx, "", "key")
@@ -563,7 +563,7 @@ func TestDedupStoreImpl_DeleteEntry(t *testing.T) {
 	t.Run("returns error for empty key", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		err := ds.DeleteEntry(ctx, "channel", "")
@@ -573,14 +573,14 @@ func TestDedupStoreImpl_DeleteEntry(t *testing.T) {
 	})
 }
 
-func TestDedupStoreImpl_CheckAndStore(t *testing.T) {
+func TestDedupStore_CheckAndStore(t *testing.T) {
 	t.Parallel()
 	log := newDedupTestLogger(t)
 
 	t.Run("stores new message", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		msg := &Message{
@@ -603,7 +603,7 @@ func TestDedupStoreImpl_CheckAndStore(t *testing.T) {
 	t.Run("detects duplicate message", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log, WithDedupStoreWindow(time.Hour))
+		ds := NewDedupStore(ms, log, WithDedupStoreWindow(time.Hour))
 		ctx := context.Background()
 
 		msg := &Message{
@@ -633,7 +633,7 @@ func TestDedupStoreImpl_CheckAndStore(t *testing.T) {
 	t.Run("uses content hash when no message ID", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log, WithDedupStoreWindow(time.Hour))
+		ds := NewDedupStore(ms, log, WithDedupStoreWindow(time.Hour))
 		ctx := context.Background()
 
 		msg := &Message{
@@ -653,7 +653,7 @@ func TestDedupStoreImpl_CheckAndStore(t *testing.T) {
 	t.Run("returns error for nil message", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		_, err := ds.CheckAndStore(ctx, "channel", nil, "")
@@ -665,7 +665,7 @@ func TestDedupStoreImpl_CheckAndStore(t *testing.T) {
 	t.Run("returns error for empty channel", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		msg := &Message{Payload: []byte("test")}
@@ -678,7 +678,7 @@ func TestDedupStoreImpl_CheckAndStore(t *testing.T) {
 	t.Run("uses client-specified dedup key", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log, WithDedupStoreWindow(time.Hour))
+		ds := NewDedupStore(ms, log, WithDedupStoreWindow(time.Hour))
 		ctx := context.Background()
 
 		msg1 := &Message{
@@ -715,7 +715,7 @@ func TestDedupStoreImpl_CheckAndStore(t *testing.T) {
 	t.Run("client dedup key takes precedence over message ID", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log, WithDedupStoreWindow(time.Hour))
+		ds := NewDedupStore(ms, log, WithDedupStoreWindow(time.Hour))
 		ctx := context.Background()
 
 		msg := &Message{
@@ -740,14 +740,14 @@ func TestDedupStoreImpl_CheckAndStore(t *testing.T) {
 	})
 }
 
-func TestDedupStoreImpl_GetStats(t *testing.T) {
+func TestDedupStore_GetStats(t *testing.T) {
 	t.Parallel()
 	log := newDedupTestLogger(t)
 
 	t.Run("returns stats for channel", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		// Store some entries
@@ -774,7 +774,7 @@ func TestDedupStoreImpl_GetStats(t *testing.T) {
 	t.Run("returns error for empty channel", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 		ctx := context.Background()
 
 		_, err := ds.GetStats(ctx, "")
@@ -784,14 +784,14 @@ func TestDedupStoreImpl_GetStats(t *testing.T) {
 	})
 }
 
-func TestDedupStoreImpl_Cleanup(t *testing.T) {
+func TestDedupStore_Cleanup(t *testing.T) {
 	t.Parallel()
 	log := newDedupTestLogger(t)
 
 	t.Run("removes expired entries", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log, WithDedupStoreWindow(time.Millisecond))
+		ds := NewDedupStore(ms, log, WithDedupStoreWindow(time.Millisecond))
 		ctx := context.Background()
 
 		// Store an entry with old timestamp
@@ -821,7 +821,7 @@ func TestDedupStoreImpl_Cleanup(t *testing.T) {
 	t.Run("keeps non-expired entries", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log, WithDedupStoreWindow(time.Hour))
+		ds := NewDedupStore(ms, log, WithDedupStoreWindow(time.Hour))
 		ctx := context.Background()
 
 		// Store a fresh entry
@@ -848,7 +848,7 @@ func TestDedupStoreImpl_Cleanup(t *testing.T) {
 	t.Run("respects context cancellation", func(t *testing.T) {
 		t.Parallel()
 		ms := newMockStorage()
-		ds := NewDedupStoreImpl(ms, log)
+		ds := NewDedupStore(ms, log)
 
 		// Store some entries
 		for i := 0; i < 100; i++ {

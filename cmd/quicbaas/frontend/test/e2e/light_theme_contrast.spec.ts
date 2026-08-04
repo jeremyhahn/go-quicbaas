@@ -93,6 +93,27 @@ function relativeLuminance(rgb: string): number | null {
 }
 
 /**
+ * In-browser helper source: normalize ANY CSS color (oklch(), color(srgb …),
+ * named, hex, rgb) to a plain "rgb(r, g, b)" string by rendering one pixel to a
+ * canvas and reading it back. Chromium's getComputedStyle returns oklch-authored
+ * theme colors in oklch()/color() form, which the rgb-only luminance parser
+ * above cannot read — this collapses every format to sRGB integers. The source
+ * is injected via addInitScript so each spec can call window.__toRgb(color).
+ */
+const INSTALL_TO_RGB = (): void => {
+  (window as unknown as { __toRgb: (c: string) => string }).__toRgb = (c: string): string => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 1;
+    const ctx = cv.getContext('2d');
+    if (ctx === null) return c;
+    ctx.fillStyle = c;
+    ctx.fillRect(0, 0, 1, 1);
+    const d = ctx.getImageData(0, 0, 1, 1).data;
+    return `rgb(${d[0]}, ${d[1]}, ${d[2]})`;
+  };
+};
+
+/**
  * WCAG 2.1 contrast ratio between two relative luminances.
  * The lighter value is always the numerator.
  */
@@ -101,6 +122,12 @@ function contrastRatio(l1: number, l2: number): number {
   const darker = Math.min(l1, l2);
   return (lighter + 0.05) / (darker + 0.05);
 }
+
+// Make window.__toRgb available on every page before any navigation so the
+// per-spec colour reads can normalise oklch/color() computed values to rgb.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(INSTALL_TO_RGB);
+});
 
 // ---------------------------------------------------------------------------
 // #86 — Connected badge background differs from body background
@@ -124,16 +151,20 @@ test.describe('Light theme — #86 Connected badge visibility', () => {
     const badge = page.locator('header .badge').first();
     await expect(badge).toBeVisible({ timeout: 8_000 });
 
-    const badgeBgRgb: string = await badge.evaluate((el): string => {
-      return getComputedStyle(el).backgroundColor;
-    });
+    const badgeBgRgb: string = await badge.evaluate((el): string =>
+      (window as unknown as { __toRgb: (c: string) => string }).__toRgb(
+        getComputedStyle(el).backgroundColor,
+      ),
+    );
 
     const bodyBgRgb: string = await page.evaluate((): string => {
       // Resolve --color-base-100 as a CSS variable on an element.
       const tmp = document.createElement('div');
       tmp.style.backgroundColor = 'var(--color-base-100)';
       document.body.appendChild(tmp);
-      const resolved = getComputedStyle(tmp).backgroundColor;
+      const resolved = (window as unknown as { __toRgb: (c: string) => string }).__toRgb(
+        getComputedStyle(tmp).backgroundColor,
+      );
       tmp.remove();
       return resolved;
     });
@@ -169,10 +200,11 @@ test.describe('Light theme — #87 Stat card label contrast', () => {
     await expect(statTitle).toBeVisible({ timeout: 8_000 });
 
     const { titleRgb, bgRgb } = await statTitle.evaluate((el): { titleRgb: string; bgRgb: string } => {
+      const toRgb = (window as unknown as { __toRgb: (c: string) => string }).__toRgb;
       const card = el.closest('.stat') ?? el.parentElement!;
       return {
-        titleRgb: getComputedStyle(el).color,
-        bgRgb: getComputedStyle(card).backgroundColor,
+        titleRgb: toRgb(getComputedStyle(el).color),
+        bgRgb: toRgb(getComputedStyle(card).backgroundColor),
       };
     });
 
@@ -194,19 +226,24 @@ test.describe('Light theme — #87 Stat card label contrast', () => {
 
 test.describe('Light theme — #87 Primary button text is light', () => {
   test.beforeEach(async ({ page }) => {
-    await navigateTo(page, '#/timeseries');
+    // Use KMS rather than Time-Series: the Time-Series subsystem is disabled on
+    // the e2e daemon, so its "Write Point" btn-primary renders DISABLED (muted
+    // colours), which is not a valid target for an enabled-primary contrast
+    // check. KMS's "+ Create Key" is always enabled.
+    await navigateTo(page, '#/kms');
     await enableLightTheme(page);
     await waitForNoSpinner(page);
   });
 
   test('primary button text computed color has high lightness (white, not black)', async ({ page }) => {
-    // "Write Point" is a btn-primary. Its text must be white (light) not black.
-    const primaryBtn = page.locator('button.btn-primary').first();
+    // The "+ Create Key" btn-primary text must be white (light) not black.
+    const primaryBtn = page.locator('button.btn-primary:not([disabled])').first();
     await expect(primaryBtn).toBeVisible({ timeout: 8_000 });
 
     const { textRgb, bgRgb } = await primaryBtn.evaluate((el): { textRgb: string; bgRgb: string } => {
+      const toRgb = (window as unknown as { __toRgb: (c: string) => string }).__toRgb;
       const s = getComputedStyle(el);
-      return { textRgb: s.color, bgRgb: s.backgroundColor };
+      return { textRgb: toRgb(s.color), bgRgb: toRgb(s.backgroundColor) };
     });
 
     const textLum = relativeLuminance(textRgb);
@@ -244,9 +281,10 @@ test.describe('Light theme — #87 Cluster standalone badge has color', () => {
     await expect(modeBadge).toBeVisible({ timeout: 8_000 });
 
     const { badgeBgRgb, bodyBgRgb } = await modeBadge.evaluate((el): { badgeBgRgb: string; bodyBgRgb: string } => {
+      const toRgb = (window as unknown as { __toRgb: (c: string) => string }).__toRgb;
       return {
-        badgeBgRgb: getComputedStyle(el).backgroundColor,
-        bodyBgRgb: getComputedStyle(document.body).backgroundColor,
+        badgeBgRgb: toRgb(getComputedStyle(el).backgroundColor),
+        bodyBgRgb: toRgb(getComputedStyle(document.body).backgroundColor),
       };
     });
 

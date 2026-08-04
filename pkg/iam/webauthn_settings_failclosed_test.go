@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -52,6 +53,14 @@ func (m *settingsTenantManager) ListTenants(ctx context.Context, opts ListOption
 }
 
 func (m *settingsTenantManager) CheckQuota(ctx context.Context, tenantID, resourceType string) error {
+	return nil
+}
+
+func (m *settingsTenantManager) UpdateEngineQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+
+func (m *settingsTenantManager) UpdateEngineEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
 	return nil
 }
 

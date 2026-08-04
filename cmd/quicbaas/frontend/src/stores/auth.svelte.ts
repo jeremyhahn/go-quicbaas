@@ -96,6 +96,113 @@ export function setAuthStatus(next: AuthStatus): void {
   status = next;
 }
 
+/** Read the persisted refresh token, or '' when none is stored. */
+function readRefreshToken(): string {
+  if (typeof window === 'undefined') return '';
+  return window.localStorage.getItem(REFRESH_TOKEN_KEY) ?? '';
+}
+
+/**
+ * Seconds until the given JWT expires, or null when the token is not a decodable
+ * JWT with a numeric exp claim. Pure string/Base64 work — no signature
+ * verification (the server is the authority); this only decides when to
+ * pre-emptively refresh. Returning null (rather than 0) lets the caller leave an
+ * undecodable/opaque token untouched instead of refreshing it needlessly.
+ */
+function secondsUntilExpiry(jwt: string): number | null {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const json = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+    const claims = JSON.parse(json) as { exp?: number };
+    if (typeof claims.exp !== 'number') return null;
+    return claims.exp - Math.floor(Date.now() / 1000);
+  } catch {
+    return null;
+  }
+}
+
+// Skew window: refresh when fewer than this many seconds remain so an in-flight
+// request never races the access-token expiry.
+const REFRESH_SKEW_SECONDS = 60;
+
+// Single-flight guard so concurrent requests trigger at most one refresh call.
+let _refreshInFlight: Promise<string> | null = null;
+
+/**
+ * Exchange the stored refresh token for a fresh access token via the public
+ * /api/v1/auth/refresh endpoint, persist it, and return it. Returns '' (and
+ * fails the session closed) when no refresh token is stored or the server
+ * rejects it. Concurrent callers share one in-flight request.
+ */
+export async function refreshAccessToken(): Promise<string> {
+  if (_refreshInFlight !== null) return _refreshInFlight;
+  if (typeof window === 'undefined') return '';
+
+  const refreshToken = readRefreshToken();
+  if (!refreshToken) {
+    setUnauthenticated();
+    return '';
+  }
+
+  _refreshInFlight = (async (): Promise<string> => {
+    try {
+      const resp = await fetch(`${window.location.origin}/api/v1/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!resp.ok) {
+        // A rejected refresh token means the session is over — fail closed so
+        // the MainApp route guard bounces the user to the login chooser.
+        setUnauthenticated();
+        return '';
+      }
+      const body = (await resp.json()) as { access_token?: string };
+      const next = body.access_token ?? '';
+      if (!next) {
+        setUnauthenticated();
+        return '';
+      }
+      // The server reuses the refresh token (it returns an empty one), so keep
+      // the stored refresh token and only update the access token.
+      window.localStorage.setItem(TOKEN_KEY, next);
+      status = 'authenticated';
+      return next;
+    } catch {
+      // Network failure: do NOT clear the session (transient); the caller falls
+      // back to the existing token and the next request retries.
+      return readAuthToken();
+    } finally {
+      _refreshInFlight = null;
+    }
+  })();
+
+  return _refreshInFlight;
+}
+
+/**
+ * Resolve the access token to attach to an outgoing request, refreshing it
+ * pre-emptively when it is missing/expired or within the skew window. This is
+ * the SDK token factory's source of truth (see sdkClient.ts): a long-lived tab
+ * whose 15-minute access token expires mid-session transparently obtains a new
+ * one from the refresh token instead of silently 401-ing.
+ */
+export async function getValidAccessToken(): Promise<string> {
+  const token = readAuthToken();
+  if (!token) return '';
+  const remaining = secondsUntilExpiry(token);
+  // Undecodable/opaque token, or comfortably valid: use it as-is.
+  if (remaining === null || remaining > REFRESH_SKEW_SECONDS) return token;
+  // Known to be expired or about to expire, and only worth a round-trip if we
+  // actually hold a refresh token. refreshAccessToken returns the new token on
+  // success, the still-valid existing token on a transient network failure, or
+  // '' on a definitive rejection (after flipping the session to unauthenticated)
+  // — return its result verbatim so a dead token is never attached.
+  if (!readRefreshToken()) return token;
+  return refreshAccessToken();
+}
+
 /**
  * Validate the persisted token against the server and set the status
  * accordingly. With no token we are unauthenticated; a server-rejected or

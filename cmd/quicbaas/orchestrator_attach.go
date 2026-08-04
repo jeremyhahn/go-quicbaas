@@ -140,7 +140,7 @@ func pickAttachRenderer(format string, out *os.File) (attachRenderer, error) {
 	case "json", "ndjson":
 		return &jsonAttachRenderer{out: out}, nil
 	default:
-		return nil, fmt.Errorf("orchestrator attach: unknown --format %q (want pretty | json)", format)
+		return nil, &MessageError{Message: fmt.Sprintf("orchestrator attach: unknown --format %q (want pretty | json)", format)}
 	}
 }
 
@@ -194,7 +194,7 @@ type genericEvent struct {
 func (p *prettyAttachRenderer) Render(env *orchestratorSDK.SessionEventEnvelope) error {
 	var ev genericEvent
 	if err := json.Unmarshal(env.PayloadJSON, &ev); err != nil {
-		return fmt.Errorf("attach: decode payload for session=%s seq=%d: %w", env.SessionID, env.Sequence, err)
+		return &OpError{Op: fmt.Sprintf("attach: decode payload for session=%s seq=%d", env.SessionID, env.Sequence), Cause: err}
 	}
 	ts := env.Timestamp.UTC().Format("2006-01-02T15:04:05Z")
 	prefix := fmt.Sprintf("[%s] seq=%d %s · %s", ts, env.Sequence, env.SessionID, ev.Kind)
@@ -265,7 +265,7 @@ type jsonAttachRenderer struct {
 func (j *jsonAttachRenderer) Render(env *orchestratorSDK.SessionEventEnvelope) error {
 	var payload map[string]interface{}
 	if err := json.Unmarshal(env.PayloadJSON, &payload); err != nil {
-		return fmt.Errorf("attach: decode payload: %w", err)
+		return &OpError{Op: "attach: decode payload", Cause: err}
 	}
 	out := map[string]interface{}{
 		"session_id":  env.SessionID,

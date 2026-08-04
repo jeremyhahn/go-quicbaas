@@ -63,6 +63,13 @@ type ToolRegistry struct {
 	// case the tenant barrier dispatcher returns
 	// TenantBarrierServiceUnavailableError.
 	tenantBarrierSvc service.TenantBarrierServicer
+
+	// tenantGovernance backs qrdb_tenant_update_quotas and
+	// qrdb_tenant_update_entitlements. Wired post-construction via
+	// SetTenantGovernance once the iam.DefaultTenantManager is online; nil
+	// during early boot and unit tests, in which case those tools return
+	// GovernanceServiceUnavailableError.
+	tenantGovernance mcpTenantGovernancer
 }
 
 // ToolDefinition describes an MCP tool.
@@ -900,6 +907,14 @@ func (r *ToolRegistry) SetTenantBarrierService(svc service.TenantBarrierServicer
 	r.tenantBarrierSvc = svc
 }
 
+// SetTenantGovernance installs the mcpTenantGovernancer used by the
+// qrdb_tenant_update_quotas and qrdb_tenant_update_entitlements tools.
+// Pass nil to take the surface offline; tools will then return
+// GovernanceServiceUnavailableError.
+func (r *ToolRegistry) SetTenantGovernance(g mcpTenantGovernancer) {
+	r.tenantGovernance = g
+}
+
 // ExecuteTool executes a tool by name with the given arguments.
 func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	r.logger.WithFields(map[string]interface{}{
@@ -941,6 +956,8 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeKMSImportKey(ctx, args)
 	case "quicbaas_kms_get_key":
 		return r.executeKMSGetKey(ctx, args)
+	case "quicbaas_kms_get_public_key":
+		return r.executeKMSGetPublicKey(ctx, args)
 	case "quicbaas_kms_list_keys":
 		return r.executeKMSListKeys(ctx, args)
 	case "quicbaas_kms_rotate_key":
@@ -963,6 +980,8 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeKMSGetRotationPolicy(ctx, args)
 	case "quicbaas_kms_delete_rotation_policy":
 		return r.executeKMSDeleteRotationPolicy(ctx, args)
+	case "quicbaas_kms_get_supported_algorithms":
+		return r.executeKMSGetSupportedAlgorithms(ctx, args)
 
 	// KMS Operations - Encrypt/Decrypt/Backend
 	case "quicbaas_kms_encrypt":
@@ -1500,6 +1519,33 @@ func getStringSlice(args map[string]interface{}, key string) []string {
 		return result
 	case []string:
 		return v
+	}
+	return nil
+}
+
+// getStringMap extracts a map[string]string from a JSON-RPC argument map,
+// accepting either a map[string]string directly or a map[string]interface{}
+// whose values are strings (the JSON-decoded form). Non-string values are
+// skipped. Returns nil when the key is absent or holds no usable entries.
+func getStringMap(args map[string]interface{}, key string) map[string]string {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case map[string]string:
+		return v
+	case map[string]interface{}:
+		result := make(map[string]string, len(v))
+		for k, item := range v {
+			if s, ok := item.(string); ok {
+				result[k] = s
+			}
+		}
+		if len(result) == 0 {
+			return nil
+		}
+		return result
 	}
 	return nil
 }

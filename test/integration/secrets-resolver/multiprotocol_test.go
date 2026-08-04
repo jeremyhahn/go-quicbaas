@@ -1173,7 +1173,7 @@ func testStoreAndResolve(t *testing.T, ctx context.Context, protocol ProtocolCli
 
 	// Verify the resolved data matches original
 	var resolvedData map[string]interface{}
-	err = json.Unmarshal([]byte(result.Value), &resolvedData)
+	err = json.Unmarshal([]byte(result.String()), &resolvedData)
 	require.NoError(t, err)
 	assert.Equal(t, "test-user", resolvedData["username"])
 	assert.Equal(t, "super-secret-password-12345", resolvedData["password"])
@@ -1246,7 +1246,7 @@ func testResolveNestedPath(t *testing.T, ctx context.Context, protocol ProtocolC
 
 	// Verify the resolved data
 	var resolvedData map[string]interface{}
-	err = json.Unmarshal([]byte(result.Value), &resolvedData)
+	err = json.Unmarshal([]byte(result.String()), &resolvedData)
 	require.NoError(t, err)
 	assert.Equal(t, "postgresql://user:pass@localhost:5432/mydb", resolvedData["connection_url"])
 	assert.Equal(t, "require", resolvedData["ssl_mode"])
@@ -1296,7 +1296,7 @@ func testResolveBinaryData(t *testing.T, ctx context.Context, protocol ProtocolC
 
 	// Verify the resolved data
 	var resolvedData map[string]interface{}
-	err = json.Unmarshal([]byte(result.Value), &resolvedData)
+	err = json.Unmarshal([]byte(result.String()), &resolvedData)
 	require.NoError(t, err)
 	assert.Equal(t, "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t...", resolvedData["certificate"])
 	assert.Equal(t, "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t...", resolvedData["private_key"])
@@ -1348,9 +1348,9 @@ func testResolveLargeSecret(t *testing.T, ctx context.Context, protocol Protocol
 	require.NoError(t, err, "Failed to resolve large secret via %s", protocol.Name())
 	require.NotNil(t, result)
 	assert.Equal(t, secrets.StrategyLocalKMS, result.Strategy)
-	assert.Greater(t, len(result.Value), 8000, "Resolved value should be at least 8KB")
+	assert.Greater(t, len(result.String()), 8000, "Resolved value should be at least 8KB")
 
-	t.Logf("[%s] Successfully resolved large secret (%d bytes) at kms://%s", protocol.Name(), len(result.Value), path)
+	t.Logf("[%s] Successfully resolved large secret (%d bytes) at kms://%s", protocol.Name(), len(result.String()), path)
 }
 
 // testResolverRegistry tests the resolver integration with ResolverRegistry.
@@ -1400,7 +1400,7 @@ func testResolverRegistry(t *testing.T, ctx context.Context, protocol ProtocolCl
 
 	// Verify resolved data
 	var resolvedData map[string]interface{}
-	err = json.Unmarshal([]byte(result.Value), &resolvedData)
+	err = json.Unmarshal([]byte(result.String()), &resolvedData)
 	require.NoError(t, err)
 	assert.Equal(t, "registry-test-token-abc123", resolvedData["token"])
 
@@ -1409,7 +1409,7 @@ func testResolverRegistry(t *testing.T, ctx context.Context, protocol ProtocolCl
 	require.NoError(t, err)
 	require.NotNil(t, literalResult)
 	assert.Equal(t, secrets.StrategyLiteral, literalResult.Strategy)
-	assert.Equal(t, "literal-value", literalResult.Value)
+	assert.Equal(t, "literal-value", literalResult.String())
 
 	t.Logf("[%s] Successfully tested resolver with ResolverRegistry", protocol.Name())
 }
@@ -1466,7 +1466,7 @@ func TestSecretResolverCrossProtocol(t *testing.T) {
 
 		// Verify data
 		var resolvedData map[string]interface{}
-		err = json.Unmarshal([]byte(result.Value), &resolvedData)
+		err = json.Unmarshal([]byte(result.String()), &resolvedData)
 		require.NoError(t, err)
 		assert.Equal(t, "cross-protocol-rest-key", resolvedData["api_key"])
 
@@ -1501,7 +1501,7 @@ func TestSecretResolverCrossProtocol(t *testing.T) {
 
 		// Verify data
 		var resolvedData map[string]interface{}
-		err = json.Unmarshal([]byte(result.Value), &resolvedData)
+		err = json.Unmarshal([]byte(result.String()), &resolvedData)
 		require.NoError(t, err)
 		assert.Equal(t, "cross-protocol-grpc-key", resolvedData["api_key"])
 

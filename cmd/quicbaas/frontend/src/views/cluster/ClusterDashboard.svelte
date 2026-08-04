@@ -56,16 +56,10 @@
     loading = true;
     error = null;
     try {
+      // Use the authenticated SDK cluster client so the bearer token is
+      // attached (a raw fetch omitted it and 401'd under default-deny authz).
       const client = await getSDKClient();
-      const base = client.connection.getAddress().replace(/\/$/, '');
-      const resp = await fetch(`${base}/api/v1/cluster/status`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => '');
-        throw new Error(`cluster status ${resp.status}: ${body}`);
-      }
-      status = (await resp.json()) as ClusterStatusResponse;
+      status = (await client.cluster.status()) as ClusterStatusResponse;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load cluster status';
     } finally {

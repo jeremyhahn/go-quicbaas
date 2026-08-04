@@ -29,15 +29,15 @@ import (
 // QuicBaaS bans insecure TLS — a valid CA is required.
 func grpcCAOnlyTLSOption(caFile string) (grpc.ClientOption, error) {
 	if caFile == "" {
-		return nil, fmt.Errorf("grpcCAOnlyTLSOption: CA file path is required")
+		return nil, &MessageError{Message: "grpcCAOnlyTLSOption: CA file path is required"}
 	}
 	caPEM, err := os.ReadFile(caFile) //nolint:gosec // caFile comes from operator config
 	if err != nil {
-		return nil, fmt.Errorf("read CA cert %s: %w", caFile, err)
+		return nil, &OpError{Op: fmt.Sprintf("read CA cert %s", caFile), Cause: err}
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("no PEM certs in CA bundle %s", caFile)
+		return nil, &MessageError{Message: fmt.Sprintf("no PEM certs in CA bundle %s", caFile)}
 	}
 	return grpc.WithTLSConfig(&tls.Config{
 		RootCAs:    pool,

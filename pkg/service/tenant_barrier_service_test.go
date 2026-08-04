@@ -18,11 +18,80 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	pkgerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
+
+// fakeEncMigrator is a stub qrdbsdk.EncryptionMigrator that records whether it
+// was invoked and with which scope, so tenant-binding tests can assert the
+// binding fires BEFORE the migrator is reached.
+type fakeEncMigrator struct {
+	called bool
+	scope  qrdbsdk.BarrierScope
+	err    error
+}
+
+func (f *fakeEncMigrator) EnableEncryption(_ context.Context, scope qrdbsdk.BarrierScope, _ qrdbsdk.MigrationOptions) error {
+	f.called = true
+	f.scope = scope
+	return f.err
+}
+
+// TestBarrierService_EnableEncryption_CrossTenantDenied pins the security fix:
+// a caller bound to tenant "acme" may NOT enable-encryption on tenant "beta"
+// even holding tenant_barrier:enable_encryption. The binding (shared by all
+// transports via BarrierService.EnableEncryption) must reject before the
+// destructive, irreversible migration reaches the migrator.
+func TestBarrierService_EnableEncryption_CrossTenantDenied(t *testing.T) {
+	mig := &fakeEncMigrator{}
+	svc := NewBarrierService(nil)
+	svc.SetMigrator(mig)
+
+	err := svc.EnableEncryption(tenantCtx("acme"), "beta",
+		qrdbsdk.MigrationOptions{TargetStrategy: qrdbsdk.StrategyPassphrase})
+	if !isForbidden(err) {
+		t.Fatalf("cross-tenant enable-encryption: expected ErrForbidden, got %v", err)
+	}
+	if mig.called {
+		t.Error("migrator was invoked despite cross-tenant denial; binding must fire before delegation")
+	}
+}
+
+// TestBarrierService_EnableEncryption_SameTenantAllowed confirms a tenant may
+// enable-encryption on its OWN barrier and the migrator receives ScopeTenant.
+func TestBarrierService_EnableEncryption_SameTenantAllowed(t *testing.T) {
+	mig := &fakeEncMigrator{}
+	svc := NewBarrierService(nil)
+	svc.SetMigrator(mig)
+
+	if err := svc.EnableEncryption(tenantCtx("acme"), "acme",
+		qrdbsdk.MigrationOptions{TargetStrategy: qrdbsdk.StrategyPassphrase}); err != nil {
+		t.Fatalf("same-tenant enable-encryption: %v", err)
+	}
+	if !mig.called || mig.scope.Kind != qrdbsdk.ScopeTenant || mig.scope.TenantID != "acme" {
+		t.Errorf("expected migrator called with ScopeTenant/acme, got called=%v scope=%+v", mig.called, mig.scope)
+	}
+}
+
+// TestBarrierService_EnableEncryption_SystemScopeNoBinding confirms the system
+// scope (empty tenantID) is admin-gated, not tenant-bound: it reaches the
+// migrator with ScopeSystem even without a tenant subject in context.
+func TestBarrierService_EnableEncryption_SystemScopeNoBinding(t *testing.T) {
+	mig := &fakeEncMigrator{}
+	svc := NewBarrierService(nil)
+	svc.SetMigrator(mig)
+
+	if err := svc.EnableEncryption(context.Background(), "",
+		qrdbsdk.MigrationOptions{TargetStrategy: qrdbsdk.StrategyPassphrase}); err != nil {
+		t.Fatalf("system-scope enable-encryption: %v", err)
+	}
+	if !mig.called || mig.scope.Kind != qrdbsdk.ScopeSystem {
+		t.Errorf("expected migrator called with ScopeSystem, got called=%v scope=%+v", mig.called, mig.scope)
+	}
+}
 
 // mockTenantClient implements qrdbtransport.TenantClient, capturing the
 // barrier requests it receives and returning configured responses/errors.
@@ -102,6 +171,9 @@ func (m *mockTenantClient) UpdateTenant(context.Context, *qrdbtransport.UpdateTe
 	return nil, nil
 }
 func (m *mockTenantClient) UpdateTenantQuotas(context.Context, *qrdbtransport.UpdateTenantQuotasRequest) (*qrdbtransport.UpdateTenantQuotasResponse, error) {
+	return nil, nil
+}
+func (m *mockTenantClient) UpdateTenantEntitlements(context.Context, *qrdbtransport.UpdateTenantEntitlementsRequest) (*qrdbtransport.UpdateTenantEntitlementsResponse, error) {
 	return nil, nil
 }
 

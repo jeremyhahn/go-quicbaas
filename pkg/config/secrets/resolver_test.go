@@ -18,7 +18,7 @@ import (
 	stderrors "errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 )
 
 // testResolver is a simple mock resolver for testing the registry
@@ -51,8 +51,8 @@ func TestNewResolverRegistry(t *testing.T) {
 	if registry == nil {
 		t.Fatal("Expected non-nil registry")
 	}
-	if len(registry.resolvers) != 0 {
-		t.Errorf("Expected empty resolvers, got %d", len(registry.resolvers))
+	if len(registry.Resolvers()) != 0 {
+		t.Errorf("Expected empty resolvers, got %d", len(registry.Resolvers()))
 	}
 }
 
@@ -63,21 +63,21 @@ func TestResolverRegistry_Register(t *testing.T) {
 	resolver := &testResolver{schemeName: "test"}
 	registry.Register(resolver)
 
-	if len(registry.resolvers) != 1 {
-		t.Errorf("Expected 1 resolver, got %d", len(registry.resolvers))
+	if len(registry.Resolvers()) != 1 {
+		t.Errorf("Expected 1 resolver, got %d", len(registry.Resolvers()))
 	}
 
 	// Register nil should be ignored
 	registry.Register(nil)
-	if len(registry.resolvers) != 1 {
-		t.Errorf("Expected 1 resolver after nil register, got %d", len(registry.resolvers))
+	if len(registry.Resolvers()) != 1 {
+		t.Errorf("Expected 1 resolver after nil register, got %d", len(registry.Resolvers()))
 	}
 
 	// Register another resolver
 	resolver2 := &testResolver{schemeName: "test2"}
 	registry.Register(resolver2)
-	if len(registry.resolvers) != 2 {
-		t.Errorf("Expected 2 resolvers, got %d", len(registry.resolvers))
+	if len(registry.Resolvers()) != 2 {
+		t.Errorf("Expected 2 resolvers, got %d", len(registry.Resolvers()))
 	}
 }
 
@@ -116,13 +116,8 @@ func TestResolverRegistry_Resolve_NilContext(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for nil context")
 	}
-
-	var qbErr *errors.QBError
-	if !stderrors.As(err, &qbErr) {
-		t.Fatalf("Expected QBError, got %T", err)
-	}
-	if qbErr.Code != errors.ErrInvalidInput {
-		t.Errorf("Expected ErrInvalidInput, got %v", qbErr.Code)
+	if !stderrors.Is(err, qrdbsecret.ErrNilContext) {
+		t.Errorf("Expected ErrNilContext, got %T: %v", err, err)
 	}
 }
 
@@ -138,8 +133,8 @@ func TestResolverRegistry_Resolve_LiteralValue(t *testing.T) {
 	if value.Strategy != StrategyLiteral {
 		t.Errorf("Expected StrategyLiteral, got %v", value.Strategy)
 	}
-	if value.Value != "plaintext-value" {
-		t.Errorf("Expected 'plaintext-value', got %s", value.Value)
+	if value.String() != "plaintext-value" {
+		t.Errorf("Expected 'plaintext-value', got %s", value.String())
 	}
 	if value.Raw != "plaintext-value" {
 		t.Errorf("Expected raw 'plaintext-value', got %s", value.Raw)
@@ -156,11 +151,7 @@ func TestResolverRegistry_Resolve_MatchingResolver(t *testing.T) {
 			return len(raw) > 7 && raw[:7] == "test://"
 		},
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return &SecretValue{
-				Raw:      raw,
-				Value:    "resolved-value",
-				Strategy: StrategyLocalKMS,
-			}, nil
+			return NewSecretValue(raw, []byte("resolved-value"), StrategyLocalKMS), nil
 		},
 	}
 	registry.Register(resolver)
@@ -169,8 +160,8 @@ func TestResolverRegistry_Resolve_MatchingResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if value.Value != "resolved-value" {
-		t.Errorf("Expected 'resolved-value', got %s", value.Value)
+	if value.String() != "resolved-value" {
+		t.Errorf("Expected 'resolved-value', got %s", value.String())
 	}
 	if value.Strategy != StrategyLocalKMS {
 		t.Errorf("Expected StrategyLocalKMS, got %v", value.Strategy)
@@ -197,15 +188,12 @@ func TestResolverRegistry_Resolve_ResolverError(t *testing.T) {
 		t.Fatal("Expected error")
 	}
 
-	var qbErr *errors.QBError
-	if !stderrors.As(err, &qbErr) {
-		t.Fatalf("Expected QBError, got %T", err)
+	var rfe *qrdbsecret.ResolutionFailedError
+	if !stderrors.As(err, &rfe) {
+		t.Fatalf("Expected ResolutionFailedError, got %T", err)
 	}
-	if qbErr.Code != errors.ErrConfiguration {
-		t.Errorf("Expected ErrConfiguration, got %v", qbErr.Code)
-	}
-	if qbErr.Context["scheme"] != "test" {
-		t.Errorf("Expected scheme 'test' in context, got %v", qbErr.Context["scheme"])
+	if rfe.Scheme != "test" {
+		t.Errorf("Expected scheme 'test', got %v", rfe.Scheme)
 	}
 }
 
@@ -218,22 +206,14 @@ func TestResolverRegistry_Resolve_FirstMatchWins(t *testing.T) {
 		schemeName:     "first",
 		canResolveFunc: func(raw string) bool { return true },
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return &SecretValue{
-				Raw:      raw,
-				Value:    "from-first",
-				Strategy: StrategyLiteral,
-			}, nil
+			return NewSecretValue(raw, []byte("from-first"), StrategyLiteral), nil
 		},
 	}
 	resolver2 := &testResolver{
 		schemeName:     "second",
 		canResolveFunc: func(raw string) bool { return true },
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return &SecretValue{
-				Raw:      raw,
-				Value:    "from-second",
-				Strategy: StrategyLiteral,
-			}, nil
+			return NewSecretValue(raw, []byte("from-second"), StrategyLiteral), nil
 		},
 	}
 	registry.Register(resolver1)
@@ -243,8 +223,8 @@ func TestResolverRegistry_Resolve_FirstMatchWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if value.Value != "from-first" {
-		t.Errorf("Expected 'from-first', got %s", value.Value)
+	if value.String() != "from-first" {
+		t.Errorf("Expected 'from-first', got %s", value.String())
 	}
 }
 

@@ -203,7 +203,7 @@ credentials:
 | | |
 |---|---|
 | Type | string |
-| Options | `go-trusted-ca` |
+| Options | `xkms` (go-xkms TrustedCA) |
 
 Type of external certificate provider.
 
@@ -212,7 +212,7 @@ credentials:
   certificates:
     provider: external
     external:
-      type: go-trusted-ca
+      type: xkms   # go-xkms TrustedCA
 ```
 
 ---
@@ -261,7 +261,7 @@ credentials:
   certificates:
     provider: external
     external:
-      type: go-trusted-ca
+      type: xkms   # go-xkms TrustedCA
       address: "ca.internal:8443"
       ca_bundle: /etc/quicbaas/ca-bundle.pem
       client_cert: /etc/quicbaas/client.crt
@@ -360,7 +360,7 @@ credentials:
         key_size: 256
 ```
 
-### External CA (go-trusted-ca)
+### External CA (go-xkms TrustedCA)
 
 ```yaml
 credentials:
@@ -368,7 +368,7 @@ credentials:
     enabled: true
     provider: external
     external:
-      type: go-trusted-ca
+      type: xkms   # go-xkms TrustedCA
       address: "ca.internal:8443"
       ca_bundle: /etc/quicbaas/pki/ca-bundle.pem
       client_cert: /etc/quicbaas/pki/quicbaas-client.crt

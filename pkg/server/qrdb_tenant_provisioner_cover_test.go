@@ -29,7 +29,7 @@ type fakeServiceTenantServicer struct {
 	lastDeleteID   string
 }
 
-func (f *fakeServiceTenantServicer) CreateTenant(_ context.Context, id, name string, iso qrdbtenant.IsolationType) (*qrdbtenant.TenantInfo, error) {
+func (f *fakeServiceTenantServicer) CreateTenant(_ context.Context, id, name string, iso qrdbtenant.IsolationType, _ ...qrdbtenant.CreateTenantOption) (*qrdbtenant.TenantInfo, error) {
 	f.lastCreateID = id
 	f.lastCreateName = name
 	f.lastCreateIso = iso

@@ -139,6 +139,14 @@ type agentDeployService struct {
 	now        func() time.Time
 	sleep      func(ctx context.Context, d time.Duration) error
 
+	// mcpEndpoint is the control plane's configured MCP listener address
+	// (https://host:port/mcp). When non-empty it is stamped onto each Spec
+	// (unless the Spec already carries one) so the deployed daemon is started
+	// with --mcp-endpoint and its spawned agents can resolve the "quicbaas"
+	// MCP preset. Empty when MCP is disabled or unconfigured: the flag is then
+	// omitted and behavior is unchanged.
+	mcpEndpoint string
+
 	// resolveHome resolves the remote login user's $HOME on a connected
 	// session. Production wires the real SSH-exec implementation; tests
 	// substitute a deterministic value so the fake session need not
@@ -166,6 +174,13 @@ type AgentDeployServiceDeps struct {
 	// when nil the service returns a typed error before dialing SSH so
 	// misconfigured callers fail fast.
 	CertIssuer AgentCertIssuer
+
+	// MCPEndpoint is the control plane's configured MCP listener address
+	// (https://host:port/mcp). Optional: when set, every deployed daemon is
+	// started with --mcp-endpoint so its spawned agents can reach the QuicBaaS
+	// MCP endpoint with the long-lived mTLS identity this deploy uploads. When
+	// empty the daemon command line is unchanged (no behavior change).
+	MCPEndpoint string
 }
 
 // NewAgentDeployService wires the default SSH/SFTP/systemd primitives
@@ -184,6 +199,7 @@ func NewAgentDeployService(deps AgentDeployServiceDeps) AgentDeployService {
 		now:         time.Now,
 		sleep:       ctxSleep,
 		resolveHome: defaultResolveRemoteHome,
+		mcpEndpoint: deps.MCPEndpoint,
 	}
 }
 
@@ -195,6 +211,14 @@ func NewAgentDeployService(deps AgentDeployServiceDeps) AgentDeployService {
 func (s *agentDeployService) Deploy(ctx context.Context, spec *deploy.Spec) (*deploy.Result, error) {
 	if err := s.validate(spec); err != nil {
 		return nil, err
+	}
+
+	// Stamp the control plane's configured MCP endpoint onto the spec so the
+	// deployed daemon is started with --mcp-endpoint. A caller-supplied value
+	// on the spec wins; an empty service endpoint leaves the spec untouched and
+	// the rendered command line omits the flag.
+	if strings.TrimSpace(spec.MCPEndpoint) == "" && s.mcpEndpoint != "" {
+		spec.MCPEndpoint = s.mcpEndpoint
 	}
 
 	// Mint the agent's mTLS identity up-front, before we dial SSH. If

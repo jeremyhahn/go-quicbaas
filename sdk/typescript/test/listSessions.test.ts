@@ -9,6 +9,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ListSessionsResponse } from '../src/types.js';
 import { RestClient } from '../src/rest.js';
 
+// mockOK returns a minimal fetch Response-alike that supports both .json()
+// and .text() so tests remain compatible with fetchJSON implementations that
+// use resp.text() (post BUG-2 fix) and those that use resp.json().
+function mockOK(payload: unknown): { ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> } {
+  const body = JSON.stringify(payload);
+  return { ok: true, status: 200, json: async () => JSON.parse(body) as unknown, text: async () => body };
+}
+
 describe('RestOrchestratorClient.listSessions', () => {
   const BASE = 'http://test-server';
   let client: RestClient;
@@ -27,7 +35,7 @@ describe('RestOrchestratorClient.listSessions', () => {
   });
 
   it('serializes tenant_id into the query string', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => emptyResponse });
+    fetchMock.mockResolvedValueOnce(mockOK(emptyResponse));
 
     await client.orchestrator.listSessions({ tenantID: 'acme', backend: 'ollama' });
 
@@ -39,7 +47,7 @@ describe('RestOrchestratorClient.listSessions', () => {
   });
 
   it('URL is exactly /api/v1/orchestrator/sessions with tenant_id and optional filters', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => emptyResponse });
+    fetchMock.mockResolvedValueOnce(mockOK(emptyResponse));
 
     await client.orchestrator.listSessions({ tenantID: 'acme', backend: 'ollama' });
 
@@ -52,7 +60,7 @@ describe('RestOrchestratorClient.listSessions', () => {
   });
 
   it('includes status filter when provided', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => emptyResponse });
+    fetchMock.mockResolvedValueOnce(mockOK(emptyResponse));
 
     await client.orchestrator.listSessions({ tenantID: 'acme', status: 'running' });
 

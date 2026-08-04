@@ -24,6 +24,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // TestIAMListUsers tests the ListUsers handler.
@@ -450,6 +452,76 @@ func TestIAMAssignRole(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Contains(t, w.Body.String(), "identity store not available")
 	})
+
+	// Regression: the TS SDK was sending { "role": "..." } but the handler
+	// expects { "role_id": "..." }. An empty or absent role_id must always 400.
+
+	t.Run("empty body omitting role_id is rejected with 400", func(t *testing.T) {
+		handler, _, cleanup := setupIAMHandler(t)
+		defer cleanup()
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant_id", "tenant-123")
+		rctx.URLParams.Add("user_id", "user-123")
+
+		// {} decodes successfully but role_id is zero-value — must 400.
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader(`{}`))
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		handler.AssignRole(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "role_id is required")
+	})
+
+	t.Run("wrong wire field 'role' (old TS SDK format) is rejected with 400", func(t *testing.T) {
+		handler, _, cleanup := setupIAMHandler(t)
+		defer cleanup()
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant_id", "tenant-123")
+		rctx.URLParams.Add("user_id", "user-123")
+
+		// Pre-fix, the TS SDK sent { "role": "admin" }. Because the handler
+		// decodes into a struct with json:"role_id", "role" is silently ignored
+		// and role_id remains empty → must 400. The fix makes the SDK send
+		// { "role_id": "admin" } instead.
+		body := `{"role":"admin"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader(body))
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		handler.AssignRole(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "role_id is required")
+	})
+}
+
+// TestIAMAssignRole_CorrectBodySucceeds is a regression test proving that
+// AssignRole returns 204 when the corrected wire body {"role_id":"<uuid>"}
+// is sent and a real identity store has the tenant, user, and role seeded.
+func TestIAMAssignRole_CorrectBodySucceeds(t *testing.T) {
+	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "t1", Name: "Tenant 1"})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "u1", TenantID: "t1", Email: "user@example.com", Name: "User"})
+	_ = memStorage.CreateRole(ctx, &iam.Role{ID: "editor", TenantID: "t1", Name: "Editor"})
+
+	body := `{"role_id":"editor"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/roles", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
+	w := httptest.NewRecorder()
+
+	handler.AssignRole(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
 }
 
 // TestIAMRevokeRole tests the RevokeRole handler.

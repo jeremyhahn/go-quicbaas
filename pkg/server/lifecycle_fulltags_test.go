@@ -30,6 +30,8 @@ import (
 
 	xkmsca "github.com/jeremyhahn/go-xkms/pkg/ca"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -414,8 +416,7 @@ func saveAndRestoreSeams(t *testing.T) {
 	origNewRetentionWorkerFn := newRetentionWorkerFn
 	origCloseBackupMgrFn := closeBackupMgrFn
 	origNewKMSKeyStorage := newKMSKeyStorage
-	origNewSoftwareBackend := newSoftwareBackend
-	origNewXKMSKeystore := newXKMSKeystore
+	origBuildKMSServiceBackendFn := buildKMSServiceBackendFn
 	origInitXKMS := initXKMS
 	origNewKMSBackendFactory := newKMSBackendFactory
 	origNewKMSServiceFn := newKMSServiceFn
@@ -470,8 +471,7 @@ func saveAndRestoreSeams(t *testing.T) {
 		newRetentionWorkerFn = origNewRetentionWorkerFn
 		closeBackupMgrFn = origCloseBackupMgrFn
 		newKMSKeyStorage = origNewKMSKeyStorage
-		newSoftwareBackend = origNewSoftwareBackend
-		newXKMSKeystore = origNewXKMSKeystore
+		buildKMSServiceBackendFn = origBuildKMSServiceBackendFn
 		initXKMS = origInitXKMS
 		newKMSBackendFactory = origNewKMSBackendFactory
 		newKMSServiceFn = origNewKMSServiceFn
@@ -1740,6 +1740,12 @@ func (m *mockTenantManagerF91) ListTenants(_ context.Context, _ iam.ListOptions)
 	return nil, nil
 }
 func (m *mockTenantManagerF91) CheckQuota(_ context.Context, _, _ string) error { return nil }
+func (m *mockTenantManagerF91) UpdateEngineQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+func (m *mockTenantManagerF91) UpdateEngineEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
+	return nil
+}
 
 // mockSessionStorageF91 is a minimal mock of iam.SessionStorage for testing
 // registerIAMService paths without a real session backend.

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -316,6 +317,14 @@ func (m *mockIdentityTenantManager) CheckQuota(ctx context.Context, tenantID, re
 	if m.quotaExceeded {
 		return ErrQuotaExceeded
 	}
+	return nil
+}
+
+func (m *mockIdentityTenantManager) UpdateEngineQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+
+func (m *mockIdentityTenantManager) UpdateEngineEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
 	return nil
 }
 
@@ -2006,6 +2015,14 @@ func (m *mockCoverageTenantManager) CheckQuota(ctx context.Context, tenantID, re
 	if m.quotaExceeded {
 		return ErrQuotaExceeded
 	}
+	return nil
+}
+
+func (m *mockCoverageTenantManager) UpdateEngineQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+
+func (m *mockCoverageTenantManager) UpdateEngineEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
 	return nil
 }
 

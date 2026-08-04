@@ -16,6 +16,7 @@ package quicbaas
 import (
 	"sync"
 
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -95,6 +96,15 @@ type SecurityService interface {
 	// six transports (embedded, REST, gRPC, QUIC, MCP, Unix) — no
 	// transport returns NotImplementedError.
 	Credentials() (QRDBCredentialClient, error)
+
+	// SecretResolver returns the unified secret resolver registry populated
+	// during server initialization. It dispatches credential://, kms://,
+	// remote-kms://, and autogen resolution in registration order. Returns
+	// nil when the client was constructed without WithSecretRegistry (e.g.
+	// a pure network client that has no access to the in-process server).
+	// go-trusted-platform consumes this as the single canonical entry point
+	// for secret resolution — no direct import of pkg/config/secrets needed.
+	SecretResolver() *qrdbsecret.ResolverRegistry
 }
 
 // IdentityService provides identity and access management operations.
@@ -264,6 +274,13 @@ func (s *securityService) Credentials() (QRDBCredentialClient, error) {
 		return nil, err
 	}
 	return qrdbClient.Credentials(), nil
+}
+
+// SecretResolver returns the unified secret resolver registry injected via
+// WithSecretRegistry. Returns nil when the option was not provided (e.g.
+// pure network clients that have no access to the in-process server registry).
+func (s *securityService) SecretResolver() *qrdbsecret.ResolverRegistry {
+	return s.c.opts.secretRegistry
 }
 
 func (s *securityService) CertificateExt() CertificateExtensions {

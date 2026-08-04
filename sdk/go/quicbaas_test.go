@@ -662,7 +662,9 @@ func (m *mockKMSClientForCoverage) ImportKey(ctx context.Context, req *kms.Impor
 func (m *mockKMSClientForCoverage) ExportKey(ctx context.Context, req *kms.ExportKeyRequest) (*kms.ExportKeyResponse, error) {
 	return nil, nil
 }
-func (m *mockKMSClientForCoverage) RevokeKey(ctx context.Context, keyID string) error { return nil }
+func (m *mockKMSClientForCoverage) RevokeKey(ctx context.Context, keyID, reason string) error {
+	return nil
+}
 func (m *mockKMSClientForCoverage) ListKeyVersions(ctx context.Context, keyID string) (*kms.ListKeyVersionsResponse, error) {
 	return nil, nil
 }

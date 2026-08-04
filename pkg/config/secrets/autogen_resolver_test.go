@@ -99,12 +99,12 @@ func TestAutoGenResolver_Resolve_Success(t *testing.T) {
 	}
 
 	// Verify value is not empty
-	if result.Value == "" {
+	if result.String() == "" {
 		t.Error("Value is empty")
 	}
 
 	// Verify value is valid URL-safe base64
-	decoded, err := base64.RawURLEncoding.DecodeString(result.Value)
+	decoded, err := base64.RawURLEncoding.DecodeString(result.String())
 	if err != nil {
 		t.Errorf("Value is not valid URL-safe base64: %v", err)
 	}
@@ -128,10 +128,10 @@ func TestAutoGenResolver_Resolve_UniquenessPerCall(t *testing.T) {
 			t.Fatalf("Resolve() iteration %d error = %v", i, err)
 		}
 
-		if seen[result.Value] {
-			t.Errorf("Duplicate value generated at iteration %d: %s", i, result.Value)
+		if seen[result.String()] {
+			t.Errorf("Duplicate value generated at iteration %d: %s", i, result.String())
 		}
-		seen[result.Value] = true
+		seen[result.String()] = true
 	}
 }
 
@@ -148,7 +148,7 @@ func TestAutoGenResolver_Resolve_AllPlaceholders(t *testing.T) {
 			if result == nil {
 				t.Fatalf("Resolve(%q) returned nil", placeholder)
 			}
-			if result.Value == "" {
+			if result.String() == "" {
 				t.Errorf("Resolve(%q) returned empty value", placeholder)
 			}
 			// Verify raw value is preserved
@@ -184,7 +184,7 @@ func TestAutoGenResolver_WithSecretSize(t *testing.T) {
 				t.Fatalf("Resolve() error = %v", err)
 			}
 
-			decoded, err := base64.RawURLEncoding.DecodeString(result.Value)
+			decoded, err := base64.RawURLEncoding.DecodeString(result.String())
 			if err != nil {
 				t.Fatalf("Failed to decode value: %v", err)
 			}
@@ -235,8 +235,8 @@ func TestAutoGenResolver_WithEntropySource(t *testing.T) {
 
 	// Verify the output matches expected encoding
 	expected := base64.RawURLEncoding.EncodeToString(testData)
-	if result.Value != expected {
-		t.Errorf("Value = %q, want %q", result.Value, expected)
+	if result.String() != expected {
+		t.Errorf("Value = %q, want %q", result.String(), expected)
 	}
 }
 
@@ -258,7 +258,7 @@ func TestAutoGenResolver_WithEntropySource_Chaining(t *testing.T) {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 
-	decoded, err := base64.RawURLEncoding.DecodeString(result.Value)
+	decoded, err := base64.RawURLEncoding.DecodeString(result.String())
 	if err != nil {
 		t.Fatalf("Failed to decode: %v", err)
 	}
@@ -407,12 +407,12 @@ func TestAutoGenResolver_URLSafeBase64(t *testing.T) {
 		}
 
 		// URL-safe base64 should not contain + or /
-		if strings.ContainsAny(result.Value, "+/=") {
-			t.Errorf("Value contains non-URL-safe characters: %s", result.Value)
+		if strings.ContainsAny(result.String(), "+/=") {
+			t.Errorf("Value contains non-URL-safe characters: %s", result.String())
 		}
 
 		// Should be decodable with RawURLEncoding
-		_, err = base64.RawURLEncoding.DecodeString(result.Value)
+		_, err = base64.RawURLEncoding.DecodeString(result.String())
 		if err != nil {
 			t.Errorf("Value is not valid RawURLEncoding: %v", err)
 		}
@@ -465,7 +465,7 @@ func TestNewAutoGenResolver_DefaultValues(t *testing.T) {
 	}
 
 	// Verify default size
-	decoded, err := base64.RawURLEncoding.DecodeString(result.Value)
+	decoded, err := base64.RawURLEncoding.DecodeString(result.String())
 	if err != nil {
 		t.Fatalf("Failed to decode: %v", err)
 	}

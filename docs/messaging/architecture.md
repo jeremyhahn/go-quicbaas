@@ -418,10 +418,10 @@ flowchart TB
 
 ## Error Handling
 
-All errors follow the DragonError pattern with typed errors:
+All errors follow the QRDBError pattern with typed errors:
 
 ```go
-type DragonError struct {
+type QRDBError struct {
     Code    ErrorCode
     Op      string
     Err     error

@@ -35,7 +35,7 @@ import (
 // lifecycle.go — startKMS enabled path
 //
 // startKMS reads from package-level seam vars (newKMSKeyStorage,
-// newSoftwareBackend, newXKMSKeystore, initXKMS, newKMSBackendFactory,
+// buildKMSServiceBackendFn, initXKMS, newKMSBackendFactory,
 // initFromXKMSFn, newKMSServiceFn). All seams resolve to real in-memory
 // implementations by default, so the enabled path runs end-to-end without
 // touching disk, network, or external services.

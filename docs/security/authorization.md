@@ -50,7 +50,7 @@ QuicBaaS supports three authorization providers:
      └───────────┘     └─────────────┘     └───────────┘
             │                 │                 │
             ▼                 ▼                 ▼
-      RoleManager       PolicyEngine      ABAC → RBAC
+      go-qrdb PDP       PolicyEngine      ABAC → RBAC
                                           fallback
 ```
 

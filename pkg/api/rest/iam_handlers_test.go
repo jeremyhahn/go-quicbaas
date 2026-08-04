@@ -30,6 +30,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
@@ -97,6 +99,14 @@ func (m *testTenantManager) ListTenants(ctx context.Context, opts iam.ListOption
 }
 
 func (m *testTenantManager) CheckQuota(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *testTenantManager) UpdateEngineQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+
+func (m *testTenantManager) UpdateEngineEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
 	return nil
 }
 

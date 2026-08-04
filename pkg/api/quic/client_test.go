@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -924,6 +925,10 @@ func (s *e2eBarrierService) BarrierHasRecoveryKeys(ctx context.Context) (bool, e
 }
 func (s *e2eBarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
 	return &service.RootTokenInfo{Token: "tok"}, nil
+}
+
+func (s *e2eBarrierService) EnableEncryption(_ context.Context, _ string, _ qrdbsdk.MigrationOptions) error {
+	return nil
 }
 
 // e2eCeremonyService satisfies service.CeremonyServicer for the in-process

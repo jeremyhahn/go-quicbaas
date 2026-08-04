@@ -61,9 +61,9 @@ type DedupStats struct {
 	TopDuplicates   []*DedupEntry // Most duplicated messages
 }
 
-// DedupStoreImpl manages message deduplication with persistent storage.
+// DedupStore manages message deduplication with persistent storage.
 // This is the production implementation of deduplication tracking.
-type DedupStoreImpl struct {
+type DedupStore struct {
 	storage  storage.Storage
 	prefix   string
 	window   time.Duration
@@ -71,26 +71,26 @@ type DedupStoreImpl struct {
 	hashPool sync.Pool
 }
 
-// DedupStoreOption configures DedupStoreImpl behavior.
-type DedupStoreOption func(*DedupStoreImpl)
+// DedupStoreOption configures DedupStore behavior.
+type DedupStoreOption func(*DedupStore)
 
 // WithDedupStorePrefix sets the key prefix for dedup entries in storage.
 func WithDedupStorePrefix(prefix string) DedupStoreOption {
-	return func(ds *DedupStoreImpl) {
+	return func(ds *DedupStore) {
 		ds.prefix = prefix
 	}
 }
 
 // WithDedupStoreWindow sets the TTL window for dedup entries.
 func WithDedupStoreWindow(window time.Duration) DedupStoreOption {
-	return func(ds *DedupStoreImpl) {
+	return func(ds *DedupStore) {
 		ds.window = window
 	}
 }
 
-// NewDedupStoreImpl creates a new DedupStoreImpl with the given storage backend and options.
-func NewDedupStoreImpl(s storage.Storage, log *logger.Logger, opts ...DedupStoreOption) *DedupStoreImpl {
-	ds := &DedupStoreImpl{
+// NewDedupStore creates a new DedupStore with the given storage backend and options.
+func NewDedupStore(s storage.Storage, log *logger.Logger, opts ...DedupStoreOption) *DedupStore {
+	ds := &DedupStore{
 		storage: s,
 		prefix:  DefaultDedupPrefix,
 		window:  DefaultDedupWindow,
@@ -113,7 +113,7 @@ func NewDedupStoreImpl(s storage.Storage, log *logger.Logger, opts ...DedupStore
 // Returns DedupInfo indicating whether the message was a duplicate and the count.
 // When clientDedupKey is non-empty, it is used as the dedup key instead of computing
 // one from the message ID or payload hash.
-func (ds *DedupStoreImpl) CheckAndStore(ctx context.Context, channel string, msg *Message, clientDedupKey string) (*DedupInfo, error) {
+func (ds *DedupStore) CheckAndStore(ctx context.Context, channel string, msg *Message, clientDedupKey string) (*DedupInfo, error) {
 	if msg == nil {
 		return nil, ErrNilMessage
 	}
@@ -210,7 +210,7 @@ func (ds *DedupStoreImpl) CheckAndStore(ctx context.Context, channel string, msg
 
 // ComputeHash computes a SHA256 hash of the payload.
 // If fields is non-empty, only those fields are extracted and hashed from JSON payloads.
-func (ds *DedupStoreImpl) ComputeHash(payload []byte, fields []string) (string, error) {
+func (ds *DedupStore) ComputeHash(payload []byte, fields []string) (string, error) {
 	if payload == nil {
 		return "", &InvalidPayloadError{Reason: "payload is nil"}
 	}
@@ -268,7 +268,7 @@ func (ds *DedupStoreImpl) ComputeHash(payload []byte, fields []string) (string, 
 }
 
 // GetEntry retrieves a dedup entry for the given channel and key.
-func (ds *DedupStoreImpl) GetEntry(ctx context.Context, channel, key string) (*DedupEntry, error) {
+func (ds *DedupStore) GetEntry(ctx context.Context, channel, key string) (*DedupEntry, error) {
 	if channel == "" {
 		return nil, ErrEmptyChannelName
 	}
@@ -292,7 +292,7 @@ func (ds *DedupStoreImpl) GetEntry(ctx context.Context, channel, key string) (*D
 }
 
 // StoreEntry stores a dedup entry for the given channel and key.
-func (ds *DedupStoreImpl) StoreEntry(ctx context.Context, channel, key string, entry *DedupEntry) error {
+func (ds *DedupStore) StoreEntry(ctx context.Context, channel, key string, entry *DedupEntry) error {
 	if channel == "" {
 		return ErrEmptyChannelName
 	}
@@ -315,7 +315,7 @@ func (ds *DedupStoreImpl) StoreEntry(ctx context.Context, channel, key string, e
 }
 
 // DeleteEntry removes a dedup entry for the given channel and key.
-func (ds *DedupStoreImpl) DeleteEntry(ctx context.Context, channel, key string) error {
+func (ds *DedupStore) DeleteEntry(ctx context.Context, channel, key string) error {
 	if channel == "" {
 		return ErrEmptyChannelName
 	}
@@ -329,7 +329,7 @@ func (ds *DedupStoreImpl) DeleteEntry(ctx context.Context, channel, key string) 
 }
 
 // GetStats retrieves deduplication statistics for a channel.
-func (ds *DedupStoreImpl) GetStats(ctx context.Context, channel string) (*DedupStats, error) {
+func (ds *DedupStore) GetStats(ctx context.Context, channel string) (*DedupStats, error) {
 	if channel == "" {
 		return nil, ErrEmptyChannelName
 	}
@@ -392,7 +392,7 @@ func (ds *DedupStoreImpl) GetStats(ctx context.Context, channel string) (*DedupS
 }
 
 // Cleanup removes expired dedup entries from all channels.
-func (ds *DedupStoreImpl) Cleanup(ctx context.Context) error {
+func (ds *DedupStore) Cleanup(ctx context.Context) error {
 	opts := &storage.IteratorOptions{
 		LowerBound: []byte(ds.prefix),
 		UpperBound: []byte(ds.prefix + "\xff\xff\xff"),
@@ -460,17 +460,17 @@ func (ds *DedupStoreImpl) Cleanup(ctx context.Context) error {
 }
 
 // GetWindow returns the deduplication window duration.
-func (ds *DedupStoreImpl) GetWindow() time.Duration {
+func (ds *DedupStore) GetWindow() time.Duration {
 	return ds.window
 }
 
 // GetPrefix returns the storage key prefix.
-func (ds *DedupStoreImpl) GetPrefix() string {
+func (ds *DedupStore) GetPrefix() string {
 	return ds.prefix
 }
 
 // buildStorageKey constructs the full storage key for a dedup entry.
-func (ds *DedupStoreImpl) buildStorageKey(channel, key string) string {
+func (ds *DedupStore) buildStorageKey(channel, key string) string {
 	return ds.prefix + channel + "/" + key
 }
 

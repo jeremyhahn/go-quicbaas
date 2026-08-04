@@ -17,13 +17,15 @@ import type { IAMUser, IAMTenant, IAMRole, IAMPolicy } from '@quicbaas/sdk';
 // Mock data
 // ---------------------------------------------------------------------------
 
+// Production reality: user.roles contains role UUIDs, not role names.
+// The view must resolve each UUID to its name via the loaded roles list.
 const mockUsers: IAMUser[] = [
   {
     id: 'user-1',
     tenant_id: 'default',
     username: 'alice',
     email: 'alice@example.com',
-    roles: ['admin'],
+    roles: ['role-1'],   // UUID, not name
     groups: [],
     created_at: '2025-01-01T00:00:00Z',
     updated_at: '2025-01-01T00:00:00Z',
@@ -33,7 +35,7 @@ const mockUsers: IAMUser[] = [
     tenant_id: 'default',
     username: 'bob',
     email: 'bob@example.com',
-    roles: ['viewer'],
+    roles: ['role-2'],   // UUID, not name
     groups: [],
     created_at: '2025-01-02T00:00:00Z',
     updated_at: '2025-01-02T00:00:00Z',
@@ -57,6 +59,15 @@ const mockRoles: IAMRole[] = [
     name: 'admin',
     description: 'Full access',
     permissions: ['read', 'write', 'delete'],
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
+  },
+  {
+    id: 'role-2',
+    tenant_id: 'default',
+    name: 'viewer',
+    description: 'Read-only access',
+    permissions: ['read'],
     created_at: '2025-01-01T00:00:00Z',
     updated_at: '2025-01-01T00:00:00Z',
   },
@@ -183,7 +194,9 @@ describe('IAMView', () => {
 
     await waitFor(() => {
       expect(mockCreateUser).toHaveBeenCalledWith(
-        'default',
+        // IAMView defaults selectedTenantID to qrdb's canonical 'system' tenant
+        // (the legacy 'default' tenant was retired).
+        'system',
         expect.objectContaining({
           username: 'charlie',
           email: 'charlie@example.com',
@@ -250,11 +263,19 @@ describe('IAMView', () => {
     }
   });
 
-  it('renders user.roles as badges in the Roles column', async () => {
+  // BUG 2 regression: user.roles contains role UUIDs from the backend; the view
+  // must resolve each UUID to the human-readable role name via the loaded roles
+  // list and never display raw UUIDs to operators.
+  it('resolves role UUIDs to role names in the Users table', async () => {
     render(IAMView);
     await waitFor(() => {
-      // alice has roles: ['admin'] — the badge must appear.
+      // alice carries role-1 (UUID) which must render as 'admin' (name).
       expect(screen.getByText('admin')).toBeInTheDocument();
+      // bob carries role-2 (UUID) which must render as 'viewer' (name).
+      expect(screen.getByText('viewer')).toBeInTheDocument();
+      // Raw UUIDs must NOT be visible to operators.
+      expect(screen.queryByText('role-1')).not.toBeInTheDocument();
+      expect(screen.queryByText('role-2')).not.toBeInTheDocument();
     });
   });
 

@@ -873,3 +873,77 @@ func (h *Handler) handleKMSUpdateKeyMetadata(ctx context.Context, req *Request) 
 
 	return &Response{Status: StatusOK, Payload: payload}
 }
+
+// =============================================================================
+// KMS Key Administration Handlers
+// =============================================================================
+
+func (h *Handler) handleKMSRevokeKey(ctx context.Context, req *Request) *Response {
+	if h.kmsService == nil {
+		return h.errorResponse(api.NewServiceUnavailableError("KMS"))
+	}
+
+	var revokeReq service.RevokeKeyRequest
+	if err := DecodePayload(req.Payload, &revokeReq); err != nil {
+		return h.errorResponse(err)
+	}
+
+	resp, err := h.kmsService.RevokeKey(ctx, &revokeReq)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	payload, err := EncodePayload(resp)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	return &Response{Status: StatusOK, Payload: payload}
+}
+
+func (h *Handler) handleKMSGetPublicKey(ctx context.Context, req *Request) *Response {
+	if h.kmsService == nil {
+		return h.errorResponse(api.NewServiceUnavailableError("KMS"))
+	}
+
+	var pubReq service.GetPublicKeyRequest
+	if err := DecodePayload(req.Payload, &pubReq); err != nil {
+		return h.errorResponse(err)
+	}
+
+	resp, err := h.kmsService.GetPublicKey(ctx, &pubReq)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	payload, err := EncodePayload(resp)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	return &Response{Status: StatusOK, Payload: payload}
+}
+
+// handleKMSGetSupportedAlgorithms returns the backend's supported algorithm
+// names. The payload is the JSON-encoded []string the service layer returns,
+// matching the shape the SDK KMS client accepts directly.
+func (h *Handler) handleKMSGetSupportedAlgorithms(ctx context.Context, req *Request) *Response {
+	if h.kmsService == nil {
+		return h.errorResponse(api.NewServiceUnavailableError("KMS"))
+	}
+
+	algorithms, err := h.kmsService.GetSupportedAlgorithms(ctx)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+	if algorithms == nil {
+		algorithms = []string{}
+	}
+
+	payload, err := EncodePayload(algorithms)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	return &Response{Status: StatusOK, Payload: payload}
+}

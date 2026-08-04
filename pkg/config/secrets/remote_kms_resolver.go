@@ -130,11 +130,7 @@ func (r *RemoteKMSResolver) Resolve(ctx context.Context, raw string) (*SecretVal
 		return nil, NewRemoteConnectionFailedError(op, host, RemoteKMSScheme, err)
 	}
 
-	return &SecretValue{
-		Raw:      raw,
-		Value:    string(secretData),
-		Strategy: StrategyRemoteKMS,
-	}, nil
+	return NewSecretValue(raw, secretData, StrategyRemoteKMS), nil
 }
 
 // parseURI extracts the host and path from a remote-kms:// URI.

@@ -119,6 +119,22 @@ describe('SessionDetail — active session', () => {
     expect(screen.getByText('Close session?')).toBeInTheDocument();
   });
 
+  it('confirming close reflects the closed state immediately (optimistic)', async () => {
+    const { container } = render(SessionDetail, { props: { session: activeSession } });
+    await fireEvent.click(screen.getByRole('button', { name: /^close session$/i }));
+    // The confirm button lives inside a native <dialog>; jsdom hides a
+    // non-showModal()'d dialog's contents from the a11y tree (daisyUI uses a
+    // CSS .modal-open, visible in a real browser), so query it from the DOM.
+    const confirmBtn = container.querySelector(
+      'button[aria-label="Confirm close session"]',
+    ) as HTMLButtonElement | null;
+    expect(confirmBtn).not.toBeNull();
+    await fireEvent.click(confirmBtn!);
+    // The closed sentinel text must appear immediately, without any SSE echo.
+    const closed = await screen.findByText(/This session is closed/i);
+    expect(closed).toBeInTheDocument();
+  });
+
   it('confirm dialog has Keep Open and Close Session buttons', async () => {
     render(SessionDetail, { props: { session: activeSession } });
     const closeBtn = screen.getByRole('button', { name: /close session/i });

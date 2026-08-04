@@ -89,6 +89,12 @@ service Barrier {
   // BarrierRootToken generates a fresh root token by proving knowledge of
   // the master key through Shamir shares.
   rpc BarrierRootToken(BarrierRootTokenRequest) returns (BarrierRootTokenResponse);
+
+  // BarrierEnableEncryption migrates the system barrier from the none
+  // (unencrypted) strategy to a keyed strategy in place. This RPC is
+  // implemented only when the embedded qrdb node is available; the
+  // transport BarrierClient stubs it with UNIMPLEMENTED.
+  rpc BarrierEnableEncryption(BarrierEnableEncryptionRequest) returns (google.protobuf.Empty);
 }
 
 // =============================================================================
@@ -196,4 +202,31 @@ message BarrierRootTokenResponse {
   string token = 1;
   // created_at is RFC3339 (UTC) or empty when not supplied by the server.
   string created_at = 2;
+}
+
+// BarrierEnableEncryptionRequest requests at-rest encryption migration for the
+// system barrier.
+message BarrierEnableEncryptionRequest {
+  // target_strategy is the keyed strategy to migrate to: "passphrase" or
+  // "shamir". Required; must not be "none".
+  string target_strategy = 1;
+
+  // mechanism selects the physical re-encryption approach: "swap" (default,
+  // ~2x peak disk, crash-safe) or "inplace" (lower peak disk).
+  string mechanism = 2;
+
+  // availability controls write availability during migration: "online"
+  // (default, keeps serving writes) or "quiesced" (blocks writes).
+  string availability = 3;
+
+  // passphrase is required for a passphrase-target migration.
+  string passphrase = 4;
+
+  // shamir_threshold is the M-of-N quorum threshold for a Shamir-target
+  // migration. Must be >= 2 and <= shamir_total.
+  int32 shamir_threshold = 5;
+
+  // shamir_total is the total number of Shamir shares for a Shamir-target
+  // migration. Must be >= shamir_threshold.
+  int32 shamir_total = 6;
 }

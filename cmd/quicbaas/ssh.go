@@ -339,7 +339,7 @@ func runSSHKeysGenerate(cmd *cobra.Command, _ []string) error {
 		algo = "ed25519"
 	}
 	if !isValidSSHAlgorithm(algo) {
-		return fmt.Errorf("%w: %q", ErrSSHInvalidKeyType, algo)
+		return &SentinelDetailError{Sentinel: ErrSSHInvalidKeyType, Detail: fmt.Sprintf("%q", algo)}
 	}
 
 	client, closer, err := sshClientWithCloser()

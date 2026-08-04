@@ -106,7 +106,7 @@ type PushService struct {
 	storage       storage.Storage // For persistence and dedup
 	codec         *CodecResolver  // Codec resolution
 	deltaComputer *DeltaComputer  // For delta computation
-	dedup         *DedupStoreImpl // Deduplication
+	dedup         *DedupStore     // Deduplication
 	running       atomic.Bool
 	subscriptions sync.Map // subscriptionID -> *subscriptionEntry
 	channels      sync.Map // channelName -> *Channel (channel metadata cache)
@@ -138,9 +138,9 @@ func NewPushService(log *logger.Logger, stor storage.Storage, opts ...ServiceOpt
 		deltaComputer = NewDeltaComputer(log)
 	}
 
-	var dedup *DedupStoreImpl
+	var dedup *DedupStore
 	if config.dedupEnabled && stor != nil && log != nil {
-		dedup = NewDedupStoreImpl(stor, log, WithDedupStoreWindow(config.dedupWindow))
+		dedup = NewDedupStore(stor, log, WithDedupStoreWindow(config.dedupWindow))
 	}
 
 	return &PushService{
@@ -749,7 +749,7 @@ func (ps *PushService) GetCodecResolver() *CodecResolver {
 
 // GetDedupStore returns the deduplication store.
 // Returns nil if deduplication is not enabled.
-func (ps *PushService) GetDedupStore() *DedupStoreImpl {
+func (ps *PushService) GetDedupStore() *DedupStore {
 	return ps.dedup
 }
 

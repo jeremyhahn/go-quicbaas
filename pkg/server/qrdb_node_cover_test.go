@@ -29,7 +29,7 @@ import (
 func TestBuildXKMSCryptoOptions_SoftwareDefault(t *testing.T) {
 	cfg := config.TestConfig()
 
-	opts, err := buildXKMSCryptoOptions(cfg, nil)
+	opts, err := buildXKMSCryptoOptions(cfg, nil, nil)
 	require.NoError(t, err, "software-strategy crypto options must build")
 	assert.NotNil(t, opts)
 }
@@ -42,7 +42,7 @@ func TestBuildXKMSCryptoOptions_HardwareStrategyFactory(t *testing.T) {
 	cfg := config.TestConfig()
 	cfg.Seal.Strategy = "tpm2"
 
-	opts, err := buildXKMSCryptoOptions(cfg, nil)
+	opts, err := buildXKMSCryptoOptions(cfg, nil, nil)
 	require.NoError(t, err, "the tpm2 factory closure must be captured without invoking the TPM")
 	assert.NotNil(t, opts)
 }

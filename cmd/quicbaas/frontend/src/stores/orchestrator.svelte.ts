@@ -240,7 +240,12 @@ let tasksLoading = $state(false);
 let backends: AgentBackendInfo[] = $state([]);
 let health: HealthCheckReport | null = $state(null);
 let events: JobEvent[] = $state([]);
-let activeTenantID = $state('default');
+// 'system' is qrdb's canonical control-plane tenant (qrdbsdk.SystemTenantID),
+// always provisioned at first-boot. The legacy 'default' tenant was permanently
+// retired by qrdb's tenant-isolation refactor, so defaulting to it made every
+// tenant-scoped fetch (agents, jobs, sessions, tasks) return an empty list until
+// the user manually switched tenants.
+let activeTenantID = $state('system');
 
 // Per-resource timestamps of the last successful fetch (ms since epoch).
 // 0 means never fetched.
@@ -538,6 +543,32 @@ export function stopOrchestratorPolling(): void {
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', _onVisibilityChange);
   }
+}
+
+/**
+ * resetOrchestratorStore stops polling and clears all cached data and the
+ * stale-while-revalidate timestamps. Call it on logout / tenant switch so the
+ * next session does not see the previous user's cached jobs, agents, sessions
+ * or tasks and so the next poll tick performs a real fetch rather than serving
+ * stale data. (Tests also use it to isolate the module-level cache between
+ * cases — without the timestamp reset the second mount considers data fresh and
+ * skips the fetch.)
+ */
+export function resetOrchestratorStore(): void {
+  stopOrchestratorPolling();
+  jobs = [];
+  selectedJob = null;
+  agents = [];
+  sessions = [];
+  tasks = [];
+  backends = [];
+  health = null;
+  events = [];
+  _jobsFetchedAt = 0;
+  _agentsFetchedAt = 0;
+  _sessionsFetchedAt = 0;
+  _tasksFetchedAt = 0;
+  _healthFetchedAt = 0;
 }
 
 // ---------------------------------------------------------------------------

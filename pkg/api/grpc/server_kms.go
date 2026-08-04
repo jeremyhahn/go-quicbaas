@@ -40,7 +40,6 @@ import (
 // KMSServer wraps the KMS manager for gRPC endpoints.
 type KMSServer struct {
 	pb.UnimplementedKeyManagementServer
-	pb.UnimplementedKeyRotationPolicyServer
 	kmsMgr   interfaces.KMSManager
 	kmsSvc   service.KMSService // optional: for service-layer operations
 	logger   *logger.Logger
@@ -308,6 +307,39 @@ func (s *KMSServer) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetK
 		Key:       keyHandle,
 		Metadata:  keyMetadata,
 		Timestamp: now.Unix(),
+	}, nil
+}
+
+// GetPublicKey retrieves the DER-encoded public key component of an asymmetric
+// key. Requires the service layer (kmsSvc). Returns Unimplemented when kmsSvc is nil.
+func (s *KMSServer) GetPublicKey(ctx context.Context, req *pb.GetPublicKeyRequest) (*pb.GetPublicKeyResponse, error) {
+	s.logger.WithField("key_id", req.GetKeyId()).Debug("Processing GetPublicKey request")
+
+	if req.GetKeyId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_id is required")
+	}
+
+	if s.kmsSvc == nil {
+		return nil, status.Error(codes.Unimplemented, "GetPublicKey requires service layer; use NewKMSServerWithService")
+	}
+
+	svcReq := &service.GetPublicKeyRequest{
+		KeyID:   req.GetKeyId(),
+		Version: req.GetVersion(),
+	}
+
+	resp, err := s.kmsSvc.GetPublicKey(ctx, svcReq)
+	if err != nil {
+		return nil, convertKMSError(err)
+	}
+
+	protoAlg, _ := convertServiceKeyAlgorithm(resp.Algorithm)
+	return &pb.GetPublicKeyResponse{
+		KeyId:     resp.KeyID,
+		PublicKey: resp.PublicKey,
+		Algorithm: protoAlg,
+		Version:   resp.Version,
+		Timestamp: resp.Timestamp.Unix(),
 	}, nil
 }
 
@@ -920,8 +952,8 @@ func (s *KMSServer) DeleteKeyRotationPolicy(ctx context.Context, req *pb.DeleteK
 	}, nil
 }
 
-// protoToServiceRotationPolicy converts a proto RotationPolicyProto to service RotationPolicy.
-func protoToServiceRotationPolicy(p *pb.RotationPolicyProto) *service.RotationPolicy {
+// protoToServiceRotationPolicy converts a proto RotationPolicy to a service RotationPolicy.
+func protoToServiceRotationPolicy(p *pb.RotationPolicy) *service.RotationPolicy {
 	if p == nil {
 		return nil
 	}
@@ -931,25 +963,25 @@ func protoToServiceRotationPolicy(p *pb.RotationPolicyProto) *service.RotationPo
 		RetainVersions: int(p.GetRetainVersions()),
 		AutoRotate:     p.GetAutoRotate(),
 	}
-	if p.GetNextRotationUnix() > 0 {
-		rp.NextRotation = time.Unix(p.GetNextRotationUnix(), 0)
+	if p.GetNextRotation() > 0 {
+		rp.NextRotation = time.Unix(p.GetNextRotation(), 0)
 	}
 	return rp
 }
 
-// serviceToProtoRotationPolicy converts a service RotationPolicy to proto RotationPolicyProto.
-func serviceToProtoRotationPolicy(p *service.RotationPolicy) *pb.RotationPolicyProto {
+// serviceToProtoRotationPolicy converts a service RotationPolicy to a proto RotationPolicy.
+func serviceToProtoRotationPolicy(p *service.RotationPolicy) *pb.RotationPolicy {
 	if p == nil {
 		return nil
 	}
-	proto := &pb.RotationPolicyProto{
+	proto := &pb.RotationPolicy{
 		Enabled:         p.Enabled,
 		IntervalSeconds: int64(p.Interval / time.Second),
 		RetainVersions:  int32(p.RetainVersions), //nolint:gosec // G115: retain_versions bounded
 		AutoRotate:      p.AutoRotate,
 	}
 	if !p.NextRotation.IsZero() {
-		proto.NextRotationUnix = p.NextRotation.Unix()
+		proto.NextRotation = p.NextRotation.Unix()
 	}
 	return proto
 }

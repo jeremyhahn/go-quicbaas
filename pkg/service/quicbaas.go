@@ -423,7 +423,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	svc.authService = &authService{svc: svc}
 	svc.rbacService = &rbacService{svc: svc}
 	svc.cacheService = &cacheService{svc: svc}
-	svc.healthService = &healthService{svc: svc}
+	svc.healthService = newHealthService(svc)
 	// Initialize timeseries storage if provided
 	var tsStorage interfaces.TimeSeriesStorage
 	if b.tsStorage != nil {
@@ -3184,22 +3184,69 @@ func (c *cacheService) UpdateCacheConfig(ctx context.Context, req *UpdateCacheCo
 	return resp, nil
 }
 
-type healthService struct{ svc *quicBaaS }
+type healthService struct {
+	svc     *quicBaaS
+	checker *qrdbsdk.HealthChecker
+}
+
+// newHealthService builds the health service backed by the stack's shared
+// health-check framework (qrdb SDK HealthChecker). Component checks are
+// registered here; Health executes them and maps the shared results onto
+// the service wire types, replacing the previous hardcoded "healthy" report.
+func newHealthService(svc *quicBaaS) *healthService {
+	h := &healthService{svc: svc, checker: qrdbsdk.NewHealthChecker()}
+	h.checker.RegisterCheck("raft", func(ctx context.Context) qrdbsdk.HealthCheckResult {
+		ready, reason := h.raftReadiness(ctx)
+		if ready {
+			return qrdbsdk.HealthCheckResult{
+				Name:    "raft",
+				Status:  qrdbsdk.HealthCheckStatusHealthy,
+				Message: "Raft operational",
+			}
+		}
+		return qrdbsdk.HealthCheckResult{
+			Name:    "raft",
+			Status:  qrdbsdk.HealthCheckStatusUnhealthy,
+			Message: reason,
+		}
+	})
+	h.checker.MarkStarted()
+	return h
+}
+
+// mapSharedHealthStatus converts the shared framework status to the service
+// wire enum (which additionally carries HealthStatusUnknown).
+func mapSharedHealthStatus(s qrdbsdk.HealthCheckStatus) HealthStatus {
+	switch s {
+	case qrdbsdk.HealthCheckStatusHealthy:
+		return HealthStatusHealthy
+	case qrdbsdk.HealthCheckStatusDegraded:
+		return HealthStatusDegraded
+	case qrdbsdk.HealthCheckStatusUnhealthy:
+		return HealthStatusUnhealthy
+	default:
+		return HealthStatusUnknown
+	}
+}
 
 func (h *healthService) Health(ctx context.Context, req *HealthRequest) (*HealthResponse, error) {
+	results := h.checker.Ready(ctx)
+
 	resp := &HealthResponse{
-		Status:        HealthStatusHealthy,
+		Status:        mapSharedHealthStatus(qrdbsdk.AggregateHealthCheckStatus(results)),
 		NodeID:        h.svc.config.NodeID,
 		Version:       h.svc.config.Version,
 		UptimeSeconds: uint64(time.Since(h.svc.startTime).Seconds()),
 	}
 
 	if req.IncludeDetails {
-		resp.Details = make(map[string]*ComponentHealth)
-		resp.Details["raft"] = &ComponentHealth{
-			Status:    HealthStatusHealthy,
-			Message:   "Raft operational",
-			LastCheck: time.Now().UnixNano(),
+		resp.Details = make(map[string]*ComponentHealth, len(results))
+		for _, res := range results {
+			resp.Details[res.Name] = &ComponentHealth{
+				Status:    mapSharedHealthStatus(res.Status),
+				Message:   res.Message,
+				LastCheck: time.Now().UnixNano(),
+			}
 		}
 	}
 
@@ -3210,20 +3257,22 @@ func (h *healthService) Liveness(ctx context.Context, req *LivenessRequest) (*Li
 	return &LivenessResponse{Alive: true}, nil
 }
 
-func (h *healthService) Readiness(ctx context.Context, req *ReadinessRequest) (*ReadinessResponse, error) {
-	// Basic readiness: service must be initialized
+// raftReadiness reports whether the Raft/data plane is ready to serve, and a
+// human-readable reason when it is not. It is the single readiness predicate
+// shared by the readiness probe and the registered "raft" health check.
+func (h *healthService) raftReadiness(ctx context.Context) (bool, string) {
 	if h.svc == nil || h.svc.config == nil {
-		return &ReadinessResponse{Ready: false, Reason: "service not initialized"}, nil
+		return false, "service not initialized"
 	}
 
 	// In standalone mode, no Raft shard leaders are required
 	if h.svc.config.Mode == "" || h.svc.config.Mode == "standalone" {
-		return &ReadinessResponse{Ready: true}, nil
+		return true, ""
 	}
 
 	// If no qrdb client, we're in local/memory mode - always ready
 	if h.svc.qrdbClient == nil {
-		return &ReadinessResponse{Ready: true}, nil
+		return true, ""
 	}
 
 	// Check all configured shards have elected leaders.
@@ -3240,22 +3289,16 @@ func (h *healthService) Readiness(ctx context.Context, req *ReadinessRequest) (*
 	client, err := h.svc.qrdbForShard(1) // shard 1 is the admin entry point
 	if err != nil {
 		if h.svc.raftNode != nil {
-			return &ReadinessResponse{Ready: true}, nil
+			return true, ""
 		}
-		return &ReadinessResponse{
-			Ready:  false,
-			Reason: "shard has no SDK client available",
-		}, nil
+		return false, "shard has no SDK client available"
 	}
 	topology, err := client.Admin().GetTopology(ctx)
 	if err != nil {
 		if h.svc.raftNode != nil {
-			return &ReadinessResponse{Ready: true}, nil
+			return true, ""
 		}
-		return &ReadinessResponse{
-			Ready:  false,
-			Reason: "shard state check failed",
-		}, nil
+		return false, "shard state check failed"
 	}
 
 	// Require every Raft shard reported by the node-host topology to have an
@@ -3270,20 +3313,19 @@ func (h *healthService) Readiness(ctx context.Context, req *ReadinessRequest) (*
 			if h.svc.raftNode != nil {
 				continue
 			}
-			return &ReadinessResponse{
-				Ready:  false,
-				Reason: "shard has no leader elected",
-			}, nil
+			return false, "shard has no leader elected"
 		}
 	}
 	if !sawShard && h.svc.raftNode == nil {
-		return &ReadinessResponse{
-			Ready:  false,
-			Reason: "no raft shards available",
-		}, nil
+		return false, "no raft shards available"
 	}
 
-	return &ReadinessResponse{Ready: true}, nil
+	return true, ""
+}
+
+func (h *healthService) Readiness(ctx context.Context, req *ReadinessRequest) (*ReadinessResponse, error) {
+	ready, reason := h.raftReadiness(ctx)
+	return &ReadinessResponse{Ready: ready, Reason: reason}, nil
 }
 
 type timeSeriesService struct {

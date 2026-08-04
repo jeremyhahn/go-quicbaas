@@ -243,6 +243,7 @@ func (s *Server) HandleCryptoSign(w http.ResponseWriter, r *http.Request) {
 	var reqBody struct {
 		Message       []byte                `json:"message"`
 		HashAlgorithm service.HashAlgorithm `json:"hash_algorithm,omitempty"`
+		PreHashed     bool                  `json:"pre_hashed,omitempty"`
 	}
 
 	if err := json.Unmarshal(body, &reqBody); err != nil {
@@ -259,6 +260,7 @@ func (s *Server) HandleCryptoSign(w http.ResponseWriter, r *http.Request) {
 		KeyID:         keyName,
 		Message:       reqBody.Message,
 		HashAlgorithm: reqBody.HashAlgorithm,
+		PreHashed:     reqBody.PreHashed,
 	}
 
 	cryptoService := s.service.(interface {

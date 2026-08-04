@@ -1208,9 +1208,9 @@ func (s *Server) ensureOrchestratorDaemonClient(ctx context.Context, appManager 
 		// gone, we can't recover the plaintext secret (AppManager never
 		// stores it). Rotate the secret to get a fresh plaintext.
 		if strings.Contains(err.Error(), "already") {
-			return nil, fmt.Errorf("ensureOrchestratorDaemonClient: app %q exists but cache %q is missing — delete the app via `quicbaas iam app delete` and restart to re-bootstrap: %w", OrchestratorDaemonClientAppName, path, err)
+			return nil, &ServerCauseError{Message: fmt.Sprintf("ensureOrchestratorDaemonClient: app %q exists but cache %q is missing — delete the app via `quicbaas iam app delete` and restart to re-bootstrap", OrchestratorDaemonClientAppName, path), Cause: err}
 		}
-		return nil, fmt.Errorf("ensureOrchestratorDaemonClient: register app: %w", err)
+		return nil, &ServerCauseError{Message: "ensureOrchestratorDaemonClient: register app", Cause: err}
 	}
 
 	client := &OrchestratorDaemonClient{
@@ -1220,7 +1220,7 @@ func (s *Server) ensureOrchestratorDaemonClient(ctx context.Context, appManager 
 		TenantID:     systemTenant,
 	}
 	if err := writeOrchestratorDaemonClient(path, client); err != nil {
-		return nil, fmt.Errorf("ensureOrchestratorDaemonClient: persist cache: %w", err)
+		return nil, &ServerCauseError{Message: "ensureOrchestratorDaemonClient: persist cache", Cause: err}
 	}
 	s.logger.Infof("Bootstrapped orchestrator daemon client (app=%q, client_id=%s) — credentials cached at %s",
 		OrchestratorDaemonClientAppName, client.ClientID, path)

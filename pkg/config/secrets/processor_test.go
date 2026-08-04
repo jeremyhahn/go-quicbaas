@@ -16,11 +16,10 @@ package secrets
 import (
 	"context"
 	stderrors "errors"
-	"reflect"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 )
 
 // mockResolver is a test resolver that resolves values with a "mock://" prefix.
@@ -40,12 +39,8 @@ func (m *mockResolver) Resolve(ctx context.Context, raw string) (*SecretValue, e
 	if m.resolveFunc != nil {
 		return m.resolveFunc(ctx, raw)
 	}
-	// Default: return the value after the prefix as the resolved value
-	return &SecretValue{
-		Raw:      raw,
-		Value:    raw[7:], // Strip "mock://"
-		Strategy: StrategyLocalKMS,
-	}, nil
+	// Default: return the value after the prefix as the resolved value.
+	return NewSecretValue(raw, []byte(raw[7:]), StrategyLocalKMS), nil
 }
 
 // failingResolver always fails to resolve.
@@ -61,35 +56,6 @@ func (f *failingResolver) CanResolve(raw string) bool {
 
 func (f *failingResolver) Resolve(ctx context.Context, raw string) (*SecretValue, error) {
 	return nil, &ResolutionFailedError{URI: raw, Reason: "intentional failure"}
-}
-
-// mockLogger captures log calls for testing.
-type mockLogger struct {
-	debugCalls []logCall
-	infoCalls  []logCall
-	warnCalls  []logCall
-	errorCalls []logCall
-}
-
-type logCall struct {
-	msg    string
-	fields []interface{}
-}
-
-func (l *mockLogger) Debug(msg string, fields ...interface{}) {
-	l.debugCalls = append(l.debugCalls, logCall{msg: msg, fields: fields})
-}
-
-func (l *mockLogger) Info(msg string, fields ...interface{}) {
-	l.infoCalls = append(l.infoCalls, logCall{msg: msg, fields: fields})
-}
-
-func (l *mockLogger) Warn(msg string, fields ...interface{}) {
-	l.warnCalls = append(l.warnCalls, logCall{msg: msg, fields: fields})
-}
-
-func (l *mockLogger) Error(msg string, fields ...interface{}) {
-	l.errorCalls = append(l.errorCalls, logCall{msg: msg, fields: fields})
 }
 
 func TestConfigProcessor_Process_SimpleStruct(t *testing.T) {
@@ -117,16 +83,8 @@ func TestConfigProcessor_Process_SimpleStruct(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	if result.Resolved[0].FieldPath != "Password" {
-		t.Errorf("expected field path 'Password', got %q", result.Resolved[0].FieldPath)
-	}
-
-	if result.Resolved[0].Original != "mock://secret-password" {
-		t.Errorf("expected original 'mock://secret-password', got %q", result.Resolved[0].Original)
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Password != "secret-password" {
@@ -181,13 +139,8 @@ func TestConfigProcessor_Process_NestedStructs(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	expectedPath := "Server.Database.Password"
-	if result.Resolved[0].FieldPath != expectedPath {
-		t.Errorf("expected field path %q, got %q", expectedPath, result.Resolved[0].FieldPath)
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Server.Database.Password != "db-password" {
@@ -226,8 +179,8 @@ func TestConfigProcessor_Process_Pointers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Creds.Password != "ptr-secret" {
@@ -262,8 +215,8 @@ func TestConfigProcessor_Process_NilPointers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 0 {
+		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
 	}
 
 	if len(result.Errors) != 0 {
@@ -301,19 +254,8 @@ func TestConfigProcessor_Process_Slices(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
-	}
-
-	// Verify paths
-	expectedPaths := map[string]bool{
-		"Backends[0].Secret": true,
-		"Backends[1].Secret": true,
-	}
-	for _, r := range result.Resolved {
-		if !expectedPaths[r.FieldPath] {
-			t.Errorf("unexpected field path: %q", r.FieldPath)
-		}
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	// Verify values
@@ -353,8 +295,8 @@ func TestConfigProcessor_Process_Maps(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	// Verify map values are updated
@@ -411,8 +353,8 @@ func TestConfigProcessor_Process_MixedTypes(t *testing.T) {
 	}
 
 	// Should resolve: Password, Nested.Secret, Secrets[0], Secrets[1], Tags[api]
-	if len(result.Resolved) != 5 {
-		t.Fatalf("expected 5 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 5 {
+		t.Fatalf("expected 5 resolved secrets, got %d", result.Resolved)
 	}
 
 	// Verify original non-secret values unchanged
@@ -467,8 +409,8 @@ func TestConfigProcessor_Process_PreservesNonSecretFields(t *testing.T) {
 	}
 
 	// No secrets should be resolved
-	if len(result.Resolved) != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 0 {
+		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
 	}
 
 	// All values should be unchanged
@@ -492,7 +434,7 @@ func TestConfigProcessor_Process_PreservesNonSecretFields(t *testing.T) {
 	}
 }
 
-func TestConfigProcessor_Process_TracksResolvedSecretsCorrectly(t *testing.T) {
+func TestConfigProcessor_Process_TracksResolvedCount(t *testing.T) {
 	type Config struct {
 		Secret1 string
 		Secret2 string
@@ -517,39 +459,19 @@ func TestConfigProcessor_Process_TracksResolvedSecretsCorrectly(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 3 {
-		t.Fatalf("expected 3 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 3 {
+		t.Fatalf("expected 3 resolved secrets, got %d", result.Resolved)
 	}
 
-	// Build map of resolved secrets for easier testing
-	resolvedMap := make(map[string]ResolvedSecret)
-	for _, r := range result.Resolved {
-		resolvedMap[r.FieldPath] = r
+	// Verify each secret was resolved correctly
+	if cfg.Secret1 != "value1" {
+		t.Errorf("Secret1: expected 'value1', got %q", cfg.Secret1)
 	}
-
-	// Verify each resolved secret
-	testCases := []struct {
-		path     string
-		original string
-		strategy ResolvedStrategy
-	}{
-		{"Secret1", "mock://value1", StrategyLocalKMS},
-		{"Secret2", "mock://value2", StrategyLocalKMS},
-		{"Secret3", "mock://value3", StrategyLocalKMS},
+	if cfg.Secret2 != "value2" {
+		t.Errorf("Secret2: expected 'value2', got %q", cfg.Secret2)
 	}
-
-	for _, tc := range testCases {
-		r, ok := resolvedMap[tc.path]
-		if !ok {
-			t.Errorf("missing resolved secret for path %q", tc.path)
-			continue
-		}
-		if r.Original != tc.original {
-			t.Errorf("path %q: expected original %q, got %q", tc.path, tc.original, r.Original)
-		}
-		if r.Strategy != tc.strategy {
-			t.Errorf("path %q: expected strategy %v, got %v", tc.path, tc.strategy, r.Strategy)
-		}
+	if cfg.Secret3 != "value3" {
+		t.Errorf("Secret3: expected 'value3', got %q", cfg.Secret3)
 	}
 }
 
@@ -580,8 +502,8 @@ func TestConfigProcessor_Process_HandlesErrorsGracefully(t *testing.T) {
 	}
 
 	// Should resolve 2 secrets successfully
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	// Should have 1 error
@@ -623,18 +545,9 @@ func TestConfigProcessor_Process_NilConfig(t *testing.T) {
 		t.Fatal("expected error for nil config")
 	}
 
-	var de *errors.QBError
-	if !stderrors.As(err, &de) {
-		t.Fatalf("expected QBError, got %T", err)
-	}
-
-	if de.Code != errors.ErrInvalidInput {
-		t.Errorf("expected ErrInvalidInput, got %v", de.Code)
-	}
-
-	var configNilErr *ConfigNilError
-	if !stderrors.As(err, &configNilErr) {
-		t.Errorf("expected ConfigNilError, got %T", de.Err)
+	var pie *ProcessorInputError
+	if !stderrors.As(err, &pie) {
+		t.Fatalf("expected ProcessorInputError, got %T", err)
 	}
 
 	if result != nil {
@@ -659,18 +572,9 @@ func TestConfigProcessor_Process_NonPointer(t *testing.T) {
 		t.Fatal("expected error for non-pointer config")
 	}
 
-	var de *errors.QBError
-	if !stderrors.As(err, &de) {
-		t.Fatalf("expected QBError, got %T", err)
-	}
-
-	if de.Code != errors.ErrInvalidInput {
-		t.Errorf("expected ErrInvalidInput, got %v", de.Code)
-	}
-
-	var notPtrErr *ConfigNotPointerError
-	if !stderrors.As(err, &notPtrErr) {
-		t.Errorf("expected ConfigNotPointerError, got %T", de.Err)
+	var pie *ProcessorInputError
+	if !stderrors.As(err, &pie) {
+		t.Fatalf("expected ProcessorInputError, got %T", err)
 	}
 
 	if result != nil {
@@ -690,18 +594,9 @@ func TestConfigProcessor_Process_PointerToNonStruct(t *testing.T) {
 		t.Fatal("expected error for pointer to non-struct")
 	}
 
-	var de *errors.QBError
-	if !stderrors.As(err, &de) {
-		t.Fatalf("expected QBError, got %T", err)
-	}
-
-	if de.Code != errors.ErrInvalidInput {
-		t.Errorf("expected ErrInvalidInput, got %v", de.Code)
-	}
-
-	var notStructErr *ConfigNotStructError
-	if !stderrors.As(err, &notStructErr) {
-		t.Errorf("expected ConfigNotStructError, got %T", de.Err)
+	var pie *ProcessorInputError
+	if !stderrors.As(err, &pie) {
+		t.Fatalf("expected ProcessorInputError, got %T", err)
 	}
 
 	if result != nil {
@@ -717,7 +612,7 @@ func TestConfigProcessor_Process_NilPointer(t *testing.T) {
 	registry := NewResolverRegistry()
 	processor := NewConfigProcessor(registry)
 
-	var cfg *Config = nil
+	var cfg *Config
 
 	ctx := context.Background()
 	result, err := processor.Process(ctx, cfg)
@@ -726,13 +621,9 @@ func TestConfigProcessor_Process_NilPointer(t *testing.T) {
 		t.Fatal("expected error for nil pointer")
 	}
 
-	var de *errors.QBError
-	if !stderrors.As(err, &de) {
-		t.Fatalf("expected QBError, got %T", err)
-	}
-
-	if de.Code != errors.ErrInvalidInput {
-		t.Errorf("expected ErrInvalidInput, got %v", de.Code)
+	var pie *ProcessorInputError
+	if !stderrors.As(err, &pie) {
+		t.Fatalf("expected ProcessorInputError, got %T", err)
 	}
 
 	if result != nil {
@@ -745,7 +636,7 @@ func TestConfigProcessor_Process_ContextCancellation(t *testing.T) {
 		Secret string
 	}
 
-	// Create a resolver that blocks until context is cancelled
+	// Create a resolver that blocks until context is cancelled.
 	blockingResolver := &mockResolver{
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
 			<-ctx.Done()
@@ -771,7 +662,7 @@ func TestConfigProcessor_Process_ContextCancellation(t *testing.T) {
 		t.Fatalf("unexpected top-level error: %v", err)
 	}
 
-	// The result should have an error due to cancellation
+	// The result should have an error due to cancellation.
 	if len(result.Errors) == 0 {
 		t.Fatal("expected errors from cancellation")
 	}
@@ -791,110 +682,26 @@ func TestConfigProcessor_Process_NilContext(t *testing.T) {
 
 	cfg := &Config{Name: "test"}
 
+	//nolint:staticcheck // intentional nil context for testing
 	result, err := processor.Process(nil, cfg)
 
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
 
-	var de *errors.QBError
-	if !stderrors.As(err, &de) {
-		t.Fatalf("expected QBError, got %T", err)
-	}
-
-	if de.Code != errors.ErrInvalidInput {
-		t.Errorf("expected ErrInvalidInput, got %v", de.Code)
+	if !stderrors.Is(err, qrdbsecret.ErrNilContext) {
+		t.Errorf("expected ErrNilContext, got %T: %v", err, err)
 	}
 
 	if result != nil {
 		t.Errorf("expected nil result, got %+v", result)
-	}
-}
-
-func TestConfigProcessor_Process_NilRegistry(t *testing.T) {
-	type Config struct {
-		Name string
-	}
-
-	processor := NewConfigProcessor(nil)
-
-	cfg := &Config{Name: "test"}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err == nil {
-		t.Fatal("expected error for nil registry")
-	}
-
-	var de *errors.QBError
-	if !stderrors.As(err, &de) {
-		t.Fatalf("expected QBError, got %T", err)
-	}
-
-	if de.Code != errors.ErrInvalidInput {
-		t.Errorf("expected ErrInvalidInput, got %v", de.Code)
-	}
-
-	var registryNilErr *RegistryNilError
-	if !stderrors.As(err, &registryNilErr) {
-		t.Errorf("expected RegistryNilError, got %T", de.Err)
-	}
-
-	if result != nil {
-		t.Errorf("expected nil result, got %+v", result)
-	}
-}
-
-func TestConfigProcessor_Process_WithLogger(t *testing.T) {
-	type Config struct {
-		Secret string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	logger := &mockLogger{}
-	processor := NewConfigProcessor(registry, WithLogger(logger))
-
-	cfg := &Config{
-		Secret: "mock://test-secret",
-	}
-
-	ctx := context.Background()
-	_, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Should have debug logs for resolution
-	if len(logger.debugCalls) == 0 {
-		t.Error("expected debug log calls")
-	}
-
-	// Should have info log for completion
-	if len(logger.infoCalls) == 0 {
-		t.Error("expected info log call for completion")
-	}
-
-	// Find the completion log
-	found := false
-	for _, call := range logger.infoCalls {
-		if call.msg == "config processing completed" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected 'config processing completed' info log")
 	}
 }
 
 func TestConfigProcessor_Process_UnexportedFields(t *testing.T) {
 	type Config struct {
 		Public  string
-		private string
+		private string //nolint:unused
 	}
 
 	registry := NewResolverRegistry()
@@ -914,20 +721,16 @@ func TestConfigProcessor_Process_UnexportedFields(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only public field should be resolved
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	if result.Resolved[0].FieldPath != "Public" {
-		t.Errorf("expected field path 'Public', got %q", result.Resolved[0].FieldPath)
+	// Only public field should be resolved.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Public != "public-secret" {
 		t.Errorf("expected 'public-secret', got %q", cfg.Public)
 	}
 
-	// Private field should be unchanged
+	// Private field should be unchanged.
 	if cfg.private != "mock://private-secret" {
 		t.Errorf("private field should be unchanged, got %q", cfg.private)
 	}
@@ -956,9 +759,9 @@ func TestConfigProcessor_Process_EmptyStrings(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only non-empty secret should be resolved
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	// Only non-empty secret should be resolved.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 }
 
@@ -991,8 +794,8 @@ func TestConfigProcessor_Process_SliceOfPointers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	if cfg.Items[0].Secret != "item1" {
@@ -1048,13 +851,8 @@ func TestConfigProcessor_Process_DeeplyNestedStructs(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	expectedPath := "L1.L2.L3.L4.Secret"
-	if result.Resolved[0].FieldPath != expectedPath {
-		t.Errorf("expected path %q, got %q", expectedPath, result.Resolved[0].FieldPath)
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.L1.L2.L3.L4.Secret != "deep-secret" {
@@ -1086,8 +884,8 @@ func TestConfigProcessor_Process_MultipleResolvers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	// Verify mock resolved
@@ -1098,19 +896,6 @@ func TestConfigProcessor_Process_MultipleResolvers(t *testing.T) {
 	// Verify auto generated (should be non-empty and different from original)
 	if cfg.AutoSecret == "auto" || cfg.AutoSecret == "" {
 		t.Errorf("expected auto-generated secret, got %q", cfg.AutoSecret)
-	}
-
-	// Check strategies
-	strategyMap := make(map[string]ResolvedStrategy)
-	for _, r := range result.Resolved {
-		strategyMap[r.FieldPath] = r.Strategy
-	}
-
-	if strategyMap["MockSecret"] != StrategyLocalKMS {
-		t.Errorf("expected StrategyLocalKMS for MockSecret, got %v", strategyMap["MockSecret"])
-	}
-	if strategyMap["AutoSecret"] != StrategyAutoGen {
-		t.Errorf("expected StrategyAutoGen for AutoSecret, got %v", strategyMap["AutoSecret"])
 	}
 }
 
@@ -1149,8 +934,8 @@ func TestConfigProcessor_Process_MapWithStructValues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	// Verify struct values in map are updated
@@ -1183,8 +968,8 @@ func TestConfigProcessor_Process_SliceOfStrings(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	if cfg.Secrets[0] != "s1" {
@@ -1198,62 +983,12 @@ func TestConfigProcessor_Process_SliceOfStrings(t *testing.T) {
 	}
 }
 
-func TestConfigNilError_Error(t *testing.T) {
-	err := &ConfigNilError{}
-	expected := "config cannot be nil"
-	if err.Error() != expected {
-		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-}
-
-func TestConfigNotPointerError_Error(t *testing.T) {
-	err := &ConfigNotPointerError{Kind: reflect.Struct}
-	expected := "config must be a pointer to struct, got struct"
-	if err.Error() != expected {
-		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-}
-
-func TestConfigNotStructError_Error(t *testing.T) {
-	err := &ConfigNotStructError{Kind: reflect.String}
-	expected := "config must point to a struct, got pointer to string"
-	if err.Error() != expected {
-		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-}
-
-func TestRegistryNilError_Error(t *testing.T) {
-	err := &RegistryNilError{}
-	expected := "resolver registry cannot be nil"
-	if err.Error() != expected {
-		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-}
-
 func TestNewConfigProcessor(t *testing.T) {
 	registry := NewResolverRegistry()
 	processor := NewConfigProcessor(registry)
 
 	if processor == nil {
 		t.Fatal("expected non-nil processor")
-	}
-
-	if processor.registry != registry {
-		t.Error("registry not set correctly")
-	}
-
-	if processor.logger != nil {
-		t.Error("logger should be nil by default")
-	}
-}
-
-func TestNewConfigProcessor_WithLogger(t *testing.T) {
-	registry := NewResolverRegistry()
-	logger := &mockLogger{}
-	processor := NewConfigProcessor(registry, WithLogger(logger))
-
-	if processor.logger != logger {
-		t.Error("logger not set correctly")
 	}
 }
 
@@ -1281,9 +1016,9 @@ func TestConfigProcessor_Process_MapWithEmptyStringValue(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only non-empty secret should be resolved
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	// Only non-empty secret should be resolved.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Secrets["empty"] != "" {
@@ -1319,9 +1054,9 @@ func TestConfigProcessor_Process_MapWithFailingSecret(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have 1 resolved and 1 error
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	// Should have 1 resolved and 1 error.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 	if len(result.Errors) != 1 {
 		t.Fatalf("expected 1 error, got %d", len(result.Errors))
@@ -1333,7 +1068,7 @@ func TestConfigProcessor_Process_MapWithFailingSecret(t *testing.T) {
 	if cfg.Secrets["good"] != "good-value" {
 		t.Errorf("expected 'good-value', got %q", cfg.Secrets["good"])
 	}
-	// Bad value should be unchanged
+	// Bad value should be unchanged.
 	if cfg.Secrets["bad"] != "fail://bad-value" {
 		t.Errorf("expected 'fail://bad-value', got %q", cfg.Secrets["bad"])
 	}
@@ -1349,7 +1084,7 @@ func TestConfigProcessor_Process_InterfaceField(t *testing.T) {
 
 	processor := NewConfigProcessor(registry)
 
-	// Interface containing a string
+	// Interface containing a string — string inside interface is not settable.
 	cfg := &Config{
 		Data: "mock://interface-secret",
 	}
@@ -1361,9 +1096,9 @@ func TestConfigProcessor_Process_InterfaceField(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Interface values are not directly settable, so no resolution expected
-	if len(result.Resolved) != 0 {
-		t.Fatalf("expected 0 resolved secrets (interface not settable), got %d", len(result.Resolved))
+	// Interface values are not directly settable, so no resolution expected.
+	if result.Resolved != 0 {
+		t.Fatalf("expected 0 resolved secrets (interface not settable), got %d", result.Resolved)
 	}
 }
 
@@ -1388,8 +1123,8 @@ func TestConfigProcessor_Process_NilInterfaceField(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 0 {
+		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
 	}
 	if len(result.Errors) != 0 {
 		t.Fatalf("expected 0 errors, got %d", len(result.Errors))
@@ -1419,9 +1154,9 @@ func TestConfigProcessor_Process_MapWithSliceValues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Slices in maps should be processed
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
+	// Slices in maps should be processed.
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	if cfg.Data["secrets"][0] != "s1" {
@@ -1464,8 +1199,8 @@ func TestConfigProcessor_Process_MapWithPointerValues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	if cfg.Items["item1"].Secret != "ptr-map-1" {
@@ -1505,8 +1240,8 @@ func TestConfigProcessor_Process_MapWithMapValues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 3 {
-		t.Fatalf("expected 3 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 3 {
+		t.Fatalf("expected 3 resolved secrets, got %d", result.Resolved)
 	}
 
 	if cfg.NestedMaps["group1"]["secret1"] != "nested-1" {
@@ -1517,39 +1252,6 @@ func TestConfigProcessor_Process_MapWithMapValues(t *testing.T) {
 	}
 	if cfg.NestedMaps["group2"]["secret3"] != "nested-3" {
 		t.Errorf("expected 'nested-3', got %q", cfg.NestedMaps["group2"]["secret3"])
-	}
-}
-
-func TestConfigProcessor_Process_WithLoggerOnErrors(t *testing.T) {
-	type Config struct {
-		BadSecret string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&failingResolver{})
-
-	logger := &mockLogger{}
-	processor := NewConfigProcessor(registry, WithLogger(logger))
-
-	cfg := &Config{
-		BadSecret: "fail://will-fail",
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Should have error in result
-	if len(result.Errors) != 1 {
-		t.Fatalf("expected 1 error, got %d", len(result.Errors))
-	}
-
-	// Should have info log for completion even with errors
-	if len(logger.infoCalls) == 0 {
-		t.Error("expected info log call for completion")
 	}
 }
 
@@ -1574,8 +1276,8 @@ func TestConfigProcessor_Process_EmptySlice(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 0 {
+		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
 	}
 }
 
@@ -1600,8 +1302,8 @@ func TestConfigProcessor_Process_EmptyMap(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 0 {
+		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
 	}
 }
 
@@ -1626,8 +1328,8 @@ func TestConfigProcessor_Process_NilSlice(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 0 {
+		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
 	}
 }
 
@@ -1652,8 +1354,8 @@ func TestConfigProcessor_Process_NilMap(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", len(result.Resolved))
+	if result.Resolved != 0 {
+		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
 	}
 }
 
@@ -1661,8 +1363,7 @@ func TestConfigProcessor_Process_NilMap(t *testing.T) {
 // Additional tests for coverage gaps
 // ============================================================================
 
-// TestConfigProcessor_Process_ChannelField tests that channel types are skipped
-// (processValue should not process channel types as they are not settable).
+// TestConfigProcessor_Process_ChannelField tests that channel types are skipped.
 func TestConfigProcessor_Process_ChannelField(t *testing.T) {
 	type Config struct {
 		Name    string
@@ -1689,20 +1390,16 @@ func TestConfigProcessor_Process_ChannelField(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only Secret should be resolved, Channel should be skipped
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	if result.Resolved[0].FieldPath != "Secret" {
-		t.Errorf("expected field path 'Secret', got %q", result.Resolved[0].FieldPath)
+	// Only Secret should be resolved, Channel should be skipped.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Secret != "channel-test" {
 		t.Errorf("expected 'channel-test', got %q", cfg.Secret)
 	}
 
-	// Verify channel was not modified
+	// Verify channel was not modified.
 	if cfg.Channel != ch {
 		t.Error("channel should be unchanged")
 	}
@@ -1735,20 +1432,16 @@ func TestConfigProcessor_Process_FuncField(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only Secret should be resolved, Callback should be skipped
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	if result.Resolved[0].FieldPath != "Secret" {
-		t.Errorf("expected field path 'Secret', got %q", result.Resolved[0].FieldPath)
+	// Only Secret should be resolved, Callback should be skipped.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Secret != "func-test" {
 		t.Errorf("expected 'func-test', got %q", cfg.Secret)
 	}
 
-	// Verify callback was not modified
+	// Verify callback was not modified.
 	if cfg.Callback == nil {
 		t.Error("callback should not be nil")
 	}
@@ -1780,20 +1473,16 @@ func TestConfigProcessor_Process_ComplexField(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only Secret should be resolved, Complex should be skipped
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	if result.Resolved[0].FieldPath != "Secret" {
-		t.Errorf("expected field path 'Secret', got %q", result.Resolved[0].FieldPath)
+	// Only Secret should be resolved, Complex should be skipped.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Secret != "complex-test" {
 		t.Errorf("expected 'complex-test', got %q", cfg.Secret)
 	}
 
-	// Verify complex was not modified
+	// Verify complex was not modified.
 	if cfg.Complex != 1+2i {
 		t.Errorf("expected 1+2i, got %v", cfg.Complex)
 	}
@@ -1825,9 +1514,9 @@ func TestConfigProcessor_Process_Complex64Field(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only Secret should be resolved
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	// Only Secret should be resolved.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Secret != "complex64-test" {
@@ -1839,7 +1528,8 @@ func TestConfigProcessor_Process_Complex64Field(t *testing.T) {
 	}
 }
 
-// TestConfigProcessor_Process_UnsafePointerField tests that unsafe pointer types are skipped.
+// TestConfigProcessor_Process_UnsafePointerField tests that the processor handles
+// non-string fields gracefully.
 func TestConfigProcessor_Process_UnsafePointerField(t *testing.T) {
 	type Config struct {
 		Name   string
@@ -1863,8 +1553,8 @@ func TestConfigProcessor_Process_UnsafePointerField(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Secret != "unsafe-test" {
@@ -1872,8 +1562,7 @@ func TestConfigProcessor_Process_UnsafePointerField(t *testing.T) {
 	}
 }
 
-// TestConfigProcessor_Process_MapInterfaceWithString tests maps with interface{} values
-// containing strings that need resolution.
+// TestConfigProcessor_Process_MapInterfaceWithString tests maps with interface{} values.
 func TestConfigProcessor_Process_MapInterfaceWithString(t *testing.T) {
 	type Config struct {
 		Data map[string]interface{}
@@ -1902,8 +1591,7 @@ func TestConfigProcessor_Process_MapInterfaceWithString(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Interface values in maps are not directly settable for strings
-	// but nested maps/structs should be processed
+	// Interface string values in maps are not directly settable.
 	if len(result.Errors) > 0 {
 		t.Errorf("unexpected errors: %v", result.Errors)
 	}
@@ -1937,125 +1625,12 @@ func TestConfigProcessor_Process_DeeplyNestedMaps(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Level1["a"]["b"]["secret"] != "deep-nested-map" {
 		t.Errorf("expected 'deep-nested-map', got %q", cfg.Level1["a"]["b"]["secret"])
-	}
-}
-
-// TestConfigProcessor_Process_MapStringWithShortURI tests processMapString with
-// a short URI (less than 10 characters) to hit the min() branch in logging.
-func TestConfigProcessor_Process_MapStringWithShortURI(t *testing.T) {
-	// Create a resolver that matches very short URIs
-	shortResolver := &mockResolver{
-		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return &SecretValue{
-				Raw:      raw,
-				Value:    "resolved-" + raw,
-				Strategy: StrategyLocalKMS,
-			}, nil
-		},
-	}
-	// Override CanResolve to match shorter strings
-	type shortMockResolver struct {
-		*mockResolver
-	}
-	sr := &shortMockResolver{mockResolver: shortResolver}
-
-	registry := NewResolverRegistry()
-	// Register with custom short URI matcher
-	registry.Register(&mockResolver{
-		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return &SecretValue{
-				Raw:      raw,
-				Value:    raw[7:],
-				Strategy: StrategyLocalKMS,
-			}, nil
-		},
-	})
-
-	logger := &mockLogger{}
-	processor := NewConfigProcessor(registry, WithLogger(logger))
-
-	_ = sr // unused but demonstrates pattern
-
-	type Config struct {
-		Secrets map[string]string
-	}
-
-	cfg := &Config{
-		Secrets: map[string]string{
-			"key": "mock://x", // Short URI (9 chars total, "mock://x")
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	// Verify debug logging happened with short URI
-	if len(logger.debugCalls) == 0 {
-		t.Error("expected debug log calls for short URI")
-	}
-}
-
-// TestConfigProcessor_Process_MapStringWithLoggerResolved tests processMapString
-// with logger enabled to verify the resolved logging path.
-func TestConfigProcessor_Process_MapStringWithLoggerResolved(t *testing.T) {
-	type Config struct {
-		Secrets map[string]string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	logger := &mockLogger{}
-	processor := NewConfigProcessor(registry, WithLogger(logger))
-
-	cfg := &Config{
-		Secrets: map[string]string{
-			"secret": "mock://map-logger-test",
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	// Should have debug log for resolving and resolved
-	resolvingFound := false
-	resolvedFound := false
-	for _, call := range logger.debugCalls {
-		if call.msg == "resolving secret in map" {
-			resolvingFound = true
-		}
-		if call.msg == "resolved secret in map" {
-			resolvedFound = true
-		}
-	}
-
-	if !resolvingFound {
-		t.Error("expected 'resolving secret in map' debug log")
-	}
-	if !resolvedFound {
-		t.Error("expected 'resolved secret in map' debug log")
 	}
 }
 
@@ -2074,7 +1649,7 @@ func TestConfigProcessor_Process_InterfaceWithStruct(t *testing.T) {
 
 	processor := NewConfigProcessor(registry)
 
-	// Interface containing a struct with a secret
+	// Interface containing a struct — struct fields inside interface are not settable.
 	cfg := &Config{
 		Data: Inner{
 			Secret: "mock://interface-struct-secret",
@@ -2088,8 +1663,7 @@ func TestConfigProcessor_Process_InterfaceWithStruct(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Struct inside interface should be processed but not settable
-	// The struct value itself is not addressable through the interface
+	// Struct inside interface should be processed but not settable.
 	if len(result.Errors) > 0 {
 		t.Errorf("unexpected errors: %v", result.Errors)
 	}
@@ -2111,7 +1685,7 @@ func TestConfigProcessor_Process_InterfaceWithPointerStruct(t *testing.T) {
 
 	processor := NewConfigProcessor(registry)
 
-	// Interface containing a pointer to struct with a secret
+	// Interface containing a pointer to struct — fields ARE settable via pointer.
 	cfg := &Config{
 		Data: &Inner{
 			Secret: "mock://interface-ptr-struct",
@@ -2125,9 +1699,9 @@ func TestConfigProcessor_Process_InterfaceWithPointerStruct(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Pointer through interface should allow modification
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	// Pointer through interface should allow modification.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	inner := cfg.Data.(*Inner)
@@ -2149,7 +1723,7 @@ func TestConfigProcessor_Process_ContextCancellationDuringStruct(t *testing.T) {
 	slowResolver := &mockResolver{
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
 			callCount++
-			// First call succeeds, subsequent calls check context
+			// First call succeeds, subsequent calls check context.
 			if callCount > 1 {
 				select {
 				case <-ctx.Done():
@@ -2157,11 +1731,7 @@ func TestConfigProcessor_Process_ContextCancellationDuringStruct(t *testing.T) {
 				default:
 				}
 			}
-			return &SecretValue{
-				Raw:      raw,
-				Value:    raw[7:],
-				Strategy: StrategyLocalKMS,
-			}, nil
+			return NewSecretValue(raw, []byte(raw[7:]), StrategyLocalKMS), nil
 		},
 	}
 
@@ -2176,9 +1746,9 @@ func TestConfigProcessor_Process_ContextCancellationDuringStruct(t *testing.T) {
 		Secret3: "mock://s3",
 	}
 
-	// Create a pre-cancelled context
+	// Create a pre-cancelled context.
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
 	result, err := processor.Process(ctx, cfg)
 
@@ -2186,7 +1756,7 @@ func TestConfigProcessor_Process_ContextCancellationDuringStruct(t *testing.T) {
 		t.Fatalf("unexpected top-level error: %v", err)
 	}
 
-	// Should have at least one cancellation error
+	// Should have at least one cancellation error.
 	if len(result.Errors) == 0 {
 		t.Fatal("expected errors from context cancellation")
 	}
@@ -2217,57 +1787,9 @@ func TestConfigProcessor_Process_MapWithInterfaceContainingSlice(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Slices inside interface values should be processed
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
-	}
-}
-
-// TestConfigProcessor_Process_StringFieldWithLogger tests processString
-// with logger enabled to hit the debug logging paths.
-func TestConfigProcessor_Process_StringFieldWithLogger(t *testing.T) {
-	type Config struct {
-		Secret string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	logger := &mockLogger{}
-	processor := NewConfigProcessor(registry, WithLogger(logger))
-
-	cfg := &Config{
-		Secret: "mock://logger-string-test",
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
-	}
-
-	// Should have both "resolving secret" and "resolved secret" debug logs
-	resolvingFound := false
-	resolvedFound := false
-	for _, call := range logger.debugCalls {
-		if call.msg == "resolving secret" {
-			resolvingFound = true
-		}
-		if call.msg == "resolved secret" {
-			resolvedFound = true
-		}
-	}
-
-	if !resolvingFound {
-		t.Error("expected 'resolving secret' debug log")
-	}
-	if !resolvedFound {
-		t.Error("expected 'resolved secret' debug log")
+	// Slices inside interface values in maps should be processed.
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets (from slice in interface), got %d", result.Resolved)
 	}
 }
 
@@ -2313,16 +1835,16 @@ func TestConfigProcessor_Process_NumericTypes(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only Secret should be resolved
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	// Only Secret should be resolved.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Secret != "numeric-test" {
 		t.Errorf("expected 'numeric-test', got %q", cfg.Secret)
 	}
 
-	// Verify numeric fields unchanged
+	// Verify numeric fields unchanged.
 	if cfg.Int8 != 1 || cfg.Int16 != 2 || cfg.Int32 != 3 || cfg.Int64 != 4 {
 		t.Error("signed integer fields should be unchanged")
 	}
@@ -2360,9 +1882,9 @@ func TestConfigProcessor_Process_BoolField(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only Secret should be resolved
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	// Only Secret should be resolved.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Secret != "bool-test" {
@@ -2402,9 +1924,9 @@ func TestConfigProcessor_Process_MapWithNonStringKey(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Maps with non-string keys should still be processed
-	if len(result.Resolved) != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", len(result.Resolved))
+	// Maps with non-string keys should still be processed.
+	if result.Resolved != 2 {
+		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
 	if cfg.IntKeyMap[1] != "int-key-1" {
@@ -2444,16 +1966,12 @@ func TestConfigProcessor_Process_NonSecretURINotResolved(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only Password should be resolved (has mock:// prefix)
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	// Only Password should be resolved (has mock:// prefix).
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
-	if result.Resolved[0].FieldPath != "Password" {
-		t.Errorf("expected field path 'Password', got %q", result.Resolved[0].FieldPath)
-	}
-
-	// Non-secret fields should be unchanged
+	// Non-secret fields should be unchanged.
 	if cfg.Host != "localhost:8080" {
 		t.Errorf("Host should be unchanged, got %q", cfg.Host)
 	}
@@ -2495,9 +2013,9 @@ func TestConfigProcessor_Process_MapNonSecretNotResolved(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only password should be resolved
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	// Only password should be resolved.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Settings["host"] != "localhost" {
@@ -2543,8 +2061,8 @@ func TestConfigProcessor_Process_EmbeddedStruct(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", len(result.Resolved))
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 
 	if cfg.Password != "embedded-password" {
@@ -2580,8 +2098,36 @@ func TestConfigProcessor_Process_SliceOfInterfaces(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// String values in interface slice are not settable, but map should be processed
-	if len(result.Resolved) != 1 {
-		t.Fatalf("expected 1 resolved secret (from map), got %d", len(result.Resolved))
+	// String values in interface slice are not settable, but map should be processed.
+	if result.Resolved != 1 {
+		t.Fatalf("expected 1 resolved secret (from map), got %d", result.Resolved)
+	}
+}
+
+// TestConfigProcessor_Process_WithFailClosed verifies that WithFailClosed causes
+// Process to return ErrUnresolvedSecretURI when resolution fails.
+func TestConfigProcessor_Process_WithFailClosed(t *testing.T) {
+	type Config struct {
+		Secret string
+	}
+
+	registry := NewResolverRegistry()
+	registry.Register(&failingResolver{})
+
+	processor := NewConfigProcessor(registry, WithFailClosed())
+
+	cfg := &Config{Secret: "fail://bad-secret"}
+
+	ctx := context.Background()
+	result, err := processor.Process(ctx, cfg)
+
+	if result == nil {
+		t.Fatal("expected non-nil result even with error")
+	}
+	if !stderrors.Is(err, ErrUnresolvedSecretURI) {
+		t.Errorf("expected ErrUnresolvedSecretURI, got %v", err)
+	}
+	if len(result.Unresolved) == 0 {
+		t.Error("expected non-empty Unresolved")
 	}
 }

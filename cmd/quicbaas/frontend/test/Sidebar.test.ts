@@ -200,32 +200,32 @@ describe('router parses all sidebar hashes', () => {
   afterEach(() => { window.location.hash = ''; });
 
   it.each(hashToRouteName)(
-    '"$hash" → routerStore.route.name === "$routeName"',
+    '"$hash" → routerStore.name === "$routeName"',
     ({ hash, routeName }) => {
       setHash(hash);
-      expect(routerStore.route.name).toBe(routeName);
+      expect(routerStore.name).toBe(routeName);
     },
   );
 
   it('"#/sessions/abc-123" → session-detail with id param', () => {
     setHash('#/sessions/abc-123');
-    expect(routerStore.route.name).toBe('session-detail');
-    expect(routerStore.route.params['id']).toBe('abc-123');
+    expect(routerStore.name).toBe('session-detail');
+    expect(routerStore.params['id']).toBe('abc-123');
   });
 
   it('empty hash → dashboard', () => {
     setHash('');
-    expect(routerStore.route.name).toBe('dashboard');
+    expect(routerStore.name).toBe('dashboard');
   });
 
   it('"#/" → dashboard', () => {
     setHash('#/');
-    expect(routerStore.route.name).toBe('dashboard');
+    expect(routerStore.name).toBe('dashboard');
   });
 
   it('unknown hash → not-found', () => {
     setHash('#/totally-unknown-route');
-    expect(routerStore.route.name).toBe('not-found');
+    expect(routerStore.name).toBe('not-found');
   });
 });
 
@@ -331,7 +331,7 @@ describe('sidebar exposes three distinct disambiguated dashboard entries', () =>
     // a parent crumb so the surface mirrors the "Orchestration > Dashboard"
     // and "Cluster > Dashboard" patterns used by the other two dashboards.
     const dashboardBlock = source.match(
-      /routerStore\.route\.name === 'dashboard'[\s\S]*?else if/,
+      /routerStore\.name === 'dashboard'[\s\S]*?else if/,
     );
     expect(dashboardBlock, 'dashboard breadcrumb block must exist').not.toBeNull();
     expect(dashboardBlock![0]).toMatch(/Overview/);

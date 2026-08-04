@@ -21,9 +21,8 @@
 // the server's REST response wire types, and converts them into the
 // service.*Response types the SDK KMS client expects.
 //
-// Methods that have no server-side REST route (GetPublicKey, RevokeKey,
-// GetKeyMetadata, UpdateKeyMetadata, GetSupportedAlgorithms) fall through to
-// the generic dispatch path.
+// Every KMS verb the SDK client exposes has a typed route here; methods
+// missing from the switch fall through to the generic dispatch path.
 
 package rest
 
@@ -31,6 +30,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -88,6 +88,22 @@ func (h *kmsRESTHandler) handleRequest(ctx context.Context, method string, req i
 		return h.handleSetKeyPolicy(ctx, req)
 	case "GetKeyPolicy":
 		return h.handleGetKeyPolicy(ctx, req)
+	case "RevokeKey":
+		return h.handleRevokeKey(ctx, req)
+	case "GetPublicKey":
+		return h.handleGetPublicKey(ctx, req)
+	case "GetKeyMetadata":
+		return h.handleGetKeyMetadata(ctx, req)
+	case "UpdateKeyMetadata":
+		return h.handleUpdateKeyMetadata(ctx, req)
+	case "GetSupportedAlgorithms":
+		return h.handleGetSupportedAlgorithms(ctx, req)
+	case "SetKeyRotationPolicy":
+		return h.handleSetKeyRotationPolicy(ctx, req)
+	case "GetKeyRotationPolicy":
+		return h.handleGetKeyRotationPolicy(ctx, req)
+	case "DeleteKeyRotationPolicy":
+		return h.handleDeleteKeyRotationPolicy(ctx, req)
 	case "BackendStatus":
 		return h.handleBackendStatus(ctx, req)
 	default:
@@ -223,14 +239,64 @@ type kmsBackendStatusWire struct {
 	Timestamp    int64           `json:"timestamp"`
 }
 
+type kmsRevokeKeyWire struct {
+	KeyID     string `json:"key_id"`
+	Status    string `json:"status"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+type kmsKeyMetadataEnvelopeWire struct {
+	Metadata  *kmsKeyMetadataWire `json:"metadata"`
+	Timestamp int64               `json:"timestamp"`
+}
+
+type kmsGetPublicKeyWire struct {
+	KeyID     string `json:"key_id"`
+	PublicKey []byte `json:"public_key"`
+	Algorithm string `json:"algorithm"`
+	Version   uint64 `json:"version"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+type kmsSupportedAlgorithmsWire struct {
+	Algorithms []string `json:"algorithms"`
+	Timestamp  int64    `json:"timestamp"`
+}
+
+type kmsRotationPolicyWire struct {
+	Enabled          bool  `json:"enabled"`
+	IntervalSeconds  int64 `json:"interval_seconds"`
+	NextRotationUnix int64 `json:"next_rotation_unix,omitempty"`
+	RetainVersions   int   `json:"retain_versions,omitempty"`
+	AutoRotate       bool  `json:"auto_rotate"`
+}
+
+type kmsSetKeyRotationPolicyWire struct {
+	KeyID     string                 `json:"key_id"`
+	Policy    *kmsRotationPolicyWire `json:"policy"`
+	Timestamp int64                  `json:"timestamp"`
+}
+
+type kmsGetKeyRotationPolicyWire struct {
+	KeyID     string                 `json:"key_id"`
+	Policy    *kmsRotationPolicyWire `json:"policy,omitempty"`
+	Timestamp int64                  `json:"timestamp"`
+}
+
+type kmsDeleteKeyRotationPolicyWire struct {
+	KeyID     string `json:"key_id"`
+	Timestamp int64  `json:"timestamp"`
+}
+
 // =============================================================================
 // REST wire request types
 // =============================================================================
 
 type kmsKeyAttributesRequest struct {
-	Algorithm  string   `json:"algorithm"`
-	KeyUsage   []string `json:"key_usage"`
-	Exportable bool     `json:"exportable,omitempty"`
+	Algorithm          string   `json:"algorithm"`
+	KeyUsage           []string `json:"key_usage"`
+	Exportable         bool     `json:"exportable,omitempty"`
+	DeletionProtection bool     `json:"deletion_protection,omitempty"`
 }
 
 type kmsGenerateKeyRequest struct {
@@ -253,6 +319,24 @@ type kmsUpdateKeyStatusRequest struct {
 	Status string `json:"status"`
 }
 
+type kmsRevokeKeyRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+type kmsUpdateKeyMetadataRequest struct {
+	Name        *string           `json:"name,omitempty"`
+	Description *string           `json:"description,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	RemoveTags  []string          `json:"remove_tags,omitempty"`
+}
+
+type kmsSetRotationPolicyRequest struct {
+	Enabled         bool  `json:"enabled"`
+	IntervalSeconds int64 `json:"interval_seconds"`
+	RetainVersions  int   `json:"retain_versions,omitempty"`
+	AutoRotate      bool  `json:"auto_rotate"`
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -265,8 +349,10 @@ func (h *kmsRESTHandler) handleGenerateKey(ctx context.Context, req interface{})
 	body := &kmsGenerateKeyRequest{
 		Name: r.Name,
 		KeyAttributes: &kmsKeyAttributesRequest{
-			Algorithm: r.Algorithm.String(),
-			KeyUsage:  kmsUsagesToStrings(r.Usage),
+			Algorithm:          r.Algorithm.String(),
+			KeyUsage:           kmsUsagesToStrings(r.Usage),
+			Exportable:         r.Exportable,
+			DeletionProtection: r.DeletionProtection,
 		},
 	}
 	var wire kmsGenerateKeyWire
@@ -499,7 +585,10 @@ func (h *kmsRESTHandler) handleSetKeyPolicy(ctx context.Context, req interface{}
 	if r.Policy == nil {
 		return nil, errors.NewInvalidInput("rest.kms.SetKeyPolicy", "policy is required")
 	}
-	body := kmsPolicyToWire(r.KeyID, r.Policy)
+	body := &service.SetKeyPolicyRequest{
+		KeyID:  r.KeyID,
+		Policy: kmsSDKPolicyToService(r.KeyID, r.Policy),
+	}
 	endpoint := "/api/v1/kms/keys/" + url.PathEscape(r.KeyID) + "/policy"
 	var wire kmsSetKeyPolicyWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPut, endpoint, body, &wire); err != nil {
@@ -524,6 +613,168 @@ func (h *kmsRESTHandler) handleGetKeyPolicy(ctx context.Context, req interface{}
 	}
 	return &service.GetKeyPolicyResponse{
 		Policy:    kmsWireToPolicy(wire.Policy),
+		Timestamp: time.Unix(wire.Timestamp, 0).UTC(),
+	}, nil
+}
+
+func (h *kmsRESTHandler) handleRevokeKey(ctx context.Context, req interface{}) (interface{}, error) {
+	keyID, err := kmsKeyIDFromRequest(req, "rest.kms.RevokeKey")
+	if err != nil {
+		return nil, err
+	}
+	// Reason is optional on the SDK wire request; absent field maps to "".
+	reason, _ := extractStringField(req, "Reason")
+	body := &kmsRevokeKeyRequest{Reason: reason}
+	endpoint := "/api/v1/kms/keys/" + url.PathEscape(keyID) + "/revoke"
+	var wire kmsRevokeKeyWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, endpoint, body, &wire); err != nil {
+		return nil, err
+	}
+	return &service.RevokeKeyResponse{
+		KeyID:     wire.KeyID,
+		Status:    service.KeyStatus(wire.Status),
+		Timestamp: time.Unix(wire.Timestamp, 0).UTC(),
+	}, nil
+}
+
+func (h *kmsRESTHandler) handleGetPublicKey(ctx context.Context, req interface{}) (interface{}, error) {
+	keyID, err := kmsKeyIDFromRequest(req, "rest.kms.GetPublicKey")
+	if err != nil {
+		return nil, err
+	}
+	endpoint := "/api/v1/kms/keys/" + url.PathEscape(keyID) + "/public"
+	if version, ok := extractIntField(req, "Version"); ok && version > 0 {
+		endpoint += "?version=" + strconv.FormatInt(version, 10)
+	}
+	var wire kmsGetPublicKeyWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, endpoint, nil, &wire); err != nil {
+		return nil, err
+	}
+	return &service.GetPublicKeyResponse{
+		KeyID:     wire.KeyID,
+		PublicKey: wire.PublicKey,
+		Algorithm: service.KeyAlgorithm(wire.Algorithm),
+		Version:   wire.Version,
+		Timestamp: time.Unix(wire.Timestamp, 0).UTC(),
+	}, nil
+}
+
+func (h *kmsRESTHandler) handleGetKeyMetadata(ctx context.Context, req interface{}) (interface{}, error) {
+	keyID, err := kmsKeyIDFromRequest(req, "rest.kms.GetKeyMetadata")
+	if err != nil {
+		return nil, err
+	}
+	endpoint := "/api/v1/kms/keys/" + url.PathEscape(keyID) + "/metadata"
+	var wire kmsKeyMetadataEnvelopeWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, endpoint, nil, &wire); err != nil {
+		return nil, err
+	}
+	return &service.GetKeyMetadataResponse{
+		Metadata:  kmsWireToKeyMetadata(wire.Metadata),
+		Timestamp: time.Unix(wire.Timestamp, 0).UTC(),
+	}, nil
+}
+
+func (h *kmsRESTHandler) handleUpdateKeyMetadata(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*kmsclient.UpdateKeyMetadataRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("rest.kms.UpdateKeyMetadata", "request is required")
+	}
+	if r.KeyID == "" {
+		return nil, errors.NewInvalidInput("rest.kms.UpdateKeyMetadata", "key ID is required")
+	}
+	body := &kmsUpdateKeyMetadataRequest{
+		Tags:       r.Tags,
+		RemoveTags: r.RemoveTags,
+	}
+	if r.Name != "" {
+		name := r.Name
+		body.Name = &name
+	}
+	if r.Description != "" {
+		description := r.Description
+		body.Description = &description
+	}
+	endpoint := "/api/v1/kms/keys/" + url.PathEscape(r.KeyID) + "/metadata"
+	var wire kmsKeyMetadataEnvelopeWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodPut, endpoint, body, &wire); err != nil {
+		return nil, err
+	}
+	return &service.UpdateKeyMetadataResponse{
+		Metadata:  kmsWireToKeyMetadata(wire.Metadata),
+		Timestamp: time.Unix(wire.Timestamp, 0).UTC(),
+	}, nil
+}
+
+// handleGetSupportedAlgorithms returns the []string the KMS SDK client accepts
+// directly, matching the embedded/gRPC/QUIC transports.
+func (h *kmsRESTHandler) handleGetSupportedAlgorithms(ctx context.Context, _ interface{}) (interface{}, error) {
+	var wire kmsSupportedAlgorithmsWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, "/api/v1/kms/algorithms", nil, &wire); err != nil {
+		return nil, err
+	}
+	if wire.Algorithms == nil {
+		wire.Algorithms = []string{}
+	}
+	return wire.Algorithms, nil
+}
+
+func (h *kmsRESTHandler) handleSetKeyRotationPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	keyID, err := kmsKeyIDFromRequest(req, "rest.kms.SetKeyRotationPolicy")
+	if err != nil {
+		return nil, err
+	}
+	intervalSeconds, _ := extractIntField(req, "IntervalSeconds")
+	retainVersions, _ := extractIntField(req, "RetainVersions")
+	autoRotate, _ := extractBoolField(req, "AutoRotate")
+	enabled, _ := extractBoolField(req, "Enabled")
+	body := &kmsSetRotationPolicyRequest{
+		Enabled:         enabled,
+		IntervalSeconds: intervalSeconds,
+		RetainVersions:  int(retainVersions),
+		AutoRotate:      autoRotate,
+	}
+	endpoint := "/api/v1/kms/keys/" + url.PathEscape(keyID) + "/rotation-policy"
+	var wire kmsSetKeyRotationPolicyWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodPut, endpoint, body, &wire); err != nil {
+		return nil, err
+	}
+	return &service.SetKeyRotationPolicyResponse{
+		KeyID:     wire.KeyID,
+		Policy:    kmsWireToRotationPolicy(wire.Policy),
+		Timestamp: time.Unix(wire.Timestamp, 0).UTC(),
+	}, nil
+}
+
+func (h *kmsRESTHandler) handleGetKeyRotationPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	keyID, err := kmsKeyIDFromRequest(req, "rest.kms.GetKeyRotationPolicy")
+	if err != nil {
+		return nil, err
+	}
+	endpoint := "/api/v1/kms/keys/" + url.PathEscape(keyID) + "/rotation-policy"
+	var wire kmsGetKeyRotationPolicyWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, endpoint, nil, &wire); err != nil {
+		return nil, err
+	}
+	return &service.GetKeyRotationPolicyResponse{
+		KeyID:     wire.KeyID,
+		Policy:    kmsWireToRotationPolicy(wire.Policy),
+		Timestamp: time.Unix(wire.Timestamp, 0).UTC(),
+	}, nil
+}
+
+func (h *kmsRESTHandler) handleDeleteKeyRotationPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	keyID, err := kmsKeyIDFromRequest(req, "rest.kms.DeleteKeyRotationPolicy")
+	if err != nil {
+		return nil, err
+	}
+	endpoint := "/api/v1/kms/keys/" + url.PathEscape(keyID) + "/rotation-policy"
+	var wire kmsDeleteKeyRotationPolicyWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodDelete, endpoint, nil, &wire); err != nil {
+		return nil, err
+	}
+	return &service.DeleteKeyRotationPolicyResponse{
+		KeyID:     wire.KeyID,
 		Timestamp: time.Unix(wire.Timestamp, 0).UTC(),
 	}, nil
 }
@@ -623,24 +874,53 @@ func kmsWireToPolicy(wire *kmsKeyPolicyWire) *service.KeyPolicy {
 	return policy
 }
 
-func kmsPolicyToWire(keyID string, policy *kmsclient.KeyPolicy) *kmsKeyPolicyWire {
-	wire := &kmsKeyPolicyWire{
+// kmsWireToRotationPolicy converts the REST rotation-policy wire shape into the
+// canonical service RotationPolicy.
+func kmsWireToRotationPolicy(wire *kmsRotationPolicyWire) *service.RotationPolicy {
+	if wire == nil {
+		return nil
+	}
+	policy := &service.RotationPolicy{
+		Enabled:        wire.Enabled,
+		Interval:       time.Duration(wire.IntervalSeconds) * time.Second,
+		RetainVersions: wire.RetainVersions,
+		AutoRotate:     wire.AutoRotate,
+	}
+	if wire.NextRotationUnix != 0 {
+		policy.NextRotation = time.Unix(wire.NextRotationUnix, 0).UTC()
+	}
+	return policy
+}
+
+// kmsSDKPolicyToService converts the exported SDK KeyPolicy into the canonical
+// service KeyPolicy the server's SetKeyPolicy handler unmarshals. Zero
+// ExpiresAt/MaxUsageCount map to nil (no expiry / no usage limit).
+func kmsSDKPolicyToService(keyID string, p *kmsclient.KeyPolicy) *service.KeyPolicy {
+	if p == nil {
+		return nil
+	}
+	svcPolicy := &service.KeyPolicy{
 		KeyID:             keyID,
-		Version:           uint64(policy.Version),
-		AllowedOperations: make([]string, 0, len(policy.AllowedOperations)),
-		AllowedPrincipals: policy.AllowedPrincipals,
-		DeniedPrincipals:  policy.DeniedPrincipals,
-		RotationRequired:  policy.RotationRequired,
-		MaxUsageCount:     policy.MaxUsageCount,
-		RequireMFA:        policy.RequireMFA,
+		Version:           uint64(p.Version), //nolint:gosec // G115: policy version is non-negative
+		AllowedOperations: make([]service.KeyUsage, 0, len(p.AllowedOperations)),
+		AllowedPrincipals: p.AllowedPrincipals,
+		DeniedPrincipals:  p.DeniedPrincipals,
+		RotationRequired:  p.RotationRequired,
+		RequireMFA:        p.RequireMFA,
+		UpdatedAt:         p.UpdatedAt,
 	}
-	for _, op := range policy.AllowedOperations {
-		wire.AllowedOperations = append(wire.AllowedOperations, kmsUsageToString(op))
+	for _, op := range p.AllowedOperations {
+		svcPolicy.AllowedOperations = append(svcPolicy.AllowedOperations, service.KeyUsage(kmsUsageToString(op)))
 	}
-	if !policy.ExpiresAt.IsZero() {
-		wire.ExpiresAt = policy.ExpiresAt.Unix()
+	if !p.ExpiresAt.IsZero() {
+		expiresAt := p.ExpiresAt
+		svcPolicy.ExpiresAt = &expiresAt
 	}
-	return wire
+	if p.MaxUsageCount > 0 {
+		maxUsage := p.MaxUsageCount
+		svcPolicy.MaxUsageCount = &maxUsage
+	}
+	return svcPolicy
 }
 
 // kmsKeyIDFromRequest extracts the KeyID field from any KMS request struct that

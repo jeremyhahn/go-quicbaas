@@ -388,10 +388,32 @@ const (
 	OpSecretsGetRotation  byte = 0xEE
 	OpSecretsUpdateStatus byte = 0xEF
 
+	// Secrets Sub-Dispatch (0x6F) - uses OpSecretsSubDispatch as the dispatch
+	// opcode with sub-operation code in the first byte of payload, mirroring
+	// the OpBarrier / OpCeremony / OpOrchestrator sub-dispatch pattern.
+	//
+	// Wire layout:
+	//   [opcode=OpSecretsSubDispatch][tokenLen][token][payloadLen][subOp:1][body...]
+	//
+	// payload[0] selects the sub-operation (see OpSecretsSubEnsure below);
+	// payload[1:] carries the JSON-encoded request body.
+	//
+	// Byte 0x6F is free: it sits between OpKMSDeleteRotationPolicy (0x6E)
+	// and OpCreateUser (0x70), confirmed against the full opcode table in
+	// protocol.go + protocol_iam.go.
+	OpSecretsSubDispatch byte = 0x6F
+
 	// KMS Rotation Policy Operations (0x6C-0x6E).
 	OpKMSSetRotationPolicy    byte = 0x6C
 	OpKMSGetRotationPolicy    byte = 0x6D
 	OpKMSDeleteRotationPolicy byte = 0x6E
+
+	// KMS Key Administration Operations (0xC2-0xC4). These bytes were freed
+	// when the deprecated seal-tree opcodes (0xC0-0xC4) were removed in
+	// Phase 8c; 0xC0/0xC1 remain the Barrier/Ceremony dispatch opcodes.
+	OpKMSRevokeKey              byte = 0xC2
+	OpKMSGetPublicKey           byte = 0xC3
+	OpKMSGetSupportedAlgorithms byte = 0xC4
 
 	// Transit Operations (0xF0-0xF9).
 	OpCryptoEncrypt    byte = 0xF0
@@ -485,25 +507,37 @@ const (
 	SubOpOrchestratorInference byte = 0x0D
 )
 
+// Secrets sub-operation codes (used in payload[0] when OpSecretsSubDispatch is the main opcode).
+// These are NOT wire opcodes - they are decoded from the request payload.
+const (
+	// OpSecretsSubEnsure is the Vault-style generate-on-first-access primitive:
+	// returns the existing value if found, otherwise generates and stores a new
+	// random secret according to the supplied SecretSpec.
+	OpSecretsSubEnsure byte = 0x01
+)
+
 // Barrier sub-operation codes (used in payload[0] when OpBarrier is the main opcode).
 // These are NOT wire opcodes - they are decoded from the request payload.
 // Mirrors the /api/v1/barrier REST surface. Sub-op codes 0x08-0x0B were
 // retired with persisted Shamir share management; their byte values are
 // intentionally left unassigned to preserve wire compatibility.
 const (
-	SubOpBarrierStatus             byte = 0x01
-	SubOpBarrierInitialize         byte = 0x02
-	SubOpBarrierUnseal             byte = 0x03
-	SubOpBarrierSeal               byte = 0x04
-	SubOpBarrierShamirInitialize   byte = 0x05
-	SubOpBarrierShamirUnsealShare  byte = 0x06
-	SubOpBarrierShamirUnsealShares byte = 0x07
-	SubOpBarrierRekey              byte = 0x0C
-	SubOpBarrierRecoveryGenerate   byte = 0x0D
-	SubOpBarrierRecoveryRecover    byte = 0x0E
-	SubOpBarrierRecoveryDelete     byte = 0x0F
-	SubOpBarrierRecoveryStatus     byte = 0x10
-	SubOpBarrierRootToken          byte = 0x11
+	SubOpBarrierStatus                   byte = 0x01
+	SubOpBarrierInitialize               byte = 0x02
+	SubOpBarrierUnseal                   byte = 0x03
+	SubOpBarrierSeal                     byte = 0x04
+	SubOpBarrierShamirInitialize         byte = 0x05
+	SubOpBarrierShamirUnsealShare        byte = 0x06
+	SubOpBarrierShamirUnsealShares       byte = 0x07
+	SubOpBarrierRekey                    byte = 0x0C
+	SubOpBarrierRecoveryGenerate         byte = 0x0D
+	SubOpBarrierRecoveryRecover          byte = 0x0E
+	SubOpBarrierRecoveryDelete           byte = 0x0F
+	SubOpBarrierRecoveryStatus           byte = 0x10
+	SubOpBarrierRootToken                byte = 0x11
+	SubOpBarrierEnableEncryption         byte = 0x12
+	SubOpBarrierUpdateTenantQuotas       byte = 0x13
+	SubOpBarrierUpdateTenantEntitlements byte = 0x14
 )
 
 // Ceremony sub-operation codes (used in payload[0] when OpCeremony is the main opcode).
@@ -550,6 +584,12 @@ func BarrierSubOpcodeToString(subOpcode byte) string {
 		return "BarrierRecoveryStatus"
 	case SubOpBarrierRootToken:
 		return "BarrierRootToken"
+	case SubOpBarrierEnableEncryption:
+		return "BarrierEnableEncryption"
+	case SubOpBarrierUpdateTenantQuotas:
+		return "BarrierUpdateTenantQuotas"
+	case SubOpBarrierUpdateTenantEntitlements:
+		return "BarrierUpdateTenantEntitlements"
 	default:
 		return fmt.Sprintf("UnknownBarrierOp(0x%02X)", subOpcode)
 	}
@@ -892,572 +932,348 @@ func StatusToError(status byte, message string) error {
 	return api.NewProtocolStatusError("quic.protocol", code, message)
 }
 
-// OpcodeToString returns a human-readable name for an opcode.
-func OpcodeToString(opcode byte) string {
-	switch opcode {
+// opcodeNames is the O(1), constant-time opcode -> human-readable name lookup
+// table. It replaces the former 243-case switch in OpcodeToString, mirroring
+// the package's map-dispatch convention (see msgHandlers). Entries stay grouped
+// by subsystem to track the wire opcode definitions above. The opcode space is
+// dense and well under 256 entries, so a map keyed by the byte opcode is the
+// idiomatic constant-time replacement for the linear switch.
+var opcodeNames = map[byte]string{
 	// Scheduler Operations (prefix-dispatched)
-	case OpScheduler:
-		return "Scheduler"
+	OpScheduler: "Scheduler",
 
 	// KV Operations
-	case OpPut:
-		return "Put"
-	case OpGet:
-		return "Get"
-	case OpDelete:
-		return "Delete"
-	case OpList:
-		return "List"
+	OpPut:    "Put",
+	OpGet:    "Get",
+	OpDelete: "Delete",
+	OpList:   "List",
 
 	// Batch Operations
-	case OpBatchPut:
-		return "BatchPut"
-	case OpBatchGet:
-		return "BatchGet"
-	case OpBatchDelete:
-		return "BatchDelete"
+	OpBatchPut:    "BatchPut",
+	OpBatchGet:    "BatchGet",
+	OpBatchDelete: "BatchDelete",
 
 	// Transaction Operations
-	case OpTransaction:
-		return "Transaction"
+	OpTransaction: "Transaction",
 
 	// Query Operations
-	case OpQuery:
-		return "Query"
-	case OpScanIndex:
-		return "ScanIndex"
+	OpQuery:     "Query",
+	OpScanIndex: "ScanIndex",
 
 	// Cluster Operations
-	case OpClusterStatus:
-		return "ClusterStatus"
-	case OpGetLeader:
-		return "GetLeader"
-	case OpAddNode:
-		return "AddNode"
-	case OpRemoveNode:
-		return "RemoveNode"
-	case OpCreateShard:
-		return "CreateShard"
-	case OpRebalanceCluster:
-		return "RebalanceCluster"
-	case OpListNodes:
-		return "ListNodes"
-	case OpRebalanceStatus:
-		return "RebalanceStatus"
-	case OpRebalancePlan:
-		return "RebalancePlan"
-	case OpCancelMigration:
-		return "CancelMigration"
-	case OpNodeReplaceRequest:
-		return "NodeReplaceRequest"
+	OpClusterStatus:      "ClusterStatus",
+	OpGetLeader:          "GetLeader",
+	OpAddNode:            "AddNode",
+	OpRemoveNode:         "RemoveNode",
+	OpCreateShard:        "CreateShard",
+	OpRebalanceCluster:   "RebalanceCluster",
+	OpListNodes:          "ListNodes",
+	OpRebalanceStatus:    "RebalanceStatus",
+	OpRebalancePlan:      "RebalancePlan",
+	OpCancelMigration:    "CancelMigration",
+	OpNodeReplaceRequest: "NodeReplaceRequest",
 
 	// Backup Operations
-	case OpCreateBackup:
-		return "CreateBackup"
-	case OpListBackups:
-		return "ListBackups"
-	case OpRestoreBackup:
-		return "RestoreBackup"
-	case OpDeleteBackup:
-		return "DeleteBackup"
-	case OpVerifyBackup:
-		return "VerifyBackup"
+	OpCreateBackup:  "CreateBackup",
+	OpListBackups:   "ListBackups",
+	OpRestoreBackup: "RestoreBackup",
+	OpDeleteBackup:  "DeleteBackup",
+	OpVerifyBackup:  "VerifyBackup",
 
 	// Auth Operations
-	case OpLogout:
-		return "Logout"
-	case OpRefreshToken:
-		return "RefreshToken"
-	case OpValidateToken:
-		return "ValidateToken"
+	OpLogout:        "Logout",
+	OpRefreshToken:  "RefreshToken",
+	OpValidateToken: "ValidateToken",
 
 	// Dynamic Secrets Operations
-	case OpDynamicSecretsCreateRole:
-		return "DynamicSecretsCreateRole"
-	case OpDynamicSecretsGetRole:
-		return "DynamicSecretsGetRole"
-	case OpDynamicSecretsListRoles:
-		return "DynamicSecretsListRoles"
-	case OpDynamicSecretsDeleteRole:
-		return "DynamicSecretsDeleteRole"
-	case OpDynamicSecretsGenerate:
-		return "DynamicSecretsGenerate"
-	case OpDynamicSecretsRenewLease:
-		return "DynamicSecretsRenewLease"
-	case OpDynamicSecretsRevokeLease:
-		return "DynamicSecretsRevokeLease"
-	case OpDynamicSecretsListLeases:
-		return "DynamicSecretsListLeases"
+	OpDynamicSecretsCreateRole:  "DynamicSecretsCreateRole",
+	OpDynamicSecretsGetRole:     "DynamicSecretsGetRole",
+	OpDynamicSecretsListRoles:   "DynamicSecretsListRoles",
+	OpDynamicSecretsDeleteRole:  "DynamicSecretsDeleteRole",
+	OpDynamicSecretsGenerate:    "DynamicSecretsGenerate",
+	OpDynamicSecretsRenewLease:  "DynamicSecretsRenewLease",
+	OpDynamicSecretsRevokeLease: "DynamicSecretsRevokeLease",
+	OpDynamicSecretsListLeases:  "DynamicSecretsListLeases",
 
 	// Parameter Store Operations
-	case OpParameterGet:
-		return "ParameterGet"
-	case OpParameterSet:
-		return "ParameterSet"
-	case OpParameterDelete:
-		return "ParameterDelete"
-	case OpParameterList:
-		return "ParameterList"
-	case OpParameterBatchGet:
-		return "ParameterBatchGet"
-	case OpParameterBatchSet:
-		return "ParameterBatchSet"
-	case OpParameterBatchDelete:
-		return "ParameterBatchDelete"
-	case OpParameterSearch:
-		return "ParameterSearch"
+	OpParameterGet:         "ParameterGet",
+	OpParameterSet:         "ParameterSet",
+	OpParameterDelete:      "ParameterDelete",
+	OpParameterList:        "ParameterList",
+	OpParameterBatchGet:    "ParameterBatchGet",
+	OpParameterBatchSet:    "ParameterBatchSet",
+	OpParameterBatchDelete: "ParameterBatchDelete",
+	OpParameterSearch:      "ParameterSearch",
 
 	// RBAC Operations
-	case OpCreateUser:
-		return "CreateUser"
-	case OpDeleteUser:
-		return "DeleteUser"
-	case OpListUsers:
-		return "ListUsers"
-	case OpCreateRole:
-		return "CreateRole"
-	case OpDeleteRole:
-		return "DeleteRole"
-	case OpListRoles:
-		return "ListRoles"
-	case OpAssignRole:
-		return "AssignRole"
-	case OpRevokeRole:
-		return "RevokeRole"
+	OpCreateUser: "CreateUser",
+	OpDeleteUser: "DeleteUser",
+	OpListUsers:  "ListUsers",
+	OpCreateRole: "CreateRole",
+	OpDeleteRole: "DeleteRole",
+	OpListRoles:  "ListRoles",
+	OpAssignRole: "AssignRole",
+	OpRevokeRole: "RevokeRole",
 
 	// Cache Operations
-	case OpGetCacheStats:
-		return "GetCacheStats"
-	case OpClearCache:
-		return "ClearCache"
-	case OpGetCacheConfig:
-		return "GetCacheConfig"
-	case OpUpdateCacheConfig:
-		return "UpdateCacheConfig"
+	OpGetCacheStats:     "GetCacheStats",
+	OpClearCache:        "ClearCache",
+	OpGetCacheConfig:    "GetCacheConfig",
+	OpUpdateCacheConfig: "UpdateCacheConfig",
 
 	// Certificate Operations
-	case OpCertIssue:
-		return "CertIssue"
-	case OpCertSignCSR:
-		return "CertSignCSR"
-	case OpCertRevoke:
-		return "CertRevoke"
-	case OpCertVerify:
-		return "CertVerify"
-	case OpCertGetCA:
-		return "CertGetCA"
-	case OpCertGetTLSConfig:
-		return "CertGetTLSConfig"
+	OpCertIssue:        "CertIssue",
+	OpCertSignCSR:      "CertSignCSR",
+	OpCertRevoke:       "CertRevoke",
+	OpCertVerify:       "CertVerify",
+	OpCertGetCA:        "CertGetCA",
+	OpCertGetTLSConfig: "CertGetTLSConfig",
 
 	// Health Operations
-	case OpHealth:
-		return "Health"
-	case OpLiveness:
-		return "Liveness"
-	case OpReadiness:
-		return "Readiness"
+	OpHealth:    "Health",
+	OpLiveness:  "Liveness",
+	OpReadiness: "Readiness",
 
 	// IAM Tenant Operations
-	case OpIAMCreateTenant:
-		return "IAMCreateTenant"
-	case OpIAMGetTenant:
-		return "IAMGetTenant"
-	case OpIAMUpdateTenant:
-		return "IAMUpdateTenant"
-	case OpIAMDeleteTenant:
-		return "IAMDeleteTenant"
-	case OpIAMListTenants:
-		return "IAMListTenants"
+	OpIAMCreateTenant: "IAMCreateTenant",
+	OpIAMGetTenant:    "IAMGetTenant",
+	OpIAMUpdateTenant: "IAMUpdateTenant",
+	OpIAMDeleteTenant: "IAMDeleteTenant",
+	OpIAMListTenants:  "IAMListTenants",
 
 	// IAM User Operations
-	case OpIAMCreateUser:
-		return "IAMCreateUser"
-	case OpIAMGetUser:
-		return "IAMGetUser"
-	case OpIAMUpdateUser:
-		return "IAMUpdateUser"
-	case OpIAMDeleteUser:
-		return "IAMDeleteUser"
-	case OpIAMListUsers:
-		return "IAMListUsers"
+	OpIAMCreateUser: "IAMCreateUser",
+	OpIAMGetUser:    "IAMGetUser",
+	OpIAMUpdateUser: "IAMUpdateUser",
+	OpIAMDeleteUser: "IAMDeleteUser",
+	OpIAMListUsers:  "IAMListUsers",
 
 	// IAM Group Operations
-	case OpIAMCreateGroup:
-		return "IAMCreateGroup"
-	case OpIAMGetGroup:
-		return "IAMGetGroup"
-	case OpIAMUpdateGroup:
-		return "IAMUpdateGroup"
-	case OpIAMDeleteGroup:
-		return "IAMDeleteGroup"
-	case OpIAMListGroups:
-		return "IAMListGroups"
-	case OpIAMAddUserToGroup:
-		return "IAMAddUserToGroup"
-	case OpIAMRemoveUserFromGroup:
-		return "IAMRemoveUserFromGroup"
+	OpIAMCreateGroup:         "IAMCreateGroup",
+	OpIAMGetGroup:            "IAMGetGroup",
+	OpIAMUpdateGroup:         "IAMUpdateGroup",
+	OpIAMDeleteGroup:         "IAMDeleteGroup",
+	OpIAMListGroups:          "IAMListGroups",
+	OpIAMAddUserToGroup:      "IAMAddUserToGroup",
+	OpIAMRemoveUserFromGroup: "IAMRemoveUserFromGroup",
 
 	// IAM Role Operations
-	case OpIAMCreateRole:
-		return "IAMCreateRole"
-	case OpIAMGetRole:
-		return "IAMGetRole"
-	case OpIAMUpdateRole:
-		return "IAMUpdateRole"
-	case OpIAMDeleteRole:
-		return "IAMDeleteRole"
-	case OpIAMListRoles:
-		return "IAMListRoles"
-	case OpIAMAssignRole:
-		return "IAMAssignRole"
-	case OpIAMRevokeRole:
-		return "IAMRevokeRole"
+	OpIAMCreateRole: "IAMCreateRole",
+	OpIAMGetRole:    "IAMGetRole",
+	OpIAMUpdateRole: "IAMUpdateRole",
+	OpIAMDeleteRole: "IAMDeleteRole",
+	OpIAMListRoles:  "IAMListRoles",
+	OpIAMAssignRole: "IAMAssignRole",
+	OpIAMRevokeRole: "IAMRevokeRole",
 
 	// IAM App Operations
-	case OpIAMRegisterApp:
-		return "IAMRegisterApp"
-	case OpIAMGetApp:
-		return "IAMGetApp"
-	case OpIAMUpdateApp:
-		return "IAMUpdateApp"
-	case OpIAMDeleteApp:
-		return "IAMDeleteApp"
-	case OpIAMListApps:
-		return "IAMListApps"
-	case OpIAMRotateAppSecret:
-		return "IAMRotateAppSecret"
+	OpIAMRegisterApp:     "IAMRegisterApp",
+	OpIAMGetApp:          "IAMGetApp",
+	OpIAMUpdateApp:       "IAMUpdateApp",
+	OpIAMDeleteApp:       "IAMDeleteApp",
+	OpIAMListApps:        "IAMListApps",
+	OpIAMRotateAppSecret: "IAMRotateAppSecret",
 
 	// IAM Policy Operations
-	case OpIAMCreatePolicy:
-		return "IAMCreatePolicy"
-	case OpIAMGetPolicy:
-		return "IAMGetPolicy"
-	case OpIAMUpdatePolicy:
-		return "IAMUpdatePolicy"
-	case OpIAMDeletePolicy:
-		return "IAMDeletePolicy"
-	case OpIAMListPolicies:
-		return "IAMListPolicies"
-	case OpIAMValidatePolicy:
-		return "IAMValidatePolicy"
-	case OpIAMTestPolicy:
-		return "IAMTestPolicy"
+	OpIAMCreatePolicy:   "IAMCreatePolicy",
+	OpIAMGetPolicy:      "IAMGetPolicy",
+	OpIAMUpdatePolicy:   "IAMUpdatePolicy",
+	OpIAMDeletePolicy:   "IAMDeletePolicy",
+	OpIAMListPolicies:   "IAMListPolicies",
+	OpIAMValidatePolicy: "IAMValidatePolicy",
+	OpIAMTestPolicy:     "IAMTestPolicy",
 
 	// Time-Series Operations
-	case OpAggregate:
-		return "Aggregate"
-	case OpTimeSeriesQuery:
-		return "TimeSeriesQuery"
-	case OpTSWritePoint:
-		return "TSWritePoint"
-	case OpTSWriteBatch:
-		return "TSWriteBatch"
-	case OpTSQuery:
-		return "TSQuery"
-	case OpTSDeleteSeries:
-		return "TSDeleteSeries"
-	case OpTSGetRetentionPolicy:
-		return "TSGetRetentionPolicy"
-	case OpTSSetRetentionPolicy:
-		return "TSSetRetentionPolicy"
-	case OpTSListMetrics:
-		return "TSListMetrics"
+	OpAggregate:            "Aggregate",
+	OpTimeSeriesQuery:      "TimeSeriesQuery",
+	OpTSWritePoint:         "TSWritePoint",
+	OpTSWriteBatch:         "TSWriteBatch",
+	OpTSQuery:              "TSQuery",
+	OpTSDeleteSeries:       "TSDeleteSeries",
+	OpTSGetRetentionPolicy: "TSGetRetentionPolicy",
+	OpTSSetRetentionPolicy: "TSSetRetentionPolicy",
+	OpTSListMetrics:        "TSListMetrics",
 
 	// ObjectTransfer Operations
-	case OpFetchObject:
-		return "FetchObject"
-	case OpStreamFetchObjects:
-		return "StreamFetchObjects"
+	OpFetchObject:        "FetchObject",
+	OpStreamFetchObjects: "StreamFetchObjects",
 
 	// Operations Management
-	case OpMigrateData:
-		return "MigrateData"
-	case OpGetMigrationProgress:
-		return "GetMigrationProgress"
-	case OpReplaceNode:
-		return "ReplaceNode"
-	case OpUpgradeNode:
-		return "UpgradeNode"
-	case OpGetUpgradeStatus:
-		return "GetUpgradeStatus"
+	OpMigrateData:          "MigrateData",
+	OpGetMigrationProgress: "GetMigrationProgress",
+	OpReplaceNode:          "ReplaceNode",
+	OpUpgradeNode:          "UpgradeNode",
+	OpGetUpgradeStatus:     "GetUpgradeStatus",
 
 	// Barrier Operations (sub-op dispatched)
-	case OpBarrier:
-		return "Barrier"
+	OpBarrier: "Barrier",
 
 	// Ceremony Operations (sub-op dispatched)
-	case OpCeremony:
-		return "Ceremony"
+	OpCeremony: "Ceremony",
 
 	// KMS Operations
-	case OpKMSGenerateKey:
-		return "KMSGenerateKey"
-	case OpKMSImportKey:
-		return "KMSImportKey"
-	case OpKMSGetKey:
-		return "KMSGetKey"
-	case OpKMSListKeys:
-		return "KMSListKeys"
-	case OpKMSRotateKey:
-		return "KMSRotateKey"
-	case OpKMSDeleteKey:
-		return "KMSDeleteKey"
-	case OpKMSEncrypt:
-		return "KMSEncrypt"
-	case OpKMSDecrypt:
-		return "KMSDecrypt"
+	OpKMSGenerateKey: "KMSGenerateKey",
+	OpKMSImportKey:   "KMSImportKey",
+	OpKMSGetKey:      "KMSGetKey",
+	OpKMSListKeys:    "KMSListKeys",
+	OpKMSRotateKey:   "KMSRotateKey",
+	OpKMSDeleteKey:   "KMSDeleteKey",
+	OpKMSEncrypt:     "KMSEncrypt",
+	OpKMSDecrypt:     "KMSDecrypt",
 
 	// KMS DEK Operations
-	case OpKMSDEKCreate:
-		return "KMSDEKCreate"
-	case OpKMSDEKGet:
-		return "KMSDEKGet"
-	case OpKMSDEKList:
-		return "KMSDEKList"
-	case OpKMSDEKRotate:
-		return "KMSDEKRotate"
-	case OpKMSDEKDelete:
-		return "KMSDEKDelete"
-	case OpKMSDEKStatus:
-		return "KMSDEKStatus"
-	case OpKMSDEKSetDefault:
-		return "KMSDEKSetDefault"
-	case OpKMSDEKSetSafety:
-		return "KMSDEKSetSafety"
-	case OpKMSDEKClearSafety:
-		return "KMSDEKClearSafety"
-	case OpKMSDEKStartReencryption:
-		return "KMSDEKStartReencryption"
-	case OpKMSDEKGetReencryptProgress:
-		return "KMSDEKGetReencryptProgress"
+	OpKMSDEKCreate:               "KMSDEKCreate",
+	OpKMSDEKGet:                  "KMSDEKGet",
+	OpKMSDEKList:                 "KMSDEKList",
+	OpKMSDEKRotate:               "KMSDEKRotate",
+	OpKMSDEKDelete:               "KMSDEKDelete",
+	OpKMSDEKStatus:               "KMSDEKStatus",
+	OpKMSDEKSetDefault:           "KMSDEKSetDefault",
+	OpKMSDEKSetSafety:            "KMSDEKSetSafety",
+	OpKMSDEKClearSafety:          "KMSDEKClearSafety",
+	OpKMSDEKStartReencryption:    "KMSDEKStartReencryption",
+	OpKMSDEKGetReencryptProgress: "KMSDEKGetReencryptProgress",
 
 	// KMS Backend Operations
-	case OpKMSBackendStatus:
-		return "KMSBackendStatus"
-	case OpKMSBackendTest:
-		return "KMSBackendTest"
-	case OpKMSKeyVersions:
-		return "KMSKeyVersions"
-	case OpKMSKeyStatus:
-		return "KMSKeyStatus"
+	OpKMSBackendStatus: "KMSBackendStatus",
+	OpKMSBackendTest:   "KMSBackendTest",
+	OpKMSKeyVersions:   "KMSKeyVersions",
+	OpKMSKeyStatus:     "KMSKeyStatus",
 
 	// Extended KMS Operations
-	case OpKMSSetKeyPolicy:
-		return "KMSSetKeyPolicy"
-	case OpKMSGetKeyPolicy:
-		return "KMSGetKeyPolicy"
+	OpKMSSetKeyPolicy: "KMSSetKeyPolicy",
+	OpKMSGetKeyPolicy: "KMSGetKeyPolicy",
 	// Rotation policy ops are handled in the 0xFD-0xFF block above
-	case OpKMSSetKeySafety:
-		return "KMSSetKeySafety"
-	case OpKMSClearKeySafety:
-		return "KMSClearKeySafety"
-	case OpKMSSafetyCheck:
-		return "KMSSafetyCheck"
-	case OpKMSSafetyReport:
-		return "KMSSafetyReport"
-	case OpKMSExportKey:
-		return "KMSExportKey"
-	case OpKMSUnwrapKey:
-		return "KMSUnwrapKey"
-	case OpKMSGetKeyMetadata:
-		return "KMSGetKeyMetadata"
-	case OpKMSUpdateKeyMetadata:
-		return "KMSUpdateKeyMetadata"
-	case OpKMSSetRotationPolicy:
-		return "KMSSetRotationPolicy"
-	case OpKMSGetRotationPolicy:
-		return "KMSGetRotationPolicy"
-	case OpKMSDeleteRotationPolicy:
-		return "KMSDeleteRotationPolicy"
+	OpKMSSetKeySafety:         "KMSSetKeySafety",
+	OpKMSClearKeySafety:       "KMSClearKeySafety",
+	OpKMSSafetyCheck:          "KMSSafetyCheck",
+	OpKMSSafetyReport:         "KMSSafetyReport",
+	OpKMSExportKey:            "KMSExportKey",
+	OpKMSUnwrapKey:            "KMSUnwrapKey",
+	OpKMSGetKeyMetadata:       "KMSGetKeyMetadata",
+	OpKMSUpdateKeyMetadata:    "KMSUpdateKeyMetadata",
+	OpKMSSetRotationPolicy:    "KMSSetRotationPolicy",
+	OpKMSGetRotationPolicy:    "KMSGetRotationPolicy",
+	OpKMSDeleteRotationPolicy: "KMSDeleteRotationPolicy",
+
+	// KMS Key Administration Operations
+	OpKMSRevokeKey:              "KMSRevokeKey",
+	OpKMSGetPublicKey:           "KMSGetPublicKey",
+	OpKMSGetSupportedAlgorithms: "KMSGetSupportedAlgorithms",
+
+	// Secrets Sub-Dispatch (sub-op in payload)
+	OpSecretsSubDispatch: "SecretsSubDispatch",
 
 	// Secrets Operations
-	case OpSecretsStore:
-		return "SecretsStore"
-	case OpSecretsGet:
-		return "SecretsGet"
-	case OpSecretsList:
-		return "SecretsList"
-	case OpSecretsDelete:
-		return "SecretsDelete"
-	case OpSecretsListVersions:
-		return "SecretsListVersions"
-	case OpSecretsRollback:
-		return "SecretsRollback"
-	case OpSecretsRotate:
-		return "SecretsRotate"
-	case OpSecretsGetVersion:
-		return "SecretsGetVersion"
-	case OpSecretsSetRotation:
-		return "SecretsSetRotation"
-	case OpSecretsGetRotation:
-		return "SecretsGetRotation"
-	case OpSecretsUpdateStatus:
-		return "SecretsUpdateStatus"
-	case OpSecretsGetByPrefix:
-		return "SecretsGetByPrefix"
-	case OpSecretsWatch:
-		return "SecretsWatch"
+	OpSecretsStore:        "SecretsStore",
+	OpSecretsGet:          "SecretsGet",
+	OpSecretsList:         "SecretsList",
+	OpSecretsDelete:       "SecretsDelete",
+	OpSecretsListVersions: "SecretsListVersions",
+	OpSecretsRollback:     "SecretsRollback",
+	OpSecretsRotate:       "SecretsRotate",
+	OpSecretsGetVersion:   "SecretsGetVersion",
+	OpSecretsSetRotation:  "SecretsSetRotation",
+	OpSecretsGetRotation:  "SecretsGetRotation",
+	OpSecretsUpdateStatus: "SecretsUpdateStatus",
+	OpSecretsGetByPrefix:  "SecretsGetByPrefix",
+	OpSecretsWatch:        "SecretsWatch",
 
 	// Crypto Operations
-	case OpCryptoEncrypt:
-		return "CryptoEncrypt"
-	case OpCryptoDecrypt:
-		return "CryptoDecrypt"
-	case OpCryptoRewrap:
-		return "CryptoRewrap"
-	case OpCryptoSign:
-		return "CryptoSign"
-	case OpCryptoVerify:
-		return "CryptoVerify"
-	case OpCryptoHash:
-		return "CryptoHash"
-	case OpCryptoRandom:
-		return "CryptoRandom"
-	case OpCryptoDataKey:
-		return "CryptoDataKey"
-	case OpCryptoHMAC:
-		return "CryptoHMAC"
-	case OpCryptoVerifyHMAC:
-		return "CryptoVerifyHMAC"
+	OpCryptoEncrypt:    "CryptoEncrypt",
+	OpCryptoDecrypt:    "CryptoDecrypt",
+	OpCryptoRewrap:     "CryptoRewrap",
+	OpCryptoSign:       "CryptoSign",
+	OpCryptoVerify:     "CryptoVerify",
+	OpCryptoHash:       "CryptoHash",
+	OpCryptoRandom:     "CryptoRandom",
+	OpCryptoDataKey:    "CryptoDataKey",
+	OpCryptoHMAC:       "CryptoHMAC",
+	OpCryptoVerifyHMAC: "CryptoVerifyHMAC",
 
 	// Vector Operations
-	case OpVectorCreateNamespace:
-		return "VectorCreateNamespace"
-	case OpVectorDeleteNamespace:
-		return "VectorDeleteNamespace"
-	case OpVectorListNamespaces:
-		return "VectorListNamespaces"
-	case OpVectorGetNamespaceInfo:
-		return "VectorGetNamespaceInfo"
-	case OpVectorUpsert:
-		return "VectorUpsert"
-	case OpVectorGet:
-		return "VectorGet"
-	case OpVectorDelete:
-		return "VectorDelete"
-	case OpVectorBatchUpsert:
-		return "VectorBatchUpsert"
-	case OpVectorSearchSimilar:
-		return "VectorSearchSimilar"
-	case OpVectorSearchByMetadata:
-		return "VectorSearchByMetadata"
-	case OpVectorHybridSearch:
-		return "VectorHybridSearch"
-	case OpVectorSearchByID:
-		return "VectorSearchByID"
-	case OpVectorRebuildIndex:
-		return "VectorRebuildIndex"
-	case OpVectorGetRebuildProgress:
-		return "VectorGetRebuildProgress"
-	case OpVectorGetIndexStats:
-		return "VectorGetIndexStats"
-	case OpVectorCompact:
-		return "VectorCompact"
-	case OpVectorGetCompactionProgress:
-		return "VectorGetCompactionProgress"
+	OpVectorCreateNamespace:       "VectorCreateNamespace",
+	OpVectorDeleteNamespace:       "VectorDeleteNamespace",
+	OpVectorListNamespaces:        "VectorListNamespaces",
+	OpVectorGetNamespaceInfo:      "VectorGetNamespaceInfo",
+	OpVectorUpsert:                "VectorUpsert",
+	OpVectorGet:                   "VectorGet",
+	OpVectorDelete:                "VectorDelete",
+	OpVectorBatchUpsert:           "VectorBatchUpsert",
+	OpVectorSearchSimilar:         "VectorSearchSimilar",
+	OpVectorSearchByMetadata:      "VectorSearchByMetadata",
+	OpVectorHybridSearch:          "VectorHybridSearch",
+	OpVectorSearchByID:            "VectorSearchByID",
+	OpVectorRebuildIndex:          "VectorRebuildIndex",
+	OpVectorGetRebuildProgress:    "VectorGetRebuildProgress",
+	OpVectorGetIndexStats:         "VectorGetIndexStats",
+	OpVectorCompact:               "VectorCompact",
+	OpVectorGetCompactionProgress: "VectorGetCompactionProgress",
 
 	// ObjectStorage Operations
-	case OpOSPutObject:
-		return "OSPutObject"
-	case OpOSGetObject:
-		return "OSGetObject"
-	case OpOSDeleteObject:
-		return "OSDeleteObject"
-	case OpOSHeadObject:
-		return "OSHeadObject"
-	case OpOSListObjects:
-		return "OSListObjects"
-	case OpOSListByTag:
-		return "OSListByTag"
-	case OpOSListByTenant:
-		return "OSListByTenant"
-	case OpOSCopyObject:
-		return "OSCopyObject"
-	case OpOSReplicateObject:
-		return "OSReplicateObject"
-	case OpOSMigrateObject:
-		return "OSMigrateObject"
-	case OpOSArchiveObject:
-		return "OSArchiveObject"
-	case OpOSRestoreObject:
-		return "OSRestoreObject"
-	case OpOSVerifyObject:
-		return "OSVerifyObject"
-	case OpOSGetObjectMetadata:
-		return "OSGetObjectMetadata"
-	case OpOSUpdateObjectMetadata:
-		return "OSUpdateObjectMetadata"
-	case OpOSGetStorageStats:
-		return "OSGetStorageStats"
-	case OpOSSetLifecyclePolicy:
-		return "OSSetLifecyclePolicy"
-	case OpOSGetLifecyclePolicy:
-		return "OSGetLifecyclePolicy"
-	case OpOSGetObjectPolicy:
-		return "OSGetObjectPolicy"
-	case OpOSListBackends:
-		return "OSListBackends"
-	case OpOSGetBackendHealth:
-		return "OSGetBackendHealth"
-	case OpOSSetTenantQuotas:
-		return "OSSetTenantQuotas"
-	case OpOSBatchPutObjects:
-		return "OSBatchPutObjects"
-	case OpOSBatchGetObjects:
-		return "OSBatchGetObjects"
-	case OpOSBatchDeleteObjects:
-		return "OSBatchDeleteObjects"
+	OpOSPutObject:            "OSPutObject",
+	OpOSGetObject:            "OSGetObject",
+	OpOSDeleteObject:         "OSDeleteObject",
+	OpOSHeadObject:           "OSHeadObject",
+	OpOSListObjects:          "OSListObjects",
+	OpOSListByTag:            "OSListByTag",
+	OpOSListByTenant:         "OSListByTenant",
+	OpOSCopyObject:           "OSCopyObject",
+	OpOSReplicateObject:      "OSReplicateObject",
+	OpOSMigrateObject:        "OSMigrateObject",
+	OpOSArchiveObject:        "OSArchiveObject",
+	OpOSRestoreObject:        "OSRestoreObject",
+	OpOSVerifyObject:         "OSVerifyObject",
+	OpOSGetObjectMetadata:    "OSGetObjectMetadata",
+	OpOSUpdateObjectMetadata: "OSUpdateObjectMetadata",
+	OpOSGetStorageStats:      "OSGetStorageStats",
+	OpOSSetLifecyclePolicy:   "OSSetLifecyclePolicy",
+	OpOSGetLifecyclePolicy:   "OSGetLifecyclePolicy",
+	OpOSGetObjectPolicy:      "OSGetObjectPolicy",
+	OpOSListBackends:         "OSListBackends",
+	OpOSGetBackendHealth:     "OSGetBackendHealth",
+	OpOSSetTenantQuotas:      "OSSetTenantQuotas",
+	OpOSBatchPutObjects:      "OSBatchPutObjects",
+	OpOSBatchGetObjects:      "OSBatchGetObjects",
+	OpOSBatchDeleteObjects:   "OSBatchDeleteObjects",
 
 	// ObjectStorage Admin Operations (sub-op dispatch)
-	case OpOSAdmin:
-		return "OSAdmin"
+	OpOSAdmin: "OSAdmin",
 	// Ollama Operations
-	case OpOllamaEmbed:
-		return "OllamaEmbed"
-	case OpOllamaEmbedWithModel:
-		return "OllamaEmbedWithModel"
-	case OpOllamaEmbedBatch:
-		return "OllamaEmbedBatch"
-	case OpOllamaListModels:
-		return "OllamaListModels"
-	case OpOllamaGetModelInfo:
-		return "OllamaGetModelInfo"
-	case OpOllamaHealth:
-		return "OllamaHealth"
+	OpOllamaEmbed:          "OllamaEmbed",
+	OpOllamaEmbedWithModel: "OllamaEmbedWithModel",
+	OpOllamaEmbedBatch:     "OllamaEmbedBatch",
+	OpOllamaListModels:     "OllamaListModels",
+	OpOllamaGetModelInfo:   "OllamaGetModelInfo",
+	OpOllamaHealth:         "OllamaHealth",
 
 	// Embedding Operations
-	case OpEmbeddingGenerate:
-		return "EmbeddingGenerate"
-	case OpEmbeddingBatchGenerate:
-		return "EmbeddingBatchGenerate"
-	case OpEmbeddingListProviders:
-		return "EmbeddingListProviders"
-	case OpEmbeddingGetProvider:
-		return "EmbeddingGetProvider"
-	case OpEmbeddingSetDefault:
-		return "EmbeddingSetDefault"
-	case OpEmbeddingGetCacheStats:
-		return "EmbeddingGetCacheStats"
-	case OpEmbeddingClearCache:
-		return "EmbeddingClearCache"
+	OpEmbeddingGenerate:      "EmbeddingGenerate",
+	OpEmbeddingBatchGenerate: "EmbeddingBatchGenerate",
+	OpEmbeddingListProviders: "EmbeddingListProviders",
+	OpEmbeddingGetProvider:   "EmbeddingGetProvider",
+	OpEmbeddingSetDefault:    "EmbeddingSetDefault",
+	OpEmbeddingGetCacheStats: "EmbeddingGetCacheStats",
+	OpEmbeddingClearCache:    "EmbeddingClearCache",
 
 	// RAG Operations
-	case OpRAGQuery:
-		return "RAGQuery"
-	case OpRAGBuildContext:
-		return "RAGBuildContext"
+	OpRAGQuery:        "RAGQuery",
+	OpRAGBuildContext: "RAGBuildContext",
 
 	// PEP Operations
-	case OpPEPCheck:
-		return "PEPCheck"
-	case OpPEPCheckBatch:
-		return "PEPCheckBatch"
-	case OpPEPSubscribe:
-		return "PEPSubscribe"
+	OpPEPCheck:      "PEPCheck",
+	OpPEPCheckBatch: "PEPCheckBatch",
+	OpPEPSubscribe:  "PEPSubscribe",
+}
 
-	default:
-		return fmt.Sprintf("Unknown(0x%02X)", opcode)
+// OpcodeToString returns a human-readable name for an opcode via an O(1) map
+// lookup. Unknown opcodes render as their hex value, preserving the exact
+// behavior of the former switch's default case.
+func OpcodeToString(opcode byte) string {
+	if name, ok := opcodeNames[opcode]; ok {
+		return name
 	}
+	return fmt.Sprintf("Unknown(0x%02X)", opcode)
 }
 
 // SchedulerSubOpcodeToString returns a human-readable name for a scheduler sub-opcode.
@@ -1487,6 +1303,18 @@ func SchedulerSubOpcodeToString(subOpcode byte) string {
 		return "SchedulerGetStatus"
 	default:
 		return fmt.Sprintf("UnknownSchedulerOp(0x%02X)", subOpcode)
+	}
+}
+
+// SecretsSubOpcodeToString returns a human-readable name for a secrets
+// sub-opcode. Used by logging and error messages when OpSecretsSubDispatch
+// is the wire opcode.
+func SecretsSubOpcodeToString(subOpcode byte) string {
+	switch subOpcode {
+	case OpSecretsSubEnsure:
+		return "SecretsEnsure"
+	default:
+		return fmt.Sprintf("UnknownSecretsSubOp(0x%02X)", subOpcode)
 	}
 }
 

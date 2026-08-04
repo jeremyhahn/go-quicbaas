@@ -43,6 +43,11 @@ type roundTripBackend struct {
 	// storeKeyFn computes the key the session is stored under. When nil, the
 	// returned id is used (the correct, bug-free behavior).
 	storeKeyFn func(returnedID string) string
+
+	// lastSpawnReq captures the orchestration.SpawnRequest the spawn server
+	// built from the proto request, so a test can assert the Persistent flag
+	// crossed the daemon gRPC boundary into the runtime/backend layer.
+	lastSpawnReq *orchestration.SpawnRequest
 }
 
 func newRoundTripBackend() *roundTripBackend {
@@ -59,6 +64,7 @@ func (b *roundTripBackend) Spawn(_ context.Context, req *orchestration.SpawnRequ
 		key = b.storeKeyFn(id)
 	}
 	b.mu.Lock()
+	b.lastSpawnReq = req
 	b.sessions[key] = struct{}{}
 	b.mu.Unlock()
 	return &orchestration.Session{
@@ -160,6 +166,104 @@ func TestSpawnServer_SpawnThenImmediatePromptFindsSession(t *testing.T) {
 	}
 	if gotID != spawnResp.GetSessionId() {
 		t.Errorf("Prompt session id = %q, want %q", gotID, spawnResp.GetSessionId())
+	}
+}
+
+// TestSpawnServer_PersistentSpawnRegistersDurableSession is the authoritative
+// regression for the PERSISTENT-mode fix: a Spawn carrying Persistent=true over
+// the daemon gRPC boundary registers a durable session whose returned id the
+// immediate Prompt, Status, and Close all resolve. It also asserts the daemon
+// translated the wire Persistent flag into the orchestration.SpawnRequest it
+// handed the backend — proving the wire field reaches the runtime layer.
+func TestSpawnServer_PersistentSpawnRegistersDurableSession(t *testing.T) {
+	backend := newRoundTripBackend()
+	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+	defer cleanup()
+
+	spawnResp, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
+		Backend:    "acp",
+		WorkDir:    "/tmp",
+		TenantId:   "tenant-a",
+		Persistent: true,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	sessionID := spawnResp.GetSessionId()
+	if sessionID == "" {
+		t.Fatal("Spawn returned empty session id")
+	}
+
+	// The daemon must have forwarded Persistent=true into the runtime request.
+	backend.mu.Lock()
+	gotReq := backend.lastSpawnReq
+	backend.mu.Unlock()
+	if gotReq == nil {
+		t.Fatal("backend did not receive a spawn request")
+	}
+	if !gotReq.Persistent {
+		t.Errorf("orchestration.SpawnRequest.Persistent = false, want true (wire flag not threaded into runtime)")
+	}
+
+	// Immediate Prompt finds the durable session.
+	gotID, promptErr := promptOnce(t, client, sessionID)
+	if promptErr != nil {
+		t.Fatalf("immediate Prompt after persistent Spawn failed: %v", promptErr)
+	}
+	if gotID != sessionID {
+		t.Errorf("Prompt session id = %q, want %q", gotID, sessionID)
+	}
+
+	// Status resolves the same durable session.
+	statusResp, statusErr := client.Status(context.Background(), &proto.SessionStatusRequest{
+		SessionId: sessionID,
+		TenantId:  "tenant-a",
+	})
+	if statusErr != nil {
+		t.Fatalf("Status after persistent Spawn failed: %v", statusErr)
+	}
+	if statusResp.GetSessionId() != sessionID {
+		t.Errorf("Status session id = %q, want %q", statusResp.GetSessionId(), sessionID)
+	}
+
+	// Close resolves and terminates the durable session.
+	closeResp, closeErr := client.Close(context.Background(), &proto.CloseSessionRequest{
+		SessionId: sessionID,
+		TenantId:  "tenant-a",
+	})
+	if closeErr != nil {
+		t.Fatalf("Close after persistent Spawn failed: %v", closeErr)
+	}
+	if closeResp.GetSessionId() != sessionID {
+		t.Errorf("Close session id = %q, want %q", closeResp.GetSessionId(), sessionID)
+	}
+}
+
+// TestSpawnServer_OneShotSpawnThreadsPersistentFalse is the negative control:
+// a Spawn with Persistent=false (or unset) threads Persistent=false into the
+// runtime request, preserving the one-shot path for callers that opt out.
+func TestSpawnServer_OneShotSpawnThreadsPersistentFalse(t *testing.T) {
+	backend := newRoundTripBackend()
+	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+	defer cleanup()
+
+	if _, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
+		Backend:    "acp",
+		WorkDir:    "/tmp",
+		TenantId:   "tenant-a",
+		Persistent: false,
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	backend.mu.Lock()
+	gotReq := backend.lastSpawnReq
+	backend.mu.Unlock()
+	if gotReq == nil {
+		t.Fatal("backend did not receive a spawn request")
+	}
+	if gotReq.Persistent {
+		t.Errorf("orchestration.SpawnRequest.Persistent = true, want false")
 	}
 }
 

@@ -110,3 +110,6 @@ LOCK
 
 # Staged local dependencies for Docker builds
 .deps/
+
+# Dockerized e2e artifacts
+/test/e2e/.docker-results/

@@ -84,6 +84,9 @@ type KeyAttributesRequest struct {
 	// Exportable indicates whether the key can be exported
 	Exportable bool `json:"exportable,omitempty"`
 
+	// DeletionProtection prevents accidental deletion of the key
+	DeletionProtection bool `json:"deletion_protection,omitempty"`
+
 	// AutoRotate enables automatic key rotation (stored in key metadata, not KeyAttributes)
 	AutoRotate bool `json:"auto_rotate,omitempty"`
 
@@ -441,13 +444,14 @@ func (s *Server) HandleGenerateKey(w http.ResponseWriter, r *http.Request) {
 		}
 
 		svcReq := &service.GenerateKeyRequest{
-			KeyAttributes: attrs,
-			Name:          req.Name,
-			Description:   req.Description,
-			Usage:         usage,
-			Exportable:    req.KeyAttributes.Exportable,
-			Tags:          req.Tags,
-			Owner:         req.Owner,
+			KeyAttributes:      attrs,
+			Name:               req.Name,
+			Description:        req.Description,
+			Usage:              usage,
+			Exportable:         req.KeyAttributes.Exportable,
+			DeletionProtection: req.KeyAttributes.DeletionProtection,
+			Tags:               req.Tags,
+			Owner:              req.Owner,
 		}
 
 		svcResp, err := kmsSvc.GenerateKey(ctx, svcReq)

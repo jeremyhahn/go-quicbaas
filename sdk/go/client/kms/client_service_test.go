@@ -544,7 +544,7 @@ func TestClient_RevokeKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := NewClient(tt.transport)
-			err := client.RevokeKey(tt.ctx, tt.keyID)
+			err := client.RevokeKey(tt.ctx, tt.keyID, "test-reason")
 			checkErr(t, "RevokeKey", err, tt.wantErr, tt.errCode)
 		})
 	}

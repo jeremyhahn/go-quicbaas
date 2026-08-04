@@ -106,6 +106,10 @@ func (s *stubBarrierClient) BarrierStatus(_ context.Context) (*transport.Barrier
 	return s.statusResp, s.statusErr
 }
 
+func (s *stubBarrierClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	return &transport.BarrierEnableEncryptionResponse{Status: "migration_started"}, nil
+}
+
 func (s *stubBarrierClient) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return s.shamirResp, s.shamirErr
 }

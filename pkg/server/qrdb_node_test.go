@@ -133,7 +133,7 @@ func TestBuildXKMSCryptoOptions_SoftwareStrategy(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Seal.Strategy = "passphrase"
 
-	opts, err := buildXKMSCryptoOptions(cfg, nil)
+	opts, err := buildXKMSCryptoOptions(cfg, nil, nil)
 
 	require.NoError(t, err)
 	// Must return at least 3 options: StrategyRegistry, PINBackend, FactorRegistry.
@@ -144,7 +144,7 @@ func TestBuildXKMSCryptoOptions_NoneStrategy(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Seal.Strategy = "none"
 
-	opts, err := buildXKMSCryptoOptions(cfg, nil)
+	opts, err := buildXKMSCryptoOptions(cfg, nil, nil)
 
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(opts), 3)
@@ -155,7 +155,7 @@ func TestBuildXKMSCryptoOptions_EmptyStrategy(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Seal.Strategy = ""
 
-	opts, err := buildXKMSCryptoOptions(cfg, nil)
+	opts, err := buildXKMSCryptoOptions(cfg, nil, nil)
 
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(opts), 3)
@@ -303,7 +303,7 @@ func buildMemoryStandaloneNode(t *testing.T) *qrdbnode.Node {
 	qcfg.Protocols.Unix = false
 	qcfg.Protocols.MCP = false
 
-	serverOpts, err := buildXKMSCryptoOptions(cfg, nil)
+	serverOpts, err := buildXKMSCryptoOptions(cfg, nil, nil)
 	require.NoError(t, err)
 
 	node, err := qrdbnode.NewStandaloneNode(
@@ -731,7 +731,7 @@ func TestBuildPINBackend_PersistentSoftwareUnderDataDir(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.DataDir = dir
 
-	be, err := buildPINBackend(cfg, nil)
+	be, err := buildPINBackend(cfg, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, be)
 	// With no TPM provider wired, the selector resolves the software backend.
@@ -745,7 +745,7 @@ func TestBuildPINBackend_PersistentSoftwareUnderDataDir(t *testing.T) {
 }
 
 func TestBuildPINBackend_NoDataDirIsInMemorySoftware(t *testing.T) {
-	be, err := buildPINBackend(&config.Config{}, nil)
+	be, err := buildPINBackend(&config.Config{}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, be)
 	assert.Equal(t, "software", string(be.Strategy()))

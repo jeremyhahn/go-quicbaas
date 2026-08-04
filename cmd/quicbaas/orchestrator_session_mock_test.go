@@ -103,3 +103,67 @@ func (m *mockOrchestratorClient) InferenceStream(ctx context.Context, req *orche
 	close(ch)
 	return ch, nil
 }
+
+// ---------------------------------------------------------------------------
+// Remaining orchestratorSDK.Client satisfiers (workflows, artifacts, agent
+// enable/disable, child jobs). The CLI surface in orchestrator_test.go does not
+// exercise these, but the desktop Wails SessionBinding casts the mock to the
+// full quicbaas.OrchestratorClient (= orchestratorSDK.Client) alias, so the mock
+// must implement the entire interface. These return benign zero values; install
+// behaviour via the override registry above if a future test needs it.
+// ---------------------------------------------------------------------------
+
+// CreateWorkflow satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) CreateWorkflow(ctx context.Context, req *orchestratorSDK.CreateWorkflowRequest) (*orchestratorSDK.WorkflowDefinition, error) {
+	return &orchestratorSDK.WorkflowDefinition{}, nil
+}
+
+// ListWorkflows satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) ListWorkflows(ctx context.Context, req *orchestratorSDK.ListWorkflowsRequest) ([]*orchestratorSDK.WorkflowDefinition, error) {
+	return []*orchestratorSDK.WorkflowDefinition{}, nil
+}
+
+// GetWorkflow satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) GetWorkflow(ctx context.Context, req *orchestratorSDK.GetWorkflowRequest) (*orchestratorSDK.WorkflowDefinition, error) {
+	return &orchestratorSDK.WorkflowDefinition{}, nil
+}
+
+// UpdateWorkflow satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) UpdateWorkflow(ctx context.Context, req *orchestratorSDK.UpdateWorkflowRequest) (*orchestratorSDK.WorkflowDefinition, error) {
+	return &orchestratorSDK.WorkflowDefinition{}, nil
+}
+
+// DeleteWorkflow satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) DeleteWorkflow(ctx context.Context, req *orchestratorSDK.DeleteWorkflowRequest) error {
+	return nil
+}
+
+// EnableAgent satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) EnableAgent(ctx context.Context, req *orchestratorSDK.EnableAgentRequest) (*orchestratorSDK.EnableAgentResponse, error) {
+	return &orchestratorSDK.EnableAgentResponse{}, nil
+}
+
+// DisableAgent satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) DisableAgent(ctx context.Context, req *orchestratorSDK.DisableAgentRequest) (*orchestratorSDK.DisableAgentResponse, error) {
+	return &orchestratorSDK.DisableAgentResponse{}, nil
+}
+
+// SubmitTaskArtifacts satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) SubmitTaskArtifacts(ctx context.Context, req *orchestratorSDK.SubmitTaskArtifactsRequest) (*orchestratorSDK.SubmitTaskArtifactsResponse, error) {
+	return &orchestratorSDK.SubmitTaskArtifactsResponse{}, nil
+}
+
+// GetTaskArtifact satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) GetTaskArtifact(ctx context.Context, req *orchestratorSDK.GetTaskArtifactRequest) (*orchestratorSDK.TaskArtifact, error) {
+	return &orchestratorSDK.TaskArtifact{}, nil
+}
+
+// ListTaskArtifacts satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) ListTaskArtifacts(ctx context.Context, req *orchestratorSDK.ListTaskArtifactsRequest) (*orchestratorSDK.ListTaskArtifactsResponse, error) {
+	return &orchestratorSDK.ListTaskArtifactsResponse{}, nil
+}
+
+// SpawnChildJob satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) SpawnChildJob(ctx context.Context, req *orchestratorSDK.SpawnChildJobRequest) (*orchestratorSDK.SpawnChildJobResponse, error) {
+	return &orchestratorSDK.SpawnChildJobResponse{}, nil
+}

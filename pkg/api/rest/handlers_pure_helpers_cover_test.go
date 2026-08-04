@@ -27,12 +27,12 @@ import (
 )
 
 // TestWriteSSEError emits a terminal error frame and verifies the SSE wire
-// format (event header + data line). httptest.ResponseRecorder satisfies the
-// http.Flusher interface used by the helper.
+// format (event header + data line). The flush argument is a no-op closure
+// since the recorder buffers everything in memory.
 func TestWriteSSEError(t *testing.T) {
 	rec := httptest.NewRecorder()
 
-	writeSSEError(rec, rec, "stream aborted")
+	writeSSEError(rec, func() {}, "stream aborted")
 
 	body := rec.Body.String()
 	assert.True(t, strings.Contains(body, "event: error"), "missing error event header: %q", body)

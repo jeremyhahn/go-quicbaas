@@ -12,7 +12,7 @@ APP_NAME := quicbaas
 VERSION := $(shell cat VERSION 2>/dev/null | tr -d '\n' || git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-dev")
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-GO_VERSION := 1.26.4
+GO_VERSION := 1.26.5
 
 # Directories
 BIN_DIR := bin
@@ -1950,6 +1950,7 @@ test-e2e: build-ui build-daemon ## Run Playwright E2E tests — no ACP backend r
 	@cd cmd/quicbaas/frontend && \
 		NODE_EXTRA_CA_CERTS=/tmp/quicbaas-chrometest-data/certs/ca-chain.crt \
 		QUICBAAS_UI_URL=https://localhost:18080/ui/ \
+		QUICBAAS_DAEMON_LOG=/tmp/quicbaasd-e2e.log \
 		npx playwright test --project=chromium-no-backend; \
 		TEST_RESULT=$$?; \
 		kill -9 $$(cat /tmp/quicbaasd-e2e.pid 2>/dev/null) 2>/dev/null || true; \
@@ -1987,12 +1988,52 @@ test-e2e-acp: build-ui build-daemon ## Run Playwright session lifecycle tests �
 	@cd cmd/quicbaas/frontend && \
 		NODE_EXTRA_CA_CERTS=/tmp/quicbaas-chrometest-data/certs/ca-chain.crt \
 		QUICBAAS_UI_URL=https://localhost:18080/ui/ \
+		QUICBAAS_DAEMON_LOG=/tmp/quicbaasd-e2e-acp.log \
 		QUICBAAS_E2E_BACKEND=acp \
 		npx playwright test --project=chromium-acp; \
 		TEST_RESULT=$$?; \
 		kill -9 $$(cat /tmp/quicbaasd-e2e-acp.pid 2>/dev/null) 2>/dev/null || true; \
 		$(MAKE) stop-local >/dev/null 2>&1 || true; \
 		exit $$TEST_RESULT
+
+.PHONY: test-e2e-docker
+test-e2e-docker: ## Run the Playwright e2e suite fully in Docker (host needs only Docker)
+	@echo "$(BLUE)Running dockerized Playwright e2e (chromium-no-backend)...$(NC)"
+	@COMPOSE_FILE="test/e2e/docker-compose.e2e.yml"; \
+	docker compose -f $$COMPOSE_FILE build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	docker compose -f $$COMPOSE_FILE run --rm e2e; \
+	RESULT=$$?; \
+	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; \
+	exit $$RESULT
+
+.PHONY: test-e2e-acp-docker
+test-e2e-acp-docker: ## Run the Playwright ACP live suite in Docker (opencode + ollama on a GPU host). Requires GPU_HOST=<host>.
+	@if [ -z "$(strip $(GPU_HOST))" ]; then \
+		echo "$(RED)Error: GPU_HOST is required (e.g. GPU_HOST=198.51.100.91). The ACP suite runs opencode against a remote ollama.$(NC)"; \
+		exit 1; \
+	fi; \
+	GPU_HOST="$(strip $(GPU_HOST))"; \
+	case "$$GPU_HOST" in *:*) : ;; *) GPU_HOST="$$GPU_HOST:11434" ;; esac; \
+	echo "$(BLUE)Running dockerized Playwright ACP e2e (opencode + ollama @ $$GPU_HOST)...$(NC)"; \
+	export QUICBAAS_E2E_SANDBOX="$(strip $(QUICBAAS_E2E_SANDBOX))"; \
+	export QUICBAAS_E2E_SANDBOX="$${QUICBAAS_E2E_SANDBOX:-0}"; \
+	export QUICBAAS_E2E_SANDBOX_IMAGE="quicbaas-e2e-sandbox-agent:latest"; \
+	if [ "$$QUICBAAS_E2E_SANDBOX" = "1" ]; then \
+		echo "$(BLUE)Container-sandbox mode: building sandbox agent image $$QUICBAAS_E2E_SANDBOX_IMAGE (opencode + ollama @ $$GPU_HOST)...$(NC)"; \
+		docker build -f test/e2e/Dockerfile.sandbox-agent \
+			--build-arg OLLAMA_URL="http://$$GPU_HOST" \
+			--build-arg OPENCODE_MODEL="qwen3:1.7b" \
+			-t "$$QUICBAAS_E2E_SANDBOX_IMAGE" test/e2e \
+			2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	fi; \
+	COMPOSE_FILE="test/e2e/docker-compose.e2e.yml"; \
+	E2E_PROJECT=chromium-acp E2E_BACKEND=opencode E2E_OLLAMA_URL="http://$$GPU_HOST" \
+	docker compose -f $$COMPOSE_FILE -f test/e2e/docker-compose.e2e-acp.yml build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	E2E_PROJECT=chromium-acp E2E_BACKEND=opencode E2E_OLLAMA_URL="http://$$GPU_HOST" \
+	docker compose -f $$COMPOSE_FILE -f test/e2e/docker-compose.e2e-acp.yml run --rm e2e; \
+	RESULT=$$?; \
+	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; \
+	exit $$RESULT
 
 .PHONY: e2e-test
 e2e-test: ## Run end-to-end tests
@@ -2060,6 +2101,29 @@ coverage: ## Generate coverage report (unit only; excludes generated code)
 	@TOTAL=$$($(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | grep total | awk '{print $$3}'); \
 	echo "$(GREEN)  TOTAL COVERAGE: $$TOTAL$(NC)"
 	@echo "$(GREEN)========================================$(NC)"
+
+# ==============================================================================
+# Coverage Gate (hard threshold — mirrors go-qrdb's COVER_MIN / check-coverage)
+# ==============================================================================
+# COVER_MIN is the hard floor for total unit-test coverage. `check-coverage`
+# fails the build (exit 1) when aggregate coverage across ./pkg/... and
+# ./cmd/... drops below it. The `coverage` target it depends on already excludes
+# generated *.pb.go, mocks, stubs, and test helpers from the profile.
+#
+# Threshold choice: the project goal is 90% (see CLAUDE.md). Measured live
+# total on 2026-08-03 was 91.5%, so the floor sits at the goal itself with
+# ~1.5pt headroom for normal churn.
+COVER_MIN ?= 90
+
+.PHONY: check-coverage
+check-coverage: coverage ## Fail the build when total coverage is below COVER_MIN
+	@TOTAL=$$($(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+	printf "$(BLUE)Coverage gate: %s%% (minimum %s%%)$(NC)\n" "$$TOTAL" "$(COVER_MIN)"; \
+	if awk -v t="$$TOTAL" -v m="$(COVER_MIN)" 'BEGIN { exit !(t+0 < m+0) }'; then \
+		printf "$(RED)FAIL: total coverage %s%% is below minimum %s%%$(NC)\n" "$$TOTAL" "$(COVER_MIN)"; \
+		exit 1; \
+	fi; \
+	printf "$(GREEN)Coverage gate passed (%s%% >= %s%%)$(NC)\n" "$$TOTAL" "$(COVER_MIN)"
 
 .PHONY: coverage-fips
 coverage-fips: ## Generate coverage report for FIPS mode
@@ -2510,7 +2574,7 @@ watch: ## Watch for changes and rebuild
 ##@ CI/CD
 
 .PHONY: ci
-ci: deps fmt-check vet lint gosec vuln trivy build test race ## Run CI pipeline locally (matches GitHub CI)
+ci: deps fmt-check vet lint gosec vuln trivy build test race check-coverage ## Run CI pipeline locally (matches GitHub CI)
 	@echo "$(GREEN)CI pipeline completed successfully$(NC)"
 
 .PHONY: ci-full

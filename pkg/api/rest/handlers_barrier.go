@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -91,6 +92,31 @@ type barrierRecoveryRecoverRequest struct {
 // POST /api/v1/barrier/root-token.
 type barrierRootTokenRequest struct {
 	Shares []string `json:"shares"`
+}
+
+// barrierEnableEncryptionRequest is the JSON payload for
+// POST /api/v1/barrier/enable-encryption.
+type barrierEnableEncryptionRequest struct {
+	// TargetStrategy is the keyed strategy to migrate to ("passphrase" or
+	// "shamir"). Required.
+	TargetStrategy string `json:"target_strategy"`
+
+	// Mechanism selects the physical re-encryption approach ("swap" or
+	// "inplace"). Defaults to "swap" when empty.
+	Mechanism string `json:"mechanism,omitempty"`
+
+	// Availability controls write availability during migration ("online"
+	// or "quiesced"). Defaults to "online" when empty.
+	Availability string `json:"availability,omitempty"`
+
+	// Passphrase is the new passphrase for a passphrase-target migration.
+	// Ignored for Shamir targets.
+	Passphrase string `json:"passphrase,omitempty"`
+
+	// ShamirThreshold / ShamirTotal configure the M-of-N scheme for a
+	// Shamir-target migration. Ignored for passphrase targets.
+	ShamirThreshold int `json:"shamir_threshold,omitempty"`
+	ShamirTotal     int `json:"shamir_total,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -477,4 +503,54 @@ func (s *Server) HandleBarrierRootToken(w http.ResponseWriter, r *http.Request) 
 	}
 
 	RespondJSON(w, r, http.StatusOK, rootTokenToResponse(info))
+}
+
+// HandleBarrierEnableEncryption handles
+// POST /api/v1/barrier/enable-encryption.
+//
+// It migrates the system barrier from the none (unencrypted) strategy to a
+// keyed strategy in place. The operation is driven through the embedded qrdb
+// node's EncryptionMigrator (not the transport BarrierClient, which stubs
+// this operation). Callers must supply the target strategy, mechanism, and
+// availability; a passphrase or Shamir parameters are required for the
+// respective target strategy.
+func (s *Server) HandleBarrierEnableEncryption(w http.ResponseWriter, r *http.Request) {
+	if !s.requireBarrierService(w, r) {
+		return
+	}
+
+	var req barrierEnableEncryptionRequest
+	if !readBarrierJSON(w, r, &req) {
+		return
+	}
+	if req.TargetStrategy == "" {
+		RespondBadRequest(w, r, "target_strategy is required")
+		return
+	}
+
+	mech := req.Mechanism
+	if mech == "" {
+		mech = string(qrdbsdk.MechanismSwap)
+	}
+	avail := req.Availability
+	if avail == "" {
+		avail = string(qrdbsdk.AvailabilityOnline)
+	}
+
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  qrdbsdk.StrategyID(req.TargetStrategy),
+		Mechanism:       qrdbsdk.MigrationMechanism(mech),
+		Availability:    qrdbsdk.MigrationAvailability(avail),
+		ShamirThreshold: req.ShamirThreshold,
+		ShamirTotal:     req.ShamirTotal,
+	}
+	if req.Passphrase != "" {
+		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(req.Passphrase)}
+	}
+
+	if err := s.barrierSvc.EnableEncryption(r.Context(), "", opts); err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

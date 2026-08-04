@@ -174,7 +174,7 @@ func (l *KVSessionEventLog) Range(ctx context.Context, tenantID, sessionID strin
 		}
 		var ev SessionEvent
 		if uErr := json.Unmarshal(e.value, &ev); uErr != nil {
-			return nil, 0, fmt.Errorf("orchestration session log: unmarshal event: %w", uErr)
+			return nil, 0, &SessionLogError{Op: "unmarshal event", Cause: uErr}
 		}
 		out = append(out, &ev)
 	}
@@ -242,7 +242,7 @@ func (l *KVSessionEventLog) GetMeta(ctx context.Context, tenantID, sessionID str
 	}
 	var meta SessionMeta
 	if err := json.Unmarshal(raw, &meta); err != nil {
-		return nil, fmt.Errorf("orchestration session log: unmarshal meta %s/%s: %w", tenantID, sessionID, err)
+		return nil, &SessionLogError{Op: fmt.Sprintf("unmarshal meta %s/%s", tenantID, sessionID), Cause: err}
 	}
 	return &meta, nil
 }

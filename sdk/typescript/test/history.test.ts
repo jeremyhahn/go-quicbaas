@@ -25,6 +25,14 @@ function makeEnvelope(seq: number, sessionID = 'sess'): SessionEventEnvelope {
   };
 }
 
+// mockOK returns a minimal fetch Response-alike that supports both .json()
+// and .text() so tests remain compatible with fetchJSON implementations that
+// use resp.text() (post BUG-2 fix) and those that use resp.json().
+function mockOK(payload: unknown): { ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> } {
+  const body = JSON.stringify(payload);
+  return { ok: true, status: 200, json: async () => JSON.parse(body) as unknown, text: async () => body };
+}
+
 // ---------------------------------------------------------------------------
 // REST pagination tests
 // ---------------------------------------------------------------------------
@@ -49,7 +57,7 @@ describe('REST getSessionHistory pagination', () => {
       events: [makeEnvelope(1), makeEnvelope(2), makeEnvelope(3), makeEnvelope(4), makeEnvelope(5)],
       next_seq: 6,
     };
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => page1 });
+    fetchMock.mockResolvedValueOnce(mockOK(page1));
 
     const resp = await client.orchestrator.getSessionHistory({
       session_id: 'sess',
@@ -69,7 +77,7 @@ describe('REST getSessionHistory pagination', () => {
       events: [makeEnvelope(6), makeEnvelope(7)],
       next_seq: 0,
     };
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => page2 });
+    fetchMock.mockResolvedValueOnce(mockOK(page2));
 
     const resp = await client.orchestrator.getSessionHistory({
       session_id: 'sess',
@@ -93,8 +101,8 @@ describe('REST getSessionHistory pagination', () => {
       next_seq: 0,
     };
     fetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => page1 })
-      .mockResolvedValueOnce({ ok: true, json: async () => page2 });
+      .mockResolvedValueOnce(mockOK(page1))
+      .mockResolvedValueOnce(mockOK(page2));
 
     // Emulate a scrollback pager.
     const allEvents: SessionEventEnvelope[] = [];
@@ -116,10 +124,7 @@ describe('REST getSessionHistory pagination', () => {
   });
 
   it('returns empty events array when session has no history', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], next_seq: 0 }),
-    });
+    fetchMock.mockResolvedValueOnce(mockOK({ events: [], next_seq: 0 }));
 
     const resp = await client.orchestrator.getSessionHistory({ session_id: 'empty-sess' });
 

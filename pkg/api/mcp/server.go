@@ -311,6 +311,17 @@ func (s *Server) SetTenantBarrierService(svc service.TenantBarrierServicer) {
 	}
 }
 
+// SetTenantGovernance installs the mcpTenantGovernancer used by the
+// qrdb_tenant_update_quotas and qrdb_tenant_update_entitlements MCP tools.
+// Lifecycle wiring calls this once the iam.DefaultTenantManager is online.
+// Passing nil takes the governance surface offline; tools then return
+// GovernanceServiceUnavailableError.
+func (s *Server) SetTenantGovernance(g mcpTenantGovernancer) {
+	if s.tools != nil {
+		s.tools.SetTenantGovernance(g)
+	}
+}
+
 // EnableClientRegistrationEndpoint enables or disables the RFC 7591 dynamic client
 // registration endpoint. If no AppRegistrar is configured, an in-memory store is used.
 func (s *Server) EnableClientRegistrationEndpoint(enable bool) {

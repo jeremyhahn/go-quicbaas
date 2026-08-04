@@ -23,9 +23,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// TestEnsureSecretGRPC_InvalidInput verifies the input-validation guard
-// on the gRPC client stub (happy-path generation is pending proto
-// regeneration — see TODO in server_secrets_ensure.go).
+// TestEnsureSecretGRPC_InvalidInput verifies the input-validation guard on the
+// gRPC client (nil request / empty secret_id are rejected before any RPC). The
+// happy path is exercised by the integration adapter suite against a real
+// server.
 func TestEnsureSecretGRPC_InvalidInput(t *testing.T) {
 	c := &Client{}
 	cases := []struct {
@@ -45,24 +46,5 @@ func TestEnsureSecretGRPC_InvalidInput(t *testing.T) {
 				t.Fatalf("expected InvalidArgument, got: %v", err)
 			}
 		})
-	}
-}
-
-// TestEnsureSecretGRPC_UnimplementedSentinel locks in the current
-// no-silent-fallback behavior: until proto stubs are regenerated the
-// gRPC client returns Unimplemented so adapters can detect and skip
-// the leg rather than silently degrading.
-func TestEnsureSecretGRPC_UnimplementedSentinel(t *testing.T) {
-	c := &Client{}
-	_, err := c.EnsureSecret(context.Background(), &service.EnsureSecretRequest{
-		SecretID: "p",
-		Length:   16,
-		Encoding: "base64",
-	})
-	if err == nil {
-		t.Fatal("expected Unimplemented error")
-	}
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("expected codes.Unimplemented, got: %v", err)
 	}
 }

@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // newTenantAuthzProvider builds a minimal OIDCProvider wired only with an
@@ -99,6 +101,12 @@ func (nilTenantManager) ListTenants(context.Context, ListOptions) ([]*Tenant, er
 	return nil, nil
 }
 func (nilTenantManager) CheckQuota(context.Context, string, string) error { return nil }
+func (nilTenantManager) UpdateEngineQuotas(context.Context, string, qrdbsdk.Quotas) error {
+	return nil
+}
+func (nilTenantManager) UpdateEngineEntitlements(context.Context, string, qrdbsdk.Entitlements) error {
+	return nil
+}
 
 func TestOIDCProviderTenantAuthzMode_NilTenant(t *testing.T) {
 	store := NewIdentityStore(IdentityStoreOptions{Tenants: nilTenantManager{}})

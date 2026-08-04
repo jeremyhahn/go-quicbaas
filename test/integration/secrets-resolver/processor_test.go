@@ -293,7 +293,7 @@ func TestConfigProcessor_NestedStruct(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors, "Should have no errors")
 	assert.Empty(t, result.Unresolved, "Should have no unresolved fields")
-	assert.Len(t, result.Resolved, 9, "Should have 9 resolved secrets")
+	assert.Equal(t, 9, result.Resolved, "Should have 9 resolved secrets")
 
 	// Verify resolved values contain expected secrets
 	assertSecretContains(t, cfg.Database.Password, "super-secret-db-password")
@@ -312,13 +312,7 @@ func TestConfigProcessor_NestedStruct(t *testing.T) {
 	assert.Equal(t, "dbuser", cfg.Database.Username)
 	assert.Equal(t, "require", cfg.Database.SSLMode)
 
-	// Verify all resolved secrets have correct strategy
-	for _, resolved := range result.Resolved {
-		assert.Equal(t, secrets.StrategyLocalKMS, resolved.Strategy,
-			"Field %s should use local_kms strategy", resolved.FieldPath)
-	}
-
-	t.Logf("Successfully processed nested config with %d secrets resolved", len(result.Resolved))
+	t.Logf("Successfully processed nested config with %d secrets resolved", result.Resolved)
 }
 
 // TestConfigProcessor_Slices tests processing config with slices containing secret references.
@@ -390,7 +384,7 @@ func TestConfigProcessor_Slices(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors)
 	assert.Empty(t, result.Unresolved)
-	assert.Len(t, result.Resolved, 9, "Should resolve 9 secrets (3 APIKeys + 4 Services + 2 Tokens)")
+	assert.Equal(t, 9, result.Resolved, "Should resolve 9 secrets (3 APIKeys + 4 Services + 2 Tokens)")
 
 	// Verify slice elements resolved
 	assertSecretContains(t, cfg.APIKeys[0], "api-key-first")
@@ -413,7 +407,7 @@ func TestConfigProcessor_Slices(t *testing.T) {
 	assert.Equal(t, "https://auth.example.com", cfg.Services[0].Endpoint)
 	assert.Equal(t, 3, cfg.Services[0].MaxRetries)
 
-	t.Logf("Successfully processed slice config with %d secrets resolved", len(result.Resolved))
+	t.Logf("Successfully processed slice config with %d secrets resolved", result.Resolved)
 }
 
 // TestConfigProcessor_Maps tests processing config with maps containing secret references.
@@ -483,7 +477,7 @@ func TestConfigProcessor_Maps(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors)
 	assert.Empty(t, result.Unresolved)
-	assert.Len(t, result.Resolved, 8, "Should resolve 8 secrets")
+	assert.Equal(t, 8, result.Resolved, "Should resolve 8 secrets")
 
 	// Verify credentials map
 	assertSecretContains(t, cfg.Credentials["admin"], "admin-password-secret")
@@ -501,7 +495,7 @@ func TestConfigProcessor_Maps(t *testing.T) {
 	assert.Equal(t, "8080", cfg.Settings["port"], "Literal should be unchanged")
 	assertSecretContains(t, cfg.Settings["secret"], "settings-secret-value")
 
-	t.Logf("Successfully processed map config with %d secrets resolved", len(result.Resolved))
+	t.Logf("Successfully processed map config with %d secrets resolved", result.Resolved)
 }
 
 // TestConfigProcessor_MixedResolution tests config with both kms:// and auto placeholders.
@@ -549,7 +543,7 @@ func TestConfigProcessor_MixedResolution(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors)
 	assert.Empty(t, result.Unresolved)
-	assert.Len(t, result.Resolved, 3, "Should resolve 3 secrets (2 KMS + 1 auto)")
+	assert.Equal(t, 3, result.Resolved, "Should resolve 3 secrets (2 KMS + 1 auto)")
 
 	// Verify KMS-resolved secrets
 	assertSecretContains(t, cfg.Database.Password, "database-secret-password")
@@ -562,16 +556,6 @@ func TestConfigProcessor_MixedResolution(t *testing.T) {
 
 	// Verify literal is unchanged
 	assert.Equal(t, "plain-text-value", cfg.Literal)
-
-	// Verify strategies in result
-	strategyMap := make(map[string]secrets.ResolvedStrategy)
-	for _, resolved := range result.Resolved {
-		strategyMap[resolved.FieldPath] = resolved.Strategy
-	}
-
-	assert.Equal(t, secrets.StrategyLocalKMS, strategyMap["Database.Password"])
-	assert.Equal(t, secrets.StrategyLocalKMS, strategyMap["APIKey"])
-	assert.Equal(t, secrets.StrategyAutoGen, strategyMap["AutoKey"])
 
 	t.Logf("Successfully processed mixed config with KMS and auto-gen resolution")
 }
@@ -619,10 +603,7 @@ func TestConfigProcessor_Result(t *testing.T) {
 		Literal: "not-a-secret",
 	}
 
-	// Store original values for comparison
-	originalSecret1 := cfg.Secret1
-	originalSecret2 := cfg.Secret2
-	originalSecret3 := cfg.Secret3
+	// Store original auto-gen value for comparison
 	originalAutoGen := cfg.AutoGen
 
 	result, err := processor.Process(ctx, cfg)
@@ -631,38 +612,21 @@ func TestConfigProcessor_Result(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors)
 	assert.Empty(t, result.Unresolved)
-	assert.Len(t, result.Resolved, 4)
+	assert.Equal(t, 4, result.Resolved)
 
-	// Build a map of resolved secrets for verification
-	resolvedMap := make(map[string]secrets.ResolvedSecret)
-	for _, resolved := range result.Resolved {
-		resolvedMap[resolved.FieldPath] = resolved
-	}
+	// Verify KMS-resolved secrets contain the expected values
+	assertSecretContains(t, cfg.Secret1, "value-one")
+	assertSecretContains(t, cfg.Secret2, "value-two")
+	assertSecretContains(t, cfg.Secret3, "value-three")
 
-	// Verify Secret1
-	assert.Contains(t, resolvedMap, "Secret1")
-	assert.Equal(t, originalSecret1, resolvedMap["Secret1"].Original)
-	assert.Equal(t, secrets.StrategyLocalKMS, resolvedMap["Secret1"].Strategy)
+	// Verify auto-generated secret was replaced
+	assert.NotEqual(t, originalAutoGen, cfg.AutoGen, "Auto-gen placeholder should be replaced")
+	assert.NotEmpty(t, cfg.AutoGen, "Auto-generated value should not be empty")
 
-	// Verify Secret2
-	assert.Contains(t, resolvedMap, "Secret2")
-	assert.Equal(t, originalSecret2, resolvedMap["Secret2"].Original)
-	assert.Equal(t, secrets.StrategyLocalKMS, resolvedMap["Secret2"].Strategy)
+	// Verify literal is not resolved
+	assert.Equal(t, "not-a-secret", cfg.Literal)
 
-	// Verify Secret3
-	assert.Contains(t, resolvedMap, "Secret3")
-	assert.Equal(t, originalSecret3, resolvedMap["Secret3"].Original)
-	assert.Equal(t, secrets.StrategyLocalKMS, resolvedMap["Secret3"].Strategy)
-
-	// Verify AutoGen
-	assert.Contains(t, resolvedMap, "AutoGen")
-	assert.Equal(t, originalAutoGen, resolvedMap["AutoGen"].Original)
-	assert.Equal(t, secrets.StrategyAutoGen, resolvedMap["AutoGen"].Strategy)
-
-	// Verify Literal is NOT in resolved
-	assert.NotContains(t, resolvedMap, "Literal")
-
-	t.Logf("Successfully verified ProcessResult with %d resolved secrets", len(result.Resolved))
+	t.Logf("Successfully verified ProcessResult with %d resolved secrets", result.Resolved)
 }
 
 // TestConfigProcessor_PartialFailure tests partial resolution when some secrets exist and some don't.
@@ -716,7 +680,7 @@ func TestConfigProcessor_PartialFailure(t *testing.T) {
 	require.NotNil(t, result)
 
 	// Should have 3 resolved (2 existing + 1 autogen)
-	assert.Len(t, result.Resolved, 3, "Should resolve 3 secrets")
+	assert.Equal(t, 3, result.Resolved, "Should resolve 3 secrets")
 
 	// Should have 2 errors (for missing secrets)
 	assert.Len(t, result.Errors, 2, "Should have 2 errors for missing secrets")
@@ -742,7 +706,7 @@ func TestConfigProcessor_PartialFailure(t *testing.T) {
 	assert.Equal(t, "not-modified", cfg.Literal)
 
 	t.Logf("Successfully handled partial failure: %d resolved, %d errors, %d unresolved",
-		len(result.Resolved), len(result.Errors), len(result.Unresolved))
+		result.Resolved, len(result.Errors), len(result.Unresolved))
 }
 
 // TestConfigProcessor_NoSecrets tests processing config with no secret references (all literals).
@@ -786,7 +750,7 @@ func TestConfigProcessor_NoSecrets(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors)
 	assert.Empty(t, result.Unresolved)
-	assert.Empty(t, result.Resolved, "Should have no resolved secrets")
+	assert.Zero(t, result.Resolved, "Should have no resolved secrets")
 
 	// Verify all values unchanged
 	assert.Equal(t, "localhost", cfg.Host)
@@ -893,7 +857,7 @@ func TestConfigProcessor_RealConfig(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors, "Should have no errors")
 	assert.Empty(t, result.Unresolved, "Should have no unresolved fields")
-	assert.Len(t, result.Resolved, 10, "Should resolve 10 secrets")
+	assert.Equal(t, 10, result.Resolved, "Should resolve 10 secrets")
 
 	// Verify server secrets
 	assertSecretContains(t, cfg.Server.TLSKeyPassword, "tls-key-password-secure")
@@ -925,13 +889,7 @@ func TestConfigProcessor_RealConfig(t *testing.T) {
 	assert.Equal(t, "info", cfg.Logging.Level)
 	assert.True(t, cfg.Logging.Enabled)
 
-	// Verify all resolved secrets have local_kms strategy
-	for _, resolved := range result.Resolved {
-		assert.Equal(t, secrets.StrategyLocalKMS, resolved.Strategy,
-			"Field %s should use local_kms strategy", resolved.FieldPath)
-	}
-
-	t.Logf("Successfully processed realistic config with %d secrets resolved", len(result.Resolved))
+	t.Logf("Successfully processed realistic config with %d secrets resolved", result.Resolved)
 }
 
 // TestConfigProcessor_ConcurrentProcessing tests concurrent processing of multiple configs.
@@ -984,7 +942,7 @@ func TestConfigProcessor_ConcurrentProcessing(t *testing.T) {
 		r := <-results
 		require.NoError(t, r.err, "Config %d should process successfully", r.index)
 		require.NotNil(t, r.result)
-		assert.Len(t, r.result.Resolved, 2)
+		assert.Equal(t, 2, r.result.Resolved)
 		assert.Empty(t, r.result.Errors)
 
 		// Verify shared secret resolved consistently
@@ -1092,7 +1050,7 @@ func TestConfigProcessor_EmptyCollections(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors)
 	assert.Empty(t, result.Unresolved)
-	assert.Empty(t, result.Resolved, "Should have no resolved secrets")
+	assert.Zero(t, result.Resolved, "Should have no resolved secrets")
 
 	t.Logf("Successfully processed config with empty collections")
 }
@@ -1132,7 +1090,7 @@ func TestConfigProcessor_DeeplyNestedMaps(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors)
 	assert.Empty(t, result.Unresolved)
-	assert.Len(t, result.Resolved, 1)
+	assert.Equal(t, 1, result.Resolved)
 
 	assertSecretContains(t, cfg.Level1["a"]["b"]["c"], "deeply-nested-secret-value")
 	assert.Equal(t, "literal-value", cfg.Level1["a"]["b"]["plain"])

@@ -116,6 +116,10 @@
       });
       showToast('success', `Agent "${agent.name}" removed`);
       removeConfirmOpen = false;
+      // Drop the removed agent from the fleet store before navigating back, so
+      // the grid doesn't keep showing its card until the next poll tick
+      // (mirrors confirmDisable, which refreshes after disable/enable).
+      void refreshAgents();
       routeFleet();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

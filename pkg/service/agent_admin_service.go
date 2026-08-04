@@ -210,6 +210,20 @@ func (s *agentAdminServiceImpl) SetStreamCloser(sc AgentStreamCloser) {
 	s.streamCloser = sc
 }
 
+// SetAgentRegistry rebinds the fleet registry this service operates on.
+//
+// The facade constructs the AgentAdminService at Build() time with a private
+// in-memory registry as a safe default for standalone callers. The server's
+// composition root, however, owns the single shared fleet registry that the
+// orchestrator AgentService (RegisterAgent / ListAgents) writes to. Disable
+// and Enable must resolve agents against that SAME registry, otherwise a
+// fleet-registered agent is invisible to AgentAdmin and disable returns 404.
+// The server calls this once, after the shared registry is established, to
+// point AgentAdmin at it.
+func (s *agentAdminServiceImpl) SetAgentRegistry(registry orchestration.AgentRegistry) {
+	s.registry = registry
+}
+
 // SetAuditLogger wires the audit logger used to emit agent.disabled /
 // agent.enabled events for compliance and observability.
 func (s *agentAdminServiceImpl) SetAuditLogger(l iam.AuditLogger) {

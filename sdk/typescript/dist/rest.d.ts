@@ -1,10 +1,10 @@
-import type { AuthClient, Client, ConnectionClient, DataClient, IAMClient, KMSClient, ObjectsClient, BarrierClient, TenantBarrierClient, CeremonyClient, BootstrapClient, SealClient, SecretsClient, SSHKeysClient, SSHKnownHostsClient, SSHAuthorizedKeysClient, SSHClient, TimeSeriesClient, VectorsClient, OrchestratorClient } from './interfaces.js';
+import type { AuthClient, Client, ConnectionClient, DataClient, IAMClient, KMSClient, ObjectsClient, BarrierClient, TenantBarrierClient, CeremonyClient, BootstrapClient, ClusterClient, SealClient, SecretsClient, SSHKeysClient, SSHKnownHostsClient, SSHAuthorizedKeysClient, SSHClient, TimeSeriesClient, VectorsClient, OrchestratorClient } from './interfaces.js';
 import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
-import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierShamirSharesResponse, BarrierShamirDeleteShareRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
+import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierShamirSharesResponse, BarrierShamirDeleteShareRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
 import { APIError, ConnectionError, NotConnectedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError } from './errors.js';
 export declare class RestBarrierClient implements BarrierClient {
     private readonly http;
@@ -47,6 +47,11 @@ export declare class RestCeremonyClient implements CeremonyClient {
     claimShare(req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse>;
     signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse>;
     enrollExternalOfficer(req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse>;
+}
+export declare class RestClusterClient implements ClusterClient {
+    private readonly http;
+    constructor(baseUrl: string, config?: ClientConfig);
+    status(): Promise<ClusterStatusResponse>;
 }
 export declare class RestBootstrapClient implements BootstrapClient {
     private readonly http;
@@ -114,6 +119,7 @@ export declare class RestClient implements Client {
     readonly tenantBarrier: TenantBarrierClient;
     readonly ceremony: CeremonyClient;
     readonly bootstrap: BootstrapClient;
+    readonly cluster: ClusterClient;
     /** @deprecated Use barrier. The legacy seal accessor is kept for one release. */
     readonly seal: SealClient;
     /**

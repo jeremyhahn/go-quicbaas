@@ -66,8 +66,20 @@ func (ac *AuthorizationChecker) authorizeViaValidator(ctx context.Context, toolN
 		return nil, nil
 	}
 
-	// A non-public tool requires a bearer token under the validator posture.
+	// A non-public tool requires a bearer token under the validator posture —
+	// unless the caller is an AGENT authenticating with its verified mTLS agent
+	// certificate (OU=agents), in which case it is admitted with the bounded
+	// least-privilege AgentMCPScopes for its own tenant. A presented token
+	// always wins over the certificate (this branch is token-less only); see
+	// authz_agent_cert.go for the trust model.
 	if token == "" {
+		agentCtx, certErr := agentCertAuthorizedContext(ctx)
+		if certErr != nil {
+			return nil, certErr
+		}
+		if agentCtx != nil {
+			return ac.authorizeAgentCertContext(agentCtx, toolName)
+		}
 		return nil, &AuthorizationError{
 			Type:    AuthErrorMissingToken,
 			Message: "authentication required",

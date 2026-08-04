@@ -168,8 +168,8 @@ func TestRemoteKMSResolver_Resolve_Success(t *testing.T) {
 	}
 
 	// Verify value
-	if result.Value != string(secretData) {
-		t.Errorf("Value = %q, want %q", result.Value, string(secretData))
+	if result.String() != string(secretData) {
+		t.Errorf("Value = %q, want %q", result.String(), string(secretData))
 	}
 
 	// Verify client was called with correct parameters
@@ -252,8 +252,8 @@ func TestRemoteKMSResolver_Resolve_URIParsing(t *testing.T) {
 			if client.lastSecretID != tt.wantSecretID {
 				t.Errorf("Parsed secretID = %q, want %q", client.lastSecretID, tt.wantSecretID)
 			}
-			if result.Value != string(secretData) {
-				t.Errorf("Value = %q, want %q", result.Value, string(secretData))
+			if result.String() != string(secretData) {
+				t.Errorf("Value = %q, want %q", result.String(), string(secretData))
 			}
 		})
 	}
@@ -592,8 +592,8 @@ func TestRemoteKMSResolver_Resolve_BinaryData(t *testing.T) {
 
 	// The value is stored as string, which may not preserve binary data well
 	// This test documents the current behavior
-	if len(result.Value) != len(binaryData) {
-		t.Errorf("Value length = %d, want %d", len(result.Value), len(binaryData))
+	if len(result.String()) != len(binaryData) {
+		t.Errorf("Value length = %d, want %d", len(result.String()), len(binaryData))
 	}
 }
 
@@ -610,8 +610,8 @@ func TestRemoteKMSResolver_Resolve_EmptySecret(t *testing.T) {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 
-	if result.Value != "" {
-		t.Errorf("Value = %q, want empty string", result.Value)
+	if result.String() != "" {
+		t.Errorf("Value = %q, want empty string", result.String())
 	}
 
 	if result.Strategy != StrategyRemoteKMS {

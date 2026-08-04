@@ -39,6 +39,13 @@
   let prompting = $state(false);
   let metadataOpen = $state(true); // collapsible on narrow viewports
 
+  // Optimistic close: a successful Close should reflect in the UI immediately
+  // rather than waiting for the server's session_closed event to echo back over
+  // the live tail (same fragility the prompt echo had). displayStatus overlays
+  // the local close on the server-provided status; it resets per session id.
+  let closedLocally = $state(false);
+  const displayStatus = $derived(closedLocally ? 'closed' : session.status);
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
@@ -52,6 +59,7 @@
   // so its body's reads don't register as dependencies.
   $effect(() => {
     const id = session.session_id; // sole tracked dependency
+    closedLocally = false; // reset optimistic close when switching sessions
     untrack(() => { void openSession(session); });
     void id;
     return () => {
@@ -68,10 +76,17 @@
     isClosing = true;
     closeError = '';
     closeConfirmOpen = false;
+    // Reflect the close optimistically — the backend teardown (agent subprocess
+    // shutdown + ACP close handshake) can take seconds, but the UI should show
+    // the closed state the instant the operator confirms. Roll back if the
+    // request fails so a transient error doesn't leave a live session looking
+    // closed.
+    closedLocally = true;
     try {
       const client = await getSDKClient();
       await client.orchestrator.closeSession({ session_id: session.session_id });
     } catch (err: unknown) {
+      closedLocally = false;
       closeError = err instanceof Error ? err.message : String(err);
     } finally {
       isClosing = false;
@@ -112,7 +127,7 @@
   <dialog
     class="modal modal-open"
     aria-modal="true"
-    aria-label="Confirm close session"
+    aria-label="Close session confirmation"
     onkeydown={(e) => { if (e.key === 'Escape') { closeConfirmOpen = false; } }}
   >
     <div class="modal-box max-w-sm">
@@ -133,6 +148,7 @@
           class="btn btn-sm btn-error"
           onclick={() => { void closeSession(); }}
           disabled={isClosing}
+          aria-label="Confirm close session"
         >
           {#if isClosing}
             <span class="loading loading-spinner loading-xs"></span>
@@ -198,9 +214,9 @@
           {session.session_id.slice(0, 16)}…
         </span>
         <StatusBadge
-          text={session.status}
-          variant={statusVariant(session.status)}
-          pulse={session.status === 'active'}
+          text={displayStatus}
+          variant={statusVariant(displayStatus)}
+          pulse={displayStatus === 'active'}
         />
         <span class="badge badge-sm badge-primary">{session.backend}</span>
       </div>
@@ -224,7 +240,7 @@
         Info
       </button>
 
-      {#if session.status !== 'closed'}
+      {#if displayStatus !== 'closed'}
         <button
           class="btn btn-xs btn-primary"
           onclick={() => { promptModalOpen = true; }}
@@ -324,7 +340,7 @@
   </div>
 
   <!-- Prompt composer (pinned to bottom) -->
-  {#if session.status !== 'closed'}
+  {#if displayStatus !== 'closed'}
     <PromptComposer sessionId={session.session_id} />
   {:else}
     <div class="p-3 text-center text-sm text-base-content/30 border-t border-base-300/50">

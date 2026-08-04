@@ -188,19 +188,42 @@ export interface CeremonyClient {
 /** BootstrapMethod identifies how the client trusts the daemon at first contact. */
 export type BootstrapMethod = 'spki-pin' | 'dane' | 'noise' | 'direct';
 
-/** BootstrapRequest is the user's chosen method + transport-specific input. */
+/**
+ * BootstrapRequest is the structured payload emitted by BootstrapMethodPicker.
+ * Each method populates only the fields it needs; optional fields on unused
+ * methods are absent so the parent can forward the request verbatim to the SDK
+ * without field-presence checks.
+ */
 export interface BootstrapRequest {
   method: BootstrapMethod;
-  /** server_url is the URL the operator wants to bootstrap against. */
+  /** server_url is the canonical URL the operator wants to bootstrap against. */
   server_url: string;
   /**
-   * material is the method-specific input:
-   *   - spki-pin: SHA-256 SPKI hash, hex
-   *   - dane:     TLSA record, presentation form
-   *   - noise:    Noise static public key, hex
-   *   - direct:   ignored (transport trust is implicit)
+   * spki_pin is the hex-encoded SHA-256 SPKI pin of the server certificate
+   * (64 hex characters). Required for spki-pin; ignored by other methods.
    */
-  material: string;
+  spki_pin?: string;
+  /**
+   * hostname is the DNSSEC zone under which TLSA records are published
+   * (e.g. "_443._tcp.kms.example.com" or the bare hostname).
+   * Required for dane; ignored by other methods.
+   */
+  hostname?: string;
+  /**
+   * dns_server pins the recursive resolver for the TLSA lookup
+   * (e.g. "8.8.8.8:53"). Optional DANE-only knob; defaults to system resolver.
+   */
+  dns_server?: string;
+  /**
+   * noise_static_key is the hex-encoded 32-byte Curve25519 server static
+   * public key. Required for noise; ignored by other methods.
+   */
+  noise_static_key?: string;
+  /**
+   * noise_addr is the explicit Noise bootstrap address ("host:port"). When
+   * empty the daemon derives the address from server_url. Optional Noise knob.
+   */
+  noise_addr?: string;
 }
 
 /** BootstrapResponse confirms a successful bootstrap. */

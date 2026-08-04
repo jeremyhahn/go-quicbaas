@@ -53,7 +53,9 @@ type Client interface {
 	ExportKey(ctx context.Context, req *ExportKeyRequest) (*ExportKeyResponse, error)
 
 	// RevokeKey marks a key as revoked and unusable.
-	RevokeKey(ctx context.Context, keyID string) error
+	// RevokeKey marks a key as revoked and unusable. The reason is recorded
+	// for audit; it may be empty.
+	RevokeKey(ctx context.Context, keyID, reason string) error
 
 	// ListKeyVersions returns all versions of a key.
 	ListKeyVersions(ctx context.Context, keyID string) (*ListKeyVersionsResponse, error)
@@ -99,6 +101,12 @@ type GenerateKeyRequest struct {
 	Name      string
 	Algorithm KeyAlgorithm
 	Usage     []KeyUsage
+
+	// Exportable marks the key material as exportable from the KMS.
+	Exportable bool `json:"exportable,omitempty"`
+
+	// DeletionProtection prevents accidental deletion of the key.
+	DeletionProtection bool `json:"deletion_protection,omitempty"`
 }
 
 // KeyAlgorithm represents the key algorithm.
@@ -270,6 +278,12 @@ type GenerateKeyResponse struct {
 	KeyID     string
 	Version   int
 	Algorithm KeyAlgorithm
+
+	// Exportable reports whether the generated key material is exportable.
+	Exportable bool `json:"exportable,omitempty"`
+
+	// DeletionProtection reports whether the key is deletion-protected.
+	DeletionProtection bool `json:"deletion_protection,omitempty"`
 }
 
 // KeyInfo contains information about a key.
@@ -551,12 +565,12 @@ type UnwrapKeyResponse struct {
 
 // getKeyRequest is the internal get key request.
 type getKeyRequest struct {
-	KeyID string
+	KeyID string `json:"key_id"`
 }
 
 // getPublicKeyRequest is the internal get public key request.
 type getPublicKeyRequest struct {
-	KeyID string
+	KeyID string `json:"key_id"`
 }
 
 // listKeysRequest is the internal list keys request.
@@ -564,12 +578,12 @@ type listKeysRequest struct{}
 
 // rotateKeyRequest is the internal rotate key request.
 type rotateKeyRequest struct {
-	KeyID string
+	KeyID string `json:"key_id"`
 }
 
 // deleteKeyRequest is the internal delete key request.
 type deleteKeyRequest struct {
-	KeyID string
+	KeyID string `json:"key_id"`
 }
 
 // deleteKeyResponse is the internal delete key response.
@@ -577,7 +591,11 @@ type deleteKeyResponse struct{}
 
 // revokeKeyRequest is the internal revoke key request.
 type revokeKeyRequest struct {
-	KeyID string
+	KeyID string `json:"key_id"`
+
+	// Reason records why the key was revoked; transports map it into
+	// service.RevokeKeyRequest.Reason for the audit trail.
+	Reason string `json:"reason,omitempty"`
 }
 
 // revokeKeyResponse is the internal revoke key response.
@@ -585,17 +603,17 @@ type revokeKeyResponse struct{}
 
 // listKeyVersionsRequest is the internal list key versions request.
 type listKeyVersionsRequest struct {
-	KeyID string
+	KeyID string `json:"key_id"`
 }
 
 // getKeyMetadataRequest is the internal get key metadata request.
 type getKeyMetadataRequest struct {
-	KeyID string
+	KeyID string `json:"key_id"`
 }
 
 // getKeyPolicyRequest is the internal get key policy request.
 type getKeyPolicyRequest struct {
-	KeyID string
+	KeyID string `json:"key_id"`
 }
 
 // setKeyPolicyResponse is the internal set key policy response.
@@ -674,6 +692,10 @@ func (c *client) GenerateKey(ctx context.Context, req *GenerateKeyRequest) (*Gen
 		if r.Key != nil {
 			genResp.Version = int(r.Key.Version)
 			genResp.Algorithm = serviceAlgToSDKAlg(r.Key.Algorithm)
+		}
+		if r.Metadata != nil {
+			genResp.Exportable = r.Metadata.Exportable
+			genResp.DeletionProtection = r.Metadata.DeletionProtection
 		}
 		return genResp, nil
 	default:
@@ -958,8 +980,9 @@ func (c *client) ExportKey(ctx context.Context, req *ExportKeyRequest) (*ExportK
 	}
 }
 
-// RevokeKey marks a key as revoked and unusable.
-func (c *client) RevokeKey(ctx context.Context, keyID string) error {
+// RevokeKey marks a key as revoked and unusable. The reason is recorded
+// for audit; it may be empty.
+func (c *client) RevokeKey(ctx context.Context, keyID, reason string) error {
 	if keyID == "" {
 		return errors.NewInvalidInput("kms.RevokeKey", "key ID is required")
 	}
@@ -968,7 +991,8 @@ func (c *client) RevokeKey(ctx context.Context, keyID string) error {
 	}
 
 	req := &revokeKeyRequest{
-		KeyID: keyID,
+		KeyID:  keyID,
+		Reason: reason,
 	}
 
 	resp, err := c.transport.Request(ctx, serviceName, "RevokeKey", req)

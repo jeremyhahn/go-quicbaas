@@ -766,7 +766,10 @@ func protoMCPServersToService(servers []*pb.MCPServerConfig) []orchestration.MCP
 	result := make([]orchestration.MCPServerConfig, len(servers))
 	for i, srv := range servers {
 		result[i] = orchestration.MCPServerConfig{
-			Name:    srv.Name,
+			Name: srv.Name,
+			URL:  srv.Url,
+			Env:  srv.Env,
+			// Command mirrors URL for callers that still read the legacy field.
 			Command: srv.Url,
 		}
 	}

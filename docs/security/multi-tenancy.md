@@ -1,6 +1,9 @@
 # Multi-Tenant Service Isolation
 
-QuicBaaS provides data isolation across all services via tenant-scoped storage keys. When a tenant ID is present in the request context, all operations are automatically scoped to that tenant's namespace. Single-tenant deployments require zero configuration changes.
+QuicBaaS provides data isolation across all services via tenant-scoped storage keys and per-tenant barriers.
+When a tenant ID is present in the request context, all operations are automatically scoped to that tenant's namespace.
+Tenants can be isolated at four levels: keyspace (namespace prefix), barrier (per-tenant encryption), volume (separate
+physical storage directory), or raft (dedicated consensus group). Single-tenant deployments require zero configuration changes.
 
 ## Architecture
 
@@ -122,3 +125,84 @@ Run all tenant tests:
 ```bash
 make test-service-tenant
 ```
+
+## Tenant Isolation Modes
+
+Each tenant is assigned an `IsolationType` that controls the scope of isolation:
+
+| Mode | Scope | Barrier | Storage | Use case |
+|------|-------|---------|---------|----------|
+| `keyspace` | Namespace prefix | Shared system barrier | Shared PebbleDB | Cost-optimized multi-tenant SaaS, low-trust environments |
+| `barrier` | Per-tenant encryption | Dedicated per-tenant barrier | Shared PebbleDB | Multi-tenant SaaS with per-tenant encryption |
+| `volume` | Separate directory | Dedicated per-tenant barrier | Separate filesystem directory | Hybrid: per-tenant isolation + shared cluster |
+| `raft` | Dedicated consensus group | Dedicated per-tenant barrier | Dedicated Raft group replicas | High-security, strong isolation (clustered mode only) |
+
+The provisioner wires the isolation mode at tenant creation time:
+
+```go
+tenant, err := provisioner.CreateTenant(ctx, &qrdb.CreateTenantRequest{
+    ID: "acme-corp",
+    IsolationType: qrdb.IsolationVolume,  // or Barrier, Keyspace, Raft
+    // ... other fields
+})
+```
+
+## Tenant Entitlements and Quotas
+
+Each tenant has an `Entitlements` set that governs what features and barrier modes are allowed:
+
+| Entitlement | Type | Values | Notes |
+|-------------|------|--------|-------|
+| `AllowedIsolationModes` | []string | keyspace, barrier, volume, raft | Which isolation modes the tenant may use |
+| `AllowedBarrierModes` | []string | none, passphrase, shamir, tpm2, pkcs11, awskms, gcpkms, azurekv, vault | Which barrier strategies the tenant may enable |
+| `AllowDedicatedRaft` | bool | true/false | Whether this tenant may create dedicated Raft groups (requires `IsolationType: raft`) |
+| `AllowVolumeStorage` | bool | true/false | Whether this tenant may use volume-scoped storage (requires `IsolationType: volume`) |
+| `AllowSystemManagedBarrier` | bool | true/false | Whether this tenant's barrier may use system-managed DEK envelope (enables enable-encryption without manual HSM/KMS) |
+| `AllowDedicatedWAL` | bool | true/false | Whether this tenant may allocate dedicated WAL groups (REST/gRPC only; not available on QUIC transport) |
+
+Additionally, each tenant has resource `Quotas`:
+
+- `MaxDatabases`, `MaxRaftGroups`, `MaxReplicasPerGroup`, `MaxTotalReplicas`
+- `MaxCollections`, `MaxKeys`, `MaxStorageBytes`, `MaxDatabaseSizeBytes`
+- `MaxUsers`, `MaxRoles`, `MaxCertificates`, `MaxBackups`
+- `MaxVectorDims`, `MaxTSMetrics`, `MaxDedicatedWALGroups` (where supported)
+- `SystemBarrierQuota` — tenant's share of the system barrier's storage
+
+Quotas and entitlements are set at tenant creation and updated via:
+
+- `PUT /v1/tenants/{tenant_id}/quotas` (REST)
+- `PUT /v1/tenants/{tenant_id}/entitlements` (REST)
+- `TenantServicer.UpdateQuotas()` / `UpdateEntitlements()` (gRPC/SDK)
+
+## Tenant Enable-Encryption
+
+Tenants can transition their isolation barrier from cleartext (`none`) to encrypted via:
+
+```bash
+# System scope: enable shared cluster barrier
+curl -X POST http://localhost:3000/api/v1/barrier/enable-encryption \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{
+    "target_strategy": "shamir",
+    "passphrase": "my-wrapping-passphrase",
+    "shamir_threshold": 2,
+    "shamir_total": 3
+  }'
+
+# Tenant scope: enable per-tenant barrier
+curl -X POST http://localhost:3000/api/v1/tenants/acme-corp/barrier/enable-encryption \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{
+    "target_strategy": "passphrase",
+    "passphrase": "tenant-wrapping-passphrase"
+  }'
+```
+
+Enable-encryption requires:
+
+1. Tenant entitlement `AllowedBarrierModes` includes the target strategy
+2. Barrier currently in `none` state (only none → keyed transitions supported)
+3. For cloud KMS / HSM: corresponding provider is reachable and provisioned
+4. Sufficient quorum for multi-shard coordination (IsolationRaft mode)
+
+See [Barrier Architecture: Enable-Encryption](../architecture/barrier.md#enable-encryption-barrier-migration) for details.

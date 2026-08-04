@@ -90,3 +90,32 @@ func (e *InvalidConfigError) Error() string {
 }
 
 func (e *InvalidConfigError) Is(target error) bool { return target == ErrInvalidConfig }
+
+// RequestError wraps a low-level HTTP request construction or marshalling
+// failure in the Okta Management-API client.
+type RequestError struct {
+	Op    string
+	Cause error
+}
+
+func (e *RequestError) Error() string { return e.Op + ": " + e.Cause.Error() }
+
+func (e *RequestError) Unwrap() error { return e.Cause }
+
+// HTTPError represents a non-2xx response from the Okta Management API. ReadErr
+// is set when the response body itself could not be read; otherwise Detail
+// carries the server-supplied error summary or raw body.
+type HTTPError struct {
+	StatusCode int
+	Detail     string
+	ReadErr    error
+}
+
+func (e *HTTPError) Error() string {
+	if e.ReadErr != nil {
+		return fmt.Sprintf("HTTP %d (failed to read body: %v)", e.StatusCode, e.ReadErr)
+	}
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Detail)
+}
+
+func (e *HTTPError) Unwrap() error { return e.ReadErr }

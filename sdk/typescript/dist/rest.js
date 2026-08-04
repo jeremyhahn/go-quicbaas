@@ -22,6 +22,16 @@ async function resolveToken(token) {
         return token();
     return token;
 }
+// parseResponseBody reads the body of a 2xx fetch Response and returns the
+// parsed JSON, tolerating 204 No Content and empty bodies (returns undefined
+// as T). All fetchJSON and fetchSSH success tails delegate here to prevent
+// "Unexpected end of JSON input" when servers return 204 or a body-less 2xx.
+async function parseResponseBody(resp) {
+    if (resp.status === 204)
+        return undefined;
+    const text = await resp.text();
+    return (text ? JSON.parse(text) : undefined);
+}
 // RestConnectionClient manages the server address and validates connectivity
 // by performing a health check against the orchestrator endpoint.
 class RestConnectionClient {
@@ -99,7 +109,7 @@ class RestOrchestratorClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // listJobs maps to GET /api/v1/orchestrator/jobs?tenant_id=<tenantID>
     // Server returns {jobs: JobStatus[] | null}; unwrap to bare array.
@@ -303,12 +313,12 @@ class RestOrchestratorClient {
     async removeAgent(req) {
         await this.fetchJSON(`/agents/${encodeURIComponent(req.agent_id)}?tenant_id=${encodeURIComponent(req.tenant_id)}`, { method: 'DELETE' });
     }
-    // disableAgent maps to POST /api/v1/agents/:agentID/disable?tenant_id=<tenantID>
+    // disableAgent maps to POST /api/v1/orchestrator/agents/:agentID/disable?tenant_id=<tenantID>
     async disableAgent(req) {
         const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
         return this.fetchJSON(`/agents/${encodeURIComponent(req.agent_id)}/disable?${query}`, { method: 'POST' });
     }
-    // enableAgent maps to POST /api/v1/agents/:agentID/enable?tenant_id=<tenantID>
+    // enableAgent maps to POST /api/v1/orchestrator/agents/:agentID/enable?tenant_id=<tenantID>
     async enableAgent(req) {
         const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
         return this.fetchJSON(`/agents/${encodeURIComponent(req.agent_id)}/enable?${query}`, { method: 'POST' });
@@ -518,7 +528,7 @@ class RestDataClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // kvList maps to GET /api/v1/kv/{type}
     // Server response shape: {entity_type, items: [{key, value, timestamp}], total, has_more}
@@ -594,7 +604,7 @@ class RestVectorsClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // listNamespaces maps to GET /api/v1/vector/namespaces.
     // Server returns {namespaces: [{namespace, dimensions, distance_metric, ...}]}
@@ -676,7 +686,7 @@ class RestTimeSeriesClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // write maps to POST /api/v1/timeseries/write
     async write(point) {
@@ -748,7 +758,7 @@ class RestObjectsClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // listObjects maps to GET /api/v1/objects (with optional prefix query param)
     async listObjects(prefix) {
@@ -1065,7 +1075,7 @@ class RestRAGClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // query maps to POST /api/v1/rag/query
     async query(req) {
@@ -1148,7 +1158,7 @@ class RestEmbeddingsClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // generate maps to POST /api/v1/embedding/generate
     async generate(req) {
@@ -1218,7 +1228,7 @@ class RestMessagingClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // listChannels maps to GET /api/v1/messaging/channels
     // Server returns {channels:[], total, timestamp}; map to SDK's ListChannelsResponse shape:
@@ -1300,7 +1310,7 @@ class RestSchedulerClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // listJobs maps to GET /api/v1/scheduler/jobs
     // Server returns {jobs:[], has_more, timestamp}; map to full SDK ListJobsResponse shape:
@@ -1393,7 +1403,7 @@ class RestProjectsClient {
             const text = await resp.text().catch(() => resp.statusText);
             throw new APIError(resp.status, text);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // createProject maps to POST /api/v1/projects
     async createProject(req) {
@@ -1473,7 +1483,7 @@ class RestIAMClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     async listUsers(tenantID) {
         // Server returns {limit, offset, users:[{id, email, name, tenant_id, created, updated, ...}]}.
@@ -1537,7 +1547,10 @@ class RestIAMClient {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`, { method: 'PUT', body: JSON.stringify(req) });
     }
     async assignRoleToUser(tenantID, userID, role) {
-        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/roles`, { method: 'POST', body: JSON.stringify({ role }) });
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/roles`, 
+        // Wire field is "role_id" — the handler decodes this and passes it directly
+        // to IdentityStore.AssignRole which keys on the role UUID, not the name.
+        { method: 'POST', body: JSON.stringify({ role_id: role }) });
     }
     async revokeRoleFromUser(tenantID, userID, role) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/roles/${encodeURIComponent(role)}`, { method: 'DELETE' });
@@ -1632,7 +1645,7 @@ class RestKMSClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     async listKeys(limit = 100) {
         // Server returns {keys: [{key_id, version, algorithm, status, created_at}]}.
@@ -1755,7 +1768,7 @@ class RestSecretsClient {
             }
             throw new APIError(resp.status, message);
         }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     async listSecrets(limit = 100) {
         const raw = await this.fetchJSON(`/api/v1/secrets?limit=${limit}`);
@@ -1851,16 +1864,7 @@ function newFetchHelper(baseUrl, config) {
     return {
         async fetchJSON(path, init) {
             const resp = await send(path, init);
-            // 204 No Content is valid: return undefined cast as T.
-            if (resp.status === 204) {
-                return undefined;
-            }
-            // Empty bodies on 200 are also tolerated (some endpoints return no body).
-            const text = await resp.text();
-            if (text.length === 0) {
-                return undefined;
-            }
-            return JSON.parse(text);
+            return parseResponseBody(resp);
         },
         async fetchVoid(path, init) {
             await send(path, init);
@@ -2052,6 +2056,24 @@ export class RestCeremonyClient {
     }
 }
 // ---------------------------------------------------------------------------
+// RestClusterClient — /api/v1/cluster surface.
+// ---------------------------------------------------------------------------
+// RestClusterClient implements ClusterClient against the QuicBaaS Raft cluster
+// REST endpoints. status() issues an authenticated GET so the bearer token is
+// attached via the shared FetchHelper (the same auth path every other
+// authenticated client uses) — a raw fetch() would omit the token and 401.
+export class RestClusterClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    async status() {
+        return this.http.fetchJSON('/api/v1/cluster/status', {
+            method: 'GET',
+        });
+    }
+}
+// ---------------------------------------------------------------------------
 // RestBootstrapClient — /api/v1/bootstrap surface.
 // ---------------------------------------------------------------------------
 // RestBootstrapClient implements BootstrapClient against the QuicBaaS
@@ -2202,14 +2224,7 @@ export class RestSSHKeysClient {
         if (!resp.ok) {
             await throwSSHError(resp);
         }
-        // No content responses — return undefined cast to T.
-        if (resp.status === 204 || resp.status === 201) {
-            const text = await resp.text();
-            if (!text)
-                return undefined;
-            return JSON.parse(text);
-        }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // list returns SSH keys using server-side scope/owner defaults.
     // Backward-compatible: returns {keys: SSHKey[]} for Wails callers.
@@ -2322,13 +2337,7 @@ export class RestKnownHostsClient {
         if (!resp.ok) {
             await throwSSHError(resp);
         }
-        if (resp.status === 204 || resp.status === 201) {
-            const text = await resp.text();
-            if (!text)
-                return undefined;
-            return JSON.parse(text);
-        }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // add pins a host-key fingerprint.
     async add(req) {
@@ -2398,13 +2407,7 @@ export class RestAuthorizedKeysClient {
         if (!resp.ok) {
             await throwSSHError(resp);
         }
-        if (resp.status === 204 || resp.status === 201) {
-            const text = await resp.text();
-            if (!text)
-                return undefined;
-            return JSON.parse(text);
-        }
-        return resp.json();
+        return parseResponseBody(resp);
     }
     // emit formats a public key into an authorized_keys line.
     async emit(req) {
@@ -2471,6 +2474,7 @@ export class RestClient {
     tenantBarrier;
     ceremony;
     bootstrap;
+    cluster;
     /** @deprecated Use barrier. The legacy seal accessor is kept for one release. */
     seal;
     /**
@@ -2503,6 +2507,7 @@ export class RestClient {
         this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
         this.ceremony = new RestCeremonyClient(baseUrl, config);
         this.bootstrap = new RestBootstrapClient(baseUrl, config);
+        this.cluster = new RestClusterClient(baseUrl, config);
         // RestSealClient is a deprecated alias retained for one release. Construction
         // is lazy via a getter so apps that never touch `client.seal` (which is the
         // expected case after the unification) don't pay for the deprecation

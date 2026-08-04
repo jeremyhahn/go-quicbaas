@@ -31,7 +31,10 @@ import { test, expect, type Page } from '@playwright/test';
 import { createTestInvite, deleteTestUser, getInviteMetadata, SYSTEM_TENANT_ID } from './fixtures/api.ts';
 import type { CreateUserResponse } from './fixtures/api.ts';
 
-test.use({ ignoreHTTPSErrors: true });
+// This suite exercises the LOGGED-OUT invite-activation and passkey-login flow,
+// so it must NOT inherit the admin storageState the live project applies by
+// default — start every page from a clean, unauthenticated browser.
+test.use({ ignoreHTTPSErrors: true, storageState: { cookies: [], origins: [] } });
 
 // ---------------------------------------------------------------------------
 // Shared state — populated in beforeAll.
@@ -241,7 +244,10 @@ test.describe('Security > Invite Activation — bootstrap activate flow', () => 
         window.location.hash = '#/login';
       });
       await page.getByRole('button', { name: /sign in with passkey/i }).click();
-      await page.getByLabel(/email address/i).fill('e2e-login-vauth@quicbaas.test');
+      // createTestInvite uniquifies the email (e2e-login-vauth+<ts>@…), so the
+      // passkey is registered against fresh.email — log in with that exact value,
+      // not the base address, or login/begin can't find the user.
+      await page.getByLabel(/email address/i).fill(fresh.email);
       await page.getByRole('button', { name: /authenticate with passkey/i }).click();
 
       // The finish call must succeed (2xx) — this is the same 200 the bug had.

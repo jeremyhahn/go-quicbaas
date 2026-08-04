@@ -12,11 +12,11 @@ This page documents only the QuicBaaS-specific deltas.
 | Concern | Where it lives | Notes |
 |---------|----------------|-------|
 | REST routes | `pkg/api/rest/handlers_{barrier,ceremony,bootstrap}.go` | Mirrors go-qrdb's path layout under `/api/v1/{barrier,init,bootstrap}/*`. The legacy `/api/v1/seal/*` paths are kept for one release with `Deprecation:` and `Sunset:` response headers. |
-| Service facade | `pkg/service/{barrier,ceremony}_service.go` | Thin wrappers that delegate to go-qrdb's `BarrierClient` / `CeremonyClient`. |
+| Service facade | `pkg/service/{barrier,ceremony}_service.go` | Thin wrappers that delegate to go-qrdb's `BarrierClient` / `CeremonyClient`. Enable-encryption is embedded-node-driven: the service layer dispatches to `s.qrdbNode` (wired as an `EncryptionMigrator`), NOT the qrdb `BarrierClient` transport. |
 | Strategy adapter | `pkg/barrier/manager.go` | The canonical SDK adapter. Constructed by `pkg/server/lifecycle.go:initBarrier` from the YAML `barrier.*` configuration. Replaces the deleted `defaultSealManager`. |
 | CLI verbs | `cmd/quicbaas/{barrier,init,bootstrap}.go` | Mirror `xkmsctl` verb-for-verb. `quicbaas seal …` is retained for one release as a deprecation alias that warns to stderr and forwards to the new path. |
 | Daemon CLI | `cmd/quicbaasd/init.go` | Mirrors `xkmsd init` — the `--barrier-strategy`, `--shares`, `--threshold`, `--so name:KIND:path`, `--trusted-ca` flag set is identical. |
-| Frontend | `cmd/quicbaas/frontend/src/views/security/{Barrier,Ceremony,Bootstrap}View.svelte` | Strategy-aware UX (disabled / software / shamir / tpm2 / pkcs11 / *kms). Replaces `SealView.svelte`. |
+| Frontend | `cmd/quicbaas/frontend/src/views/security/{Barrier,Ceremony,Bootstrap}View.svelte` | Strategy-aware UX (disabled / software / shamir / tpm2 / pkcs11 / *kms / auto). Replaces `SealView.svelte`. |
 | TS SDK | `sdk/typescript/src/{types,interfaces,rest,factory}.ts` | `Barrier*` / `Ceremony*` / `Bootstrap*` types and interfaces. `Seal*` types remain as deprecation aliases that `console.warn` on first use. |
 
 ## YAML configuration
@@ -24,7 +24,7 @@ This page documents only the QuicBaaS-specific deltas.
 ```yaml
 barrier:
   enabled: true
-  strategy: shamir          # disabled|software|shamir|tpm2|pkcs11|awskms|gcpkms|azurekv|vault
+  strategy: shamir          # disabled|software|shamir|tpm2|pkcs11|awskms|gcpkms|azurekv|vault|auto
   shamir:
     threshold: 2
     total_shares: 3
@@ -33,6 +33,26 @@ barrier:
 
 When `barrier.enabled: false`, the daemon runs without encryption-at-rest
 and the sealed-window middleware is not installed.
+
+### `auto` strategy + the `BackendResolver`
+
+The `auto` sentinel is hardware-prefer: the canonical strategy resolver
+(`resolveBarrierStrategy` → `resolveEffectiveSealStrategy`, `pkg/server`) defers
+the hardware decision to `buildHardwareSealStrategies`, which uses the same
+one-time, non-provisioning `BackendResolver` TPM probe as the
+[`crypto:` block](../configuration/crypto.md). A provisioned, seal-capable TPM is
+selected; anything else (fresh, inaccessible, or non-seal-capable TPM) falls back
+to the software strategy cleanly. The empty string and the `passphrase`/`software`
+default are returned unchanged — only explicit `auto` triggers detection.
+
+This selects the **root-key seal** only. The two barriers in a `quicbaasd` process
+(the embedded qrdb node barrier and the quicbaas data-plane barrier) both seal
+their root key via the configured strategy, but their per-epoch bulk AEAD stays
+**software AES-256-GCM** by design (the `crypto.subsystems.barrier_aead` resolver
+returns nil for both `software` and `tpm2`). The hardware boundary is the seal,
+not the per-block crypto — the envelope-encryption model. See
+[Crypto Backend Selection](../configuration/crypto.md) and
+[Seal/Unseal](../security/seal.md).
 
 ## Authorization (per-operation, all transports)
 
@@ -50,6 +70,8 @@ unmapped:
 | initialize | `tenant_barrier:init` |
 | unseal | `tenant_barrier:unseal` |
 | seal | `tenant_barrier:seal` |
+| enable-encryption (system) | `seal:enable_encryption` |
+| enable-encryption (tenant) | `tenant_barrier:enable_encryption` |
 | shamir initialize | `seal:initialize_shamir` |
 | unseal-share / unseal-shares | `barrier:unseal-share` |
 | rekey | `seal:rekey` |
@@ -82,6 +104,22 @@ barrier dispatch surface and its permission table
 (`handler_barrier_authz_guard_test.go`, `authz_qrdb_test.go`,
 `authz_barrier_granular_test.go`), so adding a barrier operation without
 an explicit permission mapping fails CI.
+
+## Entitlement-Denied Error Mapping
+
+Enable-encryption operations validate tenant quotas and entitlements via
+the embedded qrdb node. Quota/entitlement violations are mapped to HTTP
+status codes across all transports:
+
+| Error | HTTP Status | Transport path | Notes |
+|-------|-------------|-----------------|-------|
+| `ErrSharedBarrierImmutable` (barrier is shared, not per-tenant) | 403 Forbidden | all | Tenant cannot enable encryption on a shared barrier |
+| `EntitlementError` (barrier mode not in `AllowedBarrierModes`) | 403 Forbidden | all | Tenant's entitlements deny the requested barrier mode |
+| `ErrMigrationInProgress` | 409 Conflict | all | Another enable-encryption migration is in flight for this tenant |
+| `ErrMigrationSourceNotNone` (barrier not in `none` state) | 409 Conflict | all | Only migration from `none` to keyed is supported; barrier already encrypted |
+| `ErrMigrationProviderUnavailable` | 501 Not Implemented | all | Storage barrier provider (e.g., cloud KMS, HSM) is unreachable |
+| Invalid mechanism/availability/strategy | 400 Bad Request | all | Request fields do not match configured barrier provider |
+| Invalid passphrase/shamir target parameters | 400 Bad Request | all | E.g., `shamir_threshold > shamir_total` or passphrase empty for keyed strategy |
 
 When `barrier.enabled: true`, the daemon:
 

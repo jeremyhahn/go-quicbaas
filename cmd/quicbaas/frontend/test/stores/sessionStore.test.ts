@@ -19,6 +19,12 @@ const _mockHistory: { events: SessionEventEnvelope[]; next_seq: number } = {
   next_seq: 0,
 };
 
+// Controllable live SSE tail. subscribeSession parks on _liveGate until the
+// test releases it, then yields _liveEnvelopes. This lets a test render an
+// optimistic prompt BEFORE the server echo arrives, exercising the dedup path.
+let _liveGate: Promise<void> = Promise.resolve();
+let _liveEnvelopes: SessionEventEnvelope[] = [];
+
 // Build a fresh client object so vi.clearAllMocks() doesn't wipe out implementations.
 function makeMockClient() {
   return {
@@ -28,7 +34,12 @@ function makeMockClient() {
         events: _mockHistory.events,
         next_seq: _mockHistory.next_seq,
       }),
-      subscribeSession: () => (async function* () {})(),
+      subscribeSession: async function* (): AsyncGenerator<SessionEventEnvelope> {
+        await _liveGate;
+        for (const env of _liveEnvelopes) {
+          yield env;
+        }
+      },
     },
     connection: {},
   };
@@ -45,72 +56,79 @@ import {
   openSession,
   closeActiveSession,
   loadMoreHistory,
+  appendLocalPrompt,
+  removeLocalPrompt,
 } from '../../src/stores/sessionStore.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
 // ---------------------------------------------------------------------------
 
+// Envelopes use the CANONICAL server wire shape: payload_json carries the full
+// SessionEvent — a top-level `kind` discriminator (the server's snake_case kind
+// constants, e.g. prompt_submitted / system_message / session_closed) plus
+// exactly one NESTED payload object keyed by the event family. See
+// pkg/orchestration/session_events.go (SessionEvent struct + SessionEventKind).
 const ALL_KINDS_ENVELOPES: SessionEventEnvelope[] = [
   {
     session_id: 'sess-1',
     sequence: 1,
     timestamp: '2025-01-01T00:00:00Z',
-    payload_json: { kind: 'prompt', prompt: 'Hello' },
+    payload_json: { kind: 'prompt_submitted', source: 'operator:alice', prompt: { prompt: 'Hello' } },
   },
   {
     session_id: 'sess-1',
     sequence: 2,
     timestamp: '2025-01-01T00:00:01Z',
-    payload_json: { kind: 'assistant_chunk', assistant_chunk: 'Hi there', stop_reason: 'end_turn' },
+    payload_json: { kind: 'assistant_chunk', assistant_chunk: { text: 'Hi there', stop_reason: 'end_turn' } },
   },
   {
     session_id: 'sess-1',
     sequence: 3,
     timestamp: '2025-01-01T00:00:02Z',
-    payload_json: { kind: 'tool_invocation', tool_name: 'Read', tool_args: { path: 'main.go' }, invocation_id: 'inv-1' },
+    payload_json: { kind: 'tool_invocation', tool_invocation: { name: 'Read', args: { path: 'main.go' }, invocation_id: 'inv-1' } },
   },
   {
     session_id: 'sess-1',
     sequence: 4,
     timestamp: '2025-01-01T00:00:03Z',
-    payload_json: { kind: 'tool_result', tool_result: 'package main', invocation_id: 'inv-1' },
+    payload_json: { kind: 'tool_result', tool_result: { content: 'package main', invocation_id: 'inv-1' } },
   },
   {
     session_id: 'sess-1',
     sequence: 5,
     timestamp: '2025-01-01T00:00:04Z',
-    payload_json: { kind: 'file_op', op: 'edit', path: 'main.go', diff: '+added' },
+    payload_json: { kind: 'file_op', file_op: { op: 'edit', path: 'main.go', diff: '+added' } },
   },
   {
     session_id: 'sess-1',
     sequence: 6,
     timestamp: '2025-01-01T00:00:05Z',
-    payload_json: { kind: 'system', system: 'Build done', level: 'info' },
+    payload_json: { kind: 'system_message', system: { message: 'Build done', level: 'info' } },
   },
   {
     session_id: 'sess-1',
     sequence: 7,
     timestamp: '2025-01-01T00:00:06Z',
-    payload_json: { kind: 'operator_joined', operator_id: 'alice' },
+    payload_json: { kind: 'operator_joined', operator_joined: { operator_id: 'alice' } },
   },
   {
     session_id: 'sess-1',
     sequence: 8,
     timestamp: '2025-01-01T00:00:07Z',
-    payload_json: { kind: 'operator_left', operator_id: 'alice' },
+    payload_json: { kind: 'operator_left', operator_left: { operator_id: 'alice' } },
   },
   {
     session_id: 'sess-1',
     sequence: 9,
     timestamp: '2025-01-01T00:00:08Z',
-    payload_json: { kind: 'closed', reason: 'user request' },
+    payload_json: { kind: 'session_closed', closed: { reason: 'user request' } },
   },
   {
     session_id: 'sess-1',
     sequence: 10,
     timestamp: '2025-01-01T00:00:09Z',
-    payload_json: { kind: 'resumed' },
+    payload_json: { kind: 'session_resumed', resumed: {} },
   },
 ];
 
@@ -129,6 +147,9 @@ describe('sessionStore', () => {
     // Reset only the mutable config that tests may vary.
     _mockHistory.events = [...ALL_KINDS_ENVELOPES];
     _mockHistory.next_seq = 0;
+    // Default: the live tail completes immediately with no events.
+    _liveGate = Promise.resolve();
+    _liveEnvelopes = [];
   });
 
   it('starts with empty events', () => {
@@ -269,5 +290,91 @@ describe('sessionStore', () => {
     await openSession(fakeSession);
     expect(sessionStore.historyExhausted).toBe(true);
     expect(sessionStore.events).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Optimistic prompt rendering + SSE-echo dedup
+// ---------------------------------------------------------------------------
+
+function promptEcho(text: string, sequence: number): SessionEventEnvelope {
+  return {
+    session_id: 'sess-1',
+    sequence,
+    timestamp: '2025-01-01T00:00:30Z',
+    payload_json: { kind: 'prompt_submitted', source: 'operator:alice', prompt: { prompt: text } },
+  };
+}
+
+describe('sessionStore optimistic prompt', () => {
+  beforeEach(() => {
+    closeActiveSession();
+    _mockHistory.events = [];
+    _mockHistory.next_seq = 0;
+    _liveGate = Promise.resolve();
+    _liveEnvelopes = [];
+  });
+
+  it('appendLocalPrompt is a no-op when no session is active', () => {
+    appendLocalPrompt('ping');
+    expect(sessionStore.events).toHaveLength(0);
+  });
+
+  it('appendLocalPrompt renders the prompt immediately as an optimistic bubble', async () => {
+    await openSession(fakeSession);
+    appendLocalPrompt('ping');
+    const ev = sessionStore.events.find((e) => e.kind === 'prompt' && e.prompt === 'ping');
+    expect(ev).toBeDefined();
+    expect(ev!.optimistic).toBe(true);
+    expect(ev!.sequence).toBeLessThan(0);
+  });
+
+  it('reconciles the optimistic prompt with the SSE echo instead of double-rendering', async () => {
+    // Park the live tail so the optimistic bubble is rendered before the echo.
+    let release!: () => void;
+    _liveGate = new Promise<void>((r) => { release = r; });
+    _liveEnvelopes = [promptEcho('ping', 7)];
+
+    await openSession(fakeSession);
+    appendLocalPrompt('ping');
+    expect(sessionStore.events.filter((e) => e.prompt === 'ping')).toHaveLength(1);
+
+    // Release the gate; the echo flows through the live subscription.
+    release();
+
+    await vi.waitFor(() => {
+      const matches = sessionStore.events.filter((e) => e.prompt === 'ping');
+      expect(matches).toHaveLength(1);
+      // The placeholder is reconciled into the confirmed, server-sequenced event.
+      expect(matches[0]!.optimistic).toBeUndefined();
+      expect(matches[0]!.sequence).toBe(7);
+    });
+  });
+
+  it('removeLocalPrompt rolls back an unconfirmed optimistic prompt', async () => {
+    await openSession(fakeSession);
+    appendLocalPrompt('oops');
+    expect(sessionStore.events.some((e) => e.prompt === 'oops')).toBe(true);
+    removeLocalPrompt('oops');
+    expect(sessionStore.events.some((e) => e.prompt === 'oops')).toBe(false);
+  });
+
+  it('removeLocalPrompt leaves an already-confirmed prompt in place', async () => {
+    let release!: () => void;
+    _liveGate = new Promise<void>((r) => { release = r; });
+    _liveEnvelopes = [promptEcho('keep', 3)];
+
+    await openSession(fakeSession);
+    appendLocalPrompt('keep');
+    release();
+
+    await vi.waitFor(() => {
+      const ev = sessionStore.events.find((e) => e.prompt === 'keep');
+      expect(ev?.optimistic).toBeUndefined();
+    });
+
+    // The prompt was confirmed by the server echo, so rollback must not drop it.
+    removeLocalPrompt('keep');
+    expect(sessionStore.events.some((e) => e.prompt === 'keep')).toBe(true);
   });
 });

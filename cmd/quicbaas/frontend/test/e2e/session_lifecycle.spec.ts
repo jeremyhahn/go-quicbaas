@@ -100,12 +100,11 @@ test.describe('Session lifecycle — requires ACP backend', () => {
     });
 
     // Either "Beginning of session" or "Scroll up to load history" must appear.
+    // The EventStream renders one of these sentinels at the top of the log
+    // (EventStream.svelte): "Beginning of session" when history is exhausted, or
+    // "Scroll up to load history" when more pages remain.
     await expect(
-      page
-        .locator(
-          'text=Beginning of session, text=Scroll up to load history',
-        )
-        .first(),
+      page.getByText(/Beginning of session|Scroll up to load history/).first(),
     ).toBeVisible({ timeout: 5_000 });
   });
 
@@ -135,12 +134,14 @@ test.describe('Session lifecycle — requires ACP backend', () => {
     const closeBtn = page.locator('[aria-label="Close session"]');
     await expect(closeBtn).toBeVisible({ timeout: 10_000 });
 
+    // Closing is a confirm flow: the header button opens a confirm dialog; the
+    // confirm button actually closes the session.
     await closeBtn.click();
+    await page.locator('[aria-label="Confirm close session"]').click();
+
     // After closing, the SessionClosedEvent banner or "session is closed" must appear.
     await expect(
-      page
-        .locator('text=Session ended, text=session is closed')
-        .first(),
+      page.getByText(/Session ended|session is closed/).first(),
     ).toBeVisible({ timeout: 15_000 });
 
     // The session was closed by the UI — suppress afterAll cleanup error.

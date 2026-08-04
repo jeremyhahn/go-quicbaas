@@ -19,52 +19,43 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // EnsureSecret is the gRPC entry point for the Vault-style
-// generate-on-first-access primitive. The fully-wired service-layer
-// logic already lives in service.SecretsService.EnsureSecret; what is
-// intentionally NOT yet wired is the protobuf schema addition + stub
-// regeneration. This method returns codes.Unimplemented until the
-// proto is regenerated — see the TODO block below for the exact
-// steps.
+// generate-on-first-access primitive. If a secret at the given path already
+// exists it is returned unchanged (generated=false). If it does not exist a
+// fresh random value is generated, stored, and returned (generated=true).
+// Exactly one concurrent caller in a cluster-wide race receives generated=true.
 //
-// TODO(gRPC proto regeneration) — blocking full wire support:
-//
-//  1. Add the following to api/proto/quicbaas.proto inside the
-//     SecretsManagement service definition:
-//
-//     rpc EnsureSecret(EnsureSecretRequest) returns (EnsureSecretResponse);
-//
-//     message EnsureSecretRequest {
-//     string secret_id  = 1;
-//     int32  length     = 2;
-//     string encoding   = 3;
-//     string tenant_id  = 4;
-//     }
-//
-//     message EnsureSecretResponse {
-//     string secret_id = 1;
-//     bytes  data      = 2;
-//     bool   generated = 3;
-//     uint64 version   = 4;
-//     int64  timestamp = 5;
-//     }
-//
-//  2. Regenerate with:
-//     buf generate
-//     (or: protoc --go_out=. --go-grpc_out=. api/proto/quicbaas.proto)
-//
-//  3. Replace the body below with the real wiring pattern used by
-//     SecretsServer.StoreSecret (see server_secrets.go:44). It should
-//     delegate to s.secretsSvc.EnsureSecret(ctx, svcReq).
-//
-// Until step 1-3 are done, gRPC clients receive a clear Unimplemented
-// response that points them at this TODO.
-func (s *SecretsServer) EnsureSecret(ctx context.Context, _ *struct{}) (*struct{}, error) {
-	_ = service.EnsureSecretRequest{} // anchor the service-layer type so refactors surface here
-	s.logger.Warn("EnsureSecret called but gRPC proto stubs are not regenerated; returning Unimplemented")
-	return nil, status.Error(codes.Unimplemented,
-		"EnsureSecret: proto regeneration pending — see TODO in pkg/api/grpc/server_secrets_ensure.go")
+// The RPC is defined in api/proto/kms.proto (SecretsManagement.EnsureSecret)
+// and the service-layer implementation lives in
+// pkg/service/secrets.go (secretsService.EnsureSecret).
+func (s *SecretsServer) EnsureSecret(ctx context.Context, req *pb.EnsureSecretRequest) (*pb.EnsureSecretResponse, error) {
+	s.logger.Debug("Processing EnsureSecret request")
+
+	if req == nil || req.SecretId == "" {
+		return nil, status.Error(codes.InvalidArgument, "EnsureSecret: secret_id is required")
+	}
+
+	svcReq := &service.EnsureSecretRequest{
+		SecretID: req.SecretId,
+		Length:   int(req.Length),
+		Encoding: req.Encoding,
+		TenantID: req.TenantId,
+	}
+
+	resp, err := s.secretsSvc.EnsureSecret(ctx, svcReq)
+	if err != nil {
+		return nil, ToGRPCError(err)
+	}
+
+	return &pb.EnsureSecretResponse{
+		SecretId:  resp.SecretID,
+		Data:      resp.Data,
+		Generated: resp.Generated,
+		Version:   resp.Version,
+		Timestamp: resp.Timestamp.Unix(),
+	}, nil
 }

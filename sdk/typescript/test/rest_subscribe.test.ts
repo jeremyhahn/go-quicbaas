@@ -11,6 +11,16 @@ import { RestClient } from '../src/rest.js';
 import { APIError } from '../src/errors.js';
 
 // ---------------------------------------------------------------------------
+// mockOK returns a minimal fetch Response-alike that supports both .json()
+// and .text() so tests remain compatible with fetchJSON implementations that
+// use resp.text() (post BUG-2 fix) and those that use resp.json().
+// ---------------------------------------------------------------------------
+function mockOK(payload: unknown): { ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> } {
+  const body = JSON.stringify(payload);
+  return { ok: true, status: 200, json: async () => JSON.parse(body) as unknown, text: async () => body };
+}
+
+// ---------------------------------------------------------------------------
 // Helper: craft an SSE ReadableStream from a string of raw SSE bytes.
 // ---------------------------------------------------------------------------
 
@@ -273,10 +283,7 @@ describe('RestOrchestratorClient.getSessionHistory', () => {
       events: [makeEnvelope(1), makeEnvelope(2)],
       next_seq: 3,
     };
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => responseBody,
-    });
+    fetchMock.mockResolvedValueOnce(mockOK(responseBody));
 
     const resp = await client.orchestrator.getSessionHistory({
       session_id: 'sess-hist',
@@ -289,10 +296,7 @@ describe('RestOrchestratorClient.getSessionHistory', () => {
   });
 
   it('builds correct query params: from, follow=0, limit, tenant_id', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], next_seq: 0 }),
-    });
+    fetchMock.mockResolvedValueOnce(mockOK({ events: [], next_seq: 0 }));
 
     await client.orchestrator.getSessionHistory({
       session_id: 'sess-q',
@@ -309,10 +313,7 @@ describe('RestOrchestratorClient.getSessionHistory', () => {
   });
 
   it('uses from=0 when from_sequence is omitted', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], next_seq: 0 }),
-    });
+    fetchMock.mockResolvedValueOnce(mockOK({ events: [], next_seq: 0 }));
 
     await client.orchestrator.getSessionHistory({ session_id: 'sess-z' });
 
@@ -321,10 +322,7 @@ describe('RestOrchestratorClient.getSessionHistory', () => {
   });
 
   it('omits limit param when limit is 0 or omitted', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], next_seq: 0 }),
-    });
+    fetchMock.mockResolvedValueOnce(mockOK({ events: [], next_seq: 0 }));
 
     await client.orchestrator.getSessionHistory({ session_id: 'sess-nolimit', limit: 0 });
 
@@ -362,10 +360,9 @@ describe('RestOrchestratorClient.spawnSession', () => {
   });
 
   it('POSTs to /sessions with the request body', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ session_id: 'new-sess', backend: 'claude', container_id: '' }),
-    });
+    fetchMock.mockResolvedValueOnce(
+      mockOK({ session_id: 'new-sess', backend: 'claude', container_id: '' }),
+    );
 
     const resp = await client.orchestrator.spawnSession({
       tenantID: 'acme',

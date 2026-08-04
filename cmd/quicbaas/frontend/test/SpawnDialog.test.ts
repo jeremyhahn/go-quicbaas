@@ -113,3 +113,65 @@ describe('SpawnDialog — bug #59 backend pre-population', () => {
     expect(select.value).toBe('ollama');
   });
 });
+
+describe('SpawnDialog — QuicBaaS MCP endpoint preset', () => {
+  const mockSpawn = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSpawn.mockResolvedValue({ session_id: 'sess-mcp' });
+    mockListBackends.mockResolvedValue([
+      { name: 'ollama', type: 'native', healthy: true } as AgentBackendInfo,
+    ]);
+    mockGetSDKClient.mockResolvedValue({
+      orchestrator: {
+        listBackends: mockListBackends,
+        spawnSession: mockSpawn,
+        promptSession: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+  });
+
+  async function openAndSpawn(container: HTMLElement, attachMCP: boolean): Promise<void> {
+    // Wait for the backend select so the form is fully mounted.
+    await waitFor(() => screen.getByLabelText(/Select backend/i));
+    if (attachMCP) {
+      const checkbox = screen.getByLabelText(/Attach QuicBaaS MCP endpoint/i) as HTMLInputElement;
+      await fireEvent.click(checkbox);
+    }
+    const spawnBtn = container.querySelector(
+      'button[aria-label="Spawn session"]',
+    ) as HTMLButtonElement;
+    await fireEvent.click(spawnBtn);
+    await waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+  }
+
+  it('omits mcp_servers when the preset is not selected', async () => {
+    const { container } = render(SpawnDialog, { props: { open: true } });
+    await openAndSpawn(container, false);
+    const arg = mockSpawn.mock.calls[0][0] as { mcp_servers?: unknown };
+    expect(arg.mcp_servers).toBeUndefined();
+  });
+
+  it('sends the quicbaas MCP server when the preset is selected', async () => {
+    const { container } = render(SpawnDialog, { props: { open: true } });
+    await openAndSpawn(container, true);
+    const arg = mockSpawn.mock.calls[0][0] as {
+      mcp_servers?: Array<{ name: string; url?: string }>;
+    };
+    expect(arg.mcp_servers).toHaveLength(1);
+    expect(arg.mcp_servers?.[0]?.name).toBe('quicbaas');
+    // The SPA leaves url empty so the daemon resolves its own MCP endpoint and
+    // injects the agent's cert/key material — the browser never has to know the
+    // operator's MCP host/port.
+    expect(arg.mcp_servers?.[0]?.url).toBe('');
+  });
+
+  it('checkbox is present and unchecked by default (opt-in)', async () => {
+    render(SpawnDialog, { props: { open: true } });
+    const checkbox = (await waitFor(() =>
+      screen.getByLabelText(/Attach QuicBaaS MCP endpoint/i),
+    )) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+  });
+});

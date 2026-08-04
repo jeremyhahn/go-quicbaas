@@ -238,6 +238,17 @@ type TenantManager interface {
 
 	// CheckQuota checks if a tenant can create a resource.
 	CheckQuota(ctx context.Context, tenantID, resourceType string) error
+
+	// UpdateEngineQuotas updates the engine-side numeric resource limits for
+	// the tenant (databases, keys, storage bytes, etc.). Delegates to the
+	// QRDBTenantProvisioner; returns nil when no engine provisioner is wired.
+	UpdateEngineQuotas(ctx context.Context, id string, quotas qrdbsdk.Quotas) error
+
+	// UpdateEngineEntitlements updates the engine-side feature entitlements for
+	// the tenant (isolation tiers, dedicated-storage features, barrier modes).
+	// Delegates to the QRDBTenantProvisioner; returns nil when no engine
+	// provisioner is wired.
+	UpdateEngineEntitlements(ctx context.Context, id string, entitlements qrdbsdk.Entitlements) error
 }
 
 // CreateTenantOptions contains options for creating a tenant.
@@ -261,8 +272,23 @@ type CreateTenantOptions struct {
 	// Settings contains tenant settings
 	Settings *TenantSettings
 
-	// Quotas contains tenant quotas
+	// Quotas contains the BaaS-layer IAM quotas (max groups, policies, apps)
+	// for the tenant. These are distinct from EngineQuotas.
 	Quotas *TenantQuotas
+
+	// EngineQuotas overrides the engine-level numeric resource limits
+	// (databases, keys, storage bytes, etc.) applied to this tenant at
+	// creation. When nil the engine uses its own configured defaults.
+	// Applied via QRDBTenantProvisioner.UpdateQuotas immediately after
+	// engine-side CreateTenant succeeds.
+	EngineQuotas *qrdbsdk.Quotas
+
+	// EngineEntitlements overrides the engine-level feature entitlements
+	// (isolation tiers, dedicated-storage, WAL features) for this tenant.
+	// When nil the engine uses its configured defaults. Applied via
+	// QRDBTenantProvisioner.UpdateEntitlements immediately after engine-side
+	// CreateTenant succeeds.
+	EngineEntitlements *qrdbsdk.Entitlements
 }
 
 // UpdateTenantOptions contains options for updating a tenant.

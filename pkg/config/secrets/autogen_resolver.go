@@ -121,11 +121,7 @@ func (r *AutoGenResolver) Resolve(ctx context.Context, raw string) (*SecretValue
 	// Encode as URL-safe base64 (no padding for cleaner secrets)
 	encoded := base64.RawURLEncoding.EncodeToString(randomBytes)
 
-	return &SecretValue{
-		Raw:      raw,
-		Value:    encoded,
-		Strategy: StrategyAutoGen,
-	}, nil
+	return NewSecretValue(raw, []byte(encoded), StrategyAutoGen), nil
 }
 
 // Ensure AutoGenResolver implements SecretResolver.

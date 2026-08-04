@@ -53,7 +53,9 @@
   let sshHost = $state('');
   let insecureHostKey = $state(true);
   let server = $state('');
-  let tenant = $state('default');
+  // 'system' is qrdb's canonical control-plane tenant; the legacy 'default'
+  // tenant was retired by qrdb's tenant-isolation refactor.
+  let tenant = $state('system');
   let agentBind = $state('0.0.0.0:9091');
   let backendsCSV = $state('acp');
   let binary = $state('bin/quicbaas-static');

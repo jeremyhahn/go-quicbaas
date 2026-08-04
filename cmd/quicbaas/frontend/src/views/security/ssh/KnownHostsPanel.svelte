@@ -192,7 +192,9 @@
 </script>
 
 <!-- Collapsible section -->
-<div class="collapse collapse-arrow border border-base-300 rounded-box bg-base-100">
+<!-- collapse-open must track `open`, otherwise daisyUI keeps .collapse-content
+     visually hidden (max-height:0) even when {#if open} adds it to the DOM. -->
+<div class="collapse collapse-arrow border border-base-300 rounded-box bg-base-100" class:collapse-open={open}>
   <button
     class="collapse-title text-sm font-medium flex items-center gap-2"
     aria-expanded={open}

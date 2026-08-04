@@ -177,7 +177,7 @@ func TestProtoToServiceRotationPolicy(t *testing.T) {
 	})
 
 	t.Run("without_next_rotation", func(t *testing.T) {
-		in := &pb.RotationPolicyProto{
+		in := &pb.RotationPolicy{
 			Enabled:         true,
 			IntervalSeconds: 3600,
 			RetainVersions:  4,
@@ -192,10 +192,10 @@ func TestProtoToServiceRotationPolicy(t *testing.T) {
 	})
 
 	t.Run("with_next_rotation", func(t *testing.T) {
-		in := &pb.RotationPolicyProto{
-			Enabled:          true,
-			IntervalSeconds:  60,
-			NextRotationUnix: 1700000000,
+		in := &pb.RotationPolicy{
+			Enabled:         true,
+			IntervalSeconds: 60,
+			NextRotation:    1700000000,
 		}
 		out := protoToServiceRotationPolicy(in)
 		assert.False(t, out.NextRotation.IsZero())
@@ -219,7 +219,7 @@ func TestServiceToProtoRotationPolicy(t *testing.T) {
 		proto := serviceToProtoRotationPolicy(orig)
 		assert.Equal(t, int64(7200), proto.IntervalSeconds)
 		assert.Equal(t, int32(6), proto.RetainVersions)
-		assert.Equal(t, int64(1700000000), proto.NextRotationUnix)
+		assert.Equal(t, int64(1700000000), proto.NextRotation)
 
 		back := protoToServiceRotationPolicy(proto)
 		assert.Equal(t, orig.Interval, back.Interval)
@@ -230,6 +230,6 @@ func TestServiceToProtoRotationPolicy(t *testing.T) {
 
 	t.Run("zero_next_rotation_omitted", func(t *testing.T) {
 		out := serviceToProtoRotationPolicy(&service.RotationPolicy{Enabled: false})
-		assert.Equal(t, int64(0), out.NextRotationUnix)
+		assert.Equal(t, int64(0), out.NextRotation)
 	})
 }

@@ -50,7 +50,7 @@ COPY . ./go-quicbaas
 # entries from the host file. Keeping go.work as the single source of truth
 # means individual go.mod files do not need any Docker-specific shimming.
 RUN { \
-        echo 'go 1.26.4'; \
+        echo 'go 1.26.5'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \

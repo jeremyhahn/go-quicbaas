@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -47,7 +48,8 @@ type fakeBarrierService struct {
 	recoverWithKeysFn  func(ctx context.Context, keys []string) error
 	deleteRecoveryFn   func(ctx context.Context) error
 	hasRecoveryFn      func(ctx context.Context) (bool, error)
-	genRootTokenFn     func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
+	genRootTokenFn      func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
+	enableEncryptionFn  func(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
 }
 
 func (f *fakeBarrierService) BarrierStatus(ctx context.Context) (*service.BarrierStatusInfo, error) {
@@ -139,6 +141,13 @@ func (f *fakeBarrierService) BarrierGenerateRootToken(ctx context.Context, share
 		return f.genRootTokenFn(ctx, shares)
 	}
 	return &service.RootTokenInfo{}, nil
+}
+
+func (f *fakeBarrierService) EnableEncryption(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
+	if f.enableEncryptionFn != nil {
+		return f.enableEncryptionFn(ctx, tenantID, opts)
+	}
+	return nil
 }
 
 // barrierServer installs the given barrier service on a router-backed server.

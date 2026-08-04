@@ -15,7 +15,6 @@ package iam
 
 import (
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -59,7 +58,7 @@ func (f *FlexInt) UnmarshalJSON(data []byte) error {
 			*f = FlexInt(int(fv))
 			return nil
 		}
-		return fmt.Errorf("cannot parse %q as integer", strVal)
+		return &IntParseError{Value: strVal}
 	}
 
 	// Try float (JSON numbers may be float64)
@@ -69,7 +68,7 @@ func (f *FlexInt) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	return fmt.Errorf("cannot unmarshal %s into FlexInt", string(data))
+	return &JSONUnmarshalTypeError{Target: "FlexInt", Data: string(data)}
 }
 
 // Int returns the underlying int value.

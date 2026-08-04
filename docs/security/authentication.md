@@ -261,18 +261,15 @@ newToken, err := authManager.RefreshToken(ctx, token.RefreshToken)
 ### Custom Roles
 
 ```go
-roleManager := authManager.GetRoleManager()
-
-customRole := &auth.Role{
+// Roles are owned by go-qrdb — there is NO local RoleManager / GetRoleManager.
+// quicbaas creates and manages roles through QRDBRoleStorage, which delegates to
+// the qrdb RoleClient (pkg/iam/qrdb_role_storage.go). Permissions use the colon
+// resource:action vocabulary.
+err := roleStorage.CreateRole(ctx, &iam.Role{
     Name:        "data_analyst",
     Description: "Read-only data access",
-    Permissions: []*auth.Permission{
-        {Resource: "keys", Actions: []string{"read"}},
-        {Resource: "metrics", Actions: []string{"read"}},
-    },
-}
-
-err := roleManager.AddRole(customRole)
+    Permissions: []string{"keys:read", "metrics:read"},
+})
 ```
 
 ## Permission Model

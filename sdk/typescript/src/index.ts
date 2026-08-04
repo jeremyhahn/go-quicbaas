@@ -35,6 +35,7 @@ export type {
   TenantBarrierClient,
   CeremonyClient,
   BootstrapClient,
+  ClusterClient,
   /** @deprecated Use BarrierClient. */
   SealClient,
   SecretsClient,
@@ -171,6 +172,7 @@ export {
   RestTenantBarrierClient,
   RestCeremonyClient,
   RestBootstrapClient,
+  RestClusterClient,
 } from './rest.js';
 
 // Stub transport error types — exported so callers can catch them explicitly.

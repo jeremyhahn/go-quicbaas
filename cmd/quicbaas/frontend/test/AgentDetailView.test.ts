@@ -46,12 +46,11 @@ const { agentStoreMock, routerStoreMock } = vi.hoisted(() => {
       agentsLoading: false,
       onlineAgents: [agentData, agentNoGpu],
     },
+    // routerStore exposes flat name/params/hash getters (not a nested `route`).
     routerStoreMock: {
-      route: {
-        name: 'agent-detail',
-        params: { id: 'agent-xyz-789' },
-        hash: '#/agents/agent-xyz-789',
-      },
+      name: 'agent-detail',
+      params: { id: 'agent-xyz-789' },
+      hash: '#/agents/agent-xyz-789',
     },
   };
 });
@@ -108,12 +107,10 @@ import { routeFleet } from '../src/stores/router.svelte.ts';
 
 describe('AgentDetailView', () => {
   beforeEach(() => {
-    // Reset to a known-good agent ID.
-    routerStoreMock.route = {
-      name: 'agent-detail',
-      params: { id: 'agent-xyz-789' },
-      hash: '#/agents/agent-xyz-789',
-    };
+    // Reset to a known-good agent ID (flat router API).
+    routerStoreMock.name = 'agent-detail';
+    routerStoreMock.params = { id: 'agent-xyz-789' };
+    routerStoreMock.hash = '#/agents/agent-xyz-789';
     vi.mocked(routeFleet).mockClear();
   });
 
@@ -183,11 +180,9 @@ describe('AgentDetailView', () => {
   });
 
   it('shows not-found state when agent ID does not match', () => {
-    routerStoreMock.route = {
-      name: 'agent-detail',
-      params: { id: 'nonexistent-agent' },
-      hash: '#/agents/nonexistent-agent',
-    };
+    routerStoreMock.name = 'agent-detail';
+    routerStoreMock.params = { id: 'nonexistent-agent' };
+    routerStoreMock.hash = '#/agents/nonexistent-agent';
     render(AgentDetailView);
     expect(screen.getByText(/agent not found/i)).toBeInTheDocument();
   });

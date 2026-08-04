@@ -16,7 +16,6 @@ package iam
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -155,12 +154,12 @@ func (s *ConsentStatus) UnmarshalJSON(data []byte) error {
 		case "expired":
 			*s = ConsentStatusExpired
 		default:
-			return fmt.Errorf("unknown consent status: %s", strVal)
+			return &UnknownEnumValueError{Enum: "consent status", Value: strVal}
 		}
 		return nil
 	}
 
-	return fmt.Errorf("cannot unmarshal %s into ConsentStatus", string(data))
+	return &JSONUnmarshalTypeError{Target: "ConsentStatus", Data: string(data)}
 }
 
 // GrantConsentRequest contains the parameters for granting consent.
@@ -326,11 +325,11 @@ func (f *ExportFormat) UnmarshalJSON(data []byte) error {
 		case "xml":
 			*f = ExportFormatXML
 		default:
-			return fmt.Errorf("unknown export format: %s", strVal)
+			return &UnknownEnumValueError{Enum: "export format", Value: strVal}
 		}
 		return nil
 	}
-	return fmt.Errorf("cannot unmarshal %s into ExportFormat", string(data))
+	return &JSONUnmarshalTypeError{Target: "ExportFormat", Data: string(data)}
 }
 
 // ExportStatus represents the status of a data export request.
@@ -393,11 +392,11 @@ func (s *ExportStatus) UnmarshalJSON(data []byte) error {
 		case "expired":
 			*s = ExportStatusExpired
 		default:
-			return fmt.Errorf("unknown export status: %s", strVal)
+			return &UnknownEnumValueError{Enum: "export status", Value: strVal}
 		}
 		return nil
 	}
-	return fmt.Errorf("cannot unmarshal %s into ExportStatus", string(data))
+	return &JSONUnmarshalTypeError{Target: "ExportStatus", Data: string(data)}
 }
 
 // DataExportRequest represents a data export request.
@@ -562,11 +561,11 @@ func (s *DeletionStatus) UnmarshalJSON(data []byte) error {
 		case "failed":
 			*s = DeletionStatusFailed
 		default:
-			return fmt.Errorf("unknown deletion status: %s", strVal)
+			return &UnknownEnumValueError{Enum: "deletion status", Value: strVal}
 		}
 		return nil
 	}
-	return fmt.Errorf("cannot unmarshal %s into DeletionStatus", string(data))
+	return &JSONUnmarshalTypeError{Target: "DeletionStatus", Data: string(data)}
 }
 
 // DataDeletionRequest represents a data deletion request.

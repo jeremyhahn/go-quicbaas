@@ -109,6 +109,15 @@ type Spec struct {
 	// agent to appear in the fleet registry with a live heartbeat.
 	// Zero means "do not wait".
 	WaitOnline time.Duration `json:"wait_online,omitempty"`
+
+	// MCPEndpoint is the fully-qualified https://host:port/mcp address of
+	// the control plane's MCP listener. When set, the rendered daemon
+	// command line carries --mcp-endpoint so spawned agents can resolve the
+	// "quicbaas" MCP preset against the long-lived mTLS identity uploaded by
+	// this deploy. Populated by the deploy service from its configured MCP
+	// endpoint; empty when the control plane has MCP disabled or unconfigured,
+	// in which case the flag is omitted entirely (no behavior change).
+	MCPEndpoint string `json:"mcp_endpoint,omitempty"`
 }
 
 // Result describes the outcome of a successful deployment.

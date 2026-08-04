@@ -89,7 +89,7 @@ func TestKMSServer_SetKeyRotationPolicy(t *testing.T) {
 	t.Run("missing_key_id_invalid_argument", func(t *testing.T) {
 		server := NewKMSServerWithService(&mockKMSManager{}, &mocks.MockKMSService{}, log)
 		_, err := server.SetKeyRotationPolicy(context.Background(), &pb.SetKeyRotationPolicyRequest{
-			Policy: &pb.RotationPolicyProto{Enabled: true},
+			Policy: &pb.RotationPolicy{Enabled: true},
 		})
 		st, _ := status.FromError(err)
 		assert.Equal(t, codes.InvalidArgument, st.Code())
@@ -106,7 +106,7 @@ func TestKMSServer_SetKeyRotationPolicy(t *testing.T) {
 		server := NewKMSServer(&mockKMSManager{}, log)
 		_, err := server.SetKeyRotationPolicy(context.Background(), &pb.SetKeyRotationPolicyRequest{
 			KeyId:  "k1",
-			Policy: &pb.RotationPolicyProto{Enabled: true},
+			Policy: &pb.RotationPolicy{Enabled: true},
 		})
 		st, _ := status.FromError(err)
 		assert.Equal(t, codes.Unimplemented, st.Code())
@@ -121,7 +121,7 @@ func TestKMSServer_SetKeyRotationPolicy(t *testing.T) {
 		server := NewKMSServerWithService(&mockKMSManager{}, mockSvc, log)
 		_, err := server.SetKeyRotationPolicy(context.Background(), &pb.SetKeyRotationPolicyRequest{
 			KeyId:  "k1",
-			Policy: &pb.RotationPolicyProto{Enabled: true},
+			Policy: &pb.RotationPolicy{Enabled: true},
 		})
 		st, _ := status.FromError(err)
 		assert.Equal(t, codes.PermissionDenied, st.Code())
@@ -144,7 +144,7 @@ func TestKMSServer_SetKeyRotationPolicy(t *testing.T) {
 		server := NewKMSServerWithService(&mockKMSManager{}, mockSvc, log)
 		resp, err := server.SetKeyRotationPolicy(context.Background(), &pb.SetKeyRotationPolicyRequest{
 			KeyId: "k1",
-			Policy: &pb.RotationPolicyProto{
+			Policy: &pb.RotationPolicy{
 				Enabled:         true,
 				IntervalSeconds: 3600,
 				RetainVersions:  3,

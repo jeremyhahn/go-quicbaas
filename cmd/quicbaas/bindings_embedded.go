@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -138,6 +139,10 @@ func (b *EmbeddedServerBinding) Start(opts EmbeddedStartOptions) error {
 		installEmbeddedAgentCA(ca)
 	}
 
+	// Publish the reachable MCP endpoint so the same desktop process's
+	// `quicbaas agent deploy` can start deployed daemons with --mcp-endpoint.
+	installEmbeddedMCPEndpoint(embeddedMCPEndpoint(cfg))
+
 	b.logger.Infof("embedded quicbaasd started at %s", b.bindAddr)
 	return nil
 }
@@ -168,6 +173,7 @@ func (b *EmbeddedServerBinding) Stop() error {
 	}
 
 	uninstallEmbeddedAgentCA()
+	uninstallEmbeddedMCPEndpoint()
 	b.server = nil
 	b.tempDir = ""
 	b.bindAddr = ""
@@ -314,4 +320,24 @@ func reserveLoopbackPort() (int, error) {
 		return 0, &EmbeddedPortError{}
 	}
 	return addr.Port, nil
+}
+
+// embeddedMCPEndpoint derives the reachable MCP endpoint
+// (https://host:port/mcp) from the embedded server config, or returns empty
+// when MCP is disabled or no concrete host can be derived. A wildcard or empty
+// bind host cannot be advertised to a remote agent, so it yields no endpoint
+// rather than an unreachable loopback URL.
+func embeddedMCPEndpoint(cfg *config.Config) string {
+	if cfg == nil || !cfg.Server.MCP.Enabled {
+		return ""
+	}
+	host := strings.TrimSpace(cfg.Server.MCP.BindAddress)
+	if host == "" {
+		host = strings.TrimSpace(cfg.Server.Host)
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return ""
+	}
+	return "https://" + net.JoinHostPort(host, strconv.Itoa(cfg.Server.MCP.Port)) + "/mcp"
 }

@@ -51,7 +51,10 @@
 ### Encryption & Key Management
 - **KMS** - Multiple backends: AWS, GCP, Azure, HashiCorp Vault, PKCS#11 (HSM)
 - **Secrets Engine** - Versioned secrets with soft delete, rotation, and watch API
-- **Encryption at Rest** - Per-tenant encryption with AES-256-GCM and ChaCha20-Poly1305
+- **Encryption at Rest** - Transparent barrier encryption with AES-256-GCM and ChaCha20-Poly1305
+- **Barrier Strategies** - Passphrase, Shamir M-of-N, TPM2, PKCS#11, AWS KMS, GCP KMS, Azure Key Vault, Vault
+- **Enable-Encryption** - Live migration from cleartext to encrypted barriers across all transports
+- **Tenant Entitlements** - Quota governance and per-tenant barrier mode restrictions
 - **Key Rotation** - Automatic rotation without downtime
 
 ### Storage Options

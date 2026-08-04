@@ -174,14 +174,14 @@ func loadOfficerCSR(spec officerSpec) (*officerMaterial, error) {
 	}
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("%w: %s", ErrOfficerPEMDecode, spec.Path)
+		return nil, &SentinelDetailError{Sentinel: ErrOfficerPEMDecode, Detail: spec.Path}
 	}
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCSRParseFailed, spec.Path, err)
+		return nil, &SentinelDetailError{Sentinel: ErrCSRParseFailed, Detail: fmt.Sprintf("%s: %v", spec.Path, err)}
 	}
 	if err := csr.CheckSignature(); err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCSRSignatureInvalid, spec.Path, err)
+		return nil, &SentinelDetailError{Sentinel: ErrCSRSignatureInvalid, Detail: fmt.Sprintf("%s: %v", spec.Path, err)}
 	}
 	return &officerMaterial{
 		Username: spec.Username,
@@ -200,10 +200,10 @@ func loadOfficerCert(spec officerSpec) (*officerMaterial, error) {
 	}
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("%w: %s", ErrOfficerPEMDecode, spec.Path)
+		return nil, &SentinelDetailError{Sentinel: ErrOfficerPEMDecode, Detail: spec.Path}
 	}
 	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCertParseFailed, spec.Path, err)
+		return nil, &SentinelDetailError{Sentinel: ErrCertParseFailed, Detail: fmt.Sprintf("%s: %v", spec.Path, err)}
 	}
 	return &officerMaterial{
 		Username: spec.Username,
@@ -221,10 +221,10 @@ func loadOfficerPubKey(spec officerSpec) (*officerMaterial, error) {
 	}
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("%w: %s", ErrOfficerPEMDecode, spec.Path)
+		return nil, &SentinelDetailError{Sentinel: ErrOfficerPEMDecode, Detail: spec.Path}
 	}
 	if _, err := x509.ParsePKIXPublicKey(block.Bytes); err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrPubKeyParseFailed, spec.Path, err)
+		return nil, &SentinelDetailError{Sentinel: ErrPubKeyParseFailed, Detail: fmt.Sprintf("%s: %v", spec.Path, err)}
 	}
 	return &officerMaterial{
 		Username:  spec.Username,
@@ -239,17 +239,17 @@ func readOfficerFile(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrOfficerFileNotFound, path)
+			return nil, &SentinelDetailError{Sentinel: ErrOfficerFileNotFound, Detail: path}
 		}
-		return nil, fmt.Errorf("%w: %s: %v", ErrOfficerFileRead, path, err)
+		return nil, &SentinelDetailError{Sentinel: ErrOfficerFileRead, Detail: fmt.Sprintf("%s: %v", path, err)}
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("%w: %s is a directory", ErrOfficerFileRead, path)
+		return nil, &SentinelDetailError{Sentinel: ErrOfficerFileRead, Detail: fmt.Sprintf("%s is a directory", path)}
 	}
 	// #nosec G304 - officer file path is provided by the operator during init
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrOfficerFileRead, path, err)
+		return nil, &SentinelDetailError{Sentinel: ErrOfficerFileRead, Detail: fmt.Sprintf("%s: %v", path, err)}
 	}
 	return data, nil
 }
@@ -265,20 +265,20 @@ func parseOfficerSpec(value string) (officerSpec, error) {
 	// two delimiters split off username and kind unambiguously.
 	parts := strings.SplitN(value, ":", 3)
 	if len(parts) != 3 {
-		return officerSpec{}, fmt.Errorf("%w: %q", ErrInvalidOfficerFormat, value)
+		return officerSpec{}, &SentinelDetailError{Sentinel: ErrInvalidOfficerFormat, Detail: fmt.Sprintf("%q", value)}
 	}
 	username := strings.TrimSpace(parts[0])
 	kindStr := strings.TrimSpace(parts[1])
 	path := strings.TrimSpace(parts[2])
 	if username == "" {
-		return officerSpec{}, fmt.Errorf("%w: %q", ErrEmptyOfficerUsername, value)
+		return officerSpec{}, &SentinelDetailError{Sentinel: ErrEmptyOfficerUsername, Detail: fmt.Sprintf("%q", value)}
 	}
 	if path == "" {
-		return officerSpec{}, fmt.Errorf("%w: %q", ErrEmptyOfficerPath, value)
+		return officerSpec{}, &SentinelDetailError{Sentinel: ErrEmptyOfficerPath, Detail: fmt.Sprintf("%q", value)}
 	}
 	kind := officerKind(strings.ToLower(kindStr))
 	if _, ok := officerLoaders[kind]; !ok {
-		return officerSpec{}, fmt.Errorf("%w: %q", ErrUnknownOfficerKind, kindStr)
+		return officerSpec{}, &SentinelDetailError{Sentinel: ErrUnknownOfficerKind, Detail: fmt.Sprintf("%q", kindStr)}
 	}
 	return officerSpec{Username: username, Kind: kind, Path: path}, nil
 }
@@ -289,7 +289,7 @@ func parseOfficerSpec(value string) (officerSpec, error) {
 func loadOfficer(spec officerSpec) (*officerMaterial, error) {
 	loader, ok := officerLoaders[spec.Kind]
 	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnknownOfficerKind, spec.Kind)
+		return nil, &SentinelDetailError{Sentinel: ErrUnknownOfficerKind, Detail: fmt.Sprintf("%q", spec.Kind)}
 	}
 	return loader(spec)
 }
@@ -328,20 +328,20 @@ func loadTrustedCAs(paths []string) (*x509.CertPool, error) {
 		info, err := os.Stat(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return nil, fmt.Errorf("%w: %s", ErrTrustedCANotFound, path)
+				return nil, &SentinelDetailError{Sentinel: ErrTrustedCANotFound, Detail: path}
 			}
-			return nil, fmt.Errorf("%w: %s: %v", ErrTrustedCARead, path, err)
+			return nil, &SentinelDetailError{Sentinel: ErrTrustedCARead, Detail: fmt.Sprintf("%s: %v", path, err)}
 		}
 		if info.IsDir() {
-			return nil, fmt.Errorf("%w: %s is a directory", ErrTrustedCARead, path)
+			return nil, &SentinelDetailError{Sentinel: ErrTrustedCARead, Detail: fmt.Sprintf("%s is a directory", path)}
 		}
 		// #nosec G304 - trusted-ca path is provided by the operator
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s: %v", ErrTrustedCARead, path, err)
+			return nil, &SentinelDetailError{Sentinel: ErrTrustedCARead, Detail: fmt.Sprintf("%s: %v", path, err)}
 		}
 		if !pool.AppendCertsFromPEM(data) {
-			return nil, fmt.Errorf("%w: %s", ErrTrustedCANoCerts, path)
+			return nil, &SentinelDetailError{Sentinel: ErrTrustedCANoCerts, Detail: path}
 		}
 	}
 	return pool, nil
@@ -363,7 +363,7 @@ var validCredentialStrategies = map[string]struct{}{
 // strings are rejected here.
 func validateCredentialStrategy(value string) error {
 	if _, ok := validCredentialStrategies[value]; !ok {
-		return fmt.Errorf("%w: %q", ErrInvalidCredentialStrategy, value)
+		return &SentinelDetailError{Sentinel: ErrInvalidCredentialStrategy, Detail: fmt.Sprintf("%q", value)}
 	}
 	return nil
 }
@@ -525,11 +525,11 @@ func runInlineInit(cmd *cobra.Command, f *inlineInitFlags) error {
 
 	dataDir := resolveInitDataDir(f)
 	if dataDir == "" {
-		return fmt.Errorf("init: --data-dir is required")
+		return &MessageError{Message: "init: --data-dir is required"}
 	}
 
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
-		return fmt.Errorf("init: create data dir %s: %w", dataDir, err)
+		return &OpError{Op: fmt.Sprintf("init: create data dir %s", dataDir), Cause: err}
 	}
 
 	markerPath := filepath.Join(dataDir, initDoneMarkerName)
@@ -624,12 +624,12 @@ func runInitEmbeddedServer(dataDir string, f *inlineInitFlags, barrierEnabled bo
 
 	srv, err := server.NewServer(initCfg, srvOpts...)
 	if err != nil {
-		return fmt.Errorf("init: construct server: %w", err)
+		return &OpError{Op: "init: construct server", Cause: err}
 	}
 
 	if err := srv.Start(); err != nil {
 		_ = srv.Shutdown(context.Background())
-		return fmt.Errorf("init: start server: %w", err)
+		return &OpError{Op: "init: start server", Cause: err}
 	}
 
 	// Fully initialize the data-plane barrier at SERVER init so the daemon comes
@@ -648,7 +648,7 @@ func runInitEmbeddedServer(dataDir string, f *inlineInitFlags, barrierEnabled bo
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("init: shutdown server: %w", err)
+		return &OpError{Op: "init: shutdown server", Cause: err}
 	}
 	return nil
 }
@@ -673,7 +673,7 @@ func initializeSoftwareBarrier(srv *server.Server, secret string) error {
 		if errors.Is(err, qrdbsdk.ErrAlreadyInitialized) {
 			return nil
 		}
-		return fmt.Errorf("init: initialize software barrier: %w", err)
+		return &OpError{Op: "init: initialize software barrier", Cause: err}
 	}
 	return nil
 }
@@ -780,15 +780,15 @@ func writePendingCeremonyState(dataDir string, f *inlineInitFlags, officers []*o
 	}
 	raw, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return fmt.Errorf("init: marshal pending ceremony state: %w", err)
+		return &OpError{Op: "init: marshal pending ceremony state", Cause: err}
 	}
 	target := filepath.Join(dataDir, pendingCeremonyFileName)
 	tmp := target + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return fmt.Errorf("init: write %s: %w", tmp, err)
+		return &OpError{Op: fmt.Sprintf("init: write %s", tmp), Cause: err}
 	}
 	if err := os.Rename(tmp, target); err != nil {
-		return fmt.Errorf("init: rename pending ceremony state to %s: %w", target, err)
+		return &OpError{Op: fmt.Sprintf("init: rename pending ceremony state to %s", target), Cause: err}
 	}
 	return nil
 }
@@ -799,14 +799,14 @@ func writePendingCeremonyState(dataDir string, f *inlineInitFlags, officers []*o
 func writeInitDoneMarker(path string, m *initDoneMarker) error {
 	raw, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
-		return fmt.Errorf("init: marshal init-done marker: %w", err)
+		return &OpError{Op: "init: marshal init-done marker", Cause: err}
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return fmt.Errorf("init: write %s: %w", tmp, err)
+		return &OpError{Op: fmt.Sprintf("init: write %s", tmp), Cause: err}
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("init: rename init-done marker to %s: %w", path, err)
+		return &OpError{Op: fmt.Sprintf("init: rename init-done marker to %s", path), Cause: err}
 	}
 	return nil
 }

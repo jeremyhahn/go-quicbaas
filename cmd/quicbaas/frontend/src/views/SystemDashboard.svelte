@@ -307,13 +307,10 @@
 
   async function fetchClusterStatus(): Promise<void> {
     try {
+      // Use the authenticated SDK cluster client so the bearer token is
+      // attached (a raw fetch omitted it and 401'd under default-deny authz).
       const client = await getSDKClient();
-      const base = client.connection.getAddress().replace(/\/$/, '');
-      const resp = await fetch(`${base}/api/v1/cluster/status`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (!resp.ok) return;
-      clusterStatus = (await resp.json()) as ClusterStatusResponse;
+      clusterStatus = await client.cluster.status();
     } catch {
       // Non-fatal — cluster panel stays hidden.
     }
@@ -362,8 +359,13 @@
   // Recent activity
   // ---------------------------------------------------------------------------
 
+  // The recent-activity lists are keyed by job_id / session_id, so a malformed
+  // record without one would (a) collide on an `undefined` key and (b) blank the
+  // whole dashboard. Filter to records that carry their id — the activeJobCount
+  // stat above still counts every job, so the count is unaffected.
   const recentJobs = $derived<JobStatus[]>(
     [...allJobs]
+      .filter((j) => Boolean(j.job_id))
       .sort((a, b) => b.started_at - a.started_at)
       .slice(0, 5),
   );
@@ -374,6 +376,7 @@
 
   const recentSessions = $derived<SessionInfo[]>(
     [...allSessions]
+      .filter((s) => Boolean(s.session_id))
       .sort((a, b) => b.created_at - a.created_at)
       .slice(0, 5),
   );
@@ -400,7 +403,7 @@
 <SpawnDialog open={spawnOpen} onClose={() => { spawnOpen = false; }} />
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Overview" subtitle="High-level view of daemon health, activity, and resource counts" icon={LayoutDashboard} />
+  <PageHeader title="System Status" subtitle="High-level view of daemon health, activity, and resource counts" icon={LayoutDashboard} />
 
   <!-- Overall health banner -->
   <div
@@ -648,7 +651,7 @@
             {#each recentJobs as job (job.job_id)}
               <li class="flex items-center justify-between gap-2 text-sm">
                 <span class="truncate font-mono text-xs text-base-content/60" title={job.job_id}>
-                  {job.description || job.job_id.slice(0, 12)}
+                  {job.description || (job.job_id ?? '').slice(0, 12)}
                 </span>
                 <div class="flex items-center gap-2 shrink-0">
                   <StatusBadge text={job.state} variant={jobStateVariant(job.state)} />
@@ -681,7 +684,7 @@
                 <div class="flex items-center gap-2 min-w-0">
                   <span class="badge badge-xs badge-ghost truncate">{session.backend}</span>
                   <span class="font-mono text-xs text-base-content/40 truncate" title={session.session_id}>
-                    {session.session_id.slice(0, 10)}
+                    {(session.session_id ?? '').slice(0, 10)}
                   </span>
                 </div>
                 <StatusBadge text={session.state} variant="ghost" />

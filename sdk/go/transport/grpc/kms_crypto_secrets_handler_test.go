@@ -159,9 +159,10 @@ func TestKMSHandler_GenerateKey_InvalidRequestType(t *testing.T) {
 
 func TestKMSHandler_UnimplementedMethod(t *testing.T) {
 	h, _ := newKMSHandlerWithServer(t, false)
-	// SetKeyPolicy has no proto/Client analogue and must report unimplemented.
-	if _, err := h.handleRequest(context.Background(), "quicbaas.KMS", "SetKeyPolicy", nil); err == nil {
-		t.Fatal("expected unimplemented error for SetKeyPolicy")
+	// A method absent from kmsHandlerMap must report unimplemented rather
+	// than falling through to the untyped conn.Invoke path.
+	if _, err := h.handleRequest(context.Background(), "quicbaas.KMS", "NoSuchMethod", nil); err == nil {
+		t.Fatal("expected unimplemented error for unknown method")
 	}
 }
 

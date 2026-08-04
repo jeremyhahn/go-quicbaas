@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -2571,6 +2572,10 @@ func (s *successBarrierService) BarrierGenerateRootToken(ctx context.Context, sh
 	return &service.RootTokenInfo{Token: "tok"}, nil
 }
 
+func (s *successBarrierService) EnableEncryption(_ context.Context, _ string, _ qrdbsdk.MigrationOptions) error {
+	return nil
+}
+
 // TestHandleBarrierStatus_Success_ViaDispatch verifies the barrier status
 // success path through HandleRequest with a wired BarrierServicer.
 func TestHandleBarrierStatus_Success_ViaDispatch(t *testing.T) {
@@ -2903,6 +2908,10 @@ func (s *coverageErrorBarrierService) BarrierHasRecoveryKeys(ctx context.Context
 }
 func (s *coverageErrorBarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
 	return nil, errCoverageBarrierError
+}
+
+func (s *coverageErrorBarrierService) EnableEncryption(_ context.Context, _ string, _ qrdbsdk.MigrationOptions) error {
+	return errCoverageBarrierError
 }
 
 func TestHandleBarrierStatus_ServiceError_Coverage(t *testing.T) {

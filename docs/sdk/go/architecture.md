@@ -183,7 +183,7 @@ Request Failed
 All errors are typed for programmatic handling:
 
 ```go
-type DragonError struct {
+type QRDBError struct {
     Code      ErrorCode
     Op        string                 // Operation that failed
     Err       error                  // Underlying error

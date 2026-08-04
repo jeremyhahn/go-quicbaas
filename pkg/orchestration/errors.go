@@ -13,7 +13,10 @@
 
 package orchestration
 
-import "errors"
+import (
+	"errors"
+	"strconv"
+)
 
 // Sentinel errors for the acp package.
 var (
@@ -258,14 +261,26 @@ func (e *StreamJSONError) Unwrap() error {
 }
 
 // StreamJSONProcessExitedError indicates the Claude Code stream-json subprocess
-// exited unexpectedly before producing the expected output.
+// exited unexpectedly before producing the expected output. ExitCode and Stderr
+// are populated when the subprocess has been reaped and its captured stderr tail
+// is available, turning an opaque "broken pipe" into an actionable diagnostic
+// such as "acp: stream-json process exited: claude exited code 1: <stderr>".
 type StreamJSONProcessExitedError struct {
-	Command string
+	Command  string
+	ExitCode int
+	Stderr   string
 }
 
 // Error implements the error interface.
 func (e *StreamJSONProcessExitedError) Error() string {
-	return ErrStreamJSONProcessExited.Error() + ": " + e.Command
+	msg := ErrStreamJSONProcessExited.Error() + ": " + e.Command
+	if e.ExitCode != 0 {
+		msg += " exited code " + strconv.Itoa(e.ExitCode)
+	}
+	if e.Stderr != "" {
+		msg += ": " + e.Stderr
+	}
+	return msg
 }
 
 // Unwrap returns the sentinel error for errors.Is support.

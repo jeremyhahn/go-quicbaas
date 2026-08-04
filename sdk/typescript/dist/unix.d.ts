@@ -24,6 +24,7 @@ export declare class UnixClient implements Client {
     readonly tenantBarrier: any;
     readonly ceremony: any;
     readonly bootstrap: any;
+    readonly cluster: any;
     readonly seal: any;
     readonly sshKeys: any;
     readonly ssh: any;

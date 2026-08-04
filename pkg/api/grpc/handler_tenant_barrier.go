@@ -21,7 +21,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -44,12 +46,26 @@ import (
 // never logged.
 // =============================================================================
 
+// tenantGovernancer applies engine-side quota and entitlement limits to
+// tenants. iam.DefaultTenantManager satisfies this interface via its
+// QRDBTenantProvisioner delegate.
+type tenantGovernancer interface {
+	UpdateEngineQuotas(ctx context.Context, id string, quotas qrdbsdk.Quotas) error
+	UpdateEngineEntitlements(ctx context.Context, id string, entitlements qrdbsdk.Entitlements) error
+}
+
 // TenantBarrierGRPCServer wraps the TenantBarrierServicer facade for the
 // gRPC TenantBarrier service.
 type TenantBarrierGRPCServer struct {
 	pb.UnimplementedTenantBarrierServer
 	tenantBarrierSvc service.TenantBarrierServicer
-	logger           *logger.Logger
+	// barrierSvc is the system BarrierServicer that also handles tenant-scoped
+	// EnableEncryption. Injected via SetBarrierService after construction.
+	barrierSvc service.BarrierServicer
+	// governance handles engine-side quota/entitlement mutations for tenants.
+	// Injected via SetGovernance after construction.
+	governance tenantGovernancer
+	logger     *logger.Logger
 }
 
 // NewTenantBarrierGRPCServer constructs a TenantBarrierGRPCServer over the
@@ -64,10 +80,38 @@ func NewTenantBarrierGRPCServer(svc service.TenantBarrierServicer, log *logger.L
 	return srv
 }
 
+// SetBarrierService injects the BarrierServicer so that the EnableEncryption
+// RPC can delegate to BarrierServicer.EnableEncryption with a non-empty
+// tenantID. Called by server lifecycle wiring after both services are built.
+func (s *TenantBarrierGRPCServer) SetBarrierService(svc service.BarrierServicer) {
+	s.barrierSvc = svc
+}
+
+// SetGovernance injects the tenantGovernancer so that UpdateQuotas and
+// UpdateEntitlements RPCs can delegate to the engine-side provisioner.
+// Called by server lifecycle wiring after the tenant manager is built.
+func (s *TenantBarrierGRPCServer) SetGovernance(g tenantGovernancer) {
+	s.governance = g
+}
+
+// SetGovernanceFromManager is a convenience wrapper that extracts the
+// tenantGovernancer from an iam.DefaultTenantManager. It satisfies the
+// common wiring pattern at server startup.
+func (s *TenantBarrierGRPCServer) SetGovernanceFromManager(mgr *iam.DefaultTenantManager) {
+	s.governance = mgr
+}
+
 // RegisterTenantBarrierGRPCServer registers the TenantBarrier service
 // implementation on the supplied grpc.Server.
 func RegisterTenantBarrierGRPCServer(server *grpc.Server, svc service.TenantBarrierServicer, log *logger.Logger) {
 	pb.RegisterTenantBarrierServer(server, NewTenantBarrierGRPCServer(svc, log))
+}
+
+// RegisterTenantBarrierServerDirect registers a pre-built TenantBarrierGRPCServer
+// on the supplied grpc.Server. Use this when you need to inject additional
+// dependencies (e.g. SetBarrierService) before registration.
+func RegisterTenantBarrierServerDirect(server *grpc.Server, srv *TenantBarrierGRPCServer) {
+	pb.RegisterTenantBarrierServer(server, srv)
 }
 
 // ---------------------------------------------------------------------------
@@ -241,4 +285,110 @@ func (s *TenantBarrierGRPCServer) Status(ctx context.Context, req *pb.TenantBarr
 		ShamirThreshold: int32(info.ShamirThreshold), //nolint:gosec // small count
 		ShamirTotal:     int32(info.ShamirTotal),     //nolint:gosec // small count
 	}, nil
+}
+
+// EnableEncryption migrates a tenant's dedicated barrier from the none
+// (unencrypted) strategy to a keyed strategy in place. The embedded qrdb
+// node's EncryptionMigrator drives the migration (injected via
+// SetBarrierService / buildBarrierCeremonyServices).
+func (s *TenantBarrierGRPCServer) EnableEncryption(ctx context.Context, req *pb.TenantBarrierEnableEncryptionRequest) (*emptypb.Empty, error) {
+	if s.barrierSvc == nil {
+		return nil, tenantBarrierServiceUnavailableError()
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if err := requireTenantID(req.GetTenantId()); err != nil {
+		return nil, err
+	}
+	if req.GetTargetStrategy() == "" {
+		return nil, status.Error(codes.InvalidArgument, "target_strategy is required")
+	}
+
+	mech := req.GetMechanism()
+	if mech == "" {
+		mech = string(qrdbsdk.MechanismSwap)
+	}
+	avail := req.GetAvailability()
+	if avail == "" {
+		avail = string(qrdbsdk.AvailabilityOnline)
+	}
+
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  qrdbsdk.StrategyID(req.GetTargetStrategy()),
+		Mechanism:       qrdbsdk.MigrationMechanism(mech),
+		Availability:    qrdbsdk.MigrationAvailability(avail),
+		ShamirThreshold: int(req.GetShamirThreshold()),
+		ShamirTotal:     int(req.GetShamirTotal()),
+	}
+	if p := req.GetPassphrase(); p != "" {
+		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(p)}
+	}
+
+	if err := s.barrierSvc.EnableEncryption(ctx, req.GetTenantId(), opts); err != nil {
+		return nil, mapTenantBarrierError(err)
+	}
+	return &emptypb.Empty{}, nil
+}
+
+// UpdateQuotas sets the engine-level numeric resource limits for a tenant.
+func (s *TenantBarrierGRPCServer) UpdateQuotas(ctx context.Context, req *pb.UpdateTenantQuotasRequest) (*emptypb.Empty, error) {
+	if s.governance == nil {
+		return nil, status.Error(codes.Unavailable, "tenant governance not available")
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if err := requireTenantID(req.GetTenantId()); err != nil {
+		return nil, err
+	}
+
+	quotas := qrdbsdk.Quotas{
+		MaxDatabases:          req.GetMaxDatabases(),
+		MaxRaftGroups:         req.GetMaxRaftGroups(),
+		MaxReplicasPerGroup:   req.GetMaxReplicasPerGroup(),
+		MaxTotalReplicas:      req.GetMaxTotalReplicas(),
+		MaxCollections:        req.GetMaxCollections(),
+		MaxKeys:               req.GetMaxKeys(),
+		MaxStorageBytes:       req.GetMaxStorageBytes(),
+		MaxDatabaseSizeBytes:  req.GetMaxDatabaseSizeBytes(),
+		MaxUsers:              req.GetMaxUsers(),
+		MaxRoles:              req.GetMaxRoles(),
+		MaxCertificates:       req.GetMaxCertificates(),
+		MaxBackups:            req.GetMaxBackups(),
+		MaxVectorDims:         req.GetMaxVectorDims(),
+		MaxTSMetrics:          req.GetMaxTsMetrics(),
+		MaxDedicatedWALGroups: req.GetMaxDedicatedWalGroups(),
+		SystemBarrierQuota:    req.GetSystemBarrierQuota(),
+	}
+	if err := s.governance.UpdateEngineQuotas(ctx, req.GetTenantId(), quotas); err != nil {
+		return nil, mapTenantBarrierError(err)
+	}
+	return &emptypb.Empty{}, nil
+}
+
+// UpdateEntitlements sets the engine-level feature entitlements for a tenant.
+func (s *TenantBarrierGRPCServer) UpdateEntitlements(ctx context.Context, req *pb.UpdateTenantEntitlementsRequest) (*emptypb.Empty, error) {
+	if s.governance == nil {
+		return nil, status.Error(codes.Unavailable, "tenant governance not available")
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if err := requireTenantID(req.GetTenantId()); err != nil {
+		return nil, err
+	}
+
+	entitlements := qrdbsdk.Entitlements{
+		AllowedIsolationModes:     req.GetAllowedIsolationModes(),
+		AllowDedicatedRaft:        req.GetAllowDedicatedRaft(),
+		AllowVolumeStorage:        req.GetAllowVolumeStorage(),
+		AllowSystemManagedBarrier: req.GetAllowSystemManagedBarrier(),
+		AllowDedicatedWAL:         req.GetAllowDedicatedWal(),
+		AllowedBarrierModes:       req.GetAllowedBarrierModes(),
+	}
+	if err := s.governance.UpdateEngineEntitlements(ctx, req.GetTenantId(), entitlements); err != nil {
+		return nil, mapTenantBarrierError(err)
+	}
+	return &emptypb.Empty{}, nil
 }

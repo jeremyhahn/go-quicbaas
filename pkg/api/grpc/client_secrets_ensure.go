@@ -15,27 +15,41 @@ package grpc
 
 import (
 	"context"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// EnsureSecret is the gRPC client stub for the Vault-style
-// generate-on-first-access primitive. It currently returns a clear
-// Unimplemented error pointing at the proto regeneration TODO in
-// server_secrets_ensure.go. Once the proto is regenerated the body
-// should follow the pattern in client_secrets.go:StoreSecret:
-//
-//  1. secretsClient := pb.NewSecretsManagementClient(c.conn)
-//  2. pbReq := &pb.EnsureSecretRequest{ ... }
-//  3. pbResp, err := secretsClient.EnsureSecret(ctx, pbReq)
-//  4. return &service.EnsureSecretResponse{ ... }, nil
+// EnsureSecret is the gRPC client for the Vault-style generate-on-first-access
+// primitive: it returns the secret if it exists, otherwise generates and stores
+// it, returning the value. Mirrors the field mapping in
+// server_secrets_ensure.go (the inverse direction).
 func (c *Client) EnsureSecret(ctx context.Context, req *service.EnsureSecretRequest) (*service.EnsureSecretResponse, error) {
 	if req == nil || req.SecretID == "" {
 		return nil, status.Error(codes.InvalidArgument, "EnsureSecret: secret_id is required")
 	}
-	return nil, status.Error(codes.Unimplemented,
-		"grpc.Client.EnsureSecret: proto regeneration pending — see TODO in pkg/api/grpc/server_secrets_ensure.go")
+
+	secretsClient := pb.NewSecretsManagementClient(c.conn)
+
+	pbResp, err := secretsClient.EnsureSecret(ctx, &pb.EnsureSecretRequest{
+		SecretId: req.SecretID,
+		Length:   int32(req.Length), //nolint:gosec // G115: secret length is bounded by service-layer validation
+		Encoding: req.Encoding,
+		TenantId: req.TenantID,
+	})
+	if err != nil {
+		return nil, convertError(err)
+	}
+
+	return &service.EnsureSecretResponse{
+		SecretID:  pbResp.SecretId,
+		Data:      pbResp.Data,
+		Generated: pbResp.Generated,
+		Version:   pbResp.Version,
+		Timestamp: time.Unix(pbResp.Timestamp, 0),
+	}, nil
 }

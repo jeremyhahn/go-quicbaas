@@ -172,6 +172,9 @@ var quicOpcodePermissions = map[byte]qrdbPermission{
 	OpSecretsSetRotation:  {"credentials", "strategy"},
 	OpSecretsUpdateStatus: {"credentials", "submit"},
 	OpSecretsDelete:       {"credentials", "delete"},
+	// Secrets sub-dispatch (EnsureSecret and future sub-ops): authorized at the
+	// surface level as a write; the underlying EnsureSecret merges read + write.
+	OpSecretsSubDispatch: {"credentials", "store"},
 
 	// Crypto -> keys
 	OpCryptoEncrypt:    {"keys", "encrypt"},
@@ -304,7 +307,10 @@ var barrierSubOpPermissions = map[byte]qrdbPermission{
 	SubOpBarrierRecoveryRecover:    {"seal", "recover_with_keys"},
 	SubOpBarrierRecoveryDelete:     {"seal", "generate_recovery"},
 	SubOpBarrierRecoveryStatus:     {"seal", "status"},
-	SubOpBarrierRootToken:          {"seal", "bootstrap"},
+	SubOpBarrierRootToken:                {"seal", "bootstrap"},
+	SubOpBarrierEnableEncryption:         {"seal", "enable_encryption"},
+	SubOpBarrierUpdateTenantQuotas:       {"tenants", "set_quotas"},
+	SubOpBarrierUpdateTenantEntitlements: {"tenants", "set_entitlements"},
 }
 
 // getQRDBPermission returns the qrdb-canonical (resource, action) for the

@@ -119,6 +119,8 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		r.Get("/{tenant_id}", h.GetTenant)
 		r.Put("/{tenant_id}", h.UpdateTenant)
 		r.Delete("/{tenant_id}", h.DeleteTenant)
+		r.Patch("/{tenant_id}/quotas", h.UpdateTenantEngineQuotas)
+		r.Patch("/{tenant_id}/entitlements", h.UpdateTenantEngineEntitlements)
 
 		// Per-tenant barrier lifecycle (delegates to the embedded qrdb node via
 		// the broker's TenantBarrierServicer facade). Authorized as the
@@ -133,6 +135,7 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 			r.Post("/unseal-share", h.server.HandleTenantBarrierUnsealShare)
 			r.Post("/seal", h.server.HandleTenantBarrierSeal)
 			r.Get("/status", h.server.HandleTenantBarrierStatus)
+			r.Post("/enable-encryption", h.server.HandleTenantBarrierEnableEncryption)
 		})
 
 		// Tenant-scoped resources

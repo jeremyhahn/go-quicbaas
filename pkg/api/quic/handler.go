@@ -59,6 +59,13 @@ type Handler struct {
 	// liveness mode. nil leaves QUIC on its no-enforcement path (RequireAuthz=false).
 	validatorAuthorizer ValidatorAuthorizer
 
+	// governance applies engine-side quota and entitlement limits to tenants via
+	// the iam.DefaultTenantManager delegate. Wired by the QUIC server via
+	// SetTenantGovernance once the IAM manager is online; nil before lifecycle
+	// wiring completes, in which case UpdateQuotas and UpdateEntitlements respond
+	// with StatusUnavailable.
+	governance barrierTenantGovernancer
+
 	// Messaging service
 	msgService *messaging.PushService
 }
@@ -113,6 +120,17 @@ func WithBarrierService(svc service.BarrierServicer) HandlerOption {
 func WithCeremonyService(svc service.CeremonyServicer) HandlerOption {
 	return func(h *Handler) {
 		h.ceremonyService = svc
+	}
+}
+
+// WithGovernance installs the barrierTenantGovernancer used by the
+// SubOpBarrierUpdateTenantQuotas and SubOpBarrierUpdateTenantEntitlements
+// handlers. When nil (the default), those sub-operations respond with
+// StatusUnavailable ("governance service not available"). Lifecycle wiring
+// calls this option once the iam.DefaultTenantManager is online.
+func WithGovernance(g barrierTenantGovernancer) HandlerOption {
+	return func(h *Handler) {
+		h.governance = g
 	}
 }
 
@@ -250,7 +268,7 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 		return interfaces.ResourceCeremony, interfaces.ActionAdmin
 
 	// KMS Operations - Read
-	case OpKMSGetKey, OpKMSListKeys, OpKMSKeyVersions:
+	case OpKMSGetKey, OpKMSListKeys, OpKMSKeyVersions, OpKMSGetPublicKey, OpKMSGetSupportedAlgorithms:
 		return interfaces.ResourceKMS, interfaces.ActionRead
 
 	// KMS Operations - Write
@@ -258,7 +276,7 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 		return interfaces.ResourceKMS, interfaces.ActionWrite
 
 	// KMS Operations - Delete
-	case OpKMSDeleteKey:
+	case OpKMSDeleteKey, OpKMSRevokeKey:
 		return interfaces.ResourceKMS, interfaces.ActionDelete
 
 	// KMS DEK Operations - Read
@@ -283,6 +301,10 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 
 	// Secrets Operations - Write
 	case OpSecretsStore, OpSecretsRollback, OpSecretsRotate, OpSecretsSetRotation, OpSecretsUpdateStatus:
+		return interfaces.ResourceSecrets, interfaces.ActionWrite
+
+	// Secrets Sub-Dispatch (sub-op in payload; authorized at the surface level)
+	case OpSecretsSubDispatch:
 		return interfaces.ResourceSecrets, interfaces.ActionWrite
 
 	// Secrets Operations - Delete
@@ -807,6 +829,14 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 	case OpKMSUpdateKeyMetadata:
 		return h.handleKMSUpdateKeyMetadata(ctx, req)
 
+	// KMS Key Administration Operations
+	case OpKMSRevokeKey:
+		return h.handleKMSRevokeKey(ctx, req)
+	case OpKMSGetPublicKey:
+		return h.handleKMSGetPublicKey(ctx, req)
+	case OpKMSGetSupportedAlgorithms:
+		return h.handleKMSGetSupportedAlgorithms(ctx, req)
+
 	// Secrets Operations
 	case OpSecretsStore:
 		return h.handleSecretsStore(ctx, req)
@@ -834,6 +864,10 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) *Response {
 		return h.handleSecretsGetByPrefix(ctx, req)
 	case OpSecretsWatch:
 		return h.handleSecretsWatch(ctx, req)
+
+	// Secrets Sub-Dispatch - EnsureSecret and future secrets sub-operations.
+	case OpSecretsSubDispatch:
+		return h.handleSecretsSubDispatch(ctx, req)
 
 	// Crypto Operations
 	case OpCryptoEncrypt:

@@ -44,6 +44,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/agent"
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/ollama"
@@ -184,21 +185,61 @@ func (s *Server) startEmbeddedAgent() error {
 		log.Warn("Embedded agent: CA not available; starting without mTLS identity (TLS disabled)")
 	}
 
+	// Build the QuicBaaS MCP preset resolver. When MCP is enabled and the CA
+	// is up, agents spawned with the "quicbaas" MCP preset get a fresh,
+	// short-lived mTLS identity minted per spawn and torn down on close. When
+	// either is unavailable the resolver is nil and the preset is forwarded
+	// unmodified (the agent simply cannot reach the endpoint).
+	mcpResolver := s.buildEmbeddedAgentMCPResolver(hostname, log)
+
 	// Build backends from config. Each backend kind maps to a constructor
 	// via the dispatch table below.
-	backends, buildErr := buildEmbeddedAgentBackends(cfg.Backends, cfg.OllamaURL, log)
+	backends, buildErr := buildEmbeddedAgentBackends(cfg.Backends, cfg.OllamaURL, mcpResolver, log)
 	if buildErr != nil {
 		return buildErr
 	}
 
+	// Resolve the sandbox policy (how SandboxModeDefault is interpreted and
+	// whether an explicit Required is honored). Empty maps to opt-in.
+	sandboxPolicy, policyErr := orchestration.ParseSandboxPolicy(cfg.SandboxPolicy)
+	if policyErr != nil {
+		return &ServerCauseError{Message: "embedded agent: invalid sandbox_policy", Cause: policyErr}
+	}
+
+	// Wire a container runtime when sandboxed sessions are reachable under the
+	// policy (preferred/required) or an explicit sandbox image is configured.
+	// The runtime lets the ACP backend's spawnContainerJSONRPC path launch an
+	// interactive agent container; without it a Required spawn fails closed.
+	imageMap := buildEmbeddedAgentImageMap(cfg)
+	var containerRuntime orchestration.ContainerRuntime
+	if sandboxPolicy != orchestration.SandboxPolicyOptIn || len(imageMap) > 0 {
+		rt, rtBuildErr := orchestration.NewExecContainerRuntime(log)
+		if rtBuildErr != nil {
+			log.Warnf("Embedded agent: container runtime unavailable; sandboxed sessions will fail: %v", rtBuildErr)
+		} else {
+			containerRuntime = rt
+			if cfg.AutoPull {
+				for backendName, image := range imageMap {
+					if pullErr := rt.Pull(context.Background(), image); pullErr != nil {
+						log.Warnf("Embedded agent: pre-pull of sandbox image %q (backend %s) failed: %v", image, backendName, pullErr)
+					}
+				}
+			}
+		}
+	}
+
 	// Construct agent Runtime.
 	runtime, rtErr := agent.NewRuntime(agent.RuntimeConfig{
-		Backends: backends,
-		Logger:   log,
-		WorkDir:  cfg.DataDir,
+		Backends:         backends,
+		ContainerRuntime: containerRuntime,
+		SandboxPolicy:    sandboxPolicy,
+		ImageMap:         imageMap,
+		ImageRegistry:    cfg.ImageRegistry,
+		Logger:           log,
+		WorkDir:          cfg.DataDir,
 	})
 	if rtErr != nil {
-		return fmt.Errorf("embedded agent: construct runtime: %w", rtErr)
+		return &ServerCauseError{Message: "embedded agent: construct runtime", Cause: rtErr}
 	}
 
 	// Construct bufconn listener. The spawn server will serve on this;
@@ -219,7 +260,7 @@ func (s *Server) startEmbeddedAgent() error {
 		// process isolation.
 	})
 	if ssErr != nil {
-		return fmt.Errorf("embedded agent: construct spawn server: %w", ssErr)
+		return &ServerCauseError{Message: "embedded agent: construct spawn server", Cause: ssErr}
 	}
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
@@ -227,7 +268,7 @@ func (s *Server) startEmbeddedAgent() error {
 	// Start the gRPC server on the bufconn listener.
 	if err := spawnServer.Start(bgCtx); err != nil {
 		bgCancel()
-		return fmt.Errorf("embedded agent: start spawn server: %w", err)
+		return &ServerCauseError{Message: "embedded agent: start spawn server", Cause: err}
 	}
 
 	// Install a synthetic AgentIdentity so the spawn server's authorize()
@@ -262,7 +303,7 @@ func (s *Server) startEmbeddedAgent() error {
 	if regErr := s.agentRegistry.RegisterAgent(context.Background(), reg); regErr != nil {
 		bgCancel()
 		_ = spawnServer.Stop(bgCtx)
-		return fmt.Errorf("embedded agent: register in fleet registry: %w", regErr)
+		return &ServerCauseError{Message: "embedded agent: register in fleet registry", Cause: regErr}
 	}
 
 	// Wire a bufconn-backed ConnDialer into the remote resolver so the
@@ -347,10 +388,54 @@ func (s *Server) installEmbeddedBackendDialer(agentID string, reg *orchestration
 	}
 }
 
+// buildEmbeddedAgentMCPResolver constructs the QuicBaaS MCP preset resolver for
+// the embedded agent, or returns nil when MCP resolution is not available (MCP
+// disabled in config, or the CA is down so no cert can be issued). The resolver
+// reuses the platform CA via the agent cert issuer so the per-spawn certs chain
+// to the same root the MCP listener trusts for client auth.
+//
+// The endpoint URL targets the local MCP listener: the embedded agent runs on
+// the same host, so a wildcard/empty bind host is normalized to loopback (the
+// cert SANs already include localhost). A remote agent daemon would resolve its
+// own reachable endpoint instead.
+func (s *Server) buildEmbeddedAgentMCPResolver(hostname string, log interfaces.Logger) orchestration.MCPPresetResolver {
+	if !s.config.Server.MCP.Enabled {
+		log.Debug("Embedded agent: MCP disabled; quicbaas MCP preset will not be resolved")
+		return nil
+	}
+	if s.xkmsCA == nil {
+		log.Warn("Embedded agent: CA unavailable; quicbaas MCP preset will not be resolved (no agent cert)")
+		return nil
+	}
+
+	host := strings.TrimSpace(s.config.Server.MCP.BindAddress)
+	if host == "" {
+		host = strings.TrimSpace(s.config.Server.Host)
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	endpoint := fmt.Sprintf("https://%s:%d/mcp", host, s.config.Server.MCP.Port)
+
+	issuer, err := service.NewXKMSAgentCertIssuer(s.xkmsCA)
+	if err != nil {
+		log.Warnf("Embedded agent: MCP preset resolver disabled (cert issuer init failed): %v", err)
+		return nil
+	}
+	resolver, err := NewAgentMCPPresetResolver(issuer, endpoint, hostname, embeddedAgentTenantID, log)
+	if err != nil {
+		log.Warnf("Embedded agent: MCP preset resolver disabled: %v", err)
+		return nil
+	}
+	log.Infof("Embedded agent: quicbaas MCP preset resolver wired; endpoint=%s", endpoint)
+	return resolver
+}
+
 // buildEmbeddedAgentBackends constructs the backend map from the configured
 // list. Only "ollama" is supported for the embedded agent; unsupported kinds
 // are skipped with a warning.
-func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, log interfaces.Logger) (map[string]orchestration.AgentBackend, error) {
+func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, mcpResolver orchestration.MCPPresetResolver, log interfaces.Logger) (map[string]orchestration.AgentBackend, error) {
 	if len(kinds) == 0 {
 		kinds = []string{"ollama"}
 	}
@@ -377,10 +462,11 @@ func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, log interfaces
 		},
 		"claude": func() (map[string]orchestration.AgentBackend, error) {
 			b := orchestration.NewACPBackend(orchestration.ACPBackendConfig{
-				Command:      "claude",
-				Args:         []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--disable-slash-commands"},
-				DefaultModel: "",
-				CLIMode:      true,
+				Command:           "claude",
+				Args:              []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--disable-slash-commands"},
+				DefaultModel:      "",
+				CLIMode:           true,
+				MCPPresetResolver: mcpResolver,
 			})
 			b.SetLogger(log)
 			return map[string]orchestration.AgentBackend{"claude": b}, nil
@@ -396,9 +482,10 @@ func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, log interfaces
 		},
 		"opencode": func() (map[string]orchestration.AgentBackend, error) {
 			b := orchestration.NewACPBackend(orchestration.ACPBackendConfig{
-				Command:      "opencode",
-				Args:         []string{"acp"},
-				DefaultModel: "",
+				Command:           "opencode",
+				Args:              []string{"acp"},
+				DefaultModel:      "",
+				MCPPresetResolver: mcpResolver,
 			})
 			b.SetLogger(log)
 			return map[string]orchestration.AgentBackend{"opencode": b}, nil
@@ -414,7 +501,7 @@ func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, log interfaces
 		}
 		backends, err := factory()
 		if err != nil {
-			return nil, fmt.Errorf("embedded agent: build backend %q: %w", kind, err)
+			return nil, &ServerCauseError{Message: fmt.Sprintf("embedded agent: build backend %q", kind), Cause: err}
 		}
 		for name, b := range backends {
 			result[name] = b
@@ -425,6 +512,32 @@ func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, log interfaces
 		return nil, &EmbeddedAgentBuildBackendsError{Kinds: kinds}
 	}
 	return result, nil
+}
+
+// buildEmbeddedAgentImageMap resolves the per-backend sandbox image map. An
+// explicit ImageMap wins; otherwise the convenience SandboxImage is applied to
+// every configured backend so a single operator setting sandboxes the whole
+// embedded agent. Returns an empty map when neither is set (raw-only operation).
+func buildEmbeddedAgentImageMap(cfg config.EmbeddedAgentConfig) map[string]string {
+	if len(cfg.ImageMap) > 0 {
+		out := make(map[string]string, len(cfg.ImageMap))
+		for k, v := range cfg.ImageMap {
+			out[k] = v
+		}
+		return out
+	}
+	if cfg.SandboxImage == "" {
+		return map[string]string{}
+	}
+	backends := cfg.Backends
+	if len(backends) == 0 {
+		backends = []string{"ollama"}
+	}
+	out := make(map[string]string, len(backends))
+	for _, b := range backends {
+		out[b] = cfg.SandboxImage
+	}
+	return out
 }
 
 // buildEmbeddedAgentCapabilities derives the capability list from the

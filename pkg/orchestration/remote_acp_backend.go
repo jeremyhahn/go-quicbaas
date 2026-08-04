@@ -232,6 +232,7 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		Sandboxed:      req.Sandboxed,
 		ContainerImage: req.ContainerImage,
 		TenantId:       b.registration.TenantID,
+		Persistent:     req.Persistent,
 	}
 	resp, rpcErr := client.Spawn(b.authCtx(ctx), pbReq)
 	if rpcErr != nil {
@@ -593,9 +594,17 @@ func runtimeMCPServersToProto(in []MCPServerConfig) []*proto.MCPServerConfig {
 	}
 	out := make([]*proto.MCPServerConfig, len(in))
 	for i, s := range in {
+		// Prefer the explicit URL; fall back to the legacy Command field for
+		// callers that encoded the endpoint there before URL existed. Env
+		// (e.g. the agent's mTLS cert/key paths) is preserved verbatim.
+		url := s.URL
+		if url == "" {
+			url = s.Command
+		}
 		out[i] = &proto.MCPServerConfig{
 			Name: s.Name,
-			Url:  s.Command,
+			Url:  url,
+			Env:  s.Env,
 		}
 	}
 	return out

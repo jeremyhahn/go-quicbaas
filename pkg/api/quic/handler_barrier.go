@@ -19,9 +19,18 @@ import (
 	"context"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
+
+// barrierTenantGovernancer applies engine-side quota and entitlement limits to
+// tenants via the iam.DefaultTenantManager delegate. Defined locally to avoid
+// an import cycle with pkg/iam from the quic handler package.
+type barrierTenantGovernancer interface {
+	UpdateEngineQuotas(ctx context.Context, id string, quotas qrdbsdk.Quotas) error
+	UpdateEngineEntitlements(ctx context.Context, id string, entitlements qrdbsdk.Entitlements) error
+}
 
 // =============================================================================
 // Barrier QUIC handlers — OpBarrier (0xC0) sub-op dispatcher.
@@ -103,6 +112,34 @@ type barrierRecoveryRecoverWireRequest struct {
 // barrierRootTokenWireRequest is the JSON payload for SubOpBarrierRootToken.
 type barrierRootTokenWireRequest struct {
 	Shares []string `json:"shares"`
+}
+
+// barrierEnableEncryptionWireRequest is the JSON payload for
+// SubOpBarrierEnableEncryption. It mirrors the REST
+// barrierEnableEncryptionRequest body exactly.
+type barrierEnableEncryptionWireRequest struct {
+	TargetStrategy  string `json:"target_strategy"`
+	Mechanism       string `json:"mechanism"`
+	Availability    string `json:"availability"`
+	Passphrase      string `json:"passphrase,omitempty"`
+	ShamirThreshold int    `json:"shamir_threshold,omitempty"`
+	ShamirTotal     int    `json:"shamir_total,omitempty"`
+}
+
+// tenantUpdateQuotasWireRequest is the JSON payload for
+// SubOpBarrierUpdateTenantQuotas. It carries the tenant ID and the full
+// quota struct; zero-value fields mean "use system default" on the engine side.
+type tenantUpdateQuotasWireRequest struct {
+	TenantID string         `json:"tenant_id"`
+	Quotas   qrdbsdk.Quotas `json:"quotas"`
+}
+
+// tenantUpdateEntitlementsWireRequest is the JSON payload for
+// SubOpBarrierUpdateTenantEntitlements. It carries the tenant ID and the full
+// entitlements struct.
+type tenantUpdateEntitlementsWireRequest struct {
+	TenantID     string               `json:"tenant_id"`
+	Entitlements qrdbsdk.Entitlements `json:"entitlements"`
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +248,10 @@ var barrierSubOpHandlers = map[byte]barrierSubOpHandler{
 	SubOpBarrierRecoveryRecover:    (*Handler).handleBarrierRecoveryRecover,
 	SubOpBarrierRecoveryDelete:     (*Handler).handleBarrierRecoveryDelete,
 	SubOpBarrierRecoveryStatus:     (*Handler).handleBarrierRecoveryStatus,
-	SubOpBarrierRootToken:          (*Handler).handleBarrierRootToken,
+	SubOpBarrierRootToken:                (*Handler).handleBarrierRootToken,
+	SubOpBarrierEnableEncryption:         (*Handler).handleBarrierEnableEncryption,
+	SubOpBarrierUpdateTenantQuotas:       (*Handler).handleBarrierUpdateTenantQuotas,
+	SubOpBarrierUpdateTenantEntitlements: (*Handler).handleBarrierUpdateTenantEntitlements,
 }
 
 // ---------------------------------------------------------------------------
@@ -574,4 +614,107 @@ func (h *Handler) handleBarrierRootToken(ctx context.Context, req *Request) *Res
 		return h.errorResponse(err)
 	}
 	return &Response{Status: StatusOK, Payload: payload}
+}
+
+// requireGovernance returns the wired barrierTenantGovernancer or an error
+// response carrying StatusUnavailable when the facade has not been installed.
+func (h *Handler) requireGovernance() (barrierTenantGovernancer, *Response) {
+	if h.governance == nil {
+		return nil, h.errorResponse(api.NewServiceUnavailableError("governance"))
+	}
+	return h.governance, nil
+}
+
+// handleBarrierEnableEncryption migrates the system barrier from the none
+// strategy to a keyed at-rest encryption strategy. This is a one-way,
+// in-place migration delegated to the embedded qrdb node.
+// REST equivalent: POST /api/v1/barrier/enable-encryption.
+func (h *Handler) handleBarrierEnableEncryption(ctx context.Context, req *Request) *Response {
+	svc, errResp := h.requireBarrierService()
+	if errResp != nil {
+		return errResp
+	}
+
+	var body barrierEnableEncryptionWireRequest
+	if err := DecodePayload(req.Payload, &body); err != nil {
+		return h.errorResponse(err)
+	}
+	if body.TargetStrategy == "" {
+		return h.errorResponse(api.NewRequiredFieldError("target_strategy"))
+	}
+
+	mech := body.Mechanism
+	if mech == "" {
+		mech = string(qrdbsdk.MechanismSwap)
+	}
+	avail := body.Availability
+	if avail == "" {
+		avail = string(qrdbsdk.AvailabilityOnline)
+	}
+
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  qrdbsdk.StrategyID(body.TargetStrategy),
+		Mechanism:       qrdbsdk.MigrationMechanism(mech),
+		Availability:    qrdbsdk.MigrationAvailability(avail),
+		ShamirThreshold: body.ShamirThreshold,
+		ShamirTotal:     body.ShamirTotal,
+	}
+	if body.Passphrase != "" {
+		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(body.Passphrase)}
+	}
+
+	// tenantID="" routes to the system barrier scope inside EnableEncryption.
+	if err := svc.EnableEncryption(ctx, "", opts); err != nil {
+		return h.errorResponse(err)
+	}
+	return &Response{Status: StatusOK}
+}
+
+// handleBarrierUpdateTenantQuotas applies engine-level numeric resource limits
+// to the identified tenant. Delegates to the barrierTenantGovernancer facade
+// (iam.DefaultTenantManager). Returns StatusOK (empty body) on success.
+// REST equivalent: PATCH /api/v1/tenants/{id}/quotas.
+func (h *Handler) handleBarrierUpdateTenantQuotas(ctx context.Context, req *Request) *Response {
+	gov, errResp := h.requireGovernance()
+	if errResp != nil {
+		return errResp
+	}
+
+	var body tenantUpdateQuotasWireRequest
+	if err := DecodePayload(req.Payload, &body); err != nil {
+		return h.errorResponse(err)
+	}
+	if body.TenantID == "" {
+		return h.errorResponse(api.NewRequiredFieldError("tenant_id"))
+	}
+
+	if err := gov.UpdateEngineQuotas(ctx, body.TenantID, body.Quotas); err != nil {
+		return h.errorResponse(err)
+	}
+	return &Response{Status: StatusOK}
+}
+
+// handleBarrierUpdateTenantEntitlements applies engine-level feature
+// entitlements to the identified tenant. Delegates to the
+// barrierTenantGovernancer facade (iam.DefaultTenantManager). Returns StatusOK
+// (empty body) on success.
+// REST equivalent: PATCH /api/v1/tenants/{id}/entitlements.
+func (h *Handler) handleBarrierUpdateTenantEntitlements(ctx context.Context, req *Request) *Response {
+	gov, errResp := h.requireGovernance()
+	if errResp != nil {
+		return errResp
+	}
+
+	var body tenantUpdateEntitlementsWireRequest
+	if err := DecodePayload(req.Payload, &body); err != nil {
+		return h.errorResponse(err)
+	}
+	if body.TenantID == "" {
+		return h.errorResponse(api.NewRequiredFieldError("tenant_id"))
+	}
+
+	if err := gov.UpdateEngineEntitlements(ctx, body.TenantID, body.Entitlements); err != nil {
+		return h.errorResponse(err)
+	}
+	return &Response{Status: StatusOK}
 }

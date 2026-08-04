@@ -317,6 +317,7 @@ func (s *CryptoServer) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignR
 		KeyID:         req.KeyId,
 		Message:       req.Message,
 		HashAlgorithm: convertProtoHashAlgorithm(req.HashAlgorithm),
+		PreHashed:     req.PreHashed,
 	}
 
 	resp, err := s.cryptoSvc.Sign(ctx, svcReq)

@@ -10,48 +10,14 @@
  * in a test harness against a locally-run development daemon.
  */
 
-// Derive the server base URL from the same env var that playwright.config.ts
-// uses so the two are always in sync.
-function serverBase(): string {
-  const uiUrl = process.env['QUICBAAS_UI_URL'] ?? 'http://localhost:18080/ui/';
-  // Strip the /ui/ path suffix — the REST API lives at the root.
-  return uiUrl.replace(/\/ui\/?$/, '');
-}
+import { serverBase, authHeader, apiFetch, SYSTEM_TENANT_ID } from './_http.ts';
 
-// apiURL constructs a full REST path.
+export { SYSTEM_TENANT_ID };
+
+// apiURL constructs a full orchestrator REST path.
 function apiURL(path: string): string {
   return `${serverBase()}/api/v1/orchestrator${path}`;
 }
-
-// apiFetch is a thin wrapper around Node fetch that always sends/receives JSON.
-// TLS errors are suppressed via NODE_TLS_REJECT_UNAUTHORIZED=0 which the
-// Makefile / CI wrapper sets before invoking Playwright.
-async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      ...(init?.headers as Record<string, string> | undefined),
-    },
-  });
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => '');
-    throw new Error(`API ${init?.method ?? 'GET'} ${url} failed ${resp.status}: ${body}`);
-  }
-  // Some endpoints return 204 No Content.
-  const ct = resp.headers.get('content-type') ?? '';
-  if (resp.status === 204 || !ct.includes('application/json')) {
-    return undefined as T;
-  }
-  return resp.json() as Promise<T>;
-}
-
-// SYSTEM_TENANT_ID is the control-plane "system" tenant that qrdb always
-// provisions. The legacy "default" tenant was permanently retired by qrdb's
-// tenant-isolation refactor, so all fixtures seed/tear down state under the
-// system tenant.
-export const SYSTEM_TENANT_ID = 'system';
 
 // SpawnedSession holds the session_id created by spawnTestSession.
 export interface SpawnedSession {
@@ -59,16 +25,36 @@ export interface SpawnedSession {
   backend: string;
 }
 
-// spawnTestSession creates a new session against the embedded ollama backend
-// and returns the session_id.  Throws (and therefore fails the test) if the
-// daemon is unreachable or the backend cannot start a session.
+// acpBackend resolves the ACP backend a session spawn should target. Sessions
+// (spawn → prompt → events) require an ACP backend (claude / codex / opencode);
+// ollama is inference-only and the daemon rejects a spawn against it. The
+// QUICBAAS_E2E_ACP_BACKEND env var selects the backend (default: opencode, the
+// open-source agent used by the dockerized live-ACP suite).
+function acpBackend(): string {
+  return process.env['QUICBAAS_E2E_ACP_BACKEND'] || 'opencode';
+}
+
+// acpModel resolves the model the ACP session should run. For the opencode +
+// ollama live suite this is an ollama model id (e.g. "ollama/qwen3:1.7b")
+// selected by QUICBAAS_E2E_ACP_MODEL; empty defers to the backend's configured
+// default (the frontier-model case for claude/codex).
+function acpModel(): string | undefined {
+  return process.env['QUICBAAS_E2E_ACP_MODEL'] || undefined;
+}
+
+// spawnTestSession creates a new session against the configured ACP backend and
+// returns the session_id.  Throws (and therefore fails the test) if the daemon
+// is unreachable or the backend cannot start a session.
 export async function spawnTestSession(tenantID = SYSTEM_TENANT_ID): Promise<SpawnedSession> {
+  const body: Record<string, unknown> = { backend: acpBackend(), tenant_id: tenantID };
+  const model = acpModel();
+  if (model) body['model'] = model;
+  // Exercise the production-safe paradigm when requested: QUICBAAS_E2E_SANDBOX=1
+  // forces container-sandboxed execution (sandbox_mode "required" = 1).
+  if (process.env['QUICBAAS_E2E_SANDBOX'] === '1') body['sandbox_mode'] = 1;
   return apiFetch<SpawnedSession>(
     apiURL(`/sessions?tenant_id=${encodeURIComponent(tenantID)}`),
-    {
-      method: 'POST',
-      body: JSON.stringify({ backend: 'ollama', tenant_id: tenantID }),
-    },
+    { method: 'POST', body: JSON.stringify(body) },
   );
 }
 
@@ -253,7 +239,7 @@ export interface CreateUserResponse {
 export async function deleteTestUser(tenantID = SYSTEM_TENANT_ID, userID: string): Promise<void> {
   try {
     const url = `${serverBase()}/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`;
-    const resp = await fetch(url, { method: 'DELETE' });
+    const resp = await fetch(url, { method: 'DELETE', headers: authHeader() });
     if (!resp.ok && resp.status !== 404) {
       console.warn(`deleteTestUser: DELETE ${url} returned ${resp.status}`);
     }

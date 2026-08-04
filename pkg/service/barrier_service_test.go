@@ -78,6 +78,10 @@ func (m *mockBarrierClient) BarrierStatus(_ context.Context) (*transport.Barrier
 	return m.statusResp, m.statusErr
 }
 
+func (m *mockBarrierClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
+	return &transport.BarrierEnableEncryptionResponse{Status: "migration_started"}, nil
+}
+
 func (m *mockBarrierClient) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return m.initShamirResp, m.initShamirErr
 }

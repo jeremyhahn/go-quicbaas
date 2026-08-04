@@ -20,6 +20,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // =============================================================================
@@ -87,6 +88,13 @@ type BarrierServicer interface {
 	// BarrierGenerateRootToken creates a new root token by proving knowledge
 	// of the master key through Shamir shares.
 	BarrierGenerateRootToken(ctx context.Context, shares []string) (*RootTokenInfo, error)
+
+	// EnableEncryption migrates a barrier from none-strategy to a keyed
+	// strategy in place. An empty tenantID targets the system barrier;
+	// a non-empty tenantID targets that tenant's dedicated barrier.
+	// Requires an injected EncryptionMigrator (SetMigrator); returns
+	// BarrierServiceMissingError when the migrator is nil.
+	EnableEncryption(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
 }
 
 // BarrierStatusInfo describes the current state of the storage barrier.
@@ -175,6 +183,11 @@ type BarrierService struct {
 	// client is the qrdb SDK BarrierClient. May be nil before lifecycle
 	// wiring completes.
 	client transport.BarrierClient
+
+	// migrator is the EncryptionMigrator used by EnableEncryption. Must be
+	// the embedded *qrdbnode.Node (not the BarrierClient transport, which
+	// stubs BarrierEnableEncryption). Wired via SetMigrator after node init.
+	migrator qrdbsdk.EncryptionMigrator
 }
 
 // Compile-time interface check.
@@ -398,4 +411,41 @@ func (s *BarrierService) BarrierGenerateRootToken(ctx context.Context, shares []
 		}
 	}
 	return info, nil
+}
+
+// SetMigrator installs the EncryptionMigrator used by EnableEncryption.
+// Pass the embedded *qrdbnode.Node — NOT the BarrierClient transport, which
+// stubs BarrierEnableEncryption with NotImplementedError. Safe to call
+// concurrently with request handling.
+func (s *BarrierService) SetMigrator(m qrdbsdk.EncryptionMigrator) {
+	s.migrator = m
+}
+
+// EnableEncryption migrates the target barrier from none-strategy to a keyed
+// strategy in place. An empty tenantID targets the system barrier; a non-empty
+// tenantID targets that tenant's dedicated barrier. Requires SetMigrator to
+// have been called with the embedded qrdb node.
+func (s *BarrierService) EnableEncryption(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
+	if s.migrator == nil {
+		return &dberrors.QBError{
+			Code: dberrors.ErrUnavailable,
+			Op:   "barrier.EnableEncryption",
+			Err:  &BarrierServiceMissingError{},
+		}
+	}
+	scope := qrdbsdk.BarrierScope{Kind: qrdbsdk.ScopeSystem}
+	if tenantID != "" {
+		// Tenant-scoped enable-encryption is a destructive, irreversible barrier
+		// migration. Like every other per-tenant barrier op, it must be bound to
+		// the caller's own tenant: a tenant principal may not migrate another
+		// tenant's barrier even when holding tenant_barrier:enable_encryption.
+		// The system scope (empty tenantID) is admin-gated by its own permission
+		// and carries no per-tenant binding. This shared check covers all
+		// transports (REST/gRPC/QUIC/MCP) that delegate here.
+		if err := enforceTenantBinding(ctx, "barrier.enable_encryption", tenantID); err != nil {
+			return err
+		}
+		scope = qrdbsdk.BarrierScope{Kind: qrdbsdk.ScopeTenant, TenantID: tenantID}
+	}
+	return s.migrator.EnableEncryption(ctx, scope, opts)
 }

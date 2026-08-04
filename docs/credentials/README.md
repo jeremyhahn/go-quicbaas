@@ -4,7 +4,7 @@ Dynamic credential generation with pluggable providers, certificate authority, a
 
 ## Overview
 
-QuicBaaS Credentials Engine provides dynamic credential generation for certificates, database credentials, and other short-lived secrets. It features a pluggable provider architecture allowing external implementations (like go-trusted-ca) to replace the built-in lightweight CA.
+QuicBaaS Credentials Engine provides dynamic credential generation for certificates, database credentials, and other short-lived secrets. It features a pluggable provider architecture allowing external implementations (such as go-xkms TrustedCA) to replace the built-in lightweight CA.
 
 ## Key Features
 
@@ -12,7 +12,7 @@ QuicBaaS Credentials Engine provides dynamic credential generation for certifica
 |---------|-------------|
 | **Certificate Provider** | Pluggable CA interface for mTLS certificates |
 | **Built-in CA** | Lightweight self-signed CA for standalone deployments |
-| **External CA Support** | Integration with go-trusted-ca for full PKI |
+| **External CA Support** | Integration with go-xkms TrustedCA for full PKI |
 | **Database Credentials** | Dynamic PostgreSQL and MySQL credential generation |
 | **Short-Lived Secrets** | Automatic expiration and renewal |
 | **Lease Management** | TTL-based credential lifecycle |
@@ -38,7 +38,7 @@ QuicBaaS Credentials Engine provides dynamic credential generation for certifica
 │  │              CertificateProvider Interface                 │  │
 │  │  ┌──────────────────┐     ┌─────────────────────────────┐  │  │
 │  │  │  BuiltinProvider │     │  External Provider          │  │  │
-│  │  │  (Self-signed CA)│     │  (go-trusted-ca, etc.)      │  │  │
+│  │  │  (Self-signed CA)│     │  (go-xkms TrustedCA)        │  │  │
 │  │  └──────────────────┘     └─────────────────────────────┘  │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                                                                  │
@@ -188,7 +188,7 @@ credentials:
         key_size: 256         # 256 for ECDSA P-256, 2048/4096 for RSA
 ```
 
-### External Provider (go-trusted-ca)
+### External Provider (go-xkms TrustedCA)
 
 ```yaml
 credentials:
@@ -197,8 +197,8 @@ credentials:
     provider: external
 
     external:
-      # go-trusted-ca integration
-      type: go-trusted-ca
+      # go-xkms TrustedCA integration
+      type: xkms   # go-xkms TrustedCA
       address: "localhost:8443"
       ca_bundle: /path/to/ca-bundle.pem
       client_cert: /path/to/client.crt

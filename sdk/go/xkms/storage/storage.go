@@ -22,22 +22,27 @@
 // and no shimming.
 package storage
 
-import xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 // Backend is the canonical key-value storage backend interface.
 // Implement it to provide a custom storage layer for go-xkms primitives
-// such as StoragePinStore.
-type Backend = xkmsstorage.Backend
+// such as StoragePinStore. Aliased through the go-xkms SDK frontage
+// (xkmssdk.StorageBackend) — never the internal pkg/storage path — so this
+// package stays on the SDK-only contract. The local name is kept (callers
+// reference storage.Backend) while the underlying type is identical.
+type Backend = xkmssdk.StorageBackend
 
-// Sentinel errors returned by Backend implementations.
+// Sentinel errors returned by Backend implementations. These are the same
+// underlying values as the SDK's ErrStorage* names (identity-preserving
+// aliases), so errors.Is comparisons across the boundary still hold.
 var (
 	// ErrNotFound is returned by Get and Delete when the key does not exist.
-	ErrNotFound = xkmsstorage.ErrNotFound
+	ErrNotFound = xkmssdk.ErrStorageNotFound
 
 	// ErrAlreadyExists is returned when an insert would overwrite an existing key
 	// and the caller requested fail-on-conflict semantics.
-	ErrAlreadyExists = xkmsstorage.ErrAlreadyExists
+	ErrAlreadyExists = xkmssdk.ErrStorageAlreadyExists
 
 	// ErrClosed is returned when operating on a closed backend.
-	ErrClosed = xkmsstorage.ErrClosed
+	ErrClosed = xkmssdk.ErrStorageClosed
 )

@@ -29,6 +29,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -188,6 +190,12 @@ func (m *agentRegisterTestTenantManager) ListTenants(ctx context.Context, opts i
 	return nil, nil
 }
 func (m *agentRegisterTestTenantManager) CheckQuota(ctx context.Context, tenantID, resourceType string) error {
+	return nil
+}
+func (m *agentRegisterTestTenantManager) UpdateEngineQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+func (m *agentRegisterTestTenantManager) UpdateEngineEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
 	return nil
 }
 

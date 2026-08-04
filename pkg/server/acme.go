@@ -71,11 +71,13 @@ func (s *Server) buildACMEService(caAdapter *caServiceAdapter) (service.ACMEServ
 	}
 
 	acmeSvc, err := service.NewACMEService(&service.ACMEServiceParams{
-		BaseRESTURI:    baseURI,
-		CA:             tcgCA,
-		StorageFactory: storageFactory,
-		IssueCA:        caAdapter,
-		CertResolver:   caAdapter,
+		BaseRESTURI:       baseURI,
+		CA:                tcgCA,
+		StorageFactory:    storageFactory,
+		IssueCA:           caAdapter,
+		CertResolver:      caAdapter,
+		OrderPreSignHooks: s.buildClusterPreSignHooks(),
+		ClusterCACN:       s.clusterACMEIssuerCN(),
 	})
 	if err != nil {
 		return nil, err

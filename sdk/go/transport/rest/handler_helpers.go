@@ -86,6 +86,30 @@ func extractIntField(req interface{}, field string) (int64, bool) {
 	}
 }
 
+// extractBoolField returns the value of the named exported bool field on the
+// supplied request struct (or pointer to struct). It reports false when the
+// field is absent or not a bool.
+func extractBoolField(req interface{}, field string) (bool, bool) {
+	if req == nil {
+		return false, false
+	}
+	v := reflect.ValueOf(req)
+	for v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return false, false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return false, false
+	}
+	f := v.FieldByName(field)
+	if !f.IsValid() || f.Kind() != reflect.Bool {
+		return false, false
+	}
+	return f.Bool(), true
+}
+
 // splitPathSegments splits a hierarchical resource path on "/" into its
 // individual segments, dropping a leading slash if present.
 func splitPathSegments(path string) []string {

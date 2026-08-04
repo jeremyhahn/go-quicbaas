@@ -779,13 +779,13 @@ func (p *Provisioner) doRequest(ctx context.Context, method, u, token string, bo
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("marshal request body: %w", err)
+			return nil, &RequestError{Op: "marshal request body", Cause: err}
 		}
 		bodyReader = bytes.NewReader(data)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, &RequestError{Op: "create request", Cause: err}
 	}
 	req.Header.Set("Authorization", "SSWS "+token)
 	req.Header.Set("Accept", "application/json")
@@ -798,16 +798,16 @@ func (p *Provisioner) doRequest(ctx context.Context, method, u, token string, bo
 func parseError(resp *http.Response) error {
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {
-		return fmt.Errorf("HTTP %d (failed to read body: %w)", resp.StatusCode, err)
+		return &HTTPError{StatusCode: resp.StatusCode, ReadErr: err}
 	}
 	var oktaErr errorResponse
 	if err := json.Unmarshal(data, &oktaErr); err != nil {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
+		return &HTTPError{StatusCode: resp.StatusCode, Detail: string(data)}
 	}
 	if oktaErr.ErrorSummary != "" {
-		return fmt.Errorf("HTTP %d: %s (%s)", resp.StatusCode, oktaErr.ErrorSummary, oktaErr.ErrorCode)
+		return &HTTPError{StatusCode: resp.StatusCode, Detail: fmt.Sprintf("%s (%s)", oktaErr.ErrorSummary, oktaErr.ErrorCode)}
 	}
-	return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
+	return &HTTPError{StatusCode: resp.StatusCode, Detail: string(data)}
 }
 
 func orgNameFromURL(baseURL string) string {

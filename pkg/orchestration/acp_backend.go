@@ -38,6 +38,44 @@ import (
 // very large, so we use a 4MB buffer to avoid truncation.
 const streamJSONScannerBufferSize = 4 * 1024 * 1024
 
+// stderrTailLimit bounds the number of trailing stderr bytes retained for a
+// persistent subprocess. The tail is surfaced in StreamJSONProcessExitedError
+// so an operator sees the agent's own failure message instead of a bare
+// "broken pipe". A few KB is enough to carry the relevant error lines without
+// letting a chatty process consume unbounded memory.
+const stderrTailLimit = 8 * 1024
+
+// stderrTail is an io.Writer that retains only the last stderrTailLimit bytes
+// written to it. It is wired as the persistent subprocess's Stderr so the
+// captured tail is available when the process exits unexpectedly. It is
+// safe for concurrent use: the os/exec copier goroutine writes while a prompt
+// goroutine reads via String() after the process exits.
+type stderrTail struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+// Write appends p to the tail, discarding the oldest bytes beyond the limit.
+func (t *stderrTail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > stderrTailLimit {
+		t.buf = t.buf[len(t.buf)-stderrTailLimit:]
+	}
+	return len(p), nil
+}
+
+// String returns the retained stderr tail, trimmed of surrounding whitespace.
+func (t *stderrTail) String() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.TrimSpace(string(t.buf))
+}
+
 // ACPBackendConfig holds configuration for the ACP backend.
 type ACPBackendConfig struct {
 	Command      string   `json:"command"`
@@ -52,6 +90,15 @@ type ACPBackendConfig struct {
 	// --verbose" subprocess. Multiple prompts reuse the same process, and
 	// the agent maintains full conversation context across turns.
 	CLIMode bool `json:"cli_mode"`
+
+	// MCPPresetResolver, when non-nil, resolves the empty-URL QuicBaaS MCP
+	// preset (MCPServerConfig with Name=="quicbaas" and URL=="") at spawn
+	// time into a concrete endpoint URL plus a fresh per-spawn mTLS agent
+	// certificate. It is implemented at the server layer; leaving it nil
+	// disables preset resolution and the preset is forwarded to the agent
+	// unmodified (harmless — it carries no URL). Not serialized: it is a
+	// runtime wiring dependency, not configuration state.
+	MCPPresetResolver MCPPresetResolver `json:"-"`
 }
 
 // TransportFactory creates a StdioTransport. This is used for dependency
@@ -139,11 +186,13 @@ func (b *ACPBackend) logLookupMiss(op, lookupKey string) {
 // acpSession tracks an active ACP session and its configuration.
 type acpSession struct {
 	id           string
-	transport    *StdioTransport // non-nil for JSON-RPC mode sessions
-	cmd          *exec.Cmd       // non-nil for CLI stream-json mode sessions
-	stdin        io.WriteCloser  // stream-json stdin pipe
-	stdout       *bufio.Scanner  // stream-json stdout reader
-	mu           sync.Mutex      // protects stdin/stdout for serial access
+	transport    *StdioTransport    // non-nil for JSON-RPC mode sessions
+	cmd          *exec.Cmd          // non-nil for CLI stream-json mode sessions
+	procCancel   context.CancelFunc // cancels the persistent subprocess on Close
+	stderr       *stderrTail        // bounded capture of the subprocess stderr
+	stdin        io.WriteCloser     // stream-json stdin pipe
+	stdout       *bufio.Scanner     // stream-json stdout reader
+	mu           sync.Mutex         // protects stdin/stdout for serial access
 	projectID    string
 	model        string
 	workDir      string
@@ -153,6 +202,12 @@ type acpSession struct {
 	createdAt    int64
 	lastActivity atomic.Int64
 	closed       atomic.Bool
+
+	// cleanup, when non-nil, releases per-session resources provisioned at
+	// spawn (currently the ephemeral QuicBaaS MCP agent-cert directory). It
+	// runs exactly once on Close. Guarded by mu so the Spawn-time attach and
+	// the Close-time read/clear do not race.
+	cleanup func()
 }
 
 // streamJSONMessage represents a message in Claude Code's stream-json protocol.
@@ -228,6 +283,40 @@ func defaultProcessFactory(ctx context.Context, command string, args []string, w
 	return cmd, nil
 }
 
+// processExitedError builds a StreamJSONProcessExitedError describing why a
+// persistent stream-json subprocess is gone. It reads the exit code from the
+// (already-reaped) cmd.ProcessState and attaches the captured stderr tail so
+// the surfaced error reads like "claude exited code 1: <stderr>" instead of a
+// bare "broken pipe". Callers must have reaped the process (cmd.Wait) before
+// calling so ProcessState is populated.
+func (b *ACPBackend) processExitedError(cmd *exec.Cmd, stderr *stderrTail) *StreamJSONProcessExitedError {
+	exitCode := 0
+	if cmd != nil && cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	return &StreamJSONProcessExitedError{
+		Command:  b.config.Command,
+		ExitCode: exitCode,
+		Stderr:   stderr.String(),
+	}
+}
+
+// subprocessGoneError handles a persistent stream-json session whose subprocess
+// has died mid-flight (write broken pipe or scanner EOF). It reaps the process
+// so the exit code is known, marks the session closed so its state reflects the
+// failure, and returns an actionable StreamJSONProcessExitedError. It is invoked
+// while holding sess.mu, so the reap/close transition is serialised.
+func (b *ACPBackend) subprocessGoneError(sess *acpSession) *StreamJSONProcessExitedError {
+	if sess.procCancel != nil {
+		sess.procCancel()
+	}
+	if sess.cmd != nil {
+		_ = sess.cmd.Wait()
+	}
+	sess.closed.Store(true)
+	return b.processExitedError(sess.cmd, sess.stderr)
+}
+
 // Spawn creates a new agent session. In CLI mode, this starts a persistent
 // stream-json subprocess. In JSON-RPC mode, it starts a persistent subprocess
 // and performs the ACP initialization handshake.
@@ -239,7 +328,41 @@ func (b *ACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Session, er
 		return nil, &InputValidationError{Field: "work_dir", Message: "cannot be empty"}
 	}
 
-	// Route to the correct spawn path based on the request and backend config.
+	// Resolve any empty-URL QuicBaaS MCP preset into a concrete endpoint URL
+	// plus a fresh per-spawn mTLS agent certificate written to an ephemeral
+	// directory. This MUST run before injectMCPServersEnv so the populated URL
+	// and cert paths are carried in the QUICBAAS_MCP_SERVERS payload. The
+	// returned cleanup deletes the ephemeral cert directory; it is attached to
+	// the session below so it fires on Close, scoping the certificate's
+	// lifetime to the agent it was minted for.
+	mcpCleanup := b.resolveMCPPresets(ctx, req)
+
+	// Materialize any preconfigured MCP servers into the agent's environment
+	// BEFORE dispatch, so the resulting env reaches the subprocess on the
+	// initial spawn AND is stored on the session for the prompt-time relaunch.
+	// MCP access is delivered through the environment (not the ACP session/new
+	// mcpServers param, whose shape the agents do not share); see
+	// injectMCPServersEnv for the contract.
+	injectMCPServersEnv(req)
+
+	sess, err := b.dispatchSpawn(ctx, req)
+	if err != nil {
+		// Resolution succeeded but the spawn failed: there is no session to
+		// attach the cleanup to, so release the ephemeral cert material now.
+		if mcpCleanup != nil {
+			mcpCleanup()
+		}
+		return nil, err
+	}
+	if mcpCleanup != nil {
+		b.attachCleanup(sess.ID, mcpCleanup)
+	}
+	return sess, nil
+}
+
+// dispatchSpawn routes a validated, MCP-resolved spawn request to the correct
+// spawn path based on the request and backend config.
+func (b *ACPBackend) dispatchSpawn(ctx context.Context, req *SpawnRequest) (*Session, error) {
 	// CLI mode (stream-json) is used when the backend supports it AND the
 	// request explicitly asks for a persistent session.
 	if b.config.CLIMode && req.Persistent {
@@ -337,13 +460,35 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 		}
 	}
 
-	proc, err := b.containerRuntime.RunInteractive(ctx, spec)
+	// Decouple the container lifetime from the spawning request, exactly as the
+	// persistent CLI path does (see spawnCLI). RunInteractive binds the
+	// `docker run -i --rm` process to its ctx via exec.CommandContext, and the
+	// Spawn RPC ctx is cancelled by gRPC the moment the Spawn handler returns —
+	// so passing the request ctx kills the container immediately after Spawn and
+	// the follow-up Prompt finds a closed stdio transport ("session closed").
+	// context.WithoutCancel preserves request-scoped values (tenant, trace) while
+	// detaching cancellation; procCancel is stored on the session and fired only
+	// by Close. The handshake Sends below still honour the caller's ctx for
+	// spawn-time timeout/cancel.
+	procCtx, procCancel := context.WithCancel(context.WithoutCancel(ctx))
+
+	proc, err := b.containerRuntime.RunInteractive(procCtx, spec)
 	if err != nil {
+		procCancel()
 		return nil, &SpawnError{Command: image, Cause: err}
 	}
 
 	// Create transport from container pipes
 	transport := newStdioTransportFromPipes(proc.Stdin, proc.Stdout)
+
+	// teardown aborts a partially-spawned container: it closes the stdio
+	// transport and cancels the container process context (killing `docker run`
+	// and triggering --rm cleanup). Centralising it keeps every handshake
+	// failure path leak-free.
+	teardown := func() {
+		_ = transport.Close()
+		procCancel()
+	}
 
 	// ACP handshake: initialize
 	initParams := &InitializeParams{
@@ -356,11 +501,11 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 
 	resp, initErr := transport.Send(ctx, "initialize", initParams)
 	if initErr != nil {
-		_ = transport.Close()
+		teardown()
 		return nil, &TransportError{Operation: "initialize", Cause: initErr}
 	}
 	if resp.Error != nil {
-		_ = transport.Close()
+		teardown()
 		return nil, &ProtocolError{Message: resp.Error.Message}
 	}
 
@@ -383,11 +528,11 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 
 	resp, sessionErr := transport.Send(ctx, "session/new", sessionParams)
 	if sessionErr != nil {
-		_ = transport.Close()
+		teardown()
 		return nil, &TransportError{Operation: "session/new", Cause: sessionErr}
 	}
 	if resp.Error != nil {
-		_ = transport.Close()
+		teardown()
 		return nil, &ProtocolError{Message: resp.Error.Message}
 	}
 
@@ -395,7 +540,7 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 	resultBytes, _ := json.Marshal(resp.Result)
 	var sessionResult SessionNewResult
 	if jsonErr := json.Unmarshal(resultBytes, &sessionResult); jsonErr != nil {
-		_ = transport.Close()
+		teardown()
 		return nil, &ProtocolError{Message: "failed to parse session result", Cause: jsonErr}
 	}
 
@@ -404,7 +549,7 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 		var genErr error
 		sessionID, genErr = generateSessionID()
 		if genErr != nil {
-			_ = transport.Close()
+			teardown()
 			return nil, &SpawnError{Command: image, Cause: genErr}
 		}
 	}
@@ -413,6 +558,7 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 	sess := &acpSession{
 		id:           sessionID,
 		transport:    transport,
+		procCancel:   procCancel,
 		model:        model,
 		workDir:      req.WorkDir,
 		projectID:    req.ProjectID,
@@ -497,23 +643,43 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 		env = append(env, k+"="+v)
 	}
 
-	cmd, err := b.processFactory(ctx, b.config.Command, args, req.WorkDir, env)
+	// Decouple the subprocess lifetime from the spawning request. The Spawn RPC
+	// context is cancelled by gRPC the moment the Spawn handler returns; binding
+	// the persistent process to it via exec.CommandContext would deliver SIGINT
+	// (through the factory's cmd.Cancel hook) and kill claude immediately after
+	// Spawn — the follow-up Prompt would then write to a dead stdin and get a
+	// "broken pipe". context.WithoutCancel preserves request-scoped values
+	// (tenant, trace, etc.) while detaching cancellation; procCancel is stored on
+	// the session and fired only by Close. The init read below still honours the
+	// caller's ctx for spawn-time timeout/cancel.
+	procCtx, procCancel := context.WithCancel(context.WithoutCancel(ctx))
+
+	cmd, err := b.processFactory(procCtx, b.config.Command, args, req.WorkDir, env)
 	if err != nil {
+		procCancel()
 		return nil, &SpawnError{Command: b.config.Command, Cause: err}
 	}
 
+	// Capture a bounded tail of the subprocess stderr so an unexpected exit
+	// surfaces the agent's own error message instead of a bare broken pipe.
+	stderr := &stderrTail{}
+	cmd.Stderr = stderr
+
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
+		procCancel()
 		return nil, &SpawnError{Command: b.config.Command, Cause: err}
 	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
+		procCancel()
 		_ = stdinPipe.Close()
 		return nil, &SpawnError{Command: b.config.Command, Cause: err}
 	}
 
 	if err := cmd.Start(); err != nil {
+		procCancel()
 		_ = stdinPipe.Close()
 		return nil, &SpawnError{Command: b.config.Command, Cause: err}
 	}
@@ -523,11 +689,28 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 
 	// Claude Code's stream-json mode emits the init message only after
 	// receiving the first user input. Send a handshake message to trigger it.
+
+	// reap waits for the subprocess exactly once, no matter how many goroutines
+	// race to it (the init/drain reader on EOF, or teardown on a spawn failure).
+	// cmd.Wait is not safe to call concurrently, so it is guarded by a Once.
+	var waitOnce sync.Once
+	reap := func() {
+		waitOnce.Do(func() { _ = cmd.Wait() })
+	}
+
+	// teardown aborts a partially-spawned persistent subprocess: it closes
+	// stdin, cancels the process context (which SIGINTs the process through the
+	// factory's Cancel hook), and reaps it. Centralising it keeps every spawn
+	// failure path consistent and leak-free.
+	teardown := func() {
+		_ = stdinPipe.Close()
+		procCancel()
+		reap()
+	}
+
 	handshake := `{"type":"user","message":{"role":"user","content":"Initialize session. Respond with OK."}}` + "\n"
 	if _, writeErr := stdinPipe.Write([]byte(handshake)); writeErr != nil {
-		_ = stdinPipe.Close()
-		_ = cmd.Process.Signal(os.Interrupt)
-		_ = cmd.Wait()
+		teardown()
 		return nil, &SpawnError{Command: b.config.Command, Cause: writeErr}
 	}
 
@@ -550,9 +733,13 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 				return
 			}
 		}
+		// Scanner exhausted before the init message: the subprocess exited
+		// during startup. Reap it so its exit code is known, then build an
+		// actionable error carrying the exit code and stderr tail.
 		scanErr := scanner.Err()
 		if scanErr == nil {
-			scanErr = &StreamJSONProcessExitedError{Command: b.config.Command}
+			reap()
+			scanErr = b.processExitedError(cmd, stderr)
 		}
 		initCh <- initResult{err: scanErr}
 	}()
@@ -562,23 +749,17 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 	var initMsg streamJSONMessage
 	select {
 	case <-ctx.Done():
-		_ = stdinPipe.Close()
-		_ = cmd.Process.Signal(os.Interrupt)
-		_ = cmd.Wait()
+		teardown()
 		return nil, &SpawnError{Command: b.config.Command, Cause: ctx.Err()}
 	case <-time.After(initTimeout):
-		_ = stdinPipe.Close()
-		_ = cmd.Process.Signal(os.Interrupt)
-		_ = cmd.Wait()
+		teardown()
 		return nil, &SpawnError{Command: b.config.Command, Cause: &StreamJSONError{
 			Command: b.config.Command,
 			Result:  "timed out waiting for init message after " + initTimeout.String(),
 		}}
 	case result := <-initCh:
 		if result.err != nil {
-			_ = stdinPipe.Close()
-			_ = cmd.Process.Signal(os.Interrupt)
-			_ = cmd.Wait()
+			teardown()
 			return nil, &SpawnError{Command: b.config.Command, Cause: result.err}
 		}
 		initMsg = result.msg
@@ -589,9 +770,7 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 		var genErr error
 		sessionID, genErr = generateSessionID()
 		if genErr != nil {
-			_ = stdinPipe.Close()
-			_ = cmd.Process.Signal(os.Interrupt)
-			_ = cmd.Wait()
+			teardown()
 			return nil, &SpawnError{Command: b.config.Command, Cause: genErr}
 		}
 	}
@@ -621,9 +800,7 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 	case <-time.After(2 * time.Minute):
 		// Handshake timed out, but session is still usable
 	case <-ctx.Done():
-		_ = stdinPipe.Close()
-		_ = cmd.Process.Signal(os.Interrupt)
-		_ = cmd.Wait()
+		teardown()
 		return nil, &SpawnError{Command: b.config.Command, Cause: ctx.Err()}
 	}
 
@@ -631,6 +808,8 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 	sess := &acpSession{
 		id:           sessionID,
 		cmd:          cmd,
+		procCancel:   procCancel,
+		stderr:       stderr,
 		stdin:        stdinPipe,
 		stdout:       scanner,
 		projectID:    req.ProjectID,
@@ -849,7 +1028,11 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 	msgBytes = append(msgBytes, '\n')
 
 	if _, writeErr := sess.stdin.Write(msgBytes); writeErr != nil {
-		return nil, &PromptError{SessionID: sess.id, Cause: &TransportError{Operation: "write", Cause: writeErr}}
+		// A write failure (typically "broken pipe") means the persistent
+		// subprocess is gone. Surface why it exited — its code and stderr tail —
+		// instead of the opaque pipe error, and mark the session closed so the
+		// UI shows a real failure reason and follow-ups fail fast.
+		return nil, &PromptError{SessionID: sess.id, Cause: b.subprocessGoneError(sess)}
 	}
 
 	// Read response lines until we get a "result" type message.
@@ -876,10 +1059,11 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 				resultCh <- scanResult{msg: &msg, err: nil}
 				return
 			}
-			// Scanner exhausted: process exited or pipe closed.
+			// Scanner exhausted: process exited or pipe closed. Surface the
+			// subprocess exit code and stderr tail rather than a bare scan error.
 			scanErr := sess.stdout.Err()
 			if scanErr == nil {
-				scanErr = &StreamJSONProcessExitedError{Command: b.config.Command}
+				scanErr = b.subprocessGoneError(sess)
 			}
 			resultCh <- scanResult{msg: nil, err: scanErr}
 		}()
@@ -890,7 +1074,7 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 
 		case sr := <-resultCh:
 			if sr.err != nil {
-				return nil, &PromptError{SessionID: sess.id, Cause: &TransportError{Operation: "prompt", Cause: sr.err}}
+				return nil, &PromptError{SessionID: sess.id, Cause: sr.err}
 			}
 			if sr.msg == nil {
 				// Unparseable line, continue reading.
@@ -1210,13 +1394,30 @@ func (b *ACPBackend) Close(ctx context.Context, sessionID string) error {
 
 	sess.closed.Store(true)
 
-	// CLI stream-json mode: close stdin and terminate subprocess.
+	// Release any per-session resources provisioned at spawn (the ephemeral
+	// QuicBaaS MCP agent-cert directory). Read-and-clear under mu so the
+	// cleanup runs exactly once even if Close races with a late attach, then
+	// defer it so it fires after the transport/subprocess teardown below
+	// regardless of which branch returns.
+	sess.mu.Lock()
+	cleanup := sess.cleanup
+	sess.cleanup = nil
+	sess.mu.Unlock()
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	// CLI stream-json mode: close stdin and terminate subprocess. Cancelling the
+	// process context fires the factory's Cancel hook (SIGINT) on the detached
+	// process-lifetime context — the only place this persistent process is ever
+	// torn down. cmd.WaitDelay (set at creation) bounds the reap.
 	if sess.cmd != nil {
 		_ = sess.stdin.Close()
-		if sess.cmd.Process != nil {
+		if sess.procCancel != nil {
+			sess.procCancel()
+		} else if sess.cmd.Process != nil {
 			_ = sess.cmd.Process.Signal(os.Interrupt)
 		}
-		// Wait with timeout handled by cmd.WaitDelay set at creation.
 		_ = sess.cmd.Wait()
 		return nil
 	}
@@ -1230,7 +1431,17 @@ func (b *ACPBackend) Close(ctx context.Context, sessionID string) error {
 	closeParams := &SessionCloseParams{SessionID: sessionID}
 	_ = sess.transport.Notify("session/close", closeParams)
 
-	return sess.transport.Close()
+	closeErr := sess.transport.Close()
+
+	// Container-backed JSON-RPC sessions (spawnContainerJSONRPC) carry a
+	// procCancel that owns the detached `docker run` lifetime. Fire it so Close
+	// tears the container down (and triggers --rm) instead of leaking it until
+	// the agent process happens to exit on its own.
+	if sess.procCancel != nil {
+		sess.procCancel()
+	}
+
+	return closeErr
 }
 
 // Capabilities returns the capabilities of the ACP backend.

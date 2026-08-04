@@ -518,7 +518,7 @@ func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddF
 		if f.pivReader == "" {
 			readers, err := piv.ListReaders(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("piv.ListReaders: %w", err)
+				return nil, &OpError{Op: "piv.ListReaders", Cause: err}
 			}
 			if len(readers.Readers) == 0 {
 				return nil, errors.New("auth factor add --type piv: no PC/SC readers detected")
@@ -527,7 +527,7 @@ func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddF
 		}
 		cert, err := piv.GetCertificate(ctx, f.pivReader, f.pivSlot)
 		if err != nil {
-			return nil, fmt.Errorf("piv.GetCertificate: %w", err)
+			return nil, &OpError{Op: "piv.GetCertificate", Cause: err}
 		}
 		sum := sha256.Sum256(cert.Raw)
 		params["credential_sha256"] = hex.EncodeToString(sum[:])
@@ -724,7 +724,7 @@ func enrollCanonicalFIDO2(
 		DisplayName: f.label,
 	})
 	if err != nil {
-		return "", fmt.Errorf("webauthn.BeginRegistration: %w", err)
+		return "", &OpError{Op: "webauthn.BeginRegistration", Cause: err}
 	}
 	if beginResp == nil || beginResp.OptionsJSON == "" {
 		return "", &MissingFIDO2RegistrationOptionsError{}
@@ -747,7 +747,7 @@ func enrollCanonicalFIDO2(
 		SessionID:       beginResp.SessionID,
 		AttestationJSON: string(attestation),
 	}); err != nil {
-		return "", fmt.Errorf("webauthn.FinishRegistration: %w", err)
+		return "", &OpError{Op: "webauthn.FinishRegistration", Cause: err}
 	}
 
 	return credentialID, nil
@@ -789,6 +789,6 @@ func decodeCanonicalWebAuthnUserID(id any) ([]byte, error) {
 	case nil:
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected user handle type %T", id)
+		return nil, &MessageError{Message: fmt.Sprintf("unexpected user handle type %T", id)}
 	}
 }

@@ -27,6 +27,7 @@ import type {
   TenantBarrierClient,
   CeremonyClient,
   BootstrapClient,
+  ClusterClient,
   SealClient,
   SecretsClient,
   SSHKeysClient,
@@ -210,6 +211,7 @@ import type {
   BootstrapMethod,
   BootstrapBundleRequest,
   BootstrapBundleResponse,
+  ClusterStatusResponse,
   SecretEntry,
   SessionEventEnvelope,
   SessionInfo,
@@ -267,6 +269,16 @@ async function resolveToken(
   if (!token) return '';
   if (typeof token === 'function') return token();
   return token;
+}
+
+// parseResponseBody reads the body of a 2xx fetch Response and returns the
+// parsed JSON, tolerating 204 No Content and empty bodies (returns undefined
+// as T). All fetchJSON and fetchSSH success tails delegate here to prevent
+// "Unexpected end of JSON input" when servers return 204 or a body-less 2xx.
+async function parseResponseBody<T>(resp: Response): Promise<T> {
+  if (resp.status === 204) return undefined as T;
+  const text = await resp.text();
+  return (text ? (JSON.parse(text) as T) : (undefined as T));
 }
 
 // RestConnectionClient manages the server address and validates connectivity
@@ -357,7 +369,7 @@ class RestOrchestratorClient implements OrchestratorClient {
       throw new APIError(resp.status, message);
     }
 
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // listJobs maps to GET /api/v1/orchestrator/jobs?tenant_id=<tenantID>
@@ -635,7 +647,7 @@ class RestOrchestratorClient implements OrchestratorClient {
     );
   }
 
-  // disableAgent maps to POST /api/v1/agents/:agentID/disable?tenant_id=<tenantID>
+  // disableAgent maps to POST /api/v1/orchestrator/agents/:agentID/disable?tenant_id=<tenantID>
   async disableAgent(req: DisableAgentRequest): Promise<DisableAgentResponse> {
     const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
     return this.fetchJSON<DisableAgentResponse>(
@@ -644,7 +656,7 @@ class RestOrchestratorClient implements OrchestratorClient {
     );
   }
 
-  // enableAgent maps to POST /api/v1/agents/:agentID/enable?tenant_id=<tenantID>
+  // enableAgent maps to POST /api/v1/orchestrator/agents/:agentID/enable?tenant_id=<tenantID>
   async enableAgent(req: EnableAgentRequest): Promise<EnableAgentResponse> {
     const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
     return this.fetchJSON<EnableAgentResponse>(
@@ -869,7 +881,7 @@ class RestDataClient implements DataClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // kvList maps to GET /api/v1/kv/{type}
@@ -966,7 +978,7 @@ class RestVectorsClient implements VectorsClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // listNamespaces maps to GET /api/v1/vector/namespaces.
@@ -1070,7 +1082,7 @@ class RestTimeSeriesClient implements TimeSeriesClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // write maps to POST /api/v1/timeseries/write
@@ -1156,7 +1168,7 @@ class RestObjectsClient implements ObjectsClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // listObjects maps to GET /api/v1/objects (with optional prefix query param)
@@ -1491,7 +1503,7 @@ class RestRAGClient implements RAGClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // query maps to POST /api/v1/rag/query
@@ -1581,7 +1593,7 @@ class RestEmbeddingsClient implements EmbeddingsClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // generate maps to POST /api/v1/embedding/generate
@@ -1658,7 +1670,7 @@ class RestMessagingClient implements MessagingClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // listChannels maps to GET /api/v1/messaging/channels
@@ -1755,7 +1767,7 @@ class RestSchedulerClient implements SchedulerClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // listJobs maps to GET /api/v1/scheduler/jobs
@@ -1860,7 +1872,7 @@ class RestProjectsClient implements ProjectsClient {
       const text = await resp.text().catch(() => resp.statusText);
       throw new APIError(resp.status, text);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // createProject maps to POST /api/v1/projects
@@ -1960,7 +1972,7 @@ class RestIAMClient implements IAMClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   async listUsers(tenantID: string): Promise<ListUsersResponse> {
@@ -2079,7 +2091,9 @@ class RestIAMClient implements IAMClient {
   async assignRoleToUser(tenantID: string, userID: string, role: string): Promise<void> {
     await this.fetchJSON<void>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/roles`,
-      { method: 'POST', body: JSON.stringify({ role }) },
+      // Wire field is "role_id" — the handler decodes this and passes it directly
+      // to IdentityStore.AssignRole which keys on the role UUID, not the name.
+      { method: 'POST', body: JSON.stringify({ role_id: role }) },
     );
   }
 
@@ -2234,7 +2248,7 @@ class RestKMSClient implements KMSClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   async listKeys(limit = 100): Promise<ListKeysResponse> {
@@ -2403,7 +2417,7 @@ class RestSecretsClient implements SecretsClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   async listSecrets(limit = 100): Promise<ListSecretsResponse> {
@@ -2561,16 +2575,7 @@ function newFetchHelper(baseUrl: string, config: ClientConfig): FetchHelper {
   return {
     async fetchJSON<T>(path: string, init?: FetchInit): Promise<T> {
       const resp = await send(path, init);
-      // 204 No Content is valid: return undefined cast as T.
-      if (resp.status === 204) {
-        return undefined as unknown as T;
-      }
-      // Empty bodies on 200 are also tolerated (some endpoints return no body).
-      const text = await resp.text();
-      if (text.length === 0) {
-        return undefined as unknown as T;
-      }
-      return JSON.parse(text) as T;
+      return parseResponseBody<T>(resp);
     },
     async fetchVoid(path: string, init?: FetchInit): Promise<void> {
       await send(path, init);
@@ -2836,6 +2841,28 @@ export class RestCeremonyClient implements CeremonyClient {
 }
 
 // ---------------------------------------------------------------------------
+// RestClusterClient — /api/v1/cluster surface.
+// ---------------------------------------------------------------------------
+
+// RestClusterClient implements ClusterClient against the QuicBaaS Raft cluster
+// REST endpoints. status() issues an authenticated GET so the bearer token is
+// attached via the shared FetchHelper (the same auth path every other
+// authenticated client uses) — a raw fetch() would omit the token and 401.
+export class RestClusterClient implements ClusterClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  async status(): Promise<ClusterStatusResponse> {
+    return this.http.fetchJSON<ClusterStatusResponse>('/api/v1/cluster/status', {
+      method: 'GET',
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // RestBootstrapClient — /api/v1/bootstrap surface.
 // ---------------------------------------------------------------------------
 
@@ -3025,13 +3052,7 @@ export class RestSSHKeysClient implements SSHKeysClient {
     if (!resp.ok) {
       await throwSSHError(resp);
     }
-    // No content responses — return undefined cast to T.
-    if (resp.status === 204 || resp.status === 201) {
-      const text = await resp.text();
-      if (!text) return undefined as unknown as T;
-      return JSON.parse(text) as T;
-    }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // list returns SSH keys using server-side scope/owner defaults.
@@ -3167,12 +3188,7 @@ export class RestKnownHostsClient implements SSHKnownHostsClient {
     if (!resp.ok) {
       await throwSSHError(resp);
     }
-    if (resp.status === 204 || resp.status === 201) {
-      const text = await resp.text();
-      if (!text) return undefined as unknown as T;
-      return JSON.parse(text) as T;
-    }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // add pins a host-key fingerprint.
@@ -3251,12 +3267,7 @@ export class RestAuthorizedKeysClient implements SSHAuthorizedKeysClient {
     if (!resp.ok) {
       await throwSSHError(resp);
     }
-    if (resp.status === 204 || resp.status === 201) {
-      const text = await resp.text();
-      if (!text) return undefined as unknown as T;
-      return JSON.parse(text) as T;
-    }
-    return resp.json() as Promise<T>;
+    return parseResponseBody<T>(resp);
   }
 
   // emit formats a public key into an authorized_keys line.
@@ -3329,6 +3340,7 @@ export class RestClient implements Client {
   readonly tenantBarrier: TenantBarrierClient;
   readonly ceremony: CeremonyClient;
   readonly bootstrap: BootstrapClient;
+  readonly cluster: ClusterClient;
   /** @deprecated Use barrier. The legacy seal accessor is kept for one release. */
   readonly seal!: SealClient;
   /**
@@ -3362,6 +3374,7 @@ export class RestClient implements Client {
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
     this.ceremony = new RestCeremonyClient(baseUrl, config);
     this.bootstrap = new RestBootstrapClient(baseUrl, config);
+    this.cluster = new RestClusterClient(baseUrl, config);
     // RestSealClient is a deprecated alias retained for one release. Construction
     // is lazy via a getter so apps that never touch `client.seal` (which is the
     // expected case after the unification) don't pay for the deprecation

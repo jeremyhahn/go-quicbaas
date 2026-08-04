@@ -41,7 +41,7 @@
 //	if err != nil {
 //	    // handle error
 //	}
-//	fmt.Println(value.Value) // resolved plaintext value
+//	fmt.Println(value.String()) // resolved plaintext value
 //
 // # Processing Configuration Structs
 //
@@ -61,9 +61,7 @@
 //	}
 //
 //	// config.Database.Password now contains the resolved value
-//	for _, resolved := range result.Resolved {
-//	    fmt.Printf("Resolved %s using %s\n", resolved.FieldPath, resolved.Strategy)
-//	}
+//	fmt.Printf("Resolved %d secrets\n", result.Resolved)
 //
 // # Auto-Generation
 //
@@ -115,11 +113,7 @@
 //	}
 //
 //	func (r *MyResolver) Resolve(ctx context.Context, raw string) (*SecretValue, error) {
-//	    // extract path from URI and fetch secret
-//	    return &SecretValue{
-//	        Raw:      raw,
-//	        Value:    fetchedValue,
-//	        Strategy: StrategyLiteral, // or define your own
-//	    }, nil
+//	    // extract path from URI and fetch secret; pass secret bytes directly
+//	    return NewSecretValue(raw, fetchedBytes, StrategyLiteral), nil
 //	}
 package secrets

@@ -169,21 +169,23 @@ func TestServer_Initialize_TT_CatalogFailurePropagates(t *testing.T) {
 	require.Error(t, err, "initialize must abort when the catalog manager fails to start")
 }
 
-// TestServer_StartKMS_TT_SoftwareBackendFailurePropagates verifies that a failure
-// constructing the KMS software backend aborts startKMS with a wrapped error.
-func TestServer_StartKMS_TT_SoftwareBackendFailurePropagates(t *testing.T) {
+// TestServer_StartKMS_TT_BackendConstructFailurePropagates verifies that a
+// failure constructing the resolved KMS service backend aborts startKMS with a
+// wrapped error. Construction now flows through the central BackendResolver, so
+// the failure is injected via the buildKMSServiceBackendFn seam.
+func TestServer_StartKMS_TT_BackendConstructFailurePropagates(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.KMS.Enabled = true
 
-	sentinel := errors.New("software backend unavailable")
-	newSoftwareBackend = func(_ *xkmssdk.SoftwareBackendConfig) (xkmssdk.SymmetricKeyProvider, error) {
+	sentinel := errors.New("service backend unavailable")
+	buildKMSServiceBackendFn = func(_ *BackendResolver, _ BackendSpec, _ xkmssdk.StorageBackend) (xkmssdk.ServiceBackend, error) {
 		return nil, sentinel
 	}
 
 	err := srv.startKMS()
-	require.Error(t, err, "a software-backend construction failure must abort startKMS")
-	assert.Contains(t, err.Error(), "software backend",
+	require.Error(t, err, "a KMS backend construction failure must abort startKMS")
+	assert.Contains(t, err.Error(), "construct KMS backend",
 		"the wrapped error must identify the failing KMS step")
 }
 
@@ -417,8 +419,8 @@ func TestServer_Initialize_TT_KMSFailurePropagates(t *testing.T) {
 	srv.config.Server.Embedded = true
 	srv.config.KMS.Enabled = true
 
-	sentinel := errors.New("software backend unavailable")
-	newSoftwareBackend = func(_ *xkmssdk.SoftwareBackendConfig) (xkmssdk.SymmetricKeyProvider, error) {
+	sentinel := errors.New("service backend unavailable")
+	buildKMSServiceBackendFn = func(_ *BackendResolver, _ BackendSpec, _ xkmssdk.StorageBackend) (xkmssdk.ServiceBackend, error) {
 		return nil, sentinel
 	}
 

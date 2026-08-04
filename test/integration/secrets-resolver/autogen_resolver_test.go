@@ -68,9 +68,9 @@ func TestAutoGenResolver_ResolvePlaceholders(t *testing.T) {
 			// Verify result metadata
 			assert.Equal(t, placeholder, result.Raw, "Raw value should match input")
 			assert.Equal(t, secrets.StrategyAutoGen, result.Strategy, "Strategy should be autogen")
-			assert.NotEmpty(t, result.Value, "Generated value should not be empty")
+			assert.NotEmpty(t, result.String(), "Generated value should not be empty")
 
-			t.Logf("Placeholder %q generated secret of length %d", placeholder, len(result.Value))
+			t.Logf("Placeholder %q generated secret of length %d", placeholder, len(result.String()))
 		})
 	}
 }
@@ -89,7 +89,7 @@ func TestAutoGenResolver_EntropyQuality(t *testing.T) {
 		require.NotNil(t, result)
 
 		// Decode the base64 value to verify byte count
-		decoded, err := base64.RawURLEncoding.DecodeString(result.Value)
+		decoded, err := base64.RawURLEncoding.DecodeString(result.String())
 		require.NoError(t, err, "Generated value should be valid base64")
 
 		// Default secret size is 32 bytes
@@ -97,7 +97,7 @@ func TestAutoGenResolver_EntropyQuality(t *testing.T) {
 			"Decoded secret should be %d bytes", secrets.DefaultSecretSize)
 
 		t.Logf("Generated %d bytes of entropy (base64 length: %d)",
-			len(decoded), len(result.Value))
+			len(decoded), len(result.String()))
 	})
 
 	t.Run("CustomSecretSize", func(t *testing.T) {
@@ -109,14 +109,14 @@ func TestAutoGenResolver_EntropyQuality(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
-			decoded, err := base64.RawURLEncoding.DecodeString(result.Value)
+			decoded, err := base64.RawURLEncoding.DecodeString(result.String())
 			require.NoError(t, err)
 
 			assert.Equal(t, size, len(decoded),
 				"Custom size %d: decoded secret should match requested size", size)
 
 			t.Logf("Custom size %d: generated %d bytes (base64 length: %d)",
-				size, len(decoded), len(result.Value))
+				size, len(decoded), len(result.String()))
 		}
 	})
 
@@ -129,7 +129,7 @@ func TestAutoGenResolver_EntropyQuality(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
-			decoded, err := base64.RawURLEncoding.DecodeString(result.Value)
+			decoded, err := base64.RawURLEncoding.DecodeString(result.String())
 			require.NoError(t, err)
 
 			assert.Equal(t, secrets.DefaultSecretSize, len(decoded),
@@ -153,17 +153,17 @@ func TestAutoGenResolver_Base64Encoding(t *testing.T) {
 			require.NotNil(t, result)
 
 			// URL-safe base64 should not contain + or /
-			assert.NotContains(t, result.Value, "+",
+			assert.NotContains(t, result.String(), "+",
 				"URL-safe base64 should not contain '+'")
-			assert.NotContains(t, result.Value, "/",
+			assert.NotContains(t, result.String(), "/",
 				"URL-safe base64 should not contain '/'")
 
 			// Should not contain padding (RawURLEncoding)
-			assert.NotContains(t, result.Value, "=",
+			assert.NotContains(t, result.String(), "=",
 				"RawURLEncoding should not contain '=' padding")
 
 			// Should be decodable with RawURLEncoding
-			_, err = base64.RawURLEncoding.DecodeString(result.Value)
+			_, err = base64.RawURLEncoding.DecodeString(result.String())
 			assert.NoError(t, err, "Value should be valid RawURLEncoding base64")
 		}
 
@@ -176,7 +176,7 @@ func TestAutoGenResolver_Base64Encoding(t *testing.T) {
 		result, err := resolver.Resolve(ctx, "auto")
 		require.NoError(t, err)
 
-		for _, char := range result.Value {
+		for _, char := range result.String() {
 			found := false
 			for _, validChar := range validChars {
 				if char == validChar {
@@ -206,11 +206,11 @@ func TestAutoGenResolver_Uniqueness(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
-			_, exists := secrets[result.Value]
+			_, exists := secrets[result.String()]
 			assert.False(t, exists,
-				"Secret collision detected at iteration %d: %s", i, result.Value)
+				"Secret collision detected at iteration %d: %s", i, result.String())
 
-			secrets[result.Value] = struct{}{}
+			secrets[result.String()] = struct{}{}
 		}
 
 		assert.Equal(t, numSecrets, len(secrets),
@@ -228,7 +228,7 @@ func TestAutoGenResolver_Uniqueness(t *testing.T) {
 				result, err := resolver.Resolve(ctx, placeholder)
 				require.NoError(t, err)
 
-				key := result.Value
+				key := result.String()
 				if existingPlaceholder, exists := secretsMap[key]; exists {
 					t.Errorf("Secret collision: %q from placeholder %q already generated from %q",
 						key, placeholder, existingPlaceholder)
@@ -310,7 +310,7 @@ func TestAutoGenResolver_ConcurrentGeneration(t *testing.T) {
 					}
 
 					mu.Lock()
-					allSecrets[result.Value]++
+					allSecrets[result.String()]++
 					mu.Unlock()
 				}
 			}(g)
@@ -430,10 +430,10 @@ func TestAutoGenResolver_RegistryIntegration(t *testing.T) {
 
 		assert.Equal(t, secrets.StrategyAutoGen, result.Strategy,
 			"Strategy should be autogen when resolved through registry")
-		assert.NotEmpty(t, result.Value, "Generated value should not be empty")
+		assert.NotEmpty(t, result.String(), "Generated value should not be empty")
 
 		t.Logf("Registry integration: resolved placeholder to %d char secret",
-			len(result.Value))
+			len(result.String()))
 	})
 
 	t.Run("RegistryPassesThroughNonPlaceholder", func(t *testing.T) {
@@ -444,7 +444,7 @@ func TestAutoGenResolver_RegistryIntegration(t *testing.T) {
 
 		assert.Equal(t, secrets.StrategyLiteral, result.Strategy,
 			"Non-placeholder should be treated as literal")
-		assert.Equal(t, literal, result.Value,
+		assert.Equal(t, literal, result.String(),
 			"Literal value should pass through unchanged")
 
 		t.Logf("Registry integration: literal value passed through correctly")

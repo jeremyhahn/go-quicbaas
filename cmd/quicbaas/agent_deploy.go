@@ -114,6 +114,12 @@ func createAgentDeployService() (service.AgentDeployService, error) {
 	}
 	deps.CertIssuer = issuer
 
+	// MCP endpoint: empty unless an embedded server published one. When set,
+	// every deployed daemon is started with --mcp-endpoint so its spawned
+	// agents can resolve the "quicbaas" MCP preset against the long-lived mTLS
+	// identity this deploy uploads.
+	deps.MCPEndpoint = resolveDeployMCPEndpoint()
+
 	return service.NewAgentDeployService(deps), nil
 }
 
@@ -341,6 +347,14 @@ func formatAgentDeployResult(result *deploy.Result, format string, w io.Writer) 
 // and bindings_embedded.go (embedded server). The function here is a
 // seam so tests can replace the issuer without touching either.
 var resolveAgentCertIssuer = defaultResolveAgentCertIssuer
+
+// resolveDeployMCPEndpoint returns the control plane's configured MCP listener
+// address (https://host:port/mcp) so the deploy service can start each remote
+// daemon with --mcp-endpoint. The default returns an empty string: the
+// CLI-only build has no in-process server to read MCP config from, so the
+// "quicbaas" preset is left unresolved (current behavior). The desktop build
+// overrides this seam to read the endpoint published by the embedded server.
+var resolveDeployMCPEndpoint = func() string { return "" }
 
 // defaultResolveAgentCertIssuer falls back to the SDK-backed issuer,
 // which calls the running daemon's /api/v1/xkms/ca/* surface over

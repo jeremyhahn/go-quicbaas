@@ -23,7 +23,7 @@ The QuicBaaS Credentials Engine provides dynamic credential generation through a
 │  │                    CertificateService                           │ │
 │  │  - Request/Response translation                                 │ │
 │  │  - Input validation                                             │ │
-│  │  - Error wrapping (DragonError)                                 │ │
+│  │  - Error wrapping (QRDBError)                                   │ │
 │  │  - Metrics and logging                                          │ │
 │  └─────────────────────────────┬───────────────────────────────────┘ │
 │                                │                                     │
@@ -55,7 +55,7 @@ The QuicBaaS Credentials Engine provides dynamic credential generation through a
            ▼                                           ▼
 ┌─────────────────────────────────┐     ┌─────────────────────────────┐
 │      BuiltinProvider            │     │    External Provider        │
-│  (pkg/credentials/certificate)  │     │    (go-trusted-ca, etc.)    │
+│  (pkg/credentials/certificate)  │     │    (go-xkms TrustedCA)      │
 ├─────────────────────────────────┤     ├─────────────────────────────┤
 │  - Self-signed CA               │     │  - Full PKI integration     │
 │  - In-memory revocation         │     │  - HSM/TPM support          │
@@ -252,14 +252,14 @@ The `BuiltinProvider` is a lightweight CA for standalone QuicBaaS deployments. I
 
 ## Error Handling
 
-All errors flow through `certificate.ToDragonError()` for consistent API responses:
+All errors are wrapped as structured `QRDBError` values (see `pkg/errors`) for consistent API responses:
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │                     Error Categorization                          │
 ├───────────────────────────────────────────────────────────────────┤
 │                                                                   │
-│  Provider Errors          DragonError Code    HTTP Status         │
+│  Provider Errors          QRDBError Code      HTTP Status         │
 │  ────────────────────     ────────────────    ───────────         │
 │  ErrProviderNotInitialized → ErrNotInitialized → 503              │
 │  ErrMissingCACert          → ErrNotInitialized → 503              │
@@ -311,7 +311,7 @@ The `BuiltinProvider` uses `sync.RWMutex` for thread-safe operations:
 
 ## External Provider Integration
 
-To integrate an external CA (e.g., go-trusted-ca):
+To integrate an external CA (e.g., go-xkms TrustedCA):
 
 ```go
 // External provider must implement CertificateProvider
@@ -321,7 +321,7 @@ type TrustedCAProvider struct {
 
 func (p *TrustedCAProvider) IssueCertificate(ctx context.Context,
     req *certificate.CertificateRequest) (*certificate.IssuedCertificate, error) {
-    // Delegate to go-trusted-ca
+    // Delegate to go-xkms TrustedCA
     return p.client.Issue(ctx, req)
 }
 

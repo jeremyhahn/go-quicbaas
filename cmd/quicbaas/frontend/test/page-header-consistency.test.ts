@@ -39,8 +39,6 @@ const views: ViewEntry[] = [
   { name: 'SystemDashboard',       path: 'src/views/SystemDashboard.svelte',                       title: 'System Status' },
   { name: 'OrchestratorDashboard', path: 'src/views/orchestrator/OrchestratorDashboard.svelte',    title: 'Orchestration' },
   { name: 'JobsView',              path: 'src/views/orchestrator/JobsView.svelte',                 title: 'Jobs' },
-  { name: 'AgentsView',            path: 'src/views/orchestrator/AgentsView.svelte',               title: 'Agent' },
-  { name: 'SessionsView',          path: 'src/views/orchestrator/SessionsView.svelte',             title: 'Sessions' },
   { name: 'TasksView',             path: 'src/views/orchestrator/TasksView.svelte',                title: 'Tasks' },
   { name: 'WorkflowsView',         path: 'src/views/orchestrator/WorkflowsView.svelte',            title: 'Workflows' },
   { name: 'EventStreamView',       path: 'src/views/orchestrator/EventStreamView.svelte',          title: 'Live Events' },

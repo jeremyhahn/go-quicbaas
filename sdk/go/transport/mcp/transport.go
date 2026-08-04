@@ -811,6 +811,22 @@ func (t *Transport) mapToToolName(service, method string) string {
 	case "Seal":
 		return "quicbaas_" + strings.ToLower(method)
 	case "KMS":
+		// The MCP server registers several KMS tools under SHORTENED names
+		// (the "Key" segment elided); map those explicitly, generic
+		// camelToSnake covers the rest. Keep in sync with
+		// pkg/api/mcp/tools_kms.go registrations.
+		kmsToolMap := map[string]string{
+			"GetKeyMetadata":          "quicbaas_kms_get_metadata",
+			"UpdateKeyMetadata":       "quicbaas_kms_update_metadata",
+			"SetKeyPolicy":            "quicbaas_kms_set_policy",
+			"GetKeyPolicy":            "quicbaas_kms_get_policy",
+			"SetKeyRotationPolicy":    "quicbaas_kms_set_rotation_policy",
+			"GetKeyRotationPolicy":    "quicbaas_kms_get_rotation_policy",
+			"DeleteKeyRotationPolicy": "quicbaas_kms_delete_rotation_policy",
+		}
+		if name, ok := kmsToolMap[method]; ok {
+			return name
+		}
 		return "quicbaas_kms_" + camelToSnake(method)
 	case "Secrets":
 		return "quicbaas_secrets_" + camelToSnake(method)

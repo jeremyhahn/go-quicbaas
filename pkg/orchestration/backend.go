@@ -200,9 +200,25 @@ type ContentBlock struct {
 	Text string `json:"text,omitempty"`
 }
 
-// MCPServerConfig configures an MCP server for an agent session.
+// MCPServerConfig configures an MCP server made available to an agent session.
+//
+// Two server shapes are expressed by this one struct:
+//
+//   - stdio servers — the agent launches a local process: Command + Args
+//     (+ Env for that process's environment).
+//   - HTTP servers — the agent connects to a running endpoint: URL (+ Env,
+//     used to carry connection material such as the agent's mTLS cert/key
+//     paths for the QuicBaaS MCP endpoint preset).
+//
+// Env round-trips losslessly through the proto (`map<string,string> env`) and
+// the ACP `session/new` params so credential material configured at spawn
+// reaches the agent intact. The wire `command` field is retained for backward
+// compatibility with callers (and the proto bridge) that encoded an endpoint
+// URL into Command before URL existed; new callers should set URL explicitly.
 type MCPServerConfig struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args,omitempty"`
+	Name    string            `json:"name"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
 }

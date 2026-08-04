@@ -196,6 +196,14 @@ func buildDataPlaneBarrierService(
 		barrierCfg.PreferenceOrder = append(barrierCfg.PreferenceOrder, s.ID())
 	}
 
+	// The actually-built primary strategy is authoritative for status/logging.
+	// Under `seal.strategy: auto` this surfaces the auto-selected tpm2 (or the
+	// passphrase fallback) rather than the literal "auto" sentinel.
+	effectiveStrategy := strategy
+	if len(strategies) > 0 {
+		effectiveStrategy = strategies[0].ID()
+	}
+
 	barrier, err := qrdbsdk.NewStorageBarrier(logger, backend, barrierCfg, strategies...)
 	if err != nil {
 		_ = pebble.Close()
@@ -203,7 +211,7 @@ func buildDataPlaneBarrierService(
 	}
 
 	logger.Info("data-plane StorageBarrier constructed",
-		slog.String("strategy", string(strategy)),
+		slog.String("strategy", string(effectiveStrategy)),
 		slog.String("seal_dir", sealDir),
 	)
 
@@ -213,7 +221,7 @@ func buildDataPlaneBarrierService(
 	// strategyAwareBarrierService.
 	svc := &strategyAwareBarrierService{
 		BaasBarrierService: qrdbsdk.NewBarrierService(barrier),
-		configuredStrategy: string(strategy),
+		configuredStrategy: string(effectiveStrategy),
 	}
 	return svc, barrier, pebble, nil
 }

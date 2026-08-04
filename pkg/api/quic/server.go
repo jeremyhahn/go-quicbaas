@@ -71,6 +71,14 @@ type Server struct {
 	// the qrdb SDK TenantClient is online; nil before wiring completes.
 	tenantBarrierSvc service.TenantBarrierServicer
 
+	// tenantGovernance applies engine-side quota and entitlement limits to
+	// tenants via the iam.DefaultTenantManager delegate. Wired by lifecycle
+	// via SetTenantGovernance once the IAM manager is online; nil before
+	// wiring completes, in which case tenant.UpdateQuotas and
+	// tenant.UpdateEntitlements over the qrdb-quic ALPN respond with an
+	// error.
+	tenantGovernance barrierTenantGovernancer
+
 	// tenantResolver derives the caller's tenant from the verified mTLS peer
 	// certificate and stamps it onto the request context. Wired by lifecycle
 	// via SetTenantResolver; nil before wiring, in which case requests
@@ -78,9 +86,10 @@ type Server struct {
 	// permissive: it never rejects a request for lack of a tenant.
 	tenantResolver TenantContextFunc
 
-	// svcMu guards barrierService, ceremonyService, qrdbCredentialSvc, and
-	// tenantBarrierSvc against the racey lifecycle pattern where the server
-	// starts before the facades are installed concurrently.
+	// svcMu guards barrierService, ceremonyService, qrdbCredentialSvc,
+	// tenantBarrierSvc, and tenantGovernance against the racey lifecycle
+	// pattern where the server starts before the facades are installed
+	// concurrently.
 	svcMu sync.RWMutex
 
 	// Server state
@@ -482,11 +491,12 @@ func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger, 
 	cryptoService := s.service.Crypto()
 
 	// Snapshot lifecycle-wired facades under svcMu so concurrent
-	// SetBarrierService/SetCeremonyService calls cannot race with handler
-	// construction.
+	// SetBarrierService/SetCeremonyService/SetTenantGovernance calls cannot
+	// race with handler construction.
 	s.svcMu.RLock()
 	barrierService := s.barrierService
 	ceremonyService := s.ceremonyService
+	tenantGovernance := s.tenantGovernance
 	tenantResolver := s.tenantResolver
 	s.svcMu.RUnlock()
 
@@ -515,6 +525,7 @@ func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger, 
 		WithHandlerValidatorAuthorizer(s.validatorAuthorizer),
 		WithBarrierService(barrierService),
 		WithCeremonyService(ceremonyService),
+		WithGovernance(tenantGovernance),
 		getIAMServiceOption(s.service),
 		getMFAServiceOption(requestCtx, s.service),
 	)
@@ -576,6 +587,19 @@ func (s *Server) SetCeremonyService(svc service.CeremonyServicer) {
 func (s *Server) SetTenantBarrierService(svc service.TenantBarrierServicer) {
 	s.svcMu.Lock()
 	s.tenantBarrierSvc = svc
+	s.svcMu.Unlock()
+}
+
+// SetTenantGovernance installs (or replaces) the barrierTenantGovernancer used
+// by the tenant.UpdateQuotas and tenant.UpdateEntitlements method handlers on
+// the qrdb-quic ALPN, and by the SubOpBarrierUpdateTenantQuotas /
+// SubOpBarrierUpdateTenantEntitlements sub-op handlers on the quicbaas-quic
+// ALPN. Lifecycle wiring invokes this once the iam.DefaultTenantManager is
+// online. Passing nil disables the surface; handlers respond with the
+// not-configured error. Safe to call concurrently with request handling.
+func (s *Server) SetTenantGovernance(g barrierTenantGovernancer) {
+	s.svcMu.Lock()
+	s.tenantGovernance = g
 	s.svcMu.Unlock()
 }
 

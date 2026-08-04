@@ -58,6 +58,7 @@ var (
 	serveServerCAFile   string
 	serveHeartbeatEvery time.Duration
 	serveShutdownGrace  time.Duration
+	serveMCPEndpoint    string
 )
 
 // newAgentServeCommand builds the `quicbaas agent serve` subcommand.
@@ -104,6 +105,7 @@ Examples:
 	cmd.Flags().StringVar(&serveServerCAFile, "server-ca", "", "Path to the PEM-encoded CA bundle the daemon trusts when dialing --server (required)")
 	cmd.Flags().DurationVar(&serveHeartbeatEvery, "heartbeat-interval", 30*time.Second, "How often to heartbeat into the fleet registry")
 	cmd.Flags().DurationVar(&serveShutdownGrace, "shutdown-grace", 30*time.Second, "How long to wait for in-flight sessions to drain on shutdown")
+	cmd.Flags().StringVar(&serveMCPEndpoint, "mcp-endpoint", "", "Fully-qualified https://host:port/mcp address spawned agents dial for the \"quicbaas\" MCP preset. Empty leaves the preset unresolved.")
 
 	for _, flag := range []string{"server", "tenant", "agent-cert", "agent-key", "server-ca"} {
 		if err := cmd.MarkFlagRequired(flag); err != nil {
@@ -252,25 +254,35 @@ func runAgentServe(cmd *cobra.Command, args []string) error {
 // / opencode CLIs on PATH — operators override via --image-map when running
 // sandboxed. Ollama points at the local ollama API on 127.0.0.1:11434.
 func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string]orchestration.AgentBackend, error) {
+	// Resolve the QuicBaaS MCP preset for spawned ACP agents. The resolver
+	// points them at the long-lived on-disk mTLS identity the deploy flow
+	// uploaded (no per-spawn minting). It is wired only when the control plane
+	// supplied an --mcp-endpoint; otherwise it stays nil and the preset is
+	// forwarded unmodified (current behavior).
+	mcpResolver := buildAgentServeMCPResolver(cfg, logger)
+
 	backends := map[string]orchestration.AgentBackend{}
 	for _, kind := range cfg.EffectiveBackends() {
 		switch kind {
 		case agent.BackendACP:
 			backends["claude"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
-				Command:      "claude",
-				Args:         []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--disable-slash-commands"},
-				DefaultModel: "",
-				CLIMode:      true,
+				Command:           "claude",
+				Args:              []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--disable-slash-commands"},
+				DefaultModel:      "",
+				CLIMode:           true,
+				MCPPresetResolver: mcpResolver,
 			})
 			backends["codex"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
-				Command:      "codex",
-				Args:         []string{},
-				DefaultModel: "o4-mini",
+				Command:           "codex",
+				Args:              []string{},
+				DefaultModel:      "o4-mini",
+				MCPPresetResolver: mcpResolver,
 			})
 			backends["opencode"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
-				Command:      "opencode",
-				Args:         []string{"acp"},
-				DefaultModel: "",
+				Command:           "opencode",
+				Args:              []string{"acp"},
+				DefaultModel:      "",
+				MCPPresetResolver: mcpResolver,
 			})
 		case agent.BackendOllama:
 			client := ollama.NewClient(ollama.ClientConfig{
@@ -286,10 +298,30 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 		}
 	}
 	if len(backends) == 0 {
-		return nil, fmt.Errorf("no backends constructed from %v", cfg.EffectiveBackends())
+		return nil, &MessageError{Message: fmt.Sprintf("no backends constructed from %v", cfg.EffectiveBackends())}
 	}
 	logger.Debugf("agent daemon backends constructed: %d", len(backends))
 	return backends, nil
+}
+
+// buildAgentServeMCPResolver constructs the QuicBaaS MCP preset resolver for a
+// remotely deployed agent daemon, or returns nil when no MCP endpoint was
+// configured (cfg.MCPEndpoint empty) so the preset stays unresolved and current
+// behavior is preserved. The resolver reuses the long-lived agent.crt/agent.key/
+// server-ca.crt the deploy flow already uploaded — it mints nothing. A
+// construction failure is logged and degrades to nil rather than aborting the
+// daemon, matching the embedded agent's graceful behavior.
+func buildAgentServeMCPResolver(cfg *agent.Config, logger interfaces.Logger) orchestration.MCPPresetResolver {
+	if strings.TrimSpace(cfg.MCPEndpoint) == "" {
+		return nil
+	}
+	resolver, err := agent.NewFileMCPPresetResolver(cfg.MCPEndpoint, cfg.AgentCertFile, cfg.AgentKeyFile, cfg.ServerCAFile)
+	if err != nil {
+		logger.Warnf("agent daemon: quicbaas MCP preset resolver disabled: %v", err)
+		return nil
+	}
+	logger.Infof("agent daemon: quicbaas MCP preset resolver wired; endpoint=%s", cfg.MCPEndpoint)
+	return resolver
 }
 
 // cliLoggerForAgentServe returns a minimal interfaces.Logger writing to the
@@ -402,7 +434,7 @@ type oauth2Token = oauthpkg.Token
 func buildAgentHTTPClient(cfg *agent.Config) (*http.Client, error) {
 	cert, err := tls.LoadX509KeyPair(cfg.AgentCertFile, cfg.AgentKeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("agent serve: load agent key pair: %w", err)
+		return nil, &OpError{Op: "agent serve: load agent key pair", Cause: err}
 	}
 
 	pool, err := x509.SystemCertPool()
@@ -412,10 +444,10 @@ func buildAgentHTTPClient(cfg *agent.Config) (*http.Client, error) {
 	if cfg.ServerCAFile != "" {
 		pemBytes, err := os.ReadFile(cfg.ServerCAFile)
 		if err != nil {
-			return nil, fmt.Errorf("agent serve: read server CA: %w", err)
+			return nil, &OpError{Op: "agent serve: read server CA", Cause: err}
 		}
 		if !pool.AppendCertsFromPEM(pemBytes) {
-			return nil, fmt.Errorf("agent serve: no PEM certificates parsed from %s", cfg.ServerCAFile)
+			return nil, &MessageError{Message: fmt.Sprintf("agent serve: no PEM certificates parsed from %s", cfg.ServerCAFile)}
 		}
 	}
 
@@ -447,7 +479,7 @@ func buildServeConfig() (*agent.Config, error) {
 	for _, pair := range splitAndTrim(serveImageMapCSV) {
 		eq := strings.IndexByte(pair, '=')
 		if eq <= 0 || eq == len(pair)-1 {
-			return nil, fmt.Errorf("--image-map entry %q must be backend=image", pair)
+			return nil, &MessageError{Message: fmt.Sprintf("--image-map entry %q must be backend=image", pair)}
 		}
 		imageMap[pair[:eq]] = pair[eq+1:]
 	}
@@ -468,6 +500,7 @@ func buildServeConfig() (*agent.Config, error) {
 		ServerCAFile:      serveServerCAFile,
 		HeartbeatInterval: serveHeartbeatEvery,
 		ShutdownGrace:     serveShutdownGrace,
+		MCPEndpoint:       serveMCPEndpoint,
 	}
 	return cfg, nil
 }

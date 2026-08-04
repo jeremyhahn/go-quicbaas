@@ -106,19 +106,19 @@ var ErrInvalidSpec = errors.New("secrets: invalid secret spec")
 // ErrInvalidSpec on any problem.
 func (s *SecretSpec) Validate() error {
 	if s == nil {
-		return fmt.Errorf("%w: nil spec", ErrInvalidSpec)
+		return &SpecInvalidError{Reason: "nil spec"}
 	}
 	if s.Length <= 0 {
-		return fmt.Errorf("%w: length must be positive, got %d", ErrInvalidSpec, s.Length)
+		return &SpecInvalidError{Reason: fmt.Sprintf("length must be positive, got %d", s.Length)}
 	}
 	switch s.Encoding {
 	case EncodingBase64, EncodingHex, EncodingNumeric, EncodingRaw:
 		return nil
 	case "":
-		return fmt.Errorf("%w: encoding is required", ErrInvalidSpec)
+		return &SpecInvalidError{Reason: "encoding is required"}
 	default:
-		return fmt.Errorf("%w: unsupported encoding %q (supported: %s, %s, %s, %s)",
-			ErrInvalidSpec, s.Encoding, EncodingBase64, EncodingHex, EncodingNumeric, EncodingRaw)
+		return &SpecInvalidError{Reason: fmt.Sprintf("unsupported encoding %q (supported: %s, %s, %s, %s)",
+			s.Encoding, EncodingBase64, EncodingHex, EncodingNumeric, EncodingRaw)}
 	}
 }
 
@@ -162,7 +162,7 @@ func (s *SecretSpec) Generate() ([]byte, error) {
 		return []byte(hex.EncodeToString(raw)), nil
 	}
 	// Unreachable: Validate() rejects unsupported encodings.
-	return nil, fmt.Errorf("%w: %q", ErrInvalidSpec, s.Encoding)
+	return nil, &SpecInvalidError{Reason: fmt.Sprintf("%q", s.Encoding)}
 }
 
 // specFromMetadata extracts and validates a SecretSpec from a stored
@@ -180,19 +180,19 @@ func specFromMetadata(metadata map[string]string) (*SecretSpec, error) {
 	}
 	lenStr, ok := metadata[MetaSpecLength]
 	if !ok {
-		return nil, fmt.Errorf("secrets: stored auto-generated secret missing %s metadata", MetaSpecLength)
+		return nil, &SpecMetadataError{Message: fmt.Sprintf("secrets: stored auto-generated secret missing %s metadata", MetaSpecLength)}
 	}
 	length, err := strconv.Atoi(lenStr)
 	if err != nil {
-		return nil, fmt.Errorf("secrets: invalid %s metadata %q: %w", MetaSpecLength, lenStr, err)
+		return nil, &SpecMetadataError{Message: fmt.Sprintf("secrets: invalid %s metadata %q", MetaSpecLength, lenStr), Cause: err}
 	}
 	enc, ok := metadata[MetaSpecEncoding]
 	if !ok {
-		return nil, fmt.Errorf("secrets: stored auto-generated secret missing %s metadata", MetaSpecEncoding)
+		return nil, &SpecMetadataError{Message: fmt.Sprintf("secrets: stored auto-generated secret missing %s metadata", MetaSpecEncoding)}
 	}
 	spec := &SecretSpec{Length: length, Encoding: enc}
 	if err := spec.Validate(); err != nil {
-		return nil, fmt.Errorf("secrets: stored spec metadata is invalid: %w", err)
+		return nil, &SpecMetadataError{Message: "secrets: stored spec metadata is invalid", Cause: err}
 	}
 	return spec, nil
 }
@@ -215,7 +215,7 @@ func specToMetadata(spec *SecretSpec, callerMeta map[string]string) map[string]s
 func generateRaw(n int) ([]byte, error) {
 	buf := make([]byte, n)
 	if _, err := rand.Read(buf); err != nil {
-		return nil, fmt.Errorf("secrets: entropy read failed: %w", err)
+		return nil, &SecretsCauseError{Message: "secrets: entropy read failed", Cause: err}
 	}
 	return buf, nil
 }
@@ -228,9 +228,46 @@ func generateNumeric(n int) ([]byte, error) {
 	for i := 0; i < n; i++ {
 		v, err := rand.Int(rand.Reader, ten)
 		if err != nil {
-			return nil, fmt.Errorf("secrets: entropy read failed: %w", err)
+			return nil, &SecretsCauseError{Message: "secrets: entropy read failed", Cause: err}
 		}
 		out[i] = byte('0' + v.Int64())
 	}
 	return out, nil
+}
+
+// SpecInvalidError reports a SecretSpec validation failure. It unwraps to
+// ErrInvalidSpec so callers can match errors.Is(err, ErrInvalidSpec).
+type SpecInvalidError struct {
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *SpecInvalidError) Error() string {
+	return ErrInvalidSpec.Error() + ": " + e.Reason
+}
+
+// Unwrap returns the ErrInvalidSpec sentinel for errors.Is support.
+func (e *SpecInvalidError) Unwrap() error {
+	return ErrInvalidSpec
+}
+
+// SpecMetadataError reports that a stored auto-generated secret's spec
+// metadata is missing or malformed. Cause is nil for "missing" failures and
+// carries the parse error for "malformed" failures.
+type SpecMetadataError struct {
+	Message string
+	Cause   error
+}
+
+// Error implements the error interface.
+func (e *SpecMetadataError) Error() string {
+	if e.Cause != nil {
+		return e.Message + ": " + e.Cause.Error()
+	}
+	return e.Message
+}
+
+// Unwrap returns the underlying cause, if any.
+func (e *SpecMetadataError) Unwrap() error {
+	return e.Cause
 }

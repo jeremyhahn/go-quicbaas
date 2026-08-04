@@ -684,6 +684,10 @@ export class WailsClient implements Client {
   readonly ceremony: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly bootstrap: any = null;
+  // cluster status/management resolves through the REST transport in desktop
+  // mode (the embedded server runs in-process); no Wails Go binding yet.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly cluster: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly seal: any = null;
   /**

@@ -179,16 +179,20 @@ func (s *Server) buildQRDBHandlers() map[string]qrdbMethodHandler {
 		"barrier.Rekey":              s.qrdbBarrierRekey,
 		"barrier.RecoveryGenerate":   s.qrdbBarrierRecoveryGenerate,
 		"barrier.RecoveryRecover":    s.qrdbBarrierRecoveryRecover,
-		"barrier.RecoveryDelete":     s.qrdbBarrierRecoveryDelete,
-		"barrier.RecoveryStatus":     s.qrdbBarrierRecoveryStatus,
-		"barrier.RootToken":          s.qrdbBarrierRootToken,
+		"barrier.RecoveryDelete":      s.qrdbBarrierRecoveryDelete,
+		"barrier.RecoveryStatus":      s.qrdbBarrierRecoveryStatus,
+		"barrier.RootToken":           s.qrdbBarrierRootToken,
+		"barrier.EnableEncryption":    s.qrdbBarrierEnableEncryption,
 
 		// Per-tenant barrier lifecycle surface.
-		"tenant.BarrierInit":        s.qrdbTenantBarrierInit,
-		"tenant.BarrierUnseal":      s.qrdbTenantBarrierUnseal,
-		"tenant.BarrierUnsealShare": s.qrdbTenantBarrierUnsealShare,
-		"tenant.BarrierSeal":        s.qrdbTenantBarrierSeal,
-		"tenant.BarrierStatus":      s.qrdbTenantBarrierStatus,
+		"tenant.BarrierInit":               s.qrdbTenantBarrierInit,
+		"tenant.BarrierUnseal":             s.qrdbTenantBarrierUnseal,
+		"tenant.BarrierUnsealShare":        s.qrdbTenantBarrierUnsealShare,
+		"tenant.BarrierSeal":               s.qrdbTenantBarrierSeal,
+		"tenant.BarrierStatus":             s.qrdbTenantBarrierStatus,
+		"tenant.BarrierEnableEncryption":   s.qrdbTenantBarrierEnableEncryption,
+		"tenant.UpdateQuotas":              s.qrdbTenantUpdateQuotas,
+		"tenant.UpdateEntitlements":        s.qrdbTenantUpdateEntitlements,
 
 		// Initialization ceremony surface.
 		"ceremony.Initialize":            s.qrdbCeremonyInitialize,
@@ -226,7 +230,11 @@ func (s *Server) handleQRDBStream(stream *quicgo.Stream) {
 		}
 	}()
 
-	method, requestID, payload, err := wire.ReadRequest(stream)
+	// qrdb's wire frame carries a `database` field (added for KV routing). These
+	// control-plane bridge methods (credentials / tenant-barrier) are tenant-scoped
+	// via the peer cert + request context, not database-scoped, so the wire
+	// database name is intentionally not consulted here.
+	method, _, requestID, payload, err := wire.ReadRequest(stream)
 	if err != nil {
 		s.totalErrors.Add(1)
 		s.logger.WithError(err).Debug("qrdb-quic: failed to read request")
@@ -754,6 +762,46 @@ func (s *Server) qrdbBarrierRootToken(ctx context.Context, payload []byte) ([]by
 		return nil, &QRDBMarshalError{Err: marshalErr}
 	}
 	return resp, nil
+}
+
+// qrdbBarrierEnableEncryption handles the "barrier.EnableEncryption" qrdb-quic
+// method. It migrates the system barrier from none to a keyed strategy by
+// delegating to the BarrierServicer.EnableEncryption (which requires the
+// embedded node migrator). The qrdb wire format uses
+// BarrierEnableEncryptionRequest; tenant_id is empty for the system scope.
+func (s *Server) qrdbBarrierEnableEncryption(ctx context.Context, payload []byte) ([]byte, error) {
+	svc := s.qrdbBarrierService()
+	if svc == nil {
+		return nil, &QRDBBarrierNotConfiguredError{}
+	}
+	var req pb.BarrierEnableEncryptionRequest
+	if err := proto.Unmarshal(payload, &req); err != nil {
+		return nil, &QRDBUnmarshalError{Err: err}
+	}
+
+	mech := req.GetMechanism()
+	if mech == "" {
+		mech = string(qrdbsdk.MechanismSwap)
+	}
+	avail := req.GetAvailability()
+	if avail == "" {
+		avail = string(qrdbsdk.AvailabilityOnline)
+	}
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  qrdbsdk.StrategyID(req.GetStrategy()),
+		Mechanism:       qrdbsdk.MigrationMechanism(mech),
+		Availability:    qrdbsdk.MigrationAvailability(avail),
+		ShamirThreshold: int(req.GetShamirThreshold()),
+		ShamirTotal:     int(req.GetShamirTotal()),
+	}
+	if p := req.GetPassphrase(); p != "" {
+		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(p)}
+	}
+	// tenant_id in the qrdb wire message selects system vs tenant scope.
+	if err := svc.EnableEncryption(ctx, req.GetTenantId(), opts); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // =============================================================================

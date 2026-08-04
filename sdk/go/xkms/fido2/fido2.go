@@ -14,6 +14,7 @@ type (
 	EnrollmentResult     = xkmsfido2.EnrollmentResult
 	FIDO2Handler         = xkmsfido2.FIDO2Handler
 	Handler              = xkmsfido2.Handler
+	HIDDevice            = xkmsfido2.HIDDevice
 	HIDDeviceEnumerator  = xkmsfido2.HIDDeviceEnumerator
 	RelyingParty         = xkmsfido2.RelyingParty
 )

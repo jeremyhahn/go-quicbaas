@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/elliptic"
 	"crypto/x509"
+	"encoding/base64"
 	"strings"
 	"time"
 
@@ -134,6 +135,25 @@ func (r *ToolRegistry) registerKMSTools() {
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_kms_get_key",
 		Description: "Retrieve key metadata by key ID",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"key_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Key identifier",
+				},
+				"version": map[string]interface{}{
+					"type":        "integer",
+					"description": "Specific key version (optional, defaults to latest)",
+				},
+			},
+			"required": []string{"key_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_kms_get_public_key",
+		Description: "Retrieve the DER-encoded public key component of an asymmetric key",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -380,6 +400,15 @@ func (r *ToolRegistry) registerKMSTools() {
 				},
 			},
 			"required": []string{"key_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_kms_get_supported_algorithms",
+		Description: "List the cryptographic algorithms supported by the current KMS backend",
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
 		},
 	})
 }
@@ -1429,5 +1458,63 @@ func (r *ToolRegistry) executeKMSGetPolicy(ctx context.Context, args map[string]
 			"updated_at":         now.Unix(),
 		},
 		"timestamp": now.Unix(),
+	})
+}
+
+// =============================================================================
+// KMS Key Administration Execute Functions
+// =============================================================================
+
+// executeKMSGetPublicKey retrieves the DER-encoded public key component of an
+// asymmetric key via the service layer.
+func (r *ToolRegistry) executeKMSGetPublicKey(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	keyID := getString(args, "key_id")
+	if keyID == "" {
+		return nil, api.NewRequiredFieldError("key_id")
+	}
+
+	kmsSvc, err := r.getKMSService()
+	if err != nil {
+		return nil, err
+	}
+
+	svcReq := &service.GetPublicKeyRequest{
+		KeyID:   keyID,
+		Version: getUint64(args, "version"),
+	}
+
+	svcResp, err := kmsSvc.GetPublicKey(ctx, svcReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"key_id":     svcResp.KeyID,
+		"public_key": base64.StdEncoding.EncodeToString(svcResp.PublicKey),
+		"algorithm":  string(svcResp.Algorithm),
+		"version":    svcResp.Version,
+		"timestamp":  svcResp.Timestamp.Unix(),
+	})
+}
+
+// executeKMSGetSupportedAlgorithms lists the algorithms supported by the
+// current KMS backend via the service layer.
+func (r *ToolRegistry) executeKMSGetSupportedAlgorithms(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+	kmsSvc, err := r.getKMSService()
+	if err != nil {
+		return nil, err
+	}
+
+	algorithms, err := kmsSvc.GetSupportedAlgorithms(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if algorithms == nil {
+		algorithms = []string{}
+	}
+
+	return marshalResult(map[string]interface{}{
+		"algorithms": algorithms,
+		"timestamp":  time.Now().Unix(),
 	})
 }

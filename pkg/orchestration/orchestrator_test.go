@@ -558,6 +558,133 @@ func TestAgentService_PromptSession_ViaSesionID(t *testing.T) {
 	}
 }
 
+// TestAgentService_PromptSession_RecordsConversationEvents is the regression
+// guard for the event-sourced session UI: a prompt against a spawned session
+// MUST append a KindPromptSubmitted event (the operator's prompt) AND a
+// KindAssistantChunk event (the assistant reply) to the session event log, in
+// that order, so the SSE/history-driven UI has something to render. Before this
+// was wired, the synchronous reply returned over HTTP but the event log stayed
+// empty and the UI showed "0 events loaded".
+func TestAgentService_PromptSession_RecordsConversationEvents(t *testing.T) {
+	t.Parallel()
+
+	backends := map[string]AgentBackend{
+		"mock": &mockAgentBackend{
+			promptFn: func(ctx context.Context, req *PromptRequest) (*PromptResponse, error) {
+				return &PromptResponse{
+					SessionID:  req.SessionID,
+					Content:    []ContentBlock{{Type: "text", Text: "the reply"}},
+					Model:      "llama3",
+					StopReason: "end_turn",
+				}, nil
+			},
+		},
+	}
+	svc, _ := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
+
+	log := NewMemorySessionEventLog()
+	svc.(*agentServiceImpl).SetSessionEventLog(log)
+
+	// Events are tenant-scoped; thread a tenant the same way the REST handler
+	// does so the append side and the read side agree on the namespace.
+	const tenant = "tenant-x"
+	ctx := ContextWithTenant(context.Background(), tenant)
+
+	spawnResp, err := svc.SpawnSession(ctx, &SpawnSessionRequest{
+		Backend:    "mock",
+		Persistent: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn session: %v", err)
+	}
+	sessionID := spawnResp.SessionID
+
+	resp, err := svc.PromptSession(ctx, &PromptSessionRequest{
+		SessionID: sessionID,
+		Prompt:    "the question",
+	})
+	if err != nil {
+		t.Fatalf("PromptSession: %v", err)
+	}
+
+	events, _, err := log.Range(ctx, tenant, sessionID, 0, 0)
+	if err != nil {
+		t.Fatalf("Range: %v", err)
+	}
+	// SpawnSession records a system "session spawned" event (seq 1); the prompt
+	// turn then adds the operator prompt (seq 2) and the assistant reply (seq 3).
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events (spawn + prompt + assistant), got %d: %+v", len(events), events)
+	}
+	if events[0].Kind != KindSystemMessage {
+		t.Fatalf("event[0] kind = %q, want %q (spawn marker)", events[0].Kind, KindSystemMessage)
+	}
+
+	prompt := events[1]
+	if prompt.Kind != KindPromptSubmitted {
+		t.Fatalf("event[1] kind = %q, want %q", prompt.Kind, KindPromptSubmitted)
+	}
+	if prompt.Prompt == nil || prompt.Prompt.Prompt != "the question" {
+		t.Fatalf("event[1] prompt payload = %+v, want prompt %q", prompt.Prompt, "the question")
+	}
+
+	reply := events[2]
+	if reply.Kind != KindAssistantChunk {
+		t.Fatalf("event[2] kind = %q, want %q", reply.Kind, KindAssistantChunk)
+	}
+	if reply.AssistantChunk == nil || reply.AssistantChunk.Text != "the reply" {
+		t.Fatalf("event[2] assistant payload = %+v, want text %q", reply.AssistantChunk, "the reply")
+	}
+	// The recorded reply must match the synchronous HTTP response so API
+	// clients and the event-sourced UI never diverge.
+	if reply.AssistantChunk.Text != resp.Content[0].Text {
+		t.Fatalf("recorded reply %q != synchronous resp %q", reply.AssistantChunk.Text, resp.Content[0].Text)
+	}
+	if reply.AssistantChunk.StopReason != "end_turn" {
+		t.Fatalf("reply stop_reason = %q, want end_turn", reply.AssistantChunk.StopReason)
+	}
+}
+
+// TestAgentService_PromptSession_NoConversationEventsWithoutPrompt is the
+// negative guard: spawning a session but never prompting it produces only the
+// system "session spawned" marker — no operator-prompt or assistant-reply
+// events. This proves the conversation events come strictly from PromptSession
+// and aren't fabricated on spawn.
+func TestAgentService_PromptSession_NoConversationEventsWithoutPrompt(t *testing.T) {
+	t.Parallel()
+
+	backends := map[string]AgentBackend{"mock": &mockAgentBackend{}}
+	svc, _ := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
+
+	log := NewMemorySessionEventLog()
+	svc.(*agentServiceImpl).SetSessionEventLog(log)
+
+	const tenant = "tenant-empty"
+	ctx := ContextWithTenant(context.Background(), tenant)
+
+	spawnResp, err := svc.SpawnSession(ctx, &SpawnSessionRequest{Backend: "mock", Persistent: true})
+	if err != nil {
+		t.Fatalf("failed to spawn session: %v", err)
+	}
+
+	events, _, err := log.Range(ctx, tenant, spawnResp.SessionID, 0, 0)
+	if err != nil {
+		t.Fatalf("Range: %v", err)
+	}
+	// Only the spawn marker; no prompt/assistant conversation events.
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 spawn-marker event, got %d: %+v", len(events), events)
+	}
+	if events[0].Kind != KindSystemMessage {
+		t.Fatalf("event[0] kind = %q, want %q", events[0].Kind, KindSystemMessage)
+	}
+	for _, ev := range events {
+		if ev.Kind == KindPromptSubmitted || ev.Kind == KindAssistantChunk {
+			t.Fatalf("un-prompted session must have no conversation events, found %q", ev.Kind)
+		}
+	}
+}
+
 // =============================================================================
 // SessionStatus Tests
 // =============================================================================

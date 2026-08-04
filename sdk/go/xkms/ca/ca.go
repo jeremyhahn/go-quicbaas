@@ -32,13 +32,31 @@ type (
 	// types from go-xkms/pkg/ca and belong here so the CA lives in one place.
 	CACertificateAuthority    = xkmssdk.TCGCA
 	CACertificateRequest      = xkmssdk.TrustedCACertificateRequest
+	CAConfig                  = xkmssdk.TrustedCAConfig
+	CAIdentity                = xkmssdk.TrustedCAIdentity
 	CASubject                 = xkmssdk.TrustedCASubject
 	CASubjectAlternativeNames = xkmssdk.TrustedCASubjectAlternativeNames
+
+	// TCGEnrollmentResult carries the outcome of a TCG-CSR-IDEVID
+	// enrollment performed by the CA (issued certificate plus the
+	// activation credential blobs returned to the enrolling device).
+	TCGEnrollmentResult = xkmssdk.TCGEnrollmentResult
 
 	// TCGNetworkZone represents the platform network zone assigned to a
 	// certificate subject (extension 1.3.6.1.4.1.29377.101.21), evaluated by
 	// the SDN policy engine at enforcement time.
 	TCGNetworkZone = xkmssdk.TCGNetworkZone
+
+	// Per-key multi-keystore CA surface. CAKeystoresConfig declares the
+	// per-backend keystore configuration for one CA identity and
+	// BackendForStoreFunc resolves an xkms backend per (CN, StoreType) so a
+	// TPM2/PKCS#11-bound CA signing key lands in the configured backend. Pure
+	// type aliases re-exported from go-xkms.
+	CAKeystoresConfig        = xkmssdk.TrustedCAKeystoresConfig
+	CAKeystoreSoftwareConfig = xkmssdk.TrustedCAKeystoreSoftwareConfig
+	CAKeystoreTPM2Config     = xkmssdk.TrustedCAKeystoreTPM2Config
+	CAKeystorePKCS11Config   = xkmssdk.TrustedCAKeystorePKCS11Config
+	BackendForStoreFunc      = xkmssdk.TrustedCABackendForStoreFunc
 )
 
 // Re-exported function values and helpers

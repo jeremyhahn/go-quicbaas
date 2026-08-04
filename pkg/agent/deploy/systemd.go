@@ -180,5 +180,12 @@ func agentServeArgs(spec *Spec, homePrefix string) []string {
 		"--server-ca", shellQuote(caPath),
 		"--work-dir", shellQuote(workDir),
 	}
+
+	// The MCP endpoint is optional: only the control plane knows the MCP
+	// listener address, and it is omitted entirely when unconfigured so the
+	// daemon command line is unchanged for non-MCP deployments.
+	if endpoint := strings.TrimSpace(spec.MCPEndpoint); endpoint != "" {
+		args = append(args, "--mcp-endpoint", shellQuote(endpoint))
+	}
 	return args
 }

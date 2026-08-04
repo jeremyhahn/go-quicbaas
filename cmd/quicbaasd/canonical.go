@@ -294,7 +294,7 @@ func resolveAndValidateCanonicalInit(cmd *cobra.Command, f *canonicalInitFlags, 
 		// when the flag is registered, so the caller's copy-back observes it.
 		if cmd.Flags().Lookup(flagName) != nil {
 			if err := cmd.Flags().Set(flagName, val); err != nil {
-				return fmt.Errorf("init: invalid env value for %s: %w", flagName, err)
+				return &OpError{Op: fmt.Sprintf("init: invalid env value for %s", flagName), Cause: err}
 			}
 		}
 		// Apply the resolved value to the canonicalInitFlags fields used by the
@@ -306,14 +306,14 @@ func resolveAndValidateCanonicalInit(cmd *cobra.Command, f *canonicalInitFlags, 
 		if sink, ok := intSinks[flagName]; ok {
 			n, err := strconv.Atoi(val)
 			if err != nil {
-				return fmt.Errorf("init: invalid env value for %s: %w", flagName, err)
+				return &OpError{Op: fmt.Sprintf("init: invalid env value for %s", flagName), Cause: err}
 			}
 			*sink = n
 		}
 	}
 
 	if _, ok := validBarrierStrategies[f.barrierStrategy]; !ok {
-		return fmt.Errorf("init: invalid --barrier-strategy %q", f.barrierStrategy)
+		return &MessageError{Message: fmt.Sprintf("init: invalid --barrier-strategy %q", f.barrierStrategy)}
 	}
 	if _, ok := supportedBarrierStrategies[f.barrierStrategy]; !ok {
 		return &UnsupportedBarrierStrategyError{Strategy: f.barrierStrategy}
@@ -325,10 +325,10 @@ func resolveAndValidateCanonicalInit(cmd *cobra.Command, f *canonicalInitFlags, 
 	// Reject PINs explicitly so the misuse surfaces at the CLI boundary.
 	if barrierStrategyAllowsPINs(f.barrierStrategy) {
 		if f.soPin == "" {
-			return fmt.Errorf("init: --so-pin is required (or set %s_SO_PIN)", envPrefix)
+			return &MessageError{Message: fmt.Sprintf("init: --so-pin is required (or set %s_SO_PIN)", envPrefix)}
 		}
 		if f.userPin == "" {
-			return fmt.Errorf("init: --user-pin is required (or set %s_USER_PIN)", envPrefix)
+			return &MessageError{Message: fmt.Sprintf("init: --user-pin is required (or set %s_USER_PIN)", envPrefix)}
 		}
 	} else {
 		if f.soPin != "" || f.userPin != "" {
@@ -338,13 +338,13 @@ func resolveAndValidateCanonicalInit(cmd *cobra.Command, f *canonicalInitFlags, 
 
 	if f.barrierStrategy == "shamir" {
 		if f.shares < 2 {
-			return fmt.Errorf("init: --shares >= 2 required when --barrier-strategy=shamir")
+			return &MessageError{Message: "init: --shares >= 2 required when --barrier-strategy=shamir"}
 		}
 		if f.threshold < 2 || f.threshold > f.shares {
-			return fmt.Errorf("init: --threshold (2 <= threshold <= shares) required when --barrier-strategy=shamir")
+			return &MessageError{Message: "init: --threshold (2 <= threshold <= shares) required when --barrier-strategy=shamir"}
 		}
 	} else if f.shares != 0 || f.threshold != 0 {
-		return fmt.Errorf("init: --shares / --threshold only valid when --barrier-strategy=shamir")
+		return &MessageError{Message: "init: --shares / --threshold only valid when --barrier-strategy=shamir"}
 	}
 	return nil
 }
@@ -379,7 +379,7 @@ operations; this daemon-side surface is for command-shape parity.`,
 			Short: s.short,
 			Args:  cobra.ArbitraryArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return fmt.Errorf("quicbaasd barrier %s: invoke via 'quicbaas barrier %s' or 'qrdb barrier %s'", s.use, s.use, s.use)
+				return &MessageError{Message: fmt.Sprintf("quicbaasd barrier %s: invoke via 'quicbaas barrier %s' or 'qrdb barrier %s'", s.use, s.use, s.use)}
 			},
 		})
 	}
@@ -390,7 +390,7 @@ operations; this daemon-side surface is for command-shape parity.`,
 			Use:   v,
 			Short: "Recovery " + v,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return fmt.Errorf("quicbaasd barrier recovery %s: invoke via 'quicbaas barrier recovery %s'", v, v)
+				return &MessageError{Message: fmt.Sprintf("quicbaasd barrier recovery %s: invoke via 'quicbaas barrier recovery %s'", v, v)}
 			},
 		})
 	}
@@ -437,7 +437,7 @@ func newCanonicalCeremonyCmd() *cobra.Command {
 			Use:   s.use,
 			Short: s.short,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return fmt.Errorf("quicbaasd ceremony %s: invoke via 'quicbaas ceremony %s' or 'qrdb ceremony %s'", s.use, s.use, s.use)
+				return &MessageError{Message: fmt.Sprintf("quicbaasd ceremony %s: invoke via 'quicbaas ceremony %s' or 'qrdb ceremony %s'", s.use, s.use, s.use)}
 			},
 		}
 		if s.use == "claim-cert" {
@@ -461,7 +461,7 @@ func newCanonicalCACmd() *cobra.Command {
 			Use:   v,
 			Short: "CA " + v,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return fmt.Errorf("quicbaasd ca %s: invoke via 'quicbaas ca %s'", v, v)
+				return &MessageError{Message: fmt.Sprintf("quicbaasd ca %s: invoke via 'quicbaas ca %s'", v, v)}
 			},
 		})
 	}
@@ -481,7 +481,7 @@ func newCanonicalBootstrapCmd() *cobra.Command {
 			Use:   m,
 			Short: "Trust bootstrap via " + m,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return fmt.Errorf("quicbaasd bootstrap %s: bootstrap is owned by xkms; invoke via 'xkmsctl bootstrap %s'", m, m)
+				return &MessageError{Message: fmt.Sprintf("quicbaasd bootstrap %s: bootstrap is owned by xkms; invoke via 'xkmsctl bootstrap %s'", m, m)}
 			},
 		})
 	}

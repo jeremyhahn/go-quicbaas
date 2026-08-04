@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -286,6 +287,112 @@ func (h *IAMHandler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, tenant)
+}
+
+// UpdateTenantEngineQuotas handles PATCH /api/v1/tenants/{tenant_id}/quotas
+// - Update the engine-level resource quotas for a tenant.
+func (h *IAMHandler) UpdateTenantEngineQuotas(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	tenantID := chi.URLParam(r, "tenant_id")
+	if tenantID == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "failed to read request body"))
+		return
+	}
+	defer r.Body.Close()
+
+	var quotas qrdbsdk.Quotas
+	if err := json.Unmarshal(body, &quotas); err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "invalid JSON body"))
+		return
+	}
+
+	mgr, ok := h.requireTenantManager(w, r, ctx)
+	if !ok {
+		return
+	}
+
+	if err := mgr.UpdateEngineQuotas(ctx, tenantID, quotas); err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondNoContent(w, r)
+}
+
+// UpdateTenantEngineEntitlements handles PATCH /api/v1/tenants/{tenant_id}/entitlements
+// - Update the engine-level feature entitlements for a tenant.
+func (h *IAMHandler) UpdateTenantEngineEntitlements(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	tenantID := chi.URLParam(r, "tenant_id")
+	if tenantID == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "failed to read request body"))
+		return
+	}
+	defer r.Body.Close()
+
+	var entitlements qrdbsdk.Entitlements
+	if err := json.Unmarshal(body, &entitlements); err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "invalid JSON body"))
+		return
+	}
+
+	mgr, ok := h.requireTenantManager(w, r, ctx)
+	if !ok {
+		return
+	}
+
+	if err := mgr.UpdateEngineEntitlements(ctx, tenantID, entitlements); err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondNoContent(w, r)
+}
+
+// requireTenantManager is a shared helper that resolves the TenantManager from
+// the service and writes the appropriate error response on failure. Returns the
+// manager and true on success, or (nil, false) when a response has already been
+// written.
+func (h *IAMHandler) requireTenantManager(w http.ResponseWriter, r *http.Request, ctx context.Context) (TenantManager, bool) {
+	tenantMgr, ok := h.server.service.(interface {
+		GetTenantManager(ctx context.Context) (TenantManager, error)
+	})
+	if !ok {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "tenant manager not available"))
+		return nil, false
+	}
+	mgr, err := tenantMgr.GetTenantManager(ctx)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return nil, false
+	}
+	if mgr == nil {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "tenant manager not initialized"))
+		return nil, false
+	}
+	return mgr, true
 }
 
 // DeleteTenant handles DELETE /api/v1/tenants/{tenant_id} - Delete a tenant.

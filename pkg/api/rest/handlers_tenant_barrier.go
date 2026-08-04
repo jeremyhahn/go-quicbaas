@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -51,6 +52,30 @@ type tenantBarrierUnsealBody struct {
 // tenantBarrierUnsealShareBody is the JSON payload for POST .../barrier/unseal-share.
 type tenantBarrierUnsealShareBody struct {
 	Share string `json:"share,omitempty"`
+}
+
+// tenantBarrierEnableEncryptionBody is the JSON payload for
+// POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption.
+type tenantBarrierEnableEncryptionBody struct {
+	// TargetStrategy is the keyed strategy to migrate to ("passphrase" or
+	// "shamir"). Required.
+	TargetStrategy string `json:"target_strategy"`
+
+	// Mechanism selects the physical re-encryption approach ("swap" or
+	// "inplace"). Defaults to "swap" when empty.
+	Mechanism string `json:"mechanism,omitempty"`
+
+	// Availability controls write availability during migration ("online"
+	// or "quiesced"). Defaults to "online" when empty.
+	Availability string `json:"availability,omitempty"`
+
+	// Passphrase is the new passphrase for a passphrase-target migration.
+	Passphrase string `json:"passphrase,omitempty"`
+
+	// ShamirThreshold / ShamirTotal configure M-of-N for a Shamir-target
+	// migration.
+	ShamirThreshold int `json:"shamir_threshold,omitempty"`
+	ShamirTotal     int `json:"shamir_total,omitempty"`
 }
 
 // requireTenantBarrierService returns the wired per-tenant barrier facade, or
@@ -194,4 +219,59 @@ func (s *Server) HandleTenantBarrierStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	RespondJSON(w, r, http.StatusOK, status)
+}
+
+// HandleTenantBarrierEnableEncryption handles
+// POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption.
+//
+// It migrates a specific tenant's dedicated barrier from the none (unencrypted)
+// strategy to a keyed strategy in place. The operation is driven through the
+// embedded qrdb node (same EncryptionMigrator as the system barrier handler).
+func (s *Server) HandleTenantBarrierEnableEncryption(w http.ResponseWriter, r *http.Request) {
+	barrierSvc := s.barrierService()
+	if barrierSvc == nil {
+		RespondError(w, r, http.StatusServiceUnavailable, ErrBarrierServiceUnavailable)
+		return
+	}
+
+	tenantID := chi.URLParam(r, "tenant_id")
+	if tenantID == "" {
+		RespondBadRequest(w, r, "tenant ID is required")
+		return
+	}
+
+	var body tenantBarrierEnableEncryptionBody
+	if !readBarrierJSON(w, r, &body) {
+		return
+	}
+	if body.TargetStrategy == "" {
+		RespondBadRequest(w, r, "target_strategy is required")
+		return
+	}
+
+	mech := body.Mechanism
+	if mech == "" {
+		mech = string(qrdbsdk.MechanismSwap)
+	}
+	avail := body.Availability
+	if avail == "" {
+		avail = string(qrdbsdk.AvailabilityOnline)
+	}
+
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  qrdbsdk.StrategyID(body.TargetStrategy),
+		Mechanism:       qrdbsdk.MigrationMechanism(mech),
+		Availability:    qrdbsdk.MigrationAvailability(avail),
+		ShamirThreshold: body.ShamirThreshold,
+		ShamirTotal:     body.ShamirTotal,
+	}
+	if body.Passphrase != "" {
+		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(body.Passphrase)}
+	}
+
+	if err := barrierSvc.EnableEncryption(r.Context(), tenantID, opts); err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

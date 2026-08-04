@@ -355,3 +355,35 @@ func (e *SessionLogAppendError) Error() string {
 }
 
 func (e *SessionLogAppendError) Unwrap() error { return e.Cause }
+
+// Session event validation sentinels for MemorySessionEventLog.Append.
+var (
+	// ErrSessionEventNil indicates a nil event was passed to Append.
+	ErrSessionEventNil = errors.New("nil event")
+	// ErrSessionEventMissingIDs indicates an event was missing its
+	// session_id or tenant_id.
+	ErrSessionEventMissingIDs = errors.New("session_id and tenant_id required")
+)
+
+// SessionLogError wraps a session event-log operation failure (validation,
+// marshalling, persistence) with a contextual op string. It is the typed
+// replacement for fmt.Errorf in the session-log subsystem and unwraps to the
+// underlying cause for errors.Is/As traversal.
+type SessionLogError struct {
+	// Op names the failing operation, e.g. "unmarshal event".
+	Op string
+	// Cause is the wrapped underlying error, or nil for pure validation
+	// failures.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *SessionLogError) Error() string {
+	if e.Cause != nil {
+		return "orchestration session log: " + e.Op + ": " + e.Cause.Error()
+	}
+	return "orchestration session log: " + e.Op
+}
+
+// Unwrap returns the wrapped cause, if any.
+func (e *SessionLogError) Unwrap() error { return e.Cause }

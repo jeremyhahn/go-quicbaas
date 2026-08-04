@@ -56,16 +56,61 @@ Root Key (per node, sealed to strategy)
 
 ### BarrierSealManager
 
-`pkg/seal/BarrierSealManager` is a thin SDK adapter that implements `interfaces.SealManager` by delegating all operations 1:1 to `transport.BarrierClient` from the go-qrdb SDK. It:
+`pkg/seal/BarrierSealManager` is a thin SDK adapter that implements `interfaces.SealManager` by delegating operations to `transport.BarrierClient` from the go-qrdb SDK. It:
 
-- Delegates every seal lifecycle operation (init, unseal, seal, rekey) to the SDK client
+- Delegates seal lifecycle operations (init, unseal, seal, rekey) to the SDK client for non-EE paths
 - Does NOT import `go-qrdb/pkg/seal` directly
 - Does NOT perform share accumulation — that is handled by go-qrdb's `ExtendedBarrier`
 - Does NOT expose root keys through the transport layer (`GetRootKey` was removed for security)
 - Generates root tokens during initialization via the SDK
 - Tracks version numbers across rekey operations
 
+**Enable-encryption (EE) is embedded-node-driven:** The service layer (`pkg/service/barrier_service.go`) dispatches enable-encryption operations to the embedded qrdb node (`s.qrdbNode` wired as an `EncryptionMigrator`), not to `transport.BarrierClient`. This ensures EE has direct access to cluster state, DEK provisioning, and fail-safe coordination without round-tripping through a network transport.
+
 All barrier logic (Shamir reconstruction, quorum tracking, encryption) lives in go-qrdb. QuicBaaS only adapts the SDK transport interface to its internal `SealManager` contract.
+
+## Enable-Encryption (Barrier Migration)
+
+QuicBaaS surfaces go-qrdb's barrier enable-encryption capability across all transports
+(REST, gRPC, QUIC, MCP, Unix, embedded). Enable-encryption allows operators to transition
+a system or tenant from cleartext (`none` barrier) to encrypted (`passphrase`, `shamir`,
+TPM2, PKCS#11, or cloud KMS).
+
+### System vs. Tenant Enable-Encryption
+
+| Route | Scope | Permission | Use case |
+|-------|-------|-----------|----------|
+| `POST /api/v1/barrier/enable-encryption` | System barrier | `seal:enable_encryption` | Encrypt the shared cluster barrier (all tenants) |
+| `POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption` | Per-tenant barrier | `tenant_barrier:enable_encryption` | Encrypt a specific tenant's isolation barrier |
+
+### Request fields (both routes)
+
+- `strategy` — `passphrase`, `shamir`, `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault` (required)
+- `mechanism` — Provider-specific mechanism (e.g., `transit` for Vault) (optional, provider-dependent)
+- `availability` — Provider-specific availability mode (e.g., `aws-kms` for AWS) (optional, provider-dependent)
+- `passphrase` — Wrapping passphrase for `passphrase`/`shamir` strategies (required for those; rejected for `none`)
+- `shamir_threshold` — M in M-of-N Shamir (required for `shamir`; ignored otherwise)
+- `shamir_total` — N in M-of-N Shamir (required for `shamir`; ignored otherwise)
+
+### Implementation
+
+Enable-encryption is driven by the embedded qrdb node (`s.qrdbNode` wired as `EncryptionMigrator`).
+The embedded node provides direct access to:
+
+- Cluster consensus and Raft coordination
+- Data Encryption Key (DEK) provisioning and envelope encryption
+- Per-shard migration orchestration (IsolationRaft for per-tenant barriers)
+- Idempotent checkpoint-and-recovery semantics for crash resilience
+
+### Error Handling
+
+Entitlement violations and migration errors are mapped to HTTP status codes
+(see [Barrier Architecture: Entitlement-Denied Error Mapping](../architecture/barrier.md#entitlement-denied-error-mapping)):
+
+- **403 Forbidden** — Barrier is shared or entitlements deny the requested mode
+- **409 Conflict** — Migration already in progress or barrier not in `none` state
+- **400 Bad Request** — Invalid strategy, mechanism, or Shamir parameters
+- **501 Not Implemented** — Storage barrier provider unavailable
 
 ## Overview
 
@@ -174,6 +219,42 @@ seal:
       vault_name: myvault
       key_name: quicbaas-unseal
 ```
+
+### Seal strategy (`seal.strategy`)
+
+`seal.strategy` selects how the barrier's **root key** is protected at rest. It is
+distinct from the [`crypto:` block](../configuration/crypto.md), which selects
+where each subsystem's keys are *stored* — the seal protects the root key, the
+`crypto:` block stores the working keys.
+
+| `seal.strategy` | Meaning |
+|-----------------|---------|
+| `passphrase` (default) | Software strategy: root key sealed under a KDF-derived passphrase (Argon2id, PBKDF2 under FIPS). |
+| `none` | No seal (plaintext root key on disk). Ephemeral/test only. |
+| `shamir` | Shamir M-of-N split of the root key. |
+| `tpm2` | Root key sealed under the TPM SRK hierarchy (provisions at boot when named explicitly). |
+| `pkcs11` / `awskms` / `gcpkms` / `azurekv` / `vault` | HSM- / cloud-KMS-backed seal. |
+| `auto` | **Sentinel**: hardware-prefer. Uses a TPM2 seal **only** when a provisioned, seal-capable TPM is reachable; otherwise falls back to the software `passphrase` strategy. Never provisions, never stalls boot. |
+
+```yaml
+seal:
+  strategy: auto   # passphrase | none | shamir | tpm2 | pkcs11 | awskms | gcpkms | azurekv | vault | auto
+```
+
+The `auto` decision is made by the same `BackendResolver` /
+`buildHardwareSealStrategies` hardware probe that backs the `crypto:` block
+(`pkg/server/seal_autodetect.go`): the TPM is opened **exactly once**, non-
+provisioning and time-bounded (3s); a fresh, inaccessible, or non-seal-capable
+TPM falls back to software cleanly. The empty string and `passphrase` are returned
+unchanged — only the explicit `auto` sentinel triggers detection, so the default
+posture and `make test` never touch hardware. Operators who want boot-time TPM
+provisioning must name `tpm2` explicitly.
+
+> **Envelope boundary.** Even when the root key is hardware-sealed, the data-plane
+> barrier's per-epoch bulk AEAD stays **software AES-256-GCM** for throughput
+> (the `crypto.subsystems.barrier_aead` resolver returns nil — qrdb's software
+> default — for both `software` and `tpm2`). The hardware boundary is the
+> **root-key seal**, not the per-block crypto. See [Barrier](../architecture/barrier.md).
 
 ## Security Best Practices
 

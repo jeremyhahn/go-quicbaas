@@ -39,7 +39,7 @@
 
 import { createClient, isWailsRuntime } from '@quicbaas/sdk';
 import type { Client } from '@quicbaas/sdk';
-import { readAuthToken } from './auth.svelte.ts';
+import { getValidAccessToken } from './auth.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Module-level singleton
@@ -60,8 +60,11 @@ export async function getSDKClient(): Promise<Client> {
   // token is a factory (not a static string) so the SDK re-reads the live
   // access token from the shared auth store on every request. This is what
   // makes authenticated calls work after an in-tab login without rebuilding
-  // the client.
-  const token = async (): Promise<string> => readAuthToken();
+  // the client. getValidAccessToken also pre-emptively refreshes a token that
+  // is expired or within the skew window, so a long-lived tab whose 15-minute
+  // access token lapses mid-session transparently obtains a fresh one instead
+  // of 401-ing (bug #20).
+  const token = async (): Promise<string> => getValidAccessToken();
 
   _initPromise = (async (): Promise<Client> => {
     if (isWailsRuntime()) {

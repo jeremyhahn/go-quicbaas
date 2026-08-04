@@ -116,6 +116,15 @@ type Config struct {
 	// ShutdownGrace is how long Daemon.Stop waits for in-flight sessions
 	// to drain before forcefully terminating. Zero means 30 seconds.
 	ShutdownGrace time.Duration `json:"shutdown_grace,omitempty" yaml:"shutdown_grace,omitempty"`
+
+	// MCPEndpoint is the fully-qualified https://host:port/mcp address of the
+	// QuicBaaS MCP listener this daemon's spawned agents should dial when an
+	// operator attaches the "quicbaas" MCP preset. It is supplied by the
+	// control plane at deploy time because the MCP port is not advertised over
+	// the v1 wire format. Optional: when empty the preset is forwarded
+	// unmodified and the spawned agent simply cannot reach the endpoint
+	// (current behavior, no regression).
+	MCPEndpoint string `json:"mcp_endpoint,omitempty" yaml:"mcp_endpoint,omitempty"`
 }
 
 // Validate checks that required fields are set and values are sane.
@@ -124,39 +133,39 @@ func (c *Config) Validate() error {
 		return ErrConfigNil
 	}
 	if strings.TrimSpace(c.ServerAddr) == "" {
-		return fmt.Errorf("%w: server_addr", ErrConfigFieldRequired)
+		return &SentinelDetailError{Sentinel: ErrConfigFieldRequired, Detail: "server_addr"}
 	}
 	if strings.TrimSpace(c.TenantID) == "" {
-		return fmt.Errorf("%w: tenant_id", ErrConfigFieldRequired)
+		return &SentinelDetailError{Sentinel: ErrConfigFieldRequired, Detail: "tenant_id"}
 	}
 	if strings.TrimSpace(c.BindAddr) == "" {
-		return fmt.Errorf("%w: bind_addr", ErrConfigFieldRequired)
+		return &SentinelDetailError{Sentinel: ErrConfigFieldRequired, Detail: "bind_addr"}
 	}
 	if strings.TrimSpace(c.WorkDir) == "" {
-		return fmt.Errorf("%w: work_dir", ErrConfigFieldRequired)
+		return &SentinelDetailError{Sentinel: ErrConfigFieldRequired, Detail: "work_dir"}
 	}
 	if strings.TrimSpace(c.AgentCertFile) == "" {
-		return fmt.Errorf("%w: agent_cert_file", ErrConfigFieldRequired)
+		return &SentinelDetailError{Sentinel: ErrConfigFieldRequired, Detail: "agent_cert_file"}
 	}
 	if strings.TrimSpace(c.AgentKeyFile) == "" {
-		return fmt.Errorf("%w: agent_key_file", ErrConfigFieldRequired)
+		return &SentinelDetailError{Sentinel: ErrConfigFieldRequired, Detail: "agent_key_file"}
 	}
 	if strings.TrimSpace(c.ServerCAFile) == "" {
-		return fmt.Errorf("%w: server_ca_file", ErrConfigFieldRequired)
+		return &SentinelDetailError{Sentinel: ErrConfigFieldRequired, Detail: "server_ca_file"}
 	}
 	for _, b := range c.Backends {
 		switch b {
 		case BackendACP, BackendOllama:
 			// ok
 		default:
-			return fmt.Errorf("%w: %q", ErrConfigUnknownBackend, b)
+			return &SentinelDetailError{Sentinel: ErrConfigUnknownBackend, Detail: fmt.Sprintf("%q", b)}
 		}
 	}
 	switch c.ContainerRuntime {
 	case "", ContainerRuntimeAuto, ContainerRuntimeDocker, ContainerRuntimePodman, ContainerRuntimeNone:
 		// ok
 	default:
-		return fmt.Errorf("%w: %q", ErrConfigUnknownRuntime, c.ContainerRuntime)
+		return &SentinelDetailError{Sentinel: ErrConfigUnknownRuntime, Detail: fmt.Sprintf("%q", c.ContainerRuntime)}
 	}
 	return nil
 }

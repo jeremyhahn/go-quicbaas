@@ -54,7 +54,8 @@ test.describe('Security > Barrier', () => {
   test('3. sidebar exposes "Barrier" (not "Seal") under SECURITY', async ({ page }) => {
     await installLegacyURLGuard(page);
     await page.goto('./', { waitUntil: 'networkidle' });
-    const barrierBtn = page.locator('aside nav button', { hasText: 'Barrier' });
+    // Exact match: a substring 'Barrier' also matches the "Tenant Barrier" item.
+    const barrierBtn = page.locator('aside nav').getByRole('button', { name: 'Barrier', exact: true });
     await expect(barrierBtn).toBeVisible();
     const sealBtn = page.locator('aside nav button', { hasText: /^Seal$/ });
     await expect(sealBtn).toHaveCount(0);

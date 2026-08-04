@@ -748,6 +748,8 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 					Name:    getString(serverMap, "name"),
 					Command: getString(serverMap, "command"),
 					Args:    getStringSlice(serverMap, "args"),
+					URL:     getString(serverMap, "url"),
+					Env:     getStringMap(serverMap, "env"),
 				}
 				servers = append(servers, server)
 			}

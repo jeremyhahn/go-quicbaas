@@ -171,7 +171,7 @@ test.describe('Workflow wizard — Topology step isolation card colors (#67)', (
 
     // The selected isolation card label must have the border-primary class.
     // The "Shared" option is selected by default.
-    const sharedLabel = page.locator('label', { hasText: /^Shared$/ }).first();
+    const sharedLabel = page.locator('label').filter({ has: page.getByRole('heading', { name: 'Shared', exact: true }) }).first();
     await expect(sharedLabel).toBeVisible();
     const className = await sharedLabel.getAttribute('class') ?? '';
     expect(className).toContain('border-primary');
@@ -183,7 +183,7 @@ test.describe('Workflow wizard — Topology step isolation card colors (#67)', (
     await advanceToTopologyStep(page);
 
     // Click the Worktree card (its radio input is hidden; click the label itself).
-    const worktreeLabel = page.locator('label', { hasText: /^Worktree$/ }).first();
+    const worktreeLabel = page.locator('label').filter({ has: page.getByRole('heading', { name: 'Worktree', exact: true }) }).first();
     await worktreeLabel.click();
 
     await expect(async () => {
@@ -196,8 +196,8 @@ test.describe('Workflow wizard — Topology step isolation card colors (#67)', (
   test('selecting "Shared" after "Worktree" returns border-primary to Shared card (#67)', async ({ page }) => {
     await advanceToTopologyStep(page);
 
-    const sharedLabel = page.locator('label', { hasText: /^Shared$/ }).first();
-    const worktreeLabel = page.locator('label', { hasText: /^Worktree$/ }).first();
+    const sharedLabel = page.locator('label').filter({ has: page.getByRole('heading', { name: 'Shared', exact: true }) }).first();
+    const worktreeLabel = page.locator('label').filter({ has: page.getByRole('heading', { name: 'Worktree', exact: true }) }).first();
 
     // Select Worktree first.
     await worktreeLabel.click();

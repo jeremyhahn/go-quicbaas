@@ -178,7 +178,7 @@ func parseCLISandbox(s string) (orchestratorSDK.SandboxMode, error) {
 		return orchestratorSDK.SandboxModeNone, nil
 	default:
 		return orchestratorSDK.SandboxModeDefault,
-			fmt.Errorf("invalid --sandbox value %q (want: default | required | none)", s)
+			&MessageError{Message: fmt.Sprintf("invalid --sandbox value %q (want: default | required | none)", s)}
 	}
 }
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Barrier enable-encryption (live on all transports).** System (`POST /api/v1/barrier/enable-encryption`) and per-tenant (`POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption`) routes enable migration from cleartext (`none`) to encrypted barriers across REST, gRPC, QUIC, MCP, Unix, and embedded transports. Driven by the embedded qrdb node (wired as `EncryptionMigrator`), not the qrdb `BarrierClient` transport, providing direct cluster coordination and fail-safe recovery. Supports passphrase, Shamir, TPM2, PKCS#11, AWS KMS, GCP KMS, Azure Key Vault, and Vault strategies. Request fields: `strategy`, `passphrase`, `shamir_threshold`, `shamir_total`, `mechanism`, `availability`.
+- **Tenant quota and entitlement governance.** All qrdb `Quotas` fields (MaxDatabases, MaxRaftGroups, MaxReplicasPerGroup, MaxTotalReplicas, MaxCollections, MaxKeys, MaxStorageBytes, MaxDatabaseSizeBytes, MaxUsers, MaxRoles, MaxCertificates, MaxBackups, MaxVectorDims, MaxTSMetrics, MaxDedicatedWALGroups, SystemBarrierQuota) and `Entitlements` fields (AllowedIsolationModes, AllowedBarrierModes, AllowDedicatedRaft, AllowVolumeStorage, AllowSystemManagedBarrier, AllowDedicatedWAL) are settable at tenant create-time via the provisioner and via dedicated update endpoints on REST/gRPC. Quota enforcement blocks operations that exceed limits; entitlement checks reject feature use (e.g., enable-encryption to a disallowed barrier mode) with 403.
+- **Expanded tenant isolation modes.** Quicbaas config now allows `keyspace`, `barrier`, `volume`, and `raft` isolation modes (matching qrdb's full set), enabling per-tenant enable-encryption. Raft mode requires clustered quicbaas deployment.
+- **Entitlement-denied error mapping.** `ErrSharedBarrierImmutable` / `EntitlementError` → 403 Forbidden; `ErrMigrationInProgress` / `ErrMigrationSourceNotNone` → 409 Conflict; invalid mechanism/availability → 400 Bad Request; `ErrMigrationProviderUnavailable` → 501 Not Implemented. Consistent across all transports.
+- **Barrier in embedded mode.** Full barrier surface (status, init, unseal, seal, rekey, recovery, enable-encryption) now wired in embedded mode via the embedded qrdb node, eliminating the prior "NilServiceError" limitation. CLI commands like `quicbaas barrier status --transport embedded` and the init ceremony operate without a network listener.
+
 ### Changed — `seal` → `barrier` rename (cross-project)
 
 - **Encryption-at-rest unified with go-qrdb / go-xkms.** The barrier

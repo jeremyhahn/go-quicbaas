@@ -16,22 +16,51 @@
 package rest
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// stubBootstrapServicer is a zero-method placeholder used only by the
-// bootstrap routing tests. The BootstrapServicer interface is currently
-// empty, so any value satisfies it; this type exists to make the intent
-// explicit at the call site.
-type stubBootstrapServicer struct{}
+// fakeBootstrapServicer is a configurable test double for the
+// service.BootstrapServicer the REST handlers delegate to. Each mode records
+// the request it received and replays a fixed response or error so the routing
+// + serialisation contract can be exercised without any real network I/O.
+type fakeBootstrapServicer struct {
+	resp    *service.BootstrapBundleResponse
+	err     error
+	lastReq *service.BootstrapRequest
+}
+
+func (f *fakeBootstrapServicer) Auto(_ context.Context, req *service.BootstrapRequest) (*service.BootstrapBundleResponse, error) {
+	f.lastReq = req
+	return f.resp, f.err
+}
+
+func (f *fakeBootstrapServicer) Dane(_ context.Context, req *service.BootstrapRequest) (*service.BootstrapBundleResponse, error) {
+	f.lastReq = req
+	return f.resp, f.err
+}
+
+func (f *fakeBootstrapServicer) Noise(_ context.Context, req *service.BootstrapRequest) (*service.BootstrapBundleResponse, error) {
+	f.lastReq = req
+	return f.resp, f.err
+}
+
+func (f *fakeBootstrapServicer) Spki(_ context.Context, req *service.BootstrapRequest) (*service.BootstrapBundleResponse, error) {
+	f.lastReq = req
+	return f.resp, f.err
+}
 
 // TestBootstrapRoutesAreRegistered guards against the regression where the
 // /api/v1/bootstrap surface had no routes mounted at all (handler files
 // did not even exist). A 404 here means a route is missing; any other
-// status (503 unwired, 501 wired-but-unimplemented) is fine.
+// status is fine.
 func TestBootstrapRoutesAreRegistered(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
@@ -65,12 +94,10 @@ func TestBootstrapRoutesAreRegistered(t *testing.T) {
 	}
 }
 
-// TestBootstrapAutoReportsServiceUnavailableWhenUnwired pins the
-// staged-readiness contract: when bootstrapSvc is nil the handlers report a
-// service-unavailable error so callers can distinguish "still booting" from
-// "missing route" or "internal error". The TimeoutMiddleware no longer
-// rewrites status codes, so handler-emitted 503 reaches the wire intact.
-func TestBootstrapAutoReportsServiceUnavailableWhenUnwired(t *testing.T) {
+// TestBootstrapReportsServiceUnavailableWhenUnwired pins the staged-readiness
+// contract: when bootstrapSvc is nil the handlers report a service-unavailable
+// error so callers can distinguish "still booting" from "missing route".
+func TestBootstrapReportsServiceUnavailableWhenUnwired(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
@@ -92,15 +119,21 @@ func TestBootstrapAutoReportsServiceUnavailableWhenUnwired(t *testing.T) {
 	}
 }
 
-// TestBootstrapRoutesReturn501WhenServiceWired pins the second half of the
-// staged-readiness contract: once a servicer is wired, handlers return 501
-// (with a per-mode message) until concrete implementations land. This keeps
-// the route available to clients during incremental rollout.
-func TestBootstrapRoutesReturn501WhenServiceWired(t *testing.T) {
+// TestBootstrapRoutesDelegateToServicer pins the wired contract: each route
+// decodes the body, dispatches the matching servicer mode, and serialises the
+// returned CA bundle with a 200.
+func TestBootstrapRoutesDelegateToServicer(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	server.SetBootstrapService(stubBootstrapServicer{})
+	fake := &fakeBootstrapServicer{
+		resp: &service.BootstrapBundleResponse{
+			Method:      "auto",
+			BundlePEM:   "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+			ContentType: "application/pem-certificate-chain",
+		},
+	}
+	server.SetBootstrapService(fake)
 
 	cases := []struct {
 		name string
@@ -114,14 +147,68 @@ func TestBootstrapRoutesReturn501WhenServiceWired(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader("{}"))
+			body := `{"server_url":"https://kms.example.com:8443"}`
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 			server.GetRouter().ServeHTTP(w, req)
 
-			if w.Code != http.StatusNotImplemented {
-				t.Fatalf("expected 501 from %s, got %d (body=%s)", tc.path, w.Code, w.Body.String())
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200 from %s, got %d (body=%s)", tc.path, w.Code, w.Body.String())
+			}
+			var got service.BootstrapBundleResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if got.ContentType != "application/pem-certificate-chain" {
+				t.Errorf("content_type = %q", got.ContentType)
+			}
+			if fake.lastReq == nil || fake.lastReq.ServerURL != "https://kms.example.com:8443" {
+				t.Errorf("servicer did not receive decoded request: %+v", fake.lastReq)
 			}
 		})
+	}
+}
+
+// TestBootstrapServicerErrorMapsToStatus pins that a typed invalid-input error
+// from the servicer (e.g. xkms reporting a missing server URL) surfaces as a
+// 400 through the shared service-error mapping rather than a generic 500.
+func TestBootstrapServicerErrorMapsToStatus(t *testing.T) {
+	server, _, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	server.SetBootstrapService(&fakeBootstrapServicer{
+		err: &qberrors.QBError{Code: qberrors.ErrInvalidInput, Op: "BootstrapService.Dane", Err: service.ErrBootstrapNilRequest},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap/dane", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.GetRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
+	}
+}
+
+// TestBootstrapRejectsInvalidJSON pins that a malformed body is a 400 before
+// the servicer is ever consulted.
+func TestBootstrapRejectsInvalidJSON(t *testing.T) {
+	server, _, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	fake := &fakeBootstrapServicer{resp: &service.BootstrapBundleResponse{}}
+	server.SetBootstrapService(fake)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap/spki", strings.NewReader("{not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.GetRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	if fake.lastReq != nil {
+		t.Error("servicer must not be called for a malformed body")
 	}
 }

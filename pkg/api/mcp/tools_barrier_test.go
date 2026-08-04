@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -58,20 +59,24 @@ type fakeBarrierService struct {
 	rootToken       *service.RootTokenInfo
 	rootTokenErr    error
 
+	enableEncryptionErr error
+
 	// observed arguments
-	gotInitSecret   string
-	gotUnsealSecret string
-	gotShamirThr    int
-	gotShamirTotal  int
-	gotShamirSecret string
-	gotShare        string
-	gotShares       []string
-	gotRekeyThr     int
-	gotRekeyTotal   int
-	gotRecGenThr    int
-	gotRecGenTotal  int
-	gotRecKeys      []string
-	gotRootShares   []string
+	gotInitSecret        string
+	gotUnsealSecret      string
+	gotShamirThr         int
+	gotShamirTotal       int
+	gotShamirSecret      string
+	gotShare             string
+	gotShares            []string
+	gotRekeyThr          int
+	gotRekeyTotal        int
+	gotRecGenThr         int
+	gotRecGenTotal       int
+	gotRecKeys           []string
+	gotRootShares        []string
+	gotEnableEncTenantID string
+	gotEnableEncOpts     qrdbsdk.MigrationOptions
 }
 
 func (f *fakeBarrierService) BarrierStatus(_ context.Context) (*service.BarrierStatusInfo, error) {
@@ -137,6 +142,41 @@ func (f *fakeBarrierService) BarrierHasRecoveryKeys(_ context.Context) (bool, er
 func (f *fakeBarrierService) BarrierGenerateRootToken(_ context.Context, shares []string) (*service.RootTokenInfo, error) {
 	f.gotRootShares = append([]string(nil), shares...)
 	return f.rootToken, f.rootTokenErr
+}
+
+func (f *fakeBarrierService) EnableEncryption(_ context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
+	f.gotEnableEncTenantID = tenantID
+	f.gotEnableEncOpts = opts
+	return f.enableEncryptionErr
+}
+
+// =============================================================================
+// fakeGovernancer — deterministic mcpTenantGovernancer for tests.
+// =============================================================================
+
+// fakeGovernancer implements mcpTenantGovernancer with scripted responses.
+// Each instance captures the arguments from the most recent call so subtests
+// can assert correct argument propagation without shared state across calls.
+type fakeGovernancer struct {
+	updateQuotasErr       error
+	updateEntitlementsErr error
+
+	// observed arguments from the most recent call
+	gotTenantID     string
+	gotQuotas       qrdbsdk.Quotas
+	gotEntitlements qrdbsdk.Entitlements
+}
+
+func (f *fakeGovernancer) UpdateEngineQuotas(_ context.Context, id string, q qrdbsdk.Quotas) error {
+	f.gotTenantID = id
+	f.gotQuotas = q
+	return f.updateQuotasErr
+}
+
+func (f *fakeGovernancer) UpdateEngineEntitlements(_ context.Context, id string, e qrdbsdk.Entitlements) error {
+	f.gotTenantID = id
+	f.gotEntitlements = e
+	return f.updateEntitlementsErr
 }
 
 // newBarrierTestRegistry builds a ToolRegistry wired to a fake barrier
@@ -329,6 +369,77 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 		assert.Equal(t, "2026-01-01T12:00:00Z", m["created_at"])
 		assert.Equal(t, []string{"s1", "s2"}, fake.gotRootShares)
 	})
+
+	t.Run("enable_encryption_system", func(t *testing.T) {
+		out, err := r.ExecuteTool(ctx, "qrdb_barrier_enable_encryption", map[string]interface{}{
+			"target_strategy": "passphrase",
+			"passphrase":      "hunter2",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "encryption enabled", out.(map[string]interface{})["status"])
+		// System barrier: empty tenantID.
+		assert.Equal(t, "", fake.gotEnableEncTenantID)
+		assert.Equal(t, qrdbsdk.StrategyID("passphrase"), fake.gotEnableEncOpts.TargetStrategy)
+		assert.Equal(t, qrdbsdk.MechanismSwap, fake.gotEnableEncOpts.Mechanism)
+		assert.Equal(t, qrdbsdk.AvailabilityOnline, fake.gotEnableEncOpts.Availability)
+		assert.Equal(t, []byte("hunter2"), fake.gotEnableEncOpts.Credentials.Secret)
+	})
+
+	t.Run("enable_encryption_tenant", func(t *testing.T) {
+		out, err := r.ExecuteTool(ctx, "qrdb_tenant_barrier_enable_encryption", map[string]interface{}{
+			"tenant_id":       "t1",
+			"target_strategy": "passphrase",
+			"passphrase":      "hunter2",
+			"mechanism":       "copy",
+		})
+		require.NoError(t, err)
+		m := out.(map[string]interface{})
+		assert.Equal(t, "encryption enabled", m["status"])
+		assert.Equal(t, "t1", m["tenant_id"])
+		assert.Equal(t, "t1", fake.gotEnableEncTenantID)
+		assert.Equal(t, qrdbsdk.StrategyID("passphrase"), fake.gotEnableEncOpts.TargetStrategy)
+		assert.Equal(t, qrdbsdk.MigrationMechanism("copy"), fake.gotEnableEncOpts.Mechanism)
+	})
+
+	t.Run("update_tenant_quotas", func(t *testing.T) {
+		fakeGov := &fakeGovernancer{}
+		r.SetTenantGovernance(fakeGov)
+		out, err := r.ExecuteTool(ctx, "qrdb_tenant_update_quotas", map[string]interface{}{
+			"tenant_id":            "t-quotas",
+			"max_databases":        10,
+			"max_keys":             500,
+			"system_barrier_quota": -1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "ok", out.(map[string]interface{})["status"])
+		assert.Equal(t, "t-quotas", fakeGov.gotTenantID)
+		assert.Equal(t, int64(10), fakeGov.gotQuotas.MaxDatabases)
+		assert.Equal(t, int64(500), fakeGov.gotQuotas.MaxKeys)
+		assert.Equal(t, int64(-1), fakeGov.gotQuotas.SystemBarrierQuota)
+	})
+
+	t.Run("update_tenant_entitlements", func(t *testing.T) {
+		fakeGov := &fakeGovernancer{}
+		r.SetTenantGovernance(fakeGov)
+		out, err := r.ExecuteTool(ctx, "qrdb_tenant_update_entitlements", map[string]interface{}{
+			"tenant_id":                    "t-ents",
+			"allowed_isolation_modes":      []interface{}{"barrier", "raft"},
+			"allow_dedicated_raft":         true,
+			"allow_volume_storage":         false,
+			"allow_system_managed_barrier": true,
+			"allow_dedicated_wal":          true,
+			"allowed_barrier_modes":        []interface{}{"passphrase", "shamir"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "ok", out.(map[string]interface{})["status"])
+		assert.Equal(t, "t-ents", fakeGov.gotTenantID)
+		assert.Equal(t, []string{"barrier", "raft"}, fakeGov.gotEntitlements.AllowedIsolationModes)
+		assert.True(t, fakeGov.gotEntitlements.AllowDedicatedRaft)
+		assert.False(t, fakeGov.gotEntitlements.AllowVolumeStorage)
+		assert.True(t, fakeGov.gotEntitlements.AllowSystemManagedBarrier)
+		assert.True(t, fakeGov.gotEntitlements.AllowDedicatedWAL)
+		assert.Equal(t, []string{"passphrase", "shamir"}, fakeGov.gotEntitlements.AllowedBarrierModes)
+	})
 }
 
 // TestBarrierToolsValidation covers required-argument and threshold checks.
@@ -406,6 +517,24 @@ func TestBarrierToolsValidation(t *testing.T) {
 			args:        map[string]interface{}{},
 			expectedErr: &BarrierSharesRequiredError{},
 		},
+		{
+			name:        "enable_encryption missing strategy",
+			tool:        "qrdb_barrier_enable_encryption",
+			args:        map[string]interface{}{},
+			expectedErr: &BarrierTargetStrategyRequiredError{},
+		},
+		{
+			name:        "tenant_enable_encryption missing tenant_id",
+			tool:        "qrdb_tenant_barrier_enable_encryption",
+			args:        map[string]interface{}{"target_strategy": "passphrase"},
+			expectedErr: &BarrierTenantIDRequiredError{},
+		},
+		{
+			name:        "tenant_enable_encryption missing strategy",
+			tool:        "qrdb_tenant_barrier_enable_encryption",
+			args:        map[string]interface{}{"tenant_id": "t1"},
+			expectedErr: &BarrierTargetStrategyRequiredError{},
+		},
 	}
 
 	for _, c := range cases {
@@ -415,10 +544,40 @@ func TestBarrierToolsValidation(t *testing.T) {
 			assert.IsTypef(t, c.expectedErr, err, "wrong error type for %s: got %T", c.tool, err)
 		})
 	}
+
+	// Governance tool validation: argument checks are only reached once the
+	// mcpTenantGovernancer is wired (otherwise the tool short-circuits with
+	// GovernanceServiceUnavailableError before inspecting args).
+	govRegistry := newBarrierTestRegistry(t, &fakeBarrierService{status: &service.BarrierStatusInfo{}})
+	govRegistry.SetTenantGovernance(&fakeGovernancer{})
+	govValidationCases := []tc{
+		{
+			name:        "update_quotas missing tenant_id",
+			tool:        "qrdb_tenant_update_quotas",
+			args:        map[string]interface{}{},
+			expectedErr: &BarrierTenantIDRequiredError{},
+		},
+		{
+			name:        "update_entitlements missing tenant_id",
+			tool:        "qrdb_tenant_update_entitlements",
+			args:        map[string]interface{}{},
+			expectedErr: &BarrierTenantIDRequiredError{},
+		},
+	}
+	for _, c := range govValidationCases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := govRegistry.ExecuteTool(context.Background(), c.tool, c.args)
+			require.Error(t, err)
+			assert.IsTypef(t, c.expectedErr, err, "wrong error type for %s: got %T", c.tool, err)
+		})
+	}
 }
 
 // TestBarrierToolsUnavailable asserts every barrier tool returns the typed
-// unavailable error when no BarrierServicer is wired.
+// unavailable error when neither BarrierServicer nor mcpTenantGovernancer is
+// wired. Barrier tools return BarrierServiceUnavailableError; governance tools
+// (qrdb_tenant_update_quotas, qrdb_tenant_update_entitlements) return
+// GovernanceServiceUnavailableError. Both signal the same fail-closed condition.
 func TestBarrierToolsUnavailable(t *testing.T) {
 	log, err := logger.New(logger.LogConfig{
 		Level:     "error",
@@ -428,7 +587,7 @@ func TestBarrierToolsUnavailable(t *testing.T) {
 	})
 	require.NoError(t, err)
 	r := NewToolRegistry(&MockQuicBaaS{}, log)
-	// Intentionally do NOT call SetBarrierService.
+	// Intentionally do NOT call SetBarrierService or SetTenantGovernance.
 
 	for name := range barrierToolNames {
 		t.Run(name, func(t *testing.T) {
@@ -443,8 +602,10 @@ func TestBarrierToolsUnavailable(t *testing.T) {
 				"total_shares": 1,
 			})
 			require.Error(t, err)
-			var notReady *BarrierServiceUnavailableError
-			assert.Truef(t, stderrors.As(err, &notReady), "expected BarrierServiceUnavailableError, got %T", err)
+			var barrierNotReady *BarrierServiceUnavailableError
+			var govNotReady *GovernanceServiceUnavailableError
+			isUnavailable := stderrors.As(err, &barrierNotReady) || stderrors.As(err, &govNotReady)
+			assert.Truef(t, isUnavailable, "expected service unavailable error, got %T: %v", err, err)
 		})
 	}
 }
@@ -455,20 +616,21 @@ func TestBarrierToolsUnavailable(t *testing.T) {
 func TestBarrierToolsPropagatesServiceError(t *testing.T) {
 	sentinel := stderrors.New("scripted-failure")
 	fake := &fakeBarrierService{
-		status:          &service.BarrierStatusInfo{},
-		statusErr:       sentinel,
-		initErr:         sentinel,
-		unsealErr:       sentinel,
-		sealErr:         sentinel,
-		shamirInitErr:   sentinel,
-		unsealShareErr:  sentinel,
-		unsealSharesErr: sentinel,
-		rekeyErr:        sentinel,
-		recoveryKeysErr: sentinel,
-		recoverErr:      sentinel,
-		deleteRecErr:    sentinel,
-		hasRecoveryErr:  sentinel,
-		rootTokenErr:    sentinel,
+		status:              &service.BarrierStatusInfo{},
+		statusErr:           sentinel,
+		initErr:             sentinel,
+		unsealErr:           sentinel,
+		sealErr:             sentinel,
+		shamirInitErr:       sentinel,
+		unsealShareErr:      sentinel,
+		unsealSharesErr:     sentinel,
+		rekeyErr:            sentinel,
+		recoveryKeysErr:     sentinel,
+		recoverErr:          sentinel,
+		deleteRecErr:        sentinel,
+		hasRecoveryErr:      sentinel,
+		rootTokenErr:        sentinel,
+		enableEncryptionErr: sentinel,
 	}
 	r := newBarrierTestRegistry(t, fake)
 
@@ -491,12 +653,35 @@ func TestBarrierToolsPropagatesServiceError(t *testing.T) {
 		{"qrdb_barrier_recovery_delete", nil},
 		{"qrdb_barrier_recovery_status", nil},
 		{"qrdb_barrier_root_token", map[string]interface{}{"shares": []interface{}{"x"}}},
+		{"qrdb_barrier_enable_encryption", map[string]interface{}{"target_strategy": "passphrase"}},
+		{"qrdb_tenant_barrier_enable_encryption", map[string]interface{}{"tenant_id": "t1", "target_strategy": "passphrase"}},
 	}
 	for _, c := range calls {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := r.ExecuteTool(context.Background(), c.name, c.args)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, sentinel)
+		})
+	}
+
+	// Governance tools propagate errors from the mcpTenantGovernancer.
+	govSentinel := stderrors.New("scripted-governance-failure")
+	r.SetTenantGovernance(&fakeGovernancer{
+		updateQuotasErr:       govSentinel,
+		updateEntitlementsErr: govSentinel,
+	})
+	govCalls := []struct {
+		name string
+		args map[string]interface{}
+	}{
+		{"qrdb_tenant_update_quotas", map[string]interface{}{"tenant_id": "t1"}},
+		{"qrdb_tenant_update_entitlements", map[string]interface{}{"tenant_id": "t1"}},
+	}
+	for _, c := range govCalls {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := r.ExecuteTool(context.Background(), c.name, c.args)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, govSentinel)
 		})
 	}
 }
@@ -509,10 +694,13 @@ func TestBarrierToolsErrorMessages(t *testing.T) {
 		want string
 	}{
 		{&BarrierServiceUnavailableError{}, "barrier service unavailable: not configured"},
+		{&GovernanceServiceUnavailableError{}, "governance service unavailable: not configured"},
 		{&BarrierShareRequiredError{}, "share is required"},
 		{&BarrierSharesRequiredError{}, "shares is required"},
 		{&BarrierRecoveryKeysRequiredError{}, "keys is required"},
 		{&BarrierThresholdInvalidError{Reason: "x"}, "invalid threshold/total: x"},
+		{&BarrierTargetStrategyRequiredError{}, "target_strategy is required"},
+		{&BarrierTenantIDRequiredError{}, "tenant_id is required"},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, c.err.Error())

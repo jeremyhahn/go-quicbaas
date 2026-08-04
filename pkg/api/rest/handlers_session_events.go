@@ -110,8 +110,38 @@ func (s *Server) HandleOrchestratorSessionEvents(w http.ResponseWriter, r *http.
 	serveSessionEventsSSE(w, r, log, tenantID, sessionID, fromSeq, follow)
 }
 
-// respondSessionHistoryJSON returns one page of events as a JSON array.
-// Pagination cursor is carried in the `X-Next-Sequence` response header.
+// sessionEventEnvelope is the transport-neutral wire shape every session-events
+// reader (REST JSON history, SSE tail, and downstream SDK clients) consumes.
+// It matches the SDK `SessionEventEnvelope` contract: the full SessionEvent is
+// carried verbatim under payload_json so clients have a single parse path
+// regardless of event kind, while sequence/timestamp/session/tenant are lifted
+// to top-level fields for cheap addressing without unmarshalling the payload.
+type sessionEventEnvelope struct {
+	SessionID   string                      `json:"session_id"`
+	TenantID    string                      `json:"tenant_id,omitempty"`
+	Sequence    uint64                      `json:"sequence"`
+	Timestamp   time.Time                   `json:"timestamp"`
+	PayloadJSON *orchestration.SessionEvent `json:"payload_json"`
+	FromReplay  bool                        `json:"from_replay"`
+}
+
+// newSessionEventEnvelope wraps a stored SessionEvent in the canonical wire
+// envelope. fromReplay marks events delivered from history (vs the live tail)
+// so UIs can suppress per-event animations during initial backfill.
+func newSessionEventEnvelope(ev *orchestration.SessionEvent, fromReplay bool) sessionEventEnvelope {
+	return sessionEventEnvelope{
+		SessionID:   ev.SessionID,
+		TenantID:    ev.TenantID,
+		Sequence:    ev.Sequence,
+		Timestamp:   ev.Timestamp,
+		PayloadJSON: ev,
+		FromReplay:  fromReplay,
+	}
+}
+
+// respondSessionHistoryJSON returns one page of events as a JSON array of
+// SessionEventEnvelope. Pagination cursor is carried both in the response body
+// (next_seq) and the `X-Next-Sequence` response header.
 func respondSessionHistoryJSON(w http.ResponseWriter, r *http.Request, log orchestration.SessionEventLog, tenantID, sessionID string, fromSeq uint64) {
 	limit := 256
 	if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -124,12 +154,16 @@ func respondSessionHistoryJSON(w http.ResponseWriter, r *http.Request, log orche
 		RespondJSON(w, r, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	envelopes := make([]sessionEventEnvelope, 0, len(events))
+	for _, ev := range events {
+		envelopes = append(envelopes, newSessionEventEnvelope(ev, true))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if next > 0 {
 		w.Header().Set("X-Next-Sequence", strconv.FormatUint(next, 10))
 	}
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"events":     events,
+		"events":     envelopes,
 		"next_seq":   next,
 		"session_id": sessionID,
 	})
@@ -139,20 +173,26 @@ func respondSessionHistoryJSON(w http.ResponseWriter, r *http.Request, log orche
 // begins with a replay from fromSeq, then (when follow=true) transitions
 // to a live tail. Both phases write one `event:` frame per SessionEvent
 // with the sequence as the SSE `id:` so browser clients can resume.
+//
+// Flushing goes through http.NewResponseController so the call reaches the real
+// connection even when the logging middleware has wrapped the ResponseWriter
+// (the wrapper exposes Unwrap; see middleware_flush.go). Flushing is treated as
+// best-effort: a writer that cannot flush still streams (net/http auto-flushes
+// on Write), so we never refuse the connection with a 500 the way the old
+// `w.(http.Flusher)` hard assertion did.
 func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestration.SessionEventLog, tenantID, sessionID string, fromSeq uint64, follow bool) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		RespondJSON(w, r, http.StatusInternalServerError, map[string]string{
-			"error": "streaming unsupported on this connection",
-		})
-		return
+	rc := http.NewResponseController(w)
+	flush := func() {
+		// ErrNotSupported is the only documented error and is non-fatal here:
+		// the events still reach the client on the next Write/close.
+		_ = rc.Flush()
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disable proxy buffering
 	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	flush()
 
 	// Register live subscription BEFORE draining history so events that
 	// arrive during the history read get buffered for post-drain delivery.
@@ -161,7 +201,7 @@ func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestra
 	if follow {
 		ch, unsub, err := log.Subscribe(r.Context(), tenantID, sessionID)
 		if err != nil {
-			writeSSEError(w, flusher, "subscribe failed: "+err.Error())
+			writeSSEError(w, flush, "subscribe failed: "+err.Error())
 			return
 		}
 		liveCh = ch
@@ -179,11 +219,11 @@ func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestra
 	for {
 		page, next, err := log.Range(r.Context(), tenantID, sessionID, cursor, 256)
 		if err != nil {
-			writeSSEError(w, flusher, "range failed: "+err.Error())
+			writeSSEError(w, flush, "range failed: "+err.Error())
 			return
 		}
 		for _, ev := range page {
-			if err := writeSSEEvent(w, flusher, ev, true); err != nil {
+			if err := writeSSEEvent(w, flush, ev, true); err != nil {
 				return
 			}
 			if ev.Sequence > historyEnd {
@@ -217,7 +257,7 @@ func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestra
 			if ev.Sequence <= historyEnd {
 				continue
 			}
-			if err := writeSSEEvent(w, flusher, ev, false); err != nil {
+			if err := writeSSEEvent(w, flush, ev, false); err != nil {
 				return
 			}
 			historyEnd = ev.Sequence
@@ -227,7 +267,7 @@ func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestra
 			if _, err := fmt.Fprintf(w, ": ping %d\n\n", time.Now().Unix()); err != nil {
 				return
 			}
-			flusher.Flush()
+			flush()
 		}
 	}
 }
@@ -238,25 +278,25 @@ func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestra
 //	event: <kind>
 //	data: <json>
 //	<blank line>
-func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, ev *orchestration.SessionEvent, fromReplay bool) error {
-	payload, err := json.Marshal(map[string]interface{}{
-		"event":       ev,
-		"from_replay": fromReplay,
-	})
+//
+// The data payload is a SessionEventEnvelope — the same shape returned by the
+// JSON history path — so SSE and history readers share one parse path.
+func writeSSEEvent(w http.ResponseWriter, flush func(), ev *orchestration.SessionEvent, fromReplay bool) error {
+	payload, err := json.Marshal(newSessionEventEnvelope(ev, fromReplay))
 	if err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.Sequence, ev.Kind, payload); err != nil {
 		return err
 	}
-	flusher.Flush()
+	flush()
 	return nil
 }
 
 // writeSSEError emits a terminal "error" SSE frame before closing the
 // connection. Clients can distinguish this from normal event frames via
 // the `event: error` header.
-func writeSSEError(w http.ResponseWriter, flusher http.Flusher, msg string) {
+func writeSSEError(w http.ResponseWriter, flush func(), msg string) {
 	_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg)
-	flusher.Flush()
+	flush()
 }

@@ -91,10 +91,10 @@ func resolveBarrierStrategy(
 	cfg *config.Config,
 	operatorOverride bool,
 ) (qrdbsdk.StrategyID, int, int, error) {
-	cfgStrategy := cfg.Seal.Strategy
-	if cfgStrategy == "" {
-		cfgStrategy = string(qrdbsdk.StrategyPassphrase)
-	}
+	// Resolve the configured strategy, applying the P4 hardware-prefer
+	// auto-detect policy for the "auto" sentinel (resolveEffectiveSealStrategy
+	// returns the empty/passphrase default and every explicit value unchanged).
+	cfgStrategy := string(resolveEffectiveSealStrategy(cfg, nil))
 	threshold := cfg.Seal.Threshold
 	totalShares := cfg.Seal.TotalShares
 

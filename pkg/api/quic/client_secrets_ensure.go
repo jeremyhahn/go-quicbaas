@@ -17,51 +17,23 @@ package quic
 
 import (
 	"context"
-	"errors"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// ErrEnsureSecretUnsupportedQUIC indicates the QUIC transport does not
-// yet carry the EnsureSecret RPC because the single-byte opcode space
-// in pkg/api/quic/protocol.go is fully allocated. Adding a new RPC
-// requires one of:
+// EnsureSecret implements the Vault-style generate-on-first-access primitive
+// over QUIC using the OpSecretsSubDispatch (0x6F) / OpSecretsSubEnsure (0x01)
+// sub-dispatch wire format introduced in protocol.go.
 //
-//  1. Widening the wire format to a 2-byte opcode (invasive, touches
-//     every handler and client — refused here per the implementation
-//     rules).
+// Wire layout sent by this method:
 //
-//  2. Introducing a sub-dispatch opcode byte in the Secrets namespace
-//     (mirroring the IAM sub-dispatch pattern in protocol_iam.go +
-//     handler.go:1028) and routing EnsureSecret through a new
-//     SecretsSubDispatch opcode. This is the recommended approach.
+//	opcode  = OpSecretsSubDispatch (0x6F)
+//	payload = [OpSecretsSubEnsure (0x01)] | [JSON-encoded EnsureSecretRequest]
 //
-//  3. Repurposing an existing sparsely-used opcode (not recommended —
-//     breaks backward compatibility for older clients).
-//
-// TODO(QUIC EnsureSecret wiring): follow approach (2). Steps:
-//
-//   - Add OpSecretsSubDispatch byte = 0x??  in protocol.go, documenting
-//     the sub-opcode layout (payload[0] = sub-op, payload[1:] = encoded
-//     request).
-//   - Add OpSecretsSubEnsure byte = 0x01 as the first sub-op.
-//   - In handler.go Dispatch, case OpSecretsSubDispatch: route to a new
-//     handleSecretsSubDispatch(ctx, req) that reads payload[0] and maps
-//     to the concrete sub-handler (e.g. handleSecretsEnsure).
-//   - Create handler_secrets_ensure.go with the handleSecretsEnsure
-//     body — decode service.EnsureSecretRequest, pre-validate spec,
-//     call h.secretsService.EnsureSecret, encode response.
-//   - Replace the body of Client.EnsureSecret below with a sendRequest
-//     call that wraps the payload as [OpSecretsSubEnsure | encoded-req].
-//
-// Until that landing, callers receive a typed ErrEnsureSecretUnsupportedQUIC
-// error so go-trusted-platform's multi-protocol adapter test suite can
-// detect and skip the QUIC leg explicitly (no silent fallback).
-var ErrEnsureSecretUnsupportedQUIC = errors.New("quic: EnsureSecret not yet wired — opcode space requires sub-dispatch (see TODO in client_secrets_ensure.go)")
-
-// EnsureSecret returns ErrEnsureSecretUnsupportedQUIC until the
-// sub-dispatch wiring described above lands.
+// The server-side handler_secrets_ensure.go decodes payload[0] as the
+// sub-opcode, then decodes payload[1:] as service.EnsureSecretRequest and
+// delegates to secretsService.EnsureSecret.
 func (c *Client) EnsureSecret(ctx context.Context, req *service.EnsureSecretRequest) (*service.EnsureSecretResponse, error) {
 	if req == nil {
 		return nil, api.NewNilInputError("Client.EnsureSecret", "request")
@@ -69,5 +41,26 @@ func (c *Client) EnsureSecret(ctx context.Context, req *service.EnsureSecretRequ
 	if req.SecretID == "" {
 		return nil, api.NewInvalidInputError("Client.EnsureSecret: secret_id is required")
 	}
-	return nil, ErrEnsureSecretUnsupportedQUIC
+
+	bodyBytes, err := EncodePayload(req)
+	if err != nil {
+		return nil, api.NewEncodeError("Client.EnsureSecret", "request", err)
+	}
+
+	// Prepend sub-opcode: payload = [subOp | body]
+	payload := make([]byte, 1+len(bodyBytes))
+	payload[0] = OpSecretsSubEnsure
+	copy(payload[1:], bodyBytes)
+
+	resp, err := c.sendRequest(ctx, OpSecretsSubDispatch, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var result service.EnsureSecretResponse
+	if err := DecodePayload(resp.Payload, &result); err != nil {
+		return nil, api.NewDecodeError("Client.EnsureSecret", "response", err)
+	}
+
+	return &result, nil
 }

@@ -16,6 +16,7 @@ package server
 import (
 	"crypto/x509"
 	"errors"
+	"log/slog"
 	"os"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -124,60 +125,116 @@ func (e *StrategyNotCompiledError) Error() string {
 // buildHardwareSealStrategies resolves the hardware/cloud sealing strategy
 // selected by cfg.Seal.Strategy.
 //
+//   - For the OPT-IN "auto" sentinel it applies the P4 hardware-prefer policy:
+//     it opens the TPM exactly once (non-provisioning, time-bounded) and returns
+//     the resulting seal-capable TPM2 strategy. When no provisioned, seal-capable
+//     TPM is present it returns (nil, nil) so the caller falls back to software
+//     passphrase. Auto never provisions and never stalls boot (see
+//     seal_autodetect.go).
 //   - For software/none/shamir (and the empty default), it returns (nil, nil):
 //     those are handled by buildSealStrategies and must not be dispatched here.
-//   - For a hardware/cloud ID with a registered factory, it invokes the factory
-//     and returns a single-element slice.
+//   - For an EXPLICIT hardware/cloud ID with a registered factory, it invokes the
+//     factory (which provisions for tpm2) and returns a single-element slice.
 //   - For a hardware/cloud ID with NO registered factory (its build tag was not
 //     compiled), it returns a StrategyNotCompiledError.
 func buildHardwareSealStrategies(cfg *config.Config) ([]qrdbsdk.SealingStrategy, error) {
+	strategies, _, err := buildHardwareSealStrategiesShared(cfg, nil)
+	return strategies, err
+}
+
+// buildHardwareSealStrategiesShared is buildHardwareSealStrategies plus the
+// shared-backend hook the P3 PIN path needs: when the active seal strategy is
+// TPM2 (explicit "tpm2" or "auto" that resolves to a usable TPM), it ALSO
+// returns the open *xkmssdk.TPM2Backend the strategy wraps so the PIN backend
+// can verify in-hardware over the SAME single TPM open. The backend is nil for
+// every non-TPM strategy (software/none/shamir and the cloud/HSM backends,
+// which expose no TPM to share). The returned backend is the same instance held
+// inside strategies[0]; do not close it independently — closing the strategy
+// releases it.
+func buildHardwareSealStrategiesShared(cfg *config.Config, logger *slog.Logger) ([]qrdbsdk.SealingStrategy, *xkmssdk.TPM2Backend, error) {
 	if cfg == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	strategyStr := cfg.Seal.Strategy
-	if strategyStr == "" {
-		strategyStr = string(qrdbsdk.StrategyPassphrase)
+	// OPT-IN auto-detect: a single non-provisioning TPM open decides tpm2 vs
+	// software. The TPM is opened at most once here; the returned strategy owns
+	// that open backend (no probe-then-reopen), and that same backend is handed
+	// back for the PIN path to share.
+	if cfg.Seal.Strategy == string(config.BackendAuto) {
+		if strategy, backend := tpm2AutoSealStrategy(cfg, logger); strategy != nil {
+			return []qrdbsdk.SealingStrategy{strategy}, backend, nil
+		}
+		return nil, nil, nil
 	}
-	id := qrdbsdk.StrategyID(strategyStr)
+
+	id := resolveEffectiveSealStrategy(cfg, logger)
 
 	if !isHardwareStrategy(id) {
 		// software / none / shamir — not our concern.
-		return nil, nil
+		return nil, nil, nil
+	}
+
+	// Explicit tpm2: open (and provision if needed) the backend ONCE here and
+	// wrap it, so the same open is shared with the PIN backend. Routing through
+	// the registry factory would build a strategy whose backend is not
+	// recoverable, forcing a second TPM open for PIN — which a single-session
+	// swtpm emulator hangs on.
+	if id == xkmssdk.StrategyTPM2 {
+		backend, err := buildTPM2Backend(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []qrdbsdk.SealingStrategy{xkmssdk.NewTPM2Strategy(backend, nil)}, backend, nil
 	}
 
 	factory, ok := hardwareStrategyFactories[id]
 	if !ok {
-		return nil, &StrategyNotCompiledError{Strategy: id}
+		return nil, nil, &StrategyNotCompiledError{Strategy: id}
 	}
 
 	strategy, err := factory(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return []qrdbsdk.SealingStrategy{strategy}, nil
+	return []qrdbsdk.SealingStrategy{strategy}, nil, nil
 }
 
 // buildTPM2Strategy constructs the TPM 2.0 sealing strategy from cfg.Seal.TPM2.
 //
-// It composes go-xkms: a tpm2backend.Backend (which implements types.Sealer) is
-// built from the operator config and wrapped by xkmssdk.NewTPM2Strategy. No
-// TPM crypto is reimplemented here — the backend handles SRK hierarchy, PCR
-// binding, and seal/unseal.
-//
-// First-boot provisioning: when the TPM reports ErrNotInitialized (typical of
-// a freshly-reset TPM, software TPM emulator, or an operator-reset device),
-// this factory provisions it via provisionTPM2Backend and rebuilds the backend.
-// Provisioning is idempotent: on a real platform the TPM is provisioned exactly
-// once; subsequent starts find a pre-provisioned TPM and NewBackend succeeds
-// without reaching the provisioning path. A genuinely unrecoverable TPM failure
-// is wrapped in a StrategyBuildError.
+// It composes go-xkms: a tpm2backend.Backend (which implements types.Sealer),
+// built and provisioned by buildTPM2Backend, is wrapped by
+// xkmssdk.NewTPM2Strategy. No TPM crypto is reimplemented here — the backend
+// handles SRK hierarchy, PCR binding, and seal/unseal. This factory remains
+// registered in hardwareStrategyFactories for the per-tenant strategy registry;
+// the system barrier's explicit-tpm2 path goes through
+// buildHardwareSealStrategiesShared so it can also share the open backend with
+// the PIN path.
 //
 // The optional hardware SymmetricEncrypter is left nil: barrier data
 // encryption then falls back to a software DEK derived from the TPM-protected
 // root key (see TPM2Strategy.BarrierEncryptor), which keeps the root key
 // hardware-bound while avoiding a second TPM round-trip per data operation.
 func buildTPM2Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
+	backend, err := buildTPM2Backend(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return xkmssdk.NewTPM2Strategy(backend, nil), nil
+}
+
+// buildTPM2Backend opens (and, on first boot, provisions) the TPM 2.0 seal
+// backend from cfg.Seal.TPM2 and returns it. It is the SINGLE TPM-open point for
+// the explicit "tpm2" strategy: the returned backend is wrapped into the seal
+// strategy by buildTPM2Strategy AND shared with the PIN backend (P3) so the
+// device is opened exactly once for both. A genuinely unrecoverable TPM failure
+// is wrapped in a StrategyBuildError.
+//
+// First-boot provisioning: when the TPM reports ErrNotInitialized (a freshly
+// reset device, software emulator, or an operator-reset platform), this
+// provisions it via provisionTPM2Backend and returns the rebuilt backend.
+// Provisioning is idempotent: subsequent starts find a provisioned TPM and
+// NewTPM2Backend succeeds without reaching the provisioning path.
+func buildTPM2Backend(cfg *config.Config) (*xkmssdk.TPM2Backend, error) {
 	tpmCfg := cfg.Seal.TPM2
 
 	backendCfg := &xkmssdk.TPM2BackendConfig{
@@ -194,7 +251,7 @@ func buildTPM2Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 
 	backend, err := xkmssdk.NewTPM2Backend(backendCfg)
 	if err == nil {
-		return xkmssdk.NewTPM2Strategy(backend, nil), nil
+		return backend, nil
 	}
 
 	// First-boot path: provision the TPM when it reports uninitialized and retry.
@@ -207,7 +264,7 @@ func buildTPM2Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 		return nil, &StrategyBuildError{Backend: "tpm2", Cause: err}
 	}
 
-	return xkmssdk.NewTPM2Strategy(backend, nil), nil
+	return backend, nil
 }
 
 // provisionTPM2Backend provisions an uninitialized TPM (fresh device, emulator,

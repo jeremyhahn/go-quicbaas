@@ -30,7 +30,7 @@ import (
 // Task 3 requirements:
 //   a. Bidirectional guard: every key in barrierSubOpHandlers has an entry in
 //      barrierSubOpPermissions AND vice versa.
-//   b. Table-driven: each of the 13 sub-ops resolves via
+//   b. Table-driven: each of the 16 sub-ops resolves via
 //      getQRDBPermission(OpBarrier, []byte{subOp, ...}) to the EXACT canonical
 //      permission (this test is the permission spec).
 //   c. getQRDBPermission(OpBarrier, nil) and unknown sub-op → ok=false.
@@ -72,10 +72,10 @@ func TestBarrierAuthz_BidirectionalGuard(t *testing.T) {
 }
 
 // TestBarrierAuthz_SubOpPermissions is the authoritative spec for each of the
-// 13 SubOpBarrier* constants: it pins the exact canonical permission that
+// 16 SubOpBarrier* constants: it pins the exact canonical permission that
 // getQRDBPermission must return when OpBarrier is dispatched with that sub-op.
 // Values MUST match go-qrdb/pkg/permission/constants.go and the gRPC authz
-// mapping (pkg/api/grpc/authz_mapping.go lines 259-275).
+// mapping (pkg/api/grpc/authz_mapping.go lines 259-278).
 func TestBarrierAuthz_SubOpPermissions(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -96,6 +96,9 @@ func TestBarrierAuthz_SubOpPermissions(t *testing.T) {
 		{"RecoveryDelete", SubOpBarrierRecoveryDelete, "seal", "generate_recovery"},
 		{"RecoveryStatus", SubOpBarrierRecoveryStatus, "seal", "status"},
 		{"RootToken", SubOpBarrierRootToken, "seal", "bootstrap"},
+		{"EnableEncryption", SubOpBarrierEnableEncryption, "seal", "enable_encryption"},
+		{"UpdateTenantQuotas", SubOpBarrierUpdateTenantQuotas, "tenants", "set_quotas"},
+		{"UpdateTenantEntitlements", SubOpBarrierUpdateTenantEntitlements, "tenants", "set_entitlements"},
 	}
 
 	for _, tc := range cases {

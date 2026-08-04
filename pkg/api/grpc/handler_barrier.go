@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -363,4 +364,45 @@ func (s *BarrierServer) BarrierRootToken(ctx context.Context, req *pb.BarrierRoo
 		Token:     info.Token,
 		CreatedAt: formatTime(info.CreatedAt),
 	}, nil
+}
+
+// BarrierEnableEncryption migrates the system barrier from the none (unencrypted)
+// strategy to a keyed strategy in place. This operation is only available when
+// the embedded qrdb node is present (the migrator has been injected via
+// SetMigrator); otherwise codes.Unavailable is returned.
+func (s *BarrierServer) BarrierEnableEncryption(ctx context.Context, req *pb.BarrierEnableEncryptionRequest) (*emptypb.Empty, error) {
+	if err := s.requireBarrierService(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if req.GetTargetStrategy() == "" {
+		return nil, status.Error(codes.InvalidArgument, "target_strategy is required")
+	}
+
+	mech := req.GetMechanism()
+	if mech == "" {
+		mech = string(qrdbsdk.MechanismSwap)
+	}
+	avail := req.GetAvailability()
+	if avail == "" {
+		avail = string(qrdbsdk.AvailabilityOnline)
+	}
+
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  qrdbsdk.StrategyID(req.GetTargetStrategy()),
+		Mechanism:       qrdbsdk.MigrationMechanism(mech),
+		Availability:    qrdbsdk.MigrationAvailability(avail),
+		ShamirThreshold: int(req.GetShamirThreshold()),
+		ShamirTotal:     int(req.GetShamirTotal()),
+	}
+	if p := req.GetPassphrase(); p != "" {
+		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(p)}
+	}
+
+	if err := s.barrierSvc.EnableEncryption(ctx, "", opts); err != nil {
+		return nil, mapBarrierError(err)
+	}
+	return &emptypb.Empty{}, nil
 }

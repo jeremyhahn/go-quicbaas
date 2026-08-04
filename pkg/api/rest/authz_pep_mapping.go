@@ -109,12 +109,12 @@ type barrierGranularOp struct {
 	scope    string // resource + ":" + action, pre-computed
 }
 
-// barrierGranularOps is the single source of truth for all 13 barrier
-// operations registered on both /api/v1/barrier and /v1/barrier. The table
-// mirrors the gRPC canon in pkg/api/grpc/authz_mapping.go lines 259-276.
-// Suffixes are ordered longest-first so that the tier-2 suffix matching
-// (HasSuffix) resolves ambiguities correctly — e.g. "/shamir/initialize"
-// (len 19) beats "/initialize" (len 11) for the same path.
+// barrierGranularOps is the single source of truth for all barrier operations
+// registered on both /api/v1/barrier and /v1/barrier. The table mirrors the
+// gRPC canon in pkg/api/grpc/authz_mapping.go. Suffixes are ordered
+// longest-first so that the tier-2 suffix matching (HasSuffix) resolves
+// ambiguities correctly — e.g. "/shamir/initialize" (len 19) beats
+// "/initialize" (len 11) for the same path.
 var barrierGranularOps = []barrierGranularOp{
 	// Longest suffixes first to guarantee correct tier-2 wins.
 	{"/shamir/initialize", http.MethodPost, "seal", "initialize_shamir", "seal:initialize_shamir"},
@@ -123,6 +123,7 @@ var barrierGranularOps = []barrierGranularOp{
 	{"/recovery/generate", http.MethodPost, "seal", "generate_recovery", "seal:generate_recovery"},
 	{"/recovery/recover", http.MethodPost, "seal", "recover_with_keys", "seal:recover_with_keys"},
 	{"/recovery/status", http.MethodGet, "seal", "status", "seal:status"},
+	{"/enable-encryption", http.MethodPost, "seal", "enable_encryption", "seal:enable_encryption"},
 	{"/recovery", http.MethodDelete, "seal", "generate_recovery", "seal:generate_recovery"},
 	{"/root-token", http.MethodPost, "seal", "bootstrap", "seal:bootstrap"},
 	{"/rekey", http.MethodPost, "seal", "rekey", "seal:rekey"},
@@ -230,6 +231,44 @@ var pepMapping = map[string]pepResource{
 
 	// Ollama embedding inference.
 	"/api/v1/ollama": {resource: "ollama", verbs: crudVerbs{get: "health", list: "model_list", create: "embed", del: "embed"}},
+
+	// Cluster + cache control plane (Raft administration). Mirrors the gRPC
+	// canon in pkg/api/grpc/authz_mapping.go: reads authorize as admin:status,
+	// membership writes as admin:add_member / admin:remove_member. The rebalance,
+	// migrate and upgrade write actions carry finer permissions via pepSpecialRules.
+	"/api/v1/cluster": {resource: "admin", verbs: crudVerbs{get: "status", list: "status", create: "add_member", del: "remove_member"}},
+	"/api/v1/cache":   {resource: "admin", verbs: crudVerbs{get: "status", list: "status", create: "capabilities", del: "capabilities"}},
+
+	// Vector data plane. The qrdb-registered vector permission family is wide;
+	// the coarse CRUD shape here maps reads -> vector:get, collection reads ->
+	// vector:namespace_list, writes -> vector:upsert, deletes -> vector:delete.
+	// The non-CRUD search and namespace verbs resolve via pepSpecialRules.
+	"/api/v1/vector": {resource: "vector", verbs: crudVerbs{get: "get", list: "namespace_list", create: "upsert", del: "delete"}},
+
+	// Embedding generation + provider management (UI: EmbeddingsView). The SPA
+	// uses the singular /api/v1/embedding surface. Reads list models/providers,
+	// writes generate embeddings.
+	"/api/v1/embedding": {resource: "embedding", verbs: crudVerbs{get: "list_models", list: "list_models", create: "embed", del: "embed"}},
+
+	// Retrieval-augmented generation (UI: RAGView). Reads list/query documents,
+	// writes ingest, deletes remove a document.
+	"/api/v1/rag": {resource: "rag", verbs: crudVerbs{get: "query", list: "list_documents", create: "ingest", del: "delete_document"}},
+
+	// Trust-anchor bootstrap (UI: BootstrapView). First-contact CA discovery:
+	// POST /api/v1/bootstrap/{auto,dane,noise,spki} establishes a trust anchor,
+	// which IS a trust-write operation -> trust:write; a future read of the
+	// surface authorizes as trust:read. Both are registered qrdb broker perms
+	// (go-qrdb/pkg/permission/broker_scope.go: TrustRead / TrustWrite).
+	"/api/v1/bootstrap": {resource: "trust", verbs: crudVerbs{get: "read", list: "read", create: "write", del: "write"}},
+
+	// SSH key management — proxied to the xkms SSH SDK. SSH keys are
+	// cryptographic keys; these map onto the qrdb keys permission family
+	// (the nearest registered permissions — no ssh:* family exists in the qrdb
+	// registry yet; a future qrdb ssh:* permission grant should replace this
+	// mapping). The coarse fallback here covers any future sub-paths not yet in
+	// sshOps; all current endpoints resolve via buildSSHSpecialRules.
+	"/api/v1/ssh":         {resource: "keys", verbs: crudVerbs{get: "get", list: "list", create: "create", del: "delete"}},
+	"/api/v1/xkms/v1/ssh": {resource: "keys", verbs: crudVerbs{get: "get", list: "list", create: "create", del: "delete"}},
 }
 
 // pepSpecialRule overrides the CRUD-shaped pepMapping for a non-CRUD endpoint
@@ -252,6 +291,66 @@ type pepSpecialRule struct {
 	action string
 }
 
+// sshOp encodes one SSH endpoint action: path suffix, HTTP method, and the
+// qrdb-canonical (resource, action). No ssh:* permission family exists in the
+// qrdb registry; SSH key management maps to the nearest registered keys
+// permissions. A future qrdb ssh:* registration should replace this mapping.
+type sshOp struct {
+	suffix   string
+	method   string
+	resource string
+	action   string
+}
+
+// sshOps defines the per-endpoint mappings for the SSH key management surface
+// (go-xkms SSH SDK). Suffixes are ordered longest-first so the tier-based
+// matching resolves overlaps correctly (e.g. "/keys/import" beats "/keys/").
+var sshOps = []sshOp{
+	// Key CRUD, import, sign.
+	{"/keys/import", http.MethodPost, "keys", "import"},
+	{"/keys/", http.MethodGet, "keys", "get"},
+	{"/keys/", http.MethodDelete, "keys", "delete"},
+	{"/keys", http.MethodGet, "keys", "list"},
+	{"/keys", http.MethodPost, "keys", "create"},
+	{"/sign", http.MethodPost, "keys", "sign"},
+	// Known-hosts CRUD + verify.
+	{"/known-hosts/", http.MethodGet, "keys", "get"},
+	{"/known-hosts/", http.MethodDelete, "keys", "delete"},
+	{"/known-hosts", http.MethodGet, "keys", "list"},
+	{"/known-hosts", http.MethodPost, "keys", "create"},
+	// /verify matches both /known-hosts/{host}/verify and /authorized/verify.
+	{"/verify", http.MethodPost, "keys", "verify"},
+	// Authorized-keys emit: generating the authorized_keys file is a read/export.
+	{"/authorized", http.MethodPost, "keys", "get"},
+}
+
+// sshPrefixes lists both the canonical SSH mount and the xkms-SDK-client alias.
+// The alias lets CLIs set XKMSD_URL to the quicbaasd base and reuse the go-xkms
+// REST SSH client unchanged (it expects the /api/v1/xkms/v1/ssh path prefix).
+var sshPrefixes = []string{
+	"/api/v1/ssh",
+	"/api/v1/xkms/v1/ssh",
+}
+
+// buildSSHSpecialRules generates the pepSpecialRule entries for the SSH surface
+// from sshOps × sshPrefixes, keeping the per-endpoint source of truth in a
+// single slice and avoiding hand-written duplication.
+func buildSSHSpecialRules() []pepSpecialRule {
+	rules := make([]pepSpecialRule, 0, len(sshPrefixes)*len(sshOps))
+	for _, prefix := range sshPrefixes {
+		for _, op := range sshOps {
+			rules = append(rules, pepSpecialRule{
+				method:   op.method,
+				prefix:   prefix,
+				suffix:   op.suffix,
+				resource: op.resource,
+				action:   op.action,
+			})
+		}
+	}
+	return rules
+}
+
 // pepSpecialRulesBase holds the broker data-plane endpoints whose action is not
 // a plain CRUD verb. It is combined with the barrier-granular rules
 // (buildBarrierSpecialRules) into pepSpecialRules at package init time so the
@@ -260,6 +359,16 @@ type pepSpecialRule struct {
 // Each (resource, action) here is a registered qrdb permission
 // (go-qrdb/pkg/permission/broker_dataplane_scope.go).
 var pepSpecialRulesBase = []pepSpecialRule{
+	// ---- KMS key administration sub-actions ----
+	// These mirror the gRPC canon (authz_mapping.go KeyManagement entries) so
+	// REST and gRPC authorize the same verb identically: RevokeKey -> keys:delete,
+	// UpdateKeyMetadata -> keys:rotate, GetSupportedAlgorithms -> keys:list.
+	// GET /keys/{name}/metadata and /keys/{name}/public resolve to keys:get via
+	// the coarse /api/v1/kms prefix mapping and need no special rule.
+	{http.MethodPost, "/api/v1/kms", "/revoke", "keys", "delete"},
+	{http.MethodPut, "/api/v1/kms", "/metadata", "keys", "rotate"},
+	{http.MethodGet, "/api/v1/kms", "/algorithms", "keys", "list"},
+
 	// ---- Scheduler job lifecycle sub-actions ----
 	{http.MethodGet, "/api/v1/scheduler", "/jobs/", "scheduler", "read"},
 	{http.MethodGet, "/api/v1/scheduler", "/jobs", "scheduler", "list"},
@@ -308,6 +417,12 @@ var pepSpecialRulesBase = []pepSpecialRule{
 	{http.MethodPost, "/api/v1/orchestrator", "/tasks", "orchestrator", "task_create"},
 	{http.MethodPost, "/api/v1/orchestrator", "/jobs", "orchestrator", "job_start"},
 	{http.MethodPost, "/api/v1/orchestrator", "/agents", "orchestrator", "agent_register"},
+	// Agent lifecycle admin: disable maps to agent_remove (admin restriction on an
+	// agent slot); enable maps to agent_register (restoring the agent to service).
+	// These use the nearest qrdb-registered permissions since orchestrator:agent_disable
+	// and orchestrator:agent_enable are not yet in the qrdb permission registry.
+	{http.MethodPost, "/api/v1/orchestrator", "/disable", "orchestrator", "agent_remove"},
+	{http.MethodPost, "/api/v1/orchestrator", "/enable", "orchestrator", "agent_register"},
 
 	// ---- Object storage non-CRUD actions ----
 	{http.MethodPost, "/api/v1/objects", "/batch/get", "objstore", "batch"},
@@ -351,15 +466,68 @@ var pepSpecialRulesBase = []pepSpecialRule{
 	{http.MethodGet, "/api/v1/ollama", "/models", "ollama", "model_list"},
 	{http.MethodGet, "/api/v1/ollama", "/health", "ollama", "health"},
 
+	// ---- Cluster control plane: non-membership write actions ----
+	// Mirrors pkg/api/grpc/authz_mapping.go so REST and gRPC authorize cluster
+	// operations identically (multi-protocol parity). The coarse /api/v1/cluster
+	// entry already maps reads -> admin:status and node add/remove -> admin
+	// add_member/remove_member; these refine the data-movement verbs.
+	{http.MethodPost, "/api/v1/cluster", "/rebalance", "rebalance", "execute"},
+	{http.MethodGet, "/api/v1/cluster", "/rebalance/plan", "rebalance", "plan"},
+	{http.MethodGet, "/api/v1/cluster", "/rebalance/status", "rebalance", "report"},
+	{http.MethodPost, "/api/v1/cluster", "/migrate", "admin", "drain"},
+	{http.MethodDelete, "/api/v1/cluster", "/migrate", "admin", "drain"},
+	{http.MethodPost, "/api/v1/cluster", "/upgrade", "admin", "drain"},
+	{http.MethodPut, "/api/v1/cluster", "/replace", "admin", "add_member"},
+
+	// ---- Vector non-CRUD: search + namespace + index + admin ----
+	{http.MethodGet, "/api/v1/vector", "/health", "vector", "namespace_list"},
+	{http.MethodPost, "/api/v1/vector", "/search/similar", "vector", "search_similar"},
+	{http.MethodPost, "/api/v1/vector", "/search/by-id", "vector", "search_by_id"},
+	{http.MethodPost, "/api/v1/vector", "/hybrid-search", "vector", "hybrid_search"},
+	{http.MethodPost, "/api/v1/vector", "/search-by-metadata", "vector", "search_by_metadata"},
+	{http.MethodGet, "/api/v1/vector", "/namespaces", "vector", "namespace_list"},
+	{http.MethodPost, "/api/v1/vector", "/namespaces", "vector", "namespace_create"},
+	{http.MethodDelete, "/api/v1/vector", "/namespaces/", "vector", "namespace_delete"},
+	{http.MethodPost, "/api/v1/vector", "/index/rebuild", "vector", "rebuild_index"},
+	{http.MethodGet, "/api/v1/vector", "/index/progress", "vector", "get_rebuild_progress"},
+	{http.MethodGet, "/api/v1/vector", "/stats", "vector", "get_index_stats"},
+	{http.MethodPost, "/api/v1/vector", "/compact", "vector", "compact"},
+	{http.MethodPost, "/api/v1/vector", "/vectors/batch", "vector", "batch_upsert"},
+	{http.MethodDelete, "/api/v1/vector", "/vectors/batch", "vector", "batch_delete"},
+	{http.MethodPost, "/api/v1/vector", "/vectors", "vector", "upsert"},
+	{http.MethodGet, "/api/v1/vector", "/vectors", "vector", "list"},
+
+	// ---- Embedding generation + provider management ----
+	{http.MethodPost, "/api/v1/embedding", "/generate", "embedding", "embed"},
+	{http.MethodGet, "/api/v1/embedding", "/providers", "embedding", "list_models"},
+	{http.MethodPut, "/api/v1/embedding", "/providers/default", "embedding", "list_models"},
+	{http.MethodPut, "/api/v1/embedding", "/status", "embedding", "list_models"},
+
+	// ---- RAG document lifecycle + query ----
+	{http.MethodPost, "/api/v1/rag", "/query", "rag", "query"},
+	{http.MethodPost, "/api/v1/rag", "/context", "rag", "query"},
+	{http.MethodGet, "/api/v1/rag", "/documents", "rag", "list_documents"},
+	{http.MethodPost, "/api/v1/rag", "/documents", "rag", "ingest"},
+	{http.MethodPost, "/api/v1/rag", "/ingest", "rag", "ingest"},
+	{http.MethodPost, "/api/v1/rag", "/reindex", "rag", "ingest"},
+	{http.MethodDelete, "/api/v1/rag", "/documents/", "rag", "delete_document"},
+
 	// ---- Per-tenant barrier lifecycle ----
 	// These leaf actions (tier 2) win over the surface-wide "/api/v1/tenants"
 	// prefix mapping (resource "tenants"), so per-tenant barrier ops authorize
 	// as the tenant_barrier resource. unseal-share maps to the unseal action.
+	{http.MethodPost, "/api/v1/tenants", "/barrier/enable-encryption", "tenant_barrier", "enable_encryption"},
 	{http.MethodPost, "/api/v1/tenants", "/barrier/init", "tenant_barrier", "init"},
 	{http.MethodPost, "/api/v1/tenants", "/barrier/unseal-share", "tenant_barrier", "unseal"},
 	{http.MethodPost, "/api/v1/tenants", "/barrier/unseal", "tenant_barrier", "unseal"},
 	{http.MethodPost, "/api/v1/tenants", "/barrier/seal", "tenant_barrier", "seal"},
 	{http.MethodGet, "/api/v1/tenants", "/barrier/status", "tenant_barrier", "status"},
+	// ---- Per-tenant engine governance ----
+	// PATCH /api/v1/tenants/{id}/quotas and /entitlements are privileged
+	// plan-management operations that govern engine-side resource limits and
+	// feature access. They win over the surface-wide "tenants:update" mapping.
+	{http.MethodPatch, "/api/v1/tenants", "/quotas", "tenants", "set_quotas"},
+	{http.MethodPatch, "/api/v1/tenants", "/entitlements", "tenants", "set_entitlements"},
 }
 
 // pepSpecialRules is the active special-rule list consulted by
@@ -369,9 +537,11 @@ var pepSpecialRulesBase = []pepSpecialRule{
 // a single source of truth for the 13 barrier operations.
 var pepSpecialRules = func() []pepSpecialRule {
 	barrier := buildBarrierSpecialRules()
-	combined := make([]pepSpecialRule, 0, len(pepSpecialRulesBase)+len(barrier))
+	ssh := buildSSHSpecialRules()
+	combined := make([]pepSpecialRule, 0, len(pepSpecialRulesBase)+len(barrier)+len(ssh))
 	combined = append(combined, pepSpecialRulesBase...)
 	combined = append(combined, barrier...)
+	combined = append(combined, ssh...)
 	return combined
 }()
 

@@ -1,0 +1,34 @@
+# ACP live-suite override for the dockerized e2e.
+#
+# Layered on docker-compose.e2e.yml to run the chromium-acp session_lifecycle
+# suite with the open-source opencode agent backed by a remote ollama GPU host:
+#
+#   make test-e2e-acp-docker GPU_HOST=198.51.100.91
+#
+# Adds opencode to the image (WITH_OPENCODE=1) and mounts the host Docker socket
+# so the orchestrator's container-sandbox spawn path can launch sibling
+# containers when QUICBAAS_E2E_SANDBOX=1 (the production-safe paradigm). The raw
+# (in-container subprocess) path needs no socket.
+
+services:
+  e2e:
+    build:
+      args:
+        WITH_OPENCODE: "1"
+    environment:
+      # Tell the session fixtures to spawn opencode with an ollama model.
+      QUICBAAS_E2E_ACP_BACKEND: "opencode"
+      QUICBAAS_E2E_ACP_MODEL: "ollama/qwen3:1.7b"
+      QUICBAAS_E2E_ACP_MODEL_BARE: "qwen3:1.7b"
+      # Set to 1 to exercise the container-sandbox spawn path.
+      QUICBAAS_E2E_SANDBOX: "${QUICBAAS_E2E_SANDBOX:-0}"
+      # Prebuilt sandbox agent image (opencode + baked ollama provider config)
+      # the daemon spawns as a sibling container per session. Built on the host
+      # docker by the Makefile target before the compose run, with the ollama
+      # baseURL baked in. run-e2e.sh forwards it to the daemon's
+      # --embedded-agent-sandbox-image flag.
+      QUICBAAS_E2E_SANDBOX_IMAGE: "${QUICBAAS_E2E_SANDBOX_IMAGE:-quicbaas-e2e-sandbox-agent:latest}"
+    volumes:
+      # Required only for the sandboxed path so the daemon can spawn sibling
+      # agent containers. Harmless for the raw path.
+      - /var/run/docker.sock:/var/run/docker.sock

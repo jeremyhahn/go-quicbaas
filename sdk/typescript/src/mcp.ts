@@ -268,6 +268,9 @@ export class McpClient implements Client {
   readonly tenantBarrier: any = null;
   readonly ceremony: CeremonyClient;
   readonly bootstrap: BootstrapClient;
+  // cluster status/management is exposed over the REST transport; not wired here.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly cluster: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly seal: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

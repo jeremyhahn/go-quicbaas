@@ -100,6 +100,12 @@ func registerOrchestratorRoutes(s *Server, r chi.Router) {
 		r.Delete("/agents/{agentID}", s.HandleOrchestratorRemoveAgent)
 		r.Post("/agents/{agentID}/heartbeat", s.HandleOrchestratorAgentHeartbeat)
 		r.Get("/agents/{agentID}/backends/{backendName}/models", s.HandleOrchestratorListBackendModels)
+
+		// Agent lifecycle admin — disable/enable are co-located with the rest of
+		// the /orchestrator/agents surface so the SDK (which always prepends
+		// /api/v1/orchestrator) targets a path the server actually serves.
+		r.Post("/agents/{agentID}/disable", s.HandleDisableAgent)
+		r.Post("/agents/{agentID}/enable", s.HandleEnableAgent)
 	})
 }
 
@@ -195,6 +201,21 @@ func (s *Server) HandleOrchestratorSpawn(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// The /orchestrator/sessions endpoint creates conversational, multi-turn
+	// sessions (the Sessions UI). These MUST be persistent so CLI-mode backends
+	// register a durable session that Prompt/Status/Close can resolve; a
+	// one-shot spawn registers no durable session and the immediate prompt
+	// fails with "session not found". Default Persistent to true here when the
+	// caller did not explicitly set it, so every transport that reaches the
+	// orchestrator via REST gets correct multi-turn behavior. Callers that want
+	// the stateless one-shot behavior use the Inference path (a separate
+	// endpoint), or may opt out explicitly with "persistent": false. A JSON
+	// bool cannot distinguish absent from explicit-false, so probe the raw body
+	// for an explicit key before applying the default.
+	if !spawnRequestHasExplicitPersistent(body) {
+		req.Persistent = true
+	}
+
 	// Thread tenant into the orchestrator context the same way every other
 	// orchestrator handler does — the tenant guard reads it from ctx and
 	// rejects the request otherwise. Derivation precedence (query param ->
@@ -226,6 +247,21 @@ func (s *Server) HandleOrchestratorSpawn(w http.ResponseWriter, r *http.Request)
 	}
 
 	RespondCreated(w, r, resp)
+}
+
+// spawnRequestHasExplicitPersistent reports whether the raw spawn request body
+// carries an explicit "persistent" field. It distinguishes an absent field
+// (apply the server default) from an explicit "persistent": false (honor the
+// caller's opt-out) — a distinction a plain struct decode loses for bool zero
+// values. A malformed body is treated as "not explicit"; the surrounding
+// handler has already validated the JSON, so this only affects the default.
+func spawnRequestHasExplicitPersistent(body []byte) bool {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return false
+	}
+	_, ok := probe["persistent"]
+	return ok
 }
 
 // HandleOrchestratorPrompt handles POST /api/v1/orchestrator/sessions/{sessionID}/prompt - Prompt a session.

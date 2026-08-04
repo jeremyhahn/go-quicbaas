@@ -53,7 +53,7 @@ COPY . ./go-quicbaas
 # single source of truth means individual go.mod files do not need any
 # Docker-specific replace shimming.
 RUN { \
-        echo 'go 1.26.4'; \
+        echo 'go 1.26.5'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \

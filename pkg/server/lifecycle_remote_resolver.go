@@ -433,7 +433,7 @@ func (t *centralOAuth2TokenSource) refresh() (*oauth2.Token, error) {
 	if t.loopback {
 		lbClient, lbErr := loopbackTrustedClient(t.caCertPath)
 		if lbErr != nil {
-			return nil, fmt.Errorf("loopback token client: %w", lbErr)
+			return nil, &ServerCauseError{Message: "loopback token client", Cause: lbErr}
 		}
 		client = lbClient
 	}
@@ -444,7 +444,7 @@ func (t *centralOAuth2TokenSource) refresh() (*oauth2.Token, error) {
 	defer func() { _, _ = io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("central token exchange: status=%d", resp.StatusCode)
+		return nil, &ServerMessageError{Message: fmt.Sprintf("central token exchange: status=%d", resp.StatusCode)}
 	}
 
 	// Minimal decode — we only need access_token + expires_in.
@@ -499,15 +499,15 @@ func isLoopback(rawURL string) bool {
 // error — there is no fallback to insecure mode.
 func loopbackTrustedClient(caCertPath string) (*http.Client, error) {
 	if caCertPath == "" {
-		return nil, fmt.Errorf("loopbackTrustedClient: caCertPath is required (QuicBaaS bans insecure TLS)")
+		return nil, &ServerMessageError{Message: "loopbackTrustedClient: caCertPath is required (QuicBaaS bans insecure TLS)"}
 	}
 	caPEM, err := os.ReadFile(caCertPath) //nolint:gosec // caCertPath comes from server config
 	if err != nil {
-		return nil, fmt.Errorf("read ca-chain %s: %w", caCertPath, err)
+		return nil, &ServerCauseError{Message: fmt.Sprintf("read ca-chain %s", caCertPath), Cause: err}
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("no PEM certs in ca-chain %s", caCertPath)
+		return nil, &ServerMessageError{Message: fmt.Sprintf("no PEM certs in ca-chain %s", caCertPath)}
 	}
 	return &http.Client{
 		Timeout: 15 * time.Second,

@@ -35,12 +35,20 @@ import (
 // error telling the operator where to run the command from.
 var embeddedAgentCARef atomic.Pointer[xkmssdk.TrustedCA]
 
+// embeddedMCPEndpointRef holds the embedded server's reachable MCP endpoint
+// (https://host:port/mcp), published when the server starts and cleared on
+// Stop. The agent-deploy factory reads it via the resolveDeployMCPEndpoint
+// seam so deployed daemons are started with --mcp-endpoint. Empty when the
+// embedded server has MCP disabled or no reachable host could be derived.
+var embeddedMCPEndpointRef atomic.Pointer[string]
+
 // init installs the embedded cert-issuer resolver so `quicbaas agent
 // deploy` talks to the in-process CA when the desktop build is active.
 // The CLI-only build preserves its default resolver (which returns a
 // typed error when invoked).
 func init() {
 	resolveAgentCertIssuer = resolveEmbeddedAgentCertIssuer
+	resolveDeployMCPEndpoint = resolveEmbeddedDeployMCPEndpoint
 }
 
 // installEmbeddedAgentCA publishes the running server's CA into the
@@ -55,6 +63,33 @@ func installEmbeddedAgentCA(ca xkmssdk.TrustedCA) {
 // server that owned them.
 func uninstallEmbeddedAgentCA() {
 	embeddedAgentCARef.Store(nil)
+}
+
+// installEmbeddedMCPEndpoint publishes the embedded server's reachable MCP
+// endpoint into the process-wide seam so `quicbaas agent deploy` can stamp it
+// onto each deployed daemon's command line. An empty endpoint clears the seam
+// (MCP disabled or no reachable host), leaving the "quicbaas" preset
+// unresolved on deployed agents.
+func installEmbeddedMCPEndpoint(endpoint string) {
+	if endpoint == "" {
+		embeddedMCPEndpointRef.Store(nil)
+		return
+	}
+	embeddedMCPEndpointRef.Store(&endpoint)
+}
+
+// uninstallEmbeddedMCPEndpoint clears the MCP endpoint seam on server Stop.
+func uninstallEmbeddedMCPEndpoint() {
+	embeddedMCPEndpointRef.Store(nil)
+}
+
+// resolveEmbeddedDeployMCPEndpoint returns the currently-published embedded MCP
+// endpoint, or empty when none is set.
+func resolveEmbeddedDeployMCPEndpoint() string {
+	if p := embeddedMCPEndpointRef.Load(); p != nil {
+		return *p
+	}
+	return ""
 }
 
 // resolveEmbeddedAgentCertIssuer wraps the currently-installed embedded

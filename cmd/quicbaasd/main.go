@@ -55,12 +55,15 @@ var (
 	unixSocket  string
 
 	// Embedded agent flags.
-	embeddedAgentEnabled      bool
-	embeddedAgentBackends     []string
-	embeddedAgentOllamaURL    string
-	embeddedAgentHostAffinity string
-	embeddedAgentGPU          bool
-	embeddedAgentDataDir      string
+	embeddedAgentEnabled       bool
+	embeddedAgentBackends      []string
+	embeddedAgentOllamaURL     string
+	embeddedAgentHostAffinity  string
+	embeddedAgentGPU           bool
+	embeddedAgentDataDir       string
+	embeddedAgentSandboxImage  string
+	embeddedAgentSandboxPolicy string
+	embeddedAgentAutoPull      bool
 
 	// Discovery flags for node command.
 	discoveryType string
@@ -237,6 +240,9 @@ func addServerFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&embeddedAgentHostAffinity, "embedded-agent-host-affinity", "", "Host-affinity tag for the embedded agent (default: hostname)")
 	cmd.Flags().BoolVar(&embeddedAgentGPU, "embedded-agent-gpu", false, "Advertise GPU capability for the embedded agent")
 	cmd.Flags().StringVar(&embeddedAgentDataDir, "embedded-agent-data-dir", "", "Working directory for embedded agent session state (default: <data-dir>/embedded-agent)")
+	cmd.Flags().StringVar(&embeddedAgentSandboxImage, "embedded-agent-sandbox-image", "", "OCI image the embedded agent spawns for sandboxed sessions (must have the backend agent on PATH)")
+	cmd.Flags().StringVar(&embeddedAgentSandboxPolicy, "embedded-agent-sandbox-policy", "", "Embedded agent sandbox policy: opt-in (default), preferred, or required")
+	cmd.Flags().BoolVar(&embeddedAgentAutoPull, "embedded-agent-auto-pull", false, "Pre-pull the embedded agent sandbox image(s) at startup (leave off for locally-built images)")
 }
 
 // addRaftFlags adds Raft-specific flags to a command.
@@ -463,6 +469,10 @@ func bindEnvVars() {
 	_ = viper.BindEnv("server.embedded_agent.host_affinity")
 	_ = viper.BindEnv("server.embedded_agent.gpu_available")
 	_ = viper.BindEnv("server.embedded_agent.data_dir")
+	_ = viper.BindEnv("server.embedded_agent.sandbox_image")
+	_ = viper.BindEnv("server.embedded_agent.sandbox_policy")
+	_ = viper.BindEnv("server.embedded_agent.image_registry")
+	_ = viper.BindEnv("server.embedded_agent.auto_pull")
 }
 
 // parseSpecialEnvVars parses environment variables that viper doesn't handle automatically.
@@ -684,6 +694,15 @@ func applyServerFlags(cmd *cobra.Command) {
 	}
 	if cmd.Flags().Changed("embedded-agent-gpu") {
 		cfg.Server.EmbeddedAgent.GPUAvailable = embeddedAgentGPU
+	}
+	if cmd.Flags().Changed("embedded-agent-sandbox-image") {
+		cfg.Server.EmbeddedAgent.SandboxImage = embeddedAgentSandboxImage
+	}
+	if cmd.Flags().Changed("embedded-agent-sandbox-policy") {
+		cfg.Server.EmbeddedAgent.SandboxPolicy = embeddedAgentSandboxPolicy
+	}
+	if cmd.Flags().Changed("embedded-agent-auto-pull") {
+		cfg.Server.EmbeddedAgent.AutoPull = embeddedAgentAutoPull
 	}
 	if cmd.Flags().Changed("embedded-agent-data-dir") {
 		cfg.Server.EmbeddedAgent.DataDir = embeddedAgentDataDir

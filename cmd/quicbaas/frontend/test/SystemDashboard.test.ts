@@ -213,9 +213,12 @@ describe('SystemDashboard — daemon liveness wiring', () => {
     connectionStoreMock.connected = true;
   });
 
-  it('renders Overview heading', () => {
+  it('renders the "System Status" page heading', () => {
     render(SystemDashboard);
-    expect(screen.getByText('Overview')).toBeInTheDocument();
+    // The PageHeader title is "System Status" (the canonical title in
+    // page-header-consistency.test and the dashboard_layout e2e specs); the
+    // "Overview" label is the sidebar section / breadcrumb, not the page title.
+    expect(screen.getByText('System Status')).toBeInTheDocument();
   });
 
   it('probes /api/v1/health/live for daemon status', async () => {
@@ -523,6 +526,10 @@ describe('SystemDashboard — #85 overview dashboard sections', () => {
         last_activity: 1700000100,
       },
     ];
+    // The "Active Sessions" stat reads its count from sessionStore (the recent
+    // list reads orchestratorStore); seed both so the holistic dashboard is
+    // internally consistent.
+    sessionStoreMock.sessions = [{ session_id: 'sess-aaa' }, { session_id: 'sess-bbb' }];
 
     // One workflow
     mockListWorkflows.mockResolvedValue({ workflows: [{ name: 'dev-sprint' }] });

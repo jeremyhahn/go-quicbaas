@@ -233,17 +233,15 @@ serialisation, no network roundtrip.
 |----------|-----------|---------------|--------------------|
 | `KV` | Yes | Yes | All KV ops via `Security()`-adjacent qrdb paths |
 | `Admin` | Yes | Yes | `Cluster()` and `Operations()` admin reads |
-| `Barrier` | No | **No (today)** | `Security().Barrier()` returns transport NilServiceError. The bootstrap ceremony uses its own internal barrier that is not user-visible; exposing it requires plumbing `server.bootstrap.StorageBarrier` up to the wiring layer. |
+| `Barrier` | No | Yes | Full barrier surface: `status`, `init`, `unseal`, `seal`, `rekey`, `recovery`, `enable-encryption` (system and per-tenant) |
 | `Ceremony` | No | Yes (when ceremonyStack present) | `Security().Ceremony()` |
 | `Credential` | No | Yes (when ceremonyStack present) | `Security().Credentials()` |
 | `Tenant`, `CustodianGroup`, `Share`, `AuthFactor`, `UserAuthFactor` | No | Not yet | Reserved for forthcoming embedded-mode work |
 
-The "today" note for `Barrier` is the only acknowledged limitation:
-embedded ceremony + credential are fully wired, but the human-driven
-barrier verbs (`quicbaas barrier status / unseal / seal / rekey`)
-require a network listener until the bootstrap barrier is hoisted.
-The CLI prints a precise error pointing at `embedded server` as the
-unsupported stage when this case is hit.
+All servicers listed in the "Wired by CLI" = Yes rows are fully operational in embedded mode,
+including the complete barrier surface. The bootstrap barrier is wired to the embedded qrdb
+node, enabling all barrier operations (initialization, seal/unseal, rekey, recovery, and
+enable-encryption for both system and per-tenant scopes) without a network listener.
 
 ## Caller contract
 

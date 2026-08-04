@@ -360,9 +360,9 @@ client, err := quic.NewClient("localhost:4433",
 ```go
 resp, err := client.Get(ctx, req)
 if err != nil {
-    var dragonErr *errors.DragonError
-    if errors.As(err, &dragonErr) {
-        switch dragonErr.Code {
+    var qbErr *errors.QBError
+    if errors.As(err, &qbErr) {
+        switch qbErr.Code {
         case errors.ErrNotFound:
             // Handle not found
         case errors.ErrUnauthorized:

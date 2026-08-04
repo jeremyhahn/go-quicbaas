@@ -4,7 +4,7 @@
   Shows a subtle typing indicator when the assistant is streaming.
 -->
 <script lang="ts">
-  import { sessionStore } from '../../stores/sessionStore.svelte.ts';
+  import { sessionStore, appendLocalPrompt, removeLocalPrompt } from '../../stores/sessionStore.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import type { ParsedSessionEvent } from '../../stores/sessionStore.svelte.ts';
 
@@ -51,6 +51,12 @@
     errorMessage = '';
     promptText = '';
 
+    // Render the prompt immediately as a chat bubble instead of waiting for the
+    // server's prompt_submitted event to round-trip back over the SSE tail. The
+    // live tail reconciles this placeholder with the server echo (dedup by text)
+    // so the bubble never double-renders.
+    appendLocalPrompt(text);
+
     try {
       const client = await getSDKClient();
       await client.orchestrator.promptSession({
@@ -59,8 +65,10 @@
       });
     } catch (err: unknown) {
       errorMessage = err instanceof Error ? err.message : String(err);
-      // Restore the text so the user doesn't lose it.
+      // Restore the text so the user doesn't lose it, and roll back the
+      // optimistic bubble unless the SSE echo has already confirmed it.
       promptText = text;
+      removeLocalPrompt(text);
     } finally {
       inFlight = false;
     }

@@ -109,11 +109,7 @@ func (r *LocalKMSResolver) Resolve(ctx context.Context, raw string) (*SecretValu
 		return nil, NewResolutionFailedError(op, raw, "failed to retrieve secret from KMS", err)
 	}
 
-	return &SecretValue{
-		Raw:      raw,
-		Value:    string(secretData),
-		Strategy: StrategyLocalKMS,
-	}, nil
+	return NewSecretValue(raw, secretData, StrategyLocalKMS), nil
 }
 
 // Ensure LocalKMSResolver implements SecretResolver.

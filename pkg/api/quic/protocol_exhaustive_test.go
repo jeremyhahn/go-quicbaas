@@ -341,6 +341,9 @@ func TestOpcodeToString_Exhaustive(t *testing.T) {
 		{"OpSecretsGetRotation", OpSecretsGetRotation, "SecretsGetRotation"},
 		{"OpSecretsUpdateStatus", OpSecretsUpdateStatus, "SecretsUpdateStatus"},
 
+		// Secrets Sub-Dispatch Operations
+		{"OpSecretsSubDispatch", OpSecretsSubDispatch, "SecretsSubDispatch"},
+
 		// Transit Operations
 		{"OpCryptoEncrypt", OpCryptoEncrypt, "CryptoEncrypt"},
 		{"OpCryptoDecrypt", OpCryptoDecrypt, "CryptoDecrypt"},

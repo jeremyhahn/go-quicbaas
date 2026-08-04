@@ -235,6 +235,25 @@ type SpawnSessionRequest struct {
 	// to the operator-level orchestration.host_affinity.mode default when
 	// false.
 	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
+
+	// MCPServers preconfigures MCP servers for the spawned agent (e.g. the
+	// QuicBaaS MCP endpoint, giving the agent cert-authenticated access to
+	// platform tools). Serialized as mcp_servers; the server forwards each
+	// server's connection material to the spawned agent's environment.
+	MCPServers []MCPServerConfig `json:"mcp_servers,omitempty"`
+}
+
+// MCPServerConfig declares an MCP server made available to a spawned agent.
+// Mirrors orchestration.MCPServerConfig: an HTTP server (such as the QuicBaaS
+// MCP endpoint) is described by URL + Env; a stdio server by Command + Args.
+// Env carries connection material (e.g. the agent's mTLS cert/key file paths)
+// and round-trips losslessly to the spawned agent.
+type MCPServerConfig struct {
+	Name    string            `json:"name"`
+	URL     string            `json:"url,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
 }
 
 // SpawnSessionResponse is the response from creating a new session.

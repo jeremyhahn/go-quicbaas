@@ -19,20 +19,26 @@ package acme
 
 import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	acmeclient "github.com/jeremyhahn/go-xkms/pkg/acme/client"
+	acmeentities "github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 )
 
 // Type aliases
 type (
-	AccountClient                 = xkmsacme.AccountClient
-	ACMEAccountEntity             = xkmsacme.ACMEAccountEntity
-	ACMEAuthorizationEntity       = xkmsacme.ACMEAuthorizationEntity
-	ACMECertificateEntity         = xkmsacme.ACMECertificateEntity
-	ACMECertificateRequest        = xkmsacme.ACMECertificateRequest
-	ACMEChallengeEntity           = xkmsacme.ACMEChallengeEntity
-	ACMEChallengeVerifierFunc     = xkmsacme.ACMEChallengeVerifierFunc
-	ACMEClient                    = xkmsacme.ACMEClient
-	ACMEClientConfig              = xkmsacme.ACMEClientConfig
+	AccountClient             = xkmsacme.AccountClient
+	ACMEAccountEntity         = xkmsacme.ACMEAccountEntity
+	ACMEAuthorizationEntity   = xkmsacme.ACMEAuthorizationEntity
+	ACMECertificateEntity     = xkmsacme.ACMECertificateEntity
+	ACMECertificateRequest    = xkmsacme.ACMECertificateRequest
+	ACMEChallengeEntity       = xkmsacme.ACMEChallengeEntity
+	ACMEChallengeVerifierFunc = xkmsacme.ACMEChallengeVerifierFunc
+	ACMEClient                = xkmsacme.ACMEClient
+	ACMEClientConfig          = xkmsacme.ACMEClientConfig
+	// ACMEClientYAMLConfig is the `acme.client` YAML section referenced by
+	// ACMEConfig.Client. It is distinct from ACMEClientConfig, which is the
+	// runtime/transport configuration handed to NewACMEClient.
+	ACMEClientYAMLConfig          = acmeclient.ACMEClientConfig
 	ACMEClientParams              = xkmsacme.ACMEClientParams
 	ACMEConfig                    = xkmsacme.ACMEConfig
 	ACMECrossSignConfig           = xkmsacme.ACMECrossSignConfig
@@ -102,6 +108,14 @@ const (
 	CAKMSKeyUsageVerify     = xkmsacme.CAKMSKeyUsageVerify
 	DAOConditionValue       = xkmsacme.DAOConditionValue
 	DAOOpNotEqual           = xkmsacme.DAOOpNotEqual
+
+	// ACMETenantStatus* mirror the lifecycle states carried by
+	// ACMETenant.Status. The go-xkms SDK frontage aliases the Tenant
+	// entity but not its status constants, so they are promoted from
+	// the canonical entities package here.
+	ACMETenantStatusActive    = acmeentities.TenantStatusActive
+	ACMETenantStatusSuspended = acmeentities.TenantStatusSuspended
+	ACMETenantStatusDeleted   = acmeentities.TenantStatusDeleted
 )
 
 // Variables and re-exported function values

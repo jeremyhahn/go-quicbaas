@@ -36,7 +36,7 @@ COPY . ./go-quicbaas
 
 # Pruned go.work — see Dockerfile.node for rationale.
 RUN { \
-        echo 'go 1.26.4'; \
+        echo 'go 1.26.5'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \
@@ -135,7 +135,7 @@ COPY --from=workspace go-frost       ./go-frost
 COPY . ./go-quicbaas
 
 RUN { \
-        echo 'go 1.26.4'; \
+        echo 'go 1.26.5'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \

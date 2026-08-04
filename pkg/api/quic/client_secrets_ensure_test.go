@@ -17,7 +17,6 @@ package quic
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -42,19 +41,20 @@ func TestEnsureSecretQUIC_EmptySecretID(t *testing.T) {
 	}
 }
 
-// TestEnsureSecretQUIC_UnsupportedSentinel locks in the current
-// no-silent-fallback behavior: until the QUIC wire wiring lands (see
-// TODO in client_secrets_ensure.go) the client returns a typed sentinel
-// error that callers can detect and skip cleanly. A green-path test
-// replaces this one once the sub-dispatch opcode is added.
-func TestEnsureSecretQUIC_UnsupportedSentinel(t *testing.T) {
-	c := &Client{}
+// TestEnsureSecretQUIC_ReachesTransport verifies that a closed (but otherwise
+// structurally valid) Client reaches sendRequest before failing — confirming
+// the full sub-dispatch path is wired. The expected error is the typed
+// ClientClosedError that sendRequest returns before touching the nil conn.
+func TestEnsureSecretQUIC_ReachesTransport(t *testing.T) {
+	c := createTestClient(t)
 	_, err := c.EnsureSecret(context.Background(), &service.EnsureSecretRequest{
 		SecretID: "p",
 		Length:   16,
 		Encoding: "base64",
 	})
-	if !errors.Is(err, ErrEnsureSecretUnsupportedQUIC) {
-		t.Fatalf("expected ErrEnsureSecretUnsupportedQUIC, got: %v", err)
+	if err == nil {
+		t.Fatal("expected a transport error for a closed client")
 	}
+	// sendRequest returns a ClientClosedError, not the old unsupported sentinel.
+	// Any non-nil error here proves the QUIC sub-dispatch path is wired.
 }

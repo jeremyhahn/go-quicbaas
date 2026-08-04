@@ -85,10 +85,13 @@ var (
 	newRetentionWorkerFn   = catalog.NewRetentionWorker
 	closeBackupMgrFn       = func(m *backup.BackupManager) error { return m.Close() }
 	// Seams for KMS constructor functions in startKMS.
-	newKMSKeyStorage   = xkmssdk.NewMemoryBackend
-	newSoftwareBackend = xkmssdk.NewSoftwareBackend
-	newXKMSKeystore    = func(cfg *xkmssdk.ServiceBackendConfig) (xkmssdk.ServiceBackend, error) {
-		return xkmssdk.NewServiceBackend(cfg)
+	newKMSKeyStorage = xkmssdk.NewMemoryBackend
+	// buildKMSServiceBackendFn resolves and constructs the KMS service backend
+	// via the central BackendResolver, injecting the persistent key store so KMS
+	// keys survive restarts. It is a seam so tests can force a construction
+	// failure without a real TPM/HSM.
+	buildKMSServiceBackendFn = func(r *BackendResolver, spec BackendSpec, store xkmssdk.StorageBackend) (xkmssdk.ServiceBackend, error) {
+		return r.ServiceBackendWithStore(spec, store)
 	}
 	initXKMS             = dbxkms.Initialize
 	newKMSBackendFactory = kms.NewBackendFactory
@@ -134,6 +137,106 @@ func (s *Server) optionalMTLSClientAuth() tls.ClientAuthType {
 		return tls.RequireAndVerifyClientCert
 	}
 	return tls.VerifyClientCertIfGiven
+}
+
+// appendPlatformClientCAs is the full-mTLS counterpart of the opportunistic-mTLS
+// branch in initializeCA. When the operator sets Security.TLSClientAuth, every
+// connection on the shared in-memory tls.Config (the one the REST, gRPC, QUIC and
+// MCP listeners all clone) must present a CA-signed client certificate. This
+// helper guarantees the platform xkms CA bundle is present in ClientCAs so client
+// certificates issued by the platform CA — notably the agent mTLS certs
+// (OU=agents) consumed by the MCP agent authenticator — chain-verify and populate
+// r.TLS.VerifiedChains in that posture too.
+//
+// The xkms bundle is APPENDED to whatever client-CA pool is already on the config
+// (the pool seeded by xkms ServerTLSConfig, or an operator-supplied pool) rather
+// than replacing it, so operator clients and platform agents both verify.
+func (s *Server) appendPlatformClientCAs(tlsConfig *tls.Config) error {
+	if s.xkmsCA != nil {
+		caBundle, err := s.xkmsCA.CABundle()
+		if err != nil {
+			return api.NewOperationFailedError("get xkms CA bundle for client auth", err)
+		}
+		if len(caBundle) > 0 {
+			if tlsConfig.ClientCAs == nil {
+				tlsConfig.ClientCAs = x509.NewCertPool()
+			}
+			if !tlsConfig.ClientCAs.AppendCertsFromPEM(caBundle) {
+				return api.NewInvalidFormatError("xkms CA bundle", nil)
+			}
+		}
+	}
+	tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	s.logger.Info("TLS configured with mutual TLS (client certificate required, platform CA trusted)")
+	return nil
+}
+
+// resolveCASigningSpec builds the BackendSpec for the CA SIGNING key only.
+// Precedence, highest first:
+//  1. crypto.subsystems.ca   (per-subsystem override)
+//  2. crypto.backend         (process-wide default)
+//  3. ca.keystore_type       (legacy CA-local field)
+//  4. "" / auto              (hardware-prefer: TPM2 if present, else software)
+//
+// KeyRef falls back from the CA subsystem ref to the process-wide crypto ref.
+// This drives ONLY the CA signing key; the TLS server key is always software
+// (it must be exportable for transport) and is resolved independently.
+func (s *Server) resolveCASigningSpec() BackendSpec {
+	spec := BackendSpec{
+		Backend: s.config.Crypto.Subsystems.CA.Backend,
+		KeyRef:  s.config.Crypto.Subsystems.CA.KeyRef,
+	}
+	if spec.Backend == "" {
+		spec.Backend = s.config.Crypto.Backend
+	}
+	if spec.Backend == "" {
+		spec.Backend = config.BackendType(s.config.CA.KeystoreType)
+	}
+	if spec.KeyRef == "" {
+		spec.KeyRef = s.config.Crypto.KeyRef
+	}
+	return spec
+}
+
+// caBackendForStore builds the per-key CA backend-resolution closure passed to
+// the go-xkms CA as Params.BackendForStore. It is invoked once per unique
+// StoreType in the CA identity's Keys slice. The software StoreType always maps
+// back to the supplied PKCS#8 software backend so the CA's leaf/TLS keys (which
+// the CA generates through ca.keyStore) stay software and exportable; every
+// other StoreType delegates to the central BackendResolver, which constructs
+// the configured backend (e.g. tpm2) or surfaces a typed BackendNotCompiledError
+// for an uncompiled one — never a silent software downgrade.
+func (s *Server) caBackendForStore(
+	softwareBackend xkmssdk.ServiceBackend,
+	caSpec BackendSpec,
+	resolver *BackendResolver,
+) xkmssdk.TrustedCABackendForStoreFunc {
+	return func(cn string, storeType xkmssdk.StoreType) (xkmssdk.ServiceBackend, error) {
+		if storeType == xkmssdk.StoreSoftware {
+			return softwareBackend, nil
+		}
+		return resolver.ServiceBackend(caSpec)
+	}
+}
+
+// resolveCAStoreType resolves the go-xkms StoreType for the CA SIGNING key.
+//
+// Empty/auto keeps the conservative software default: the CA signing key is the
+// trust root for every certificate this node issues, so it is never silently
+// auto-promoted to hardware on a TPM-equipped host — only an EXPLICIT operator
+// backend (crypto.subsystems.ca / crypto.backend / ca.keystore_type) selects a
+// non-software store type. An explicit non-software type is now fully honored:
+// initializeCA wires Params.BackendForStore (per-key routing) so the CA signing
+// key physically lands in the configured backend (e.g. tpm2) while the TLS
+// server LEAF key stays software. Resolution routes through the central
+// BackendResolver so a configured-but-not-compiled backend surfaces
+// BackendNotCompiledError instead of silently downgrading to software.
+func (s *Server) resolveCAStoreType() (xkmssdk.StoreType, error) {
+	spec := s.resolveCASigningSpec()
+	if config.IsAutoBackend(spec.Backend) {
+		return xkmssdk.StoreSoftware, nil
+	}
+	return NewBackendResolver(s.config).StoreType(spec)
 }
 
 func (s *Server) initializeCA() error {
@@ -187,8 +290,16 @@ func (s *Server) initializeCA() error {
 		return api.NewOperationFailedError("create cert storage", err)
 	}
 
-	// Create PKCS#8 backend for key operations
-	pkcs8Backend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{KeyStorage: keyStorage})
+	// Create PKCS#8 backend for key operations.
+	// AllowPlaintextKeys is true when no RootKeyPassword is configured,
+	// preserving backward-compatible unencrypted key storage for deployments
+	// that rely on filesystem/volume-level encryption instead of a key
+	// password. When RootKeyPassword is set the backend rejects plaintext
+	// storage, enforcing that the CA signing key is always password-protected.
+	pkcs8Backend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: s.config.CA.RootKeyPassword == "",
+	})
 	if err != nil {
 		return api.NewOperationFailedError("create PKCS#8 backend", err)
 	}
@@ -211,6 +322,32 @@ func (s *Server) initializeCA() error {
 		return api.NewOperationFailedError("create cert store", err)
 	}
 
+	// Resolve the CA SIGNING-key store from crypto config (see
+	// resolveCASigningSpec for precedence). An EXPLICIT backend
+	// (crypto.subsystems.ca / crypto.backend / ca.keystore_type) drives the CA
+	// store type through the central resolver, so a configured-but-not-compiled
+	// backend (e.g. pkcs11 without -tags pkcs11) surfaces the resolver's typed
+	// BackendNotCompiledError instead of silently downgrading to software.
+	//
+	// Empty/auto keeps the conservative SOFTWARE default (the CA trust root is
+	// never auto-promoted to hardware). An explicit non-software type now lands
+	// the CA SIGNING key in that backend via Params.BackendForStore (wired
+	// below); only the CA signing key routes there — the TLS SERVER (leaf) key
+	// always stays software and exportable.
+	caStoreType, err := s.resolveCAStoreType()
+	if err != nil {
+		return api.NewOperationFailedError("resolve CA keystore type", err)
+	}
+
+	// Build and store the unified secret registry now that the qrdb node is
+	// online (initializeCA runs after the node init switch). The registry is
+	// built lazily: if a caller (or test) has already injected a registry via
+	// s.secretRegistry, it is left intact. In production this path is always
+	// a first-build because secretRegistry is nil at construction time.
+	if s.secretRegistry == nil {
+		s.secretRegistry = s.buildSecretRegistry()
+	}
+
 	// Build key config from QuicBaaS config
 	keyAlgo := xkmssdk.AlgorithmECDSA
 	if s.config.CA.RootKeyAlgorithm == "RSA" {
@@ -222,8 +359,22 @@ func (s *Server) initializeCA() error {
 		KeyType:            xkmssdk.KeyTypeStringCA,
 		Hash:               xkmssdk.HashSHA256,
 		SignatureAlgorithm: xkmssdk.SigECDSAWithSHA256,
-		StoreType:          xkmssdk.StoreSoftware,
+		StoreType:          caStoreType,
 		ECCConfig:          &xkmssdk.KeyECCConfig{Curve: xkmssdk.CurveP256},
+	}
+
+	// Resolve the CA signing-key password when one is configured. The
+	// RootKeyPassword field accepts a literal string, a credential://
+	// reference (resolved via the qrdb credential store), or a kms://
+	// reference (resolved via the local KMS, available after startSecrets).
+	// An empty RootKeyPassword keeps the PKCS#8 key unencrypted (default).
+	if raw := s.config.CA.RootKeyPassword; raw != "" {
+		sv, err := s.secretRegistry.Resolve(context.Background(), raw)
+		if err != nil {
+			return api.NewOperationFailedError("resolve CA root key password", err)
+		}
+		keyConfig.Password = sv.String()
+		sv.Clear()
 	}
 
 	// Handle RSA vs ECDSA config
@@ -253,7 +404,7 @@ func (s *Server) initializeCA() error {
 				},
 				Valid:        s.config.CA.RootValidYears,
 				Keys:         []*xkmssdk.KeyConfig{keyConfig},
-				KeystoreType: xkmssdk.StoreSoftware,
+				KeystoreType: caStoreType,
 				IsRoot:       true,
 			},
 		},
@@ -284,7 +435,49 @@ func (s *Server) initializeCA() error {
 		CertStore:     cs,
 	}
 
-	xkmsCA, err := newCAFn(params)
+	// Per-key CA backend routing. When the CA signing key resolves to a
+	// non-software store, route it to the configured crypto backend through the
+	// central BackendResolver — the same selector that backs KMS, seal and PIN —
+	// so an explicit crypto.subsystems.ca.backend=tpm2 physically places the CA
+	// signing key in the TPM. The software StoreType always resolves back to the
+	// existing PKCS#8 xkmsBackend, so leaf/TLS keys (which the CA generates via
+	// its software ca.keyStore) are unaffected. For a software CA this block is
+	// skipped: BackendForStore stays nil, the CA's keystoreMap stays nil, and
+	// every key resolves to ca.keyStore — byte-for-byte the legacy path.
+	if caStoreType != xkmssdk.StoreSoftware {
+		params.BackendForStore = s.caBackendForStore(
+			xkmsBackend, s.resolveCASigningSpec(), NewBackendResolver(s.config))
+	}
+
+	var xkmsCA xkmssdk.TrustedCA
+	if s.clusterCAConfig != nil && s.clusterCAKeyStrategy != nil {
+		// Cluster-ACME mode: build the CA from the full hierarchy (root +
+		// dedicated cluster intermediate). The cluster CA key custody strategy
+		// resolves this node's runtime keystore — for the barrier strategy the
+		// first node's bootstrap key is promoted into the replicated
+		// barrier-encrypted store and every node loads it, so any node can issue.
+		// Adopt the pre-staged certificate set first so Load finds the whole
+		// hierarchy without re-running Init (which would fork a second root).
+		if adoptErr := s.adoptStagedClusterCACerts(cs); adoptErr != nil {
+			return api.NewOperationFailedError("adopt staged cluster CA certificates", adoptErr)
+		}
+		clusterBackend, resolveErr := s.resolveClusterCARuntimeBackend()
+		if resolveErr != nil {
+			return api.NewOperationFailedError("resolve cluster CA keystore", resolveErr)
+		}
+		serialStorage, serr := xkmssdk.NewFileStorageBackend(filepath.Join(s.clusterCACacheDir(), "ca-serials"))
+		if serr != nil {
+			return api.NewOperationFailedError("create cluster CA serial storage", serr)
+		}
+		xkmsCA, err = xkmssdk.NewTrustedCAFromMultiIdentityConfig(&xkmssdk.TrustedCAMultiIdentityParams{
+			Config:    s.clusterCAConfig,
+			KeyStore:  clusterBackend,
+			CertStore: cs,
+			SerialGen: xkmssdk.NewSerialGenerator(xkmssdk.NewBackendStorage(serialStorage)),
+		})
+	} else {
+		xkmsCA, err = newCAFn(params)
+	}
 	if err != nil {
 		return api.NewOperationFailedError("create certificate authority", err)
 	}
@@ -339,7 +532,7 @@ func (s *Server) initializeCA() error {
 				}
 				// Wire the operator-provided CA for optional mTLS so per-route
 				// client-cert validation still works with externally-managed
-				// chains. Full-mTLS clusters override this in the REST server.
+				// chains.
 				if s.config.Security.TLSCAFile != "" {
 					if caBytes, caErr := os.ReadFile(s.config.Security.TLSCAFile); caErr == nil {
 						pool := x509.NewCertPool()
@@ -349,6 +542,14 @@ func (s *Server) initializeCA() error {
 								s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
 							}
 						}
+					}
+				}
+				// Full-mTLS clusters require every client to present a cert and
+				// must also trust the platform xkms CA so agent mTLS certs
+				// (OU=agents) verify alongside the operator's own client CAs.
+				if s.config.Security.TLSClientAuth {
+					if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
+						return err
 					}
 				}
 				s.logger.Infof("TLS configured from operator-provided cert: %s", s.config.Security.TLSCertFile)
@@ -401,8 +602,15 @@ func (s *Server) initializeCA() error {
 		return api.NewOperationFailedError("issue server TLS certificate", err)
 	}
 
-	// Build server key attributes matching what the CA generated
+	// Build server key attributes matching what the CA generated. The TLS
+	// SERVER (leaf) key ALWAYS lives in the software keystore: the CA's
+	// CreateCSR -> getOrGenerateKey path generates it through ca.keyStore (the
+	// software xkmsBackend) and the transport listeners require it to be
+	// exportable. Pinning the leaf StoreType to software keeps key generation
+	// and lookup ids in agreement even when the CA SIGNING key routes to a
+	// hardware backend — preventing the "key not found: tpm2:tls:..." boot crash.
 	keyConfig.KeyType = xkmssdk.KeyTypeStringTLS
+	keyConfig.StoreType = xkmssdk.StoreSoftware
 	serverKeyAttrs, err := xkmssdk.KeyAttributesFromConfig(keyConfig)
 	if err != nil {
 		return api.NewOperationFailedError("parse server key config", err)
@@ -418,11 +626,17 @@ func (s *Server) initializeCA() error {
 	}
 	// Enforce TLS 1.3 minimum
 	s.tlsConfig.MinVersion = tls.VersionTLS13
-	// Enable optional mTLS so per-route handlers (e.g. the agent
-	// register endpoint) can validate a presented client cert while
-	// browser-origin requests proceed without one. Full-mTLS clusters
-	// set TLSClientAuth=true; in that branch the REST server's own
-	// buildTLSConfig path takes over and promotes to RequireAndVerify.
+	// Wire client-certificate verification onto the in-memory tls.Config that
+	// every public listener (REST, gRPC, QUIC, MCP) clones. The platform xkms CA
+	// bundle MUST be present in ClientCAs in BOTH postures so client certificates
+	// issued by the platform CA — notably the agent mTLS certs (OU=agents)
+	// consumed by the MCP agent authenticator — chain-verify and populate
+	// r.TLS.VerifiedChains:
+	//   - TLSClientAuth=false → VerifyClientCertIfGiven: browser-origin requests
+	//     proceed without a cert; agents may present one for per-route validation.
+	//   - TLSClientAuth=true  → RequireAndVerifyClientCert: every connection must
+	//     present a CA-signed client cert, with the platform CA appended to any
+	//     operator-supplied client CAs (appendPlatformClientCAs).
 	if !s.config.Security.TLSClientAuth {
 		if caBundle, caErr := xkmsCA.CABundle(); caErr == nil && len(caBundle) > 0 {
 			pool := x509.NewCertPool()
@@ -432,6 +646,8 @@ func (s *Server) initializeCA() error {
 				s.logger.Info("TLS configured with optional mTLS (per-route client cert validation)")
 			}
 		}
+	} else if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
+		return err
 	}
 
 	// Advertise gRPC ALPN (h2) on the in-memory TLS config so gRPC
@@ -769,13 +985,6 @@ func (s *Server) startKMS() error {
 	// Create logger adapter for XKMS
 	logAdapter := logger.NewAdapter(s.logger)
 
-	// Determine default backend type for XKMS initialization
-	defaultBackendType := s.config.KMS.Backend
-	if defaultBackendType == "" {
-		defaultBackendType = config.BackendTypeSoftware
-	}
-	defaultBackendName := string(defaultBackendType)
-
 	// Reuse the CA chain's key storage when available so that KEKs and
 	// asymmetric CA keys share a single on-disk directory and a single XKMS
 	// instance. This eliminates the two-chain problem: previously startKMS
@@ -809,30 +1018,56 @@ func (s *Server) startKMS() error {
 		}
 		s.logger.Info("KMS key storage backed by memory (no data directory configured)")
 	}
-	certStorage := xkmssdk.NewStorageMemory()
-
-	// Create software backend that supports symmetric key operations (AES, ChaCha20)
-	softwareBackend, err := newSoftwareBackend(&xkmssdk.SoftwareBackendConfig{
-		KeyStorage: keyStorage,
-	})
-	if err != nil {
-		return api.NewOperationFailedError("create software backend", err)
+	// Resolve the configured KMS crypto backend through the central resolver so
+	// hardware backends are honored instead of silently downgraded to software.
+	// Precedence (highest first):
+	//   1. crypto.subsystems.kms       — per-subsystem override
+	//   2. crypto.backend              — process-wide crypto default (applied
+	//                                    when the subsystem spec is unset/"auto")
+	//   3. kms.backend                 — legacy field, honored only when NO
+	//                                    crypto.* backend is configured at all
+	// An unset chain leaves spec.Backend == "", which the resolver treats as
+	// hardware-prefer auto-detection (TPM2 if present, else software). With no
+	// hardware the resolved backend is software — byte-for-byte the historical
+	// behavior, so existing deployments are unaffected.
+	kmsSpec := BackendSpec{
+		Backend: s.config.Crypto.Subsystems.KMS.Backend,
+		KeyRef:  s.config.Crypto.Subsystems.KMS.KeyRef,
+	}
+	if config.IsAutoBackend(kmsSpec.Backend) && s.config.Crypto.Backend != "" {
+		kmsSpec.Backend = s.config.Crypto.Backend
+	}
+	if kmsSpec.Backend == "" {
+		kmsSpec.Backend = s.config.KMS.Backend
+	}
+	if kmsSpec.KeyRef == "" {
+		kmsSpec.KeyRef = s.config.Crypto.KeyRef
 	}
 
-	// Create XKMS keystore with software backend
-	ks, err := newXKMSKeystore(&xkmssdk.ServiceBackendConfig{
-		Backend:     softwareBackend,
-		CertStorage: certStorage,
-	})
+	resolver := NewBackendResolver(s.config)
+	resolvedBackend, err := resolver.Resolve(kmsSpec)
 	if err != nil {
-		return api.NewOperationFailedError("create XKMS keystore", err)
+		// A configured-but-not-compiled or unknown backend is a hard, typed
+		// failure (BackendNotCompiledError / UnknownBackendError) — never a
+		// silent downgrade to software.
+		return api.NewOperationFailedError("resolve KMS backend", err)
 	}
+	backendName := string(resolvedBackend)
 
-	// Initialize XKMS with the configured backend
+	// Construct the resolved backend with the PERSISTENT key store built above so
+	// KMS keys survive restarts. The resolver centralises all build-tag /
+	// hardware-prefer dispatch; startKMS only injects persistence.
+	primaryBackend, err := buildKMSServiceBackendFn(resolver, kmsSpec, keyStorage)
+	if err != nil {
+		return api.NewOperationFailedError("construct KMS backend", err)
+	}
+	s.logger.WithField("backend", backendName).Info("KMS crypto backend resolved")
+
+	// Initialize XKMS with the resolved backend, registered under its type name.
 	xkmsConfig := &dbxkms.Config{
-		DefaultBackend: defaultBackendName,
+		DefaultBackend: backendName,
 		Backends: map[string]xkmssdk.ServiceBackend{
-			defaultBackendName: ks,
+			backendName: primaryBackend,
 		},
 		Logger: logAdapter,
 	}

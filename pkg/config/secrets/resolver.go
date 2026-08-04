@@ -14,158 +14,59 @@
 // Package secrets provides secret resolution capabilities for configuration files.
 // It supports multiple resolution strategies including literal values, local/remote KMS,
 // auto-generated secrets, and encrypted values.
+//
+// The core SecretResolver, SecretValue, ResolverRegistry, and ResolvedStrategy types
+// are re-exported from the canonical go-qrdb secret package. Only quicbaas-specific
+// concrete resolvers (LocalKMSResolver, RemoteKMSResolver, AutoGenResolver) are
+// implemented here.
 package secrets
 
-import (
-	"context"
-	"sync"
+import qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-)
+// ---------------------------------------------------------------------------
+// Canonical type aliases — single source of truth in go-qrdb/pkg/secret
+// ---------------------------------------------------------------------------
 
-// ResolvedStrategy represents the strategy used to resolve a secret value.
-type ResolvedStrategy string
+// ResolvedStrategy identifies how a SecretValue was produced during resolution.
+type ResolvedStrategy = qrdbsecret.ResolvedStrategy
 
+// Strategy constants shared with go-qrdb.
 const (
 	// StrategyLiteral indicates the value was used as-is without transformation.
-	StrategyLiteral ResolvedStrategy = "literal"
+	StrategyLiteral = qrdbsecret.StrategyLiteral
 
 	// StrategyLocalKMS indicates the value was resolved using local KMS decryption.
-	StrategyLocalKMS ResolvedStrategy = "local_kms"
+	StrategyLocalKMS = qrdbsecret.StrategyLocalKMS
 
 	// StrategyRemoteKMS indicates the value was resolved using remote KMS decryption.
-	StrategyRemoteKMS ResolvedStrategy = "remote_kms"
+	StrategyRemoteKMS = qrdbsecret.StrategyRemoteKMS
 
 	// StrategyAutoGen indicates the value was auto-generated.
-	StrategyAutoGen ResolvedStrategy = "autogen"
+	StrategyAutoGen = qrdbsecret.StrategyAutoGen
 
 	// StrategyEncrypted indicates the value was resolved from an encrypted source.
+	// This is a quicbaas-specific extension not present in go-qrdb.
 	StrategyEncrypted ResolvedStrategy = "encrypted"
 )
 
-// SecretValue represents a resolved secret with metadata about its resolution.
-type SecretValue struct {
-	// Raw is the original value before resolution (e.g., "kms://key-id/encrypted-data").
-	Raw string
+// SecretValue holds a resolved secret with its backing plaintext bytes and
+// resolution metadata. Call Clear when done to reduce heap plaintext exposure.
+// Plaintext is carried as bytes, not a retained string, to support zeroization.
+type SecretValue = qrdbsecret.SecretValue
 
-	// Value is the resolved plaintext value.
-	Value string
+// SecretResolver resolves raw secret reference URIs to their plaintext values.
+// Implementations handle a specific URI scheme (e.g. "kms://", "remote-kms://").
+type SecretResolver = qrdbsecret.SecretResolver
 
-	// Strategy indicates how the secret was resolved.
-	Strategy ResolvedStrategy
-}
+// ResolverRegistry dispatches secret resolution to the first registered
+// SecretResolver whose CanResolve returns true for the raw value.
+// It is safe for concurrent use.
+type ResolverRegistry = qrdbsecret.ResolverRegistry
 
-// SecretResolver defines the interface for resolving secret values from various sources.
-// Implementations handle specific URI schemes (e.g., kms://, env://, file://).
-type SecretResolver interface {
-	// Resolve attempts to resolve the raw secret reference to its plaintext value.
-	// Returns a SecretValue containing the resolved value and metadata.
-	// Returns an error if resolution fails.
-	Resolve(ctx context.Context, raw string) (*SecretValue, error)
+// NewResolverRegistry creates an empty ResolverRegistry.
+var NewResolverRegistry = qrdbsecret.NewResolverRegistry
 
-	// CanResolve returns true if this resolver can handle the given raw value.
-	// Typically checks for a specific URI scheme prefix.
-	CanResolve(raw string) bool
-
-	// Scheme returns the URI scheme this resolver handles (e.g., "kms", "env", "file").
-	Scheme() string
-}
-
-// ResolverRegistry manages a collection of secret resolvers and dispatches
-// resolution requests to the appropriate resolver based on the input format.
-type ResolverRegistry struct {
-	resolvers []SecretResolver
-	mu        sync.RWMutex
-}
-
-// NewResolverRegistry creates a new empty ResolverRegistry.
-func NewResolverRegistry() *ResolverRegistry {
-	return &ResolverRegistry{
-		resolvers: make([]SecretResolver, 0),
-	}
-}
-
-// Register adds a SecretResolver to the registry.
-// Resolvers are checked in registration order when resolving secrets.
-// Thread-safe for concurrent use.
-func (r *ResolverRegistry) Register(resolver SecretResolver) {
-	if resolver == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.resolvers = append(r.resolvers, resolver)
-}
-
-// Resolve attempts to resolve a raw secret value using registered resolvers.
-// It iterates through resolvers in registration order and uses the first one
-// that can handle the input. If no resolver matches, the raw value is returned
-// as a literal with StrategyLiteral.
-//
-// Returns an error if a matching resolver fails during resolution.
-// Thread-safe for concurrent use.
-func (r *ResolverRegistry) Resolve(ctx context.Context, raw string) (*SecretValue, error) {
-	if ctx == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "ResolverRegistry.Resolve",
-			Err:  ErrNilContext,
-		}
-	}
-
-	r.mu.RLock()
-	resolvers := make([]SecretResolver, len(r.resolvers))
-	copy(resolvers, r.resolvers)
-	r.mu.RUnlock()
-
-	for _, resolver := range resolvers {
-		if resolver.CanResolve(raw) {
-			value, err := resolver.Resolve(ctx, raw)
-			if err != nil {
-				return nil, &errors.QBError{
-					Code: errors.ErrConfiguration,
-					Op:   "ResolverRegistry.Resolve",
-					Err:  err,
-					Context: map[string]interface{}{
-						"scheme": resolver.Scheme(),
-						"raw":    raw,
-					},
-				}
-			}
-			return value, nil
-		}
-	}
-
-	// No resolver matched, treat as literal value
-	return &SecretValue{
-		Raw:      raw,
-		Value:    raw,
-		Strategy: StrategyLiteral,
-	}, nil
-}
-
-// IsSecretURI returns true if any registered resolver can handle the given raw value.
-// This is useful for determining if a configuration value needs resolution.
-// Thread-safe for concurrent use.
-func (r *ResolverRegistry) IsSecretURI(raw string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	for _, resolver := range r.resolvers {
-		if resolver.CanResolve(raw) {
-			return true
-		}
-	}
-	return false
-}
-
-// Resolvers returns a copy of all registered resolvers.
-// Thread-safe for concurrent use.
-func (r *ResolverRegistry) Resolvers() []SecretResolver {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	result := make([]SecretResolver, len(r.resolvers))
-	copy(result, r.resolvers)
-	return result
-}
+// NewSecretValue constructs a SecretValue from a raw reference, byte slice, and
+// strategy. The bytes are copied into a private backing slice so callers can
+// safely reuse or zero their buffer independently.
+var NewSecretValue = qrdbsecret.NewSecretValue

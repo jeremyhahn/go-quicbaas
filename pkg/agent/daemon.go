@@ -16,7 +16,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -178,7 +177,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		identity, err := d.enroller.Enroll(ctx, d.cfg)
 		if err != nil {
 			d.state.Store(int32(stateFailed))
-			d.recordRunErr(fmt.Errorf("enrollment: %w", err))
+			d.recordRunErr(&OpError{Op: "enrollment", Cause: err})
 			startErr = err
 			return
 		}
@@ -186,7 +185,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 		if err := d.spawnServer.Start(ctx); err != nil {
 			d.state.Store(int32(stateFailed))
-			d.recordRunErr(fmt.Errorf("spawn server: %w", err))
+			d.recordRunErr(&OpError{Op: "spawn server", Cause: err})
 			startErr = err
 			return
 		}
@@ -331,10 +330,10 @@ func (d *Daemon) recordRunErr(err error) {
 func ensureWorkDir(path string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return fmt.Errorf("agent: resolve work dir: %w", err)
+		return &OpError{Op: "agent: resolve work dir", Cause: err}
 	}
 	if err := os.MkdirAll(abs, 0o700); err != nil {
-		return fmt.Errorf("agent: create work dir: %w", err)
+		return &OpError{Op: "agent: create work dir", Cause: err}
 	}
 	return nil
 }

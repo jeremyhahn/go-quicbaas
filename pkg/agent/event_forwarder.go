@@ -18,7 +18,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -294,7 +293,7 @@ func (f *EventForwarder) run(ctx context.Context) {
 func (f *EventForwarder) runOnce(ctx context.Context) error {
 	conn, err := f.dial(ctx)
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return &OpError{Op: "dial", Cause: err}
 	}
 	defer conn.Close()
 
@@ -302,13 +301,13 @@ func (f *EventForwarder) runOnce(ctx context.Context) error {
 	defer cancel()
 	streamCtx, err = f.attachAuth(streamCtx)
 	if err != nil {
-		return fmt.Errorf("attach auth: %w", err)
+		return &OpError{Op: "attach auth", Cause: err}
 	}
 
 	client := pb.NewOrchestratorServiceClient(conn)
 	stream, err := client.PushEvents(streamCtx)
 	if err != nil {
-		return fmt.Errorf("open stream: %w", err)
+		return &OpError{Op: "open stream", Cause: err}
 	}
 
 	// Recv goroutine: absorbs acks so Send doesn't block.
@@ -336,7 +335,7 @@ func (f *EventForwarder) runOnce(ctx context.Context) error {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
-			return fmt.Errorf("recv: %w", err)
+			return &OpError{Op: "recv", Cause: err}
 		case entry := <-f.queue:
 			// Skip events the control plane has already ack'd (duplicates after
 			// reconnect). Cheap guard; control plane is also idempotent.
@@ -362,7 +361,7 @@ func (f *EventForwarder) runOnce(ctx context.Context) error {
 				default:
 					f.drops.Add(1)
 				}
-				return fmt.Errorf("send: %w", err)
+				return &OpError{Op: "send", Cause: err}
 			}
 		}
 	}

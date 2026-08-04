@@ -12,9 +12,10 @@ branding, named-networks, sandbox policy), IAM-subsystem quotas
 | Capability | Owner | Notes |
 |---|---|---|
 | Tenant identity, name, timestamps | qrdb TenantServicer | authoritative |
-| IsolationType, per-tenant barrier, DEK | qrdb TenantServicer | authoritative |
+| IsolationType, Entitlements, per-tenant barrier, DEK | qrdb TenantServicer | authoritative |
 | Engine quotas (users, roles, storage, DBs, keys, certs, etc.) | qrdb TenantServicer | authoritative |
-| Usage tracking (IncrementQuotaUsage) | qrdb TenantServicer | moved from BaaS in Phase D |
+| Quota enforcement + usage tracking | qrdb TenantServicer | moved from BaaS in Phase D |
+| Enable-encryption migrations | qrdb embedded node | via EncryptionMigrator |
 | TenantSettings (MFA/session/branding/sandbox) | QuicBaaS IAM | BaaS product concern |
 | IAM group/policy/app quotas | QuicBaaS IAM | BaaS concept, not an engine primitive |
 | Federation/OIDC/MFA/groups/policies/apps | QuicBaaS IAM | BaaS-only, not in qrdb |
@@ -111,6 +112,67 @@ IsPlatformShard(id) bool  // id == 1
 IsReservedShard(id) bool  // id > 1 && id < 100
 IsTenantShard(id)   bool  // id >= 100
 ```
+
+## Tenant Isolation Modes
+
+Each tenant has an `IsolationType` that determines the scope of isolation:
+
+```go
+type IsolationType int
+
+const (
+    IsolationKeyspace = iota  // Shared barrier, shared storage: namespace prefix only
+    IsolationBarrier          // Per-tenant barrier, shared storage: DEK + namespace
+    IsolationVolume           // Per-tenant barrier, volume directory: DEK + directory + namespace
+    IsolationRaft             // Per-tenant barrier, dedicated Raft group: all three + quorum (clustered mode only)
+)
+```
+
+Configuration at tenant creation:
+
+```yaml
+# Provisioner hooks qrdb's CreateTenant API
+tenant = TenantServicer.CreateTenant({
+    ID: "acme-corp",
+    IsolationType: IsolationVolume,  // or Barrier/Keyspace/Raft
+    Entitlements: {
+        AllowedIsolationModes: ["barrier", "volume"],
+        AllowedBarrierModes: ["none", "passphrase", "shamir"],
+        AllowVolumeStorage: true,
+        AllowDedicatedRaft: false,
+        AllowSystemManagedBarrier: true,
+    },
+    Quotas: {
+        MaxDatabases: 100,
+        MaxKeys: 10000000,
+        MaxStorageBytes: 10737418240,  # 10 GB
+        // ... other quotas
+    },
+})
+```
+
+QuicBaaS provisioner invokes qrdb's `CreateTenant` (which materializes the barrier, DEK, and
+storage according to `IsolationType`), then runs BaaS-layer hooks (IAM setup, TenantSettings, Projects).
+
+## Tenant Entitlements
+
+Every tenant has an `Entitlements` struct that gates which features and barrier modes are allowed:
+
+| Entitlement | Type | Controlled feature |
+|---|---|---|
+| `AllowedIsolationModes` | []string | Which IsolationType values the tenant may use (e.g., `["barrier", "volume"]`) |
+| `AllowedBarrierModes` | []string | Which barrier strategies the tenant may enable via enable-encryption (e.g., `["none", "passphrase", "shamir"]`) |
+| `AllowDedicatedRaft` | bool | Permission to use `IsolationRaft` (requires clustered mode) |
+| `AllowVolumeStorage` | bool | Permission to use `IsolationVolume` (separate storage directory per tenant) |
+| `AllowSystemManagedBarrier` | bool | Permission to enable encryption without external HSM/KMS (uses system's managed envelope) |
+| `AllowDedicatedWAL` | bool | Permission to allocate dedicated WAL groups (REST/gRPC only) |
+
+Enable-encryption enforcement: When a tenant calls `POST /tenants/{id}/barrier/enable-encryption` with strategy `S`,
+the service layer checks:
+
+1. `EntitlementError` if `S not in Entitlements.AllowedBarrierModes`
+2. `ErrSharedBarrierImmutable` if barrier is shared and `IsolationType != IsolationBarrier/Volume/Raft`
+3. `QuotaViolation` if barrier encryption would exceed `SystemBarrierQuota`
 
 ## Database Naming
 

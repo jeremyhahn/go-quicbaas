@@ -427,7 +427,7 @@ func parseLeafCertPEM(certPEM []byte) (*x509.Certificate, error) {
 		return nil, errors.New("no PEM block found in certificate")
 	}
 	if block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("unexpected PEM type %q", block.Type)
+		return nil, &UnexpectedPEMTypeError{PEMType: block.Type}
 	}
 	return x509.ParseCertificate(block.Bytes)
 }
@@ -476,4 +476,15 @@ func (e *AgentCertIssueError) Error() string {
 // Unwrap exposes the underlying cause for errors.Is / errors.As.
 func (e *AgentCertIssueError) Unwrap() error {
 	return e.Cause
+}
+
+// UnexpectedPEMTypeError indicates a PEM block had an unexpected type when a
+// CERTIFICATE block was required.
+type UnexpectedPEMTypeError struct {
+	PEMType string
+}
+
+// Error implements the error interface.
+func (e *UnexpectedPEMTypeError) Error() string {
+	return fmt.Sprintf("unexpected PEM type %q", e.PEMType)
 }

@@ -100,8 +100,24 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 		return nil, ErrRuntimeNoLogger
 	}
 	hasRT := cfg.ContainerRuntime != nil && cfg.ContainerRuntime.IsAvailable()
+	backends := cloneBackends(cfg.Backends)
+
+	// Give every ACP backend access to the container runtime so its
+	// SandboxModeRequired path (spawnContainerJSONRPC) can launch an
+	// interactive agent container. Without this the backend's containerRuntime
+	// stays nil and a Required spawn fails with SandboxModeViolationError. This
+	// mirrors the orchestrator-side wiring in
+	// pkg/server/lifecycle_orchestration.go.
+	if hasRT {
+		for _, b := range backends {
+			if acp, ok := b.(*orchestration.ACPBackend); ok {
+				acp.SetContainerRuntime(cfg.ContainerRuntime)
+			}
+		}
+	}
+
 	return &Runtime{
-		backends:         cloneBackends(cfg.Backends),
+		backends:         backends,
 		resolver:         NewSandboxResolver(cfg.SandboxPolicy, hasRT),
 		imageMap:         cloneStringMap(cfg.ImageMap),
 		imageRegistry:    cfg.ImageRegistry,
@@ -157,7 +173,7 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 
 	backend, ok := r.lookupBackend(backendName)
 	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrRuntimeUnknownBackend, backendName)
+		return nil, &SentinelDetailError{Sentinel: ErrRuntimeUnknownBackend, Detail: fmt.Sprintf("%q", backendName)}
 	}
 
 	resolver := r.resolver.WithTenantOverride(tenantOverride)
@@ -177,7 +193,7 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 		if img, ok := r.imageFor(backendName); ok {
 			req.ContainerImage = img
 		} else {
-			return nil, fmt.Errorf("%w: backend %q has no image mapping", ErrRuntimeNoImage, backendName)
+			return nil, &SentinelDetailError{Sentinel: ErrRuntimeNoImage, Detail: fmt.Sprintf("backend %q has no image mapping", backendName)}
 		}
 	}
 
@@ -220,7 +236,7 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 func (r *Runtime) Prompt(ctx context.Context, backendName string, req *orchestration.PromptRequest) (*orchestration.PromptResponse, error) {
 	backend, ok := r.lookupBackend(backendName)
 	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrRuntimeUnknownBackend, backendName)
+		return nil, &SentinelDetailError{Sentinel: ErrRuntimeUnknownBackend, Detail: fmt.Sprintf("%q", backendName)}
 	}
 
 	// Record a PromptSubmitted event up front so attachers see the prompt
@@ -282,7 +298,7 @@ func (r *Runtime) Prompt(ctx context.Context, backendName string, req *orchestra
 func (r *Runtime) Infer(ctx context.Context, backendName string, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error) {
 	backend, ok := r.lookupBackend(backendName)
 	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrRuntimeUnknownBackend, backendName)
+		return nil, &SentinelDetailError{Sentinel: ErrRuntimeUnknownBackend, Detail: fmt.Sprintf("%q", backendName)}
 	}
 
 	// Session-based backends require Spawn first; surface a typed error so
@@ -355,7 +371,7 @@ func (r *Runtime) Infer(ctx context.Context, backendName string, req *orchestrat
 func (r *Runtime) Status(ctx context.Context, backendName, sessionID string) (*orchestration.SessionStatus, error) {
 	backend, ok := r.lookupBackend(backendName)
 	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrRuntimeUnknownBackend, backendName)
+		return nil, &SentinelDetailError{Sentinel: ErrRuntimeUnknownBackend, Detail: fmt.Sprintf("%q", backendName)}
 	}
 	return backend.Status(ctx, sessionID)
 }
@@ -364,7 +380,7 @@ func (r *Runtime) Status(ctx context.Context, backendName, sessionID string) (*o
 func (r *Runtime) Close(ctx context.Context, backendName, sessionID string) error {
 	backend, ok := r.lookupBackend(backendName)
 	if !ok {
-		return fmt.Errorf("%w: %q", ErrRuntimeUnknownBackend, backendName)
+		return &SentinelDetailError{Sentinel: ErrRuntimeUnknownBackend, Detail: fmt.Sprintf("%q", backendName)}
 	}
 	r.forgetSessionBackend(sessionID)
 	if err := backend.Close(ctx, sessionID); err != nil {
@@ -418,7 +434,7 @@ func (r *Runtime) ListModels(ctx context.Context, backendName string) ([]string,
 	backend, ok := r.backends[backendName]
 	r.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrRuntimeUnknownBackend, backendName)
+		return nil, &SentinelDetailError{Sentinel: ErrRuntimeUnknownBackend, Detail: fmt.Sprintf("%q", backendName)}
 	}
 	lister, ok := backend.(orchestration.ModelLister)
 	if !ok {

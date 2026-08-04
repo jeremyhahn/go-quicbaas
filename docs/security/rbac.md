@@ -2,6 +2,20 @@
 
 QuicBaaS implements Role-Based Access Control (RBAC) for fine-grained authorization across all API protocols. This document covers the RBAC architecture, configuration, built-in roles, and usage patterns.
 
+> **Status: RBAC is delegated to the go-qrdb Policy Decision Point (PDP).**
+> The former local RBAC fork (`rbac.go` / `persistent_rbac.go`,
+> `interfaces.RoleManager`, `GetRoleManager`, `auth.NewRoleManager`, `auth.Role`
+> / `auth.Permission`) was **deleted** in the authz-unification. Roles and
+> permissions are now **owned by go-qrdb** and reached through
+> `pkg/iam/qrdb_role_storage.go` (`QRDBRoleStorage` → qrdb `RoleClient`), sharing
+> ONE role ID space with the qrdb PDP. Request-time authorization uses the colon
+> `resource:action` vocabulary via
+> `platformtoken.Authorize(claims).RequireScope("resource:action")`; token
+> subjects are qrdb users. The `RoleManager` / `auth.Role` code shown below
+> describes the **deleted fork API** and is retained only as conceptual
+> background — see [Authorization](authorization.md) and
+> [Authentication](authentication.md).
+
 ## Overview
 
 ### What is RBAC?
@@ -71,7 +85,7 @@ QuicBaaS supports both models and a hybrid mode for gradual migration.
                               v
 +-------------------------------------------------------------+
 |                    RBAC Provider                             |
-|              Wraps RoleManager                               |
+|        Projects the request onto the go-qrdb PDP            |
 |                                                             |
 |  Features:                                                  |
 |  - Context cancellation support                             |
@@ -81,13 +95,12 @@ QuicBaaS supports both models and a hybrid mode for gradual migration.
                               |
                               v
 +-------------------------------------------------------------+
-|                     RoleManager                              |
-|   HasPermission(roles, resource, action) -> bool            |
+|           go-qrdb PDP (single source of truth)              |
+|     Authorize(subject, resource:action) -> allow/deny       |
 |                                                             |
-|  Features:                                                  |
-|  - O(1) role lookup                                         |
-|  - Wildcard matching                                        |
-|  - Thread-safe operations                                   |
+|  - Roles + permissions OWNED by qrdb (one role ID space)   |
+|  - QRDBRoleStorage -> qrdb RoleClient (pkg/iam)            |
+|  - Colon resource:action vocab; subjects = qrdb users      |
 +-------------------------------------------------------------+
 ```
 
@@ -96,7 +109,7 @@ QuicBaaS supports both models and a hybrid mode for gradual migration.
 1. **Protocol Handler** receives a request with JWT token
 2. **Authentication** extracts user identity and roles from token
 3. **Authorization Service** creates an `AuthorizationRequest`
-4. **RBAC Provider** evaluates permissions via `RoleManager`
+4. **RBAC Provider** projects the request onto the **go-qrdb PDP**, which evaluates `resource:action` permissions against qrdb-owned roles
 5. **Decision** returned with allow/deny, reason, and audit metadata
 
 ## Built-in Roles
@@ -409,37 +422,44 @@ type AuthorizationService interface {
 }
 ```
 
-### RoleManager Interface
+### Role storage (go-qrdb `RoleClient`)
+
+There is **no local `RoleManager`**. Role CRUD is delegated to go-qrdb through
+`pkg/iam/qrdb_role_storage.go`. `QRDBRoleStorage` implements the IAM role-storage
+seam by forwarding to the qrdb `RoleClient` (`qrdbtransport.RoleClient`), so a
+role created by quicbaas and a role evaluated by the qrdb PDP resolve to ONE
+record (one role ID space):
 
 ```go
-type RoleManager interface {
-    // HasPermission checks if any role has permission for the action
-    HasPermission(userRoles []string, resource, action string) bool
+// pkg/iam/qrdb_role_storage.go — delegates to the qrdb RoleClient.
+type QRDBRoleStorage struct { /* resolver RoleClientResolver */ }
 
-    // AllowsAnonymous checks if a resource/action allows anonymous access
-    AllowsAnonymous(resource, action string) bool
+func (s *QRDBRoleStorage) CreateRole(ctx context.Context, r *Role) error
+func (s *QRDBRoleStorage) GetRole(ctx context.Context, tenantID, roleID string) (*Role, error)
+func (s *QRDBRoleStorage) UpdateRole(ctx context.Context, r *Role) error
+func (s *QRDBRoleStorage) DeleteRole(ctx context.Context, tenantID, roleID string) error
+func (s *QRDBRoleStorage) ListRoles(ctx context.Context, tenantID string, opts ListOptions) ([]*Role, error)
+```
 
-    // AddRole adds a custom role
-    AddRole(role RoleInfo) error
+Request-time permission checks are performed by the SDK `platformtoken` package
+against the token's resolved scopes, using the colon `resource:action`
+vocabulary:
 
-    // GetRole retrieves a role by name
-    GetRole(name string) RoleInfo
-
-    // ListRoles returns all available roles
-    ListRoles() []RoleInfo
-
-    // DeleteRole removes a custom role
-    DeleteRole(name string) error
-
-    // UpdateRole updates an existing role
-    UpdateRole(role RoleInfo) error
-
-    // ValidateRoles checks if all role names exist
-    ValidateRoles(roleNames []string) bool
+```go
+// sdk/go/platformtoken — fail-closed scope check.
+if err := platformtoken.Authorize(claims).RequireScope("keys:read"); err != nil {
+    // *ScopeDeniedError names the concrete scope that was missing.
+    return err
 }
 ```
 
 ## Usage Examples
+
+> **Note:** the `auth.NewRoleManager` / `auth.Role` / `auth.Permission` snippets
+> in this section show the **deleted local fork API**, retained as conceptual
+> background. In current code, roles are managed through the qrdb `RoleClient`
+> (see *Role storage* above) and permissions are checked with
+> `platformtoken.Authorize(...).RequireScope("resource:action")`.
 
 ### Configuring RBAC in QuicBaaS
 
@@ -468,7 +488,7 @@ import (
 
 func main() {
     log, _ := logger.New(logger.LogConfig{Level: "info"})
-    rm := auth.NewRoleManager(log)
+    rm := auth.NewRoleManager(log) // LEGACY: deleted fork API; roles now via qrdb RoleClient
 
     // Create a custom role for data scientists
     dataScientistRole := &auth.Role{
@@ -518,7 +538,7 @@ func main() {
     log, _ := logger.New(logger.LogConfig{Level: "info"})
 
     // Create role manager with built-in roles
-    rm := auth.NewRoleManager(log)
+    rm := auth.NewRoleManager(log) // LEGACY: deleted fork API; roles now via qrdb RoleClient
 
     // Create RBAC provider
     provider, err := providers.NewRBACProvider(rm, log)
@@ -570,7 +590,7 @@ import (
 
 func main() {
     log, _ := logger.New(logger.LogConfig{Level: "info"})
-    rm := auth.NewRoleManager(log)
+    rm := auth.NewRoleManager(log) // LEGACY: deleted fork API; roles now via qrdb RoleClient
     provider, _ := providers.NewRBACProvider(rm, log)
     defer provider.Close()
 
@@ -686,10 +706,13 @@ func extractResource(path string) string {
 
 ### Benchmark Results
 
+Historical numbers from the pre-unification local fork (the `RoleManager`
+micro-benchmark no longer exists — permission evaluation now happens in the
+go-qrdb PDP). Retained as an order-of-magnitude reference for the provider layer:
+
 ```
 BenchmarkRBACProvider_Authorize-8          3000000       450 ns/op       96 B/op      2 allocs/op
 BenchmarkRBACProvider_BatchAuthorize_10-8  500000        2850 ns/op      960 B/op     20 allocs/op
-BenchmarkRoleManager_HasPermission-8       10000000      120 ns/op       0 B/op       0 allocs/op
 ```
 
 ### Optimization Tips

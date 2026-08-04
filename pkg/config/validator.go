@@ -105,6 +105,7 @@ func (v *Validator) Validate(cfg *Config) error {
 	v.validateAuth(&cfg.Auth)
 	v.validateLogging(&cfg.Logging)
 	v.validateKMS(&cfg.KMS)
+	v.validateCrypto(&cfg.Crypto)
 	v.validateOrchestration(&cfg.Orchestration)
 	v.validateTrust(cfg.Trust)
 
@@ -519,6 +520,20 @@ func (v *Validator) validateTrust(cfg *xkmsresolver.Config) {
 }
 
 // addError adds a validation error.
+// validateCrypto validates the process-wide crypto backend policy. It is
+// always run (the zero value is valid = software everywhere); an unknown
+// backend type in any slot yields a typed validation error.
+func (v *Validator) validateCrypto(cfg *CryptoConfig) {
+	if err := cfg.Validate(); err != nil {
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			v.addError(validationErr.Field, validationErr.Message)
+		} else {
+			v.addError("crypto", err.Error())
+		}
+	}
+}
+
 func (v *Validator) addError(field, message string) {
 	v.errors = append(v.errors, ValidationError{
 		Field:   field,

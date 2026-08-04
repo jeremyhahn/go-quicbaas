@@ -131,6 +131,10 @@ func (r *ToolRegistry) registerCryptoTools() {
 					"description": "Hash algorithm (SHA256, SHA384, SHA512, etc.)",
 					"enum":        []string{"SHA256", "SHA384", "SHA512", "SHA3-256", "SHA3-384", "SHA3-512", "BLAKE2B-256", "BLAKE2B-512"},
 				},
+				"pre_hashed": map[string]interface{}{
+					"type":        "boolean",
+					"description": "When true, message is already a hash digest and is signed directly without hashing again",
+				},
 			},
 			"required": []string{"key_id", "message"},
 		},
@@ -524,6 +528,7 @@ func (r *ToolRegistry) executeCryptoSign(ctx context.Context, args map[string]in
 		KeyID:         getString(args, "key_id"),
 		Message:       message,
 		HashAlgorithm: service.HashAlgorithm(getString(args, "hash_algorithm")),
+		PreHashed:     getBool(args, "pre_hashed"),
 	}
 
 	resp, err := cryptoSvc.Sign(ctx, req)

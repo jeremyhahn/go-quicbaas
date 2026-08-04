@@ -44,8 +44,6 @@
   import JobsView from './orchestrator/JobsView.svelte';
   import JobDetailView from './orchestrator/JobDetailView.svelte';
   import AgentDetailView from './orchestrator/AgentDetailView.svelte';
-  import AgentsView from './orchestrator/AgentsView.svelte';
-  import SessionsView from './orchestrator/SessionsView.svelte';
   import TasksView from './orchestrator/TasksView.svelte';
   import WorkflowsView from './orchestrator/WorkflowsView.svelte';
   import EventStreamView from './orchestrator/EventStreamView.svelte';
@@ -257,7 +255,7 @@
     const stopPolling = startOrchestratorPolling();
     // The orchestrator poller covers orchestratorStore.{jobs,agents,sessions,tasks}
     // but the standalone agentStore and sessionStore (used by AgentFleet, SpawnDialog,
-    // SessionsView, etc.) need their own refresh ticks.
+    // SessionList, etc.) need their own refresh ticks.
     void refreshAgents();
     void refreshSessions();
     const auxInterval = setInterval(() => {
@@ -274,10 +272,12 @@
   // ---------------------------------------------------------------------------
   // Active-tenant switcher options. Fetched from the public tenants endpoint
   // (the same one LoginView uses) so the dropdown reflects every tenant the
-  // server knows about, not just the bootstrap "default". Falls back to a
-  // single "default" entry if the fetch fails so the control still works.
+  // server knows about, not just the bootstrap "system". Falls back to a
+  // single "system" entry if the fetch fails so the control still works.
+  // 'system' is qrdb's canonical control-plane tenant; the legacy "default"
+  // tenant was permanently retired by qrdb's tenant-isolation refactor.
   // ---------------------------------------------------------------------------
-  let tenantOptions = $state<Array<{ id: string; name: string }>>([{ id: 'default', name: 'default' }]);
+  let tenantOptions = $state<Array<{ id: string; name: string }>>([{ id: 'system', name: 'system' }]);
 
   $effect(() => {
     void (async () => {

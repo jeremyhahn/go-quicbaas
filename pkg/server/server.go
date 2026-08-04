@@ -27,8 +27,10 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
 	dane "github.com/jeremyhahn/go-xkms/sdk/go/dane"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -301,6 +303,49 @@ type Server struct {
 	// Nil for cluster mode (until Phase C).
 	qrdbNode *qrdbnode.Node
 
+	// raftClusterAdvertiser is the running Noise NK bootstrap server started
+	// during Raft cluster-TLS auto-enrollment on the first node of a new
+	// cluster. Non-nil only when the software or hardware enrollment path ran
+	// and this node bootstrapped the cluster CA (rather than joining). Must be
+	// stopped in Shutdown before the qrdb node closes.
+	raftClusterAdvertiser interface{ Stop() }
+
+	// clusterCAConfig is the CA hierarchy (root + dedicated cluster
+	// intermediate) the cluster ACME first-node pre-stage built and the runtime
+	// CA (initializeCA) loads. It is built once during cluster provisioning so
+	// the pre-stage and the runtime CA agree on identities and the injected
+	// KeyProtection keystore password. nil except on a first node with cluster
+	// ACME enrollment enabled.
+	clusterCAConfig *xkmssdk.TrustedCAMultiIdentityConfig
+
+	// clusterCAKeyStrategy is the cluster CA key custody strategy (barrier / hsm
+	// / tpm-kek) built during cluster ACME provisioning. It is stateful (the
+	// barrier strategy retains its bootstrap key-storage handle for promotion),
+	// so the SAME instance is used for the pre-node BootstrapBackends and the
+	// post-node RuntimeBackend initializeCA signs from — so any node can issue.
+	// nil except when cluster ACME enrollment provisioned the cluster mTLS.
+	clusterCAKeyStrategy clustercasdk.ClusterCAKeyStrategy
+
+	// secretRegistry is the unified secret resolver registry built during
+	// server initialization after the qrdb node is online. It dispatches
+	// credential://, kms://, remote-kms://, and autogen resolution. Nil
+	// before initializeCA runs. Accessible via GetSecretRegistry().
+	secretRegistry *qrdbsecret.ResolverRegistry
+
+	// sealStrategy is the hardware/cloud seal strategy built ONCE during node
+	// init (buildSealStrategyOnce) and injected into the embedded qrdb node via
+	// WithSealStrategy. Nil for software/none/shamir seal (the node builds its
+	// own). It owns the underlying TPM/HSM backend; do not close it separately —
+	// the qrdb node releases it on shutdown.
+	sealStrategy qrdbsdk.SealingStrategy
+
+	// sealTPM2Backend is the open TPM2 backend held inside sealStrategy when the
+	// seal strategy is TPM-backed. It is shared with the PIN backend (P3) so the
+	// TPM is opened EXACTLY ONCE for both seal and PIN verification. Nil when the
+	// seal strategy is not TPM-backed. Same instance as inside sealStrategy — not
+	// closed independently.
+	sealTPM2Backend *xkmssdk.TPM2Backend
+
 	// Service facade - used by all API servers
 	quicBaaSService service.QuicBaaS
 
@@ -516,11 +561,6 @@ func (s *Server) initialize() error {
 		s.logger.Warn("WARNING: auth.insecure_dev_mode=true — INSECURE DEV MODE ACTIVE")
 	}
 
-	// Generate TLS certificates if needed (auto-generate on first startup)
-	if err := initializeCAFn(s); err != nil {
-		return err
-	}
-
 	// Start components in order
 	if err := s.startStorage(); err != nil {
 		return err
@@ -557,6 +597,13 @@ func (s *Server) initialize() error {
 			return err
 		}
 		s.logger.Info("Standalone mode: real qrdb engine started")
+	}
+
+	// Generate TLS certificates if needed (auto-generate on first startup).
+	// CA initialization runs AFTER the qrdb node is online so that the
+	// credential store is available for RootKeyPassword secret resolution.
+	if err := initializeCAFn(s); err != nil {
+		return err
 	}
 
 	if err := s.startIndexes(); err != nil {
@@ -894,6 +941,16 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			} else {
 				s.logger.Info("Sharded qrdb client shutdown complete")
 			}
+		}
+
+		// Stop the Raft cluster enrollment Noise NK advertiser. Non-nil
+		// only on the first node that bootstrapped the cluster CA; must be
+		// stopped before the qrdb node so no enrollment requests arrive
+		// during teardown.
+		if s.raftClusterAdvertiser != nil {
+			s.logger.Info("Stopping Raft cluster enrollment advertiser...")
+			s.raftClusterAdvertiser.Stop()
+			s.logger.Info("Raft cluster enrollment advertiser stopped")
 		}
 
 		// Close the standalone qrdb node (standalone mode only). The node

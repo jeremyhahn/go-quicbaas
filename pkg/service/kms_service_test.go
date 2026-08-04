@@ -4208,6 +4208,52 @@ func TestKMSService_DeleteKey_ManagerError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to delete key")
 }
 
+// TestKMSService_DeleteKey_NotFoundPreservesCode is a regression guard for the
+// already-deleted-key 500 bug: when the manager reports the key as missing the
+// service must surface ErrNotFound (-> HTTP 404), not clobber it with
+// ErrInternal (-> HTTP 500). A genuine manager failure must stay ErrInternal.
+func TestKMSService_DeleteKey_NotFoundPreservesCode(t *testing.T) {
+	logger := newMockLogger()
+
+	t.Run("missing key maps to not found", func(t *testing.T) {
+		mockManager := newMockKMSManager()
+		mockManager.deleteKeyFn = func(ctx context.Context, keyID string) error {
+			return kms.ErrKeyNotFound
+		}
+		svc := newKMSService(mockManager, logger)
+
+		resp, err := svc.DeleteKey(context.Background(), &DeleteKeyRequest{
+			KeyID:             "already-deleted",
+			PendingWindowDays: 7,
+		})
+
+		require.Error(t, err)
+		assert.Nil(t, resp)
+		var qbErr *quicbaasErrors.QBError
+		require.True(t, stderrors.As(err, &qbErr), "expected a QBError")
+		assert.Equal(t, quicbaasErrors.ErrNotFound, qbErr.Code)
+	})
+
+	t.Run("genuine failure stays internal", func(t *testing.T) {
+		mockManager := newMockKMSManager()
+		mockManager.deleteKeyFn = func(ctx context.Context, keyID string) error {
+			return stderrors.New("backend exploded")
+		}
+		svc := newKMSService(mockManager, logger)
+
+		resp, err := svc.DeleteKey(context.Background(), &DeleteKeyRequest{
+			KeyID:             "boom",
+			PendingWindowDays: 7,
+		})
+
+		require.Error(t, err)
+		assert.Nil(t, resp)
+		var qbErr *quicbaasErrors.QBError
+		require.True(t, stderrors.As(err, &qbErr), "expected a QBError")
+		assert.Equal(t, quicbaasErrors.ErrInternal, qbErr.Code)
+	})
+}
+
 func TestKMSService_RevokeKey_ManagerError(t *testing.T) {
 	mockManager := newMockKMSManager()
 	mockManager.revokeKeyFn = func(ctx context.Context, keyID string) error {

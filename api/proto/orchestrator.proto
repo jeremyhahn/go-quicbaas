@@ -313,6 +313,7 @@ message SpawnSessionRequest {
     SandboxMode sandbox_mode = 12;
     string host_affinity = 13;         // pin to a specific agent daemon (Name or Host)
     bool host_affinity_strict = 14;    // when true, fail with NoMatchingAgentError if host_affinity is offline (overrides operator soft default)
+    bool persistent = 15;              // when true, spawn a durable multi-turn session (CLI-mode backends register it in the session registry for Prompt/Status/Close); when false the backend uses one-shot-per-prompt execution
 }
 
 message SpawnSessionResponse {

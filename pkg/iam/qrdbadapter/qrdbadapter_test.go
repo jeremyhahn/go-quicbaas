@@ -56,6 +56,12 @@ func (f *fakeTenantManager) ListTenants(_ context.Context, _ iam.ListOptions) ([
 	return nil, errors.New("not implemented in fake")
 }
 func (f *fakeTenantManager) CheckQuota(_ context.Context, _, _ string) error { return nil }
+func (f *fakeTenantManager) UpdateEngineQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+func (f *fakeTenantManager) UpdateEngineEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
+	return nil
+}
 
 func TestTenantAdapter_CreateTenant_HappyPath(t *testing.T) {
 	mgr := &fakeTenantManager{}

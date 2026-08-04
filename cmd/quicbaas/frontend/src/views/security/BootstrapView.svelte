@@ -27,7 +27,7 @@
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { Compass } from 'lucide-svelte';
   import { createBootstrapClient, isWailsRuntime } from '@quicbaas/sdk';
-  import type { BootstrapClient as SDKBootstrapClient } from '@quicbaas/sdk';
+  import type { BootstrapClient as SDKBootstrapClient, BootstrapBundleRequest } from '@quicbaas/sdk';
   import { BootstrapMethodPicker } from '@quicbaas/svelte-security';
   import type {
     BootstrapMethod,
@@ -80,24 +80,36 @@
 
   async function dispatch(req: BootstrapRequest): Promise<BootstrapResponse> {
     const client = await getSdkClient();
-    const filter = req.material.trim() === '' ? undefined : { store_type: '', algorithm: '' };
+
+    // Build the typed request body the backend decodes. server_url is required
+    // by every mode; per-mode material fields are forwarded as-is from the
+    // picker so the servicer can apply the right verification strategy.
+    const bundleReq: BootstrapBundleRequest = {
+      server_url: req.server_url,
+      hostname: req.hostname,
+      dns_server: req.dns_server,
+      noise_static_key: req.noise_static_key,
+      noise_addr: req.noise_addr,
+      spki_pin: req.spki_pin,
+    };
+
     let bundle;
     switch (req.method) {
       case 'spki-pin':
-        bundle = await client.spki(filter);
+        bundle = await client.spki(bundleReq);
         break;
       case 'dane':
-        bundle = await client.dane(filter);
+        bundle = await client.dane(bundleReq);
         break;
       case 'noise':
-        bundle = await client.noise(filter);
+        bundle = await client.noise(bundleReq);
         break;
       case 'direct':
         // "direct" means the transport already enforces trust (localhost,
         // mTLS, etc.). The SDK exposes this as the catch-all auto() method,
         // which iterates the daemon's configured bootstrap chain in priority
         // order and returns the first verified bundle.
-        bundle = await client.auto(filter);
+        bundle = await client.auto(bundleReq);
         break;
       default: {
         const _exhaustive: never = req.method;

@@ -160,6 +160,18 @@ type sessionRecord struct {
 	// context makes re-resolution deterministic. Empty when the session ran on
 	// a local (non-remote) backend, in which case no replay is needed.
 	HostAffinity string
+
+	// BackendLocal is true when Spawn resolved to the local in-process backend
+	// (the RemoteBackendResolver declined the request). The live session lives
+	// only in that local backend's in-memory registry. Prompt / Status / Close
+	// MUST resolve to the SAME local backend; without this marker a follow-up
+	// call would re-run the resolver, and a remote daemon that registered AFTER
+	// Spawn (registration-timing) would now claim the backend name, routing the
+	// follow-up to a different, empty instance — surfacing as
+	// "acp: session not found". When true, pinSessionBackend forces local
+	// resolution via the localBackendPin context marker. HostAffinity is empty
+	// in this case because local backends are not host-bound.
+	BackendLocal bool
 }
 
 // resolvedHostBackend is implemented by backends that route to a specific
@@ -168,6 +180,30 @@ type sessionRecord struct {
 // same instance. Local in-process backends do not implement it.
 type resolvedHostBackend interface {
 	ResolvedHost() string
+}
+
+// localBackendPinKey is the unexported context key used to force
+// lookupBackendCtx to bypass the RemoteBackendResolver and resolve against the
+// locally registered backend table. It is set by pinSessionBackend for sessions
+// whose Spawn landed on the local in-process backend, guaranteeing the whole
+// session lifecycle stays on the same instance even after a remote daemon
+// registers later.
+type localBackendPinKey struct{}
+
+// withLocalBackendPin returns a context that instructs lookupBackendCtx to skip
+// remote resolution and use the local backend table directly.
+func withLocalBackendPin(ctx context.Context) context.Context {
+	return context.WithValue(ctx, localBackendPinKey{}, true)
+}
+
+// localBackendPinned reports whether the context carries a local-backend pin.
+// Safe to call on any context.
+func localBackendPinned(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(localBackendPinKey{}).(bool)
+	return v
 }
 
 // sessionHostAffinity returns the host a resolved backend is bound to, or the
@@ -813,15 +849,22 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		ctx = WithGpuRequired(ctx)
 	}
 
-	backend, err := s.lookupBackendCtx(ctx, req.Backend, req.ProjectID)
+	backend, fromRemote, err := s.resolveBackendForSpawn(ctx, req.Backend, req.ProjectID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Capture the host the resolver bound this session to so Prompt / Status /
-	// Close can pin re-resolution to the same daemon instance. See
-	// sessionRecord.HostAffinity for why this is required.
-	sessionHost := sessionHostAffinity(backend, req.HostAffinity)
+	// Capture which instance the resolver bound this session to so Prompt /
+	// Status / Close can pin re-resolution to the same backend instance.
+	//   - fromRemote: capture the daemon host (HostAffinity replay).
+	//   - !fromRemote: mark BackendLocal so follow-ups bypass the resolver and
+	//     stay on this local instance. See sessionRecord for why this is
+	//     required (spawn→local / prompt→remote divergence).
+	backendLocal := !fromRemote
+	sessionHost := ""
+	if fromRemote {
+		sessionHost = sessionHostAffinity(backend, req.HostAffinity)
+	}
 
 	// Resolve model: request > project default > empty (let backend decide)
 	model := req.Model
@@ -850,8 +893,17 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	// Sandboxed container path — only used for backends that don't handle
 	// containerization internally (e.g., non-ACP backends). ACP backends
 	// with SetContainerRuntime handle their own container lifecycle.
+	//
+	// A spawn dispatched to a remote/embedded agent (fromRemote) is sandboxed
+	// by THAT agent's own runtime (its SandboxPolicy + container runtime +
+	// image map). The control plane must not also spawn a local detached
+	// container for it: that container carries no interactive ACP transport,
+	// so the follow-up Prompt — pinned to the remote agent — would never find
+	// the session. Treat remote spawns as "backend handles containers" so the
+	// local container path below is skipped and the spawn is dispatched to the
+	// agent over the wire.
 	acpBackend, isACP := backend.(*ACPBackend)
-	backendHandlesContainers := isACP && acpBackend.containerRuntime != nil
+	backendHandlesContainers := fromRemote || (isACP && acpBackend.containerRuntime != nil)
 
 	// Resolve sandbox mode against server policy + tenant override + runtime
 	// availability. This fails fast before any side effects (container spawn
@@ -883,6 +935,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			ContainerID:  containerID,
 			CreatedAt:    now,
 			HostAffinity: sessionHost,
+			BackendLocal: backendLocal,
 		})
 
 		record := &SessionRecord{
@@ -951,6 +1004,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		TenantID:     tenantID,
 		CreatedAt:    session.CreatedAt,
 		HostAffinity: sessionHost,
+		BackendLocal: backendLocal,
 	})
 
 	// Persist session metadata to the store
@@ -1092,10 +1146,11 @@ func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSession
 		}
 	}
 
-	// Pin re-resolution to the daemon that holds the live session so the
-	// follow-up prompt reaches the same instance Spawn used.
+	// Pin re-resolution to the backend instance that holds the live session so
+	// the follow-up prompt reaches the same instance Spawn used (remote daemon
+	// or local backend).
 	if req.SessionID != "" {
-		ctx = s.pinSessionHostAffinity(ctx, req.SessionID)
+		ctx = s.pinSessionBackend(ctx, req.SessionID)
 	}
 
 	backend, err := s.lookupBackendCtx(ctx, backendName, req.ProjectID)
@@ -1298,8 +1353,8 @@ func (s *agentServiceImpl) SessionStatus(ctx context.Context, req *SessionStatus
 		}, nil
 	}
 
-	// Pin re-resolution to the daemon that holds the live session.
-	ctx = s.pinSessionHostAffinity(ctx, req.SessionID)
+	// Pin re-resolution to the backend instance that holds the live session.
+	ctx = s.pinSessionBackend(ctx, req.SessionID)
 
 	backend, err := s.lookupBackendCtx(ctx, backendName, "")
 	if err != nil {
@@ -1335,8 +1390,8 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 		return nil, err
 	}
 
-	// Pin re-resolution to the daemon that holds the live session.
-	ctx = s.pinSessionHostAffinity(ctx, req.SessionID)
+	// Pin re-resolution to the backend instance that holds the live session.
+	ctx = s.pinSessionBackend(ctx, req.SessionID)
 
 	backend, err := s.lookupBackendCtx(ctx, backendName, "")
 	if err != nil {
@@ -2464,13 +2519,39 @@ func (s *agentServiceImpl) lookupBackend(name string) (AgentBackend, error) {
 // consults any registered RemoteBackendResolver; if the resolver returns a
 // backend, it is used. Otherwise the locally registered backend table is
 // consulted. This is the routing primitive used by the BackendDispatcher.
+//
+// When the context carries a local-backend pin (set by pinSessionBackend for a
+// session whose Spawn landed on the local backend) the resolver is bypassed
+// entirely so the follow-up call deterministically reaches the same local
+// instance that holds the live session.
 func (s *agentServiceImpl) lookupBackendCtx(ctx context.Context, name, projectID string) (AgentBackend, error) {
+	if localBackendPinned(ctx) {
+		return s.lookupBackend(name)
+	}
 	if s.remoteResolver != nil {
 		if backend, ok := s.remoteResolver(ctx, name, projectID); ok && backend != nil {
 			return backend, nil
 		}
 	}
 	return s.lookupBackend(name)
+}
+
+// resolveBackendForSpawn resolves a backend at Spawn time and reports whether
+// the resolution came from the RemoteBackendResolver (fromRemote=true) or fell
+// through to the local backend table (fromRemote=false). Spawn records this
+// origin on the session so the whole lifecycle is pinned to the same backend
+// instance the session was spawned on. See sessionRecord.BackendLocal.
+func (s *agentServiceImpl) resolveBackendForSpawn(ctx context.Context, name, projectID string) (backend AgentBackend, fromRemote bool, err error) {
+	if s.remoteResolver != nil {
+		if b, ok := s.remoteResolver(ctx, name, projectID); ok && b != nil {
+			return b, true, nil
+		}
+	}
+	b, lookupErr := s.lookupBackend(name)
+	if lookupErr != nil {
+		return nil, false, lookupErr
+	}
+	return b, false, nil
 }
 
 // defaultBackendName returns the name of the default backend to use when none
@@ -2518,20 +2599,38 @@ func (s *agentServiceImpl) findSessionBackend(sessionID string) (string, error) 
 	return rec.Backend, nil
 }
 
-// pinSessionHostAffinity replays the host affinity captured at Spawn onto the
-// context so lookupBackendCtx re-resolves to the same daemon instance that
-// holds the live session. Without this, a follow-up Prompt / Status / Close
-// that omits the host hint (the common SPA case) can re-resolve to a different
-// daemon or the local fallback backend, where the in-memory session does not
-// exist — surfacing as "acp: session not found". Returns the context unchanged
-// when the session is unknown or ran on a local backend (empty stored host).
-func (s *agentServiceImpl) pinSessionHostAffinity(ctx context.Context, sessionID string) context.Context {
+// pinSessionBackend pins a follow-up Prompt / Status / Close to the SAME
+// backend instance the session was spawned on, covering both resolution
+// outcomes Spawn can produce:
+//
+//   - Spawn resolved to a remote daemon: the captured host is replayed onto the
+//     context so lookupBackendCtx re-resolves to that same daemon.
+//   - Spawn resolved to the local in-process backend: a local-backend pin is set
+//     so lookupBackendCtx bypasses the resolver and uses the local backend
+//     directly. This is the fix for the spawn→local / prompt→remote divergence:
+//     without it a remote daemon registering AFTER Spawn would hijack the
+//     backend name on the follow-up and route to an empty instance.
+//
+// Without this, a follow-up that omits the host hint (the common SPA case) can
+// re-resolve to a different daemon or the local fallback backend, where the
+// in-memory session does not exist — surfacing as "acp: session not found".
+// Returns the context unchanged when the session is unknown.
+func (s *agentServiceImpl) pinSessionBackend(ctx context.Context, sessionID string) context.Context {
 	val, ok := s.sessions.Load(sessionID)
 	if !ok {
 		return ctx
 	}
 	rec, ok := val.(*sessionRecord)
-	if !ok || rec.HostAffinity == "" {
+	if !ok {
+		return ctx
+	}
+	// Local-spawned sessions: force resolution to the local backend, never the
+	// resolver. This wins regardless of any per-request affinity because the
+	// live session physically lives only in the local instance.
+	if rec.BackendLocal {
+		return withLocalBackendPin(ctx)
+	}
+	if rec.HostAffinity == "" {
 		return ctx
 	}
 	// Do not override an explicit per-request affinity — an operator may be

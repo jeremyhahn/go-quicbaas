@@ -1,0 +1,30 @@
+# Dockerized Playwright e2e — the host needs only Docker.
+#
+# The e2e service is self-contained: a multi-stage build produces quicbaasd with
+# the freshly-built UI embedded, on a Playwright base image (browsers included).
+# Its entrypoint (run-e2e.sh) boots the daemon and runs the suite in the same
+# container, so the CA cert and first-boot invite log are shared locally.
+#
+#   make test-e2e-docker        → chromium-no-backend (no agent backend needed)
+#   make test-e2e-acp-docker …  → chromium-acp (opencode + ollama; see override)
+#
+# The `workspace` named context supplies the sibling repos for the go.work
+# reconstruction, identical to the integration compose files.
+
+services:
+  e2e:
+    build:
+      context: ../..
+      additional_contexts:
+        workspace: ../../..
+      dockerfile: test/e2e/Dockerfile
+      args:
+        BUILD_TAGS: "${E2E_BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+    environment:
+      E2E_PROJECT: "${E2E_PROJECT:-chromium-no-backend}"
+      E2E_BACKEND: "${E2E_BACKEND:-ollama}"
+      E2E_OLLAMA_URL: "${E2E_OLLAMA_URL:-http://ollama:11434}"
+      E2E_EXTRA_ARGS: "${E2E_EXTRA_ARGS:-}"
+    volumes:
+      # Surface Playwright artifacts (traces/screenshots/report) to the host.
+      - ./.docker-results:/app/cmd/quicbaas/frontend/test-results

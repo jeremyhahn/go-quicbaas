@@ -435,6 +435,13 @@ func (t *Transport) RecoveryShareClaimComplete(ctx context.Context, req *qrdbtra
 	return &resp, nil
 }
 
+// BarrierEnableEncryption is not supported on the MCP transport; enable
+// encryption via the REST or gRPC (unix) transports which have direct access
+// to the barrier key material.
+func (t *Transport) BarrierEnableEncryption(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
+	return nil, &qrdbtransport.NotImplementedError{Method: "BarrierEnableEncryption"}
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

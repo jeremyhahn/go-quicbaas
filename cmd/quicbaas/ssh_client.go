@@ -99,18 +99,18 @@ func buildCLISSHHTTPClient() (*http.Client, error) {
 	if tlsCA != "" {
 		pem, err := os.ReadFile(tlsCA)
 		if err != nil {
-			return nil, fmt.Errorf("read --tls-ca: %w", err)
+			return nil, &OpError{Op: "read --tls-ca", Cause: err}
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("--tls-ca: invalid PEM")
+			return nil, &MessageError{Message: "--tls-ca: invalid PEM"}
 		}
 		tlsCfg.RootCAs = pool
 	}
 	if tlsCert != "" && tlsKey != "" {
 		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
 		if err != nil {
-			return nil, fmt.Errorf("load --tls-cert/--tls-key: %w", err)
+			return nil, &OpError{Op: "load --tls-cert/--tls-key", Cause: err}
 		}
 		tlsCfg.Certificates = []tls.Certificate{cert}
 	}
@@ -129,7 +129,7 @@ func cliSSHStoreRoot() (string, error) {
 	}
 	cwd, cwdErr := os.Getwd()
 	if cwdErr != nil {
-		return "", &CLISSHClientBuildError{Op: "resolve_home", Err: fmt.Errorf("home: %v; cwd: %v", err, cwdErr)}
+		return "", &CLISSHClientBuildError{Op: "resolve_home", Err: &MessageError{Message: fmt.Sprintf("home: %v; cwd: %v", err, cwdErr)}}
 	}
 	return filepath.Join(cwd, CLISSHStoreSubdir), nil
 }

@@ -222,6 +222,13 @@ func (s *Server) startRESTServer() error {
 		restServer.SetCertificateAuthority(s.xkmsCA)
 	}
 
+	// Mount the cluster CA secret-delivery endpoint (tpm-kek) when the active
+	// cluster CA key strategy delivers post-enrollment material. Inert for
+	// barrier/hsm and non-cluster deployments.
+	if delivery := s.ClusterSecretDeliveryService(); delivery != nil {
+		restServer.SetClusterSecretHandler(delivery.Handler())
+	}
+
 	// Wire the credential management service into the REST server so the
 	// /v1/credentials/* endpoints serve real responses. The service is the
 	// same instance the embedded SDK transport dispatches Security().
@@ -242,6 +249,14 @@ func (s *Server) startRESTServer() error {
 	restServer.SetCeremonyService(ceremonySvc)
 	restServer.SetTenantBarrierService(s.buildTenantBarrierService())
 	s.logger.Info("Barrier and ceremony services wired into REST server")
+
+	// Wire the trust-bootstrap service into the REST server so the
+	// /api/v1/bootstrap/{auto,dane,noise,spki} endpoints perform real
+	// first-contact CA discovery. The service is a pure composition over the
+	// canonical go-xkms trust-bootstrap library; it holds no trust state and
+	// needs no CA handle, so it is always wired.
+	restServer.SetBootstrapService(service.NewBootstrapService(nil))
+	s.logger.Info("Bootstrap service wired into REST server")
 
 	// Wire the seal service into the QuicBaaS facade so that REST
 	// handlers can reach it via the service.SealService type assertion.

@@ -23,6 +23,8 @@ QuicBaaS implements defense-in-depth with hierarchical key management, pluggable
 | [REST Security](rest-security.md) | HTTP security headers middleware | Production |
 | [TLS Setup](tls-setup.md) | TLS configuration guide | Production |
 | [Hardening Guide](hardening-guide.md) | Production hardening recommendations | Production |
+| [Crypto Backends](../configuration/crypto.md) | `crypto:` backend selection per subsystem (KMS / CA / PIN / barrier AEAD) — operator reference | Production |
+| [Crypto Backend Selection](crypto-backend-selection.md) | BackendResolver design, hardware-prefer policy, per-subsystem checklist | Production |
 
 ## Key Hierarchy
 
@@ -222,6 +224,8 @@ The REST API includes security headers middleware:
 - [REST Security](rest-security.md) - HTTP security headers
 - [TLS Setup](tls-setup.md) - TLS configuration guide
 - [Hardening Guide](hardening-guide.md) - Production security hardening
+- [Crypto Backends](../configuration/crypto.md) - Per-subsystem backend selection (auto / hardware-prefer)
+- [Crypto Backend Selection](crypto-backend-selection.md) - BackendResolver design of record
 
 ## Extended Documentation
 

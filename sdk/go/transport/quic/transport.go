@@ -278,6 +278,17 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	// shape every other transport returns.
 	isKMS := isKMSService(svc)
 	isDEK := isDEKService(svc)
+	if isKMS {
+		// A few KMS SDK request shapes differ from the canonical
+		// service.*Request the server decodes (flat rotation-policy body,
+		// PascalCase metadata update); re-encode those into the server wire
+		// shape. All other KMS methods pass through unchanged.
+		var err error
+		transformedReq, err = transformKMSRequest(method, transformedReq)
+		if err != nil {
+			return nil, err
+		}
+	}
 	isCrypto := isCryptoService(svc)
 	isSecrets := isSecretsService(svc)
 

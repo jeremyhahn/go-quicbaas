@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -48,7 +49,8 @@ type mockBarrierService struct {
 	recoverWithKeysFn   func(ctx context.Context, keys []string) error
 	deleteRecoveryFn    func(ctx context.Context) error
 	hasRecoveryFn       func(ctx context.Context) (bool, error)
-	generateRootTokenFn func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
+	generateRootTokenFn  func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
+	enableEncryptionFn   func(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
 }
 
 var _ service.BarrierServicer = (*mockBarrierService)(nil)
@@ -142,6 +144,13 @@ func (m *mockBarrierService) BarrierGenerateRootToken(ctx context.Context, share
 		return m.generateRootTokenFn(ctx, shares)
 	}
 	return &service.RootTokenInfo{}, nil
+}
+
+func (m *mockBarrierService) EnableEncryption(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
+	if m.enableEncryptionFn != nil {
+		return m.enableEncryptionFn(ctx, tenantID, opts)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

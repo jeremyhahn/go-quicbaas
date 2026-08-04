@@ -8,12 +8,24 @@ import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 type Backend = xkmssdk.ServiceBackend
 
+// PIV manager wiring: PIVKeyGenerator and PIVManagerConfig describe how a
+// backend provisions PIV slots, and SetPIVBackendResolver installs the
+// resolver used to locate the backend serving a given device.
+type (
+	PIVKeyGenerator  = xkmssdk.PIVKeyGenerator
+	PIVManagerConfig = xkmssdk.PIVManagerConfig
+)
+
 var (
-	GeneratePIVKey       = xkmssdk.GeneratePIVKey
-	GetPIVCertificate    = xkmssdk.GetPIVCertificate
-	InitializePIV        = xkmssdk.InitializePIV
-	ListPIVSlots         = xkmssdk.ListPIVSlots
-	StorePIVCertificate  = xkmssdk.StorePIVCertificate
-	ErrPIVInvalidSlot    = xkmssdk.ServiceErrPIVInvalidSlot
-	ErrPIVNotInitialized = xkmssdk.ServiceErrPIVNotInitialized
+	GeneratePIVKey        = xkmssdk.GeneratePIVKey
+	GetPIVCertificate     = xkmssdk.GetPIVCertificate
+	InitializePIV         = xkmssdk.InitializePIV
+	ListPIVSlots          = xkmssdk.ListPIVSlots
+	ResetPIV              = xkmssdk.XKMSResetPIV
+	SetPIVBackendResolver = xkmssdk.SetPIVBackendResolver
+	StorePIVCertificate   = xkmssdk.StorePIVCertificate
+
+	ErrPIVInvalidSlot           = xkmssdk.ServiceErrPIVInvalidSlot
+	ErrPIVNoAttestationMaterial = xkmssdk.ErrPIVNoAttestationMaterial
+	ErrPIVNotInitialized        = xkmssdk.ServiceErrPIVNotInitialized
 )

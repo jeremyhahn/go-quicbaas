@@ -31,7 +31,7 @@ The Phase 10 gap-2 fix made `quicbaasd init` actually persist:
 1. The data directory is created (mode `0o750`) if missing.
 2. The barrier strategy and credential strategy are validated.
 3. SO officer files are parsed and validated.
-4. For `software` / `none` strategies an embedded `*server.Server` is
+4. For `passphrase` / `none` strategies an embedded `*server.Server` is
    constructed against the data dir, started so the IAM bootstrap
    runs end-to-end (PebbleDB stores the system tenant, built-in
    roles, admin user, admin invite), then shut down cleanly.
@@ -64,7 +64,7 @@ is:
 
 ```json
 {
-  "barrier_strategy":    "software",
+  "barrier_strategy":    "passphrase",
   "credential_strategy": "barrier",
   "hostname":            "node1.example.com",
   "officer_count":       0,
@@ -85,7 +85,7 @@ the three operator binaries accept identical arguments.
 |------|---------|---------------|-------------|
 | `--so-pin <string>` | (none) | always | Security Officer PIN. FIPS 140-3 / PCI-DSS v4 SO credential. |
 | `--user-pin <string>` | (none) | always | User PIN. FIPS 140-3 / PCI-DSS v4 user credential. |
-| `--barrier-strategy <name>` | `software` | always | One of `disabled` / `none` / `software` / `shamir`. Hardware strategies (`pkcs11`, `tpm2`, `awskms`, `gcpkms`, `azurekv`, `vault`) are rejected by `quicbaasd init` and must be initialised by the xkmsd-driven flow. |
+| `--barrier-strategy <name>` | `passphrase` | always | One of `none` / `disabled` / `passphrase` / `shamir`. Hardware strategies (`pkcs11`, `tpm2`, `awskms`, `gcpkms`, `azurekv`, `vault`) are rejected by `quicbaasd init` and must be initialised by the xkmsd-driven flow. The runtime `auto` sentinel is **not** an init value — it is a `seal.strategy` resolved at `quicbaasd start` (see the axis table below). |
 | `--shares <int>` | `0` | `--barrier-strategy=shamir` | Total Shamir shares (N). |
 | `--threshold <int>` | `0` | `--barrier-strategy=shamir` | Shamir M-of-N threshold. |
 | `--hostname <fqdn>` | (none) | optional | FQDN written into the admin / server certificate CN. |
@@ -106,16 +106,40 @@ the three operator binaries accept identical arguments.
 | Value | Meaning | PIN required? | Listener at end of init? |
 |-------|---------|---------------|--------------------------|
 | `disabled` / `none` | No encryption barrier. Data dir is plaintext on disk. Suitable only for ephemeral test environments. | Yes (validator enforces parity with the other strategies) | No — the embedded server is started, IAM bootstrap runs, then it shuts down. |
-| `software` | qrdb's `SoftwareStrategy`. Root key is derived from the SO/User PIN via Argon2id (PBKDF2 under FIPS) and sealed locally. | Yes | No — same as `disabled`: embedded run, persist, shut down. |
+| `passphrase` | qrdb's `SoftwareStrategy`. Root key is derived from the SO/User PIN via Argon2id (PBKDF2 under FIPS) and sealed locally. (Older docs called this value `software`.) | Yes | No — same as `disabled`: embedded run, persist, shut down. |
 | `shamir` | qrdb's Shamir M-of-N strategy. Root key is split into N shares; M shares are required to unseal. Init persists `pending_ceremony.json` only; the operator completes the ceremony via `quicbaas ceremony claim-cert begin ...` after the next `quicbaasd start`. | Yes (PIN material is included in the ceremony state) | No daemon and no IAM bootstrap until the ceremony completes. |
 | `pkcs11` / `tpm2` / `awskms` / `gcpkms` / `azurekv` / `vault` | Hardware-backed strategies | n/a | **Rejected by `quicbaasd init`**. These run through the xkms-orchestrated flow and `xkmsd init`. |
+
+## init `--barrier-strategy` vs runtime `seal.strategy` and the `crypto:` block
+
+Three distinct axes are easy to confuse. `quicbaasd init --barrier-strategy` is
+an **init-time** choice limited to software-class seals; the hardware-prefer
+`auto` sentinel and the hardware seals are **runtime** (`quicbaasd start`)
+concerns; and the `crypto:` block is about *key storage*, not the seal at all.
+
+| Axis | Where / when | What it selects | Valid values |
+|------|--------------|-----------------|--------------|
+| `--barrier-strategy` (init flag) | `quicbaasd init`, once | The root-key seal the data dir is **initialised** with | `none` / `disabled` / `passphrase` / `shamir` |
+| `seal.strategy` (config) | `quicbaasd start`, every boot | The **runtime** root-key seal, including hardware and the hardware-prefer sentinel | `none` / `passphrase` / `shamir` / `tpm2` / `pkcs11` / `awskms` / `gcpkms` / `azurekv` / `vault` / `auto` |
+| `crypto:` block (config) | `quicbaasd start`, every boot | Which go-xkms backend **stores** each subsystem's keys (KMS, CA, PIN, barrier AEAD) | see [crypto.md](../configuration/crypto.md) |
+
+- `auto` is **not** an init `--barrier-strategy` value (the init validator rejects
+  it). It is a runtime `seal.strategy` sentinel resolved at `quicbaasd start` by
+  the `BackendResolver`: a TPM2 seal when a provisioned, seal-capable device is
+  present, else software. `quicbaasd init` only initialises software-class seals
+  (`none`/`disabled`/`passphrase`/`shamir`); hardware and `auto` seals come up at
+  start. See [Seal/Unseal](../security/seal.md#seal-strategy-sealstrategy).
+- The `crypto:` block is orthogonal to the seal strategy: it decides *where keys
+  live*, not *how the root key is sealed*. A passphrase-sealed barrier can still
+  pin its CA signing key into a TPM via `crypto.subsystems.ca.backend: tpm2`. See
+  [Crypto Backend Selection](../configuration/crypto.md).
 
 ## PIN handling per strategy
 
 | Strategy | SO PIN | User PIN | Notes |
 |----------|--------|----------|-------|
 | `disabled` / `none` | Validated for parity; not stored anywhere persistent | Validated for parity; not stored | Reject empty PINs so an operator does not accidentally bring up an unauthenticated cluster. |
-| `software` | Hashed via `pin.AutoDetectHashConfig()` and stored in the qrdb `PINBackend` (PebbleDB-backed by the composed server). | Hashed and stored alongside SO PIN. | `PINBackend` defaults to PBKDF2 in FIPS mode, Argon2id otherwise. |
+| `passphrase` | Hashed via `pin.AutoDetectHashConfig()` and stored in the qrdb `PINBackend` (PebbleDB-backed by the composed server). | Hashed and stored alongside SO PIN. | `PINBackend` defaults to PBKDF2 in FIPS mode, Argon2id otherwise. |
 | `shamir` | Recorded into the pending-ceremony state so the daemon can reapply it during the resume flow. | Same. | Final hashing happens after the operator completes the ceremony. |
 
 PINs travel only through the in-process embedded server during init —
@@ -144,7 +168,7 @@ malformed, the init aborts without touching the data dir.
 After a successful `quicbaasd init`:
 
 1. The data dir contains `.quicbaasd_init_done`.
-2. For `software` / `disabled` / `none`: PebbleDB holds the system
+2. For `passphrase` / `disabled` / `none`: PebbleDB holds the system
    tenant + admin user + admin invite (synthesised via the
    `qrdbadapter.UserAdapter`).
 3. For `shamir`: PebbleDB is empty; `pending_ceremony.json` is the
@@ -152,7 +176,7 @@ After a successful `quicbaasd init`:
 
 The next `quicbaasd start` reads the marker and:
 
-- `software` / `disabled` / `none`: starts every configured listener
+- `passphrase` / `disabled` / `none`: starts every configured listener
   and resumes from the persisted bootstrap state. `firstBootBootstrap`
   detects the existing admin and short-circuits.
 - `shamir`: brings up the listener stack in a "ceremony pending"
@@ -175,7 +199,7 @@ sequenceDiagram
     participant Server as embedded *server.Server
     participant Disk as <data-dir>
 
-    Op->>Daemon: quicbaasd init --so-pin … --user-pin … --barrier-strategy software --so alice:csr:/...
+    Op->>Daemon: quicbaasd init --so-pin … --user-pin … --barrier-strategy passphrase --so alice:csr:/...
     Daemon->>Daemon: validateInlineInitFlags
     Daemon->>Disk: MkdirAll(dataDir, 0o750)
     Daemon->>Disk: Stat(.quicbaasd_init_done)
@@ -198,14 +222,14 @@ sequenceDiagram
 
 ## Examples
 
-### Software (single-host)
+### Passphrase (single-host)
 
 ```bash
 quicbaasd init \
   --data-dir /var/lib/quicbaas \
   --so-pin $SO_PIN \
   --user-pin $USER_PIN \
-  --barrier-strategy software \
+  --barrier-strategy passphrase \
   --credential-strategy barrier \
   --hostname quicbaas-1.example.com
 ```

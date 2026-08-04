@@ -974,6 +974,37 @@ func TestRuntimeMCPServersToProto(t *testing.T) {
 			t.Errorf("second entry name mismatch: got %q", got[1].Name)
 		}
 	})
+
+	t.Run("PreservesURLAndEnv", func(t *testing.T) {
+		// The MCP-preconfig feature relies on the URL + env (agent cert/key
+		// paths) surviving the runtime->proto hop. A new caller sets URL
+		// explicitly; env carries credential material.
+		in := []MCPServerConfig{{
+			Name: "quicbaas",
+			URL:  "https://localhost:8444/mcp",
+			Env:  map[string]string{"QUICBAAS_MCP_CERT": "/data/agent.crt"},
+		}}
+		got := runtimeMCPServersToProto(in)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 proto config, got %d", len(got))
+		}
+		if got[0].Url != "https://localhost:8444/mcp" {
+			t.Errorf("url: got %q, want explicit URL field", got[0].Url)
+		}
+		if got[0].Env["QUICBAAS_MCP_CERT"] != "/data/agent.crt" {
+			t.Errorf("env dropped: %+v", got[0].Env)
+		}
+	})
+
+	t.Run("LegacyCommandFallsBackToURL", func(t *testing.T) {
+		// Callers that still encode the endpoint in the legacy Command field
+		// must keep producing a proto url so nothing breaks during migration.
+		in := []MCPServerConfig{{Name: "legacy", Command: "http://mcp.local/legacy"}}
+		got := runtimeMCPServersToProto(in)
+		if got[0].Url != "http://mcp.local/legacy" {
+			t.Errorf("legacy Command must populate proto url, got %q", got[0].Url)
+		}
+	})
 }
 
 func TestProtoSessionStateToRuntime(t *testing.T) {

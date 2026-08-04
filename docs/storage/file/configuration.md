@@ -145,7 +145,7 @@ The configuration is validated when creating a new file store:
 ```go
 store, err := file.New(cfg, log)
 if err != nil {
-    // Handle validation error - uses pkg/errors DragonError
+    // Handle validation error - uses pkg/errors QRDBError (aliased QBError)
     if errors.IsInvalidInput(err) {
         // Invalid configuration
         fmt.Printf("Configuration error: %v\n", err)

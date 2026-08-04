@@ -288,6 +288,7 @@ func (s *GRPCSpawnServer) Spawn(ctx context.Context, req *proto.SpawnSessionRequ
 		SandboxMode:    orchestration.SandboxMode(req.GetSandboxMode()),
 		Sandboxed:      req.GetSandboxed(),
 		ContainerImage: req.GetContainerImage(),
+		Persistent:     req.GetPersistent(),
 	}
 
 	session, err := s.runtime.Spawn(ctx, identity.TenantID, nil, req.GetBackend(), spawnReq)
@@ -721,7 +722,10 @@ func protoMCPServersToRuntime(in []*proto.MCPServerConfig) []orchestration.MCPSe
 	out := make([]orchestration.MCPServerConfig, len(in))
 	for i, s := range in {
 		out[i] = orchestration.MCPServerConfig{
-			Name:    s.GetName(),
+			Name: s.GetName(),
+			URL:  s.GetUrl(),
+			Env:  s.GetEnv(),
+			// Command mirrors URL for callers that still read the legacy field.
 			Command: s.GetUrl(),
 		}
 	}

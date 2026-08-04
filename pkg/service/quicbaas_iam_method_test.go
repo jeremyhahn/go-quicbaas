@@ -12,6 +12,7 @@ import (
 	"context"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/stretchr/testify/assert"
@@ -90,6 +91,14 @@ func (m *mockTenantManager) ListTenants(ctx context.Context, opts iam.ListOption
 }
 
 func (m *mockTenantManager) CheckQuota(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockTenantManager) UpdateEngineQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
+	return nil
+}
+
+func (m *mockTenantManager) UpdateEngineEntitlements(_ context.Context, _ string, _ qrdbsdk.Entitlements) error {
 	return nil
 }
 

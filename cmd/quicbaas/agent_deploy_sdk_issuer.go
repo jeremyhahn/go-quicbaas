@@ -113,7 +113,7 @@ func buildIssuerTLSConfig() (*tls.Config, error) {
 	if caFile != "" {
 		caPEM, err := os.ReadFile(caFile)
 		if err != nil {
-			return nil, fmt.Errorf("read CA cert %s: %w", caFile, err)
+			return nil, &OpError{Op: fmt.Sprintf("read CA cert %s", caFile), Cause: err}
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caPEM) {
@@ -124,7 +124,7 @@ func buildIssuerTLSConfig() (*tls.Config, error) {
 	if tlsCert != "" && tlsKey != "" {
 		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
 		if err != nil {
-			return nil, fmt.Errorf("load --tls-cert/--tls-key: %w", err)
+			return nil, &OpError{Op: "load --tls-cert/--tls-key", Cause: err}
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}
@@ -190,7 +190,7 @@ func (i *sdkAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *ser
 
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("agent deploy: generate keypair: %w", err)
+		return nil, &OpError{Op: "agent deploy: generate keypair", Cause: err}
 	}
 
 	csrTemplate := &x509.CertificateRequest{
@@ -204,7 +204,7 @@ func (i *sdkAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *ser
 	}
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, csrTemplate, priv)
 	if err != nil {
-		return nil, fmt.Errorf("agent deploy: build CSR: %w", err)
+		return nil, &OpError{Op: "agent deploy: build CSR", Cause: err}
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
@@ -222,19 +222,19 @@ func (i *sdkAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *ser
 	if len(caPEM) == 0 {
 		caPEM, err = i.fetchCABundle(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("agent deploy: fetch CA bundle: %w", err)
+			return nil, &OpError{Op: "agent deploy: fetch CA bundle", Cause: err}
 		}
 	}
 
 	privKeyDER, err := x509.MarshalECPrivateKey(priv)
 	if err != nil {
-		return nil, fmt.Errorf("agent deploy: marshal private key: %w", err)
+		return nil, &OpError{Op: "agent deploy: marshal private key", Cause: err}
 	}
 	privKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privKeyDER})
 
 	keyBuf, err := xkmssecure.NewBufferFromBytes(privKeyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("agent deploy: secure private key: %w", err)
+		return nil, &OpError{Op: "agent deploy: secure private key", Cause: err}
 	}
 	// Wipe the heap copy so plaintext key bytes are not reachable.
 	for j := range privKeyPEM {
@@ -244,7 +244,7 @@ func (i *sdkAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *ser
 	parsed, err := x509.ParseCertificate(decodeFirstPEMBlock(signedCert))
 	if err != nil {
 		keyBuf.Destroy()
-		return nil, fmt.Errorf("agent deploy: parse issued certificate: %w", err)
+		return nil, &OpError{Op: "agent deploy: parse issued certificate", Cause: err}
 	}
 
 	return &service.IssuedAgentCertificate{
@@ -270,29 +270,29 @@ func decodeFirstPEMBlock(p []byte) []byte {
 func (i *sdkAgentCertIssuer) signCSR(ctx context.Context, req *xkmsSignCSRRequest) ([]byte, []byte, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("agent deploy: marshal sign-csr: %w", err)
+		return nil, nil, &OpError{Op: "agent deploy: marshal sign-csr", Cause: err}
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, i.baseURL+"/api/v1/xkms/ca/sign", bytes.NewReader(body))
 	if err != nil {
-		return nil, nil, fmt.Errorf("agent deploy: build sign-csr request: %w", err)
+		return nil, nil, &OpError{Op: "agent deploy: build sign-csr request", Cause: err}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 	resp, err := i.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, nil, fmt.Errorf("agent deploy: sign-csr call: %w", err)
+		return nil, nil, &OpError{Op: "agent deploy: sign-csr call", Cause: err}
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, fmt.Errorf("agent deploy: read sign-csr response: %w", err)
+		return nil, nil, &OpError{Op: "agent deploy: read sign-csr response", Cause: err}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("agent deploy: sign-csr HTTP %d: %s", resp.StatusCode, string(respBody))
+		return nil, nil, &MessageError{Message: fmt.Sprintf("agent deploy: sign-csr HTTP %d: %s", resp.StatusCode, string(respBody))}
 	}
 	var out xkmsSignCSRResponse
 	if err := json.Unmarshal(respBody, &out); err != nil {
-		return nil, nil, fmt.Errorf("agent deploy: decode sign-csr response: %w", err)
+		return nil, nil, &OpError{Op: "agent deploy: decode sign-csr response", Cause: err}
 	}
 	return out.CertificatePEM, out.ChainPEM, nil
 }
@@ -302,24 +302,24 @@ func (i *sdkAgentCertIssuer) signCSR(ctx context.Context, req *xkmsSignCSRReques
 func (i *sdkAgentCertIssuer) fetchCABundle(ctx context.Context) ([]byte, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, i.baseURL+"/api/v1/xkms/ca/bundle", nil)
 	if err != nil {
-		return nil, fmt.Errorf("build ca-bundle request: %w", err)
+		return nil, &OpError{Op: "build ca-bundle request", Cause: err}
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	resp, err := i.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("ca-bundle call: %w", err)
+		return nil, &OpError{Op: "ca-bundle call", Cause: err}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read ca-bundle: %w", err)
+		return nil, &OpError{Op: "read ca-bundle", Cause: err}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ca-bundle HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, &MessageError{Message: fmt.Sprintf("ca-bundle HTTP %d: %s", resp.StatusCode, string(body))}
 	}
 	var out xkmsCABundleResponse
 	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("decode ca-bundle: %w", err)
+		return nil, &OpError{Op: "decode ca-bundle", Cause: err}
 	}
 	if len(out.BundlePEM) == 0 {
 		return nil, ErrEmptyCABundle

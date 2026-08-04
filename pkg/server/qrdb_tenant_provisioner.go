@@ -53,3 +53,15 @@ func (a *qrdbTenantProvisionerAdapter) CreateTenant(ctx context.Context, id, nam
 func (a *qrdbTenantProvisionerAdapter) DeleteTenant(ctx context.Context, id string) error {
 	return a.svc.DeleteTenant(ctx, id)
 }
+
+// UpdateQuotas updates the engine-side resource quotas for the tenant.
+func (a *qrdbTenantProvisionerAdapter) UpdateQuotas(ctx context.Context, id string, quotas qrdbsdk.Quotas) error {
+	_, err := a.svc.UpdateQuotas(ctx, id, &quotas)
+	return err
+}
+
+// UpdateEntitlements updates the engine-side feature entitlements for the tenant.
+func (a *qrdbTenantProvisionerAdapter) UpdateEntitlements(ctx context.Context, id string, entitlements qrdbsdk.Entitlements) error {
+	_, err := a.svc.UpdateEntitlements(ctx, id, &entitlements)
+	return err
+}
