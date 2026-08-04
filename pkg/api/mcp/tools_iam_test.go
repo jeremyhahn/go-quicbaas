@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -2431,4 +2432,60 @@ func TestIAMCoverage91_ExecToolRouting_GDPR(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+// =============================================================================
+// User create role forwarding (transport parity with gRPC/Unix)
+// =============================================================================
+
+// TestExecuteIAMUserCreate_RolesForwarded proves the MCP tool arguments
+// "roles" reach the IAM service request untouched.
+func TestExecuteIAMUserCreate_RolesForwarded(t *testing.T) {
+	var captured *service.IAMCreateUserRequest
+	mock := &mockIAMService{
+		createUserFunc: func(_ context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
+			captured = req
+			return &service.IAMCreateUserResponse{
+				User:      &iam.User{ID: "u1", TenantID: req.TenantID, Email: req.Email, Name: req.Name, Roles: req.Roles},
+				Timestamp: time.Now(),
+			}, nil
+		},
+	}
+	reg := newIAMTestRegistry(mock)
+
+	args := map[string]interface{}{
+		"tenant_id": "t1",
+		"email":     "roles@example.com",
+		"name":      "Role User",
+		"roles":     []interface{}{"role-a", "role-b"},
+	}
+
+	result, err := reg.executeIAMUserCreate(context.Background(), args)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, captured)
+	assert.Equal(t, []string{"role-a", "role-b"}, captured.Roles)
+}
+
+// TestExecuteIAMUserCreate_UnknownRoleError proves a typed not-found error
+// from validate-before-create propagates to the MCP caller with no result.
+func TestExecuteIAMUserCreate_UnknownRoleError(t *testing.T) {
+	mock := &mockIAMService{
+		createUserFunc: func(_ context.Context, _ *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
+			return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.role.get"}
+		},
+	}
+	reg := newIAMTestRegistry(mock)
+
+	args := map[string]interface{}{
+		"tenant_id": "t1",
+		"email":     "phantom@example.com",
+		"name":      "Phantom",
+		"roles":     []interface{}{"no-such-role"},
+	}
+
+	result, err := reg.executeIAMUserCreate(context.Background(), args)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
 }

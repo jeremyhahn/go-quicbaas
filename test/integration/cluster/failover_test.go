@@ -435,10 +435,7 @@ func writeEntity(nodeURL, entityType string, entityID uint64, data map[string]in
 		}
 		done := make(chan result, 1)
 		go func() {
-			cl := &http.Client{
-				Timeout:   35 * time.Second,
-				Transport: &http.Transport{},
-			}
+			cl := newInsecureHTTPClient(35 * time.Second)
 			resp, err := cl.Post(apiURL, "application/json", bytes.NewReader(payloadBytes))
 			if err != nil {
 				done <- result{err: err}

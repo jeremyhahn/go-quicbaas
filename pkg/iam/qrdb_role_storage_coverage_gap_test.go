@@ -257,3 +257,29 @@ func TestMapQRDBRoleError_Nil(t *testing.T) {
 	// A nil input error is passed through as nil.
 	assert.NoError(t, mapQRDBRoleError("op", nil))
 }
+
+func TestMapQRDBRoleError_InvalidPermission(t *testing.T) {
+	// qrdb's invalid-permission rejection is a client-input error: it must be
+	// classified as ErrInvalidInput (-> 400 / InvalidArgument), never internal.
+	src := &qrdbrole.InvalidPermissionError{Permission: "read"}
+	err := mapQRDBRoleError("create", src)
+
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	assert.Equal(t, "iam.role.qrdb.create", qbErr.Op)
+	// The original typed error stays in the chain.
+	var perm *qrdbrole.InvalidPermissionError
+	assert.ErrorAs(t, err, &perm)
+}
+
+func TestMapQRDBRoleError_Validation(t *testing.T) {
+	// qrdb role request validation failures are client-input errors too.
+	src := &qrdbrole.ValidationError{Field: "name", Reason: "empty"}
+	err := mapQRDBRoleError("update", src)
+
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	assert.Equal(t, "iam.role.qrdb.update", qbErr.Op)
+}

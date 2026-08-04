@@ -75,25 +75,13 @@ func nodeURLs(t *testing.T) (node1, node2, node3 string) {
 	return
 }
 
-// plainHTTPClient returns an http.Client with a DEDICATED transport for the
-// cluster test stack which runs plain HTTP (security.tls_enabled=false).
-// A dedicated transport avoids sharing the http.DefaultTransport connection
-// pool with other test helpers (e.g. waitForClusterReady), which could cause
-// stale keepalive connections to be reused and hang writes.
-func plainHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: &http.Transport{},
-	}
-}
-
 // waitReady polls the /api/v1/health/ready endpoint until it returns 200 or
 // the deadline is exceeded.
 func waitReady(t *testing.T, nodeURL string, timeout time.Duration) bool {
 	t.Helper()
 	// Use a dedicated transport (new connection per call) to avoid
 	// stale keepalive connections from the shared DefaultTransport pool.
-	client := plainHTTPClient(5 * time.Second)
+	client := newInsecureHTTPClient(5 * time.Second)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(nodeURL + "/api/v1/health/ready")
@@ -131,7 +119,7 @@ func kvPut(t *testing.T, nodeURL, key string, value []byte) {
 	var lastErr error
 	var lastStatus int
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		client := plainHTTPClient(30 * time.Second)
+		client := newInsecureHTTPClient(30 * time.Second)
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPut,
 			apiURL, strings.NewReader(string(jsonValue)))
 		require.NoError(t, err)
@@ -172,7 +160,7 @@ func kvGet(t *testing.T, nodeURL, key string) []byte {
 	const maxAttempts = 6
 	const retryDelay = 3 * time.Second
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		client := plainHTTPClient(10 * time.Second)
+		client := newInsecureHTTPClient(10 * time.Second)
 		resp, err := client.Get(apiURL)
 		if err != nil {
 			t.Logf("kvGet attempt %d/%d: network error: %v", attempt, maxAttempts, err)

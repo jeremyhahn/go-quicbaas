@@ -99,7 +99,16 @@ func TestRoleAdapter_CreateRole_ValidationErrorPassthrough(t *testing.T) {
 // stable email, forwards roles, and returns a qrdbsdk.User echoing the
 // stored username/tenant/roles with Enabled=true.
 func TestUserAdapter_CreateUser_HappyPath(t *testing.T) {
-	a := WrapUser(newStore())
+	store := newStore()
+	// Register the role first, mirroring first-boot ordering (built-in roles
+	// are created before the admin user). IdentityStore.CreateUser validates
+	// role references before writing the user record.
+	if _, err := store.CreateRole(context.Background(), "system", iam.CreateRoleOptions{
+		ID: "role-admin", Name: "admin",
+	}); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	a := WrapUser(store)
 	req := &qrdbsdk.CreateUserRequest{
 		Username: "admin",
 		TenantID: "system",

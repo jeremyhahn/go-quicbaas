@@ -24,10 +24,17 @@ package iam_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -227,20 +234,26 @@ func TestBootstrap_ActivationEndpoint_ReturnsHTTP200(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestBootstrap_InsecureDevMode_PasswordAdminCreated_NoInvite
+// TestBootstrap_PIVCertPath_BindsAdmin_NoInviteBanner
 //
-// When InsecureDevMode=true the password bootstrap path runs and no invite
-// banner should be emitted.
+// QuicBaaS is passwordless: the legacy InsecureDevMode password-admin
+// bootstrap was retired with the hardening that removed password login
+// (Auth.BootstrapAdminUsername/Password are no longer consumed anywhere).
+// The current NO-BANNER bootstrap contract is path (d): when
+// Auth.BootstrapAdminPIVCertPath is configured, firstBootBootstrap binds the
+// certificate's thumbprint to the bootstrap admin non-interactively and
+// SKIPS the three-option ceremony banner entirely. This is the exact path
+// the integration harness uses (test/integration/quicbaas.yaml
+// auth.bootstrap_admin_piv_cert_path).
 // ---------------------------------------------------------------------------
 
-func TestBootstrap_InsecureDevMode_PasswordAdminCreated_NoInvite(t *testing.T) {
+func TestBootstrap_PIVCertPath_BindsAdmin_NoInviteBanner(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := minimalBootstrapConfig(tmpDir)
-	cfg.Auth.AllowPasswordAuth = true
-	cfg.Auth.InsecureDevMode = true
-	cfg.Auth.BootstrapAdminUsername = "devadmin"
-	cfg.Auth.BootstrapAdminPassword = "quicbaas-dev-admin"
+	cfg.Auth.AllowPasswordAuth = false
+	cfg.Auth.InsecureDevMode = false
+	cfg.Auth.BootstrapAdminPIVCertPath = writeSelfSignedAdminCert(t, tmpDir)
 
 	rdr, wtr, err := os.Pipe()
 	require.NoError(t, err)
@@ -248,22 +261,60 @@ func TestBootstrap_InsecureDevMode_PasswordAdminCreated_NoInvite(t *testing.T) {
 	os.Stderr = wtr
 
 	srv, startErr := startBootstrapServer(t, cfg)
-	require.NoError(t, startErr)
+	// Restore stderr before asserting so a failure message is visible.
+	_ = wtr.Close()
+	os.Stderr = origStderr
+	require.NoError(t, startErr,
+		"server must boot and bind the bootstrap admin PIV cert non-interactively")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 	})
 
-	_ = wtr.Close()
-	os.Stderr = origStderr
-
 	var stderrBuf bytes.Buffer
 	_, _ = io.Copy(&stderrBuf, rdr)
 	stderrOutput := stderrBuf.String()
 
 	assert.NotContains(t, stderrOutput, "FIRST-BOOT BOOTSTRAP",
-		"invite banner must NOT appear when dev mode password admin is used")
+		"ceremony banner must NOT appear when the bootstrap admin is bound to a PIV cert")
+	assert.NotContains(t, stderrOutput, "/ui/#/invite/",
+		"no activation URL may be printed on the PIV cert-bind bootstrap path")
+}
+
+// writeSelfSignedAdminCert mints a throwaway self-signed P-256 client
+// certificate and writes it as PEM into dir, returning the file path. Only
+// the certificate's SPKI/DER thumbprint is consumed by bindAdminPIVCert, so a
+// self-signed leaf is sufficient — no CA chain is validated on this path.
+func writeSelfSignedAdminCert(t *testing.T, dir string) string {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err, "generate P-256 key")
+
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialLimit)
+	require.NoError(t, err, "generate serial")
+
+	now := time.Now()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			Organization: []string{"QuicBaaS Integration Tests"},
+			CommonName:   "bootstrap-admin",
+		},
+		NotBefore:   now.Add(-time.Minute),
+		NotAfter:    now.AddDate(0, 0, 1),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err, "create self-signed cert")
+
+	path := filepath.Join(dir, "bootstrap-admin.crt")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	require.NoError(t, os.WriteFile(path, pemBytes, 0o600), "write cert PEM")
+	return path
 }
 
 // ---------------------------------------------------------------------------
@@ -373,10 +424,14 @@ func waitForStarted(t *testing.T, srv *server.Server, startErrCh <-chan error, r
 }
 
 // extractInviteToken parses the invite token out of an activation URL in the
-// stderr banner. Returns empty string if not found.
+// stderr banner. The banner emits the canonical SPA route
+// /ui/#/invite/<token> (pre-v1 stack: there is exactly ONE invite route; the
+// legacy #/activate?token= form is dead and explicitly asserted absent by
+// TestBootstrap_FirstBoot_PrintsActivationURL). Returns empty string if not
+// found.
 func extractInviteToken(t *testing.T, stderr string) string {
 	t.Helper()
-	const marker = "token="
+	const marker = "/ui/#/invite/"
 	idx := strings.Index(stderr, marker)
 	if idx < 0 {
 		return ""

@@ -336,32 +336,86 @@ func TestTenantBarrierService_CrossTenantDenied(t *testing.T) {
 	}
 }
 
-// TestTenantBarrierService_SystemTenantDenied verifies that a system-tenant
-// caller (empty TenantID) is denied for all barrier operations. System admins
-// hold no per-tenant barrier key (ScopeTenantOnly).
-func TestTenantBarrierService_SystemTenantDenied(t *testing.T) {
-	mock := &mockTenantClient{}
-	svc := NewTenantBarrierService(mock)
-
-	// System tenant: empty TenantID in subject.
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{
-		ID: "admin", Username: "admin", TenantID: "", Authenticated: true,
+// systemCtx returns a context carrying an authenticated system-tenant subject.
+// Both canonical representations are produced: the empty TenantID (pre-tenant
+// contexts) and the explicit qrdbsdk.SystemTenantID (SPIFFE-derived tokens).
+func systemCtx(tenantID string) context.Context {
+	return auth.SubjectIntoContext(context.Background(), interfaces.Subject{
+		ID: "admin", Username: "admin", TenantID: tenantID, Authenticated: true,
 	})
+}
 
-	if _, err := svc.TenantBarrierInit(ctx, "acme", "", 1, 1, "none"); !isForbidden(err) {
-		t.Errorf("Init: expected ErrForbidden for system-tenant caller, got %v", err)
+// TestTenantBarrierService_SystemTenantWritesDenied verifies that a
+// system-tenant caller (empty TenantID or the explicit "system" tenant) is
+// denied for every MUTATING barrier operation. System admins hold no
+// per-tenant barrier key (ScopeTenantOnly); tenant admins self-bootstrap
+// their own barriers per the locked architecture.
+func TestTenantBarrierService_SystemTenantWritesDenied(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		tenantID := tenantID
+		t.Run("subject_tenant="+tenantID, func(t *testing.T) {
+			mock := &mockTenantClient{}
+			svc := NewTenantBarrierService(mock)
+			ctx := systemCtx(tenantID)
+
+			if _, err := svc.TenantBarrierInit(ctx, "acme", "", 1, 1, "none"); !isForbidden(err) {
+				t.Errorf("Init: expected ErrForbidden for system-tenant caller, got %v", err)
+			}
+			if err := svc.TenantBarrierUnseal(ctx, "acme", []byte("k")); !isForbidden(err) {
+				t.Errorf("Unseal: expected ErrForbidden for system-tenant caller, got %v", err)
+			}
+			if _, err := svc.TenantBarrierUnsealShare(ctx, "acme", "share"); !isForbidden(err) {
+				t.Errorf("UnsealShare: expected ErrForbidden for system-tenant caller, got %v", err)
+			}
+			if err := svc.TenantBarrierSeal(ctx, "acme"); !isForbidden(err) {
+				t.Errorf("Seal: expected ErrForbidden for system-tenant caller, got %v", err)
+			}
+
+			// The mock must never see a mutating request.
+			if mock.initReq != nil || mock.unsealReq != nil || mock.shareReq != nil || mock.sealReq != nil {
+				t.Error("mock received a mutating request despite system-tenant denial")
+			}
+		})
 	}
-	if err := svc.TenantBarrierUnseal(ctx, "acme", []byte("k")); !isForbidden(err) {
-		t.Errorf("Unseal: expected ErrForbidden for system-tenant caller, got %v", err)
+}
+
+// TestTenantBarrierService_SystemTenantStatusAllowed verifies the owner
+// decision: system-tenant callers may READ any tenant barrier's status
+// (control-plane observability) while every mutation stays denied. Both
+// canonical system-tenant representations are admitted.
+func TestTenantBarrierService_SystemTenantStatusAllowed(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		tenantID := tenantID
+		t.Run("subject_tenant="+tenantID, func(t *testing.T) {
+			mock := &mockTenantClient{
+				statusResp: &qrdbtransport.TenantBarrierStatusResponse{
+					TenantID: "acme", Sealed: true, Initialized: true, Strategy: "shamir",
+				},
+			}
+			svc := NewTenantBarrierService(mock)
+
+			st, err := svc.TenantBarrierStatus(systemCtx(tenantID), "acme")
+			if err != nil {
+				t.Fatalf("Status: system-tenant read must be allowed, got %v", err)
+			}
+			if mock.statusReq == nil || mock.statusReq.TenantID != "acme" {
+				t.Fatalf("unexpected status request: %+v", mock.statusReq)
+			}
+			if st == nil || st.TenantID != "acme" || !st.Sealed || !st.Initialized {
+				t.Fatalf("unexpected status response: %+v", st)
+			}
+		})
 	}
-	if _, err := svc.TenantBarrierUnsealShare(ctx, "acme", "share"); !isForbidden(err) {
-		t.Errorf("UnsealShare: expected ErrForbidden for system-tenant caller, got %v", err)
-	}
-	if err := svc.TenantBarrierSeal(ctx, "acme"); !isForbidden(err) {
-		t.Errorf("Seal: expected ErrForbidden for system-tenant caller, got %v", err)
-	}
-	if _, err := svc.TenantBarrierStatus(ctx, "acme"); !isForbidden(err) {
-		t.Errorf("Status: expected ErrForbidden for system-tenant caller, got %v", err)
+}
+
+// TestTenantBarrierService_SystemTenantStatusPropagatesError verifies the
+// system-tenant read path propagates delegate errors unchanged (no allow-path
+// masking of qrdb failures).
+func TestTenantBarrierService_SystemTenantStatusPropagatesError(t *testing.T) {
+	sentinel := errors.New("qrdb down")
+	svc := NewTenantBarrierService(&mockTenantClient{statusErr: sentinel})
+	if _, err := svc.TenantBarrierStatus(systemCtx(qrdbsdk.SystemTenantID), "acme"); !errors.Is(err, sentinel) {
+		t.Fatalf("expected sentinel error, got %v", err)
 	}
 }
 

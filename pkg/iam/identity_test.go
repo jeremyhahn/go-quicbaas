@@ -3577,6 +3577,13 @@ func TestCreateUser_WithRoles(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
+	// Register the role first, mirroring first-boot ordering (roles are
+	// created before the admin user). CreateUser validates role references
+	// before writing the user record.
+	if _, err := store.CreateRole(ctx, "default", CreateRoleOptions{ID: "admin", Name: "admin"}); err != nil {
+		t.Fatalf("CreateRole failed: %v", err)
+	}
+
 	opts := CreateUserOptions{
 		Email:    "admin@quicbaas.local",
 		Username: "admin",
@@ -3623,5 +3630,92 @@ func TestCreateUser_WithNoRoles(t *testing.T) {
 	}
 	if len(user.Roles) != 0 {
 		t.Errorf("expected empty Roles, got %v", user.Roles)
+	}
+}
+
+// =============================================================================
+// CreateUser role validation (validate-before-create shared seam)
+// =============================================================================
+
+// TestCreateUser_WithRoles_ValidReferences verifies that role IDs supplied in
+// CreateUserOptions are validated against the tenant role store and persisted
+// on the created user.
+func TestCreateUser_WithRoles_ValidReferences(t *testing.T) {
+	store := newTestIdentityStore()
+	ctx := context.Background()
+
+	role, err := store.CreateRole(ctx, "tenant1", CreateRoleOptions{Name: "auditor"})
+	if err != nil {
+		t.Fatalf("CreateRole failed: %v", err)
+	}
+
+	user, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+		Email:    "roles@example.com",
+		Username: "roleuser",
+		Roles:    []string{role.ID},
+	})
+	if err != nil {
+		t.Fatalf("CreateUser with valid roles failed: %v", err)
+	}
+
+	if len(user.Roles) != 1 || user.Roles[0] != role.ID {
+		t.Errorf("Expected user.Roles [%s], got %v", role.ID, user.Roles)
+	}
+
+	// The persisted record must carry the roles too.
+	stored, err := store.GetUser(ctx, "tenant1", user.ID)
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if len(stored.Roles) != 1 || stored.Roles[0] != role.ID {
+		t.Errorf("Expected persisted roles [%s], got %v", role.ID, stored.Roles)
+	}
+}
+
+// TestCreateUser_WithRoles_UnknownRoleFailsWithoutCreate verifies the
+// validate-before-create contract shared by ALL transports: an unknown role
+// reference fails fast with a typed not-found error and NO user record is
+// written (a retry must not fail with already-exists).
+func TestCreateUser_WithRoles_UnknownRoleFailsWithoutCreate(t *testing.T) {
+	store := newTestIdentityStore()
+	ctx := context.Background()
+
+	_, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+		Email:    "phantom@example.com",
+		Username: "phantomuser",
+		Roles:    []string{"no-such-role"},
+	})
+	if err == nil {
+		t.Fatal("Expected error for unknown role reference")
+	}
+	if !dberrors.IsNotFound(err) {
+		t.Errorf("Expected typed not-found error, got %T: %v", err, err)
+	}
+
+	// Zero side effects: the user must NOT exist.
+	if _, err := store.GetUserByEmail(ctx, "phantom@example.com"); err == nil {
+		t.Error("Expected no user to be created after failed role validation")
+	}
+}
+
+// TestCreateUser_WithRoles_ValidatedBeforeQuota verifies role references are
+// checked before the tenant quota, mirroring the gRPC/Unix adapter ordering
+// (roles first, then quota) so all transports fail identically.
+func TestCreateUser_WithRoles_ValidatedBeforeQuota(t *testing.T) {
+	store := NewIdentityStore(IdentityStoreOptions{
+		UserStorage:  newMockUserStorage(),
+		GroupStorage: newMockGroupStorage(),
+		RoleStorage:  newMockRoleStorage(),
+		Tenants:      &mockIdentityTenantManager{quotaExceeded: true},
+	})
+	ctx := context.Background()
+
+	_, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+		Email:    "order@example.com",
+		Username: "orderuser",
+		Roles:    []string{"no-such-role"},
+	})
+	if !dberrors.IsNotFound(err) {
+		t.Errorf("Expected role not-found before quota error, got %v", err)
 	}
 }

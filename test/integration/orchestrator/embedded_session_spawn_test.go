@@ -45,6 +45,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
@@ -232,16 +234,17 @@ func TestEmbeddedSessionSpawn_SucceedsWithoutEnrollment(t *testing.T) {
 
 // TestEmbeddedSessionSpawn_EmbeddedAgentIsRegistered verifies that after
 // startEmbeddedAgent the fleet registry contains exactly one embedded-kind
-// agent for the default tenant, which is what triggers the embedded dispatch
-// path in the remote backend resolver.
+// agent. The embedded agent registers under the system tenant
+// (embeddedAgentTenantID = qrdbsdk.SystemTenantID), which is what triggers
+// the embedded dispatch path in the remote backend resolver.
 func TestEmbeddedSessionSpawn_EmbeddedAgentIsRegistered(t *testing.T) {
 	mockURL := startMockOllama(t)
 	env := newEmbeddedSessionEnv(t, mockURL)
 	agentSvc := env.svc.Agent()
 
-	ctx := orchestration.ContextWithTenant(context.Background(), "default")
+	ctx := orchestration.ContextWithTenant(context.Background(), qrdbsdk.SystemTenantID)
 
-	agents, err := agentSvc.ListAgents(ctx, "default", &orchestration.AgentFilter{})
+	agents, err := agentSvc.ListAgents(ctx, qrdbsdk.SystemTenantID, &orchestration.AgentFilter{})
 	require.NoError(t, err)
 	require.NotNil(t, agents)
 

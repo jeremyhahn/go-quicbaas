@@ -345,6 +345,11 @@ type CreateUserOptions struct {
 	// Roles is the list of role IDs to assign to the new user.
 	Roles []string
 
+	// Groups is the list of group IDs the new user is added to. Each
+	// reference is validated before the user record is written, and each
+	// group's member list is updated to include the new user.
+	Groups []string
+
 	// InviteExpiry is the duration until the invite token expires.
 	// Defaults to 24 hours when zero.
 	InviteExpiry time.Duration

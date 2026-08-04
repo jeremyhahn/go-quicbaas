@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 )
 
 // CeremonyWiringError indicates a failure constructing the bootstrap ceremony
@@ -138,6 +139,50 @@ func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir string) (*Cerem
 		Ceremony:   qrdbsdk.NewServiceCeremonyService(ceremonyCore),
 		Core:       ceremonyCore,
 	}, nil
+}
+
+// newBootstrapCeremonyClient builds the in-process qrdb SDK client that
+// exposes the bootstrap ceremony service stack (barrier, ceremony, and
+// credential servicers) through the canonical qrdb embedded transport.
+//
+// It exists for the seal-disabled deployment state: the embedded qrdb node
+// builds its seal-layer services (and registers them on its own embedded
+// transport) only when cfg.Seal.Enabled is true. Without a seal barrier the
+// node's SDK client answers every barrier/ceremony/credential call with a
+// NilServiceError, which would leave the whole multi-protocol surface (REST,
+// gRPC, QUIC, MCP, Unix, and the SDK embedded transport) without a working
+// bootstrap-window ceremony. This client wraps the SAME servicer instances
+// stored in s.ceremonyServices, so every transport operates on one barrier
+// with no split-brain state.
+//
+// The KV and Admin servicers come from the node's service graph; the qrdb
+// embedded transport requires both. All construction failures are returned
+// as CeremonyWiringError with a stage identifying the failing step.
+func newBootstrapCeremonyClient(
+	kv qrdbsdk.KVServicer,
+	admin qrdbsdk.AdminServicer,
+	cs *CeremonyServices,
+) (*qrdbsdk.Client, error) {
+	if cs == nil || cs.Barrier == nil || cs.Ceremony == nil || cs.Credential == nil {
+		return nil, &CeremonyWiringError{Stage: "bootstrap-client services"}
+	}
+
+	tp, err := qrdbembedded.New(kv, admin,
+		qrdbembedded.WithBarrierService(cs.Barrier),
+		qrdbembedded.WithCeremonyService(cs.Ceremony),
+		qrdbembedded.WithCredentialService(cs.Credential),
+	)
+	if err != nil {
+		return nil, &CeremonyWiringError{Stage: "bootstrap-transport", Cause: err}
+	}
+
+	// Connect is a no-op for the qrdb embedded transport (it never dials
+	// anything), so the client is usable immediately.
+	client, err := qrdbsdk.NewClient(tp)
+	if err != nil {
+		return nil, &CeremonyWiringError{Stage: "bootstrap-client", Cause: err}
+	}
+	return client, nil
 }
 
 // SOCertSPKIThumbprintError indicates a failure computing the SPKI

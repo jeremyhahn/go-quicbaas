@@ -510,13 +510,22 @@ func splitLines(data []byte) []string {
 //
 // We deliberately use a fresh exec.Cmd (not spawnDaemon) because init is
 // short-lived and must exit cleanly before the test moves to start.
+// matrixPassphrase is the admin-supplied barrier passphrase shared between
+// the init phase (--passphrase) and the start phase
+// (QUICBAAS_SEAL_PASSPHRASE auto-unseal) of the passphrase matrix cells.
+const matrixPassphrase = "init-matrix-passphrase-2026"
+
 func runInit(ctx context.Context, binary string, strategy string, dataDir string) (string, error) {
 	args := []string{"init", "--barrier-strategy", strategy, "--data-dir", dataDir}
 	switch strategy {
 	case "none":
 		// PINs intentionally omitted — the daemon rejects them under "none".
 	case "passphrase":
-		args = append(args, "--so-pin", "so-pin-1234", "--user-pin", "user-pin-1234")
+		// The passphrase barrier is sealed with an admin-supplied
+		// passphrase at init (security hardening removed the
+		// deployment-derived default), so --passphrase is REQUIRED.
+		args = append(args, "--so-pin", "so-pin-1234", "--user-pin", "user-pin-1234",
+			"--passphrase", matrixPassphrase)
 	case "shamir":
 		// For shamir we expect officers + threshold/shares. The matrix
 		// drives this through the dedicated runShamirInit helper below
@@ -585,7 +594,7 @@ func runShamirInit(ctx context.Context, binary string, dataDir string) (string, 
 // explicitly disable the Unix socket only when our target transport is
 // gRPC or none of the gRPC-bearing transports; otherwise unix lives on a
 // per-subtest path under the data dir.
-func startDaemon(t *testing.T, binary string, dataDir string, transport string, ports PortBundle) *DaemonProcess {
+func startDaemon(t *testing.T, binary string, dataDir string, strategy string, transport string, ports PortBundle) *DaemonProcess {
 	t.Helper()
 
 	args := []string{
@@ -614,6 +623,18 @@ func startDaemon(t *testing.T, binary string, dataDir string, transport string, 
 	env := []string{
 		// HOME isolates xkms key material under the data dir.
 		"HOME=" + dataDir,
+	}
+	if strategy == "passphrase" {
+		// Init ran with seal enabled and an initialized passphrase barrier,
+		// so the data plane on disk is encrypted (encfs over the barrier
+		// KEK). Start must boot with the SAME seal posture and auto-unseal
+		// with the admin passphrase — there is no deployment-derived
+		// default (security hardening).
+		env = append(env,
+			"QUICBAAS_SEAL_ENABLED=true",
+			"QUICBAAS_SEAL_STRATEGY=passphrase",
+			"QUICBAAS_SEAL_PASSPHRASE="+matrixPassphrase,
+		)
 	}
 	if transport == "quic" {
 		env = append(env,

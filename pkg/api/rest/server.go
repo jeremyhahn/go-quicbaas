@@ -298,6 +298,20 @@ type Server struct {
 	// /api/v1) so the qrdb SDK REST client works unchanged against quicbaasd.
 	credentialSvc qrdbsdk.ServiceCredentialServicer
 
+	// userSvc serves the qrdb-wire GET /users/by-username/{username} lookup
+	// the qrdb SDK factor surface uses to resolve a subject to its uint64
+	// user id. Wired by lifecycle via SetUserService (a lazy proxy over the
+	// embedded node's user store). Nil before wiring; the handler reports
+	// 501 Not Implemented.
+	userSvc qrdbsdk.UserServicer
+
+	// userAuthFactorSvc serves the qrdb-wire /v1/users/factors/* endpoints
+	// (user-login factor enrollment / rotation / revocation). Wired by
+	// lifecycle via SetUserAuthFactorService with the SAME UserAuthFactor
+	// instance the unified-login ceremony resolves against. Nil before
+	// wiring; the handlers report 501 Not Implemented.
+	userAuthFactorSvc qrdbsdk.UserAuthFactorServicer
+
 	startTime time.Time
 	mu        sync.RWMutex
 	started   bool
@@ -388,20 +402,9 @@ func (s *Server) setupRouter() {
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Apply authorization middleware if configured. Selector precedence:
-		// the central platform-token Validator gate (AuthorizeViaValidator) when
-		// enabled; then proof-of-possession-only token binding
-		// (EnforceTokenBinding); otherwise the legacy RBAC Authorize gate.
-		if s.authzMiddleware != nil && !s.defaultDenyEnforcement {
-			switch {
-			case s.validatorEnforcement:
-				r.Use(s.authzMiddleware.AuthorizeViaValidator)
-			case s.bindingEnforcementOnly:
-				r.Use(s.authzMiddleware.EnforceTokenBinding)
-			default:
-				r.Use(s.authzMiddleware.Authorize)
-			}
-		}
+		// Apply the shared protected-API authorization chain (see
+		// useAPIAuthzMiddleware for the selector precedence).
+		s.useAPIAuthzMiddleware(r)
 
 		// Standard API routes with default body size limit (10 MB).
 		// This group protects against memory exhaustion DoS by capping
@@ -873,6 +876,34 @@ func (s *Server) setupRouter() {
 		r.Post("/enroll-external-officer", s.HandleCeremonyEnrollExternalOfficer)
 	})
 
+	// User lookup wire route. The qrdb SDK factor surface
+	// (Security().Auth().Factors()) resolves a subject (tenant + username) to
+	// its uint64 user id via GET /users/by-username/{username}?tenantID=...
+	// before enrolling a factor. ONLY the read-only lookup is mounted: user
+	// CRUD stays on the quicbaas IAM management surface (/api/v1/iam), which
+	// remains the single canonical user-administration entry point.
+	// Registered at the root (NOT under /api/v1) because the qrdb SDK REST
+	// transport hardcodes the /users prefix.
+	r.Route("/users", func(r chi.Router) {
+		r.Get("/by-username/{username}", s.HandleQRDBUserByUsername)
+	})
+
+	// User auth-factor wire routes mirror the qrdb /v1/users/factors/* wire
+	// contract (go-qrdb pkg/api/rest/handlers_user_auth_factor.go) so the
+	// qrdb SDK REST client works unchanged against quicbaasd. Enrollment
+	// writes land in the SAME UserAuthFactor store the unified-login ceremony
+	// reads. Registered at the root (NOT under /api/v1) because the qrdb SDK
+	// transport hardcodes the /v1/users/factors prefix.
+	r.Route("/v1/users/factors", func(r chi.Router) {
+		r.Post("/", s.HandleUserAuthFactorAdd)
+		r.Get("/list", s.HandleUserAuthFactorList)
+		r.Post("/rotate", s.HandleUserAuthFactorRotate)
+		r.Post("/login", s.HandleUserAuthFactorLogin)
+		r.Get("/{factorID}", s.HandleUserAuthFactorGet)
+		r.Delete("/{factorID}", s.HandleUserAuthFactorRemove)
+		r.Put("/{factorID}/label", s.HandleUserAuthFactorRelabel)
+	})
+
 	// IAM routes
 	// Note: This is at root level because OIDC endpoints must be at /.well-known/*
 	// The IAM handler internally registers /api/v1/* routes for management APIs
@@ -896,6 +927,38 @@ func (s *Server) setupRouter() {
 	})
 
 	s.router = r
+}
+
+// useAPIAuthzMiddleware installs the protected-API authorization middleware
+// chain on r. It is the SINGLE selector for the per-group inbound authz
+// posture, shared by the /api/v1 chi group and the root-mounted IAM
+// management group (/api/v1/tenants, registered in iam.go), so both surfaces
+// enforce the same chain under every posture. Selector precedence:
+//
+//   - validatorEnforcement (RequireAuthz=true): the central platform-token
+//     Validator gate (AuthorizeViaValidator) — fail-closed scp -> permission
+//     decision + principal injection;
+//   - bindingEnforcementOnly (RequireAuthz=false): proof-of-possession-only
+//     token binding (EnforceTokenBinding) — DPoP/mTLS binding enforced on
+//     presented tokens and the verified principal injected, WITHOUT the RBAC
+//     decision;
+//   - otherwise: the legacy RBAC Authorize gate.
+//
+// When defaultDenyEnforcement is active the gate lives on the TOP router
+// (EnforceDefaultDeny) and no per-group middleware is added, so the surface
+// is gated exactly once. A nil authzMiddleware installs nothing.
+func (s *Server) useAPIAuthzMiddleware(r chi.Router) {
+	if s.authzMiddleware == nil || s.defaultDenyEnforcement {
+		return
+	}
+	switch {
+	case s.validatorEnforcement:
+		r.Use(s.authzMiddleware.AuthorizeViaValidator)
+	case s.bindingEnforcementOnly:
+		r.Use(s.authzMiddleware.EnforceTokenBinding)
+	default:
+		r.Use(s.authzMiddleware.Authorize)
+	}
 }
 
 // handleDEKGetAction routes GET requests for DEKs based on path suffix.
@@ -1091,6 +1154,44 @@ func (s *Server) SetCredentialService(svc qrdbsdk.ServiceCredentialServicer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.credentialSvc = svc
+}
+
+// SetUserService installs the qrdb user lookup service used by the
+// /users/by-username/{username} wire handler. Lifecycle wiring passes a lazy
+// proxy over the embedded node's user store so the surface follows the
+// node's sealed/unsealed state. Passing nil disables the surface (handlers
+// report 501 Not Implemented).
+func (s *Server) SetUserService(svc qrdbsdk.UserServicer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.userSvc = svc
+}
+
+// SetUserAuthFactorService installs the qrdb user auth-factor service used
+// by the /v1/users/factors/* wire handlers. Lifecycle wiring passes a lazy
+// proxy over the embedded node's UserAuthFactor instance — the exact store
+// the unified-login ceremony resolves against. Passing nil disables the
+// surface (handlers report 501 Not Implemented).
+func (s *Server) SetUserAuthFactorService(svc qrdbsdk.UserAuthFactorServicer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.userAuthFactorSvc = svc
+}
+
+// userService returns the wired qrdb user lookup service under the read
+// lock, or nil when not yet wired.
+func (s *Server) userService() qrdbsdk.UserServicer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.userSvc
+}
+
+// userAuthFactorService returns the wired qrdb user auth-factor service
+// under the read lock, or nil when not yet wired.
+func (s *Server) userAuthFactorService() qrdbsdk.UserAuthFactorServicer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.userAuthFactorSvc
 }
 
 // SetAuthorizationService sets the authorization service and token validator after construction.

@@ -64,7 +64,10 @@ auth:
   token_ttl: 1h
   refresh_token_ttl: 24h
   bootstrap_admin: true
-  bootstrap_admin_username: "admin@integration.test"
+  # NOTE: bootstrap_admin_username / bootstrap_admin_password are dead knobs
+  # (consumed by nothing since password bootstrap was retired). The bootstrap
+  # admin identity comes exclusively from the cert bound via
+  # bootstrap_admin_piv_cert_path below.
   bootstrap_admin_piv_cert_path: /etc/quicbaas/certs/admin.crt
   # Disable login attempt throttling for integration tests.
   # Failed auth attempts from QUIC/MCP protocol probing must not trigger

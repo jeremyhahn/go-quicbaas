@@ -184,7 +184,7 @@ func TestUserRoleAssignment(t *testing.T) {
 	roleReq := map[string]interface{}{
 		"id":          "developer",
 		"name":        "Developer",
-		"permissions": []string{"read", "write"},
+		"permissions": []string{"kv:get", "kv:put"},
 	}
 	var role iam.Role
 	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), roleReq, &role))
@@ -402,7 +402,7 @@ func TestRoleCRUD(t *testing.T) {
 			"id":          roleID,
 			"name":        "Test Role",
 			"description": "A test role",
-			"permissions": []string{"read", "write", "delete"},
+			"permissions": []string{"kv:get", "kv:put", "kv:delete"},
 		}
 
 		var role iam.Role
@@ -413,7 +413,7 @@ func TestRoleCRUD(t *testing.T) {
 		assert.Equal(t, "Test Role", role.Name)
 		assert.Equal(t, tenantID, role.TenantID)
 		assert.Len(t, role.Permissions, 3)
-		assert.Contains(t, role.Permissions, "read")
+		assert.Contains(t, role.Permissions, "kv:get")
 	})
 
 	// Get role
@@ -430,7 +430,7 @@ func TestRoleCRUD(t *testing.T) {
 	t.Run("Update", func(t *testing.T) {
 		updateReq := map[string]interface{}{
 			"name":        "Updated Role Name",
-			"permissions": []string{"read", "write", "delete", "admin"},
+			"permissions": []string{"kv:get", "kv:put", "kv:delete", "kv:*"},
 		}
 
 		var updated iam.Role
@@ -439,7 +439,7 @@ func TestRoleCRUD(t *testing.T) {
 
 		assert.Equal(t, "Updated Role Name", updated.Name)
 		assert.Len(t, updated.Permissions, 4)
-		assert.Contains(t, updated.Permissions, "admin")
+		assert.Contains(t, updated.Permissions, "kv:*")
 	})
 
 	// Delete role
@@ -472,11 +472,18 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 
 	// Create multiple roles
 	roles := []string{"viewer", "editor", "admin"}
+	// Each broker role ID maps to a qrdb-registered colon permission — the
+	// qrdb PDP rejects unregistered permission strings at role creation.
+	rolePerms := map[string]string{
+		"viewer": "kv:get",
+		"editor": "kv:put",
+		"admin":  "kv:*",
+	}
 	for _, roleID := range roles {
 		roleReq := map[string]interface{}{
 			"id":          roleID,
 			"name":        roleID,
-			"permissions": []string{roleID},
+			"permissions": []string{rolePerms[roleID]},
 		}
 		var role iam.Role
 		require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), roleReq, &role))

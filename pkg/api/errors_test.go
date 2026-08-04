@@ -182,6 +182,47 @@ func TestOperationFailedError(t *testing.T) {
 			t.Errorf("op = %q", de.Op)
 		}
 	})
+
+	t.Run("UnclassifiedCauseDefaultsToInternal", func(t *testing.T) {
+		de := NewOperationFailedError("restore", cause)
+		if de.Code != dberrors.ErrInternal {
+			t.Errorf("code = %v, want ErrInternal", de.Code)
+		}
+	})
+
+	t.Run("ClassifiedCauseCodePreserved", func(t *testing.T) {
+		// A cause chain that already carries a classified QBError must keep
+		// its code so transports map the failure to the correct client-facing
+		// status (404/409/400) instead of masking it as a 500.
+		cases := []struct {
+			name string
+			code dberrors.ErrorCode
+		}{
+			{"NotFound", dberrors.ErrNotFound},
+			{"AlreadyExists", dberrors.ErrAlreadyExists},
+			{"InvalidInput", dberrors.ErrInvalidInput},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				inner := &dberrors.QBError{Code: tc.code, Op: "iam.role", Err: cause}
+				de := NewOperationFailedError("delete role", inner)
+				if de.Code != tc.code {
+					t.Errorf("code = %v, want %v", de.Code, tc.code)
+				}
+				if de.Op != "api.delete role" {
+					t.Errorf("op = %q", de.Op)
+				}
+			})
+		}
+	})
+
+	t.Run("UnknownCauseCodeDefaultsToInternal", func(t *testing.T) {
+		inner := &dberrors.QBError{Code: dberrors.ErrUnknown, Op: "iam.role", Err: cause}
+		de := NewOperationFailedError("delete role", inner)
+		if de.Code != dberrors.ErrInternal {
+			t.Errorf("code = %v, want ErrInternal", de.Code)
+		}
+	})
 }
 
 func TestInvalidBase64Error(t *testing.T) {

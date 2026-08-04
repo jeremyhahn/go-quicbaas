@@ -114,6 +114,17 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 
 	// Tenants management
 	router.Route("/api/v1/tenants", func(r chi.Router) {
+		// This group is registered at the ROOT router (the OIDC discovery
+		// endpoints force root-level registration), so it does NOT inherit the
+		// /api/v1 chi group's authorization chain. Install the SAME shared
+		// selector the /api/v1 group uses (useAPIAuthzMiddleware) so the
+		// tenant-management surface is fail-closed under RequireAuthz=true
+		// (AuthorizeViaValidator; every path here is PEP-mapped — tenants:* and
+		// the tenant_barrier:* special rules) and still receives the verified
+		// principal under RequireAuthz=false (EnforceTokenBinding), which the
+		// service-layer tenant-binding gates require to reason about identity.
+		h.server.useAPIAuthzMiddleware(r)
+
 		r.Get("/", h.ListTenants)
 		r.Post("/", h.CreateTenant)
 		r.Get("/{tenant_id}", h.GetTenant)
@@ -251,6 +262,18 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 
 	// IAM utility endpoints (not tenant-scoped)
 	router.Route("/api/v1/iam", func(r chi.Router) {
+		// This group is registered at the ROOT router (like /api/v1/tenants
+		// above), so it does NOT inherit the /api/v1 chi group's authorization
+		// chain. Install the SAME shared selector (useAPIAuthzMiddleware) so
+		// the sessions / audit / PEP-check / approval surface is fail-closed
+		// under RequireAuthz=true (AuthorizeViaValidator; every path here is
+		// PEP-mapped — see the "/api/v1/iam" entries in authz_pep_mapping.go)
+		// and still receives the verified principal under RequireAuthz=false
+		// (EnforceTokenBinding). The public tenant listing below bypasses the
+		// gate via isAuthzPublicEndpoint, so the login UI tenant selector
+		// keeps working without a token.
+		h.server.useAPIAuthzMiddleware(r)
+
 		// Public tenant listing for the login UI tenant selector — no auth required.
 		r.Get("/tenants/public", h.ListPublicTenants)
 

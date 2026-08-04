@@ -87,7 +87,7 @@ func TestIAMMappersImpersonationDuration(t *testing.T) {
 }
 
 // TestIAMMappersTenantSettings exercises mapTenantCreateRequest,
-// mapTenantSettings, convertSettingValue and extractQuotasFromSettings.
+// mapTenantSettings and convertSettingValue.
 func TestIAMMappersTenantSettings(t *testing.T) {
 	var body map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,12 +114,8 @@ func TestIAMMappersTenantSettings(t *testing.T) {
 	if body["name"] != "Acme" {
 		t.Errorf("expected display_name fallback to name, got %v", body["name"])
 	}
-	quotas, ok := body["quotas"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected quotas extracted, got %v", body["quotas"])
-	}
-	if quotas["max_users"] != float64(50) {
-		t.Errorf("expected max_users=50 in quotas, got %v", quotas["max_users"])
+	if _, present := body["quotas"]; present {
+		t.Errorf("quotas must not be synthesized from settings, got %v", body["quotas"])
 	}
 	settings, ok := body["settings"].(map[string]interface{})
 	if !ok {
@@ -128,8 +124,8 @@ func TestIAMMappersTenantSettings(t *testing.T) {
 	if settings["mfa_required"] != true {
 		t.Errorf("expected mfa_required converted to bool, got %v", settings["mfa_required"])
 	}
-	if _, present := settings["max_users"]; present {
-		t.Error("max_users should have been moved out of settings into quotas")
+	if settings["max_users"] != float64(50) {
+		t.Errorf("expected max_users=50 kept in settings as int, got %v", settings["max_users"])
 	}
 }
 

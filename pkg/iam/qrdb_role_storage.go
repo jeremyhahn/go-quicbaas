@@ -209,8 +209,11 @@ func transportRoleToIAM(tr *qrdbtransport.Role) *Role {
 
 // mapQRDBRoleError translates qrdb's role errors into the broker's typed IAM
 // sentinels so callers that branch on errors.Is(err, ErrRoleNotFound) /
-// ErrRoleAlreadyExists keep working unchanged across the storage swap. Unknown
-// errors are wrapped (never swallowed) with the originating op.
+// ErrRoleAlreadyExists keep working unchanged across the storage swap.
+// Validation failures raised by qrdb (an unregistered permission or a
+// malformed role request) are client-input errors and are classified as
+// ErrInvalidInput so the transports surface 400 / InvalidArgument instead of
+// a 500. Unknown errors are wrapped (never swallowed) with the originating op.
 func mapQRDBRoleError(op string, err error) error {
 	if err == nil {
 		return nil
@@ -222,6 +225,22 @@ func mapQRDBRoleError(op string, err error) error {
 	var nameExists *qrdbsdk.RoleNameExistsError
 	if errors.As(err, &nameExists) {
 		return ErrRoleAlreadyExists
+	}
+	var invalidPerm *qrdbsdk.RoleInvalidPermissionError
+	if errors.As(err, &invalidPerm) {
+		return &dberrors.QBError{
+			Code: dberrors.ErrInvalidInput,
+			Op:   "iam.role.qrdb." + op,
+			Err:  err,
+		}
+	}
+	var validation *qrdbsdk.RoleValidationError
+	if errors.As(err, &validation) {
+		return &dberrors.QBError{
+			Code: dberrors.ErrInvalidInput,
+			Op:   "iam.role.qrdb." + op,
+			Err:  err,
+		}
 	}
 	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,

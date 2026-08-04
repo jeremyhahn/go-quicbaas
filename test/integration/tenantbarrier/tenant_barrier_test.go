@@ -16,24 +16,37 @@
 // tenant_barrier_test.go contains the per-tenant barrier REST integration
 // test matrix.
 //
+// Identity model (owner decision): tenant-barrier MUTATIONS
+// (init/unseal/unseal-share/seal) run under tenant-admin identities minted
+// via helpers.AuthTenantAdmin — tenant admins self-bootstrap their own
+// barriers per the locked architecture. The system-admin bearer may READ any
+// tenant barrier's status (control-plane observability) and is DENIED every
+// mutation with the typed service denial.
+//
 // Matrix cases:
 //
-//	1. Strategy none         — init(none)→204, status(initialized,unsealed,none),
-//	                           seal→204, status(sealed), unseal(no key)→204, status(unsealed).
-//	2. Strategy passphrase   — requires volume pool. init→204, status, seal, unseal, status.
-//	3. Strategy shamir       — requires volume pool.
-//	   a. init(3-of-5)→200 {shares[5],threshold=3,total=5}
-//	   b. status: initialized, sealed, strategy=shamir, shamir_threshold=3, shamir_total=5
-//	   c. submit threshold-1 shares: each returns complete=false, sealed=true
-//	   d. submit threshold-th share: complete=true, sealed=false
-//	   e. status: initialized, unsealed, strategy=shamir
-//	   f. seal→204, status: sealed
-//	4. Cross-tenant denial   — admin of tenant A is denied (403) on tenant B's barrier.
-//	5. System-tenant denial  — barrier ops against the "test-tenant" (default/system
-//	                           tenant in the integration cluster) return 403.
+//	1. Strategy none         — tenant admin: init(none)→204, status(initialized,
+//	                           unsealed,none), seal→204, status(sealed),
+//	                           unseal(no key)→204, status(unsealed).
+//	2. Strategy passphrase   — requires volume pool. Tenant admin: init→204,
+//	                           status, seal, unseal, status.
+//	3. Strategy shamir       — requires volume pool. Tenant admin drives the
+//	                           full 3-of-5 quorum lifecycle.
+//	4. Cross-tenant denial   — admin of tenant A is denied (403) on tenant B's
+//	                           barrier; the system admin reads both statuses (200).
+//	5. System/default tenant — mutations against the cluster's default tenant
+//	                           ("test-tenant") by the system admin are denied;
+//	                           the status read returns 200 (control-plane read).
 //	6. Volume-pool-absent    — documented behaviour: when no pool is configured,
 //	                           cryptographic strategies return an error containing
 //	                           "volume pool not configured" (runtime-detected, no t.Skip).
+//	7. System-admin write posture (REST) — every mutating verb under the
+//	                           system-admin bearer returns the typed 403 denial;
+//	                           the status read returns 200.
+//	8. System-admin write posture (gRPC) — the same mutations over the gRPC
+//	                           transport return codes.PermissionDenied, proving
+//	                           the denial lives in the shared service facade,
+//	                           not a REST-only gate.
 
 package tenantbarrier
 
@@ -47,22 +60,32 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
+
+// systemDenialSentinel is the typed service-layer denial message returned when
+// a system-tenant caller attempts a per-tenant barrier mutation
+// (pkg/service/tenant_barrier_service.go enforceTenantBinding).
+const systemDenialSentinel = "system-tenant callers may not perform per-tenant barrier operations"
 
 // =============================================================================
 // Test 1: strategy none
 // =============================================================================
 
-// TestTenantBarrier_None exercises the full lifecycle for the "none" strategy.
-// The none strategy carries no credential requirement and does not allocate a
-// per-tenant storage volume, so it succeeds regardless of whether the daemon
-// has a volume pool configured.
+// TestTenantBarrier_None exercises the full lifecycle for the "none" strategy
+// under a tenant-admin identity. The none strategy carries no credential
+// requirement and does not allocate a per-tenant storage volume, so it
+// succeeds regardless of whether the daemon has a volume pool configured.
 func TestTenantBarrier_None(t *testing.T) {
-	bearer := adminBearer(t)
+	admin := adminBearer(t)
 	tenantID := fmt.Sprintf("tb-none-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier None Test", bearer)
+	createTenant(t, tenantID, "Barrier None Test", admin)
+	bearer := tenantAdminBearer(t, tenantID)
 	ctx := context.Background()
 
 	t.Run("init_none_returns_204", func(t *testing.T) {
@@ -125,20 +148,21 @@ func TestTenantBarrier_None(t *testing.T) {
 // =============================================================================
 
 // TestTenantBarrier_Passphrase exercises the full lifecycle for the
-// "passphrase" (software) strategy. The test detects at runtime whether the
-// integration cluster's qrdb node has a storage volume pool configured.
-// If it does not, the test documents the expected error and verifies the
-// canonical "volume pool not configured" sentinel appears in the error
-// response. Per project rules (no t.Skip), the test NEVER exits early; it
-// always runs all sub-cases and either validates the cryptographic path or the
-// expected pool-absent error path.
+// "passphrase" (software) strategy under a tenant-admin identity. The test
+// detects at runtime whether the integration cluster's qrdb node has a
+// storage volume pool configured. If it does not, the test documents the
+// expected error and verifies the canonical "volume pool not configured"
+// sentinel appears in the error response. Per project rules (no t.Skip), the
+// test NEVER exits early; it always runs all sub-cases and either validates
+// the cryptographic path or the expected pool-absent error path.
 func TestTenantBarrier_Passphrase(t *testing.T) {
-	bearer := adminBearer(t)
-	poolAvailable := volumePoolAvailable(t, bearer)
+	admin := adminBearer(t)
+	poolAvailable := volumePoolAvailable(t, admin)
 	t.Logf("volume pool available: %v", poolAvailable)
 
 	tenantID := fmt.Sprintf("tb-pass-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier Passphrase Test", bearer)
+	createTenant(t, tenantID, "Barrier Passphrase Test", admin)
+	bearer := tenantAdminBearer(t, tenantID)
 	ctx := context.Background()
 	const passphrase = "integration-test-passphrase-2026"
 
@@ -244,7 +268,8 @@ func TestTenantBarrier_Passphrase(t *testing.T) {
 // Test 3: strategy shamir (requires volume pool)
 // =============================================================================
 
-// TestTenantBarrier_Shamir exercises the full Shamir lifecycle:
+// TestTenantBarrier_Shamir exercises the full Shamir lifecycle under a
+// tenant-admin identity:
 //
 //   - init with M=3 N=5 returns exactly 5 shares and threshold=3
 //   - status reports shamir_threshold=3, shamir_total=5, sealed=true
@@ -253,12 +278,13 @@ func TestTenantBarrier_Passphrase(t *testing.T) {
 //   - status after the threshold share reports unsealed
 //   - seal → unseal-share cycle works a second time
 func TestTenantBarrier_Shamir(t *testing.T) {
-	bearer := adminBearer(t)
-	poolAvailable := volumePoolAvailable(t, bearer)
+	admin := adminBearer(t)
+	poolAvailable := volumePoolAvailable(t, admin)
 	t.Logf("volume pool available: %v", poolAvailable)
 
 	tenantID := fmt.Sprintf("tb-shamir-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier Shamir Test", bearer)
+	createTenant(t, tenantID, "Barrier Shamir Test", admin)
+	bearer := tenantAdminBearer(t, tenantID)
 	ctx := context.Background()
 
 	const (
@@ -408,13 +434,12 @@ func TestTenantBarrier_Shamir(t *testing.T) {
 // =============================================================================
 
 // TestTenantBarrier_CrossTenantDenied verifies that the admin bearer for
-// tenant A cannot reach the barrier endpoints of tenant B. The PEP maps
-// per-tenant barrier paths to the tenant_barrier resource with tenant-scoped
-// authorization; a cross-tenant request must be denied with 403.
+// tenant A cannot reach the barrier endpoints of tenant B, while the system
+// admin retains read-only status visibility over both tenants.
 //
-// This test exercises only the REST transport because the authz enforcement is
-// at the handler level and is identical across transports (the PEP/authz gate
-// runs before any transport-specific dispatch).
+// This test exercises only the REST transport because the tenant binding is
+// enforced in the shared service facade and is identical across transports
+// (the binding runs before any transport-specific dispatch).
 //
 // Mechanism: helpers.AuthTenantAdmin mints an ephemeral ECDSA P-256 client
 // certificate carrying a tenant-scoped SPIFFE URI SAN, enrolls a tenant-admin
@@ -430,9 +455,9 @@ func TestTenantBarrier_CrossTenantDenied(t *testing.T) {
 	createTenant(t, tenantB, "Barrier Cross-Tenant B", adminToken)
 
 	// Obtain a tenant-A-scoped bearer via the PIV invite + SPIFFE cert fixture.
-	tenantABearer := helpers.AuthTenantAdmin(t, restBaseURL(), tenantA)
+	tenantABearer := tenantAdminBearer(t, tenantA)
 
-	// --- system-admin can read both tenants ---
+	// --- system-admin can read both tenants (control-plane observability) ---
 	t.Run("system_admin_can_read_both_tenant_statuses", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), restTimeout)
 		defer cancel()
@@ -482,21 +507,22 @@ func TestTenantBarrier_CrossTenantDenied(t *testing.T) {
 			"tenant A bearer must be denied (403) on tenant B's barrier seal; body=%s", body)
 	})
 
-	// --- tenant-A bearer is also denied on own barrier when accessed via wrong
-	//     path (sanity: cross-origin denial is not a path-not-found false positive) ---
+	// --- tenant-A bearer is allowed on its own barrier (sanity: cross-tenant
+	//     denial is not a path-not-found false positive) ---
 	t.Run("tenant_a_bearer_allowed_on_tenant_a_status", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), restTimeout)
 		defer cancel()
 
-		// init tenant A with "none" so status reflects a known state.
+		// init tenant A with "none" (as the tenant A admin — writes are
+		// tenant-scoped) so status reflects a known state.
 		initCtx, initCancel := context.WithTimeout(context.Background(), restTimeout)
 		defer initCancel()
-		initStatus, _, _, initErr := initTenantBarrier(initCtx, tenantA, adminToken, tenantBarrierInitReq{
+		initStatus, _, initBody, initErr := initTenantBarrier(initCtx, tenantA, tenantABearer, tenantBarrierInitReq{
 			Strategy: "none",
 		})
 		require.NoErrorf(t, initErr, "init tenant A barrier (sanity init): network error")
 		require.Equalf(t, http.StatusNoContent, initStatus,
-			"init tenant A barrier for sanity check must return 204")
+			"init tenant A barrier for sanity check must return 204; body=%s", initBody)
 
 		status, resp, body, err := statusTenantBarrier(ctx, tenantA, tenantABearer)
 		require.NoErrorf(t, err, "GET tenant A status with tenant A bearer: network error")
@@ -508,23 +534,20 @@ func TestTenantBarrier_CrossTenantDenied(t *testing.T) {
 }
 
 // =============================================================================
-// Test 5: system-tenant denial
+// Test 5: system/default tenant posture
 // =============================================================================
 
-// TestTenantBarrier_SystemTenantDenied asserts that barrier operations against
-// the integration cluster's system/default tenant ("test-tenant") are denied.
-// Per the locked architecture, the system tenant's barrier is managed by the
-// system-level barrier surface (/api/v1/barrier/*) and is explicitly excluded
-// from the per-tenant barrier API. The PEP applies ScopeTenantOnly which
-// denies system-tenant targets.
+// TestTenantBarrier_SystemTenantPosture asserts the system-admin posture
+// against the integration cluster's default tenant ("test-tenant"): barrier
+// MUTATIONS are denied (system-tenant callers hold no per-tenant key —
+// ScopeTenantOnly), while the STATUS read returns 200 per the owner decision
+// (control-plane observability).
 //
-// The "test-tenant" ID comes from iam.tenants.default in quicbaas.yaml; its
-// barrier is managed by the global /api/v1/barrier surface, not the per-tenant
-// one, so any POST to /api/v1/tenants/test-tenant/barrier/* must be denied.
-func TestTenantBarrier_SystemTenantDenied(t *testing.T) {
-	// The integration cluster's default/system tenant ID as configured in
+// The "test-tenant" ID comes from iam.tenants.default in quicbaas.yaml.
+func TestTenantBarrier_SystemTenantPosture(t *testing.T) {
+	// The integration cluster's default tenant ID as configured in
 	// test/integration/quicbaas.yaml (iam.tenants.default).
-	const systemTenantID = "test-tenant"
+	const defaultTenantID = "test-tenant"
 
 	bearer := adminBearer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), restTimeout)
@@ -541,27 +564,29 @@ func TestTenantBarrier_SystemTenantDenied(t *testing.T) {
 		return false
 	}
 
-	t.Run("init_system_tenant_denied", func(t *testing.T) {
-		status, _, body, err := initTenantBarrier(ctx, systemTenantID, bearer, tenantBarrierInitReq{
+	t.Run("init_default_tenant_denied_for_system_admin", func(t *testing.T) {
+		status, _, body, err := initTenantBarrier(ctx, defaultTenantID, bearer, tenantBarrierInitReq{
 			Strategy: "none",
 		})
-		require.NoErrorf(t, err, "init system tenant: network error")
+		require.NoErrorf(t, err, "init default tenant: network error")
 		assert.Truef(t, isForbidden(status),
-			"init on system tenant must be denied (403/401); got status=%d body=%s", status, body)
+			"init on the default tenant by the system admin must be denied (403/401); got status=%d body=%s", status, body)
 	})
 
-	t.Run("seal_system_tenant_denied", func(t *testing.T) {
-		status, body, err := sealTenantBarrier(ctx, systemTenantID, bearer)
-		require.NoErrorf(t, err, "seal system tenant: network error")
+	t.Run("seal_default_tenant_denied_for_system_admin", func(t *testing.T) {
+		status, body, err := sealTenantBarrier(ctx, defaultTenantID, bearer)
+		require.NoErrorf(t, err, "seal default tenant: network error")
 		assert.Truef(t, isForbidden(status),
-			"seal on system tenant must be denied (403/401); got status=%d body=%s", status, body)
+			"seal on the default tenant by the system admin must be denied (403/401); got status=%d body=%s", status, body)
 	})
 
-	t.Run("status_system_tenant_denied", func(t *testing.T) {
-		status, _, body, err := statusTenantBarrier(ctx, systemTenantID, bearer)
-		require.NoErrorf(t, err, "status system tenant: network error")
-		assert.Truef(t, isForbidden(status),
-			"status on system tenant must be denied (403/401); got status=%d body=%s", status, body)
+	t.Run("status_default_tenant_readable_by_system_admin", func(t *testing.T) {
+		status, resp, body, err := statusTenantBarrier(ctx, defaultTenantID, bearer)
+		require.NoErrorf(t, err, "status default tenant: network error")
+		require.Equalf(t, http.StatusOK, status,
+			"status on the default tenant by the system admin must return 200 (control-plane read); body=%s", body)
+		require.NotNilf(t, resp, "status response must not be nil")
+		assert.Equalf(t, defaultTenantID, resp.TenantID, "status tenant_id mismatch")
 	})
 }
 
@@ -571,11 +596,12 @@ func TestTenantBarrier_SystemTenantDenied(t *testing.T) {
 
 // TestTenantBarrier_VolumePoolAbsent explicitly validates the clean error
 // surface when the embedded qrdb node has no storage volume pool configured.
-// If the pool IS configured this test is a no-op (logs and passes). Per
-// project rules (no t.Skip), the test always runs.
+// All init attempts run under a tenant-admin identity (mutations are
+// tenant-scoped). If the pool IS configured this test is a no-op (logs and
+// passes). Per project rules (no t.Skip), the test always runs.
 func TestTenantBarrier_VolumePoolAbsent(t *testing.T) {
-	bearer := adminBearer(t)
-	poolAvailable := volumePoolAvailable(t, bearer)
+	admin := adminBearer(t)
+	poolAvailable := volumePoolAvailable(t, admin)
 
 	if poolAvailable {
 		t.Logf("volume pool is configured — VolumePoolAbsent sentinel test is a no-op in this cluster")
@@ -583,7 +609,8 @@ func TestTenantBarrier_VolumePoolAbsent(t *testing.T) {
 	}
 
 	tenantID := fmt.Sprintf("tb-nopool-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier No-Pool Test", bearer)
+	createTenant(t, tenantID, "Barrier No-Pool Test", admin)
+	bearer := tenantAdminBearer(t, tenantID)
 	ctx := context.Background()
 
 	for _, strategy := range []string{"passphrase", "shamir"} {
@@ -623,5 +650,154 @@ func TestTenantBarrier_VolumePoolAbsent(t *testing.T) {
 		require.NoErrorf(t, err, "init none (no pool): network error")
 		assert.Equalf(t, http.StatusNoContent, status,
 			"init(none) must return 204 regardless of volume pool configuration; body=%s", body)
+	})
+}
+
+// =============================================================================
+// Test 7: system-admin write posture — REST negative matrix
+// =============================================================================
+
+// TestTenantBarrier_SystemAdminWritePosture_REST pins the owner decision on
+// the REST transport against a REGULAR tenant: every mutating tenant-barrier
+// verb under the system-admin bearer returns 403 carrying the typed
+// service-layer denial ("system-tenant callers may not perform per-tenant
+// barrier operations"), while the status read returns 200. The per-tenant
+// barrier surface has no rekey/rotate verb; the negative matrix therefore
+// covers every registered mutation (init/unseal/unseal-share/seal).
+func TestTenantBarrier_SystemAdminWritePosture_REST(t *testing.T) {
+	adminToken := adminBearer(t)
+	tenantID := fmt.Sprintf("tb-sysneg-%d", time.Now().UnixNano())
+	createTenant(t, tenantID, "Barrier SysAdmin Negative", adminToken)
+
+	// The tenant admin initializes its own barrier (none) so the negative
+	// matrix runs against a real, initialized barrier — denials must come from
+	// the identity gate, not from an uninitialized-barrier error path.
+	tenantBearer := tenantAdminBearer(t, tenantID)
+	initCtx, initCancel := context.WithTimeout(context.Background(), restTimeout)
+	defer initCancel()
+	initStatus, _, initBody, initErr := initTenantBarrier(initCtx, tenantID, tenantBearer, tenantBarrierInitReq{
+		Strategy: "none",
+	})
+	require.NoErrorf(t, initErr, "tenant-admin init: network error")
+	require.Equalf(t, http.StatusNoContent, initStatus,
+		"tenant-admin init(none) must return 204; body=%s", initBody)
+
+	ctx, cancel := context.WithTimeout(context.Background(), restTimeout)
+	defer cancel()
+
+	// requireTypedDenial asserts the canonical 403 + typed denial body.
+	requireTypedDenial := func(t *testing.T, verb string, status int, body []byte) {
+		t.Helper()
+		require.Equalf(t, http.StatusForbidden, status,
+			"%s by the system admin must return 403; got %d body=%s", verb, status, body)
+		assert.Containsf(t, strings.ToLower(string(body)), systemDenialSentinel,
+			"%s denial body must carry the typed service denial; body=%s", verb, body)
+	}
+
+	t.Run("init_denied_403_typed", func(t *testing.T) {
+		status, _, body, err := initTenantBarrier(ctx, tenantID, adminToken, tenantBarrierInitReq{
+			Strategy: "none",
+		})
+		require.NoErrorf(t, err, "system-admin init: network error")
+		requireTypedDenial(t, "init", status, body)
+	})
+
+	t.Run("unseal_denied_403_typed", func(t *testing.T) {
+		status, body, err := unsealTenantBarrier(ctx, tenantID, adminToken, encodedKey("irrelevant"))
+		require.NoErrorf(t, err, "system-admin unseal: network error")
+		requireTypedDenial(t, "unseal", status, body)
+	})
+
+	t.Run("unseal_share_denied_403_typed", func(t *testing.T) {
+		status, _, body, err := unsealShareTenantBarrier(ctx, tenantID, adminToken, "dummy-share")
+		require.NoErrorf(t, err, "system-admin unseal-share: network error")
+		requireTypedDenial(t, "unseal-share", status, body)
+	})
+
+	t.Run("seal_denied_403_typed", func(t *testing.T) {
+		status, body, err := sealTenantBarrier(ctx, tenantID, adminToken)
+		require.NoErrorf(t, err, "system-admin seal: network error")
+		requireTypedDenial(t, "seal", status, body)
+	})
+
+	t.Run("status_read_allowed_200", func(t *testing.T) {
+		status, resp, body, err := statusTenantBarrier(ctx, tenantID, adminToken)
+		require.NoErrorf(t, err, "system-admin status: network error")
+		require.Equalf(t, http.StatusOK, status,
+			"system-admin status read must return 200; body=%s", body)
+		require.NotNilf(t, resp, "status response must not be nil")
+		assert.Equalf(t, tenantID, resp.TenantID, "status tenant_id mismatch")
+		assert.Truef(t, resp.Initialized, "barrier was initialized by the tenant admin")
+	})
+}
+
+// =============================================================================
+// Test 8: system-admin write posture — gRPC negative matrix
+// =============================================================================
+
+// TestTenantBarrier_SystemAdminWritePosture_GRPC proves the system-admin
+// mutation denial is enforced in the SHARED service facade (not a REST-only
+// gate) by replaying the negative matrix over the gRPC TenantBarrier service:
+// every mutation under the system-admin bearer must fail with
+// codes.PermissionDenied.
+func TestTenantBarrier_SystemAdminWritePosture_GRPC(t *testing.T) {
+	adminToken := adminBearer(t)
+	tenantID := fmt.Sprintf("tb-sysneg-grpc-%d", time.Now().UnixNano())
+	createTenant(t, tenantID, "Barrier SysAdmin Negative gRPC", adminToken)
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), restTimeout)
+	defer dialCancel()
+
+	endpoints := helpers.GetClusterEndpoints()
+	require.NotEmpty(t, endpoints, "gRPC cluster endpoints must be configured")
+	conn := helpers.MustSetupGRPCConnectionToEndpoint(t, dialCtx, endpoints[0])
+	defer conn.Close()
+
+	client := pb.NewTenantBarrierClient(conn)
+
+	// Attach the system-admin bearer to every RPC.
+	rpcCtx, rpcCancel := context.WithTimeout(context.Background(), restTimeout)
+	defer rpcCancel()
+	rpcCtx = metadata.AppendToOutgoingContext(rpcCtx, "authorization", "Bearer "+adminToken)
+
+	// requirePermissionDenied asserts the RPC failed with PermissionDenied.
+	requirePermissionDenied := func(t *testing.T, verb string, err error) {
+		t.Helper()
+		require.Errorf(t, err, "%s by the system admin over gRPC must fail", verb)
+		st, ok := status.FromError(err)
+		require.Truef(t, ok, "%s error must be a gRPC status error; got %v", verb, err)
+		assert.Equalf(t, codes.PermissionDenied, st.Code(),
+			"%s by the system admin must be PermissionDenied; got %s (%s)", verb, st.Code(), st.Message())
+	}
+
+	t.Run("init_permission_denied", func(t *testing.T) {
+		_, err := client.Init(rpcCtx, &pb.TenantBarrierInitRequest{
+			TenantId: tenantID,
+			Strategy: "none",
+		})
+		requirePermissionDenied(t, "Init", err)
+	})
+
+	t.Run("unseal_permission_denied", func(t *testing.T) {
+		_, err := client.Unseal(rpcCtx, &pb.TenantBarrierUnsealRequest{
+			TenantId: tenantID,
+			Key:      []byte("irrelevant"),
+		})
+		requirePermissionDenied(t, "Unseal", err)
+	})
+
+	t.Run("unseal_share_permission_denied", func(t *testing.T) {
+		_, err := client.UnsealShare(rpcCtx, &pb.TenantBarrierUnsealShareRequest{
+			TenantId: tenantID,
+			Share:    "dummy-share",
+		})
+		requirePermissionDenied(t, "UnsealShare", err)
+	})
+
+	t.Run("seal_permission_denied", func(t *testing.T) {
+		_, err := client.Seal(rpcCtx, &pb.TenantBarrierSealRequest{
+			TenantId: tenantID,
+		})
+		requirePermissionDenied(t, "Seal", err)
 	})
 }

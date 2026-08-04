@@ -282,6 +282,17 @@ type Server struct {
 	// transport (network-only modes that don't run the init flow).
 	ceremonyServices *CeremonyServices
 
+	// bootstrapCeremonyClient is the in-process qrdb SDK client built over
+	// the bootstrap ceremony service stack via the qrdb embedded transport.
+	// Non-nil ONLY when the embedded qrdb node runs without a seal barrier
+	// (seal disabled) — in that state the node's own SDK client carries no
+	// Barrier/Ceremony/Credential servicers, so barrier, ceremony, and
+	// credential verbs on every transport are served through this client
+	// instead (see startService and buildBarrierCeremonyServices). It wraps
+	// the exact servicer instances stored in ceremonyServices, keeping all
+	// transports on one barrier with no split-brain state.
+	bootstrapCeremonyClient *qrdbsdk.Client
+
 	// bootstrapAdminUserID and bootstrapAdminTenantID identify the pending
 	// admin user created by firstBootBootstrap. BindAdminToSOCert reads these
 	// to pin the SO certificate's SPKI thumbprint against the right user
@@ -929,6 +940,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 				s.logger.WithError(err).Error("Failed to shutdown raft node")
 			} else {
 				s.logger.Info("Raft node shutdown complete")
+			}
+		}
+
+		// Close the bootstrap ceremony client (in-process qrdb SDK client
+		// over the bootstrap ceremony stack). Non-nil only when the node
+		// runs without a seal barrier. Closed before the node because its
+		// embedded transport references the node's KV/Admin servicers.
+		if s.bootstrapCeremonyClient != nil {
+			s.logger.Info("Closing bootstrap ceremony client...")
+			if err := s.bootstrapCeremonyClient.Close(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to close bootstrap ceremony client")
+			} else {
+				s.logger.Info("Bootstrap ceremony client closed")
 			}
 		}
 

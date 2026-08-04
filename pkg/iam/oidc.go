@@ -696,14 +696,23 @@ func (p *OIDCProvider) UserInfo(ctx context.Context, accessToken string) (*UserI
 		return nil, NewOAuthError(ErrOAuthInvalidGrant, "invalid access token")
 	}
 
-	// Get user
+	// Resolve the user. OAuth2 flows mint sub = the broker user ID, while the
+	// unified login ceremony mints sub = the qrdb username (token subjects are
+	// qrdb users). Resolve by ID first and fall back to the tenant-scoped
+	// username so ceremony-issued bearers validate against userinfo too.
 	user, err := p.identityStore.GetUser(ctx, claims.TenantID, claims.Subject)
 	if err != nil {
-		return nil, NewOAuthError(ErrOAuthServerError, "failed to get user info")
+		user, err = p.identityStore.GetUserByUsername(ctx, claims.TenantID, claims.Subject)
+		if err != nil {
+			return nil, NewOAuthError(ErrOAuthServerError, "failed to get user info")
+		}
 	}
 
+	// OIDC Core 5.3.2: the userinfo sub MUST match the token sub. On the ID
+	// path user.ID == claims.Subject, so this is equivalent; on the username
+	// fallback it preserves the ceremony bearer's subject.
 	return &UserInfoResponse{
-		Sub:           user.ID,
+		Sub:           claims.Subject,
 		Name:          user.Name,
 		Email:         user.Email,
 		EmailVerified: true,

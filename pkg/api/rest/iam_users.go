@@ -134,6 +134,8 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Attributes        map[string]interface{} `json:"attributes,omitempty"`
 		Enabled           bool                   `json:"enabled"`
 		AuthMethods       []string               `json:"auth_methods,omitempty"`
+		Roles             []string               `json:"roles,omitempty"`
+		Groups            []string               `json:"groups,omitempty"`
 		InviteExpiryHours int                    `json:"invite_expiry_hours,omitempty"`
 	}
 
@@ -192,12 +194,18 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// Create user
 	inviteExpiry := time.Duration(req.InviteExpiryHours) * time.Hour
 	opts := iam.CreateUserOptions{
-		ID:           req.ID,
-		Email:        req.Email,
-		Username:     req.Username,
-		Name:         req.Name,
-		Attributes:   req.Attributes,
-		Enabled:      req.Enabled,
+		ID:         req.ID,
+		Email:      req.Email,
+		Username:   req.Username,
+		Name:       req.Name,
+		Attributes: req.Attributes,
+		Enabled:    req.Enabled,
+		// Roles and Groups are validated against the tenant's role and
+		// group stores by IdentityStore.CreateUser BEFORE the user record
+		// is written (validate-before-create), matching the gRPC/Unix
+		// adapter contract.
+		Roles:        req.Roles,
+		Groups:       req.Groups,
 		AuthMethods:  req.AuthMethods,
 		InviteExpiry: inviteExpiry,
 	}

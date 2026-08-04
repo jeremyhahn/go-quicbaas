@@ -108,6 +108,8 @@ type (
 	GetKeyResponse            = xkmssdk.GetKeyResponse
 	IAKConfig                 = xkmssdk.IAKConfig
 	IDevIDConfig              = xkmssdk.IDevIDConfig
+	LDevIDConfig              = xkmssdk.LDevIDConfig
+	LAKConfig                 = xkmssdk.LAKConfig
 	InstallOptions            = xkmssdk.InstallOptions
 	KeyAlgorithmString        = xkmssdk.KeyAlgorithmString
 	KeyAttributes             = xkmssdk.KeyAttributes
@@ -227,6 +229,7 @@ var (
 	ErrTPMNotInitialized              = xkmssdk.ErrTPMNotInitialized
 	ErrTPMStoreCertNotFound           = xkmssdk.ErrTPMStoreCertNotFound
 	IDevIDAttributesFromConfig        = xkmssdk.IDevIDAttributesFromConfig
+	LDevIDAttributesFromConfig        = xkmssdk.LDevIDAttributesFromConfig
 	KeyAttributesFromConfig           = xkmssdk.KeyAttributesFromConfig
 	MinimalInstallOptions             = xkmssdk.MinimalInstallOptions
 	NewCertStore                      = xkmssdk.NewCertStore

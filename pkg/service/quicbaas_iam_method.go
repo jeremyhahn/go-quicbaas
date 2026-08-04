@@ -221,9 +221,16 @@ func (w *iamServiceWrapper) CreateUser(ctx context.Context, req *IAMCreateUserRe
 	}
 
 	opts := iam.CreateUserOptions{
-		Email:    req.Email,
-		Username: username,
-		Name:     req.Name,
+		Email:      req.Email,
+		Username:   username,
+		Name:       req.Name,
+		Attributes: req.Attributes,
+		// Roles and Groups are validated against the tenant's role and
+		// group stores by IdentityStore.CreateUser BEFORE the user record
+		// is written (validate-before-create), matching the gRPC/Unix
+		// adapter contract.
+		Roles:  req.Roles,
+		Groups: req.Groups,
 	}
 
 	user, err := is.CreateUser(ctx, req.TenantID, opts)

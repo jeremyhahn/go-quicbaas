@@ -239,6 +239,17 @@ func (s *Server) startRESTServer() error {
 		s.logger.Info("Credential service wired into REST server")
 	}
 
+	// Wire the qrdb user + user auth-factor services into the REST server so
+	// the /users/by-username and /v1/users/factors/* wire endpoints (which
+	// the qrdb SDK factor surface targets) serve real responses. The lazy
+	// proxies resolve the embedded node servicer per call, so the surface
+	// follows the node's sealed/unsealed state on BOTH the seal-enabled and
+	// seal-disabled boot paths and always operates on the SAME user /
+	// UserAuthFactor stores the unified-login ceremony resolves against.
+	restServer.SetUserService(newQRDBUserServicerProxy(s))
+	restServer.SetUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s))
+	s.logger.Info("qrdb user and user auth-factor services wired into REST server")
+
 	// Wire barrier and ceremony services into the REST server so the
 	// root-level /v1/barrier/* and /v1/ceremony/* endpoints (which the qrdb
 	// SDK REST sub-client targets) serve real responses. These are the same

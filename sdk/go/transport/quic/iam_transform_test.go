@@ -206,6 +206,10 @@ func TestTransformUserCreateRequest(t *testing.T) {
 		assert.Equal(t, "Bob", m["name"])
 		assert.Equal(t, "b@x.y", m["email"])
 		assert.Equal(t, map[string]interface{}{"k": "v"}, m["attributes"])
+		// Roles/groups must reach the wire under their snake_case keys so the
+		// server can validate-before-create (transport parity with gRPC/Unix).
+		assert.Equal(t, []interface{}{"r1"}, m["roles"])
+		assert.Equal(t, []interface{}{"g1"}, m["groups"])
 	})
 
 	t.Run("flat with name fallback", func(t *testing.T) {

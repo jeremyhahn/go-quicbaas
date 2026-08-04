@@ -945,3 +945,57 @@ func TestIAMMiddleware_TenantContext(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
+
+// TestIAMHandler_CreateUser_WithRoles proves the REST body schema accepts a
+// "roles" list and forwards it through the shared IdentityStore seam: the
+// created user carries the role and the persisted record matches.
+func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
+	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-auditor", TenantID: "tenant1", Name: "auditor"}))
+
+	body := `{"email": "withroles@example.com", "username": "withroles", "name": "With Roles", "roles": ["role-auditor"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	w := httptest.NewRecorder()
+
+	handler.CreateUser(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, []interface{}{"role-auditor"}, resp["roles"], "response must carry the assigned roles")
+
+	// Persisted record carries the roles too.
+	stored, err := memStorage.GetUserByEmail(ctx, "withroles@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"role-auditor"}, stored.Roles)
+}
+
+// TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser proves the REST
+// transport inherits the validate-before-create contract: an unknown role
+// reference returns 404 and NO user record is written (retry-safe).
+func TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser(t *testing.T) {
+	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+
+	body := `{"email": "phantom@example.com", "username": "phantom", "name": "Phantom", "roles": ["no-such-role"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	w := httptest.NewRecorder()
+
+	handler.CreateUser(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
+
+	// Zero side effects: the user must NOT exist.
+	_, err := memStorage.GetUserByEmail(ctx, "phantom@example.com")
+	require.Error(t, err, "no user must be created after failed role validation")
+}

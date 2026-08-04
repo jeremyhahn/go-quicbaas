@@ -31,10 +31,15 @@
 //
 // The matrix runs against the SHARED integration cluster started by
 // make integration-test / docker-compose.integration.yml. All REST calls are
-// made directly via net/http (no CLI binary needed); the admin bearer is
-// obtained via helpers.AuthPIV. Tenant creation uses the IAM CLI verb via
-// the shared TestRunner from package cli — an admin-level operation that
-// must not be guarded by the suite's per-tenant token.
+// made directly via net/http (no CLI binary needed).
+//
+// Identity model (owner decision): the system-admin bearer (helpers.AuthPIV)
+// is a CONTROL-PLANE identity — it provisions tenants and may READ any
+// tenant barrier's status, but it is DENIED every tenant-barrier mutation
+// (init/unseal/unseal-share/seal). All barrier lifecycle writes are performed
+// under a tenant-admin bearer minted via helpers.AuthTenantAdmin, matching
+// the locked architecture where tenant admins self-bootstrap their own
+// barriers.
 //
 // Volume-pool availability is detected at runtime by attempting a passphrase
 // init against a probe tenant and checking for the canonical "volume pool not
@@ -103,6 +108,17 @@ func adminBearer(t *testing.T) string {
 	t.Helper()
 	token := helpers.AuthPIV(t, restBaseURL())
 	require.NotEmpty(t, token, "admin bearer token must not be empty")
+	return token
+}
+
+// tenantAdminBearer mints (and memoises, via helpers) a tenant-admin bearer
+// scoped to tenantID. Per the owner decision, ALL tenant-barrier mutations in
+// this suite run under a tenant-admin identity; the system-admin bearer is
+// used only for tenant provisioning and status reads.
+func tenantAdminBearer(t *testing.T, tenantID string) string {
+	t.Helper()
+	token := helpers.AuthTenantAdmin(t, restBaseURL(), tenantID)
+	require.NotEmptyf(t, token, "tenant-admin bearer for %s must not be empty", tenantID)
 	return token
 }
 
@@ -284,11 +300,11 @@ func createTenant(t *testing.T, tenantID, displayName, bearer string) {
 	defer cancel()
 
 	reqBody := map[string]interface{}{
+		"id":   tenantID,
 		"name": displayName,
 	}
 	status, body, err := doREST(ctx, http.MethodPost,
-		fmt.Sprintf("/api/v1/iam/tenants/%s", tenantID),
-		bearer, reqBody)
+		"/api/v1/tenants", bearer, reqBody)
 	require.NoErrorf(t, err, "createTenant %s: network error", tenantID)
 	// 200 or 201 → created; 409 → already exists (idempotent for parallel
 	// test runs that share the cluster).
@@ -312,15 +328,20 @@ func createTenant(t *testing.T, tenantID, displayName, bearer string) {
 // across parallel test runs.
 //
 // Returns true when a volume pool is configured.
+//
+// The probe init runs under a tenant-admin bearer for the probe tenant:
+// barrier init is a tenant-barrier mutation and system-tenant callers are
+// denied (403) before the volume-pool check would ever be reached.
 func volumePoolAvailable(t *testing.T, bearer string) bool {
 	t.Helper()
 	probeTenantID := fmt.Sprintf("tb-probe-%d", time.Now().UnixNano())
 	createTenant(t, probeTenantID, "TenantBarrier Volume-Pool Probe", bearer)
+	probeBearer := tenantAdminBearer(t, probeTenantID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), restTimeout)
 	defer cancel()
 
-	status, _, body, err := initTenantBarrier(ctx, probeTenantID, bearer, tenantBarrierInitReq{
+	status, _, body, err := initTenantBarrier(ctx, probeTenantID, probeBearer, tenantBarrierInitReq{
 		Strategy:   "passphrase",
 		Passphrase: "probe-passphrase",
 	})

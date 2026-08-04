@@ -203,6 +203,22 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*ia
 		Attributes: user.Attributes,
 	}
 
+	// Pre-validate requested role and group references BEFORE creating the
+	// user. Resolving them up front keeps the create atomic from the caller's
+	// perspective: a bad role/group ID fails fast with a typed not-found error
+	// and no partially-created user is left behind (which would make a retry
+	// fail with already_exists on the username).
+	for _, role := range user.Roles {
+		if _, err := a.identityStore.GetRole(ctx, user.TenantID, role); err != nil {
+			return nil, err
+		}
+	}
+	for _, group := range user.Groups {
+		if _, err := a.identityStore.GetGroup(ctx, user.TenantID, group); err != nil {
+			return nil, err
+		}
+	}
+
 	created, err := a.identityStore.CreateUser(ctx, user.TenantID, opts)
 	if err != nil {
 		return nil, err

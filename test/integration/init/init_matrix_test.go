@@ -123,7 +123,7 @@ func runMatrixCell(t *testing.T, binary, strategy, transport string) {
 
 	// Phase 2: start daemon + wait for transport readiness.
 	ports := allocPortBundle(t, transport, dataDir)
-	daemon := startDaemon(t, binary, dataDir, transport, ports)
+	daemon := startDaemon(t, binary, dataDir, strategy, transport, ports)
 	if err := waitForTransportReady(ctx, t, daemon, transport, ports, dataDir); err != nil {
 		t.Fatalf("transport %q for strategy %q never became ready: %v",
 			transport, strategy, err)

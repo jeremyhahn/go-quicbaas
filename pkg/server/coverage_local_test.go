@@ -131,8 +131,11 @@ func TestServer_QRDBCredentialServicer_Local_NilWhenUnset(t *testing.T) {
 
 func TestServer_BuildQRDBRegisterOptions_Local_EmptyWhenNoServices(t *testing.T) {
 	srv := withTempServer(t)
-	assert.Empty(t, srv.buildQRDBRegisterOptions(),
-		"no register options expected when ceremonyServices is nil")
+	// The user + user-auth-factor lazy proxies are ALWAYS registered (they
+	// resolve the node servicer per call); credential/ceremony/barrier are
+	// conditional on their wiring.
+	assert.Len(t, srv.buildQRDBRegisterOptions(), 2,
+		"only the always-on user-surface options expected when ceremonyServices is nil")
 }
 
 func TestServer_RegisterQRDBService_Local_NoPanic(t *testing.T) {
@@ -201,8 +204,8 @@ func TestServer_BuildQRDBRegisterOptions_Local_IncludesCredentialAndCeremony(t *
 		"ceremony servicer must be non-nil once ceremony services are wired")
 
 	opts := srv.buildQRDBRegisterOptions()
-	require.Len(t, opts, 2,
-		"credential and ceremony register options expected; barrier omitted without a qrdb client")
+	require.Len(t, opts, 4,
+		"credential + ceremony + always-on user/user-auth-factor register options expected; barrier omitted without a qrdb client")
 
 	// The register options must be applicable to a real gRPC registration
 	// without panicking on a nil receiver.

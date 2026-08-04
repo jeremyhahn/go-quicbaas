@@ -98,8 +98,10 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 	// NOT the bootstrap ceremony's ephemeral in-memory barrier.
 	//
 	// On the node path the barrier is exposed via GetCeremonyServices().Barrier
-	// (populated from the node's seal subsystem in startService). Fall back to
-	// nil (barrier operations return NotSupported) when seal is disabled.
+	// (populated from the node's seal subsystem in startService). When seal is
+	// disabled, startService populates GetCeremonyServices() with the bootstrap
+	// ceremony stack instead, so the embedded transport serves the SAME
+	// bootstrap-window barrier as every other transport (Phase 8 parity).
 	if dp := es.server.GetDataPlaneBarrierService(); dp != nil {
 		servicers.Barrier = dp
 	} else if ceremonyStack := es.server.GetCeremonyServices(); ceremonyStack != nil && ceremonyStack.Barrier != nil {

@@ -288,6 +288,13 @@ var defaultDenyScopeTable = map[string]defaultDenyScopeRule{
 	"/v1/ceremony":    {read: "ceremony:status", write: "ceremony:initialize"},
 	"/v1/init":        {read: "ceremony:status", write: "ceremony:initialize"},
 	"/api/v1/init":    {read: "ceremony:status", write: "ceremony:initialize"},
+
+	// qrdb-wire user lookup + user-login factor mounts at the router root
+	// (server.go /users + /v1/users/factors). Resource names are the
+	// qrdb-registered users:* and user_authfactors:* permission families
+	// (go-qrdb/pkg/permission/constants.go).
+	"/users":            {read: "users:read", write: "users:create"},
+	"/v1/users/factors": {read: "user_authfactors:get", write: "user_authfactors:add"},
 }
 
 // barrierScopeTable maps each barrier prefix to a coarse fallback scope rule

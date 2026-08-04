@@ -190,10 +190,26 @@ var pepMapping = map[string]pepResource{
 	"/api/v1/barrier": {resource: "tenant_barrier", verbs: crudVerbs{get: "status", list: "status", create: "init", del: "seal"}},
 	"/v1/barrier":     {resource: "tenant_barrier", verbs: crudVerbs{get: "status", list: "status", create: "init", del: "seal"}},
 
+	// qrdb-wire user lookup + user-login factor mounts at the router root —
+	// same root-wire precedent as /v1/barrier above. Verbs map onto the
+	// qrdb-registered users:* and user_authfactors:* permission families.
+	"/users":            {resource: "users", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
+	"/v1/users/factors": {resource: "user_authfactors", verbs: crudVerbs{get: "get", list: "list", create: "add", del: "remove"}},
+
 	// IAM management surfaces.
 	"/api/v1/users":   {resource: "users", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
 	"/api/v1/roles":   {resource: "roles", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
 	"/api/v1/tenants": {resource: "tenants", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
+
+	// IAM utility group (root-mounted /api/v1/iam in iam.go): sessions, audit,
+	// PEP access-check and self-registration approval surfaces. Every registered
+	// endpoint resolves via the "/api/v1/iam" pepSpecialRulesBase block; this
+	// coarse fallback keeps any future sub-path mapped (degrading to the same
+	// tenants family the defaultDenyScopeTable uses for /api/v1/iam) rather than
+	// unmapped/denied. The public tenant listing (/api/v1/iam/tenants/public)
+	// and the invite-activation mount (/api/v1/iam/invites) bypass the authz
+	// middleware entirely (isAuthzPublicEndpoint / separate unwrapped mount).
+	"/api/v1/iam": {resource: "tenants", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
 
 	// Data-service surfaces.
 	"/api/v1/timeseries":   {resource: "timeseries", verbs: crudVerbs{get: "query", list: "query", create: "write", del: "delete_series"}},
@@ -511,6 +527,44 @@ var pepSpecialRulesBase = []pepSpecialRule{
 	{http.MethodPost, "/api/v1/rag", "/ingest", "rag", "ingest"},
 	{http.MethodPost, "/api/v1/rag", "/reindex", "rag", "ingest"},
 	{http.MethodDelete, "/api/v1/rag", "/documents/", "rag", "delete_document"},
+
+	// ---- IAM utility group (/api/v1/iam: sessions / audit / PEP checks) ----
+	// Root-mounted in iam.go outside the /api/v1 chi group; it carries the same
+	// useAPIAuthzMiddleware chain as /api/v1/tenants, so every endpoint must
+	// resolve to a registered qrdb permission (go-qrdb/pkg/permission).
+	//
+	// Pending self-registration review transitions a user's state: approve ->
+	// active (users:enable), reject -> disabled (users:disable).
+	{http.MethodPost, "/api/v1/iam", "/approve", "users", "enable"},
+	{http.MethodPost, "/api/v1/iam", "/reject", "users", "disable"},
+	// OAuth2 client-credential validation reads the tenant's registered app.
+	// Apps are managed under the tenants surface (/api/v1/tenants/{id}/apps
+	// authorizes as tenants:*), so validation authorizes as a tenants read.
+	{http.MethodPost, "/api/v1/iam", "/validate-client", "tenants", "read"},
+	// PEP access checks resolve a subject's effective permissions.
+	{http.MethodPost, "/api/v1/iam", "/check/batch", "permissions", "resolve"},
+	{http.MethodPost, "/api/v1/iam", "/batch-check", "permissions", "resolve"},
+	{http.MethodPost, "/api/v1/iam", "/check", "permissions", "resolve"},
+	// Audit log: filtered listing -> audit:query, single event -> audit:read.
+	// "/audit/" (item) is longer than "/audit" (collection) so audit:read wins
+	// for /audit/{id} while /audit stays audit:query (scheduler /jobs pattern).
+	{http.MethodGet, "/api/v1/iam", "/audit/", "audit", "read"},
+	{http.MethodGet, "/api/v1/iam", "/audit", "audit", "query"},
+	// Retention pruning: the qrdb registry has no audit:delete yet, so the gate
+	// requires the nearest registered audit-family permission; the handler
+	// additionally enforces the fine-grained audit:delete AdminManager check
+	// before deleting. A future qrdb audit:delete registration should replace
+	// this mapping.
+	{http.MethodDelete, "/api/v1/iam", "/audit", "audit", "query"},
+	// Login-session management operates on the caller's own user record:
+	// session reads -> users:read, revocations mutate session state ->
+	// users:update. No session:* family exists in the qrdb registry; a future
+	// registration should replace this mapping.
+	{http.MethodPost, "/api/v1/iam", "/sessions/revoke-others", "users", "update"},
+	{http.MethodGet, "/api/v1/iam", "/sessions/", "users", "read"},
+	{http.MethodDelete, "/api/v1/iam", "/sessions/", "users", "update"},
+	{http.MethodGet, "/api/v1/iam", "/sessions", "users", "read"},
+	{http.MethodDelete, "/api/v1/iam", "/sessions", "users", "update"},
 
 	// ---- Per-tenant barrier lifecycle ----
 	// These leaf actions (tier 2) win over the surface-wide "/api/v1/tenants"

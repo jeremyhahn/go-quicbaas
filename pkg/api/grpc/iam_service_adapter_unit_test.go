@@ -1052,6 +1052,18 @@ func TestAdapter91_CreateUser_WithRolesAndGroups(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
+	// Pre-create the role and group so the create-time references resolve.
+	_, err := adapter.identityStore.CreateRole(ctx, "tenant-1", iam.CreateRoleOptions{
+		ID:   "admin",
+		Name: "Admin",
+	})
+	require.NoError(t, err)
+	_, err = adapter.identityStore.CreateGroup(ctx, "tenant-1", iam.CreateGroupOptions{
+		ID:   "dev-team",
+		Name: "Dev Team",
+	})
+	require.NoError(t, err)
+
 	user := &iam.User{
 		TenantID: "tenant-1",
 		Email:    "bob@example.com",
@@ -1060,9 +1072,51 @@ func TestAdapter91_CreateUser_WithRolesAndGroups(t *testing.T) {
 		Groups:   []string{"dev-team"},
 	}
 	result, err := adapter.CreateUser(ctx, user)
-	// Role/group assignment may fail since they don't exist, but user is created
-	assert.NotNil(t, result)
-	_ = err
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"admin"}, result.Roles)
+	assert.Equal(t, []string{"dev-team"}, result.Groups)
+}
+
+func TestAdapter91_CreateUser_UnknownRoleFailsWithoutPartialUser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	adapter := createTestIAMAdapter91(t)
+
+	user := &iam.User{
+		TenantID: "tenant-1",
+		Email:    "bob2@example.com",
+		Name:     "Bob Two",
+		Roles:    []string{"does-not-exist"},
+	}
+	result, err := adapter.CreateUser(ctx, user)
+	// Role references are validated BEFORE the user record is created, so a
+	// bad role fails fast and atomically: no result and no partial user that
+	// would make a retry collide with already_exists.
+	require.Error(t, err)
+	assert.Nil(t, result)
+
+	_, getErr := adapter.GetUser(ctx, "tenant-1", "bob2@example.com")
+	assert.Error(t, getErr, "no partial user must remain after a failed create")
+}
+
+func TestAdapter91_CreateUser_UnknownGroupFailsWithoutPartialUser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	adapter := createTestIAMAdapter91(t)
+
+	user := &iam.User{
+		TenantID: "tenant-1",
+		Email:    "bob3@example.com",
+		Name:     "Bob Three",
+		Groups:   []string{"no-such-group"},
+	}
+	result, err := adapter.CreateUser(ctx, user)
+	require.Error(t, err)
+	assert.Nil(t, result)
+
+	_, getErr := adapter.GetUser(ctx, "tenant-1", "bob3@example.com")
+	assert.Error(t, getErr, "no partial user must remain after a failed create")
 }
 
 func TestAdapter91_GetUser_ByID(t *testing.T) {

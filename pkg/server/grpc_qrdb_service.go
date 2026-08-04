@@ -45,7 +45,7 @@ import (
 func (s *Server) registerQRDBService(grpcServer *ggrpc.Server) {
 	opts := s.buildQRDBRegisterOptions()
 	qrdbsdk.RegisterGRPCService(grpcServer, nil, nil, opts...)
-	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (credential/barrier/ceremony surface)")
+	s.logger.Info("Registered qrdb.v1.QRDBService on gRPC server (credential/barrier/ceremony/user/user-auth-factor surface)")
 }
 
 // buildQRDBRegisterOptions assembles the qrdbsdk.GRPCRegisterOption slice from
@@ -74,6 +74,18 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 	if bs := s.qrdbBarrierServicer(); bs != nil {
 		opts = append(opts, qrdbsdk.WithRegisterBarrierService(bs))
 	}
+
+	// User + UserAuthFactor services back the qrdb SDK's
+	// Security().Auth().Factors() surface: resolveSubjectUserID reads the
+	// user store and factor enrollment writes the UserAuthFactor store the
+	// unified-login ceremony resolves against. The proxies resolve the
+	// embedded node servicer PER CALL (see qrdb_user_servicers.go) so the
+	// surface comes online after Unseal on the seal-enabled boot path
+	// instead of being captured as nil at registration time.
+	opts = append(opts,
+		qrdbsdk.WithRegisterUserService(newQRDBUserServicerProxy(s)),
+		qrdbsdk.WithRegisterUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s)),
+	)
 
 	return opts
 }
@@ -120,6 +132,12 @@ func (s *Server) qrdbCeremonyServicer() qrdbsdk.ServiceCeremonyServicer {
 // case the qrdb barrier RPCs respond with codes.Unimplemented — preserving the
 // clean fallback for misconfigured deployments.
 func (s *Server) qrdbBarrierServicer() qrdbsdk.BarrierServicer {
+	// Seal-disabled state: the node's SDK client carries no barrier
+	// servicer, so the qrdb.v1 barrier surface operates on the bootstrap
+	// ceremony client — the same instances every other transport serves.
+	if s.bootstrapCeremonyClient != nil {
+		return newQRDBBarrierClientServicer(s.bootstrapCeremonyClient.Barrier())
+	}
 	if s.qrdbClient == nil {
 		return nil
 	}

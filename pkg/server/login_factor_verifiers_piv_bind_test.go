@@ -8,12 +8,17 @@ package server
 import (
 	"context"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 // pivBindFakeCA is a minimal TrustedCA whose CABundleCertPool result is fully
@@ -129,3 +134,122 @@ func TestBindLoginFactorVerifiers_RoutesPIV(t *testing.T) {
 	}
 	t.Fatal("PIV verifier shell not found")
 }
+
+// writeTestPIVRootPEM writes the given certificate as a PEM CA bundle file
+// and returns its path.
+func writeTestPIVRootPEM(t *testing.T, cert *x509.Certificate) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "piv-ca.crt")
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	if err := os.WriteFile(path, pemData, 0o600); err != nil {
+		t.Fatalf("write PIV CA pem: %v", err)
+	}
+	return path
+}
+
+// TestAppendOperatorPIVLoginRoots_AppendsConfiguredCA proves the operator's
+// iam.piv_login.ca_file roots are appended to the verifier trust pool so PIV
+// factor logins verify operator-PKI certificates — the same posture as the
+// REST PIV login path.
+func TestAppendOperatorPIVLoginRoots_AppendsConfiguredCA(t *testing.T) {
+	s := newTestServer(t)
+	s.config = &config.Config{}
+	operatorRoot, _ := newTestPIVRoot(t)
+	s.config.IAM.PIVLogin.Enabled = true
+	s.config.IAM.PIVLogin.CAFile = writeTestPIVRootPEM(t, operatorRoot)
+
+	pool := x509.NewCertPool()
+	s.appendOperatorPIVLoginRoots(pool)
+
+	if pool.Equal(x509.NewCertPool()) {
+		t.Fatal("operator PIV root must be appended to the trust pool")
+	}
+}
+
+// TestAppendOperatorPIVLoginRoots_NoOpWhenDisabledOrUnset proves the pool is
+// untouched when PIV login is disabled or no ca_file is configured.
+func TestAppendOperatorPIVLoginRoots_NoOpWhenDisabledOrUnset(t *testing.T) {
+	s := newTestServer(t)
+	s.config = &config.Config{}
+	operatorRoot, _ := newTestPIVRoot(t)
+	caFile := writeTestPIVRootPEM(t, operatorRoot)
+
+	// Disabled with a configured file.
+	s.config.IAM.PIVLogin.Enabled = false
+	s.config.IAM.PIVLogin.CAFile = caFile
+	pool := x509.NewCertPool()
+	s.appendOperatorPIVLoginRoots(pool)
+	if !pool.Equal(x509.NewCertPool()) {
+		t.Fatal("disabled PIV login must not modify the trust pool")
+	}
+
+	// Enabled without a file.
+	s.config.IAM.PIVLogin.Enabled = true
+	s.config.IAM.PIVLogin.CAFile = ""
+	s.appendOperatorPIVLoginRoots(pool)
+	if !pool.Equal(x509.NewCertPool()) {
+		t.Fatal("empty ca_file must not modify the trust pool")
+	}
+}
+
+// TestAppendOperatorPIVLoginRoots_BadFileLeavesPoolUnchanged proves an
+// unreadable or non-PEM ca_file is skipped defensively (daemon roots remain
+// in effect; startup validation is the enforcement point).
+func TestAppendOperatorPIVLoginRoots_BadFileLeavesPoolUnchanged(t *testing.T) {
+	s := newTestServer(t)
+	s.config = &config.Config{}
+	s.config.IAM.PIVLogin.Enabled = true
+
+	// Missing file.
+	s.config.IAM.PIVLogin.CAFile = filepath.Join(t.TempDir(), "missing.crt")
+	pool := x509.NewCertPool()
+	s.appendOperatorPIVLoginRoots(pool)
+	if !pool.Equal(x509.NewCertPool()) {
+		t.Fatal("missing ca_file must not modify the trust pool")
+	}
+
+	// Garbage PEM.
+	garbage := filepath.Join(t.TempDir(), "garbage.crt")
+	if err := os.WriteFile(garbage, []byte("not a pem"), 0o600); err != nil {
+		t.Fatalf("write garbage: %v", err)
+	}
+	s.config.IAM.PIVLogin.CAFile = garbage
+	s.appendOperatorPIVLoginRoots(pool)
+	if !pool.Equal(x509.NewCertPool()) {
+		t.Fatal("non-PEM ca_file must not modify the trust pool")
+	}
+}
+
+// TestBindPIVLoginVerifier_IncludesOperatorRoots proves the bound verifier's
+// pool includes the operator PIV root: binding succeeds and the inner
+// verifier is attached with the merged pool (delegated rejection, not
+// unbound).
+func TestBindPIVLoginVerifier_IncludesOperatorRoots(t *testing.T) {
+	s := newTestServer(t)
+	s.config = &config.Config{}
+	v := pivVerifierFromServer(t, s)
+
+	daemonRoot, _ := newTestPIVRoot(t)
+	pool := x509.NewCertPool()
+	pool.AddCert(daemonRoot)
+	s.xkmsCA = &pivBindFakeCA{pool: pool}
+
+	operatorRoot, _ := newTestPIVRoot(t)
+	s.config.IAM.PIVLogin.Enabled = true
+	s.config.IAM.PIVLogin.CAFile = writeTestPIVRootPEM(t, operatorRoot)
+
+	before := pool.Clone()
+	s.bindPIVLoginVerifier(v)
+
+	if pool.Equal(before) {
+		t.Fatal("bindPIVLoginVerifier must merge the operator PIV root into the trust pool")
+	}
+
+	err := v.Verify(context.Background(), &qrdbauth.AuthFactor{Type: qrdbauth.AuthFactorPIV},
+		qrdbtransport.VerifyChallenge{Type: qrdbtransport.FactorTypePIV})
+	var unbound *UnboundPIVVerifierError
+	if errors.As(err, &unbound) {
+		t.Fatalf("verifier should be bound with merged roots, got unbound: %v", err)
+	}
+}
+

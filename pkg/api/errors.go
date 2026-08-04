@@ -17,6 +17,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -175,10 +176,19 @@ func (e *OperationFailedError) Unwrap() error {
 	return e.Cause
 }
 
-// NewOperationFailedError creates a QBError for a failed operation.
+// NewOperationFailedError creates a QBError for a failed operation. When the
+// cause chain already carries a classified QBError (not_found, already_exists,
+// invalid_input, ...), that code is preserved so transports map the failure to
+// the correct client-facing status instead of masking it as a 500 internal
+// error. Unclassified causes default to ErrInternal.
 func NewOperationFailedError(operation string, cause error) *dberrors.QBError {
+	code := dberrors.ErrInternal
+	var qbErr *dberrors.QBError
+	if errors.As(cause, &qbErr) && qbErr.Code != dberrors.ErrUnknown {
+		code = qbErr.Code
+	}
 	return &dberrors.QBError{
-		Code: dberrors.ErrInternal,
+		Code: code,
 		Op:   "api." + operation,
 		Err:  &OperationFailedError{Operation: operation, Cause: cause},
 	}

@@ -17,6 +17,7 @@ package login
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,10 +53,37 @@ func TestUnifiedLogin_PasswordLoginUnsupported(t *testing.T) {
 				TenantID: systemTenantID,
 			})
 			require.Error(t, lerr, "[%s] legacy password login must be unsupported", tr)
-			require.True(t, sdkerrors.IsPasswordLoginUnsupported(lerr),
-				"[%s] legacy Login must return PasswordLoginUnsupportedError, got: %v", tr, lerr)
+			switch tr {
+			case transportQUIC, transportMCP:
+				// On QUIC and MCP the legacy verb is removed at the WIRE level:
+				// QUIC opcode 0x60 is permanently reserved ("former password
+				// login", pkg/api/quic/protocol.go) and MCP registers only
+				// quicbaas_login_begin / quicbaas_login_finish
+				// (pkg/api/mcp/tools_login.go). The verb not existing at all is
+				// a strictly stronger fail-closed posture than a typed
+				// rejection, so accept either form.
+				require.True(t, sdkerrors.IsPasswordLoginUnsupported(lerr) || isLegacyLoginVerbAbsent(lerr),
+					"[%s] legacy Login must be rejected typed or absent at the wire level, got: %v", tr, lerr)
+			default:
+				require.True(t, sdkerrors.IsPasswordLoginUnsupported(lerr),
+					"[%s] legacy Login must return PasswordLoginUnsupportedError, got: %v", tr, lerr)
+			}
 		})
 	}
+}
+
+// isLegacyLoginVerbAbsent reports whether err is the wire-level "verb does
+// not exist" rejection from a transport whose protocol surface no longer
+// carries the retired password Login verb at all: the reserved QUIC opcode
+// 0x60 or the unregistered MCP quicbaas_login tool. Both surface as
+// invalid-input errors from the server's dispatch table.
+func isLegacyLoginVerbAbsent(err error) bool {
+	if err == nil || !sdkerrors.IsInvalidInput(err) {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unknown opcode: 0x60") ||
+		strings.Contains(msg, "unknown tool: quicbaas_login")
 }
 
 // TestUnifiedLogin_WebAuthnInContainerDeferred is SECURITY assertion (d),

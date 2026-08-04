@@ -135,7 +135,7 @@ func TestIAMImpersonationDurationStringAndDefault(t *testing.T) {
 }
 
 // TestIAMTenantUpdateSettings exercises mapTenantUpdateRequest with a settings
-// block (display_name->name, settings conversion, quota extraction).
+// block (display_name->name, settings conversion, max_users kept in settings).
 func TestIAMTenantUpdateSettings(t *testing.T) {
 	var body map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -157,5 +157,12 @@ func TestIAMTenantUpdateSettings(t *testing.T) {
 	}
 	if body["name"] != "Renamed" {
 		t.Errorf("expected display_name mapped to name, got %v", body["name"])
+	}
+	settings, ok := body["settings"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected settings retained, got %v", body["settings"])
+	}
+	if settings["max_users"] != float64(10) {
+		t.Errorf("expected max_users=10 kept in settings as int, got %v", settings["max_users"])
 	}
 }

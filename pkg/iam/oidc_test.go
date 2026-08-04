@@ -1569,3 +1569,83 @@ func TestOIDCResourceIndicatorsSupportedInMetadata(t *testing.T) {
 		t.Error("GetOAuthASMetadata().ResourceIndicatorsSupported should be true")
 	}
 }
+
+// TestOIDCUserInfo_CeremonyBearerUsernameFallback proves UserInfo resolves a
+// unified-login-ceremony bearer whose sub is the qrdb USERNAME (not the broker
+// user ID): the ID lookup misses, the tenant-scoped username fallback resolves
+// the user, and the returned sub preserves the token's sub (OIDC Core 5.3.2).
+func TestOIDCUserInfo_CeremonyBearerUsernameFallback(t *testing.T) {
+	provider, _, _, _, memStorage := createTestOIDCProvider(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	user := &User{
+		ID:       "user-uuid-999",
+		TenantID: "system",
+		Email:    "admin@example.com",
+		Name:     "admin", // ceremony subject = qrdb username
+		Roles:    []string{"admin"},
+		Created:  now,
+		Updated:  now,
+	}
+	if err := addUserToMemStorage(ctx, memStorage, user); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	claims := &Claims{
+		Issuer:    provider.config.Issuer,
+		Subject:   "admin", // username sub, as minted by IssueSessionToken
+		Audience:  []string{provider.config.Issuer},
+		ExpiresAt: NewUnixTime(now.Add(time.Hour)),
+		IssuedAt:  NewUnixTime(now),
+		NotBefore: NewUnixTime(now),
+		JTI:       "ceremony-jti-1",
+		TenantID:  "system",
+		Roles:     []string{"admin"},
+	}
+	accessToken, err := provider.tokenService.GenerateAccessToken(ctx, claims)
+	if err != nil {
+		t.Fatalf("mint ceremony-style bearer: %v", err)
+	}
+
+	info, err := provider.UserInfo(ctx, accessToken)
+	if err != nil {
+		t.Fatalf("UserInfo() must resolve a username-subject bearer: %v", err)
+	}
+	if info.Sub != "admin" {
+		t.Fatalf("UserInfo() sub must preserve the token sub, got %q", info.Sub)
+	}
+	if info.Email != "admin@example.com" {
+		t.Fatalf("UserInfo() email = %q, want admin@example.com", info.Email)
+	}
+	if info.TenantID != "system" {
+		t.Fatalf("UserInfo() tenant = %q, want system", info.TenantID)
+	}
+}
+
+// TestOIDCUserInfo_UnknownSubjectFailsClosed proves UserInfo still fails
+// closed when the subject matches neither a user ID nor a username.
+func TestOIDCUserInfo_UnknownSubjectFailsClosed(t *testing.T) {
+	provider, _, _, _, _ := createTestOIDCProvider(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	claims := &Claims{
+		Issuer:    provider.config.Issuer,
+		Subject:   "ghost",
+		Audience:  []string{provider.config.Issuer},
+		ExpiresAt: NewUnixTime(now.Add(time.Hour)),
+		IssuedAt:  NewUnixTime(now),
+		NotBefore: NewUnixTime(now),
+		JTI:       "ceremony-jti-2",
+		TenantID:  "system",
+	}
+	accessToken, err := provider.tokenService.GenerateAccessToken(ctx, claims)
+	if err != nil {
+		t.Fatalf("mint bearer: %v", err)
+	}
+
+	if _, err := provider.UserInfo(ctx, accessToken); err == nil {
+		t.Fatal("UserInfo() must fail closed for an unknown subject")
+	}
+}

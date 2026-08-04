@@ -62,10 +62,19 @@ func (s *Server) registerBarrierCeremonyServices(grpcServer *ggrpc.Server) {
 }
 
 // buildBarrierCeremonyServices constructs the BarrierServicer and
-// CeremonyServicer facades from the qrdb SDK client bound to the platform
-// shard. When the qrdb client is unavailable (typical pre-wire state) the
-// facades are constructed with a nil transport which is handled gracefully
-// by the service layer.
+// CeremonyServicer facades over the qrdb SDK client that carries the active
+// barrier/ceremony servicers:
+//
+//   - Seal enabled: the platform-shard client (the node's SDK client) — the
+//     node registered its data-plane barrier on its own embedded transport.
+//   - Seal disabled: the bootstrap ceremony client built in startService —
+//     the node's transport carries NO barrier/ceremony servicers in this
+//     state, so the bootstrap-window stack (in-memory barrier + ceremony)
+//     is the single canonical source for these verbs.
+//
+// When neither client is available (typical pre-wire state in unit tests)
+// the facades are constructed with a nil transport which is handled
+// gracefully by the service layer.
 //
 // When the embedded qrdb node is available it is injected as the
 // EncryptionMigrator so EnableEncryption delegates to the real in-process
@@ -77,7 +86,11 @@ func (s *Server) buildBarrierCeremonyServices() (service.BarrierServicer, servic
 		ceremonySvc = service.NewCeremonyService(nil)
 	)
 
-	if s.qrdbClient != nil {
+	switch {
+	case s.bootstrapCeremonyClient != nil:
+		barrierSvc = service.NewBarrierService(s.bootstrapCeremonyClient.Barrier())
+		ceremonySvc = service.NewCeremonyService(s.bootstrapCeremonyClient.Ceremony())
+	case s.qrdbClient != nil:
 		platformClient, err := s.qrdbClient.ForShard(qbshards.PlatformShardID)
 		if err != nil {
 			s.logger.Warnf("Barrier/Ceremony services bound to nil transport: %v", err)

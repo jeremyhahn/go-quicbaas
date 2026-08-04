@@ -95,6 +95,92 @@ func TestServer_TokenBindingEnforcement(t *testing.T) {
 	}
 }
 
+// The root-mounted IAM management group (/api/v1/tenants, registered in
+// iam.go) must receive the SAME authorization chain as the /api/v1 chi group
+// (useAPIAuthzMiddleware). Under the binding posture (RequireAuthz=false) a
+// bound token presented without its DPoP proof is rejected 401 on the IAM
+// group exactly as on the /api/v1 group, and a valid bearer has its principal
+// injected before the route layer — the seam the service-layer tenant-binding
+// gates depend on.
+func TestServer_TokenBindingEnforcement_IAMTenantsGroup(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.SetTokenBindingEnforcement(bindingValidator{})
+
+	tests := []struct {
+		name        string
+		path        string
+		authz       string
+		dpop        string
+		wantBlocked bool
+	}{
+		{"bound token without proof rejected on tenants list", "/api/v1/tenants", "Bearer bound", "", true},
+		{"bound token without proof rejected on tenant barrier status", "/api/v1/tenants/t1/barrier/status", "Bearer bound", "", true},
+		{"bound token with proof passes middleware", "/api/v1/tenants/t1/barrier/status", "Bearer bound", "proof", false},
+		{"plain bearer passes middleware", "/api/v1/tenants/t1/barrier/status", "Bearer human", "", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			if tc.authz != "" {
+				req.Header.Set("Authorization", tc.authz)
+			}
+			if tc.dpop != "" {
+				req.Header.Set("DPoP", tc.dpop)
+			}
+			w := httptest.NewRecorder()
+			s.router.ServeHTTP(w, req)
+
+			if tc.wantBlocked {
+				if w.Code != http.StatusUnauthorized {
+					t.Fatalf("expected 401 on %s, got %d", tc.path, w.Code)
+				}
+			} else if w.Code == http.StatusUnauthorized {
+				t.Fatalf("middleware blocked a request it should have passed on %s: %d", tc.path, w.Code)
+			}
+		})
+	}
+}
+
+// Under the validator posture (RequireAuthz=true) the IAM tenants group is
+// fail-closed through the SAME AuthorizeViaValidator gate as the /api/v1
+// group: the PEP maps the per-tenant barrier status path to
+// tenant_barrier:status, a scope denial surfaces as 403, and a token-less
+// request is rejected 401 — proving no unauthenticated path into the IAM
+// management surface remains.
+func TestServer_ValidatorEnforcement_IAMTenantsGroup(t *testing.T) {
+	s, _ := newTestServer(t)
+	authorizer := &recordingValidatorAuthorizer{retErr: &platformtoken.ScopeDeniedError{Required: "tenant_barrier:status"}}
+	s.SetValidatorAuthzEnforcement(authorizer)
+
+	t.Run("scope denial is 403 with canonical permission", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/barrier/status", nil)
+		req.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		s.router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d", w.Code)
+		}
+		if !authorizer.called {
+			t.Fatal("validator authorizer must be consulted for the IAM tenants group")
+		}
+		if authorizer.gotPerm != "tenant_barrier:status" {
+			t.Errorf("requiredPerm = %q, want tenant_barrier:status", authorizer.gotPerm)
+		}
+	})
+
+	t.Run("token-less request is 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/barrier/init", nil)
+		w := httptest.NewRecorder()
+		s.router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 for token-less request, got %d", w.Code)
+		}
+	})
+}
+
 // SetTokenBindingEnforcement with a nil validator is a guarded no-op.
 func TestServer_TokenBindingEnforcement_NilValidator(t *testing.T) {
 	s, _ := newTestServer(t)

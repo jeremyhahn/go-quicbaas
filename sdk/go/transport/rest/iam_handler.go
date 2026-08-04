@@ -1266,7 +1266,7 @@ func (h *iamRESTHandler) doRequest(ctx context.Context, httpMethod, path string,
 
 // mapUserCreateRequest maps SDK CreateUserRequest fields to REST API fields.
 // SDK sends: username, email, display_name, auth_methods, roles, groups, metadata
-// REST expects: id, email, username, name, auth_methods, attributes, enabled
+// REST expects: id, email, username, name, auth_methods, roles, attributes, enabled
 func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 	if req == nil {
 		return nil
@@ -1301,6 +1301,12 @@ func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 	// Map metadata to attributes
 	if metadata, ok := req["metadata"].(map[string]interface{}); ok && len(metadata) > 0 {
 		body["attributes"] = metadata
+	}
+
+	// Map roles (initial role IDs). The server validates the references
+	// before creating the user, so they must not be dropped here.
+	if roles, ok := req["roles"].([]interface{}); ok && len(roles) > 0 {
+		body["roles"] = roles
 	}
 
 	// Map enabled (default to true if not specified)
@@ -1663,8 +1669,10 @@ func convertSettingValue(key string, val interface{}) interface{} {
 }
 
 // mapTenantCreateRequest maps SDK CreateTenantRequest fields to the format
-// expected by the REST server. Handles display_name->name fallback,
-// settings type conversion, and extracts max_users into quotas.
+// expected by the REST server. Handles display_name->name fallback and
+// settings type conversion. max_users stays inside settings: the server's
+// TenantSettings carries it (json "max_users") and engine-level user quotas
+// are owned by qrdb's TenantServicer, not the BaaS TenantQuotas struct.
 func mapTenantCreateRequest(req map[string]interface{}) map[string]interface{} {
 	if req == nil {
 		return nil
@@ -1685,11 +1693,8 @@ func mapTenantCreateRequest(req map[string]interface{}) map[string]interface{} {
 	}
 
 	if settings, ok := req["settings"]; ok && settings != nil {
-		if mapped := mapTenantSettings(settings); mapped != nil {
-			extractQuotasFromSettings(mapped, body)
-			if len(mapped) > 0 {
-				body["settings"] = mapped
-			}
+		if mapped := mapTenantSettings(settings); len(mapped) > 0 {
+			body["settings"] = mapped
 		}
 	}
 
@@ -1697,9 +1702,9 @@ func mapTenantCreateRequest(req map[string]interface{}) map[string]interface{} {
 }
 
 // mapTenantUpdateRequest maps SDK UpdateTenantRequest fields to the format
-// expected by the REST server. Maps display_name to name, converts
-// settings from string values to typed values, and extracts max_users
-// into a quotas object.
+// expected by the REST server. Maps display_name to name and converts
+// settings from string values to typed values. max_users stays inside
+// settings for the same reason as mapTenantCreateRequest.
 func mapTenantUpdateRequest(req map[string]interface{}) map[string]interface{} {
 	if req == nil {
 		return nil
@@ -1716,32 +1721,12 @@ func mapTenantUpdateRequest(req map[string]interface{}) map[string]interface{} {
 	}
 
 	if settings, ok := req["settings"]; ok && settings != nil {
-		if mapped := mapTenantSettings(settings); mapped != nil {
-			extractQuotasFromSettings(mapped, body)
-			if len(mapped) > 0 {
-				body["settings"] = mapped
-			}
+		if mapped := mapTenantSettings(settings); len(mapped) > 0 {
+			body["settings"] = mapped
 		}
 	}
 
 	return body
-}
-
-// extractQuotasFromSettings extracts quota-related fields (max_users) from
-// the settings map and places them into a quotas object in the body.
-// This is needed because the SDK sends max_users in settings (map[string]string)
-// but the server expects it in quotas (TenantQuotas struct).
-func extractQuotasFromSettings(settings map[string]interface{}, body map[string]interface{}) {
-	quotas := map[string]interface{}{}
-
-	if maxUsers, ok := settings["max_users"]; ok {
-		quotas["max_users"] = maxUsers
-		delete(settings, "max_users")
-	}
-
-	if len(quotas) > 0 {
-		body["quotas"] = quotas
-	}
 }
 
 // mapServerPolicyToSDK converts a server-format policy response (with apiVersion,

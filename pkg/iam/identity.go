@@ -126,6 +126,39 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 		return nil, err
 	}
 
+	// Pre-validate requested role references BEFORE any write. Every
+	// transport (REST, QUIC, MCP, embedded, and gRPC/Unix via the IAM
+	// service adapter) converges on this seam, so a bad role ID fails fast
+	// with the storage backend's typed not-found error and no
+	// partially-created user is left behind — the create stays atomic from
+	// the caller's perspective (a retry does not fail with already_exists).
+	for _, roleID := range opts.Roles {
+		if _, err := s.GetRole(ctx, tenantID, roleID); err != nil {
+			return nil, err
+		}
+	}
+
+	// Deduplicate requested group references while preserving order so a
+	// repeated ID cannot double-register the user in a group's member list.
+	groupIDs := make([]string, 0, len(opts.Groups))
+	seenGroups := make(map[string]struct{}, len(opts.Groups))
+	for _, groupID := range opts.Groups {
+		if _, dup := seenGroups[groupID]; dup {
+			continue
+		}
+		seenGroups[groupID] = struct{}{}
+		groupIDs = append(groupIDs, groupID)
+	}
+
+	// Pre-validate requested group references BEFORE any write, mirroring
+	// the role validation above: a bad group ID fails fast with the storage
+	// backend's typed not-found error and no user record is written.
+	for _, groupID := range groupIDs {
+		if _, err := s.GetGroup(ctx, tenantID, groupID); err != nil {
+			return nil, err
+		}
+	}
+
 	// Check tenant quota
 	if s.tenants != nil {
 		if err := s.tenants.CheckQuota(ctx, tenantID, QuotaResourceUsers); err != nil {
@@ -158,13 +191,15 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 	if len(opts.Roles) > 0 {
 		roles = append(roles, opts.Roles...)
 	}
+	groups := make([]string, 0)
+	groups = append(groups, groupIDs...)
 	user := &User{
 		ID:         userID,
 		TenantID:   tenantID,
 		Email:      strings.ToLower(strings.TrimSpace(opts.Email)),
 		Name:       displayName,
 		Attributes: opts.Attributes,
-		Groups:     []string{},
+		Groups:     groups,
 		Roles:      roles,
 		Created:    now,
 		Updated:    now,
@@ -174,7 +209,56 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 		return nil, api.NewOperationFailedError("create user", err)
 	}
 
+	// Register the new user in each requested group's member list. Group
+	// membership is bidirectional: user.Groups was persisted with the user
+	// record above, and each group's Members must reference the user back.
+	// On failure the whole create is rolled back so the operation stays
+	// atomic from the caller's perspective.
+	for i, groupID := range groupIDs {
+		if err := s.addMemberToGroup(ctx, tenantID, groupID, user.ID); err != nil {
+			s.rollbackCreateUserGroups(ctx, tenantID, user.ID, groupIDs[:i])
+			return nil, api.NewOperationFailedError("add user to group", err)
+		}
+	}
+
 	return user, nil
+}
+
+// addMemberToGroup appends userID to the group's member list. The group is
+// re-fetched so a concurrent group update between validation and this write
+// is not clobbered.
+func (s *IdentityStore) addMemberToGroup(ctx context.Context, tenantID, groupID, userID string) error {
+	group, err := s.groupStorage.GetGroup(ctx, tenantID, groupID)
+	if err != nil {
+		return err
+	}
+	group.Members = append(group.Members, userID)
+	group.Updated = time.Now().UTC()
+	return s.groupStorage.UpdateGroup(ctx, group)
+}
+
+// rollbackCreateUserGroups compensates a failed CreateUser after the user
+// record was written: it removes the user from every group member list that
+// was already updated and deletes the user record. Compensation writes are
+// best-effort (mirroring AddUserToGroup's rollback) because the primary
+// error has already been captured and is what the caller receives.
+func (s *IdentityStore) rollbackCreateUserGroups(ctx context.Context, tenantID, userID string, groupIDs []string) {
+	for _, groupID := range groupIDs {
+		group, err := s.groupStorage.GetGroup(ctx, tenantID, groupID)
+		if err != nil {
+			continue
+		}
+		members := make([]string, 0, len(group.Members))
+		for _, memberID := range group.Members {
+			if memberID != userID {
+				members = append(members, memberID)
+			}
+		}
+		group.Members = members
+		group.Updated = time.Now().UTC()
+		_ = s.groupStorage.UpdateGroup(ctx, group)
+	}
+	_ = s.userStorage.DeleteUser(ctx, tenantID, userID)
 }
 
 // GetUser retrieves a user by ID within a tenant.

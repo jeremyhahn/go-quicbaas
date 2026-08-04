@@ -495,11 +495,18 @@ func (s *dynamicSecretsHandler) GenerateCredential(ctx context.Context, req *Gen
 		return nil, api.NewTTLExceedsMaxError("dynamicSecretsHandler.GenerateCredential", ttl, role.MaxTTL)
 	}
 
-	// Get generator
+	// Get generator. A stored role referencing an unregistered generator is a
+	// server-side configuration failure, not a client error: the request was
+	// valid, so the registry's not_found classification must NOT bleed through
+	// to the caller as a 404. Classify explicitly as internal.
 	generator, err := s.generatorReg.Get(role.GeneratorType)
 	if err != nil {
 		s.metrics.credentialsGenerated.With(role.GeneratorType, "error").Inc()
-		return nil, api.NewOperationFailedError("get generator", err)
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "api.get generator",
+			Err:  &api.OperationFailedError{Operation: "get generator", Cause: err},
+		}
 	}
 
 	// Generate credential

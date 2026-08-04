@@ -1748,8 +1748,7 @@ func (s *Server) startService() error {
 		// Populate s.ceremonyServices from the node's services so that the
 		// gRPC barrier/ceremony adapters and REST /api/v1/init/* routes can
 		// resolve the barrier and ceremony service without re-building the
-		// stack. When seal is disabled these fields are nil, matching the
-		// existing NotSupported fallback behaviour.
+		// stack.
 		if svcs := s.qrdbNode.Services(); svcs != nil && svcs.Barrier != nil {
 			s.ceremonyServices = &CeremonyServices{
 				Barrier:    svcs.Barrier,
@@ -1757,6 +1756,50 @@ func (s *Server) startService() error {
 				Ceremony:   svcs.Ceremony,
 			}
 			s.logger.Info("Node barrier/ceremony/credential services wired from qrdb node")
+		} else {
+			// Seal is disabled: the node exposes no seal-layer services and
+			// its embedded transport carries no Barrier/Ceremony/Credential
+			// servicers (qrdb wires them only when cfg.Seal.Enabled). Build
+			// the bootstrap ceremony stack (manual credential + ceremony
+			// service) plus an in-process qrdb SDK client over it so every
+			// transport — REST, gRPC, QUIC, MCP, Unix, and the SDK embedded
+			// transport — serves barrier, ceremony, and credential verbs
+			// from the SAME instances during the bootstrap window (Phase 8
+			// transport-parity rule).
+			bootstrapServices, wireErr := buildBootstrapCeremonyServices(
+				slog.Default(), s.config.Storage.DataDir)
+			if wireErr != nil {
+				return wireErr
+			}
+
+			// The `barrier` CLI verbs must operate on the PERSISTENT
+			// data-plane barrier over <dataDir>/seal — independent of
+			// cfg.Seal.Enabled — so init/unseal state survives restarts and
+			// status reports the configured strategy while uninitialised
+			// (see buildDataPlaneBarrierService / strategyAwareBarrierService).
+			// The node with seal disabled never opens the seal sub-store, so
+			// there is no double-open. Only when no persistent DataDir
+			// exists (all-nil return) does the bootstrap stack's in-memory
+			// barrier remain the barrier servicer.
+			dpSvc, rawBarrier, dpCloser, dpErr := buildDataPlaneBarrierService(
+				s.config, slog.Default())
+			if dpErr != nil {
+				return dpErr
+			}
+			if dpSvc != nil {
+				bootstrapServices.Barrier = dpSvc
+				s.dataPlaneBarrier = rawBarrier
+				s.dataPlaneBarrierCloser = dpCloser
+			}
+
+			bootstrapClient, clientErr := newBootstrapCeremonyClient(
+				s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bootstrapServices)
+			if clientErr != nil {
+				return clientErr
+			}
+			s.ceremonyServices = bootstrapServices
+			s.bootstrapCeremonyClient = bootstrapClient
+			s.logger.Info("Bootstrap ceremony services wired (node seal disabled): persistent data-plane barrier + manual credential/ceremony")
 		}
 	}
 	// Phase E: the else (legacy baasTransport) branch is removed.

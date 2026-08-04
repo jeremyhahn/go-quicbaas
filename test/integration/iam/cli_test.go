@@ -1400,11 +1400,19 @@ func TestCLIUserCreateMultiProtocol(t *testing.T) {
 					"--name", fmt.Sprintf("Attributed User %s", proto.name),
 					"--role", "admin")
 				if err != nil && (strings.Contains(err.Error(), "unknown flag") || strings.Contains(err.Error(), "not_found")) {
-					// Role flag may not be supported, or role doesn't exist - try without it
+					// Role flag may not be supported, or the role doesn't exist in
+					// this fresh tenant — retry without it. The retry MUST use a
+					// distinct --name as well as a distinct email: on the gRPC
+					// path a role-assignment failure deliberately preserves the
+					// already-created user (see pkg/api/grpc/iam_service_adapter.go
+					// CreateUser), and the qrdb user record is keyed by
+					// (tenant, username) where username == the display name
+					// (pkg/iam/qrdbadapter/convert.go userCoreName). Reusing the
+					// first attempt's name therefore collides with already_exists.
 					email2 := fmt.Sprintf("user-attr2-%s-%d@test.local", proto.name, time.Now().UnixNano())
 					output, err = cli.run("iam", "user", "create", email2,
 						"--tenant", tenantID,
-						"--name", fmt.Sprintf("Attributed User %s", proto.name))
+						"--name", fmt.Sprintf("Attributed User Retry %s", proto.name))
 				} else if err != nil && strings.Contains(err.Error(), "already_exists") {
 					// User was created but role assignment failed - this is still a success
 					t.Log("User created successfully (role assignment may have failed separately)")
@@ -1442,11 +1450,15 @@ func TestCLIUserCreate(t *testing.T) {
 			"--name", "Attributed User",
 			"--role", "admin")
 		if err != nil && (strings.Contains(err.Error(), "unknown flag") || strings.Contains(err.Error(), "not_found")) {
-			// Role flag may not be supported, or role doesn't exist - try without it using a NEW email
+			// Role flag may not be supported, or the role doesn't exist in this
+			// fresh tenant — retry without it. Use a distinct --name AND email:
+			// the gRPC adapter preserves the user created by the failed first
+			// attempt, and qrdb keys users by (tenant, username) with
+			// username == display name, so reusing the name collides.
 			email2 := fmt.Sprintf("user-attr2-%d@test.local", time.Now().UnixNano())
 			output, err = cli.run("iam", "user", "create", email2,
 				"--tenant", tenantID,
-				"--name", "Attributed User")
+				"--name", "Attributed User Retry")
 		} else if err != nil && strings.Contains(err.Error(), "already_exists") {
 			// User was created but role assignment failed - this is still a success for the test
 			t.Log("User created successfully (role assignment may have failed separately)")

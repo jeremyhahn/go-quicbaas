@@ -21,6 +21,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestMain sets up and tears down the test environment.
@@ -39,16 +41,14 @@ func TestMain(m *testing.M) {
 }
 
 // waitForClusterReady waits for the QuicBaaS cluster to be ready.
-// The cluster test stack runs plain HTTP (security.tls_enabled=false).
-// A dedicated transport is used to avoid polluting http.DefaultTransport's
-// connection pool with keepalive connections that could cause later tests
-// to hang when reusing stale connections.
+// The cluster test stack serves HTTPS with the integration CA, so the probe
+// uses helpers.NewHTTPClient, which trusts the integration CA at
+// helpers.IntegrationCAPath. A dedicated client is used to avoid polluting
+// http.DefaultTransport's connection pool with keepalive connections that
+// could cause later tests to hang when reusing stale connections.
 func waitForClusterReady() bool {
 	endpoint := getRESTEndpoint()
-	client := &http.Client{
-		Timeout:   5 * time.Second,
-		Transport: &http.Transport{},
-	}
+	client := helpers.NewHTTPClient(5 * time.Second)
 
 	deadline := time.Now().Add(4 * time.Minute)
 	for time.Now().Before(deadline) {

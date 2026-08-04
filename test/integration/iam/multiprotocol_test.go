@@ -2874,11 +2874,11 @@ func TestRoleCRUD_AllProtocols(t *testing.T) {
 
 			// Create
 			t.Run("Create", func(t *testing.T) {
-				role, err := client.CreateRole(ctx, tenantID, roleID, "Test Role", "Test Description", []string{"read", "write"})
+				role, err := client.CreateRole(ctx, tenantID, roleID, "Test Role", "Test Description", []string{"kv:get", "kv:put"})
 				require.NoError(t, err, "Failed to create role via %s", protocol)
 				assert.Equal(t, roleID, role.ID)
 				assert.Equal(t, "Test Role", role.Name)
-				assert.Equal(t, []string{"read", "write"}, role.Permissions)
+				assert.Equal(t, []string{"kv:get", "kv:put"}, role.Permissions)
 			})
 
 			// Get
@@ -2905,10 +2905,10 @@ func TestRoleCRUD_AllProtocols(t *testing.T) {
 
 			// Update
 			t.Run("Update", func(t *testing.T) {
-				role, err := client.UpdateRole(ctx, tenantID, roleID, "Updated Role", "Updated Description", []string{"read", "write", "delete"})
+				role, err := client.UpdateRole(ctx, tenantID, roleID, "Updated Role", "Updated Description", []string{"kv:get", "kv:put", "kv:delete"})
 				require.NoError(t, err, "Failed to update role via %s", protocol)
 				assert.Equal(t, "Updated Role", role.Name)
-				assert.Contains(t, role.Permissions, "delete")
+				assert.Contains(t, role.Permissions, "kv:delete")
 			})
 
 			// Delete

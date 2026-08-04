@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/stretchr/testify/assert"
@@ -769,4 +770,76 @@ func TestIAMServiceWrapper_TestPolicy_ProviderError(t *testing.T) {
 
 func (e *testIAMError) Error() string {
 	return e.msg
+}
+
+// =============================================================================
+// CreateUser role forwarding (QUIC + MCP transports converge on this wrapper)
+// =============================================================================
+
+// newRoleTestIdentityStore builds a real IdentityStore over MemoryStorage so
+// role validation and persistence are exercised end-to-end (no tenant manager:
+// quota checks are skipped when Tenants is nil).
+func newRoleTestIdentityStore() (*iam.IdentityStore, *iam.MemoryStorage) {
+	mem := iam.NewMemoryStorage()
+	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  mem,
+		GroupStorage: mem,
+		RoleStorage:  mem,
+	})
+	return store, mem
+}
+
+// TestIAMServiceWrapper_CreateUser_ForwardsRoles proves the wrapper no longer
+// drops IAMCreateUserRequest.Roles: the roles reach the identity store and are
+// persisted on the created user.
+func TestIAMServiceWrapper_CreateUser_ForwardsRoles(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	role, err := store.CreateRole(ctx, "t-1", iam.CreateRoleOptions{Name: "auditor"})
+	require.NoError(t, err)
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID: "t-1",
+		Email:    "roles@example.com",
+		Name:     "Role User",
+		Roles:    []string{role.ID},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.User)
+	assert.Equal(t, []string{role.ID}, resp.User.Roles)
+
+	// Persisted record carries the roles too.
+	stored, err := store.GetUser(ctx, "t-1", resp.User.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{role.ID}, stored.Roles)
+}
+
+// TestIAMServiceWrapper_CreateUser_UnknownRole_NoUserCreated proves the
+// validate-before-create contract on the wrapper path (QUIC/MCP): an unknown
+// role reference fails with a typed not-found error and no user is written.
+func TestIAMServiceWrapper_CreateUser_UnknownRole_NoUserCreated(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID: "t-1",
+		Email:    "phantom@example.com",
+		Name:     "Phantom User",
+		Roles:    []string{"no-such-role"},
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
+
+	// Zero side effects: the user must NOT exist.
+	_, err = store.GetUserByEmail(ctx, "phantom@example.com")
+	require.Error(t, err, "no user must be created after failed role validation")
 }
